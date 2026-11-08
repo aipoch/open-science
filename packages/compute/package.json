@@ -34,7 +34,9 @@
   },
   "dependencies": {
     "@aipoch/diagnostics": "0.1.0",
-    "micromatch": "^4.0.8"
+    "@huggingface/hub": "2.17.10",
+    "micromatch": "^4.0.8",
+    "jszip": "3.10.2"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

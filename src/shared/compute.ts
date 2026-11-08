@@ -49,6 +49,64 @@ export type AgentComputeHostSummary = ComputeHostSummary & {
   role: 'selected' | 'available'
 }
 
+export type KubernetesTargetConfig = Readonly<{
+  displayName: string
+  context: string
+  namespace: string
+  image: string
+  transferImage: string
+  sizeMiB: number
+}>
+export type KubernetesTarget = KubernetesTargetConfig & Readonly<{ id: string; providerId: string }>
+
+export type HostedTargetConfig = Readonly<{
+  displayName: string
+  namespace: string
+  image: string
+  flavor: string
+  bucket: string
+  timeoutSeconds: number
+}>
+export type HostedTarget = HostedTargetConfig & Readonly<{ id: string; providerId: string }>
+
+export type RayTargetConfig = Readonly<{
+  displayName: string
+  endpoint: string
+  sharedRoot: string
+  remoteRoot: string
+  cpus: number
+  gpus: number
+}>
+export type RayTarget = RayTargetConfig & Readonly<{ id: string; providerId: string }>
+
+export type ModalTargetConfig = Readonly<{
+  displayName: string
+  environmentName: string
+  appName: string
+  image: string
+  cpus: number
+  memoryMiB: number
+  gpu?: string
+}>
+export type ModalTarget = ModalTargetConfig & Readonly<{ id: string; providerId: string }>
+export type ExternalComputeTarget = KubernetesTarget | HostedTarget | RayTarget | ModalTarget
+export type ExternalComputeMode = Exclude<ComputeExecutionMode, 'direct_ssh' | 'slurm'>
+
+export const externalComputeMode = (providerId: string): ExternalComputeMode | undefined => {
+  if (providerId.startsWith('kubernetes:')) return 'kubernetes'
+  if (providerId.startsWith('hf-jobs:')) return 'hugging_face_jobs'
+  if (providerId.startsWith('ray:')) return 'ray_jobs'
+  if (providerId.startsWith('modal:')) return 'modal_sandbox'
+  return undefined
+}
+
+export const isComputeProviderId = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  ((value.startsWith('ssh:') && value.length > 4) ||
+    /^(?:kubernetes|hf-jobs|ray|modal):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value
+    ))
+
 // Add-form payload. displayName defaults to the alias; detailsDoc seeds the notes (author = user).
 export type CreateComputeHostRequest = {
   sshAlias: string
@@ -107,6 +165,7 @@ export type DeleteComputeHostRequest = {
 }
 
 export type ComputeHostDeletionBlocker = Readonly<{
+  modalCreationUnconfirmed?: true
   jobId: string
   projectId: string
   sessionId: string
@@ -187,6 +246,51 @@ export type ComputeApprovalRequestInfo = ComputeApprovalRequestBase &
         operation: 'submit_job'
         command_preview: string
         command_full: string
+        kubernetes?: {
+          context: string
+          namespace: string
+          endpoint: string
+          image: string
+          transferImage: string
+          sizeMiB: number
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
+        hosted?: {
+          namespace: string
+          image: string
+          flavor: string
+          bucket: string
+          runId: string
+          rateMicroUsdPerMinute: number
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
+        ray?: {
+          endpoint: string
+          sessionName: string
+          cpus: number
+          gpus: number
+          sharedRoot: string
+          remoteRoot: string
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
+        modal?: {
+          environmentName: string
+          appName: string
+          appId: string
+          image: string
+          cpus: number
+          memoryMiB: number
+          gpu?: string
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
         execution_mode?: ComputeExecutionMode
         environment?: string
         inputs_summary?: string

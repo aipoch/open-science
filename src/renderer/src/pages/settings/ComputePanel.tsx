@@ -1,6 +1,10 @@
+import { KubernetesTargets } from './KubernetesTargets'
+import { HostedTargets } from './HostedTargets'
+import { RayTargets } from './RayTargets'
+import { ModalTargets } from './ModalTargets'
 import type { ComputeView } from '../../lib/settings-navigation'
 import { ErrorNotice } from '@/components/error-notice'
-import { Folder, Info, Plus, Server } from 'lucide-react'
+import { Folder, Plus, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,7 +21,7 @@ import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
-// are separate components owned by SettingsPage; this panel renders the list + header banner only.
+// are separate components owned by SettingsPage; this panel renders the target lists.
 export type { ComputeView } from '../../lib/settings-navigation'
 
 type ComputePanelProps = {
@@ -157,11 +161,6 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
 
   return (
     <div className="p-5">
-      <div className="mb-5 flex items-start gap-2 rounded-xl bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
-        <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        <span>{t('Connect where heavy compute runs — your own servers over SSH.')}</span>
-      </div>
-
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 className="text-base font-medium text-foreground">{t('SSH hosts')}</h3>
@@ -214,6 +213,11 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
           ))
         )}
       </div>
+
+      <KubernetesTargets />
+      <HostedTargets />
+      <RayTargets />
+      <ModalTargets />
 
       {/* File browser modal — opened when a host folder button is clicked */}
       <FileBrowserModal

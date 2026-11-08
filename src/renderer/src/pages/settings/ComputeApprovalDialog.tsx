@@ -94,18 +94,49 @@ export function ComputeApprovalDialog({
       : dialogRequest.operation === 'submit_job'
         ? t('Allow remote job submission?')
         : t('Allow remote command?')
-  const description =
-    dialogRequest.operation === 'download'
+  const job = dialogRequest.operation === 'submit_job' ? dialogRequest : undefined
+  const modal = job?.modal,
+    ray = job?.ray,
+    hosted = job?.hosted,
+    kubernetes = job?.kubernetes
+  const files = modal ?? ray ?? hosted ?? kubernetes
+  const backendName = modal
+    ? t('Modal Sandboxes')
+    : ray
+      ? t('Ray Jobs')
+      : hosted
+        ? t('Hugging Face Jobs')
+        : kubernetes
+          ? t('Kubernetes')
+          : undefined
+
+  const description = modal
+    ? t(
+        'Only declared outputs are archived. After verified publication the job volume and its remaining files are deleted. The volume is retained if collection is incomplete.'
+      )
+    : ray
       ? t(
-          "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path."
+          'Declared outputs are archived and originals stay in the shared directory. The driver limits command runtime. The app requests a stop for overdue jobs when connected.'
         )
-      : dialogRequest.operation === 'submit_job'
+      : hosted
         ? t(
-            'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.'
+            'Only declared outputs are archived. After verification, the job files are removed from the bucket.'
           )
-        : t(
-            'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
-          )
+        : kubernetes
+          ? t(
+              'The command runs in the selected Kubernetes namespace. The job volume is retained until results are collected.'
+            )
+          : dialogRequest.operation === 'download'
+            ? t(
+                "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path."
+              )
+            : dialogRequest.operation === 'submit_job'
+              ? t(
+                  'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.'
+                )
+              : t(
+                  'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
+                )
   const broadScopeSubject =
     dialogRequest.operation === 'download'
       ? t('remote file downloads from {{host}}', { host: dialogRequest.providerName })
@@ -226,9 +257,78 @@ export function ComputeApprovalDialog({
                       {t('Execution mode')}
                     </span>
                     <span className="min-w-0 text-foreground">
-                      {dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
+                      {backendName ??
+                        (dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH'))}
                     </span>
                   </div>
+                )}
+                {job && files && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                    {[
+                      ...(modal
+                        ? [
+                            [t('Environment'), modal.environmentName],
+                            ['Modal App', modal.appName + ' (' + modal.appId + ')'],
+                            [t('Image'), modal.image],
+                            ['CPU / GPU', modal.cpus + ' / ' + (modal.gpu ?? '—')],
+                            [t('Memory'), modal.memoryMiB + ' MiB']
+                          ]
+                        : []),
+                      ...(ray
+                        ? [
+                            [t('Dashboard'), ray.endpoint],
+                            [t('Session'), ray.sessionName],
+                            ['CPU / GPU', ray.cpus + ' / ' + ray.gpus],
+                            [t('Local shared directory'), ray.sharedRoot]
+                          ]
+                        : []),
+                      ...(hosted
+                        ? [
+                            [t('Billing account'), hosted.namespace],
+                            [t('Image'), hosted.image],
+                            [t('Flavor'), hosted.flavor],
+                            [
+                              t('Compute rate'),
+                              `USD ${hosted.rateMicroUsdPerMinute / 1_000_000}/min`
+                            ],
+                            [
+                              t('Estimated compute cost'),
+                              `USD ${((Math.ceil(job.timeoutSeconds / 60) * hosted.rateMicroUsdPerMinute) / 1_000_000).toFixed(6)}`
+                            ],
+                            [
+                              t('Bucket'),
+                              `hf://buckets/${hosted.bucket}/open-science/${hosted.runId}/`
+                            ]
+                          ]
+                        : []),
+                      ...(kubernetes
+                        ? [
+                            [t('Context'), kubernetes.context],
+                            [t('Namespace'), kubernetes.namespace],
+                            ['API', kubernetes.endpoint],
+                            [t('Image'), kubernetes.image],
+                            [t('Transfer image'), kubernetes.transferImage],
+                            ['PVC', kubernetes.sizeMiB + ' MiB']
+                          ]
+                        : []),
+                      [
+                        t('Inputs'),
+                        files.inputFiles
+                          .map(
+                            (file) =>
+                              `${file.source} → ${file.destination} (${file.sizeBytes} B)\nSHA-256 ${file.sha256}`
+                          )
+                          .join('\n') || '—'
+                      ],
+                      [t('Outputs'), files.outputManifest ?? '[]'],
+                      ...(files.harvestConfig ? [[t('Harvest'), files.harvestConfig]] : [])
+                    ].map(([label, value]) => (
+                      <div key={label} className="contents">
+                        <dt className="text-muted-foreground">{label}</dt>
+                        <dd className="whitespace-pre-wrap break-all font-mono">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
                 )}
                 {dialogRequest.operation === 'submit_job' && dialogRequest.environment && (
                   <div className="flex gap-2">
@@ -259,7 +359,7 @@ export function ComputeApprovalDialog({
                     </div>
                     <div className="flex gap-2">
                       <span className="w-20 shrink-0 text-muted-foreground">
-                        {t('Remote workdir')}
+                        {modal || ray ? t('Output directory') : t('Remote workdir')}
                       </span>
                       <span className="min-w-0 break-all font-mono text-muted-foreground">
                         {dialogRequest.remoteWorkdir}
@@ -296,7 +396,7 @@ export function ComputeApprovalDialog({
             </Button>
             <PermissionScopeButton
               key={dialogRequest.id}
-              available={['once', 'session', 'project', 'global']}
+              available={files ? ['once'] : ['once', 'session', 'project', 'global']}
               disabled={responding}
               onAllow={(scope) => {
                 if (scope === 'project' || scope === 'global')

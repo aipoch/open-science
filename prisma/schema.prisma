@@ -1131,6 +1131,7 @@ model ComputeJob {
   harvestConfig            String?
   timeoutSeconds           Int?
   remoteWorkdir            String?
+  kubernetesWorkspace      String?
   remoteHandle             String?
   remoteCleanupDisposition String                @default("pending")
   exitCode                 Int?

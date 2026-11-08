@@ -878,6 +878,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "harvestConfig" TEXT,
     "timeoutSeconds" INTEGER,
     "remoteWorkdir" TEXT,
+    "kubernetesWorkspace" TEXT,
     "remoteHandle" TEXT,
     "remoteCleanupDisposition" TEXT NOT NULL DEFAULT 'pending',
     "exitCode" INTEGER,

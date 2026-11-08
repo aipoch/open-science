@@ -276,5 +276,9 @@
   ],
   "src/main/notebook/source-analysis-worker-entry.ts": [
     "src/main/notebook/source-analysis-worker.ts"
-  ]
+  ],
+  "packages/compute/src/hugging-face-bucket-worker.ts": [
+    "packages/compute/src/hugging-face-bucket.ts"
+  ],
+  "resources/compute-modal.py": ["src/main/compute/modal-sdk.ts"]
 }

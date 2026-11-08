@@ -9,7 +9,13 @@ import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
-import { harvestJob } from './harvest-engine'
+import { createModalJobRuntime } from './modal-job-runtime'
+import type { ComputeJob } from '@aipoch/compute'
+import type { ExternalComputeMode } from '../../shared/compute'
+import { createKubernetesJobRuntime } from './kubernetes-job-runtime'
+import { createHuggingFaceJobRuntime } from './hugging-face-job-runtime'
+import { createRayJobRuntime } from './ray-job-runtime'
+import { harvestJob, type HarvestDeps } from './harvest-engine'
 import { broadcastJobUpdated } from './ipc'
 import { createNotifyingJobPoller, emitJobNotification } from './job-notifier'
 import type { ComputeJobRepository } from './job-repository'
@@ -29,7 +35,8 @@ type ComputeJobRuntimeDeps = {
     | 'handleJobCancellationConfirmed'
     | 'startQueueReconciliation'
     | 'stopQueueReconciliation'
-  >
+  > &
+    Partial<Pick<ComputeService, 'bindExternalJobRuntime'>>
   jobDeletionOwner?: Pick<ComputeJobDeletionOwner, 'bindRuntime'>
   hostRepository: ComputeHostRepository
   jobRepository: ComputeJobRepository
@@ -93,6 +100,71 @@ export const createComputeJobRuntime = (
     }
   }
 
+  type ExternalRuntime = ReturnType<typeof createKubernetesJobRuntime> & {
+    retry?(jobId: string): Promise<void>
+  }
+  const external = new Map<ExternalComputeMode, ExternalRuntime>()
+  if (deps.computeService.bindExternalJobRuntime && deps.operationRepository) {
+    const dependencies = {
+      jobRepository: deps.jobRepository,
+      operationRepository: deps.operationRepository,
+      storageRoot: deps.storageRoot,
+      onJobUpdated: deps.computeService.handleJobUpdated
+    }
+    const harvestExternal = (
+      job: ComputeJob,
+      files: Pick<
+        HarvestDeps,
+        'workspaceConnection' | 'rayOutputs' | 'modalOutputs' | 'hostedOutputs'
+      >,
+      signal: AbortSignal
+    ): Promise<void> =>
+      resourceActivity.run(() =>
+        harvest(job, {
+          connectionBroker: deps.connectionBroker,
+          hostRepository: deps.hostRepository,
+          jobRepository: deps.jobRepository,
+          storageRoot: deps.storageRoot,
+          broadcast,
+          publishJobUpdated: deps.computeService.handleJobUpdated,
+          ...files,
+          signal
+        })
+      )
+    external.set(
+      'kubernetes',
+      createKubernetesJobRuntime({
+        ...dependencies,
+        harvest: (job, workspaceConnection, signal) =>
+          harvestExternal(job, { workspaceConnection }, signal)
+      })
+    )
+    external.set(
+      'hugging_face_jobs',
+      createHuggingFaceJobRuntime({
+        ...dependencies,
+        harvest: (job, hostedOutputs, signal) => harvestExternal(job, { hostedOutputs }, signal)
+      })
+    )
+    external.set(
+      'ray_jobs',
+      createRayJobRuntime({
+        ...dependencies,
+        harvest: (job, rayOutputs, signal) => harvestExternal(job, { rayOutputs }, signal)
+      })
+    )
+    external.set(
+      'modal_sandbox',
+      createModalJobRuntime({
+        ...dependencies,
+        harvest: (job, modalOutputs, signal) => harvestExternal(job, { modalOutputs }, signal)
+      })
+    )
+  }
+  const unbindExternal = Array.from(external, ([mode, runtime]) =>
+    deps.computeService.bindExternalJobRuntime!(mode, () => runtime.tick())
+  )
+  const runtimes = Array.from(external.values())
   const harvestScheduler = createHarvestScheduler(pollerDeps.harvestFn!)
   pollerDeps.harvestScheduler = harvestScheduler
 
@@ -116,6 +188,16 @@ export const createComputeJobRuntime = (
     if (job.harvested_at !== undefined) return
     if (job.remote_cleanup_disposition === 'cleaned' || !job.remote_workdir) {
       throw new Error('Remote results are unavailable.')
+    }
+    if (
+      job.execution_mode &&
+      job.execution_mode !== 'slurm' &&
+      job.execution_mode !== 'direct_ssh'
+    ) {
+      const runtime = external.get(job.execution_mode)
+      if (!runtime) throw new Error('Compute recovery is unavailable.')
+      await (runtime.retry ? runtime.retry(job.job_id) : runtime.tick())
+      return
     }
     await harvestScheduler.retry(job, signal)
   })
@@ -166,12 +248,17 @@ export const createComputeJobRuntime = (
   const deletionRuntime = {
     pause: async (): Promise<void> => {
       harvestAbortController.abort()
-      await Promise.all([poller.pause(), cancellationReaper?.pause()])
+      await Promise.all([
+        poller.pause(),
+        cancellationReaper?.pause(),
+        ...runtimes.map((r) => r.pause())
+      ])
       await harvestScheduler.waitForIdle()
     },
     resume: (): void => {
       if (stopRequested) return
       harvestAbortController = new AbortController()
+      for (const r of runtimes) r.resume()
       poller.resume()
       cancellationReaper?.resume()
     }
@@ -183,7 +270,11 @@ export const createComputeJobRuntime = (
     start: () => {
       if (stopRequested) return
       startTask ??= (async () => {
-        await Promise.all([poller.start(), cancellationReaper?.start()])
+        await Promise.all([
+          poller.start(),
+          cancellationReaper?.start(),
+          ...runtimes.map((r) => r.start())
+        ])
         if (stopRequested) return
         try {
           await deps.computeService.startQueueReconciliation()
@@ -207,12 +298,17 @@ export const createComputeJobRuntime = (
             failures.push(error)
           }
         }
+        for (const unbind of unbindExternal) await attempt(unbind)
         await attempt(() => unbindHarvestRetry())
         await attempt(() => unbindDeletionRuntime?.())
         await attempt(() => deps.computeService.stopQueueReconciliation())
         await attempt(() => startTask)
         harvestAbortController.abort()
-        await Promise.all([attempt(() => poller.stop()), attempt(() => cancellationReaper?.stop())])
+        await Promise.all([
+          attempt(() => poller.stop()),
+          attempt(() => cancellationReaper?.stop()),
+          ...runtimes.map((r) => attempt(() => r.stop()))
+        ])
         await attempt(() => harvestScheduler.waitForIdle())
         if (failures.length === 1) throw failures[0]
         if (failures.length) throw new AggregateError(failures, 'Compute runtime cleanup failed.')

@@ -282,7 +282,26 @@
         "resources/compute-askpass-win.cjs",
         "resources/compute-askpass.cjs",
         "src/main/compute/dispatch-evidence.ts",
-        "src/main/compute/handler-contract.ts"
+        "src/main/compute/handler-contract.ts",
+        "src/main/compute/kubernetes-job-workspace.ts",
+        "src/main/compute/kubernetes-kubeconfig.ts",
+        "src/main/compute/kubernetes-job-files.ts",
+        "src/main/compute/kubernetes-job-runtime.ts",
+        "src/main/compute/kubernetes-target-catalog.ts",
+        "src/main/compute/hosted-target-catalog.ts",
+        "src/main/compute/hugging-face-job-access.ts",
+        "src/main/compute/hugging-face-job-journal.ts",
+        "src/main/compute/hugging-face-job-runtime.ts",
+        "src/main/compute/ray-job-journal.ts",
+        "src/main/compute/ray-job-runtime.ts",
+        "src/main/compute/ray-shared-outputs.ts",
+        "src/main/compute/ray-target-catalog.ts",
+        "src/main/compute/modal-job-journal.ts",
+        "src/main/compute/modal-job-runtime.ts",
+        "src/main/compute/modal-sdk.ts",
+        "src/main/compute/modal-target-catalog.ts",
+        "src/main/compute/harvest-output-volume.ts",
+        "src/main/compute/external-job-submission.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -349,13 +368,20 @@
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/compute/kubernetes-workspace.real-cluster.integration.test.ts",
+        "src/main/compute/hosted-job-workflow.integration.test.ts",
+        "src/main/compute/hugging-face-job-access.test.ts",
+        "src/main/compute/ray-job-workflow.integration.test.ts",
+        "src/main/compute/ray-shared-outputs.test.ts",
+        "src/main/compute/modal-job-workflow.integration.test.ts"
       ],
       "externalImports": [
         "@aipoch/compute",
         "@aipoch/compute/node",
         "@aipoch/diagnostics",
         "@aipoch/diagnostics/node",
+        "node:child_process",
         "node:crypto",
         "node:fs",
         "node:fs/promises",
@@ -364,13 +390,16 @@
         "node:path",
         "node:string_decoder",
         "vitest",
-        "zod"
+        "zod",
+        "@aipoch/durable-files",
+        "node:stream/promises"
       ],
       "resourcePaths": [
         "resources/skills/remote-compute-ssh/SKILL.md",
-        "resources/compute-askpass.sh"
+        "resources/compute-askpass.sh",
+        "resources/compute-modal.py"
       ],
-      "resourceImports": ["resources/compute-askpass.sh"],
+      "resourceImports": ["resources/compute-askpass.sh", "resources/compute-modal.py"],
       "resourceTests": [
         "src/main/compute/approval-session-lifecycle.test.ts",
         "src/main/compute/agent-compute-service.test.ts",
@@ -429,7 +458,8 @@
         "src/shared/remote-fs.test.ts",
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
-        "src/shared/renderer-contract-catalog.test.ts"
+        "src/shared/renderer-contract-catalog.test.ts",
+        "src/main/compute/modal-job-workflow.integration.test.ts"
       ]
     },
     "connector_builtins": {
@@ -5882,7 +5912,9 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.ts",
         "src/renderer/src/pages/settings/validation-message.ts",
         "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
-        "src/renderer/src/pages/settings/TrustedPrivateServices.tsx"
+        "src/renderer/src/pages/settings/TrustedPrivateServices.tsx",
+        "src/renderer/src/pages/settings/RayTargets.tsx",
+        "src/renderer/src/pages/settings/ModalTargets.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -5942,7 +5974,9 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.ts": "presentation-adapter",
         "src/renderer/src/pages/settings/validation-message.ts": "presentation-adapter",
         "src/renderer/src/pages/settings/ProviderTestResultCard.tsx": "presentation-adapter",
-        "src/renderer/src/pages/settings/TrustedPrivateServices.tsx": "presentation-adapter"
+        "src/renderer/src/pages/settings/TrustedPrivateServices.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/RayTargets.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/ModalTargets.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [

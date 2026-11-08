@@ -292,6 +292,25 @@ describe('getJobHarvestDir', () => {
 // Clean harvest: featured + hidden files downloaded, harvestedAt set
 // ---------------------------------------------------------------------------
 
+it('rejects a different backend’s archive transport before touching the job or the filesystem', async () => {
+  const job = makeJob({ provider_id: 'modal:local', execution_mode: 'modal_sandbox' })
+  const { repo, updates } = makeJobRepo(job)
+  const acquire = vi.fn()
+  const hostRepository = makeHostRepo(null)
+  await expect(
+    harvestJob(job, {
+      storageRoot: await mkTmp(),
+      jobRepository: repo,
+      hostRepository,
+      connectionBroker: { acquire },
+      rayOutputs: { sharedRoot: '/shared', runId: job.job_id, dev: '1', ino: '2' }
+    })
+  ).rejects.toThrow('Compute harvest source does not match its job.')
+  expect(acquire).not.toHaveBeenCalled()
+  expect(hostRepository.get).not.toHaveBeenCalled()
+  expect(updates).toHaveLength(0)
+})
+
 describe('harvestJob — clean harvest', () => {
   it('persists sibling scheduler states while actual harvest log I/O remains pending', async () => {
     const storageRoot = await mkTmp()

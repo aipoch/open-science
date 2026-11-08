@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,12 +52,108 @@ afterEach(() => {
 })
 
 describe('ComputePanel', () => {
-  it('renders the header banner and empty state', () => {
+  it('shows configured targets together under their own backend in remote read-only settings', () => {
+    const identity = { id: 'configured', providerId: 'unused' }
+    useComputeStore.setState({
+      kubernetesTargets: [
+        {
+          ...identity,
+          displayName: 'Lab cluster',
+          context: 'dev',
+          namespace: 'jobs',
+          image: 'worker',
+          transferImage: 'transfer',
+          sizeMiB: 64
+        }
+      ],
+      hostedTargets: [
+        {
+          ...identity,
+          displayName: 'HF worker',
+          namespace: 'lab',
+          bucket: 'lab/private',
+          flavor: 'cpu-basic',
+          image: 'ubuntu',
+          timeoutSeconds: 60
+        }
+      ],
+      rayTargets: [
+        {
+          ...identity,
+          displayName: 'Ray lab',
+          endpoint: 'http://127.0.0.1:8265',
+          sharedRoot: '/local',
+          remoteRoot: '/shared',
+          cpus: 1,
+          gpus: 0
+        }
+      ],
+      modalTargets: [
+        {
+          ...identity,
+          displayName: 'Modal lab',
+          environmentName: 'dev',
+          appName: 'jobs',
+          image: 'ubuntu',
+          cpus: 1,
+          memoryMiB: 128
+        }
+      ]
+    })
+
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    try {
+      act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+      for (const [section, name] of [
+        ['Kubernetes targets', 'Lab cluster'],
+        ['Hugging Face Jobs targets', 'HF worker'],
+        ['Ray Jobs targets', 'Ray lab'],
+        ['Modal Sandbox targets', 'Modal lab']
+      ]) {
+        const heading = Array.from(container.querySelectorAll('h3')).find(
+          (element) => element.textContent === section
+        )
+        const group = heading?.closest('section')
+        expect(group?.textContent).toContain(name)
+        expect(group?.querySelector('button')).toBeNull()
+      }
+    } finally {
+      document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    }
+  })
+  it('submits the explicit Modal Sandbox target from Settings', async () => {
+    const save = vi.fn().mockResolvedValue({})
+    Object.assign(window.api.compute, { createModalTarget: save })
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+    const add = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Add Modal Sandbox target')
+    )
+    act(() => add!.click())
+    const form = container.querySelector('form')!
+    const config = {
+      displayName: 'Local',
+      environmentName: 'research',
+      appName: 'experiment',
+      image: 'ubuntu:24.04',
+      cpus: 2,
+      memoryMiB: 1024
+    }
+    for (const [name, value] of Object.entries(config)) {
+      ;(form.elements.namedItem(name) as HTMLInputElement).value = String(value)
+    }
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(save).toHaveBeenCalledWith(config)
+    expect(container.querySelector('form')).toBeNull()
+  })
+
+  it('renders the registered host sections and empty state', () => {
     act(() => {
       root.render(<ComputePanel onNavigate={vi.fn()} />)
     })
 
-    expect(container.textContent).toContain('Connect where heavy compute runs')
+    expect(container.textContent).toContain('Modal Sandbox targets')
     expect(container.textContent).toContain('SSH hosts')
     expect(container.textContent).toContain('No SSH hosts yet')
   })
@@ -203,6 +300,53 @@ describe('ComputePanel', () => {
       expect(deleteHost).not.toHaveBeenCalled()
     }
   )
+
+  it('requires a billing warning before abandoning an uncertain Modal creation', async () => {
+    const providerId = 'modal:205e1449-7f3c-46b4-b218-5ed529e9e9ba'
+    useComputeStore.setState({
+      hosts: [],
+      modalTargets: [
+        {
+          id: providerId.slice(6),
+          providerId,
+          displayName: 'Trial',
+          environmentName: 'dev',
+          appName: 'demo',
+          image: 'ubuntu:24.04',
+          cpus: 1,
+          memoryMiB: 1024
+        }
+      ],
+      isLoaded: true
+    })
+    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({
+      blockedByJobs: true,
+      blockingJobs: [
+        {
+          jobId: 'unknown',
+          projectId: 'p',
+          sessionId: 's',
+          status: 'submitted',
+          modalCreationUnconfirmed: true,
+          intent: 'trial',
+          createdAt: 1
+        }
+      ]
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Remove Trial"]')!.click()
+    )
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')!
+    const button = (text: string): HTMLButtonElement =>
+      Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === text)!
+    act(() => button('View blocking jobs').click())
+    expect(button('Clean up remote files').disabled).toBe(true)
+    act(() => button('Abandon remote cleanup').click())
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('incurring charges'))
+    expect(window.api.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
+  })
 
   it('disables remote cleanup until a terminal Job has been harvested', async () => {
     vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({

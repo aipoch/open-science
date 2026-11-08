@@ -1,3 +1,9 @@
+import { externalComputeMode } from '../../shared/compute'
+import { MODAL_CREATION_UNCONFIRMED } from './modal-job-journal'
+import { KubernetesTargetCatalog } from './kubernetes-target-catalog'
+import { HostedTargetCatalog } from './hosted-target-catalog'
+import { RayTargetCatalog } from './ray-target-catalog'
+import { ModalTargetCatalog } from './modal-target-catalog'
 import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
@@ -222,7 +228,9 @@ const createComputeHandlers = (
           ? (grant) => legacyComputeGrants.addComputeGrant(grant).then(() => undefined)
           : undefined,
       isProviderCurrent: async ({ providerId, ownerId }) => {
-        const current = await repository.get(providerId)
+        const current = externalComputeMode(providerId)
+          ? await repository.getComputeTarget(providerId)
+          : await repository.get(providerId)
         return current !== null && (ownerId === undefined || current.id === ownerId)
       },
       permissionGrants
@@ -262,15 +270,33 @@ const createComputeHandlers = (
       ? execution.createQueue({
           jobs: jobRepository,
           hosts: repository,
-          dispatch: (queuedJobId, handleJobUpdated) =>
-            dispatchJob(queuedJobId, {
+          dispatch: async (queuedJobId, handleJobUpdated) => {
+            const queued = await jobRepository.get(queuedJobId)
+            if (queued) {
+              const mode = externalComputeMode(queued.provider_id)
+              if (
+                mode
+                  ? queued.execution_mode !== mode
+                  : queued.execution_mode !== undefined &&
+                    queued.execution_mode !== 'direct_ssh' &&
+                    queued.execution_mode !== 'slurm'
+              ) {
+                throw new Error('Queued Compute Job execution mode does not match its provider.')
+              }
+              if (mode) {
+                service.wakeExternalJobs(mode)
+                return
+              }
+            }
+            await dispatchJob(queuedJobId, {
               connectionBroker,
               hostRepository: repository,
               jobRepository,
               onJobUpdated: handleJobUpdated,
               storageRoot,
               execution
-            }),
+            })
+          },
           publish: onJobUpdated,
           sessionPolicy: sessionLimitPersistence
         })
@@ -342,8 +368,14 @@ const createComputeHandlers = (
     : undefined
   const listHostNames = async (): Promise<Map<string, string>> => {
     try {
-      const hosts = await repository.list()
-      return new Map(hosts.map((host) => [host.providerId, host.displayName]))
+      const groups = await Promise.all([
+        repository.list(),
+        repository.listKubernetesTargets?.() ?? [],
+        repository.listHostedTargets?.() ?? [],
+        repository.listRayTargets?.() ?? [],
+        repository.listModalTargets?.() ?? []
+      ])
+      return new Map(groups.flat().map((host) => [host.providerId, host.displayName]))
     } catch {
       return new Map()
     }
@@ -377,6 +409,30 @@ const createComputeHandlers = (
 
   return {
     list: () => service.list(),
+    listKubernetesTargets: () => repository.listKubernetesTargets(),
+    createKubernetesTarget: (config) =>
+      runHostLifecycleMutation(async () => {
+        if (!repository.kubernetesTargets) throw new Error('Compute settings unavailable.')
+        return repository.kubernetesTargets.create(config)
+      }),
+    listHostedTargets: () => repository.listHostedTargets(),
+    createHostedTarget: (config) =>
+      runHostLifecycleMutation(async () => {
+        if (!repository.hostedTargets) throw new Error('Compute settings unavailable.')
+        return repository.hostedTargets.create(config)
+      }),
+    listRayTargets: () => repository.listRayTargets(),
+    createRayTarget: (config) =>
+      runHostLifecycleMutation(async () => {
+        if (!repository.rayTargets) throw new Error('Compute settings unavailable.')
+        return repository.rayTargets.create(config)
+      }),
+    listModalTargets: () => repository.listModalTargets(),
+    createModalTarget: (config) =>
+      runHostLifecycleMutation(async () => {
+        if (!repository.modalTargets) throw new Error('Compute settings unavailable.')
+        return repository.modalTargets.create(config)
+      }),
     get: async (providerId) => {
       const host = await repository.get(providerId)
       return host ? projectComputeCredentialStatus(host, credentialVault) : null
@@ -421,6 +477,10 @@ const createComputeHandlers = (
       return {
         blockedByJobs: jobs.length > 0,
         blockingJobs: jobs.map((job) => ({
+          ...(job.execution_mode === 'modal_sandbox' &&
+            job.last_poll_error === MODAL_CREATION_UNCONFIRMED && {
+              modalCreationUnconfirmed: true as const
+            }),
           jobId: job.job_id,
           projectId: job.project_id,
           sessionId: job.session_id,
@@ -433,7 +493,10 @@ const createComputeHandlers = (
         }))
       }
     },
-    delete: (providerId, options = { allowPasswordCredentialDeletion: true }) =>
+    delete: (
+      providerId: string,
+      options = { allowPasswordCredentialDeletion: true }
+    ): Promise<void> =>
       runHostLifecycleMutation(() =>
         deleteComputeHost(
           {
@@ -501,7 +564,7 @@ const createComputeHandlers = (
       }
       const jobs =
         'nonTerminal' in filter
-          ? await jobRepository.findNonTerminal()
+          ? await jobRepository.findNonTerminal(true)
           : await jobRepository.findBySession(filter.sessionId, filter.status)
       return Promise.all(
         jobs.map(async (j) =>
@@ -520,6 +583,25 @@ const createComputeHandlers = (
     jobsRetryHarvest: (request) => service.retryJobHarvest(request),
     jobsSetRemoteCleanup: async (request) => {
       if (!jobDeletionOwner) throw new Error('Compute Job cleanup owner is unavailable.')
+      const mode = externalComputeMode(request.providerId)
+      if (mode && request.disposition === 'cleaned') {
+        const job = await jobRepository?.get(request.jobId)
+        if (
+          !job ||
+          job.execution_mode !== mode ||
+          job.provider_id !== request.providerId ||
+          job.project_id !== request.projectId ||
+          job.session_id !== request.sessionId
+        )
+          throw new Error('Compute Job cleanup scope does not match.')
+        if (job.remote_cleanup_disposition === 'cleaned') return
+        if (mode === 'ray_jobs')
+          throw new Error('Ray output files are retained on the shared filesystem.')
+        await service.reconcileExternalJobs(mode)
+        if ((await jobRepository?.get(job.job_id))?.remote_cleanup_disposition !== 'cleaned')
+          throw new Error('Remote cleanup is pending verified publication or volume removal.')
+        return
+      }
       if (request.disposition === 'cleaned') {
         await jobDeletionOwner.cleanupJobRemote(request)
       } else {
@@ -579,7 +661,12 @@ const createComputeHandlers = (
 // is passed as a provider (not a resolved promise) so a failed first initialization can be retried on
 // the next request instead of being cached for the app's lifetime.
 const createDefaultComputeHostRepository = (): ComputeHostRepository =>
-  new ComputeHostRepository(() => getProjectDbClient(resolveConfigRoot()))
+  new ComputeHostRepository(() => getProjectDbClient(resolveConfigRoot()), {
+    kubernetesTargets: new KubernetesTargetCatalog(resolveConfigRoot),
+    hostedTargets: new HostedTargetCatalog(resolveConfigRoot),
+    rayTargets: new RayTargetCatalog(resolveConfigRoot),
+    modalTargets: new ModalTargetCatalog(resolveConfigRoot)
+  })
 
 const createDefaultComputeJobRepository = (): ComputeJobRepository =>
   new ComputeJobRepository(() => getProjectDbClient(resolveConfigRoot()))

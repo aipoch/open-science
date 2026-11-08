@@ -37,7 +37,8 @@ import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 
 export type JobNotifierDeps = {
   jobRepository: Pick<ComputeJobRepository, 'claimNotification'>
-  hostRepository: Pick<ComputeHostRepository, 'get'>
+  hostRepository: Pick<ComputeHostRepository, 'get'> &
+    Partial<Pick<ComputeHostRepository, 'getComputeTarget'>>
   storageRoot: string
   // Injectable broadcast function; defaults to the production broadcastJobUpdated.
   // Injected in tests to capture the emitted summary without touching Electron IPC.
@@ -157,7 +158,9 @@ export const emitJobNotification = async (
   // Look up the host to get its displayName (fix: was using raw provider_id causing card flip).
   let displayName = updatedJob.provider_id
   try {
-    const host = await hostRepository.get(updatedJob.provider_id)
+    const host = hostRepository.getComputeTarget
+      ? await hostRepository.getComputeTarget(updatedJob.provider_id)
+      : await hostRepository.get(updatedJob.provider_id)
     if (host) displayName = host.displayName
   } catch {
     // Transient lookup failure — fall back to provider_id so the broadcast always happens.

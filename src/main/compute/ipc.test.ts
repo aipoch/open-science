@@ -2657,8 +2657,16 @@ describe('installComputeIpcHandlers', () => {
 
     const expected = [
       'compute:list',
+      'compute:list-kubernetes-targets',
+      'compute:list-hosted-targets',
+      'compute:list-ray-targets',
+      'compute:list-modal-targets',
       'compute:get',
       'compute:create',
+      'compute:create-kubernetes-target',
+      'compute:create-hosted-target',
+      'compute:create-ray-target',
+      'compute:create-modal-target',
       'compute:create-password',
       'compute:reset-password',
       'compute:change-authentication',

@@ -1,3 +1,7 @@
+import { kubernetesTargetConfigSchema } from './kubernetes-target-catalog'
+import { hostedTargetConfigSchema } from './hosted-target-catalog'
+import { rayTargetConfigSchema } from './ray-target-catalog'
+import { modalTargetConfigSchema } from './modal-target-catalog'
 import type { IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
@@ -154,6 +158,14 @@ const setComputeJobRemoteCleanupRequestSchema = z
 
 const computeIpcArgumentSchemas = Object.freeze({
   'compute:list': z.tuple([]),
+  'compute:list-kubernetes-targets': z.tuple([]),
+  'compute:create-kubernetes-target': z.tuple([kubernetesTargetConfigSchema]),
+  'compute:list-hosted-targets': z.tuple([]),
+  'compute:create-hosted-target': z.tuple([hostedTargetConfigSchema]),
+  'compute:list-ray-targets': z.tuple([]),
+  'compute:create-ray-target': z.tuple([rayTargetConfigSchema]),
+  'compute:list-modal-targets': z.tuple([]),
+  'compute:create-modal-target': z.tuple([modalTargetConfigSchema]),
   'compute:get': z.tuple([z.string()]),
   'compute:create': z.tuple([createComputeHostRequestSchema]),
   'compute:create-password': z.tuple([createPasswordComputeHostRequestSchema]),
@@ -229,6 +241,22 @@ const handleComputeIpc = <Channel extends ComputeIpcChannel>(
 }
 
 const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdapter): void => {
+  handleComputeIpc('compute:list-kubernetes-targets', () => handlers.listKubernetesTargets())
+  handleComputeIpc('compute:create-kubernetes-target', (_event, config) =>
+    handlers.createKubernetesTarget(config)
+  )
+  handleComputeIpc('compute:list-hosted-targets', () => handlers.listHostedTargets())
+  handleComputeIpc('compute:create-hosted-target', (_event, config) =>
+    handlers.createHostedTarget(config)
+  )
+  handleComputeIpc('compute:list-ray-targets', () => handlers.listRayTargets())
+  handleComputeIpc('compute:create-ray-target', (_event, config) =>
+    handlers.createRayTarget(config)
+  )
+  handleComputeIpc('compute:list-modal-targets', () => handlers.listModalTargets())
+  handleComputeIpc('compute:create-modal-target', (_event, config) =>
+    handlers.createModalTarget(config)
+  )
   handleComputeIpc('compute:list', () => handlers.list())
   handleComputeIpc('compute:get', (_event, providerId) => handlers.get(providerId))
   handleComputeIpc('compute:create', (_event, request) => handlers.create(request))

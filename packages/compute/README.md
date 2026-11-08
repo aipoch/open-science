@@ -85,6 +85,35 @@ cancellation completion and user retry use that same scheduler. It owns deduplic
 collection slots and retry backoff. Abort the host's collection signal and await `waitForIdle()` on
 shutdown. The actual downloads, budget policy, evidence receipts and publication stay with the host.
 
+## Kubernetes file jobs
+
+The Node adapter exposes a per-job workspace for hosts that supply Kubernetes credentials,
+a namespace with dynamic volume provisioning, and a trusted transfer image with `sleep` and
+the file transfer tools used by the host. The adapter account needs get/create/delete on
+PVCs and transfer Pods in that namespace. The file transport needs permission for `pods/exec`.
+
+1. After approval, persist the target, job ID and requested capacity. Call
+   `prepareWorkspace(jobId, target, sizeMiB)` and journal its receipt before staging files.
+   Retry an interrupted creation with the same reservation. Keep the receipt across restarts.
+2. Call `withWorkspaceFiles(receipt, 'upload', image, transfer)`. The transfer callback receives
+   the helper Pod name. Copy frozen inputs to temporary paths in `/workspace`, verify their
+   checksums, and rename them before returning. With kubectl, use `cp --no-preserve` on upload.
+3. Call `submitInWorkspace(request, receipt)` and record the Job handle. The workload runs in
+   `/workspace`. Treat a lost submission response as an ambiguous launch. An existing Job
+   handle supports recovery and cancellation separately from the workspace receipt.
+4. After the workload stops, use `withWorkspaceFiles(receipt, 'archive', image, transfer)`.
+   The helper mounts the volume read-only. The host validates paths and byte budgets, publishes
+   the declared outputs and records their evidence. On interruption, retry with the saved receipt.
+5. Once publication is durable (or the user explicitly abandons the files), call
+   `releaseWorkspace(receipt)`. Keep the cleanup obligation while it returns `requested`;
+   `confirmed` means the claim is absent. Physical volume reclamation follows the cluster's
+   StorageClass policy.
+
+A Job cleanup only removes compute resources. While files await collection the PVC survives
+Job deletion, consumes cluster storage, and must be accounted for by the host. Transfer Pods
+belong to the claim, have a one-hour deadline and are deleted after each transfer callback.
+Use a trusted namespace where only the host provisions or replaces the workspace claims.
+
 ## Runtime and resources
 
 SSH/SCP are external OpenSSH executables; no executable or credential is bundled. On Unix the default

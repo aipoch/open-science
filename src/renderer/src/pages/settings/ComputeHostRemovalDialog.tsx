@@ -1,3 +1,4 @@
+import { externalComputeMode } from '../../../../shared/compute'
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { X } from 'lucide-react'
@@ -25,7 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useComputeStore } from '@/stores/compute-store'
 
 type ComputeHostRemovalDialogProps = {
-  host: ComputeHost
+  host: Pick<ComputeHost, 'providerId' | 'displayName' | 'authentication'>
   onRemoved: () => void
 }
 
@@ -41,6 +42,8 @@ export function ComputeHostRemovalDialog({
   onRemoved
 }: ComputeHostRemovalDialogProps): React.JSX.Element {
   const { t } = useTranslation()
+  const mode = externalComputeMode(host.providerId)
+  const modal = mode === 'modal_sandbox'
   const deleteHost = useComputeStore((state) => state.deleteHost)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -101,9 +104,13 @@ export function ComputeHostRemovalDialog({
   const abandonJob = (job: ComputeHostDeletionBlocker): void => {
     if (
       !window.confirm(
-        t(
-          'Abandon remote cleanup? The Job history stays local, but its remote files may remain permanently.'
-        )
+        job.modalCreationUnconfirmed
+          ? t(
+              'Check the Modal dashboard before abandoning. The sandbox may still be running and incurring charges. Abandon local recovery?'
+            )
+          : t(
+              'Abandon remote cleanup? The Job history stays local, but its remote files may remain permanently.'
+            )
       )
     ) {
       return
@@ -157,7 +164,7 @@ export function ComputeHostRemovalDialog({
             </Button>
           </AlertDialog.Trigger>
         </TooltipTrigger>
-        <TooltipContent>{t('Remove host')}</TooltipContent>
+        <TooltipContent>{t('Remove {{name}}', { name: host.displayName })}</TooltipContent>
       </Tooltip>
 
       <AlertDialog.Portal>
@@ -167,16 +174,20 @@ export function ComputeHostRemovalDialog({
         >
           <div className={dialogHeaderClassName}>
             <AlertDialog.Title className={dialogTitleClassName}>
-              {t('Remove Compute Host?')}
+              {mode ? t('Remove {{name}}', { name: host.displayName }) : t('Remove Compute Host?')}
             </AlertDialog.Title>
           </div>
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              {host.authentication?.mode === 'password'
-                ? t(
-                    'The local Compute Host and encrypted password will be deleted. The remote SSH account is unchanged, and the password cannot be recovered.'
-                  )
-                : t('The local Compute Host will be deleted. The remote SSH account is unchanged.')}
+              {mode
+                ? t('This removes the target from Compute settings and all sessions.')
+                : host.authentication?.mode === 'password'
+                  ? t(
+                      'The local Compute Host and encrypted password will be deleted. The remote SSH account is unchanged, and the password cannot be recovered.'
+                    )
+                  : t(
+                      'The local Compute Host will be deleted. The remote SSH account is unchanged.'
+                    )}
             </AlertDialog.Description>
             {deletionStatus?.blockedByJobs ? (
               <div className="mt-3 space-y-3">
@@ -208,15 +219,21 @@ export function ComputeHostRemovalDialog({
                           />
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={busy || !canCleanRemoteFiles(job)}
-                            onClick={() => cleanJob(job)}
-                          >
-                            {t('Clean up remote files')}
-                          </Button>
-                          {!['queued', 'submitted', 'running'].includes(job.status) ? (
+                          {mode !== 'ray_jobs' && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={
+                                busy ||
+                                !canCleanRemoteFiles(job) ||
+                                (modal && ACTIVE_JOB_STATUSES.has(job.status))
+                              }
+                              onClick={() => cleanJob(job)}
+                            >
+                              {t('Clean up remote files')}
+                            </Button>
+                          )}
+                          {!ACTIVE_JOB_STATUSES.has(job.status) || job.modalCreationUnconfirmed ? (
                             <Button
                               type="button"
                               variant="outline"
@@ -228,22 +245,31 @@ export function ComputeHostRemovalDialog({
                             </Button>
                           ) : null}
                         </div>
-                        {!canCleanRemoteFiles(job) ? (
+                        {mode !== 'ray_jobs' && !canCleanRemoteFiles(job) ? (
                           <p className="mt-2 text-xs text-muted-foreground">
                             {t('Finish harvesting before cleaning up remote files.')}
                           </p>
                         ) : null}
                       </div>
                     ))}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy || blockingJobs.some((job) => !canCleanRemoteFiles(job))}
-                      onClick={() => void cleanAllJobs()}
-                    >
-                      {t('Clean up all remote files')}
-                    </Button>
+                    {mode !== 'ray_jobs' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          busy ||
+                          blockingJobs.some(
+                            (job) =>
+                              !canCleanRemoteFiles(job) ||
+                              (modal && ACTIVE_JOB_STATUSES.has(job.status))
+                          )
+                        }
+                        onClick={() => void cleanAllJobs()}
+                      >
+                        {t('Clean up all remote files')}
+                      </Button>
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -266,7 +292,7 @@ export function ComputeHostRemovalDialog({
               disabled={busy || deletionStatus?.blockedByJobs !== false}
               onClick={() => void removeHost()}
             >
-              {busy ? t('Removing…') : t('Remove Host')}
+              {busy ? t('Removing…') : mode ? t('Remove') : t('Remove Host')}
             </Button>
           </div>
         </AlertDialog.Content>

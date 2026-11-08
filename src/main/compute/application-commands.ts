@@ -24,6 +24,14 @@ import type { ComputeHandlers } from './handler-contract'
 type ComputeCommandOwner = Pick<
   ComputeHandlers,
   | 'list'
+  | 'listKubernetesTargets'
+  | 'createKubernetesTarget'
+  | 'listHostedTargets'
+  | 'createHostedTarget'
+  | 'listRayTargets'
+  | 'createRayTarget'
+  | 'listModalTargets'
+  | 'createModalTarget'
   | 'get'
   | 'create'
   | 'createPassword'
@@ -88,6 +96,46 @@ type OwnerResult<Owner, Method extends keyof Owner> = Owner[Method] extends (
   : never
 
 const computeApplicationCommands = Object.freeze({
+  listKubernetesTargets: defineApplicationCommand<
+    'compute:list-kubernetes-targets',
+    OwnerArgs<ComputeCommandOwner, 'listKubernetesTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listKubernetesTargets'>
+  >('compute:list-kubernetes-targets'),
+  createKubernetesTarget: defineApplicationCommand<
+    'compute:create-kubernetes-target',
+    OwnerArgs<ComputeCommandOwner, 'createKubernetesTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createKubernetesTarget'>
+  >('compute:create-kubernetes-target'),
+  listHostedTargets: defineApplicationCommand<
+    'compute:list-hosted-targets',
+    OwnerArgs<ComputeCommandOwner, 'listHostedTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listHostedTargets'>
+  >('compute:list-hosted-targets'),
+  createHostedTarget: defineApplicationCommand<
+    'compute:create-hosted-target',
+    OwnerArgs<ComputeCommandOwner, 'createHostedTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createHostedTarget'>
+  >('compute:create-hosted-target'),
+  listRayTargets: defineApplicationCommand<
+    'compute:list-ray-targets',
+    OwnerArgs<ComputeCommandOwner, 'listRayTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listRayTargets'>
+  >('compute:list-ray-targets'),
+  createRayTarget: defineApplicationCommand<
+    'compute:create-ray-target',
+    OwnerArgs<ComputeCommandOwner, 'createRayTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createRayTarget'>
+  >('compute:create-ray-target'),
+  listModalTargets: defineApplicationCommand<
+    'compute:list-modal-targets',
+    OwnerArgs<ComputeCommandOwner, 'listModalTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listModalTargets'>
+  >('compute:list-modal-targets'),
+  createModalTarget: defineApplicationCommand<
+    'compute:create-modal-target',
+    OwnerArgs<ComputeCommandOwner, 'createModalTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createModalTarget'>
+  >('compute:create-modal-target'),
   list: defineApplicationCommand<
     'compute:list',
     OwnerArgs<ComputeCommandOwner, 'list'>,
@@ -271,6 +319,14 @@ const computeApplicationCommands = Object.freeze({
 })
 
 const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', [
+  computeApplicationCommands.listKubernetesTargets,
+  computeApplicationCommands.createKubernetesTarget,
+  computeApplicationCommands.listHostedTargets,
+  computeApplicationCommands.createHostedTarget,
+  computeApplicationCommands.listRayTargets,
+  computeApplicationCommands.createRayTarget,
+  computeApplicationCommands.listModalTargets,
+  computeApplicationCommands.createModalTarget,
   computeApplicationCommands.bookmarksGet,
   computeApplicationCommands.bookmarksSet,
   computeApplicationCommands.changeAuthentication,
@@ -357,6 +413,26 @@ const registerComputeApplicationCommands = (
   }
   try {
     scope.registerGroup(computeApplicationCommandGroup, {
+      'compute:list-kubernetes-targets': () => dependencies.compute.listKubernetesTargets(),
+      'compute:create-kubernetes-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-kubernetes-target')
+        return dependencies.compute.createKubernetesTarget(args[0])
+      },
+      'compute:list-hosted-targets': () => dependencies.compute.listHostedTargets(),
+      'compute:create-hosted-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-hosted-target')
+        return dependencies.compute.createHostedTarget(args[0])
+      },
+      'compute:list-ray-targets': () => dependencies.compute.listRayTargets(),
+      'compute:create-ray-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-ray-target')
+        return dependencies.compute.createRayTarget(args[0])
+      },
+      'compute:list-modal-targets': () => dependencies.compute.listModalTargets(),
+      'compute:create-modal-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-modal-target')
+        return dependencies.compute.createModalTarget(args[0])
+      },
       'compute:list': () => dependencies.compute.list(),
       'compute:get': ({ args }) => dependencies.compute.get(args[0]),
       'compute:create': ({ args }) => dependencies.compute.create(args[0]),

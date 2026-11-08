@@ -6,7 +6,9 @@
     "packages/compute/package.json",
     "packages/compute/tsconfig.json",
     "packages/compute/src/host-connection-profile.test.ts",
-    "packages/compute/src/ports.ts"
+    "packages/compute/src/ports.ts",
+    "packages/compute/src/backend.ts",
+    "packages/compute/src/backend.test.ts"
   ],
   "interfacePaths": [
     "packages/compute/src/index.ts",
@@ -20,7 +22,10 @@
     "shared_workspace_contracts"
   ],
   "testFiles": {
-    "owner": ["packages/compute/src/host-connection-profile.test.ts"],
+    "owner": [
+      "packages/compute/src/host-connection-profile.test.ts",
+      "packages/compute/src/backend.test.ts"
+    ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
@@ -1014,5 +1019,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Backend capability contracts add a registry whose require method prevents static dependency certification. Run complete validation for changes to the domain contract."
 }
