@@ -86,6 +86,7 @@ type SessionActionOptions = {
   canDeleteConversations: boolean
   canDownloadArtifacts: boolean
   canArchiveSession?: (session: ChatSession) => boolean
+  canTogglePin?: boolean
   onTogglePin: (session: ChatSession) => void
   onRenameSession: (session: ChatSession) => void
   onDownloadArtifacts?: (session: ChatSession) => void
@@ -141,6 +142,7 @@ export const createSessionActionBindings = (
     execute: ({ session }) => options.onTogglePin(session),
     labelKey: ({ session }: SessionActionInvocation) => (session.pinned ? 'Unpin' : 'Pin'),
     icon: ({ session }: SessionActionInvocation) => (session.pinned ? PinOff : Pin),
+    hidden: options.canTogglePin === false,
     disabled: !options.canMutateConversations
   },
   edit: {
