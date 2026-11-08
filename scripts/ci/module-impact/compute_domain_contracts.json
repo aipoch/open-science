@@ -6,16 +6,13 @@
     "packages/compute/package.json",
     "packages/compute/tsconfig.json",
     "packages/compute/src/host-connection-profile.test.ts",
-    "packages/compute/src/ports.ts",
-    "packages/compute/src/backend.ts",
-    "packages/compute/src/backend.test.ts"
+    "packages/compute/src/ports.ts"
   ],
   "interfacePaths": [
     "packages/compute/src/index.ts",
     "packages/compute/src/model.ts",
     "packages/compute/src/host-connection-profile.ts",
-    "packages/compute/src/ports.ts",
-    "packages/compute/src/backend.ts"
+    "packages/compute/src/ports.ts"
   ],
   "consumerModules": [
     "compute_package",
@@ -23,10 +20,7 @@
     "shared_workspace_contracts"
   ],
   "testFiles": {
-    "owner": [
-      "packages/compute/src/host-connection-profile.test.ts",
-      "packages/compute/src/backend.test.ts"
-    ],
+    "owner": ["packages/compute/src/host-connection-profile.test.ts"],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/application-command-wiring.test.ts",

@@ -239,13 +239,27 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   artifacts: ['open-file'],
   cli: ['install', 'uninstall'],
   compute: [
+    'account-status',
+    'cancel-account-connection',
     'change-authentication',
+    'connect-account',
+    'create-hosted-target',
+    'create-kubernetes-target',
+    'create-modal-target',
     'create-password',
+    'create-ray-target',
+    'disconnect-account',
     'download',
     'jobs:set-remote-cleanup',
+    'list-ray-tokens',
     'password-capability',
+    'remove-ray-token',
     'reset-password',
-    'reveal-in-folder'
+    'reveal-in-folder',
+    'set-ray-token',
+    'update-target',
+    'use-local-account',
+    'verify-target'
   ],
   'local-fs': [
     'get-roots',

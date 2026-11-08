@@ -22,8 +22,6 @@
     "src/renderer/src/pages/settings/ComputeHostRemovalDialog.tsx",
     "src/renderer/src/pages/settings/ComputePanel.render.test.tsx",
     "src/renderer/src/pages/settings/ComputePanel.tsx",
-    "src/renderer/src/pages/settings/ComputeTargetGroup.tsx",
-    "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
     "src/renderer/src/pages/settings/ComputePasswordResetSection.tsx",
     "src/renderer/src/pages/settings/CredentialsPanel.loading.render.test.tsx",
     "src/renderer/src/pages/settings/CredentialsPanel.render.test.tsx",
@@ -105,13 +103,7 @@
     "src/renderer/src/pages/settings/TrustedPrivateServices.tsx",
     "src/renderer/src/pages/settings/settings-manual-update-guide.ts",
     "src/renderer/src/pages/settings/ResourceRecordingRow.tsx",
-    "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx",
-    "src/renderer/src/pages/settings/KubernetesTargets.tsx",
-    "src/renderer/src/pages/settings/HostedTargets.tsx",
-    "src/renderer/src/pages/settings/RayTargets.tsx",
-    "src/renderer/src/pages/settings/ModalTargets.tsx",
-    "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
-    "src/renderer/src/pages/settings/use-compute-account.ts"
+    "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",

@@ -2,16 +2,33 @@
 import asyncio
 import json
 import os
+import socket
+import stat
 import sys
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from importlib.metadata import PackageNotFoundError, version
 
 
-def emit(record):
-    print(json.dumps(record, separators=(",", ":")), file=sys.__stdout__, flush=True)
+@contextmanager
+def protocol_writer():
+    # Node supplies a pipe on Windows and can use a local socketpair on Unix.
+    with os.fdopen(os.dup(1), "w", encoding="utf-8", newline="\n") as channel:
+        mode = os.fstat(channel.fileno()).st_mode
+        if stat.S_ISSOCK(mode):
+            with socket.socket(fileno=os.dup(channel.fileno())) as peer:
+                if peer.family != socket.AF_UNIX:
+                    raise SystemExit("Modal authentication requires a local IPC channel.")
+        elif not stat.S_ISFIFO(mode):
+            raise SystemExit("Modal authentication requires a local IPC channel.")
+
+        def emit(record):
+            channel.write(json.dumps(record, separators=(",", ":")) + "\n")
+            channel.flush()
+
+        yield emit
 
 
-async def run(request):
+async def run(request, emit):
     from modal.client import _Client
     from modal.config import DEFAULT_SERVER_URL, config
     from modal.exception import AuthError, InvalidError, PermissionDeniedError
@@ -47,7 +64,7 @@ async def run(request):
         emit({"error": "authorization"})
 
 
-if __name__ == "__main__":
+def main(emit):
     try:
         request = json.load(sys.stdin)
         if request["action"] == "authorize" or "material" in request:
@@ -62,9 +79,14 @@ if __name__ == "__main__":
         if version("modal") != "1.6.3":
             raise PackageNotFoundError()
         with redirect_stdout(sys.stderr):
-            asyncio.run(run(request))
+            asyncio.run(run(request, emit))
     except (ImportError, PackageNotFoundError):
         emit({"error": "dependency"})
     except Exception:
         # Provider exceptions can contain authentication data or local paths.
         emit({"error": "network"})
+
+
+if __name__ == "__main__":
+    with protocol_writer() as emit:
+        main(emit)

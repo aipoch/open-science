@@ -1,13 +1,11 @@
 {
   "ownerPaths": [
     "src/renderer/src/components/JobDetailModal.render.test.tsx",
-    "src/renderer/src/components/ComputeJobOutputs.tsx",
     "src/renderer/src/components/JobDetailModal.tsx",
     "src/renderer/src/components/JobStatusBadge.tsx",
     "src/renderer/src/components/RemoteJobRow.tsx"
   ],
   "interfacePaths": [
-    "src/renderer/src/components/ComputeJobOutputs.tsx",
     "src/renderer/src/components/JobDetailModal.tsx",
     "src/renderer/src/components/JobStatusBadge.tsx",
     "src/renderer/src/components/RemoteJobRow.tsx"
