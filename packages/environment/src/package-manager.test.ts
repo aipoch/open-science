@@ -1474,7 +1474,7 @@ describe('installPackages', () => {
       }
     )
 
-    const prefix = envPrefix(runtimeRoot(base.storageRoot), DEFAULT_R_ENV, 'win32')
+    const prefix = envPrefix(runtimeRoot(base.storageRoot), DEFAULT_R_ENV)
     expect(calls[0]?.[2]?.PATH).toBe(condaActivatedPath(prefix, process.env.PATH, 'win32'))
   })
 
