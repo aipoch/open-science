@@ -1,9 +1,9 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { access, readFile, rm, writeFile } from 'node:fs/promises'
-import { constants, mkdirSync } from 'node:fs'
+import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
-import { dirname, join, win32 } from 'node:path'
+import { join, win32 } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
