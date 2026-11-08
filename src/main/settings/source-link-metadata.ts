@@ -77,7 +77,7 @@ const readResource = async (
     )
       throw new Error('Resource unavailable')
 
-    const limit = kind === 'page' ? 128 * 1024 : 512 * 1024
+    const limit = kind === 'page' ? 128 * 1024 : 1024 * 1024
     const chunks: Buffer[] = []
     let size = 0
     for await (const chunk of response) {
@@ -105,7 +105,7 @@ export async function readSourceLinkMetadata(
   if (typeof rawUrl !== 'string' || rawUrl.length > 8192 || activeReads >= 4) return {}
   activeReads++
   try {
-    const signal = AbortSignal.timeout(5000)
+    const signal = AbortSignal.timeout(8000)
     const page = await readResource(new URL(rawUrl), settings, 'page', signal)
     const html = children(parse(page.bytes.toString('utf8'))).find(
       (node) => node.tagName === 'html'
