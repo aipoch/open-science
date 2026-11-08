@@ -1215,7 +1215,7 @@ async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic 
       signal: new AbortController().signal,
       readCached: async () => cached
     }
-  return { loading, args, extraction }
+  return { loading, native, args, extraction }
 }
 
 it('retains complete generic figure labels only when the crop owns every native text item', async () => {
@@ -1233,6 +1233,23 @@ it('retains complete generic figure labels only when the crop owns every native 
     expect(result.source.originalRegions![0].rect.width).toBeCloseTo(0.5)
     expect(result.source.originalRegions![0].rect.height).toBeCloseTo(0.35)
   } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('cleans a generic figure page when graphic anchor inspection fails', async () => {
+  const f = await genericFigureWithoutSourceItems()
+  const cleanup = vi.spyOn(f.native, 'cleanup')
+  const getOperatorList = f.native.getOperatorList.bind(f.native)
+  f.native.getOperatorList = async () => {
+    throw new Error('synthetic operator-list failure')
+  }
+  try {
+    await applyCachedPdfFigureSources(f.args)
+    expect(cleanup).toHaveBeenCalled()
+  } finally {
+    f.native.getOperatorList = getOperatorList
+    cleanup.mockRestore()
     await f.loading.destroy()
   }
 })

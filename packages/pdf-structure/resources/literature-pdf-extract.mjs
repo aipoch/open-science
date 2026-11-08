@@ -190,6 +190,8 @@ import {
 import {
   isFigureRiskTable,
   isFigureOwnedPartialTable,
+  isFigureOwnedCaptionLeakTable,
+  isFigureOwnedCaptionlessPanelTable,
   isNativeFigureOwnedClippedTable,
   proveCaptionedNativeDefinitionFrame,
   proveCaptionedNativeClosedTableFrame,
@@ -2471,6 +2473,8 @@ try {
             // a second time as table cells merely because they align in rows.
             !isRecognizedAlgorithmOwnedTable(table, associations[index].caption, pageAlgorithms) &&
             !isFigureOwnedPartialTable(table, captionedFigureRegions) &&
+            !isFigureOwnedCaptionLeakTable(table, captionedFigureRegions) &&
+            !isFigureOwnedCaptionlessPanelTable(table, captionedFigureRegions) &&
             !isExternalAttachmentTableRegion(table, tokens, rules, associations[index].caption) &&
             !isNativeAuthorAffiliationRegion(
               table,
@@ -2539,7 +2543,7 @@ try {
               })) &&
             hasSourceTableEvidence(table, index)
         )
-        const recognizedTableRects = refined
+        let recognizedTableRects = refined
           .filter((_, index) => acceptedTables[index])
           .map((table) => table.cropRect.map((v) => v / 1.5))
         const graphicalTables = associateGraphicalTables(
@@ -3128,6 +3132,33 @@ try {
               }
             }
           }
+        }
+        // A captioned two-panel figure can have a text-heavy upper panel that
+        // the detector classifies as a captionless table.  The association
+        // pass has already expanded that figure to the full panel envelope;
+        // only now suppress the table candidate, and only when the caption
+        // names both panels and the table carries unresolved crop ownership.
+        const panelFigures = pageFigures.filter((figure) => {
+          const text = [figure.caption?.text, ...(figure.caption?.lines ?? [])]
+            .filter(Boolean)
+            .join(' ')
+          return figure.rect && /(?:^|\s)\(a\).*?(?:^|\s)\(b\)/isu.test(text)
+        })
+        if (panelFigures.length) {
+          for (const [index, table] of refined.entries()) {
+            if (
+              !acceptedTables[index] ||
+              associations[index]?.caption ||
+              !isFigureOwnedPartialTable(table, panelFigures)
+            )
+              continue
+            acceptedTables[index] = false
+          }
+          // Keep every downstream exclusion and competing-rectangle list in sync
+          // with the late panel-owned table suppression above.
+          recognizedTableRects = refined
+            .filter((_, index) => acceptedTables[index])
+            .map((table) => table.cropRect.map((v) => v / 1.5))
         }
         // This optional path owns only a complete native body and literal caption.
         // It cannot enter label recovery, prose suppression or crop expansion.

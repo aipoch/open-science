@@ -3007,6 +3007,7 @@ export function refineTable(
       repairs.push('duplicate-column-removed')
     }
   }
+  if (!recordGrid) recoverSourceWideMathColumns(table, columns, pageItems, top, bottom, repairs)
   // Rotated continuations occasionally lose one narrow data column in the
   // structure prediction. A populated source cluster in a large model gap is
   // stronger evidence than the empty prediction on either side; insert one
@@ -22512,10 +22513,436 @@ function recoverNativeOverlappingLiteralColumns(table, pageItems, rules) {
   }
 }
 
+// A compact mathematical table can have one overlapped detector column even
+// though the printed header and every body baseline expose the full lane
+// sequence.  Recover that shape from measured source runs only; arbitrary
+// numeric token counts are intentionally rejected because ranges may emit
+// several source glyphs per cell.
+function recoverSourceWideMathColumns(table, columns, pageItems, top, bottom, repairs) {
+  if (columns.length !== 7 || !table?.cropRect || !Array.isArray(pageItems)) return false
+  const overlaps = columns.some((a, index) =>
+    columns.slice(index + 1).some((b) => {
+      const overlap = Math.min(a.rect[2], b.rect[2]) - Math.max(a.rect[0], b.rect[0])
+      return overlap > Math.min(a.rect[2] - a.rect[0], b.rect[2] - b.rect[0]) * 0.2
+    })
+  )
+  if (!overlaps) return false
+  const source = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      typeof item.text === 'string' &&
+      item.text.trim() &&
+      item.rect?.every(Number.isFinite) &&
+      item.rect[0] >= table.cropRect[0] &&
+      item.rect[2] <= table.cropRect[2] &&
+      item.rect[1] >= table.cropRect[1] &&
+      item.rect[3] <= table.cropRect[3]
+  )
+  if (source.length < 24) return false
+  const heights = source
+    .map((item) => item.height)
+    .filter((value) => value > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return false
+  const lineGroups = []
+  for (const item of source
+    .slice()
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const line = lineGroups.at(-1)
+    if (line && Math.abs(line.baseline - item.baseline) <= height * 0.4) {
+      line.items.push(item)
+      line.baseline = (line.baseline + item.baseline) / 2
+    } else lineGroups.push({ baseline: item.baseline, items: [item] })
+  }
+  const runs = (line) => {
+    const output = []
+    for (const item of line.items.slice().sort((a, b) => a.rect[0] - b.rect[0])) {
+      const previous = output.at(-1)
+      const gap = previous ? item.rect[0] - previous.rect[2] : Infinity
+      if (previous && gap <= height * 1.25) {
+        previous.items.push(item)
+        previous.rect[2] = Math.max(previous.rect[2], item.rect[2])
+        previous.rect[3] = Math.max(previous.rect[3], item.rect[3])
+      } else output.push({ items: [item], rect: [...item.rect] })
+    }
+    return output.map((run) => ({
+      ...run,
+      text: run.items
+        .map((item) => item.text)
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+    }))
+  }
+  const numeric = (text) =>
+    /\d/u.test(text) && !/[A-Za-z]{2,}/u.test(text) && !/[.!?]$/u.test(text.trim())
+  const body = lineGroups
+    .map((line) => ({ ...line, runs: runs(line) }))
+    .filter(
+      (line) =>
+        line.runs.length === 8 &&
+        /^\p{Lu}$/u.test(line.runs[0].text.trim()) &&
+        line.runs.slice(1).every((run) => numeric(run.text))
+    )
+  if (body.length < 3) return false
+  const headerObject = table.structure?.objects?.find(
+    (object) => object.label === 'table column header'
+  )
+  if (!headerObject) return false
+  const headerRect = [
+    headerObject.rect[0] + table.cropRect[0],
+    headerObject.rect[1] + table.cropRect[1],
+    headerObject.rect[2] + table.cropRect[0],
+    headerObject.rect[3] + table.cropRect[1]
+  ]
+  const header = lineGroups
+    .map((line) => ({ ...line, runs: runs(line) }))
+    .filter(
+      (line) =>
+        line.baseline <= headerRect[3] + height * 0.4 &&
+        line.baseline >= headerRect[1] - height * 0.4 &&
+        line.runs.length === 8 &&
+        line.runs.filter((run) => /\p{L}/u.test(run.text)).length >= 6
+    )
+    .sort((a, b) => a.baseline - b.baseline)[0]
+  if (!header) return false
+  const groups = [header.runs, ...body.map((line) => line.runs)]
+  const cuts = [columns[0].rect[0]]
+  for (let index = 1; index < 8; index++) {
+    const left = Math.max(...groups.map((line) => line[index - 1].rect[2]))
+    const right = Math.min(...groups.map((line) => line[index].rect[0]))
+    if (!(right - left > height * 0.35)) return false
+    cuts.push((left + right) / 2)
+  }
+  cuts.push(columns.at(-1).rect[2])
+  if (cuts.some((cut, index) => index && cut <= cuts[index - 1])) return false
+  const repaired = cuts.slice(1).map((right, index) => ({
+    rect: [cuts[index], top, right, bottom],
+    score: 1,
+    origin: 'source-wide-math-column'
+  }))
+  columns.splice(0, columns.length, ...repaired)
+  repairs.push('source-wide-math-columns-recovered')
+  return true
+}
+
 function recoverGroupedHeaderTiers(table, items, rules, runs, result) {
   if (result.repairs.includes('native-independent-printed-header-proved')) return
   const count = result.grid[0]?.length
   if (!(count >= 5)) return
+  // Some open grouped headers have no usable full-width rule and the model
+  // leaves the first boolean record with the header fragments.  Recover only
+  // the narrow, source-proved shape: one detector span over the first two
+  // columns, two header baselines, and at least three complete rows made of
+  // check/cross indicators followed by scalar values.
+  const recoverOpenBooleanHeader = () => {
+    if (!result.unassigned?.length || count !== 6) return
+    const span = (table.structure?.objects ?? [])
+      .filter((object) => object.label === 'table spanning cell')
+      .map((object) => [
+        object.rect[0] + table.cropRect[0],
+        object.rect[1] + table.cropRect[1],
+        object.rect[2] + table.cropRect[0],
+        object.rect[3] + table.cropRect[1]
+      ])
+      .find(
+        (candidate) => candidate[2] - candidate[0] > (table.cropRect[2] - table.cropRect[0]) * 0.1
+      )
+    if (!span) return
+    const columns = result.cells
+      .filter((cell) => cell.row === 0 && cell.colSpan === 1)
+      .sort((a, b) => a.column - b.column)
+    if (columns.length !== count || columns.some((cell, column) => cell.column !== column)) return
+    const source = items.filter(
+      (item) =>
+        item.horizontal &&
+        item.rect?.every(Number.isFinite) &&
+        item.rect[0] >= table.cropRect[0] &&
+        item.rect[2] <= table.cropRect[2] &&
+        item.rect[1] >= table.cropRect[1] &&
+        item.rect[3] <= table.cropRect[3]
+    )
+    const heights = source
+      .map((item) => item.height)
+      .filter((height) => height > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)]
+    if (!(height > 0)) return
+    const lines = []
+    for (const item of source
+      .slice()
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+      const line = lines.at(-1)
+      if (line && Math.abs(line.baseline - item.baseline) <= height * 0.35) {
+        line.items.push(item)
+        line.baseline = (line.baseline + item.baseline) / 2
+      } else lines.push({ baseline: item.baseline, items: [item] })
+    }
+    const makeRuns = (line) => {
+      const output = []
+      for (const item of line.items.slice().sort((a, b) => a.rect[0] - b.rect[0])) {
+        const previous = output.at(-1)
+        const gap = previous ? item.rect[0] - previous.rect[2] : Infinity
+        if (previous && gap <= height * 1.25) {
+          previous.items.push(item)
+          previous.rect[2] = Math.max(previous.rect[2], item.rect[2])
+          previous.rect[3] = Math.max(previous.rect[3], item.rect[3])
+        } else output.push({ items: [item], rect: [...item.rect] })
+      }
+      return output.map((run) => ({
+        ...run,
+        text: nativeRecordText(run.items, { baselineHeight: height })
+      }))
+    }
+    const scalar = (text) =>
+      /^[<>≤≥−+-]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:%|[↑↓])?$/u.test(text.replace(/\s+/gu, ''))
+    const indicator = (text) => /^[✓✗×xX]$/u.test(text.trim())
+    const columnOf = (run) => {
+      const center = (run.rect[0] + run.rect[2]) / 2
+      const matches = columns.filter(
+        (cell) => center >= cell.rect[0] - height * 0.7 && center <= cell.rect[2] + height * 0.7
+      )
+      return matches.length === 1 ? matches[0].column : -1
+    }
+    const expandRuns = (runs) => {
+      const byColumn = new Map()
+      for (const run of runs) {
+        for (const item of run.items) {
+          const column = columnOf({ rect: item.rect })
+          if (column < 0) continue
+          const group = byColumn.get(column) ?? { items: [], rect: [...item.rect] }
+          group.items.push(item)
+          group.rect[0] = Math.min(group.rect[0], item.rect[0])
+          group.rect[1] = Math.min(group.rect[1], item.rect[1])
+          group.rect[2] = Math.max(group.rect[2], item.rect[2])
+          group.rect[3] = Math.max(group.rect[3], item.rect[3])
+          byColumn.set(column, group)
+        }
+      }
+      return [...byColumn.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([column, run]) => ({
+          ...run,
+          column,
+          text: nativeRecordText(run.items, { baselineHeight: height })
+        }))
+    }
+    const body = lines
+      .map((line) => ({ ...line, runs: makeRuns(line) }))
+      .filter(
+        (line) =>
+          line.runs.length === count &&
+          indicator(line.runs[0].text) &&
+          indicator(line.runs[1].text) &&
+          line.runs.slice(2).every((run) => scalar(run.text))
+      )
+    if (body.length < 3) return
+    const firstBody = body[0]
+    const spanColumns = columns.filter(
+      (cell) => intersect(cell.rect, span) / area(cell.rect) > 0.25
+    )
+    if (spanColumns.length !== 2 || spanColumns[0].column !== 0) return
+    const parentLine = lines
+      .map((line) => ({ ...line, runs: makeRuns(line) }))
+      .filter((line) => line.baseline < firstBody.baseline - height * 0.5)
+      .map((line) => {
+        const parentItems = line.items.filter((item) => intersect(item.rect, span) > 0)
+        const other = line.items.filter((item) => !parentItems.includes(item))
+        return {
+          ...line,
+          parentItems,
+          parentText: nativeRecordText(parentItems, { baselineHeight: height }),
+          otherRuns: makeRuns({ items: other })
+        }
+      })
+      .find(
+        (line) =>
+          line.parentItems.length >= 1 &&
+          line.parentItems.every(
+            (item) =>
+              item.rect[0] >= span[0] &&
+              item.rect[2] <= span[2] &&
+              item.rect[1] >= span[1] &&
+              item.rect[3] <= span[3]
+          ) &&
+          /\p{L}{3}/u.test(line.parentText) &&
+          expandRuns(line.otherRuns).filter((run) => run.column >= spanColumns.at(-1).column + 1)
+            .length >= 2
+      )
+    if (!parentLine) return
+    const childLine = lines
+      .map((line) => ({ ...line, runs: makeRuns(line) }))
+      .filter((line) => line.baseline > parentLine.baseline && line.baseline < firstBody.baseline)
+      .find((line) => {
+        const expanded = expandRuns(line.runs)
+        const mapped = expanded.map((run) => run.column)
+        return (
+          mapped.filter((column) => spanColumns.some((cell) => cell.column === column)).length ===
+            spanColumns.length &&
+          expanded.every((run, index) => {
+            const column = mapped[index]
+            return column >= 0 && /\p{L}|[|λ−]/u.test(run.text)
+          })
+        )
+      })
+    if (!childLine) return
+    const topRuns = expandRuns(parentLine.otherRuns).filter(
+      (run) => run.column >= spanColumns.at(-1).column + 1
+    )
+    const topColumns = topRuns.map((run) => run.column)
+    if (
+      topRuns.length !== count - spanColumns.length ||
+      new Set(topColumns).size !== topRuns.length ||
+      topColumns.some((column, index) => column !== spanColumns.length + index) ||
+      topRuns.some((run) => !/\p{L}|[|λ−]/u.test(run.text))
+    )
+      return
+    const childRuns = expandRuns(childLine.runs)
+    const childColumns = childRuns.map((run) => run.column)
+    if (
+      childRuns.length !== spanColumns.length ||
+      new Set(childColumns).size !== childRuns.length ||
+      childColumns.some((column, index) => column !== spanColumns[index].column)
+    )
+      return
+    const used = new Set([
+      ...parentLine.parentItems,
+      ...topRuns.flatMap((run) => run.items),
+      ...childRuns.flatMap((run) => run.items),
+      ...body.flatMap((line) => line.runs.flatMap((run) => run.items))
+    ])
+    if (
+      source.some(
+        (item) =>
+          !used.has(item) && item.rect[1] < firstBody.items[0].rect[1] && /\p{L}/u.test(item.text)
+      )
+    )
+      return
+    const top =
+      Math.min(
+        ...parentLine.parentItems.map((item) => item.rect[1]),
+        ...topRuns.flatMap((run) => run.items.map((item) => item.rect[1]))
+      ) -
+      height * 0.25
+    const split = (parentLine.baseline + childLine.baseline) / 2
+    const bodyEdges = body.map((line, index) => ({
+      top: index
+        ? (body[index - 1].items.at(-1).rect[3] + line.items[0].rect[1]) / 2
+        : (childLine.items.at(-1).rect[3] + line.items[0].rect[1]) / 2,
+      bottom:
+        index + 1 < body.length
+          ? (line.items.at(-1).rect[3] + body[index + 1].items[0].rect[1]) / 2
+          : line.items.at(-1).rect[3] + height * 0.4
+    }))
+    const cell = (row, column, text, tokens, rect, colSpan = 1, rowSpan = 1) => {
+      const origins = nativeWholeFontOrigins(tokens)
+      return {
+        row,
+        column,
+        colSpan,
+        rowSpan,
+        text,
+        rect,
+        sourceTokens: tokens,
+        sourceRects: tokens.map((token) => token.rect),
+        ...(origins?.length === tokens.length ? { sourceItems: origins } : {})
+      }
+    }
+    const headerCells = [
+      cell(
+        0,
+        spanColumns[0].column,
+        parentLine.parentText,
+        parentLine.parentItems,
+        [spanColumns[0].rect[0], top, spanColumns.at(-1).rect[2], split],
+        spanColumns.length
+      ),
+      ...topRuns.map((run, index) => {
+        const column = topColumns[index]
+        return cell(
+          0,
+          column,
+          run.text,
+          run.items,
+          [columns[column].rect[0], top, columns[column].rect[2], childLine.items.at(-1).rect[3]],
+          1,
+          2
+        )
+      }),
+      ...childRuns.map((run) => {
+        const column = run.column
+        return cell(1, column, run.text, run.items, [
+          columns[column].rect[0],
+          split,
+          columns[column].rect[2],
+          bodyEdges[0].top
+        ])
+      })
+    ]
+    const bodyCells = body.flatMap((line, row) =>
+      line.runs.map((run) => {
+        const column = columnOf(run)
+        return cell(row + 2, column, run.text, run.items, [
+          columns[column].rect[0],
+          bodyEdges[row].top,
+          columns[column].rect[2],
+          bodyEdges[row].bottom
+        ])
+      })
+    )
+    const grid = [
+      Array(count).fill(''),
+      Array(count).fill(''),
+      ...body.map((line) => {
+        const row = Array(count).fill('')
+        line.runs.forEach((run) => {
+          const column = columnOf(run)
+          row[column] = run.text
+        })
+        return row
+      })
+    ]
+    for (const header of headerCells) grid[header.row][header.column] = header.text
+    const unassigned = result.unassigned.slice()
+    for (const key of ['sourceItems', 'reconciliationItems']) {
+      const values = result.unassigned?.[key]
+      if (Array.isArray(values))
+        Object.defineProperty(unassigned, key, { value: values.slice(), enumerable: false })
+    }
+    for (const item of used) {
+      const index = unassigned.indexOf(item.text)
+      if (index >= 0) unassigned.splice(index, 1)
+    }
+    const issues = result.issues.filter(
+      (issue) => issue !== 'unassigned-source-text' || unassigned.length
+    )
+    return {
+      ...result,
+      cells: [...headerCells, ...bodyCells],
+      grid,
+      rows: [
+        {
+          rect: [columns[0].rect[0], top, columns.at(-1).rect[2], split],
+          origin: 'native-open-grouped-header'
+        },
+        {
+          rect: [columns[0].rect[0], split, columns.at(-1).rect[2], bodyEdges[0].top],
+          origin: 'native-open-grouped-header'
+        },
+        ...bodyEdges.map((edge) => ({
+          rect: [columns[0].rect[0], edge.top, columns.at(-1).rect[2], edge.bottom],
+          origin: 'native-open-grouped-body'
+        }))
+      ],
+      unassigned,
+      issues,
+      repairs: [...result.repairs, 'native-open-grouped-header-recovered'],
+      reviewCandidate: issues.length === 0
+    }
+  }
+  const openBoolean = recoverOpenBooleanHeader()
+  if (openBoolean) return openBoolean
   const full = joinHorizontalTableRules(rules).filter(
     (r) =>
       r[1] >= table.cropRect[1] &&

@@ -2367,6 +2367,72 @@ export function isFigureOwnedPartialTable(table, figures, scale = 1.5) {
   })
 }
 
+// A figure panel can be mistaken for a small text table when the detector
+// crops its columns and the crop includes the figure caption.  Suppress only
+// this high-confidence false positive: the candidate is uncaptioned, carries
+// both crop-boundary and unresolved-source diagnostics, overlaps a resolved
+// figure, and contains that figure's own caption marker in its grid text.
+export function isFigureOwnedCaptionLeakTable(table, figures, scale = 1.5) {
+  if (
+    !table?.cropRect ||
+    table.caption ||
+    !table.issues?.includes('text-crosses-crop-boundary') ||
+    !table.issues?.includes('unassigned-source-text') ||
+    !(table.unassigned?.length ?? 0) ||
+    !Array.isArray(figures)
+  )
+    return false
+  const rect = table.cropRect.map((value) => value / scale)
+  const candidateArea = area(rect)
+  if (!candidateArea) return false
+  const text = (table.grid ?? [])
+    .flat()
+    .filter((value) => typeof value === 'string')
+    .join(' ')
+  return figures.some((figure) => {
+    if (!figure?.rect || !figure.caption) return false
+    const overlap = intersection(rect, figure.rect) / candidateArea
+    if (overlap < 0.45) return false
+    const caption = [figure.caption.text, ...(figure.caption.lines ?? [])].filter(Boolean).join(' ')
+    const marker = /\b(?:Figure|Fig\.)\s*\d+[A-Z]?\b/iu.exec(caption)?.[0]
+    return Boolean(
+      marker && new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'iu').test(text)
+    )
+  })
+}
+
+// A multi-panel figure may expose one text-heavy panel as an uncaptioned table
+// while the figure association is completed from the other panel.  Suppress
+// only a crop-boundary candidate with unresolved source text when its complete
+// figure caption explicitly names panels (a) and (b) and the candidate lies
+// wholly inside that resolved figure.
+export function isFigureOwnedCaptionlessPanelTable(table, figures, scale = 1.5) {
+  if (
+    !table?.cropRect ||
+    table.caption ||
+    !table.issues?.includes('text-crosses-crop-boundary') ||
+    !(table.unassigned?.length ?? 0) ||
+    !Array.isArray(figures)
+  )
+    return false
+  const rect = table.cropRect.map((value) => value / scale),
+    candidateArea = area(rect)
+  if (!candidateArea) return false
+  return figures.some((figure) => {
+    const figureRect = figure?.rect,
+      caption = figure?.caption
+    if (!Array.isArray(figureRect) || !caption) return false
+    const text = [caption.text, ...(caption.lines ?? [])].filter(Boolean).join(' ')
+    if (!/\(a\)/iu.test(text) || !/\(b\)/iu.test(text)) return false
+    const contained =
+      rect[0] >= figureRect[0] &&
+      rect[1] >= figureRect[1] &&
+      rect[2] <= figureRect[2] &&
+      rect[3] <= figureRect[3]
+    return contained && intersection(rect, figureRect) / candidateArea >= 0.8
+  })
+}
+
 // Assigned text can cross a detector crop without appearing in `unassigned`.
 // Reject that fragment only when the unique captioned figure retains every
 // whole native owner. No cell reconstruction or enlargement follows from this.

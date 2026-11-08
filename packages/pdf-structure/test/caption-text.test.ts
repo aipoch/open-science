@@ -54,6 +54,40 @@ it.each([
   expect(captionKind(text)).toBe(kind)
 })
 
+it('rejects section-qualified figure references embedded in body prose', () => {
+  expect(
+    captionKind(
+      'Figure 1 (Section 2.2). The theoretical high-rate regime has an upper limit, making a different trend at the largest tested rates.'
+    )
+  ).toBeUndefined()
+})
+
+it('rejects cited reproduced-figure prose that starts with a figure label', () => {
+  expect(
+    captionKind(
+      'Figure 1. The main idea in [9] is to supplement a usual contracting network by a symmetric expanding path.'
+    )
+  ).toBeUndefined()
+})
+
+it('rejects figure score sentences that start with an unpunctuated label', () => {
+  expect(
+    captionKind('Figure 11 scores texts by the mean over all pairs of a feature’s texts.')
+  ).toBeUndefined()
+  expect(captionKind('Figure 11. Scores for the held-out evaluation.')).toBe('figure')
+  expect(captionKind('Figure 2 score distributions')).toBe('figure')
+})
+
+it('keeps score-for noun titles across figure and chart labels', () => {
+  expect(captionKind('Figure 2 scores for all methods')).toBe('figure')
+  expect(captionKind('Chart 1 scores for each group')).toBe('figure')
+})
+
+it('keeps a normal cited figure caption when the citation describes the source', () => {
+  expect(captionKind('Figure 1. The architecture from [9] is shown in blue.')).toBe('figure')
+  expect(captionKind('Figure 1. The architecture from [9] is a directed graph.')).toBe('figure')
+})
+
 function coordinatedTableReferenceCaption(): {
   pageNumber: number
   width: number

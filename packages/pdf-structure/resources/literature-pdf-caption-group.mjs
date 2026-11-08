@@ -324,6 +324,12 @@ export function captionKind(text) {
     /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+\((?:left|right|top|bottom|middle|center|centre|[A-Za-z])\)\.\s+(?:The|This|These|Those|Our|Their|It|They)\b/i.test(
       text ?? ''
     ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+\(Section\s+[^)]+\)\.\s+(?:The|This|These|Those|Our|Their|It|They)\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+(?:The|This|These|Those|Our|Their|It|They)\b[^.!?]{0,180}\b(?:in|from|of|after)\s+\[\d+\]\s+(?:is|are|was|were)\s+to\b/i.test(
+      text ?? ''
+    ) ||
     /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+(?:all|both|each)\b/i.test(text ?? '')
   )
     return undefined
@@ -397,6 +403,13 @@ export function captionKind(text) {
     `^${narrativeReferenceLabel}${narrativeReferencePanel}(?:\\s*(?:,|and|&)\\s*(?:${narrativeReferenceLabel}|[A-Z]?\\d+(?:\\.\\d+)?)${narrativeReferencePanel})*\\s+(?:(?:also|further|first)\\s+)?${narrativeReferenceVerb}\\b`,
     'i'
   )
+  // Keep "score" as a noun in titles such as "Figure 2 score distributions";
+  // reject only the finite-verb form when a following object establishes prose.
+  const scoredReference = new RegExp(
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+scores\\b(?!\\s+for\\b)\\s+\\p{L}{2,}(?:\\s+(?:by|on|across|over|for|using|with|from)\\b|\\s+\\p{L}{2,}\\b)`,
+    'iu'
+  )
+  if (scoredReference.test(text)) return undefined
   // An unpunctuated figure subject followed by an inflected transitive verb
   // and a determiner-led object is running prose. Require the complete local
   // grammar: noun titles and punctuation-delimited captions retain ownership.

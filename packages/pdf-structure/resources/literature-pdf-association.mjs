@@ -2942,6 +2942,38 @@ function associateNativeFigures(
           : figure
       })
   const result = finalizeFigures(completed)
+  // A composite figure can contain an internal prose label such as
+  // "Figure 1. The main idea in [9]".  When that label has no independently
+  // associated crop and is wholly enclosed by an already resolved figure,
+  // keep the outer owner as the sole source owner.  Preserve unresolved
+  // captions outside resolved crops (and captions with independent graphic
+  // or table evidence) for diagnostics and later recovery.
+  const filterNestedCaptionReferences = (figures) =>
+    figures.filter((figure, index, all) => {
+      if ((figure.issue ?? figure.reason) !== 'no-unambiguous-adjacent-graphics') return true
+      const captionRect = figure.caption?.rect
+      if (!captionRect) return true
+      const enclosed = all.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          other.rect &&
+          other.caption?.page === figure.caption?.page &&
+          other.rect[0] <= captionRect[0] &&
+          other.rect[1] <= captionRect[1] &&
+          other.rect[2] >= captionRect[2] &&
+          other.rect[3] >= captionRect[3]
+      )
+      if (!enclosed) return true
+      if (tableRects.some((rect) => intersection(rect, captionRect) > 0)) return true
+      if (
+        (page.graphicsBounds ?? []).some((graphic) => {
+          const rect = figureGraphicRect(page, graphic)
+          return rect && intersection(rect, captionRect) > 0
+        })
+      )
+        return true
+      return false
+    })
   const independentRasters = (figures) =>
     figures.map((figure, index) => {
       const symbolAxis = nativeGroupedSymbolAxisCrop(
@@ -2972,13 +3004,16 @@ function associateNativeFigures(
         ? { ...figure, ...proof, fallbackFigure: figure }
         : figure
     })
-  if (!completed.some((figure) => figure.fallbackFigure)) return independentRasters(result)
+  if (!completed.some((figure) => figure.fallbackFigure))
+    return filterNestedCaptionReferences(independentRasters(result))
   // Complete the ordinary alternatives together, preserving all peer checks.
   // Scope admission is disabled explicitly on the single bounded retry above.
   const fallback = finalizeFigures(completed.map((figure) => figure.fallbackFigure ?? figure))
-  return independentRasters(
-    result.map((figure, index) =>
-      completed[index].fallbackFigure ? { ...figure, fallbackFigure: fallback[index] } : figure
+  return filterNestedCaptionReferences(
+    independentRasters(
+      result.map((figure, index) =>
+        completed[index].fallbackFigure ? { ...figure, fallbackFigure: fallback[index] } : figure
+      )
     )
   )
 }
@@ -3293,7 +3328,7 @@ function nativeIndependentFramedRaster(page, figure, captions, tables, tokens, c
   }
 }
 
-function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
+export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
   const caption = figure?.caption
   if (!caption || !figure?.rect || !page.graphicsBounds?.length) return undefined
   const captionText = caption.lines?.join(' ') ?? ''
@@ -3311,6 +3346,100 @@ function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
   const panelKeys = new Set(
     [...captionText.matchAll(/(?:^|\s)\(([a-z])\)/gi)].map((match) => match[1].toLowerCase())
   )
+  // A vector/text panel can be mistaken for a table before figure association
+  // runs.  When a two-panel caption has only the lower panel associated, a
+  // captionless table-shaped candidate immediately above it is strong local
+  // evidence for the missing upper panel.  Require an explicit `(a)` heading,
+  // no nearby table caption, and a shared horizontal lane so ordinary tables
+  // above figures are never absorbed.
+  if (panelKeys.has('a') && panelKeys.has('b') && panelKeys.size === 2) {
+    const areaOf = (rect) => Math.max(0, rect[2] - rect[0]) * Math.max(0, rect[3] - rect[1])
+    const upper = (tableRects ?? [])
+      .filter((rect) => {
+        if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) return false
+        const horizontal = Math.min(rect[2], figure.rect[2]) - Math.max(rect[0], figure.rect[0])
+        return (
+          rect[2] > rect[0] &&
+          rect[3] > rect[1] &&
+          rect[3] <= figure.rect[1] + 4 &&
+          horizontal / Math.min(rect[2] - rect[0], figure.rect[2] - figure.rect[0]) >= 0.65
+        )
+      })
+      .sort((a, b) => b[3] - a[3])[0]
+    const upperTitle =
+      upper &&
+      page.lines
+        ?.filter(
+          (line) =>
+            line.y < upper[1] &&
+            line.y > priorCaptionBottom &&
+            upper[1] - line.y <= Math.max(48, page.height * 0.06) &&
+            line.y + line.height <= upper[1] + 4 &&
+            /^\(a\)(?:\s|$)/iu.test(line.text?.trim() ?? '') &&
+            line.x + line.width > upper[0] &&
+            line.x < upper[2]
+        )
+        .sort((a, b) => b.y - a.y)[0]
+    const hasTableCaption =
+      upper &&
+      candidates.some(
+        (candidate) =>
+          candidate !== caption &&
+          candidate.page === caption.page &&
+          captionKind(candidate.lines?.[0] ?? '') === 'table' &&
+          candidate.rect[3] <= upper[1] &&
+          candidate.rect[2] > upper[0] &&
+          candidate.rect[0] < upper[2]
+      )
+    if (upper && upperTitle && !hasTableCaption) {
+      const band = [
+        Math.min(upper[0], figure.rect[0]),
+        Math.min(upperTitle.y - 2, upper[1]),
+        Math.max(upper[2], figure.rect[2]),
+        Math.max(upper[3], figure.rect[3])
+      ]
+      const nearbyGraphics = page.graphicsBounds
+        .map((graphic) => {
+          const normalizedRect = graphic.paintedNormalizedRect ?? graphic.normalizedRect
+          if (
+            !Array.isArray(normalizedRect) ||
+            normalizedRect.length !== 4 ||
+            !normalizedRect.every(Number.isFinite) ||
+            normalizedRect[2] <= normalizedRect[0] ||
+            normalizedRect[3] <= normalizedRect[1]
+          )
+            return undefined
+          return {
+            ...graphic,
+            rect: normalizedRect.map(
+              (value, index) => value * (index % 2 ? page.height : page.width)
+            )
+          }
+        })
+        .filter(
+          (entry) =>
+            entry &&
+            entry.rect.every(Number.isFinite) &&
+            entry.rect[2] > band[0] &&
+            entry.rect[0] < band[2] &&
+            entry.rect[3] > band[1] &&
+            entry.rect[1] < band[3]
+        )
+        .map(({ rect }) => rect)
+      const textRects = (page.lines ?? [])
+        .filter(
+          (line) =>
+            line.y + line.height > band[1] &&
+            line.y < band[3] &&
+            line.x + line.width > band[0] &&
+            line.x < band[2]
+        )
+        .map((line) => [line.x, line.y, line.x + line.width, line.y + line.height])
+      const rect = union([band, ...nearbyGraphics, ...textRects])
+      if (rect[3] < caption.rect[1] && areaOf(rect) > areaOf(figure.rect) * 1.2)
+        return { rect, graphicsCount: nearbyGraphics.length, issue: undefined }
+    }
+  }
   const panelTitleEvidence = page.lines?.some(
     (line) =>
       line.y < caption.rect[1] &&
