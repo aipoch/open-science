@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Check, ScanText, Trash2 } from 'lucide-react'
+import { Check, Download, ScanText, Trash2 } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { localModelDownloadProgress } from '../../../shared/local-models'
@@ -185,6 +185,7 @@ export function LocalOcrControl({
               }
               onClick={() => void run('install')}
             >
+              <Download className="size-4" aria-hidden="true" />
               {snapshot?.error
                 ? t('Retry')
                 : snapshot?.updateAvailable
