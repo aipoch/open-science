@@ -1,9 +1,9 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { access, readFile, rm, writeFile } from 'node:fs/promises'
-import { constants, mkdirSync } from 'node:fs'
+import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
-import { dirname, join, win32 } from 'node:path'
+import { join, win32 } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
@@ -101,7 +101,7 @@ type WindowsStandardLaunchRequest = Readonly<
 type WindowsSupervisedLaunchRequest = Readonly<
   WindowsStandardLaunchRequest &
     Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'> &
-    Partial<Pick<WindowsLaunchRequest, 'ownershipRoot'>>
+    Pick<WindowsLaunchRequest, 'ownershipRoot'>
 >
 
 type ProcessTreeTerminationProof = Readonly<{
@@ -111,7 +111,10 @@ type ProcessTreeTerminationProof = Readonly<{
   confirmState: () => Promise<WindowsProcessState>
   request: () => Promise<boolean>
   requestPath: string
+  release: () => Promise<void>
 }>
+
+type ProcessTreeProofMetadata = Pick<ProcessTreeTerminationProof, 'path' | 'token' | 'requestPath'>
 
 type WindowsProcessState = 'never-started' | 'started-and-reaped' | 'termination-unknown'
 
@@ -636,15 +639,9 @@ const setWindowsRuntimeAccess = async (
   return result
 }
 
-const createProcessTreeTerminationProof = (
-  env: NodeJS.ProcessEnv,
-  cwd: string
-): ProcessTreeTerminationProof => {
+const createProcessTreeTerminationProof = (proofRoot: string): ProcessTreeTerminationProof => {
   const token = randomUUID()
-  const path = join(
-    env.TEMP ?? env.TMP ?? cwd,
-    `.open-science-process-tree-terminated-${token}.proof`
-  )
+  const path = join(proofRoot, `.open-science-process-tree-terminated-${token}.proof`)
   const requestPath = `${path}.request`
   let requestSent = false
   let terminalState: WindowsProcessState | undefined
@@ -673,8 +670,9 @@ const createProcessTreeTerminationProof = (
           const state = parse(await readFile(path, 'utf8'))
           if (state !== 'termination-unknown') {
             terminalState = state
-            await rm(path, { force: true }).catch(() => undefined)
-            await rm(requestPath, { force: true }).catch(() => undefined)
+            // Keep the terminal proof until the owning receipt or sandbox cleanup settles. A
+            // restart may need this evidence if the owner dies after confirmation but before it
+            // publishes cleanup completion.
             return state
           }
         } catch {
@@ -713,13 +711,17 @@ const createProcessTreeTerminationProof = (
     })
     return requesting
   }
+  const release = async (): Promise<void> => {
+    await Promise.all([rm(path, { force: true }), rm(requestPath, { force: true })])
+  }
   return {
     path,
     token,
     confirmState,
     request,
     confirm: async () => (await confirmState()) !== 'termination-unknown',
-    requestPath
+    requestPath,
+    release
   }
 }
 
@@ -728,9 +730,11 @@ const windowsLaunch = (
 ): {
   argv: string[]
   env: NodeJS.ProcessEnv
+  processTreeProof: ProcessTreeProofMetadata
   confirmProcessTreeTermination: () => Promise<boolean>
   requestProcessTreeTermination: () => Promise<boolean>
   confirmProcessState: () => Promise<WindowsProcessState>
+  releaseProcessTreeProof: () => Promise<void>
 } => {
   const shell: WindowsShell =
     typeof request.shell === 'object'
@@ -761,7 +765,7 @@ const windowsLaunch = (
   })
   const policyInvocation = { ...directInvocation, args: [...policyArguments] }
   const layout = normalizeFilesystemLayout(request.filesystem)
-  const proof = createProcessTreeTerminationProof(request.env, request.cwd)
+  const proof = createProcessTreeTerminationProof(request.ownershipRoot)
   const specification = Buffer.from(
     JSON.stringify({
       executable: policyInvocation.executable,
@@ -806,9 +810,11 @@ const windowsLaunch = (
       specification
     ],
     env,
+    processTreeProof: { path: proof.path, token: proof.token, requestPath: proof.requestPath },
     confirmProcessTreeTermination: proof.confirm,
     requestProcessTreeTermination: proof.request,
-    confirmProcessState: proof.confirmState
+    confirmProcessState: proof.confirmState,
+    releaseProcessTreeProof: proof.release
   }
 }
 
@@ -847,23 +853,18 @@ const windowsSupervisedLaunch = (
 ): {
   argv: string[]
   env: NodeJS.ProcessEnv
+  processTreeProof: ProcessTreeProofMetadata
   confirmProcessTreeTermination: () => Promise<boolean>
   requestProcessTreeTermination: () => Promise<boolean>
   confirmProcessState: () => Promise<WindowsProcessState>
+  releaseProcessTreeProof: () => Promise<void>
 } => {
   // This path does not apply AppContainer capabilities or ACLs. It only asks the bundled host to
   // contain an opted-in standard-mode worker and its helpers in a kill-on-close Job Object.
   const direct = windowsStandardLaunch(request)
   const [executable, ...args] = direct.argv
   if (!executable) throw new Error('Windows supervisor received an empty command.')
-  const proofRoot = request.ownershipRoot
-    ? join(dirname(request.ownershipRoot), '.open-science-process-proofs')
-    : undefined
-  if (proofRoot) mkdirSync(proofRoot, { recursive: true })
-  const proof = createProcessTreeTerminationProof(
-    proofRoot ? { ...direct.env, TEMP: proofRoot } : direct.env,
-    request.cwd
-  )
+  const proof = createProcessTreeTerminationProof(request.ownershipRoot)
   const specification = Buffer.from(
     JSON.stringify({
       executable,
@@ -885,9 +886,11 @@ const windowsSupervisedLaunch = (
   return {
     argv: [request.hostPath, 'supervise', specification],
     env: direct.env,
+    processTreeProof: { path: proof.path, token: proof.token, requestPath: proof.requestPath },
     confirmProcessTreeTermination: proof.confirm,
     requestProcessTreeTermination: proof.request,
-    confirmProcessState: proof.confirmState
+    confirmProcessState: proof.confirmState,
+    releaseProcessTreeProof: proof.release
   }
 }
 
