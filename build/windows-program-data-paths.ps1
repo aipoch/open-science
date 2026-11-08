@@ -15,6 +15,25 @@ function Get-AbsolutePath([string]$Path) {
   return $full
 }
 
+function Format-ErrorDetails([Exception]$Error) {
+  $hresult = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int32]$Error.HResult), 0)
+  $parts = @(
+    "exceptionType=$($Error.GetType().FullName)"
+    "message=$($Error.Message)"
+    ('hresult=0x{0:X8}' -f $hresult)
+  )
+  $inner = $Error
+  while ($inner) {
+    $nativeCode = $inner.PSObject.Properties['NativeErrorCode']
+    if ($nativeCode -and $null -ne $nativeCode.Value) {
+      $parts += "nativeErrorCode=$([int]$nativeCode.Value)"
+      break
+    }
+    $inner = $inner.InnerException
+  }
+  return ($parts -join ' ')
+}
+
 try {
   Add-Type -Path (Join-Path $PSScriptRoot 'windows-install-publication.dll')
   # Match the packaged bootstrap resolver. A development-only STORAGE_ROOT does not participate.
@@ -61,6 +80,8 @@ try {
   [IO.File]::WriteAllText($OutputPath, ($paths -join "`r`n") + "`r`n", [Text.UnicodeEncoding]::new($false, $false))
   exit 0
 } catch {
-  [Console]::Error.WriteLine($_.Exception.Message)
+  [Console]::Error.WriteLine(
+    "Open-Science windows-program-data-paths.ps1 failed phase=resolve-configured-data-locations $(Format-ErrorDetails $_.Exception)"
+  )
   exit 2
 }

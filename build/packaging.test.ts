@@ -929,6 +929,24 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     }
   })
 
+  it('records the helper phase and exit code when cleanup fails', () => {
+    const cleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.nsh'), 'utf8')
+    expect(cleanup).toContain(
+      'Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations'
+    )
+    expect(cleanup).toContain(
+      'Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files'
+    )
+
+    const dataPaths = readFileSync(join(repoRoot, 'build/windows-program-data-paths.ps1'), 'utf8')
+    const programCleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.ps1'), 'utf8')
+    for (const script of [dataPaths, programCleanup]) {
+      expect(script).toContain('nativeErrorCode=')
+      expect(script).toContain('hresult=0x')
+      expect(script).toMatch(/exit 2/)
+    }
+  })
+
   it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {
     // The real-lock case: a background child running from the install dir (micromamba
     // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by executable
