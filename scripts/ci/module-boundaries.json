@@ -229,7 +229,8 @@
         "packages/compute/src/host-connection-profile.ts",
         "packages/compute/package.json",
         "packages/compute/tsconfig.json",
-        "packages/compute/src/ports.ts"
+        "packages/compute/src/ports.ts",
+        "packages/compute/src/backend.ts"
       ],
       "layer": "package",
       "sourceLayers": {},
@@ -242,6 +243,7 @@
         "packages/open-science/cli.test.ts",
         "packages/open-science/client.test.ts",
         "packages/compute/src/host-connection-profile.test.ts",
+        "packages/compute/src/backend.test.ts",
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": []

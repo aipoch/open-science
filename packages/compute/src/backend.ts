@@ -243,7 +243,7 @@ export class ComputeBackendAdapterRegistry {
     return this.adapters.get(id)
   }
 
-  require(id: ComputeBackendId): ComputeBackendAdapter {
+  requireAdapter(id: ComputeBackendId): ComputeBackendAdapter {
     const adapter = this.get(id)
     if (!adapter) throw new Error(`No compute backend adapter registered for "${id}".`)
     return adapter

@@ -14,7 +14,8 @@
     "packages/compute/src/index.ts",
     "packages/compute/src/model.ts",
     "packages/compute/src/host-connection-profile.ts",
-    "packages/compute/src/ports.ts"
+    "packages/compute/src/ports.ts",
+    "packages/compute/src/backend.ts"
   ],
   "consumerModules": [
     "compute_package",
@@ -1019,6 +1020,5 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime",
-  "fullTestReason": "Backend capability contracts add a registry whose require method prevents static dependency certification. Run complete validation for changes to the domain contract."
+  "fallbackCapability": "main_runtime"
 }

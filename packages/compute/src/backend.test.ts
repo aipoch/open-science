@@ -75,7 +75,9 @@ describe('compute backend adapter registry', () => {
     expect(registry.get('kubernetes')).toBe(adapter)
     expect(registry.list()).toEqual([adapter])
     await expect(
-      registry.require('kubernetes').probe({ providerId: 'k8s:cluster', backendId: 'kubernetes' })
+      registry
+        .requireAdapter('kubernetes')
+        .probe({ providerId: 'k8s:cluster', backendId: 'kubernetes' })
     ).resolves.toEqual({
       phase: 'running',
       contact: 'live'
@@ -88,7 +90,7 @@ describe('compute backend adapter registry', () => {
     expect(() => new ComputeBackendAdapterRegistry([adapter, adapter])).toThrow(
       'Compute backend adapter ids must be unique.'
     )
-    expect(() => new ComputeBackendAdapterRegistry().require('kubernetes')).toThrow(
+    expect(() => new ComputeBackendAdapterRegistry().requireAdapter('kubernetes')).toThrow(
       'No compute backend adapter registered for "kubernetes".'
     )
   })
