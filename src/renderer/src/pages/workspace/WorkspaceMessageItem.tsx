@@ -189,6 +189,7 @@ type WorkspaceMessageItemProps = {
   // live row remains below it, the message keeps only its natural text-line height.
   reserveLoadingRowHeight?: boolean
   // Whole-window find owns scroll positioning while it is open.
+  skipScrollAnchorOnMount?: boolean
   disableScrollAnchor?: boolean
   // Durable lifecycle of an application-authored correction request. Keeping the response state
   // explicit prevents a missing historical response from looking like a successfully started one.
@@ -1349,10 +1350,14 @@ const WorkspaceMessageItemImpl = ({
   presentationSourceOpen,
   presentationAnimateOnMount,
   reserveLoadingRowHeight = true,
-  disableScrollAnchor = false,
+  skipScrollAnchorOnMount = false,
+  disableScrollAnchor: suppressScrollAnchor = false,
   reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
+  // Enabling a previously skipped prompt anchor would jump back to that prompt on resume.
+  const [skippedPromptAnchor] = useState(skipScrollAnchorOnMount)
+  const disableScrollAnchor = suppressScrollAnchor || skippedPromptAnchor
   const bookmarks = useBookmarks()
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
