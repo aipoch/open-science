@@ -90,8 +90,10 @@ import {
   prepareCredentialValidation
 } from './credential-identity/bootstrap'
 import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
+import { recoveryCredentialInventoryOptions } from './credential-identity/recovery-inventory'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
+import { resolveDataRoot } from './storage-root'
 import {
   startOrAttachDesktopBackend,
   desktopBackendPaths,
@@ -100,6 +102,7 @@ import {
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
+import { createElectronSessionDiagnosticsFallback } from './session-diagnostics/electron-fallback'
 import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
@@ -594,6 +597,13 @@ async function startDesktop(): Promise<void> {
   let getMainWindow = (): BrowserWindow | undefined => undefined
   let isMainWindowHidden = (): boolean => false
   let relay: ReturnType<typeof installDesktopRuntimeElectronAdapter> | undefined
+  let recoveryDiagnosticsFallback:
+    ReturnType<typeof createElectronSessionDiagnosticsFallback> | undefined
+  const recoveryDiagnosticChannels = new Set([
+    'sessions:inspect-diagnostics',
+    'sessions:export-diagnostics',
+    'sessions:cancel-diagnostics'
+  ])
   let plannedRelaunch = false
   let relaunchConfirmation: Promise<void> | undefined
   let updateCommitted = false
@@ -603,6 +613,9 @@ async function startDesktop(): Promise<void> {
     if (lease) shutdownLease = lease
   }
   app.once('will-quit', () => shutdownLease?.release())
+  app.once('will-quit', () => {
+    void recoveryDiagnosticsFallback?.close()
+  })
   let preview: Awaited<ReturnType<typeof createDesktopPreviewProxy>> | undefined
   let tray: ReturnType<typeof createAppTray>
   let icons: ReturnType<typeof createAppIconController> | undefined = undefined
@@ -751,7 +764,33 @@ async function startDesktop(): Promise<void> {
         },
         release: (id) => attached.release(id)
       },
-      isApplicationCommandWindow
+      isApplicationCommandWindow,
+      (_document, channel, args) => {
+        if (
+          !recovery ||
+          recovery.state().phase === 'connected' ||
+          !recoveryDiagnosticChannels.has(channel)
+        )
+          return undefined
+        recoveryDiagnosticsFallback ??= createElectronSessionDiagnosticsFallback({
+          configRoot,
+          dataRoot: client?.runtimeInfo().startupOptions.dataRoot ?? resolveDataRoot(),
+          chooseDestination: async (defaultName) => {
+            const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+            return result.canceled ? undefined : result.filePath
+          }
+        })
+        switch (channel) {
+          case 'sessions:inspect-diagnostics':
+            return recoveryDiagnosticsFallback.inspect(args[0] as never)
+          case 'sessions:export-diagnostics':
+            return recoveryDiagnosticsFallback.export(args[0] as never)
+          case 'sessions:cancel-diagnostics':
+            return recoveryDiagnosticsFallback.cancel(args[0] as never)
+          default:
+            return undefined
+        }
+      }
     )
   }
   const publishStartup = (next: DatabaseStartupState): void => {
@@ -1206,6 +1245,10 @@ async function startDesktop(): Promise<void> {
         ...initialBackendPaths,
         packaged: app.isPackaged,
         signal,
+        ...recoveryCredentialInventoryOptions(
+          startupCredentialCiphertexts,
+          startupCredentialInventoryCapturedAt
+        ),
         beforeLaunch: async () => {
           signal.throwIfAborted()
           assertDesktopRuntimeRestartAllowed(
@@ -1290,6 +1333,10 @@ async function startDesktop(): Promise<void> {
           ...initialBackendPaths,
           packaged: app.isPackaged,
           signal,
+          ...recoveryCredentialInventoryOptions(
+            startupCredentialCiphertexts,
+            startupCredentialInventoryCapturedAt
+          ),
           beforeLaunch: verifyRestartIntent,
           timeoutMs: 10_000,
           args: [

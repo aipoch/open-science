@@ -303,14 +303,10 @@ export function createDesktopRuntimeRecovery(options: {
             crashesInWindow: crashes.length,
             ...lastFailure
           }
-          // Credential inventory context is transient; keep it in the on-screen diagnostic only.
-          const persistent = { ...diagnostics }
-          const persistentCredential = credentialDiagnosticSchema.safeParse(
-            persistent.credentialDiagnostic
-          )
-          if (persistentCredential.success && persistentCredential.data.code === 'inventory-failed')
-            delete persistent.credentialDiagnostic
-          log.warn('desktop runtime recovery failed', persistent)
+          // The credential diagnostic is already schema-limited to safe classifications and
+          // operating-system codes. Keep it in the recovery log so a later package export can
+          // explain why the backend could not restart without including paths or secrets.
+          log.warn('desktop runtime recovery failed', diagnostics)
           if (error instanceof RuntimeRecoveryStoppedError) stopped = true
           if (candidate) options.discard?.(candidate)
           candidate?.close()
