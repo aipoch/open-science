@@ -32,6 +32,23 @@ beforeAll(async () => {
     platform: 'node',
     format: 'cjs',
     packages: 'external',
+    // The child never analyzes worker-sized sources; a worker import would fall back in-process.
+    plugins: [
+      {
+        name: 'node-worker-stub',
+        setup: (plugin) => {
+          plugin.onResolve({ filter: /\?nodeWorker$/ }, ({ path }) => ({
+            path,
+            namespace: 'node-worker-stub'
+          }))
+          plugin.onLoad({ filter: /.*/, namespace: 'node-worker-stub' }, () => ({
+            contents:
+              "export default () => { throw new Error('Worker unavailable in this child.') }",
+            loader: 'js'
+          }))
+        }
+      }
+    ],
     logLevel: 'silent'
   })
 })
