@@ -1464,18 +1464,26 @@ describe('installPackages', () => {
   })
 
   it('activates the managed R environment for source installers on Windows', async () => {
-    const { spawn, calls } = scriptedSpawn([ok])
-    await installPackages(
-      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
-      {
-        spawn,
-        ...base,
-        micromambaEnv: { platform: 'win32', env: { PATH: 'C:\\Windows' } }
-      }
-    )
+    const originalPath = process.env.PATH
+    const originalPathAlias = process.env.Path
+    try {
+      delete process.env.PATH
+      process.env.Path = 'C:\\Windows'
+      const { spawn, calls } = scriptedSpawn([ok])
+      await installPackages(
+        { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+        { spawn, ...base, micromambaEnv: { platform: 'win32' } }
+      )
 
-    const prefix = envPrefix(runtimeRoot(base.storageRoot), DEFAULT_R_ENV)
-    expect(calls[0]?.[2]?.PATH).toBe(condaActivatedPath(prefix, process.env.PATH, 'win32'))
+      const prefix = envPrefix(runtimeRoot(base.storageRoot), DEFAULT_R_ENV)
+      expect(calls[0]?.[2]?.PATH).toBe(condaActivatedPath(prefix, 'C:\\Windows', 'win32'))
+      expect(calls[0]?.[2]?.Path).toBeUndefined()
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+      if (originalPathAlias === undefined) delete process.env.Path
+      else process.env.Path = originalPathAlias
+    }
   })
 
   it('routes pip and R workload caches under the configured data storage runtime', async () => {
