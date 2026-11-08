@@ -135,6 +135,7 @@ type WorkspaceMessageItemProps = {
   message: ChatMessage
   projectId?: string
   isPackageSession?: boolean
+  deletedDiscussionSourceId?: string
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
@@ -1111,6 +1112,7 @@ const MessagePdfReadingContext = ({
 const MessagePartsContent = ({
   parts,
   isStatic = false,
+  deletedDiscussionSourceId,
   projectId,
   onOpenSkillMention,
   onOpenLibraryMention,
@@ -1119,6 +1121,7 @@ const MessagePartsContent = ({
 }: {
   parts: Array<MessagePart | ProvenanceMessagePart>
   isStatic?: boolean
+  deletedDiscussionSourceId?: string
   projectId?: string
   onOpenSkillMention: (skillId: string, name: string) => void
   onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
@@ -1301,7 +1304,12 @@ const MessagePartsContent = ({
         return isStatic ? (
           <span key={index}>{part.text}</span>
         ) : (
-          <ReplayReferenceText key={index} text={part.text} projectId={projectId} />
+          <ReplayReferenceText
+            deletedDiscussionSourceId={deletedDiscussionSourceId}
+            key={index}
+            text={part.text}
+            projectId={projectId}
+          />
         )
       })}
     </div>
@@ -1313,6 +1321,7 @@ const WorkspaceMessageItemImpl = ({
   message,
   projectId,
   isPackageSession = false,
+  deletedDiscussionSourceId,
   onPreviewArtifact,
   onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
@@ -1535,6 +1544,7 @@ const WorkspaceMessageItemImpl = ({
   const userMessageContent =
     staticParts && staticParts.length > 0 ? (
       <MessagePartsContent
+        deletedDiscussionSourceId={deletedDiscussionSourceId}
         parts={staticParts}
         isStatic
         projectId={projectId}
@@ -1545,6 +1555,7 @@ const WorkspaceMessageItemImpl = ({
       />
     ) : message.parts && message.parts.length > 0 ? (
       <MessagePartsContent
+        deletedDiscussionSourceId={deletedDiscussionSourceId}
         parts={message.parts}
         projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
@@ -1554,7 +1565,11 @@ const WorkspaceMessageItemImpl = ({
       />
     ) : message.content ? (
       <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-        <ReplayReferenceText text={message.content} projectId={projectId} />
+        <ReplayReferenceText
+          deletedDiscussionSourceId={deletedDiscussionSourceId}
+          text={message.content}
+          projectId={projectId}
+        />
       </div>
     ) : null
   const hasInteractiveUserMessageContent = Boolean(
@@ -1793,6 +1808,7 @@ const WorkspaceMessageItemImpl = ({
                   <WorkspaceUserMessageBubble>
                     <MessagePdfReadingContext message={message} projectId={projectId} />
                     <AnnotationMessageCards
+                      deletedDiscussionSourceId={deletedDiscussionSourceId}
                       annotations={message.annotations ?? []}
                       onReveal={requestAnnotationReveal}
                     />
@@ -2060,6 +2076,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.projectId === next.projectId &&
+  previous.deletedDiscussionSourceId === next.deletedDiscussionSourceId &&
   (previous.isPackageSession ?? false) === (next.isPackageSession ?? false) &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
   previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&

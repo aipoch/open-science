@@ -1,43 +1,46 @@
-import { useSessionReplayStore } from '@/stores/session-replay-store'
+import type { ComposerSessionContext } from './composer-contract'
 import type { Annotation } from '../../../../shared/annotation-contract'
-import type { SessionReadingBinding } from '../../../../shared/session-reading'
-import type { SessionDiscussionCapture } from './replay/replay-context'
-import {
-  createSessionDiscussionAnnotation,
-  replayAnnotationTarget
-} from './session-discussion-annotation'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 
-// Called at Send/Enqueue, never from playback. The copy also freezes evidence while awaiting I/O.
-export const captureDiscussionSendContext = (
-  annotations: readonly Annotation[],
-  binding?: SessionReadingBinding,
-  receivingSessionId?: string
-): SessionDiscussionCapture | undefined => {
-  const draftSource = annotations.map(replayAnnotationTarget).filter(Boolean).at(-1)
-  const source = draftSource ?? (binding && { ...binding, sourceSessionId: binding.sessionId })
-  const playhead = useSessionReplayStore.getState().playhead
-  if (
-    !source ||
-    !playhead ||
-    source.sourceSessionId === receivingSessionId ||
-    source.projectId !== playhead.projectId ||
-    source.sourceSessionId !== playhead.sourceSessionId
+// Older child discussions could unlink reading while retaining the sidebar parent. Reuse
+// the saved message reference to restore that same parent on the next turn.
+export function discussionDraftAnnotations(
+  session: ComposerSessionContext | null | undefined,
+  annotations: Annotation[]
+): Annotation[] {
+  if (session?.deletedDiscussionSourceId)
+    return annotations.filter((item) => {
+      const target = replayAnnotationTarget(item)
+      return !(
+        target?.sourceSessionId === session.deletedDiscussionSourceId &&
+        target?.projectId === session.projectId
+      )
+    })
+  if (!session?.parentSessionId) return annotations
+  const belongsToParent = (item: Annotation): boolean => {
+    const target = replayAnnotationTarget(item)
+    return (
+      target?.projectId === session.projectId && target?.sourceSessionId === session.parentSessionId
+    )
+  }
+  const retained = annotations.filter(
+    (item) => !replayAnnotationTarget(item) || belongsToParent(item)
   )
-    return undefined
-  return structuredClone({ ...playhead.capture(), scope: 'step' })
-}
-
-export const prepareDiscussionSendAnnotations = async (
-  annotations: Annotation[],
-  focus: SessionDiscussionCapture
-): Promise<Annotation[]> => {
-  const id = crypto.randomUUID()
-  const annotation = createSessionDiscussionAnnotation(focus, id)
-  if (!annotation) throw new Error('Replay step unavailable')
-  await window.api.sessionReplay.saveSelectionSnapshot({
-    projectId: focus.projectId,
-    sourceSessionId: focus.sourceSessionId,
-    context: { ...focus, id }
-  })
-  return [...annotations.filter((item) => !replayAnnotationTarget(item)), annotation]
+  if (
+    retained.some(belongsToParent) ||
+    session.runtimeContext?.sessionContext?.bindings.some(
+      (binding) =>
+        binding.projectId === session.projectId && binding.sessionId === session.parentSessionId
+    )
+  )
+    return retained
+  const messages = session.messages?.length
+    ? session.messages
+    : (session.conversationGraph?.messages ?? [])
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    const saved = message.role === 'user' && message.annotations?.find(belongsToParent)
+    if (saved) return [...retained, saved]
+  }
+  return retained
 }

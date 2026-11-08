@@ -220,6 +220,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0054_slurm_job_reliability',
     checksum: '1525c308d5403411490596cf7ad4e03a2fc9ae7ee43adf6d3622d0b17d97319b'
+  },
+  {
+    id: '0055_session_discussion_parent',
+    checksum: '8fc258c3f41f8ce14ad74a58cde8aa53c93bf312a251f6345174b5d06bb65cf1'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

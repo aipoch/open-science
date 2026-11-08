@@ -228,6 +228,27 @@ describe('local research workspace ownership', () => {
     expect((await service.get(other)).view).toBeUndefined()
   })
 
+  it('confirms permanent deletion only for a missing source with a matching tombstone', async () => {
+    sessions.delete(identity.sourceSessionId)
+    expect((await service.get(identity)).sourceStatus).toBe('missing')
+    await client.session.create({
+      data: {
+        id: identity.sourceSessionId,
+        projectId: identity.projectId,
+        number: 1,
+        title: 'Removed',
+        createdAtMs: 1n,
+        updatedAtMs: 1n,
+        deletedAtMs: 2n,
+        status: 'idle',
+        presentedStatus: 'idle'
+      }
+    })
+    expect((await service.get(identity)).sourceStatus).toBe('deleted')
+    unreadable.add(identity.sourceSessionId)
+    expect((await service.get(identity)).sourceStatus).toBe('unreadable')
+  })
+
   it('reports archived identities without unlocking them', async () => {
     sessions.get(identity.sourceSessionId)!.archivedAt = 6
     expect((await service.get(identity)).sourceStatus).toBe('archived')

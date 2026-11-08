@@ -1897,6 +1897,7 @@ const WorkspaceMessageScrollerImpl = ({
                       : undefined,
                     projectId: currentProjectId,
                     isPackageSession: Boolean(activeSession?.packageOrigin),
+                    deletedDiscussionSourceId: activeSession?.deletedDiscussionSourceId,
                     onPreviewArtifact,
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
@@ -2277,6 +2278,7 @@ const WorkspaceMessageScrollerImpl = ({
                 <WorkspaceMessageItem
                   message={optimisticMessage}
                   isPackageSession={Boolean(activeSession?.packageOrigin)}
+                  deletedDiscussionSourceId={activeSession?.deletedDiscussionSourceId}
                   disableScrollAnchor={windowFindOpen}
                   projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}

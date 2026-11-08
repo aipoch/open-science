@@ -32,6 +32,7 @@ import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { composerContextRowClassName } from './SessionDiscussionBar'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { discussionDraftAnnotations } from './discussion-send-context'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
 import { SessionHeaderMenu } from './SessionHeaderMenu'
 import { SessionInfoPopover } from './SessionInfoPopover'
@@ -41,7 +42,7 @@ import { mentionProjectFile } from './project-file-mention'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { NotificationBell } from '@/components/NotificationBell'
@@ -542,6 +543,9 @@ const ConversationPanel = ({
       dismissAutomaticReading
     }
   } = composer
+  const discussionAnnotations = discussionDraftAnnotations(activeSession, annotations).filter(
+    (item) => replayAnnotationTarget(item)
+  )
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
   const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
@@ -977,7 +981,10 @@ const ConversationPanel = ({
       },
       {
         id: 'composer',
-        message: composerError !== actionError ? composerError : undefined,
+        message:
+          composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
+            ? composerError
+            : undefined,
         detail: composerErrorDetail
       },
       {
@@ -1806,6 +1813,19 @@ const ConversationPanel = ({
               )}
               <div className="px-1 md:px-3">
                 <ComposerNoticeSlot
+                  draftConflict={
+                    composerError === DISCUSSION_DRAFT_CONFLICT
+                      ? {
+                          description: t(
+                            'Send or clear your current draft before starting a discussion.'
+                          ),
+                          dismissButton: {
+                            label: t('Dismiss'),
+                            onClick: () => onSetComposerError(null)
+                          }
+                        }
+                      : undefined
+                  }
                   notices={composerNotices.notices}
                   handlers={noticeHandlers}
                   onDismiss={composerNotices.dismiss}
@@ -2296,7 +2316,7 @@ const ConversationPanel = ({
                             aria-hidden="true"
                           />
                         ) : null}
-                        {annotations.some((annotation) => replayAnnotationTarget(annotation)) ||
+                        {discussionAnnotations.length > 0 ||
                         activeSession?.runtimeContext?.sessionContext?.bindings.length ||
                         pdfContext.bindings.length > 0 ||
                         pdfContext.automaticAttachmentCount > 0 ? (
@@ -2305,9 +2325,8 @@ const ConversationPanel = ({
                             data-testid="composer-context-header"
                           >
                             <AnnotationDraftCards
-                              annotations={annotations.filter((annotation) =>
-                                replayAnnotationTarget(annotation)
-                              )}
+                              annotations={discussionAnnotations}
+                              fixedParent={Boolean(activeSession?.parentSessionId)}
                               disabled={!canEditDraft || pdfContext.isPending}
                               onReveal={requestAnnotationReveal}
                               onUpdateNote={onUpdateAnnotationNote}
@@ -2319,6 +2338,7 @@ const ConversationPanel = ({
                             ) ? (
                               <SessionDiscussionSource
                                 key={activeSession.id}
+                                parentSessionId={activeSession.parentSessionId}
                                 projectId={activeSession.projectId}
                                 sessionId={activeSession.id}
                                 context={activeSession.runtimeContext}

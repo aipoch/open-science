@@ -1,8 +1,11 @@
+import { useSessionStore } from '@/stores/session-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
-import { SessionDiscussionDialog } from './SessionDiscussionDialog'
-import type { SessionDiscussionCapture } from './replay/replay-context'
+import {
+  createSessionReplayItem,
+  loadSessionDiscussionContext,
+  openDiscussionDraft
+} from './workspace-session-actions'
 import { SessionPackageImportMenu } from '@/components/SessionPackageImportMenu'
 import {
   BookOpen,
@@ -277,7 +280,7 @@ const isLiveSession = (
 // is read rather than here. Keeping the union closed means a section added upstream fails typecheck
 // until its text is added, instead of silently rendering untranslated.
 type SidebarSessionSection = {
-  label: 'Pinned' | 'Active' | 'Today' | 'Yesterday' | 'This week' | 'Older'
+  label: 'Imported research' | 'Pinned' | 'Active' | 'Today' | 'Yesterday' | 'This week' | 'Older'
   items: ChatSession[]
 }
 
@@ -286,6 +289,11 @@ const startOfLocalDay = (timestamp: number): number => {
   date.setHours(0, 0, 0, 0)
   return date.getTime()
 }
+
+const isImportedSessionRow = (session: ChatSession): boolean =>
+  session.contentLoaded === false
+    ? session.id.startsWith('import-')
+    : Boolean(session.packageOrigin)
 
 const getSessionSections = (
   sessions: ChatSession[],
@@ -301,6 +309,8 @@ const getSessionSections = (
   week.setDate(week.getDate() - ((week.getDay() + 6) % 7))
   const weekStartedAt = week.getTime()
 
+  const imports = sessions.filter(isImportedSessionRow)
+  const children = new Map(imports.map((source) => [source.id, [] as ChatSession[]]))
   const pinned: ChatSession[] = []
   const active: ChatSession[] = []
   const today: ChatSession[] = []
@@ -309,6 +319,12 @@ const getSessionSections = (
   const older: ChatSession[] = []
 
   sessions.forEach((session) => {
+    if (isImportedSessionRow(session)) return
+    const siblings = session.parentSessionId && children.get(session.parentSessionId)
+    if (siblings) {
+      siblings.push(session)
+      return
+    }
     if (session.pinned) {
       pinned.push(session)
     } else if (
@@ -328,6 +344,10 @@ const getSessionSections = (
   })
 
   const sections: SidebarSessionSection[] = [
+    {
+      label: 'Imported research',
+      items: imports.flatMap((source) => [source, ...children.get(source.id)!])
+    },
     { label: 'Pinned', items: pinned },
     { label: 'Active', items: active },
     { label: 'Today', items: today },
@@ -497,6 +517,27 @@ type SessionRowProps = {
 // Keep the costly action-menu and hover-preview subtree stable when the page rerenders for a
 // draft edit, or when selection moves between two otherwise unchanged Sessions. The full Session
 // object is a prop so a stream, status, title, permission, or preview update still refreshes it.
+const ArchivedDiscussionParent = ({
+  projectId,
+  parentId
+}: {
+  projectId: string
+  parentId: string
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const title = useSessionStore(
+    (state) =>
+      state.sessions.find(
+        (row) => row.id === parentId && row.projectId === projectId && row.archivedAt !== undefined
+      )?.title
+  )
+  return title ? (
+    <span className="block truncate text-[11px] text-muted-foreground" title={title}>
+      {t('Archived source: {{title}}', { title })}
+    </span>
+  ) : null
+}
+
 const SessionRow = memo(function SessionRow({
   t,
   session,
@@ -538,7 +579,7 @@ const SessionRow = memo(function SessionRow({
       : undefined,
     onViewNotebook: (target) => actions.onViewNotebook(target),
     onViewReplay: actions.onViewReplay,
-    onDiscussSession: actions.onDiscussSession,
+    onDiscussSession: imported ? actions.onDiscussSession : undefined,
     onExportSession: canExportSession ? (target) => actions.onExportSession?.(target) : undefined,
     onForkSession: canForkSession
       ? async (target) => {
@@ -559,6 +600,7 @@ const SessionRow = memo(function SessionRow({
   })
   const sessionActionIdentityKey = JSON.stringify([
     session.id,
+    imported,
     session.updatedAt,
     session.pinned ?? false,
     presentedStatus,
@@ -614,6 +656,12 @@ const SessionRow = memo(function SessionRow({
         )}
       >
         {session.title}
+        {session.parentSessionId && sectionLabel !== 'Imported research' && (
+          <ArchivedDiscussionParent
+            projectId={session.projectId}
+            parentId={session.parentSessionId}
+          />
+        )}
       </span>
       {showSessionShortcuts && shortcutNumber ? (
         <kbd
@@ -656,7 +704,16 @@ const SessionRow = memo(function SessionRow({
     >
       <div
         data-session-id={session.id}
-        className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
+        data-parent-session-id={
+          sectionLabel === 'Imported research' ? session.parentSessionId : undefined
+        }
+        className={cn(
+          sessionRowClassName,
+          sectionLabel === 'Imported research' &&
+            session.parentSessionId &&
+            'ms-6 border-s border-border-200',
+          isActive && 'bg-bg-300 text-text-000'
+        )}
         title={mobileMode ? session.title : undefined}
       >
         <div className="flex w-full min-w-0 items-center">
@@ -1282,7 +1339,9 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                 {sections.map((section) => (
                   <div key={section.label}>
                     <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
-                      {t(section.label)}
+                      {section.label === 'Imported research'
+                        ? t('Imported research')
+                        : t(section.label)}
                     </div>
                     {section.items.map((session) => {
                       const presentedStatus = getPresentedSessionStatus(
@@ -1297,11 +1356,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                           session={session}
                           sectionLabel={section.label}
                           isActive={session.id === activeSessionId}
-                          imported={
-                            session.contentLoaded === false
-                              ? session.id.startsWith('import-')
-                              : Boolean(session.packageOrigin)
-                          }
+                          imported={isImportedSessionRow(session)}
                           shortcutNumber={shortcutNumberBySessionId.get(session.id)}
                           presentedStatus={presentedStatus}
                           archiveAvailable={canArchiveSession?.(session) ?? false}
@@ -1367,7 +1422,6 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
 const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
   const mounted = useRef(true)
   const pendingOpen = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const cancelPendingOpen = useCallback(() => {
@@ -1407,7 +1461,12 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       )
         return
       if (!context) throw new Error(t('No recorded steps are available.'))
-      setDiscussionCapture(context)
+      if (!openDiscussionDraft(context))
+        throw new Error(
+          t(
+            'Could not open the discussion. Check that the source project is available and try again.'
+          )
+        )
     }
   }
   const latestCallbacks = useRef(callbacks)
@@ -1466,17 +1525,7 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
     }),
     [cancelPendingOpen]
   )
-  return (
-    <>
-      <WorkspaceSidebarView {...props} rowActions={rowActions} />
-      {discussionCapture ? (
-        <SessionDiscussionDialog
-          context={discussionCapture}
-          onClose={() => setDiscussionCapture(undefined)}
-        />
-      ) : null}
-    </>
-  )
+  return <WorkspaceSidebarView {...props} rowActions={rowActions} />
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {

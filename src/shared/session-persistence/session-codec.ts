@@ -335,6 +335,19 @@ export const sanitizeSession = (
     }
   }
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
+  if (
+    typeof session.parentSessionId === 'string' &&
+    /^import-[a-zA-Z0-9-]+$/.test(session.parentSessionId) &&
+    session.parentSessionId !== id
+  )
+    sanitized.parentSessionId = session.parentSessionId
+  if (
+    typeof session.deletedDiscussionSourceId === 'string' &&
+    /^import-[a-zA-Z0-9-]+$/.test(session.deletedDiscussionSourceId) &&
+    !sanitized.parentSessionId &&
+    session.deletedDiscussionSourceId !== id
+  )
+    sanitized.deletedDiscussionSourceId = session.deletedDiscussionSourceId
   if (branchSource) sanitized.branchSource = branchSource
   if (session.packageOrigin !== undefined) {
     const origin = packageOriginSchema.safeParse(session.packageOrigin)

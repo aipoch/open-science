@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
@@ -124,7 +125,34 @@ describe('SessionReplayPreview lifecycle', () => {
     expect(props().active).toBe(true)
   })
 
-  it('opens the ordinary conversation chooser without staging or sending the question', async () => {
+  it('offers replay without discussion entry points for an ordinary Session', async () => {
+    render(<SessionReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    expect(props().onAskStep).toBeUndefined()
+  })
+
+  it('opens the new discussion draft directly for an imported source', async () => {
+    const imported = doc()
+    imported.source.packageOrigin = {
+      importId: 'import-1',
+      sourceProjectId: 'origin',
+      sourceSessionId: 'original',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    mocks.load.mockResolvedValue(imported)
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project',
+          name: 'Project',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
     useNavigationStore.setState({ activeProjectId: 'project' })
     render(<SessionReplayPreview item={item()} />)
     await screen.findByTestId('replay-panel')
@@ -141,8 +169,9 @@ describe('SessionReplayPreview lifecycle', () => {
         excerpt: 'Question'
       })
     )
-    expect(await screen.findByRole('dialog', { name: 'Ask in a conversation' })).toBeTruthy()
-    expect(useSessionReplayStore.getState().pendingDiscussion).toBeUndefined()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useSessionReplayStore.getState().pendingDiscussion?.sourceSessionId).toBe('source')
   })
   it('loads paused history and forwards active visibility changes', async () => {
     const mounted = render(<SessionReplayPreview item={item()} />)

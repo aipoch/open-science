@@ -556,12 +556,16 @@ describe('WorkspaceSidebar accessible render', () => {
               }
             : undefined
         }),
-        createSession({ id: 'local', title: 'New analysis', status: 'idle' })
+        createSession({ id: 'local', title: 'New analysis', status: 'idle' }),
+        createSession({ id: 'discussion', parentSessionId: 'import-session', contentLoaded: false })
       ])
       const container = document.createElement('div')
       container.innerHTML = html
       const imported = container.querySelector('[data-session-id="import-session"]')
       const icon = imported?.querySelector('[role="img"][aria-label="Read-only"]')
+      const child = container.querySelector('[data-session-id="discussion"]')
+      expect(child?.getAttribute('data-parent-session-id')).toBe('import-session')
+      expect(imported?.parentElement?.textContent).toContain('Imported research')
       expect(icon).not.toBeNull()
       expect(icon?.textContent).toBe('')
       expect(
@@ -919,7 +923,6 @@ describe('WorkspaceSidebar accessible render', () => {
       ).toEqual([
         'toggle-pin',
         'edit',
-        'discuss',
         'view-replay',
         'download-artifacts',
         'view-notebook',
@@ -950,7 +953,6 @@ describe('WorkspaceSidebar accessible render', () => {
       ).toEqual([
         'toggle-pin',
         'edit',
-        'discuss',
         'view-replay',
         'download-artifacts',
         'view-notebook',
@@ -969,7 +971,12 @@ describe('WorkspaceSidebar accessible render', () => {
 
   it('applies Session hidden, disabled, and danger presentation to the right-click menu', async () => {
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const session = createSession({ id: 'restricted', title: 'Restricted session', status: 'idle' })
+    const session = createSession({
+      id: 'import-restricted',
+      title: 'Restricted session',
+      status: 'idle',
+      contentLoaded: false
+    })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -1002,7 +1009,7 @@ describe('WorkspaceSidebar accessible render', () => {
         )
       })
 
-      const target = container.querySelector<HTMLElement>('[data-session-id="restricted"]')
+      const target = container.querySelector<HTMLElement>('[data-session-id="import-restricted"]')
       await act(async () => {
         target?.dispatchEvent(
           new MouseEvent('contextmenu', {

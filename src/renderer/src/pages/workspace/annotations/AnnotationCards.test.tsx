@@ -156,7 +156,7 @@ describe('AnnotationCards image projection', () => {
       )
     )
     expect(container.textContent).toContain('Saved analysis')
-    expect(container.textContent).toContain('Discuss')
+    expect(container.querySelector('[aria-haspopup="dialog"]')).toBeNull()
     expect(container.textContent).not.toContain('Reading')
     const source = container.querySelector('[data-session-discussion-source]')!
     expect(source.textContent).not.toContain('Discuss')

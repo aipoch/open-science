@@ -561,6 +561,23 @@ class SessionPersistenceStateOwner {
     candidate.revision = current.revision + 1
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
+    if (
+      session.deletedDiscussionSourceId &&
+      runtimeContext.sessionContext?.bindings.some(
+        (binding) =>
+          binding.projectId === projectId && binding.sessionId === session.deletedDiscussionSourceId
+      )
+    )
+      throw new Error('The discussion source was permanently deleted.')
+    if (session.parentSessionId && Object.hasOwn(patch, 'sessionContext')) {
+      const bindings = runtimeContext.sessionContext?.bindings
+      if (
+        bindings?.length !== 1 ||
+        bindings[0].sessionId !== session.parentSessionId ||
+        bindings[0].projectId !== projectId
+      )
+        throw new Error('A child discussion must keep its parent research Session.')
+    }
 
     const archivePlanProjection = command.archivePlanProjection
       ? sanitizePlanHistoryProjections([command.archivePlanProjection])?.[0]
@@ -1639,6 +1656,7 @@ class SessionPersistenceStateOwner {
         : undefined
     const commandProjection = conversationAuthority
       ? {
+          parentSessionId: conversationAuthority.parentSessionId,
           conversationGraph: conversationAuthority.conversationGraph,
           messages: conversationAuthority.messages,
           activities: conversationAuthority.activities,
@@ -1659,6 +1677,13 @@ class SessionPersistenceStateOwner {
       ...commandProjection,
       ...relayProjection,
       ...mainOwnedSessionDetails,
+      ...(authority?.parentSessionId ? { parentSessionId: authority.parentSessionId } : {}),
+      ...(authority?.deletedDiscussionSourceId
+        ? {
+            parentSessionId: undefined,
+            deletedDiscussionSourceId: authority.deletedDiscussionSourceId
+          }
+        : { deletedDiscussionSourceId: undefined }),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(authority?.planHistoryProjections

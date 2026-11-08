@@ -1,3 +1,4 @@
+import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -994,6 +995,16 @@ const MIGRATION_MANIFEST = [
       slurmJobReliabilityMigration.operations
     ),
     foreignKeysDuringApply: 'disabled',
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionDiscussionParentMigration,
+    checksum: checksumMigrationPayload(
+      sessionDiscussionParentMigration.id,
+      sessionDiscussionParentMigration.statements,
+      sessionDiscussionParentMigration.verifiers
+    ),
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

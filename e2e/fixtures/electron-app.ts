@@ -413,7 +413,8 @@ type ElectronApp = {
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   restartWithSessionFixture: (
     session: PersistedChatSession,
-    notebookRuns?: NotebookRunRecord[]
+    notebookRuns?: NotebookRunRecord[],
+    ...additionalSessions: PersistedChatSession[]
   ) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   recordResourceTiming: (name: string, durationMs: number) => void
@@ -1876,21 +1877,27 @@ class ElectronAppHarness implements ElectronApp {
 
   async restartWithSessionFixture(
     session: PersistedChatSession,
-    notebookRuns: NotebookRunRecord[] = []
+    notebookRuns: NotebookRunRecord[] = [],
+    ...additionalSessions: PersistedChatSession[]
   ): Promise<Page> {
-    if (![session.projectId, session.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
-      throw new Error('Invalid E2E Session fixture identity.')
+    const sessions = [session, ...additionalSessions]
+    for (const fixture of sessions) {
+      if (![fixture.projectId, fixture.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+        throw new Error('Invalid E2E Session fixture identity.')
+      }
     }
     const dataRoot = notebookRuns.length
       ? await this.page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)
       : undefined
     await this.close()
-    const directory = join(this.roots.storageRoot, 'sessions', session.projectId)
-    await mkdir(directory, { recursive: true })
-    await writeFile(
-      join(directory, `${session.id}.json`),
-      JSON.stringify(createSessionFile(session))
-    )
+    for (const fixture of sessions) {
+      const directory = join(this.roots.storageRoot, 'sessions', fixture.projectId)
+      await mkdir(directory, { recursive: true })
+      await writeFile(
+        join(directory, `${fixture.id}.json`),
+        JSON.stringify(createSessionFile(fixture))
+      )
+    }
     if (dataRoot && notebookRuns.length) {
       if (session.packageOrigin)
         await mkdir(

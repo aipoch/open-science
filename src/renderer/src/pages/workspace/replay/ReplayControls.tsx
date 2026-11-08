@@ -67,7 +67,7 @@ export type ReplayControlsProps = {
   onNext: () => void
   onSeek: (positionMs: number) => void
   onSpeed: (speed: ReplaySpeed) => void
-  onAsk: () => void
+  onAsk?: () => void
 }
 
 const PAGE_SIZE = 40
@@ -252,33 +252,35 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
               <ChevronDown size={12} aria-hidden="true" />
             </Button>
           </PopoverTrigger>
-          <div role="group" aria-label={t('Step actions')} className="ml-auto shrink-0">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger
-                  asChild
-                  onFocus={(event) => {
-                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-                  }}
-                >
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    className={controlClass}
-                    onClick={props.onAsk}
-                    disabled={empty}
-                    aria-label={t('Ask about this step')}
+          {props.onAsk && (
+            <div role="group" aria-label={t('Step actions')} className="ml-auto shrink-0">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
                   >
-                    <MessageSquare size={14} />
-                    <span className={width < 560 ? 'sr-only' : 'min-w-0 truncate'}>
-                      {t('Ask about this step')}
-                    </span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('Ask about this step')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      className={controlClass}
+                      onClick={props.onAsk}
+                      disabled={empty}
+                      aria-label={t('Ask about this step')}
+                    >
+                      <MessageSquare size={14} />
+                      <span className={width < 560 ? 'sr-only' : 'min-w-0 truncate'}>
+                        {t('Ask about this step')}
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Ask about this step')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          )}
         </div>
         <div
           ref={track}

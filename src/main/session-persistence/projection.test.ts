@@ -663,6 +663,151 @@ describe('Session projection', () => {
     ).resolves.toBe(0)
   })
 
+  it('replays a committed parent deletion and detaches only its surviving children, including archived children', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-discussion-delete-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const index = new SessionProjectionRepository(async () => client!)
+    const open = (): SessionRepository => new SessionRepository(storageRoot!, {}, index)
+    const files = open()
+    await files.ensureSessionProjection(() => files.loadAll())
+    const parent = await files.saveSession(session('import-source'))
+    const binding = {
+      projectId: parent.projectId,
+      sessionId: parent.id,
+      contextId: 'snapshot-1',
+      branchId: 'main',
+      title: parent.title,
+      promptMessageId: 'question'
+    }
+    const child = await files.saveSession({
+      ...session('child'),
+      parentSessionId: parent.id,
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        sessionContext: { version: 1, bindings: [binding] }
+      }
+    })
+    const archived = await files.saveSession({
+      ...child,
+      id: 'archived-child',
+      number: undefined,
+      archivedAt: 50
+    })
+    await files.saveSession({ ...session('unrelated'), parentSessionId: 'import-other' })
+    // A missing file alone never authorizes detachment.
+    await rm(join(storageRoot, 'sessions', parent.projectId, parent.id + '.json'))
+    await files.recoverDeletedDiscussionChildren(parent.projectId, parent.id)
+    expect((await files.loadSession(parent.projectId, child.id))?.parentSessionId).toBe(parent.id)
+    await index.markPending(parent.projectId, parent.id, 'delete')
+    await expect(
+      files.saveSession({ ...session('racing-child'), parentSessionId: parent.id })
+    ).rejects.toThrow('being deleted')
+    await open().reconcilePendingSessionProjection()
+    for (const before of [child, archived]) {
+      const after = await open().loadSession(parent.projectId, before.id)
+      expect(after?.parentSessionId).toBeUndefined()
+      expect(after?.runtimeContext?.sessionContext).toBeUndefined()
+      expect(after?.deletedDiscussionSourceId).toBe(parent.id)
+      expect(after?.runtimeContext?.revision).toBe(5)
+      expect(after?.messages).toEqual(before.messages)
+      expect(after?.archivedAt).toBe(before.archivedAt)
+    }
+    expect(await index.discussionChildCandidates(parent.projectId, parent.id)).toEqual([])
+    expect((await files.loadSession(parent.projectId, 'unrelated'))?.parentSessionId).toBe(
+      'import-other'
+    )
+    await expect(
+      files.saveSession({ ...session('late-child'), parentSessionId: parent.id })
+    ).rejects.toThrow('permanently deleted')
+  })
+
+  it('finishes parent deletion independently of unreadable pending saves and retries their own recovery', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'discussion-pending-saves-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const index = new SessionProjectionRepository(async () => client!)
+    const files = new SessionRepository(storageRoot, {}, index)
+    await files.ensureSessionProjection(() => files.loadAll())
+    const parent = await files.saveSession(session('import-source'))
+    const known = await files.saveSession({ ...session('known'), parentSessionId: parent.id })
+    const file = (id: string): string =>
+      join(storageRoot!, 'sessions', parent.projectId, id + '.json')
+    // Both projections predate their pending saves. Only the JSON can identify the new child.
+    const ordinary = await files.saveSession(session('ordinary'))
+    const late = await files.saveSession(session('late'))
+    for (const saved of [ordinary, late]) {
+      await index.markPending(parent.projectId, saved.id)
+      await writeFile(file(saved.id), '{')
+    }
+    // A confirmed child must be detached before the deletion can commit.
+    const knownContents = await readFile(file(known.id))
+    await writeFile(file(known.id), '{')
+    await expect(files.deleteSession(parent.projectId, parent.id)).rejects.toThrow(
+      'unreadable discussion'
+    )
+    expect(await index.isDeleted(parent.projectId, parent.id)).toBe(false)
+    await writeFile(file(known.id), knownContents)
+    // The unrelated unreadable saves predate the delete intent and must not stall replay.
+    await files.reconcilePendingSessionProjection()
+    expect(await index.isDeleted(parent.projectId, parent.id)).toBe(true)
+    expect((await files.loadSession(parent.projectId, known.id))?.deletedDiscussionSourceId).toBe(
+      parent.id
+    )
+    expect((await index.pending()).map(({ sessionId }) => sessionId).sort()).toEqual([
+      parent.id,
+      'late',
+      'ordinary'
+    ])
+
+    // A post-commit retry must never delete a parent file restored while the intent was parked.
+    const restoredParent = JSON.stringify(createSessionFile(parent))
+    await writeFile(file(parent.id), restoredParent)
+    await files.reconcilePendingSessionProjection()
+    expect(await readFile(file(parent.id), 'utf8')).toBe(restoredParent)
+    await rm(file(parent.id))
+
+    const repaired = { ...late, parentSessionId: parent.id }
+    await writeFile(file(late.id), JSON.stringify(createSessionFile(repaired)))
+    await files.reconcilePendingSessionProjection()
+    const detached = await files.loadSession(parent.projectId, late.id)
+    expect(detached?.parentSessionId).toBeUndefined()
+    expect(detached?.deletedDiscussionSourceId).toBe(parent.id)
+    expect(detached?.messages).toEqual(late.messages)
+    expect((await index.pending()).map(({ sessionId }) => sessionId).sort()).toEqual([
+      parent.id,
+      'ordinary'
+    ])
+    await writeFile(file(ordinary.id), JSON.stringify(createSessionFile(ordinary)))
+    await files.reconcilePendingSessionProjection()
+    expect(
+      (await files.loadSession(parent.projectId, ordinary.id))?.deletedDiscussionSourceId
+    ).toBeUndefined()
+    expect(await index.pending()).toEqual([])
+  })
+
+  it('restores the discussion parent from Session JSON and from the cold startup index', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-discussion-parent-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const open = (): SessionRepository =>
+      new SessionRepository(storageRoot!, {}, new SessionProjectionRepository(async () => client!))
+    const initial = open()
+    await initial.ensureSessionProjection(() => initial.loadAll())
+    await initial.saveSession({ ...session('child'), parentSessionId: 'import-source' })
+    expect(
+      (await open().loadSessionSummaries()).find((row) => row.id === 'child')?.parentSessionId
+    ).toBe('import-source')
+    expect((await open().loadSession('project-1', 'child'))?.parentSessionId).toBe('import-source')
+  })
+
   it('does not replace Session authority when an invalid projection integer rejects the save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-save-validation-'))
     initDataRoot(storageRoot)

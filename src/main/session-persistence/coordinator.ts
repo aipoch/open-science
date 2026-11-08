@@ -480,6 +480,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
       },
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
+      notifyDiscussionDetached: (session) => publishSessionUpdate(session, 'runtime-context'),
       notifySessionsDeleted: (sessionIds) => this.notifySessionsDeleted(sessionIds)
     })
     this.reconciliationOwner = new SessionPersistenceReconciliationOwner({

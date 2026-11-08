@@ -6888,6 +6888,9 @@ describe('ACP runtime session management', () => {
       const oldPromptGate = createDeferred()
       const resumedPromptGate = createDeferred()
       const resumedPromptStarted = createDeferred()
+      // Durable resume performs real disk I/O between provider reattachment and continuation.
+      // Keep the production idle window for that handoff instead of the suite's 10 ms shortcut.
+      vi.mocked(globalThis.setTimeout).mockRestore()
       const oldAgent = startFakeAgent(oldProcess, ['durable-disconnect-session'], {
         supportsResume: true,
         onPrompt: () => oldPromptGate.promise

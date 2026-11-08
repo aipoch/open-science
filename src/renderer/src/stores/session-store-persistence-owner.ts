@@ -192,6 +192,12 @@ const projectSessionMetadataAuthority = (
   const projected = {
     ...current,
     revision: incomingRevision,
+    ...(incoming.deletedDiscussionSourceId
+      ? {
+          parentSessionId: undefined,
+          deletedDiscussionSourceId: incoming.deletedDiscussionSourceId
+        }
+      : {}),
     enabledComputeHosts: incoming.enabledComputeHosts && [...incoming.enabledComputeHosts],
     selectedComputeHosts: incoming.selectedComputeHosts && [...incoming.selectedComputeHosts],
     computeConcurrencyLimit: incoming.computeConcurrencyLimit
@@ -423,6 +429,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   number: summary.number,
   id: summary.id,
   projectId: summary.projectId,
+  ...(summary.parentSessionId ? { parentSessionId: summary.parentSessionId } : {}),
   title: summary.title,
   cwd: '',
   status: summary.presentedStatus,
