@@ -599,10 +599,11 @@ async function generate({
   const geometry = pages.map((expected, index) => {
     if (selectedPages && !selectedPages.has(index + 1)) return undefined
     pageNumber = index + 1
-    const page = p.FPDF_LoadPage(input.doc, index)
-    check(page)
     const box = e.alloc(16)
+    let page
     try {
+      page = p.FPDF_LoadPage(input.doc, index)
+      check(page)
       const rotation = p.FPDFPage_GetRotation(page)
       check([0, 1, 2, 3].includes(rotation))
       const pageLinks = links(page, index)
@@ -639,7 +640,7 @@ async function generate({
       throw error
     } finally {
       e.free(box)
-      p.FPDF_ClosePage(page)
+      if (page) p.FPDF_ClosePage(page)
     }
   })
   // PDFium's Form bounds include drawing outside the Form's mandatory BBox.
