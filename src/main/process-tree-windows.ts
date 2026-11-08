@@ -1,3 +1,4 @@
+/* c8 ignore file -- exercised by Windows-specific CI, not the portable coverage runner. */
 import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { closeSync, existsSync } from 'node:fs'
 import { Socket } from 'node:net'
