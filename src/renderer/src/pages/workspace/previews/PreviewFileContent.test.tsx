@@ -458,6 +458,10 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.exportResearchVideo).toHaveBeenCalledWith({
       resourceId: expect.any(String)
     })
+    expect(container.querySelector('[data-research-video-export-status]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-research-video-export-toolbar]')?.textContent
+    ).not.toContain('Exporting MP4…')
     await act(async () =>
       [...container.querySelectorAll('button')]
         .find((button) => button.textContent === 'Cancel')!
