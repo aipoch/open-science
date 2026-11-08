@@ -4,7 +4,6 @@ import { constants } from 'node:fs'
 import { z } from 'zod'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { ComputeJob } from '../../shared/compute'
-import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ComputeJobRepository, UpdateJobRequest } from './job-repository'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { decodeDataPath } from '../storage/data-path'
@@ -192,15 +191,7 @@ export function createModalJobRuntime(deps: Deps): {
       await markUncertain(job)
       return
     }
-    if (
-      job.harvested_at &&
-      (job.harvest_error ||
-        job.left_on_remote !== '[]' ||
-        !j.published ||
-        !hasImmutableExecutionFileEvidenceReference(job.file_evidence) ||
-        job.file_evidence.state === 'unavailable')
-    )
-      return
+    if (job.harvested_at && !repo.canCleanJournalResources(job, j)) return
     if (
       !j.sandbox &&
       (job.status === 'submitted' || job.status === 'running') &&

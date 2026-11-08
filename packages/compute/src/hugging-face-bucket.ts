@@ -13,6 +13,7 @@ export type HuggingFaceArchivedFile = Readonly<{
 }>
 type Inventory = Array<{ path: string; bytes: number; xetHash?: string }>
 type CleanupSnapshot = {
+  expectedInputs?: readonly Pick<HuggingFaceArchivedFile, 'path' | 'bytes' | 'sha256'>[]
   expectedOutputs?: readonly Omit<HuggingFaceArchivedFile, 'localPath'>[]
   discardedOutputs?: readonly { path: string; bytes: number; xetHash: string }[]
 }
@@ -88,12 +89,13 @@ export async function archiveHuggingFaceOutputs(
   }
 }
 
-/** Invoke only after durable publication or an explicit abandon decision. Retry against the same run. */
+/** Pre-launch cancellation verifies the frozen inputs. Completed jobs use publication receipts. */
 export function cleanupHuggingFaceBucketFiles(
   request: Connection & CleanupSnapshot
 ): Promise<void> {
   return runWorker(request, {
     kind: 'cleanup',
+    expectedInputs: request.expectedInputs,
     expectedOutputs: request.expectedOutputs,
     discardedOutputs: request.discardedOutputs
   })

@@ -11,6 +11,7 @@ import { createKubernetesBackendAdapter, type KubernetesWorkspace } from '@aipoc
 import {
   initialHostedJournal,
   readHostedJournal,
+  type HostedJobJournal,
   type HostedJobTarget
 } from './hugging-face-job-journal'
 import { initialRayJournal, type RayJobTarget } from './ray-job-journal'
@@ -18,6 +19,7 @@ import {
   initialModalJournal,
   MODAL_CREATION_UNCONFIRMED,
   readModalJournal,
+  type ModalJobJournal,
   type ModalJobTarget
 } from './modal-job-journal'
 import type {
@@ -926,6 +928,33 @@ export class ComputeJobRepository {
     return rows.map(this.toJob)
   }
 
+  canCleanJournalResources(job: ComputeJob, journal: HostedJobJournal | ModalJobJournal): boolean {
+    if (
+      !job.harvested_at ||
+      job.harvest_error ||
+      !['success', 'failed', 'timeout'].includes(job.status)
+    )
+      return false
+    if (journal.published) {
+      return (
+        job.left_on_remote === '[]' &&
+        hasImmutableExecutionFileEvidenceReference(job.file_evidence) &&
+        job.file_evidence.state !== 'unavailable'
+      )
+    }
+    // A fulfilled pre-launch cancellation has no execution results to publish.
+    return (
+      job.status === 'failed' &&
+      job.error_code === 'job_cancelled' &&
+      job.cancellation_status === 'cancelled' &&
+      job.started_at === undefined &&
+      (job.left_on_remote === undefined || job.left_on_remote === '[]') &&
+      ('nonce' in journal
+        ? !!journal.volume?.id && !journal.sandbox
+        : journal.staging === true && !journal.launch && !journal.discardedOutputs)
+    )
+  }
+
   confirmModalCleanup(job: ComputeJob): Promise<ComputeJob> {
     return this.confirmJournalCleanup(job, 'modal_sandbox')
   }
@@ -945,20 +974,18 @@ export class ComputeJobRepository {
         sessionId: job.session_id,
         executionMode: mode
       }
-      const row = await tx.computeJob.findFirstOrThrow({ where })
+      const row = await tx.computeJob.findFirstOrThrow({
+        where,
+        include: { operations: { where: { kind: 'cancel' } } }
+      })
       const current = this.toJob(row)
+      const journal =
+        mode === 'modal_sandbox' ? readModalJournal(current) : readHostedJournal(current)
       if (
         current.remote_handle !== job.remote_handle ||
-        !['success', 'failed', 'timeout'].includes(current.status) ||
-        !current.harvested_at ||
-        current.harvest_error ||
-        current.left_on_remote !== '[]' ||
-        !hasImmutableExecutionFileEvidenceReference(current.file_evidence) ||
-        current.file_evidence.state === 'unavailable' ||
-        !(mode === 'modal_sandbox' ? readModalJournal(current) : readHostedJournal(current))
-          .published
+        !this.canCleanJournalResources(current, journal)
       )
-        throw new Error('Files have not been durably published.')
+        throw new Error('Remote resource cleanup could not be confirmed.')
       await tx.computeJob.updateMany({
         where: { ...where, remoteHandle: row.remoteHandle, remoteCleanupDisposition: 'pending' },
         data: { remoteCleanupDisposition: 'cleaned', lastPollError: null }

@@ -292,7 +292,42 @@ export async function executeBucketTask(
   if (task.kind === 'cleanup') {
     const expected = new Map(task.expectedOutputs?.map((file) => [file.path, file]))
     const discarded = new Map(task.discardedOutputs?.map((file) => [file.path, file]))
-    const guarded = task.expectedOutputs !== undefined || task.discardedOutputs !== undefined
+    const stagedInputs = task.expectedInputs
+    const guarded =
+      stagedInputs !== undefined ||
+      task.expectedOutputs !== undefined ||
+      task.discardedOutputs !== undefined
+    async function verifyStagingMarker(prefix: string, file: Entry): Promise<void> {
+      check(file.bytes === 1, 'Bucket staging marker changed; cleanup stopped.')
+      const { blob } = await read(prefix + '/' + marker)
+      check(
+        blob.size === 1 && (await blob.text()) === '\n',
+        'Bucket staging marker changed; cleanup stopped.'
+      )
+    }
+    let verifiedInputs: Entry[] | undefined
+    if (stagedInputs) {
+      validateFiles(stagedInputs, Number.MAX_SAFE_INTEGER)
+      const manifest = new Map(stagedInputs.map((file) => [file.path, file]))
+      verifiedInputs = await inventory(inputs.prefix)
+      for (const file of verifiedInputs) {
+        if (file.path === marker) {
+          await verifyStagingMarker(inputs.prefix, file)
+          continue
+        }
+        const receipt = manifest.get(file.path)
+        check(
+          receipt && receipt.bytes === file.bytes,
+          'Unexpected or changed Bucket input; cleanup stopped.'
+        )
+        const { blob } = await read(inputs.prefix + '/' + file.path)
+        const actual = await transfer(blob, receipt.bytes)
+        check(
+          actual.bytes === receipt.bytes && actual.sha256 === receipt.sha256,
+          'Bucket input digest changed; cleanup stopped.'
+        )
+      }
+    }
     if (guarded) {
       validateFiles(
         [...(task.expectedOutputs ?? []), ...(task.discardedOutputs ?? [])],
@@ -306,10 +341,14 @@ export async function executeBucketTask(
     // Check outputs before deleting inputs. HF only offers unconditional path deletion:
     // the caller must own this prefix exclusively and have confirmed that execution stopped.
     for (const mount of [outputs, inputs]) {
-      const files = await inventory(mount.prefix)
+      const files =
+        mount === inputs && verifiedInputs ? verifiedInputs : await inventory(mount.prefix)
       if (mount === outputs && guarded) {
         for (const file of files) {
-          if (file.path === marker) continue
+          if (file.path === marker) {
+            if (stagedInputs) await verifyStagingMarker(outputs.prefix, file)
+            continue
+          }
           const skipped = discarded.get(file.path)
           if (skipped) {
             check(

@@ -157,6 +157,32 @@ describe('Hugging Face Bucket channel', () => {
       await expect(executeBucketTask(snapshot, wire)).rejects.toThrow('lost batch reply')
       await executeBucketTask(snapshot, wire)
       expect([...keys.keys()]).toEqual(['open-science/other/outputs/keep'])
+
+      const stagedCleanup = {
+        ...scope,
+        kind: 'cleanup' as const,
+        expectedOutputs: [],
+        expectedInputs: [
+          { path: 'dir/data.bin', bytes: content.length, sha256 },
+          { path: 'not-uploaded.bin', bytes: content.length, sha256 }
+        ]
+      }
+      keys.set(inputs + '/dir/data.bin', content)
+      keys.set(outputs + '/' + marker, Uint8Array.of(10))
+      keys.set(inputs + '/unowned', content)
+      await expect(executeBucketTask(stagedCleanup, wire)).rejects.toThrow(
+        'Unexpected or changed Bucket input'
+      )
+      keys.delete(inputs + '/unowned')
+      keys.set(inputs + '/dir/data.bin', new Uint8Array(content.length))
+      await expect(executeBucketTask(stagedCleanup, wire)).rejects.toThrow('input digest changed')
+      expect(keys.has(outputs + '/' + marker)).toBe(true)
+      keys.set(inputs + '/dir/data.bin', content)
+      keys.set(outputs + '/' + marker, Uint8Array.of(65))
+      await expect(executeBucketTask(stagedCleanup, wire)).rejects.toThrow('staging marker changed')
+      keys.set(outputs + '/' + marker, Uint8Array.of(10))
+      await executeBucketTask(stagedCleanup, wire)
+      expect([...keys.keys()]).toEqual(['open-science/other/outputs/keep'])
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

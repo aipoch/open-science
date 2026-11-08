@@ -11,7 +11,6 @@ import {
   cancelHuggingFaceJob,
   readHuggingFaceJobLogs
 } from '@aipoch/compute/node'
-import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ComputeJob } from '../../shared/compute'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { decodeDataPath } from '../storage/data-path'
@@ -139,15 +138,7 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
   const reconcile = async (job: ComputeJob, signal: AbortSignal): Promise<void> => {
     if (job.last_poll_error === approvalChangedMessage && job.status === 'submitted') return
     const journal = readHostedJournal(job)
-    if (
-      job.harvested_at &&
-      (job.harvest_error ||
-        job.left_on_remote !== '[]' ||
-        !journal.published ||
-        !hasImmutableExecutionFileEvidenceReference(job.file_evidence) ||
-        job.file_evidence.state === 'unavailable')
-    )
-      return
+    if (job.harvested_at && !repo.canCleanJournalResources(job, journal)) return
     const connection =
       !journal.launch && (job.status === 'submitted' || job.status === 'running')
         ? await approvedAccess(job, journal, signal)
@@ -229,7 +220,14 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
     await cleanupHuggingFaceBucketFiles({
       ...bucket,
       signal,
-      expectedOutputs: journal.published,
+      expectedOutputs: journal.published ?? [],
+      expectedInputs: journal.launch
+        ? undefined
+        : inputs.parse(JSON.parse(job.input_manifest ?? '[]')).map((file) => ({
+            path: file.dstFilename,
+            bytes: file.sizeBytes,
+            sha256: file.checksum
+          })),
       discardedOutputs: journal.discardedOutputs
     })
     await deps.onJobUpdated(await repo.confirmHostedCleanup(job))

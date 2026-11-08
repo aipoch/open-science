@@ -41,16 +41,21 @@ afterEach(() => {
 // Set COMPUTE_TEST_HF_DOCKER=1 to execute the submitted argv in the locally cached image.
 it(
   'recovers a submitted file job after losing the creation response and cleans up only after publication',
-  () => exerciseSubmission(false),
+  () => exerciseSubmission('completed'),
   60_000
 )
 it(
   'retains staged files after a quota rejection without looking for or creating another Job on restart',
-  () => exerciseSubmission(true),
+  () => exerciseSubmission('quota-rejected'),
   60_000
 )
 
-async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
+it('recovers a staged-only cancellation after cleanup fails and the app restarts', () =>
+  exerciseSubmission('cancel-during-staging'))
+
+async function exerciseSubmission(
+  scenario: 'completed' | 'quota-rejected' | 'cancel-during-staging'
+): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'hf-host-integration-'))
   vi.mocked(resolveConfigRoot).mockReturnValue(root)
   let client = createProjectDbClient(root)
@@ -130,7 +135,7 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
         ]
       })
       expect(await readFile(join(inputs, 'input.bin'))).toEqual(input)
-      if (quotaRejected) return new Response(null, { status: 402 })
+      if (scenario === 'quota-rejected') return new Response(null, { status: 402 })
       if (process.env.COMPUTE_TEST_HF_DOCKER === '1') {
         await promisify(execFile)(
           'docker',
@@ -244,6 +249,46 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
       outputManifest: JSON.stringify(['result.bin'])
     })
     await writeFile(join(workspace, 'input.bin'), 'changed after approval')
+    if (scenario === 'cancel-during-staging') {
+      const stage = vi.mocked(computePackage.stageHuggingFaceInputs)
+      const stageFiles = stage.getMockImplementation()!
+      stage.mockImplementationOnce(async (request) => {
+        const mounts = await stageFiles(request)
+        await agent.cancelJob(scope, target.providerId, job_id)
+        return mounts
+      })
+      const cleanup = vi.mocked(computePackage.cleanupHuggingFaceBucketFiles)
+      cleanup
+        .mockRejectedValueOnce(new Error('Temporary cleanup failure'))
+        .mockResolvedValue(undefined)
+      runtime.start()
+      for (let n = 0; n < 5 && !cleanup.mock.calls.length; n++) await runtime.tick()
+      expect(cleanup).toHaveBeenCalledTimes(1)
+      expect(await jobs.get(job_id)).toMatchObject({
+        cancellation_status: 'cancelled',
+        remote_cleanup_disposition: 'pending'
+      })
+      await runtime.stop()
+      await client.$disconnect()
+      client = createProjectDbClient(root)
+      runtime = makeRuntime()
+      runtime.start()
+      await runtime.tick()
+      expect(cleanup).toHaveBeenCalledTimes(2)
+      expect(cleanup).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          bucket: 'lab/private',
+          runId: job_id,
+          expectedOutputs: [],
+          expectedInputs: [{ path: 'input.bin', bytes: input.length, sha256 }]
+        })
+      )
+      expect((await jobs.get(job_id))?.remote_cleanup_disposition).toBe('cleaned')
+      expect(creates).toBe(0)
+      expect(lookups).toBe(0)
+      expect(listOutputs).not.toHaveBeenCalled()
+      return
+    }
     runtime.start()
     for (let n = 0; n < 4 && !creates; n++) await runtime.tick()
     expect(creates).toBe(1)
@@ -252,7 +297,7 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
     client = createProjectDbClient(root)
     runtime = makeRuntime()
     runtime.start()
-    if (quotaRejected) {
+    if (scenario === 'quota-rejected') {
       await runtime.tick()
       expect(await jobs.get(job_id)).toMatchObject({
         status: 'error',

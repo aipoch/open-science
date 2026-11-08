@@ -234,3 +234,86 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
     await rm(root, { recursive: true, force: true })
   }
 }, 30_000)
+
+it('retries owned-volume cleanup after a pre-launch cancellation and database restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'modal-cancel-'))
+  let client = createProjectDbClient(root)
+  const jobs = new ComputeJobRepository(async () => client)
+  const operations = new ComputeJobOperationRepository(async () => client)
+  const harvest = vi.fn()
+  const newRuntime = (): ReturnType<typeof createModalJobRuntime> =>
+    createModalJobRuntime({
+      jobRepository: jobs,
+      operationRepository: operations,
+      storageRoot: root,
+      onJobUpdated: () => undefined,
+      harvest
+    })
+  let runtime = newRuntime()
+  const scope = { providerId: 'modal:' + randomUUID(), projectId: 'project', sessionId: 'session' }
+  const target = {
+    environmentName: 'dev',
+    appName: 'research',
+    appId: 'ap-cancel',
+    image: 'ubuntu:24.04',
+    cpus: 1,
+    memoryMiB: 1024
+  }
+  const id = randomUUID()
+  vi.clearAllMocks()
+  vi.mocked(sdk.resolveModalApp).mockResolvedValue({ appId: target.appId })
+  vi.mocked(sdk.createModalVolume).mockResolvedValue({ volumeId: 'vo-cancel' })
+  const cleanup = vi.mocked(sdk.cleanupModalVolume)
+  cleanup.mockResolvedValue(undefined).mockRejectedValueOnce(new Error('Temporary cleanup failure'))
+  try {
+    await migrateApplicationDatabase(client)
+    await jobs.createApprovedModalJob(
+      {
+        ...scope,
+        id,
+        intent: 'cancel before launch',
+        command: 'true',
+        commandHash: digest(Buffer.from('true')),
+        shape: 'bridge_runner',
+        timeoutSeconds: 120,
+        allowUnencryptedPersistence: true
+      },
+      target
+    )
+    runtime.start()
+    await runtime.tick()
+    expect(sdk.createModalVolume).toHaveBeenCalledTimes(1)
+    await operations.request(id, 'cancel', scope, new Date())
+    await runtime.tick()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    await runtime.stop()
+    await client.$disconnect()
+    client = createProjectDbClient(root)
+    expect(await jobs.get(id)).toMatchObject({
+      status: 'failed',
+      error_code: 'job_cancelled',
+      harvested_at: expect.any(Number),
+      remote_cleanup_disposition: 'pending'
+    })
+    expect(await operations.get(id, 'cancel')).toMatchObject({
+      phase: 'settled',
+      outcome: 'fulfilled'
+    })
+    runtime = newRuntime()
+    runtime.start()
+    await runtime.tick()
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(cleanup.mock.calls.map(([ref]) => [ref.runId, ref.appId, ref.volumeId])).toEqual([
+      [id, target.appId, 'vo-cancel'],
+      [id, target.appId, 'vo-cancel']
+    ])
+    expect((await jobs.get(id))?.remote_cleanup_disposition).toBe('cleaned')
+    expect(harvest).not.toHaveBeenCalled()
+    expect(sdk.createModalSandbox).not.toHaveBeenCalled()
+  } finally {
+    await runtime.stop()
+    await client.$disconnect()
+    await releaseLocks()
+    await rm(root, { recursive: true, force: true })
+  }
+})
