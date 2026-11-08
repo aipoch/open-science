@@ -352,6 +352,39 @@ describe('research replay interaction', () => {
     )
   })
 
+  it('keeps the header step indicator in sync with replay navigation', () => {
+    const props = callbacks()
+    render(<ReplayPanel document={makeDocument()} {...props} />)
+
+    const indicator = screen.getByTestId('replay-current-step')
+    expect(indicator.textContent).toBe('Step 1 of 3')
+    expect(indicator.getAttribute('title')).toBe('Initial observation')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
+
+    expect(indicator.textContent).toBe('Step 2 of 3')
+    expect(indicator.getAttribute('title')).toBe('Interpret saved evidence')
+  })
+
+  it('offers the current step as a contextual question after seeking or pausing', () => {
+    const props = callbacks()
+    render(<ReplayPanel document={makeDocument()} {...props} />)
+
+    expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
+    expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
+    fireEvent.click(within(screen.getByTestId('replay-ask-step-prompt')).getByRole('button'))
+    expect(props.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'two' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }))
+    expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+  })
+
   it('browses only the selected branch, pauses, and returns focus after a direct step jump', async () => {
     const props = callbacks()
     render(<ReplayPanel document={makeDocument()} {...props} />)

@@ -46,6 +46,7 @@ import { createReplayPresentation } from './replay-presentation'
 import { ReplayStage } from './ReplayStage'
 import { ReplayControls } from './ReplayControls'
 import { ReplaySourceDetails } from './ReplaySourceDetails'
+import { replayStepExcerpt } from './replay-navigation'
 import {
   captureDiscussionStep,
   captureDiscussionSession,
@@ -157,6 +158,7 @@ const ReplayPanelContent = ({
   const [positionMs, setPositionMs] = useState(initial.positionMs)
   const [speed, setSpeed] = useState<ReplaySpeed>(initial.speed)
   const [playing, setPlaying] = useState(false)
+  const [showAskPrompt, setShowAskPrompt] = useState(false)
   const [ready, setReady] = useState(false)
   const [wide, setWide] = useState(false)
   const [materialsOverride, setMaterialsOverride] = useState<boolean>()
@@ -196,6 +198,7 @@ const ReplayPanelContent = ({
     [replayDocument, branchId, positionMs]
   )
   const branch = replayDocument.branches.find((item) => item.id === scene.branchId)
+  const currentStepLabel = scene.step ? replayStepExcerpt(scene.step) : undefined
   const materialCatalog = useMemo(() => {
     const steps = branch?.steps.slice(0, scene.stepIndex + 1) ?? []
     const runs = new Map<string, ReplayRunIndex>()
@@ -440,6 +443,7 @@ const ReplayPanelContent = ({
   const seek = useCallback(
     (position: number) => {
       setPlaying(false)
+      setShowAskPrompt(true)
       setSelectedResourceId(undefined)
       setPositionMs(position)
       setConversationFocusRequest((request) => request + 1)
@@ -480,6 +484,7 @@ const ReplayPanelContent = ({
   }, [replayDocument, seek])
 
   const ask = (): void => {
+    setShowAskPrompt(false)
     pause()
     if (scene.step) onAskStep?.(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
@@ -497,7 +502,9 @@ const ReplayPanelContent = ({
     setNotebookLimit(undefined)
     setFilePage(0)
     if (scene.ended) setPositionMs(0)
-    setPlaying((value) => !value)
+    const nextPlaying = !playing
+    setPlaying(nextPlaying)
+    setShowAskPrompt(!nextPlaying)
   }
 
   const renderMaterialPagination = (
@@ -538,7 +545,7 @@ const ReplayPanelContent = ({
   return (
     <div
       ref={panel}
-      className="flex h-full min-h-0 min-w-0 flex-col bg-bg-10"
+      className="relative flex h-full min-h-0 min-w-0 flex-col bg-bg-10"
       data-testid="replay-panel"
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return
@@ -580,7 +587,20 @@ const ReplayPanelContent = ({
                   title: replayDocument.source.title
                 })}
               >
-                <span className="truncate">{replayDocument.source.title}</span>
+                <span className="min-w-0 truncate">{replayDocument.source.title}</span>
+                {scene.step && branch ? (
+                  <span
+                    aria-live="polite"
+                    className="shrink-0 border-s border-border-200 ps-1.5 text-xs font-normal text-muted-foreground"
+                    data-testid="replay-current-step"
+                    title={currentStepLabel}
+                  >
+                    {t('Step {{current}} of {{total}}', {
+                      current: scene.stepIndex + 1,
+                      total: branch.steps.length
+                    })}
+                  </span>
+                ) : null}
                 <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
               </Button>
             </PopoverTrigger>
@@ -950,30 +970,49 @@ const ReplayPanelContent = ({
           ) : null}
         </div>
       ) : null}
-      <ReplayControls
-        key={scene.branchId}
-        playing={playing}
-        ready={ready}
-        positionMs={scene.positionMs}
-        durationMs={scene.durationMs}
-        stepIndex={scene.stepIndex}
-        steps={branch?.steps ?? EMPTY_STEPS}
-        resources={replayDocument.resources}
-        onPause={pause}
-        onOpenEvidence={(step) => onOpenEvidence(undefined, step)}
-        speed={speed}
-        onToggle={toggle}
-        onPrevious={() => seek(branch?.steps[Math.max(0, scene.stepIndex - 1)]?.startMs ?? 0)}
-        onNext={() =>
-          seek(
-            branch?.steps[Math.min((branch?.steps.length ?? 1) - 1, scene.stepIndex + 1)]
-              ?.startMs ?? 0
-          )
-        }
-        onSeek={seek}
-        onSpeed={setSpeed}
-        onAsk={onAskStep ? ask : undefined}
-      />
+      <div className="relative shrink-0">
+        {onAskStep && showAskPrompt && !playing && scene.step ? (
+          <div
+            className="pointer-events-none absolute inset-x-3 bottom-[calc(100%+0.5rem)] z-20 flex justify-end"
+            data-testid="replay-ask-step-prompt"
+          >
+            <Button
+              variant="secondary"
+              type="button"
+              className="pointer-events-auto h-9 gap-2 rounded-full px-3 text-xs shadow-menu ring-1 ring-border-200"
+              onClick={ask}
+              aria-label={t('Ask about this step')}
+            >
+              <MessageSquare size={14} aria-hidden="true" />
+              {t('Ask about this step')}
+            </Button>
+          </div>
+        ) : null}
+        <ReplayControls
+          key={scene.branchId}
+          playing={playing}
+          ready={ready}
+          positionMs={scene.positionMs}
+          durationMs={scene.durationMs}
+          stepIndex={scene.stepIndex}
+          steps={branch?.steps ?? EMPTY_STEPS}
+          resources={replayDocument.resources}
+          onPause={pause}
+          onOpenEvidence={(step) => onOpenEvidence(undefined, step)}
+          speed={speed}
+          onToggle={toggle}
+          onPrevious={() => seek(branch?.steps[Math.max(0, scene.stepIndex - 1)]?.startMs ?? 0)}
+          onNext={() =>
+            seek(
+              branch?.steps[Math.min((branch?.steps.length ?? 1) - 1, scene.stepIndex + 1)]
+                ?.startMs ?? 0
+            )
+          }
+          onSeek={seek}
+          onSpeed={setSpeed}
+          onAsk={onAskStep && !(showAskPrompt && !playing) ? ask : undefined}
+        />
+      </div>
     </div>
   )
 }
