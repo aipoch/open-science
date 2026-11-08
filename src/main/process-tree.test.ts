@@ -105,6 +105,27 @@ describe('terminateProcessTree (win32)', () => {
     expect(child.kill).not.toHaveBeenCalled()
   })
 
+  it('resolves taskkill beside ComSpec when the Windows root variables are unavailable', async () => {
+    setPlatform('win32')
+    vi.stubEnv('SystemRoot', '')
+    vi.stubEnv('WINDIR', '')
+    vi.stubEnv('ComSpec', 'C:\\Windows\\System32\\cmd.exe')
+    const killer = new EventEmitter()
+    spawnMock.mockReturnValueOnce(killer)
+    const child = new FakeChild(4321)
+
+    const pending = terminateProcessTree(child as never)
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\taskkill.exe',
+      ['/pid', '4321', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true })
+    )
+
+    killer.emit('exit', 0, null)
+    await expect(pending).resolves.toEqual({ reaped: true })
+  })
+
   it('does not fall back spuriously after a clean taskkill even once the grace elapses', async () => {
     // Regression: the grace timer must be cleared on the success path, or it fires later and produces a
     // false timeout log plus a stray direct kill while the app keeps running.
