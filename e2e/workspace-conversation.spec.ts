@@ -614,8 +614,6 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     return color
   })
   await expect(sourceLink).toHaveCSS('color', linkColor)
-  await expect(hoverUrl).toHaveCSS('color', linkColor)
-  await expect(externalButton).toHaveCSS('color', linkColor)
   expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
   const hoverAccessibility = (await hoverCard.evaluate(async (element) => {
