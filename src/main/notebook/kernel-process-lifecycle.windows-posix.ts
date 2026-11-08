@@ -248,7 +248,12 @@ const terminateWindowsPid = async (
   if (proof && (await requestWindowsProcessTreeReap(proof))) return { reaped: true }
   await capture('taskkill.exe', ['/pid', String(pid), '/T', '/F'])
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (!pidIsAlive(pid)) return { reaped: true }
+    if (!pidIsAlive(pid)) {
+      // A proof-backed receipt remains unresolved until the supervisor publishes terminal
+      // evidence. The taskkill fallback only proves that the recorded host exited, not that
+      // descendants were reaped.
+      return { reaped: proof ? proofFileConfirmsWindowsProcessTreeReaped(proof) : true }
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, 50))
   }
   return { reaped: false }
