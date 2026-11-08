@@ -177,10 +177,10 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
       }
     }
   )
-  vi.mocked(computePackage.listHuggingFaceJobOutputs).mockResolvedValue([
-    { path: 'result.bin', bytes: input.length },
-    { path: 'scratch.bin', bytes: 3, xetHash: 'd'.repeat(64) }
-  ])
+  const resultFile = { path: 'result.bin', bytes: input.length }
+  const scratchFile = { path: 'scratch.bin', bytes: 3 }
+  const listOutputs = vi.mocked(computePackage.listHuggingFaceJobOutputs)
+  listOutputs.mockResolvedValue([resultFile, scratchFile])
   vi.mocked(computePackage.archiveHuggingFaceOutputs).mockImplementation(
     async ({ stagingDirectory, files }) => {
       expect(files.map((f) => f.path)).toEqual(['result.bin'])
@@ -275,6 +275,14 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
       await jobs.deleteByOwner({ projectId: scope.projectId })
       return
     }
+    for (let n = 0; n < 5 && !listOutputs.mock.calls.length; n++) await runtime.tick()
+    const pending = await jobs.get(job_id)
+    expect(pending?.harvest_error).toBe(
+      'harvest pending: HF Bucket did not supply an object hash for an unplanned output.'
+    )
+    expect(pending?.harvested_at).toBeUndefined()
+    expect(computePackage.cleanupHuggingFaceBucketFiles).not.toHaveBeenCalled()
+    listOutputs.mockResolvedValue([resultFile, { ...scratchFile, xetHash: 'd'.repeat(64) }])
     vi.mocked(computePackage.cleanupHuggingFaceBucketFiles).mockRejectedValueOnce(
       new Error('Temporary cleanup failure')
     )

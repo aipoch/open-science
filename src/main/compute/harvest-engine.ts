@@ -818,10 +818,16 @@ const harvestJobUnchecked = async (
         ...classification.featured.map((path) => [path, featuredDir] as const),
         ...classification.hidden.map((path) => [path, hiddenDir] as const)
       ])
-      const retained = new Set(classification.left_on_remote.map((f) => f.path))
-      for (const file of remoteFiles) {
-        if (file.xetHash && !plan.has(file.path) && !retained.has(file.path))
+      if (deps.hostedOutputs) {
+        const retained = new Set(classification.left_on_remote.map((f) => f.path))
+        for (const file of remoteFiles) {
+          if (plan.has(file.path) || retained.has(file.path)) continue
+          if (!file.xetHash)
+            throw new RetryableHarvestError(
+              'HF Bucket did not supply an object hash for an unplanned output.'
+            )
           discarded.push({ path: file.path, bytes: file.size_bytes, xetHash: file.xetHash })
+        }
       }
       if (plan.size) {
         const stagingDirectory = join(attemptDir, '.volume-staging')
