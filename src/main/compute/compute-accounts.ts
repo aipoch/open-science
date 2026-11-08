@@ -15,7 +15,7 @@ import {
   decodeComputeAccountDocument,
   type ComputeAccountDocument as RecordData
 } from '../credential-identity/compute-account-document'
-import { OptionalSecureStorageStringProtection } from './credential-vault'
+import { OptionalSecureStorageStringProtection } from '../secure-storage'
 import {
   AccountAuthError,
   type AccountMaterial,

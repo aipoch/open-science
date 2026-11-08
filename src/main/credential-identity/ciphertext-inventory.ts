@@ -1,3 +1,4 @@
+import { PROTECTED_STRING_PREFIX } from './protected-string-format'
 import {
   decodeRayTokenDocument,
   rayTokenFileName,
@@ -17,7 +18,6 @@ import {
   type InventoryDiagnostic
 } from './diagnostic'
 
-const PROTECTED_PREFIX = 'open-science:protected:v1:'
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 // Read the original documents directly: the normal durable store may promote crash-recovery temps
@@ -48,12 +48,12 @@ export const readCredentialCiphertexts = (options: {
   const collectDocument = (contents: string, name: string): void => {
     if (name === rayTokenFileName) {
       for (const { sealed } of decodeRayTokenDocument(contents).entries)
-        collectRef(sealed, PROTECTED_PREFIX)
+        collectRef(sealed, PROTECTED_STRING_PREFIX)
       return
     }
     if (name !== 'settings.json' && name !== 'credentials.json') {
       const account = decodeComputeAccountDocument(contents)
-      if (account.source === 'managed') collectRef(account.sealed, PROTECTED_PREFIX)
+      if (account.source === 'managed') collectRef(account.sealed, PROTECTED_STRING_PREFIX)
       return
     }
     const value: unknown =
@@ -100,7 +100,7 @@ export const readCredentialCiphertexts = (options: {
       'lastPollError',
       'harvestError'
     ])
-      collectRef(row[field], PROTECTED_PREFIX)
+      collectRef(row[field], PROTECTED_STRING_PREFIX)
     for (const field of [
       'resourceRequest',
       'inputManifest',
@@ -114,11 +114,11 @@ export const readCredentialCiphertexts = (options: {
       const container: unknown = JSON.parse(value)
       if (Array.isArray(container)) {
         if (container.length === 2 && container[0] === 'open-science:protected-json:v1')
-          collectRef(container[1], PROTECTED_PREFIX)
+          collectRef(container[1], PROTECTED_STRING_PREFIX)
       } else {
         const object = record(container)
         if (Object.keys(object).length === 1)
-          collectRef(object['open-science:protected-json:v1'], PROTECTED_PREFIX)
+          collectRef(object['open-science:protected-json:v1'], PROTECTED_STRING_PREFIX)
       }
     }
   }

@@ -1,6 +1,6 @@
 import { DurableJsonRecoveryBarrierError } from '@aipoch/durable-files'
 import { z } from 'zod'
-import { PROTECTED_STRING_PREFIX } from '../secure-storage'
+import { PROTECTED_STRING_PREFIX } from './protected-string-format'
 
 export const rayTokenFileName = 'compute-ray-tokens.json'
 export const rayTokenDocumentMaxBytes = 4 * 1024 * 1024

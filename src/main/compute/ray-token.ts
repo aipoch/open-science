@@ -15,7 +15,7 @@ import {
 } from '../credential-identity/runtime'
 import { resolveConfigRoot } from '../storage-root'
 import { isRecord } from '../value-guards'
-import { OptionalSecureStorageStringProtection } from './credential-vault'
+import { OptionalSecureStorageStringProtection } from '../secure-storage'
 
 function canonicalEndpoint(endpoint: string): string {
   if (

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { ComputeAccountProvider } from '../../shared/compute-accounts'
-import { PROTECTED_STRING_PREFIX } from '../secure-storage'
+import { PROTECTED_STRING_PREFIX } from './protected-string-format'
 
 export const computeAccountFileNames = {
   'hugging-face': 'compute-hugging-face-account.json',

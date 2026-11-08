@@ -4,94 +4,19 @@ import { platform } from 'node:os'
 import { ComputeConnectionError } from '@aipoch/compute/node'
 import type { ComputePasswordCapability } from '../../shared/compute'
 import type { SecureStorageCipher } from '../credential-identity/cipher-contract'
-import {
-  isSecureStorageAvailable,
-  protectedSafeStorage as safeStorage,
-  PROTECTED_STRING_PREFIX,
-  revealProtectedString
-} from '../secure-storage'
+import { isSecureStorageAvailable, protectedSafeStorage as safeStorage } from '../secure-storage'
 
 const MAX_PASSWORD_BYTES = 16 * 1024
-const PROTECTED_JSON_MARKER = 'open-science:protected-json:v1'
 
 type StoredComputeCredential = Readonly<{ ciphertext: Buffer; revision?: number }>
 interface ComputeCredentialReader {
   getCredential(computeHostId: string): Promise<StoredComputeCredential | null>
 }
 export type ComputeCredentialCipher = SecureStorageCipher
-export type ProtectedJsonContainer = 'object' | 'array'
-
-export class OptionalSecureStorageStringProtection {
-  private failed = false
-
-  constructor(
-    private readonly cipher: SecureStorageCipher = safeStorage,
-    private readonly currentPlatform: NodeJS.Platform = platform()
-  ) {}
-
-  isAvailable(): boolean {
-    return !this.failed && isSecureStorageAvailable(this.cipher, this.currentPlatform)
-  }
-
-  protect(value: string): string {
-    if (!this.isAvailable()) throw new Error('Compute Job data protection became unavailable.')
-    try {
-      return `${PROTECTED_STRING_PREFIX}${this.cipher.encryptString(value).toString('base64')}`
-    } catch {
-      this.failed = true
-      throw new Error('Compute Job data protection became unavailable.')
-    }
-  }
-
-  protectJson(value: string, container: ProtectedJsonContainer): string {
-    const parsed: unknown = JSON.parse(value)
-    const hasExpectedContainer =
-      container === 'array'
-        ? Array.isArray(parsed)
-        : typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-    if (!hasExpectedContainer) throw new Error(`Expected a JSON ${container}.`)
-
-    const protectedValue = this.protect(value)
-    return JSON.stringify(
-      container === 'object'
-        ? { [PROTECTED_JSON_MARKER]: protectedValue }
-        : [PROTECTED_JSON_MARKER, protectedValue]
-    )
-  }
-
-  reveal(value: string): string {
-    return revealProtectedString(value, this.cipher)
-  }
-
-  revealJson(value: string, container: ProtectedJsonContainer): string {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(value)
-    } catch {
-      return value
-    }
-
-    if (container === 'object') {
-      if (
-        typeof parsed !== 'object' ||
-        parsed === null ||
-        Array.isArray(parsed) ||
-        Object.keys(parsed).length !== 1
-      ) {
-        return value
-      }
-      const protectedValue = (parsed as Record<string, unknown>)[PROTECTED_JSON_MARKER]
-      return typeof protectedValue === 'string' ? this.reveal(protectedValue) : value
-    }
-
-    return Array.isArray(parsed) &&
-      parsed.length === 2 &&
-      parsed[0] === PROTECTED_JSON_MARKER &&
-      typeof parsed[1] === 'string'
-      ? this.reveal(parsed[1])
-      : value
-  }
-}
+export {
+  OptionalSecureStorageStringProtection,
+  type ProtectedJsonContainer
+} from '../secure-storage'
 
 interface CredentialPasswordLease {
   withPassword<Result>(operation: (password: string) => Promise<Result>): Promise<Result>

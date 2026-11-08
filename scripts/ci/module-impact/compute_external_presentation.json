@@ -7,19 +7,13 @@
     "src/renderer/src/components/ComputeJobOutputs.tsx",
     "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
     "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
-    "src/renderer/src/pages/settings/ComputeTargetGroup.tsx",
-    "src/renderer/src/pages/settings/HostedTargets.tsx",
-    "src/renderer/src/pages/settings/KubernetesTargets.tsx",
-    "src/renderer/src/pages/settings/ModalTargets.tsx",
     "src/renderer/src/pages/settings/RayCredentials.tsx",
-    "src/renderer/src/pages/settings/RayTargets.tsx",
     "src/renderer/src/pages/settings/use-compute-account.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ComputeJobOutputs.tsx",
     "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
     "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
-    "src/renderer/src/pages/settings/ComputeTargetGroup.tsx",
     "src/renderer/src/pages/settings/RayCredentials.tsx"
   ],
   "consumerModules": ["workspace_job_presentation", "settings_credentials_presentation"],
