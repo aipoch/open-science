@@ -264,6 +264,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "jsdom": "^29.1.1",
     "jszip": "3.10.2",
+    "ipaddr.js": "1.9.1",
     "lucide-react": "^1.23.0",
     "mermaid": "11.17.2",
     "motion": "^12.42.2",
