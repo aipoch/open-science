@@ -87,6 +87,76 @@ const LocalModelsPanel = (): React.JSX.Element => {
       : error
         ? t('Download failed')
         : t('Not installed')
+  const actionControls = snapshot ? (
+    <div className="col-start-2 row-start-1 ml-auto flex shrink-0 items-center gap-3">
+      <span className="text-xs text-muted-foreground">
+        {size(snapshot.installedRevision ? snapshot.installedBytes : snapshot.downloadBytes)}
+      </span>
+      <div className="flex items-center gap-2">
+        {installing ? (
+          <Button size="sm" variant="outline" disabled={pending} onClick={() => void run('cancel')}>
+            {t('Cancel download')}
+          </Button>
+        ) : (
+          <>
+            {snapshot.hasFiles ? (
+              <AlertDialog.Root>
+                <AlertDialog.Trigger asChild>
+                  <Button size="sm" variant="outline" disabled={pending || snapshot.inUse}>
+                    <Trash2 className="size-3.5" aria-hidden="true" />
+                    {t('Uninstall')}
+                  </Button>
+                </AlertDialog.Trigger>
+                <AlertDialog.Portal>
+                  <AlertDialog.Overlay className={dialogOverlayClassName} />
+                  <AlertDialog.Content
+                    className={dialogPanelClassName('w-[calc(100%-2rem)] max-w-lg p-0')}
+                  >
+                    <div className={dialogHeaderClassName}>
+                      <div>
+                        <AlertDialog.Title className={dialogTitleClassName}>
+                          {t('Remove local model files?')}
+                        </AlertDialog.Title>
+                        <AlertDialog.Description className={dialogDescriptionClassName}>
+                          {t(
+                            'Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.'
+                          )}
+                        </AlertDialog.Description>
+                      </div>
+                    </div>
+                    <div className={dialogFooterClassName}>
+                      <AlertDialog.Cancel asChild>
+                        <Button variant="ghost">{t('Cancel')}</Button>
+                      </AlertDialog.Cancel>
+                      <AlertDialog.Action asChild>
+                        <Button
+                          variant="destructive"
+                          disabled={pending || snapshot.inUse}
+                          onClick={() => void run('remove')}
+                        >
+                          {t('Remove')}
+                        </Button>
+                      </AlertDialog.Action>
+                    </div>
+                  </AlertDialog.Content>
+                </AlertDialog.Portal>
+              </AlertDialog.Root>
+            ) : null}
+            {!snapshot.installedRevision || snapshot.updateAvailable || error ? (
+              <Button
+                size="sm"
+                disabled={pending || error === 'incompatible' || requestFailed}
+                onClick={() => void run('install')}
+              >
+                <Download className="size-4" aria-hidden="true" />
+                {error ? t('Retry') : snapshot.updateAvailable ? t('Update') : t('Install')}
+              </Button>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  ) : null
   return (
     <div className="space-y-4 p-5">
       <SettingsSection title={t('Local capabilities')} contentClassName="space-y-3">
@@ -105,8 +175,8 @@ const LocalModelsPanel = (): React.JSX.Element => {
           </p>
         ) : (
           <div data-slot="local-model-card" className="rounded-xl border border-border bg-card p-4">
-            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3">
+              <div className="flex min-w-0 items-start gap-3">
                 <Table2 className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -120,139 +190,57 @@ const LocalModelsPanel = (): React.JSX.Element => {
                   </div>
                 </div>
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-3">
-                <span className="text-xs text-muted-foreground">
-                  {size(
-                    snapshot.installedRevision ? snapshot.installedBytes : snapshot.downloadBytes
-                  )}
-                </span>
-                <div className="flex items-center gap-2">
-                  {installing ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={pending}
-                      onClick={() => void run('cancel')}
-                    >
-                      {t('Cancel download')}
-                    </Button>
-                  ) : (
-                    <>
-                      {snapshot.hasFiles ? (
-                        <AlertDialog.Root>
-                          <AlertDialog.Trigger asChild>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={pending || snapshot.inUse}
-                            >
-                              <Trash2 className="size-3.5" aria-hidden="true" />
-                              {t('Uninstall')}
-                            </Button>
-                          </AlertDialog.Trigger>
-                          <AlertDialog.Portal>
-                            <AlertDialog.Overlay className={dialogOverlayClassName} />
-                            <AlertDialog.Content
-                              className={dialogPanelClassName('w-[calc(100%-2rem)] max-w-lg p-0')}
-                            >
-                              <div className={dialogHeaderClassName}>
-                                <div>
-                                  <AlertDialog.Title className={dialogTitleClassName}>
-                                    {t('Remove local model files?')}
-                                  </AlertDialog.Title>
-                                  <AlertDialog.Description className={dialogDescriptionClassName}>
-                                    {t(
-                                      'Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.'
-                                    )}
-                                  </AlertDialog.Description>
-                                </div>
-                              </div>
-                              <div className={dialogFooterClassName}>
-                                <AlertDialog.Cancel asChild>
-                                  <Button variant="ghost">{t('Cancel')}</Button>
-                                </AlertDialog.Cancel>
-                                <AlertDialog.Action asChild>
-                                  <Button
-                                    variant="destructive"
-                                    disabled={pending || snapshot.inUse}
-                                    onClick={() => void run('remove')}
-                                  >
-                                    {t('Remove')}
-                                  </Button>
-                                </AlertDialog.Action>
-                              </div>
-                            </AlertDialog.Content>
-                          </AlertDialog.Portal>
-                        </AlertDialog.Root>
-                      ) : null}
-                      {!snapshot.installedRevision || snapshot.updateAvailable || error ? (
-                        <Button
-                          size="sm"
-                          disabled={pending || error === 'incompatible' || requestFailed}
-                          onClick={() => void run('install')}
-                        >
-                          <Download className="size-4" aria-hidden="true" />
-                          {error
-                            ? t('Retry')
-                            : snapshot.updateAvailable
-                              ? t('Update')
-                              : t('Install')}
-                        </Button>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 space-y-2 border-t border-border pt-3">
-              <p className="text-[13px] text-muted-foreground">
-                {t('Find candidate figures, captions and copyable tables in Literature PDFs.')}
-              </p>
-              <dl className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <dt className="text-muted-foreground">{t('Model source')}</dt>
-                  <dd>
-                    <ExternalTextLink href="https://github.com/microsoft/table-transformer">
-                      {'microsoft/table-transformer'}
-                    </ExternalTextLink>
-                  </dd>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <dt className="text-muted-foreground">
-                    {snapshot.installedRevision ? t('Installed version') : t('Version')}
-                  </dt>
-                  <dd className="break-all">
-                    {snapshot.installedRevision ?? snapshot.recommendedRevision}
-                  </dd>
-                </div>
-                {snapshot.installedRevision && snapshot.updateAvailable ? (
-                  <>
-                    <div className="flex items-center gap-1.5">
-                      <dt className="text-muted-foreground">{t('New version')}</dt>
-                      <dd className="break-all">{snapshot.recommendedRevision}</dd>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <dt className="text-muted-foreground">{t('Download size')}</dt>
-                      <dd>{size(snapshot.downloadBytes)}</dd>
-                    </div>
-                  </>
-                ) : null}
-              </dl>
-              {installing ? (
-                <div className="space-y-2">
-                  <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
-                  {snapshot.installedRevision ? (
-                    <p className="text-xs text-muted-foreground">
-                      {t('The installed version remains available while the update downloads.')}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {snapshot.inUse ? (
-                <p role="status" className="text-xs text-muted-foreground">
-                  {t('Model in use. Removal is available when parsing finishes.')}
+              <div className="col-span-2 row-start-2 mt-4 space-y-2 border-t border-border pt-3">
+                <p className="text-[13px] text-muted-foreground">
+                  {t('Find candidate figures, captions and copyable tables in Literature PDFs.')}
                 </p>
-              ) : null}
+                <dl className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <dt className="text-muted-foreground">{t('Model source')}</dt>
+                    <dd>
+                      <ExternalTextLink href="https://github.com/microsoft/table-transformer">
+                        {'microsoft/table-transformer'}
+                      </ExternalTextLink>
+                    </dd>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <dt className="text-muted-foreground">
+                      {snapshot.installedRevision ? t('Installed version') : t('Version')}
+                    </dt>
+                    <dd className="break-all">
+                      {snapshot.installedRevision ?? snapshot.recommendedRevision}
+                    </dd>
+                  </div>
+                  {snapshot.installedRevision && snapshot.updateAvailable ? (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <dt className="text-muted-foreground">{t('New version')}</dt>
+                        <dd className="break-all">{snapshot.recommendedRevision}</dd>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <dt className="text-muted-foreground">{t('Download size')}</dt>
+                        <dd>{size(snapshot.downloadBytes)}</dd>
+                      </div>
+                    </>
+                  ) : null}
+                </dl>
+                {installing ? (
+                  <div className="space-y-2">
+                    <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
+                    {snapshot.installedRevision ? (
+                      <p className="text-xs text-muted-foreground">
+                        {t('The installed version remains available while the update downloads.')}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {snapshot.inUse ? (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    {t('Model in use. Removal is available when parsing finishes.')}
+                  </p>
+                ) : null}
+              </div>
+              {actionControls}
             </div>
           </div>
         )}
