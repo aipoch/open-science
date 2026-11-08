@@ -47,19 +47,18 @@
 
 When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
 
-### 💡 AIPOCH Open-Science v1.1.0 updates
+### 💡 AIPOCH Open-Science v1.2.0 updates
 
-_November 6, 2026_
+_November 8, 2026_
 
-- **Research films**: Export completed sessions as portable narrated films with terminal playback. Voice narration requires a locally installed voice model.
-- **Mobile pairing**: Scan a QR code to open the current workspace on a phone or tablet over local WiFi or a Pinggy tunnel; internet traffic passes through Pinggy’s servers.
-- **Literature in CLI and MCP**: Search and manage references from the command line and MCP clients, with read-only browsing plus write tools.
-- **Resumable overviews**: Batch paper overviews resume after interruptions without regenerating completed results.
-- **Resource center**: A renamed resource center with an adapted case library layout, more compact external links, and compute settings under connections.
-- **Diagnostics**: Exports preserve Notebook execution evidence, allow selecting historical backend logs, and can include opt-in resource recordings (Windows).
-- **Reliability fixes**: Recover conversations after interruptions, restore PDF figures and tables from searchable scans, and improve startup, Windows update checks, and memory use.
+- **Remote compute**: Run approved jobs on Kubernetes, Hugging Face Jobs, Modal, or Ray alongside SSH and Slurm, with per-job approval and recovery after restarts.
+- **Built-in agent**: A standalone built-in agent runtime is now the default for new setups, with Claude Code, OpenCode, Codex, CodeBuddy, and Pi still available.
+- **Faster macOS updates**: Differential downloads fetch only changed blocks of the app image, with full-download fallback.
+- **Step discussions**: Ask from an imported `.science` package or a replay step to open a child conversation linked to that step.
+- **Workspace polish**: Sidebar groups are reordered with one recents list, imported history promotes "fork to continue", and sending from an earlier turn keeps your reading position.
+- **Reliability fixes**: Update checks verify the running app and name blocking files, Windows clamps the window to the taskbar area, and PDF translation keeps healthy pages when one page fails.
 
-[View the full v1.1.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
+[View the full v1.2.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />

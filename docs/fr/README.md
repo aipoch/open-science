@@ -49,19 +49,18 @@
 
 Pour comprendre comment un résultat a été obtenu, consultez les données d’entrée, le code et l’historique d’exécution disponibles. Pour partager votre travail, choisissez les branches de conversation, les versions de fichiers, les enregistrements du Notebook et les éléments de vérification à inclure dans un paquet `.science`, puis exportez-le.
 
-### 💡 AIPOCH Open-Science v1.1.0 — Nouveautés
+### 💡 AIPOCH Open-Science v1.2.0 — Nouveautés
 
-_6 novembre 2026_
+_8 novembre 2026_
 
-- **Films de recherche**: Exportez les sessions terminées en films portables avec relecture du terminal et narration. La narration nécessite un modèle vocal installé localement.
-- **Appairage mobile**: Ouvrez l’espace de travail actuel sur un téléphone ou une tablette par QR code, via le WiFi local ou un tunnel Pinggy ; le trafic Internet transite par les serveurs de Pinggy.
-- **Bibliothèque bibliographique dans le CLI et MCP**: Recherche et gestion des références depuis la ligne de commande et les clients MCP, avec navigation en lecture seule et outils d'écriture.
-- **Synthèses reprises sur interruption**: Les synthèses par lots de papiers reprennent après une interruption sans régénérer les résultats déjà achevés.
-- **Centre de ressources**: Un centre de ressources renommé avec une disposition de la bibliothèque de cas adaptée, des liens externes plus compacts et les paramètres de calcul sous les connexions.
-- **Diagnostics**: Les exports préservent les preuves d'exécution du Notebook, permettent de sélectionner des journaux backend historiques et peuvent inclure des enregistrements de ressources en opt-in (Windows).
-- **Correctifs de fiabilité**: Récupération des conversations après interruption, restauration des figures et tableaux des PDF à partir de scans avec texte, et amélioration du démarrage, des vérifications de mise à jour Windows et de l'utilisation mémoire.
+- **Calcul à distance**: Exécutez des jobs approuvés sur Kubernetes, Hugging Face Jobs, Modal ou Ray aux côtés de SSH et Slurm, avec approbation par job et récupération après les redémarrages.
+- **Agent intégré**: Un runtime d'agent intégré autonome devient le choix par défaut des nouvelles installations ; Claude Code, OpenCode, Codex, CodeBuddy et Pi restent disponibles.
+- **Mises à jour macOS plus rapides**: Les téléchargements différentiels ne récupèrent que les blocs modifiés de l'image de l'application, avec repli sur le téléchargement complet.
+- **Discussions par étape**: Posez une question depuis un paquet `.science` importé ou une étape de relecture pour ouvrir une conversation enfant liée à cette étape.
+- **Espace de travail peaufiné**: Les groupes de la barre latérale sont réordonnés avec une seule liste de récents, l'historique importé promeut « forker pour continuer », et l'envoi depuis un tour antérieur conserve votre position de lecture.
+- **Correctifs de fiabilité**: Les vérifications de mise à jour valident l'application en cours d'exécution et nomment les fichiers bloquants, Windows limite la fenêtre à la zone de la barre des tâches, et la traduction PDF conserve les pages saines lorsqu'une page échoue.
 
-[Notes complètes v1.1.0](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
+[Notes complètes v1.2.0](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />
