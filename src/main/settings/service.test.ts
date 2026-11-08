@@ -4478,24 +4478,21 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek flash through the native Responses route under Codex', async () => {
+  it('probes DeepSeek flash aliases through the Chat Completions route under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
-    const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
+    const fetchMock = vi.fn().mockResolvedValue(validBridgeToolCallResponse())
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await service.validateProvider({
       draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds', model: 'deepseek-v4-flash' }
     })
-
     expect(result).toMatchObject({ ok: true, category: 'ok' })
-    // deepseek-v4-flash supports the native Responses API, so the probe must hit /responses with
-    // the namespace compatibility contract instead of the Chat Completions bridge.
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       model: 'deepseek-v4-flash',
       stream: true,
-      tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
+      tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
     })
   })
 
