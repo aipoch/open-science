@@ -78,6 +78,11 @@ it('rejects figure score sentences that start with an unpunctuated label', () =>
   expect(captionKind('Figure 2 score distributions')).toBe('figure')
 })
 
+it('keeps score-for noun titles across figure and chart labels', () => {
+  expect(captionKind('Figure 2 scores for all methods')).toBe('figure')
+  expect(captionKind('Chart 1 scores for each group')).toBe('figure')
+})
+
 it('keeps a normal cited figure caption when the citation describes the source', () => {
   expect(captionKind('Figure 1. The architecture from [9] is shown in blue.')).toBe('figure')
   expect(captionKind('Figure 1. The architecture from [9] is a directed graph.')).toBe('figure')
