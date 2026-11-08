@@ -46,10 +46,23 @@ const WINDOWS_ENV_ALLOWLIST = [
   'ProgramFiles',
   'ProgramFiles(x86)',
   'ProgramW6432',
+  'PROCESSOR_ARCHITECTURE',
   'SystemDrive',
   'SystemRoot',
   'WINDIR'
 ] as const
+
+const projectedEnvironmentValue = (
+  sourceEnv: NodeJS.ProcessEnv,
+  key: string,
+  platform: NodeJS.Platform
+): string | undefined => {
+  const value = sourceEnv[key]
+  if (value !== undefined || platform !== 'win32' || key !== 'PROCESSOR_ARCHITECTURE') {
+    return value
+  }
+  return Object.entries(sourceEnv).find(([name]) => name.toUpperCase() === key)?.[1]
+}
 
 const projectEnvironment = (
   sourceEnv: NodeJS.ProcessEnv,
@@ -61,7 +74,7 @@ const projectEnvironment = (
     ...(platform === 'win32' ? WINDOWS_ENV_ALLOWLIST : POSIX_ENV_ALLOWLIST)
   ]
   for (const key of keys) {
-    const value = sourceEnv[key]
+    const value = projectedEnvironmentValue(sourceEnv, key, platform)
     if (value !== undefined) env[key] = value
   }
   return env
