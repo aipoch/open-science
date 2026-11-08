@@ -782,6 +782,34 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
     }
     return requestFor(messages)
   }
+  // Summarize the compacted source as transformed for this step: transform filtering/redaction still
+  // applies, but the retained recent tail is not sent twice. A transform that splits the source's tool
+  // exchanges falls back to the complete transformed request.
+  const transformedSource = (
+    request: ModelRequest,
+    source: readonly AgentMessage[]
+  ): ModelRequest => {
+    const ids = new Set(source.map((message) => message.id))
+    const messages = request.messages.filter((message) => ids.has(message.id))
+    if (!messages.length) return request
+    try {
+      checkState(
+        {
+          version: 1,
+          sessionId,
+          revision: 0,
+          messages: structuredClone(messages),
+          compactions: [],
+          requests: [],
+          pending: []
+        },
+        sessionId
+      )
+    } catch {
+      return request
+    }
+    return { ...request, messages }
+  }
   const exceedsBudget = (request: ModelRequest): boolean => {
     const tokens = compaction!.measure(request)
     if (!Number.isSafeInteger(tokens) || tokens < 0) throw new Error('Invalid context measurement')
@@ -845,7 +873,9 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
                 summarize: (messages, summarySignal) =>
                   summarizeAutomatically(
                     summarySignal,
-                    options.transformContext ? request : requestFor([...messages])
+                    options.transformContext
+                      ? transformedSource(request, messages)
+                      : requestFor([...messages])
                   )
               },
               signal

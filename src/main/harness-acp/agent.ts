@@ -24,9 +24,13 @@ import {
   type HarnessConfig
 } from './config'
 import { connectHarnessMcp } from './mcp'
+import { createContextMeter, createToolResultClearing } from './context-budget'
+import { recognizeInput } from '../../shared/failure/recognizers/input'
 
 type Entry = {
   session: AgentSession
+  /** True once per provider context-overflow rejection observed since the last call. */
+  takeOverflow(): boolean
   close(): Promise<void>
   flush(): Promise<void>
   reconcile(): Promise<void>
@@ -35,10 +39,20 @@ type Entry = {
 }
 const modes = { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Ask' }] }
 
-// Conservative text/envelope byte estimate. It is not a bound on provider-expanded media
-// (PDF pages, remote URLs, audio or video); provider usage remains authoritative.
-export const measureHarnessRequest = (request: ModelRequest): number =>
-  Buffer.byteLength(JSON.stringify(request), 'utf8') + 1024
+// Bounded read of a rejected response body; only its overflow classification leaves this process.
+const MAX_ERROR_BODY_CHARS = 16_384
+const isContextOverflowResponse = async (response: Response): Promise<boolean> => {
+  if (response.status === 413) return true
+  if (response.status !== 400) return false
+  const text = await response
+    .clone()
+    .text()
+    .then((body) => body.slice(0, MAX_ERROR_BODY_CHARS))
+    .catch(() => '')
+  return (
+    recognizeInput({ origin: 'provider', status: 400, text })?.reason === 'input/context-overflow'
+  )
+}
 
 export function createHarnessAcpAgent(directory: string): {
   app: acp.AgentApp
@@ -149,6 +163,10 @@ export function createHarnessAcpAgent(directory: string): {
       }
       const announced = new Set<string>(),
         completed = new Set<string>()
+      const meter = createContextMeter()
+      const inputBudget = Math.floor(config.contextWindow * 0.9) - config.maxOutputTokens
+      const clearing = createToolResultClearing(inputBudget, meter)
+      let overflow = false
       const onEvent = (event: AgentEvent): void => {
         if (event.type === 'compaction') {
           const started = event.status === 'started'
@@ -173,6 +191,8 @@ export function createHarnessAcpAgent(directory: string): {
           })
         } else if (event.type === 'model') {
           if (event.purpose === 'compaction') return
+          if (event.event.type === 'finish' && event.event.usage)
+            meter.reported(event.requestId, event.event.usage)
           if (event.event.type === 'finish' && event.event.usage)
             notify({
               sessionUpdate: 'usage_update',
@@ -253,15 +273,24 @@ export function createHarnessAcpAgent(directory: string): {
             ? target.modelIdentity
             : `${target.protocol}:${target.modelIdentity}`,
         apiKey: async () => target.token,
-        fetch: (url, init) => {
+        fetch: async (url, init) => {
           const headers = new Headers(init?.headers)
           headers.set('user-agent', 'open-science-agent/0.1.0')
           if (target.sessionHeader) headers.set(target.sessionHeader, id)
-          return fetch(url, { ...init, headers })
+          const response = await fetch(url, { ...init, headers })
+          if (!response.ok && (await isContextOverflowResponse(response))) {
+            overflow = true
+            meter.overflowed(target.contextWindow)
+          }
+          return response
         },
         inputCapabilities: target.inputCapabilities,
         parameters: target.parameters as Record<string, Json>
       })
+      const admit = (request: ModelRequest, message: string): void => {
+        if (meter.measure(request) + request.maxOutputTokens > target.contextWindow)
+          throw new Error(message)
+      }
       session = await openAgentSession({
         sessionId: id,
         store,
@@ -276,18 +305,16 @@ export function createHarnessAcpAgent(directory: string): {
         maxSteps: 64,
         maxOutputTokens: target.maxOutputTokens,
         compaction: {
-          inputBudget: Math.floor(target.contextWindow * 0.9) - target.maxOutputTokens,
+          inputBudget,
           keepRecentItems: 1,
           maxOutputTokens: Math.min(2048, target.maxOutputTokens),
-          measure: measureHarnessRequest,
-          admit: (request) => {
-            if (measureHarnessRequest(request) + request.maxOutputTokens > target.contextWindow)
-              throw new Error('Summary exceeds the model context budget')
-          }
+          measure: meter.measure,
+          admit: (request) => admit(request, 'Summary exceeds the model context budget')
         },
+        transformContext: (messages) => clearing.project(messages),
         admit: (request) => {
-          if (measureHarnessRequest(request) + request.maxOutputTokens > target.contextWindow)
-            throw new Error('Request exceeds the model context budget')
+          admit(request, 'Request exceeds the model context budget')
+          meter.admitted(request)
         },
         onEvent
       })
@@ -300,6 +327,11 @@ export function createHarnessAcpAgent(directory: string): {
       signal.throwIfAborted()
       entries.set(id, {
         session,
+        takeOverflow: () => {
+          const observed = overflow
+          overflow = false
+          return observed
+        },
         close,
         reconcile: () => mcp!.reconcile(session!),
         active: false,
@@ -417,11 +449,22 @@ export function createHarnessAcpAgent(directory: string): {
             }
             const before = await entry.session.inspect()
             assertKnown(before)
-            const status = await entry.session.prompt(blocks).catch(async (error: unknown) => {
-              await entry.flush()
-              if (!entry.cancelled) assertKnown(await entry.session.inspect())
-              throw error
-            })
+            entry.takeOverflow()
+            // A provider context overflow already lowered the meter's estimate. Continue the same turn
+            // once so the next request compacts first; the rejected request executed no tool.
+            const status = await entry.session
+              .prompt(blocks)
+              .catch(async (error: unknown) => {
+                if (entry.cancelled || !entry.takeOverflow()) throw error
+                const checkpoint = await entry.session.inspect()
+                if (checkpoint.pending.length) throw error
+                return entry.session.continue()
+              })
+              .catch(async (error: unknown) => {
+                await entry.flush()
+                if (!entry.cancelled) assertKnown(await entry.session.inspect())
+                throw error
+              })
             await entry.flush()
             const after = await entry.session.inspect({ requestsFrom: before.requestCount })
             if (!entry.cancelled) assertKnown(after)

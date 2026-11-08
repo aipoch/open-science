@@ -806,6 +806,42 @@ describe('standalone session capability journeys', () => {
     await session.dispose()
   })
 
+  it('summarizes only the transformed compaction source, not the retained recent tail', async () => {
+    const store = memory()
+    const seed = await openAgentSession(options({ store }))
+    await seed.prompt(text('OLD'.repeat(300)))
+    await seed.dispose()
+    let summarized: ModelRequest | undefined
+    const session = await openAgentSession(
+      options({
+        store,
+        // Redaction applies to the summary input as well as to ordinary requests.
+        transformContext: (messages) =>
+          messages.map((message) =>
+            JSON.stringify(message.content).includes('OLD')
+              ? { ...message, content: text('REDACTED_OLD'.padEnd(900, '.')) }
+              : message
+          ),
+        summary: model((request) => {
+          summarized = request
+          return [done('summary')]
+        }),
+        compaction: {
+          inputBudget: 400,
+          keepRecentItems: 1,
+          maxOutputTokens: 50,
+          measure: (request) => JSON.stringify(request.messages).length
+        }
+      })
+    )
+    expect(await session.prompt(text('LATEST'.repeat(10)))).toBe('complete')
+    const input = JSON.stringify(summarized!.messages.slice(0, -1))
+    expect(input).toContain('REDACTED_OLD')
+    expect(input).not.toContain('OLDOLD')
+    expect(input).not.toContain('LATEST')
+    await session.dispose()
+  })
+
   it('cancels an in-flight automatic summary and records interruption without compacting or executing', async () => {
     const store = createMemoryAgentStore()
     const seed = await openAgentSession(options({ store }))
