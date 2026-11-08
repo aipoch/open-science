@@ -798,7 +798,9 @@ export const createSessionDetailsOwner = (
       if (started || stopping) return
       // Application composition already reconciled this catalog before installing client adapters.
       // Recovery mutations below still re-read current authority and check generation identity.
-      const sessions = startupSessions ?? (await dependencies.sessions.listSessions())
+      // Metadata generation in an imported package records the source's history.
+      const catalog = startupSessions ?? (await dependencies.sessions.listSessions())
+      const sessions = catalog.filter((session) => !session.packageOrigin)
       for (const session of sessions) {
         if (!acceptCompletions || stopping) return
         const generation = session.sessionDetailsGeneration
@@ -861,6 +863,7 @@ export const createSessionDetailsOwner = (
     },
 
     afterSessionSaved(session: PersistedChatSession): void {
+      if (session.packageOrigin) return
       const detailsSession = session as SessionDetailsSession
       const generation = detailsSession.sessionDetailsGeneration
       const retryableAdmissionFailure =
