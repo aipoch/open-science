@@ -1,5 +1,4 @@
 import { OverlayLayerProvider } from '../../../src/renderer/src/components/ui/overlay-layer'
-import { SessionDiscussionDialog } from '../../../src/renderer/src/pages/workspace/SessionDiscussionDialog'
 import { Profiler, useLayoutEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SessionReplayEvidence } from '../../../src/renderer/src/pages/workspace/SessionReplayEvidence'
@@ -544,7 +543,6 @@ if (params.has('evidencePage')) {
 }
 function PanelFixture() {
   const [expanded, setExpanded] = useState(false)
-  const [question, setQuestion] = useState()
   const [evidence, setEvidence] = useState('')
   const [evidenceStep, setEvidenceStep] = useState()
   const source = {
@@ -578,9 +576,6 @@ function PanelFixture() {
         <output data-selected-evidence={evidence}>{evidence}</output>
       </section>
       <OverlayLayerProvider value={expanded ? 60 : 40}>
-        {question ? (
-          <SessionDiscussionDialog context={question} onClose={() => setQuestion(undefined)} />
-        ) : null}
         <section
           data-replay-container="true"
           className="flex flex-col"
@@ -607,10 +602,6 @@ function PanelFixture() {
               onToggleExpanded={() => setExpanded((value) => !value)}
               onAskStep={(context) => {
                 window.discussionCapture = context
-                if (params.has('modalLayers')) {
-                  setQuestion(context)
-                  return
-                }
                 setExpanded(false)
                 queueMicrotask(() => globalThis.document.getElementById('discussion').focus())
               }}

@@ -77,6 +77,13 @@ test('drops native packages into Workspace and Home and restores a child discuss
   await expect(page.getByRole('button', { name: 'Research exchange', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('project-package-drop-completed.png') })
 
+  const importedGroup = page
+    .getByRole('group')
+    .filter({ has: page.getByText('Imported research', { exact: true }) })
+  const firstImport = importedGroup.locator('[data-session-id]')
+  await expect(firstImport).toHaveCount(1)
+  const firstImportId = await firstImport.getAttribute('data-session-id')
+
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   const home = page.getByRole('main')
   const homeCdp = await page.context().newCDPSession(page)
@@ -136,10 +143,9 @@ test('drops native packages into Workspace and Home and restores a child discuss
   await page.screenshot({ path: testInfo.outputPath('home-package-drop-completed.png') })
 
   // Both imports share the original title. Ask must attach to the selected local import.
-  const importedGroup = page.getByText('Imported research', { exact: true }).locator('..')
-  const selectedImport = importedGroup.locator('[data-session-id]').filter({
-    has: page.locator('[data-slot="session-open-button"][aria-current="page"]')
-  })
+  const selectedImport = importedGroup.locator(
+    `[data-session-id]:not([data-session-id="${firstImportId}"])`
+  )
   await expect(selectedImport).toBeVisible()
   const parentId = await selectedImport.getAttribute('data-session-id')
   await page
@@ -163,7 +169,9 @@ test('drops native packages into Workspace and Home and restores a child discuss
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: 'Research exchange', exact: true })
     .click()
-  const restoredGroup = restored.getByText('Imported research', { exact: true }).locator('..')
+  const restoredGroup = restored
+    .getByRole('group')
+    .filter({ has: restored.getByText('Imported research', { exact: true }) })
   await expect(restoredGroup.locator(`[data-session-id="${parentId}"]`)).toBeVisible()
   await restoredGroup
     .locator(`[data-session-id="${childId}"]${childSelector}`)
