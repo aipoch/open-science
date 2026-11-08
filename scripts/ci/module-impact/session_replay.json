@@ -271,5 +271,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Direct Ask replaces the conversation picker and changes the reviewed replay boundary. Run full validation until its draft, navigation and session persistence contracts are reviewed."
 }
