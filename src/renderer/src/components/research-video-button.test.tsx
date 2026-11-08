@@ -79,6 +79,35 @@ it('starts directly from the session button without a chat or fork API, and supp
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
 
+it('keeps the trigger in a loading state until the initial presentation status is known', async () => {
+  let resolveStatus!: (next: ResearchVideoPresentationStatus) => void
+  const pendingStatus = new Promise<ResearchVideoPresentationStatus>((resolve) => {
+    resolveStatus = resolve
+  })
+  api.researchVideo.status.mockImplementationOnce(() => pendingStatus)
+
+  await act(async () => root.render(<ResearchVideoButton {...request} sessionId="loading" />))
+
+  const trigger = container.querySelector('button')!
+  expect(trigger.textContent).toBe('Loading…')
+  expect(trigger.disabled).toBe(true)
+
+  await act(async () =>
+    resolveStatus({
+      result: {
+        id: 'saved',
+        title: 'Saved research',
+        duration: 10,
+        playerPath: '/saved.html',
+        sourcePath: '/saved.zip'
+      }
+    })
+  )
+
+  expect(trigger.textContent).toBe('View research film')
+  expect(trigger.disabled).toBe(false)
+})
+
 it('explains a blocked source and enables generation when a completed reply becomes available', async () => {
   status = { generationBlock: 'awaiting-reply' }
   await act(async () => vi.advanceTimersByTimeAsync(750))
