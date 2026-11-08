@@ -89,7 +89,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
         : t('Not installed')
   return (
     <div className="space-y-4 p-5">
-      <SettingsSection title={t('Local capabilities')}>
+      <SettingsSection title={t('Local capabilities')} contentClassName="space-y-3">
         {requestFailed || error ? (
           <div className="mb-4">
             <ErrorNotice
@@ -204,34 +204,36 @@ const LocalModelsPanel = (): React.JSX.Element => {
                 </div>
               </div>
             </div>
-            <div className="mt-4 grid gap-4 border-t border-border pt-4">
+            <div className="mt-4 space-y-2 border-t border-border pt-3">
               <p className="text-[13px] text-muted-foreground">
                 {t('Find candidate figures, captions and copyable tables in Literature PDFs.')}
               </p>
-              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <span className="text-muted-foreground">{t('Model source')}</span>
-                <ExternalTextLink href="https://github.com/microsoft/table-transformer">
-                  {'microsoft/table-transformer'}
-                </ExternalTextLink>
-              </p>
-              <dl className="grid gap-x-8 gap-y-3 text-xs sm:grid-cols-2">
-                <div>
+              <dl className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <dt className="text-muted-foreground">{t('Model source')}</dt>
+                  <dd>
+                    <ExternalTextLink href="https://github.com/microsoft/table-transformer">
+                      {'microsoft/table-transformer'}
+                    </ExternalTextLink>
+                  </dd>
+                </div>
+                <div className="flex items-center gap-1.5">
                   <dt className="text-muted-foreground">
                     {snapshot.installedRevision ? t('Installed version') : t('Version')}
                   </dt>
-                  <dd className="mt-0.5 break-all">
+                  <dd className="break-all">
                     {snapshot.installedRevision ?? snapshot.recommendedRevision}
                   </dd>
                 </div>
                 {snapshot.installedRevision && snapshot.updateAvailable ? (
                   <>
-                    <div>
+                    <div className="flex items-center gap-1.5">
                       <dt className="text-muted-foreground">{t('New version')}</dt>
-                      <dd className="mt-0.5 break-all">{snapshot.recommendedRevision}</dd>
+                      <dd className="break-all">{snapshot.recommendedRevision}</dd>
                     </div>
-                    <div>
+                    <div className="flex items-center gap-1.5">
                       <dt className="text-muted-foreground">{t('Download size')}</dt>
-                      <dd className="mt-0.5">{size(snapshot.downloadBytes)}</dd>
+                      <dd>{size(snapshot.downloadBytes)}</dd>
                     </div>
                   </>
                 ) : null}
@@ -254,12 +256,8 @@ const LocalModelsPanel = (): React.JSX.Element => {
             </div>
           </div>
         )}
-        <div>
-          <LocalOcrControl />
-        </div>
-        <div>
-          <LocalNarrationControl />
-        </div>
+        <LocalOcrControl />
+        <LocalNarrationControl />
       </SettingsSection>
     </div>
   )

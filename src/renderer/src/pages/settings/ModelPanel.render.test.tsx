@@ -157,6 +157,7 @@ describe('model settings A tabs', () => {
     expect(container.textContent).not.toContain('Manual update')
     expect(container.textContent).not.toContain('Update available')
     expect([...container.querySelectorAll('dt')].map((entry) => entry.textContent)).toEqual([
+      'Model source',
       'Version'
     ])
     await click('Install')
@@ -183,6 +184,7 @@ describe('model settings A tabs', () => {
     await act(async () => root.render(<Harness />))
     expect(container.textContent).toContain('Update available')
     expect([...container.querySelectorAll('dt')].map((entry) => entry.textContent)).toEqual([
+      'Model source',
       'Installed version',
       'New version',
       'Download size'
@@ -202,6 +204,7 @@ describe('model settings A tabs', () => {
     expect(container.textContent).not.toContain('Update available')
     expect(container.textContent).not.toContain('Model updates')
     expect([...container.querySelectorAll('dt')].map((entry) => entry.textContent)).toEqual([
+      'Model source',
       'Installed version'
     ])
     expect(
