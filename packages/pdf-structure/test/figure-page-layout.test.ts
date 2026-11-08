@@ -139,6 +139,24 @@ it('stops a lower figure from claiming graphics above an intervening figure capt
   expect(figures[1].rect[3]).toBeLessThan(500)
 })
 
+it('drops a nested reason-only caption from a resolved side-by-side figure', () => {
+  const captions = [
+    { page: 1, lines: ['Figure 1. Outer caption'], rect: [100, 400, 500, 418] },
+    { page: 1, lines: ['Figure 1. Inner prose'], rect: [260, 300, 340, 318] }
+  ]
+  const source = {
+    ...page,
+    graphicsBounds: [
+      graphic('image', [0.15, 0.15, 0.4, 0.5]),
+      graphic('image', [0.6, 0.15, 0.85, 0.5])
+    ]
+  }
+  const figures = associateFigures(source, captions)
+  expect(figures).toHaveLength(1)
+  expect(figures[0]).toMatchObject({ caption: captions[0], rect: expect.any(Array) })
+  expect(figures[0].reason).toBeUndefined()
+})
+
 it('drops an unresolved duplicate when an adjacent page resolved the caption', () => {
   const caption = {
     page: 12,

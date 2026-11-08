@@ -3328,7 +3328,7 @@ function nativeIndependentFramedRaster(page, figure, captions, tables, tokens, c
   }
 }
 
-function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
+export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
   const caption = figure?.caption
   if (!caption || !figure?.rect || !page.graphicsBounds?.length) return undefined
   const captionText = caption.lines?.join(' ') ?? ''
@@ -3346,6 +3346,84 @@ function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
   const panelKeys = new Set(
     [...captionText.matchAll(/(?:^|\s)\(([a-z])\)/gi)].map((match) => match[1].toLowerCase())
   )
+  // A vector/text panel can be mistaken for a table before figure association
+  // runs.  When a two-panel caption has only the lower panel associated, a
+  // captionless table-shaped candidate immediately above it is strong local
+  // evidence for the missing upper panel.  Require an explicit `(a)` heading,
+  // no nearby table caption, and a shared horizontal lane so ordinary tables
+  // above figures are never absorbed.
+  if (panelKeys.has('a') && panelKeys.has('b') && panelKeys.size === 2) {
+    const areaOf = (rect) => Math.max(0, rect[2] - rect[0]) * Math.max(0, rect[3] - rect[1])
+    const upper = (tableRects ?? [])
+      .filter((rect) => {
+        if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) return false
+        const horizontal = Math.min(rect[2], figure.rect[2]) - Math.max(rect[0], figure.rect[0])
+        return (
+          rect[2] > rect[0] &&
+          rect[3] > rect[1] &&
+          rect[3] <= figure.rect[1] + 4 &&
+          horizontal / Math.min(rect[2] - rect[0], figure.rect[2] - figure.rect[0]) >= 0.65
+        )
+      })
+      .sort((a, b) => b[3] - a[3])[0]
+    const upperTitle =
+      upper &&
+      page.lines
+        ?.filter(
+          (line) =>
+            line.y < upper[1] &&
+            line.y > priorCaptionBottom &&
+            /^\(a\)(?:\s|$)/iu.test(line.text?.trim() ?? '') &&
+            line.x + line.width > upper[0] &&
+            line.x < upper[2]
+        )
+        .sort((a, b) => b.y - a.y)[0]
+    const hasTableCaption =
+      upper &&
+      candidates.some(
+        (candidate) =>
+          candidate !== caption &&
+          candidate.page === caption.page &&
+          captionKind(candidate.lines?.[0] ?? '') === 'table' &&
+          intersection(candidate.rect, [upper[0], upper[1] - 24, upper[2], upper[3]]) > 0
+      )
+    if (upper && upperTitle && !hasTableCaption) {
+      const band = [
+        Math.min(upper[0], figure.rect[0]),
+        Math.min(upperTitle.y - 2, upper[1]),
+        Math.max(upper[2], figure.rect[2]),
+        Math.max(upper[3], figure.rect[3])
+      ]
+      const nearbyGraphics = page.graphicsBounds
+        .map((graphic) => ({
+          ...graphic,
+          rect: (graphic.paintedNormalizedRect ?? graphic.normalizedRect).map(
+            (value, index) => value * (index % 2 ? page.height : page.width)
+          )
+        }))
+        .filter(
+          ({ rect }) =>
+            rect.every(Number.isFinite) &&
+            rect[2] > band[0] &&
+            rect[0] < band[2] &&
+            rect[3] > band[1] &&
+            rect[1] < band[3]
+        )
+        .map(({ rect }) => rect)
+      const textRects = (page.lines ?? [])
+        .filter(
+          (line) =>
+            line.y + line.height > band[1] &&
+            line.y < band[3] &&
+            line.x + line.width > band[0] &&
+            line.x < band[2]
+        )
+        .map((line) => [line.x, line.y, line.x + line.width, line.y + line.height])
+      const rect = union([band, ...nearbyGraphics, ...textRects])
+      if (rect[3] < caption.rect[1] && areaOf(rect) > areaOf(figure.rect) * 1.2)
+        return { rect, graphicsCount: nearbyGraphics.length, issue: undefined }
+    }
+  }
   const panelTitleEvidence = page.lines?.some(
     (line) =>
       line.y < caption.rect[1] &&

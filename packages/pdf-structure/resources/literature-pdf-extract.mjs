@@ -190,6 +190,8 @@ import {
 import {
   isFigureRiskTable,
   isFigureOwnedPartialTable,
+  isFigureOwnedCaptionLeakTable,
+  isFigureOwnedCaptionlessPanelTable,
   isNativeFigureOwnedClippedTable,
   proveCaptionedNativeDefinitionFrame,
   proveCaptionedNativeClosedTableFrame,
@@ -2471,6 +2473,8 @@ try {
             // a second time as table cells merely because they align in rows.
             !isRecognizedAlgorithmOwnedTable(table, associations[index].caption, pageAlgorithms) &&
             !isFigureOwnedPartialTable(table, captionedFigureRegions) &&
+            !isFigureOwnedCaptionLeakTable(table, captionedFigureRegions) &&
+            !isFigureOwnedCaptionlessPanelTable(table, captionedFigureRegions) &&
             !isExternalAttachmentTableRegion(table, tokens, rules, associations[index].caption) &&
             !isNativeAuthorAffiliationRegion(
               table,
@@ -3127,6 +3131,28 @@ try {
                 pageFigures = [plan]
               }
             }
+          }
+        }
+        // A captioned two-panel figure can have a text-heavy upper panel that
+        // the detector classifies as a captionless table.  The association
+        // pass has already expanded that figure to the full panel envelope;
+        // only now suppress the table candidate, and only when the caption
+        // names both panels and the table carries unresolved crop ownership.
+        const panelFigures = pageFigures.filter((figure) => {
+          const text = [figure.caption?.text, ...(figure.caption?.lines ?? [])]
+            .filter(Boolean)
+            .join(' ')
+          return figure.rect && /(?:^|\s)\(a\).*?(?:^|\s)\(b\)/isu.test(text)
+        })
+        if (panelFigures.length) {
+          for (const [index, table] of refined.entries()) {
+            if (
+              !acceptedTables[index] ||
+              associations[index]?.caption ||
+              !isFigureOwnedPartialTable(table, panelFigures)
+            )
+              continue
+            acceptedTables[index] = false
           }
         }
         // This optional path owns only a complete native body and literal caption.
