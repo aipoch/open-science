@@ -269,16 +269,19 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
                     }}
                   >
                     <Button
-                      variant="ghost"
+                      variant={props.askPromptVisible ? 'secondary' : 'ghost'}
                       type="button"
                       className={cn(
                         controlClass,
-                        'overflow-hidden whitespace-nowrap transition-[max-width,padding,gap,background-color] duration-300 ease-out motion-reduce:transition-none',
+                        'overflow-hidden whitespace-nowrap transition-[max-width,padding,gap,background-color,box-shadow,color] duration-300 ease-out motion-reduce:transition-none',
+                        props.askPromptVisible &&
+                          'bg-primary/10 text-primary ring-2 ring-primary/30 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-200 motion-reduce:animate-none',
                         width < 560 && !props.askPromptVisible ? 'max-w-8' : 'max-w-36'
                       )}
                       onClick={props.onAsk}
                       disabled={empty}
                       aria-label={t('Ask about this step')}
+                      data-ask-prompt={props.askPromptVisible ? 'true' : undefined}
                     >
                       <MessageSquare size={14} />
                       {width < 560 ? (

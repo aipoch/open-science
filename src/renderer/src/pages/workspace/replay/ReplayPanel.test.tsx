@@ -385,6 +385,9 @@ describe('research replay interaction', () => {
       const askButton = within(prompt).getByRole('button')
       expect(askButton.textContent).toContain('Ask')
       expect(askButton.className).toContain('max-w-36')
+      expect(askButton.getAttribute('data-ask-prompt')).toBe('true')
+      expect(askButton.className).toContain('ring-2')
+      expect(askButton.className).toContain('bg-primary/10')
       fireEvent.click(within(screen.getByTestId('replay-ask-step-prompt')).getByRole('button'))
       expect(props.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'two' }))
 
