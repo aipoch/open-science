@@ -42,7 +42,6 @@ import { mentionProjectFile } from './project-file-mention'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
-import { ErrorNotice } from '@/components/error-notice'
 import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -1813,17 +1812,20 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
-                {composerError === DISCUSSION_DRAFT_CONFLICT && (
-                  <ErrorNotice
-                    inline
-                    level="info"
-                    description={t(
-                      'Send or clear your current draft before starting a discussion.'
-                    )}
-                    dismissButton={{ label: t('Dismiss'), onClick: () => onSetComposerError(null) }}
-                  />
-                )}
                 <ComposerNoticeSlot
+                  draftConflict={
+                    composerError === DISCUSSION_DRAFT_CONFLICT
+                      ? {
+                          description: t(
+                            'Send or clear your current draft before starting a discussion.'
+                          ),
+                          dismissButton: {
+                            label: t('Dismiss'),
+                            onClick: () => onSetComposerError(null)
+                          }
+                        }
+                      : undefined
+                  }
                   notices={composerNotices.notices}
                   handlers={noticeHandlers}
                   onDismiss={composerNotices.dismiss}
