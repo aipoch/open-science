@@ -161,7 +161,6 @@ export function ResearchVideoButton({
           }
         }
       } catch (caught) {
-        if (live.current) setStatusLoadedScope(deletionScope)
         if (live.current && finishingInstallation) {
           startAfterInstall.current = false
           setInstalling(false)

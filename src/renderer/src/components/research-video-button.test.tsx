@@ -108,6 +108,30 @@ it('keeps the trigger in a loading state until the initial presentation status i
   expect(trigger.disabled).toBe(false)
 })
 
+it('keeps the trigger loading after a status failure until a retry succeeds', async () => {
+  api.researchVideo.status.mockRejectedValueOnce(new Error('temporary status failure'))
+
+  await act(async () => root.render(<ResearchVideoButton {...request} sessionId="retry" />))
+
+  const trigger = container.querySelector('button')!
+  expect(trigger.textContent).toBe('Loading…')
+  expect(trigger.disabled).toBe(true)
+
+  status = {
+    result: {
+      id: 'saved',
+      title: 'Saved research',
+      duration: 10,
+      playerPath: '/saved.html',
+      sourcePath: '/saved.zip'
+    }
+  }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+
+  expect(trigger.textContent).toBe('View research film')
+  expect(trigger.disabled).toBe(false)
+})
+
 it('explains a blocked source and enables generation when a completed reply becomes available', async () => {
   status = { generationBlock: 'awaiting-reply' }
   await act(async () => vi.advanceTimersByTimeAsync(750))
