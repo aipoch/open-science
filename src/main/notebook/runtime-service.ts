@@ -38,11 +38,11 @@ import type {
   ProvisionProgress
 } from '@aipoch/environment/contracts'
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import { analyzePowerShellCodeRisk, type NotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import {
-  analyzeNotebookCodeRisk,
-  analyzePowerShellCodeRisk,
-  type NotebookCodeRisk
-} from '@aipoch/notebook-code-risk'
+  analyzeNotebookCodeRiskOffMainThread,
+  analyzeNotebookSourceOffMainThread
+} from './source-analysis-worker'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
@@ -709,7 +709,7 @@ class NotebookRuntimeService {
             signal,
             run.cwdBefore
           )
-        : await analyzeNotebookCodeRisk(
+        : await analyzeNotebookCodeRiskOffMainThread(
             run.kernelKind,
             run.script,
             {
@@ -860,6 +860,7 @@ class NotebookRuntimeService {
       createNotebookDependencyAnalyzer({
         storageRoot: options.dataRoot,
         repository: this.repository,
+        analyzeSource: analyzeNotebookSourceOffMainThread,
         resolveInterpreter: (run) =>
           run.runtimeId && (run.kernelKind === 'python' || run.kernelKind === 'r')
             ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)

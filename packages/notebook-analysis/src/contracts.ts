@@ -7,6 +7,7 @@ export type {
 } from './run-contract'
 export type {
   AnalyzeNotebookScripts,
+  AnalyzeNotebookSource,
   AnalyzedNotebookRun,
   NotebookDependencyInterpreter,
   NotebookDependencyProjection,

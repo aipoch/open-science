@@ -10,6 +10,7 @@ import type {
 } from './run-contract'
 import type {
   AnalyzeNotebookScripts,
+  AnalyzeNotebookSource,
   AnalyzedNotebookRun,
   NotebookDependencyAlias,
   NotebookDependencyAnalysisSidecar,
@@ -1782,6 +1783,7 @@ class NotebookDependencyAnalyzer {
       readFileGenerations?: ReadFileGenerations
       managedInterpreter?: (run: NotebookRunRecord) => NotebookDependencyInterpreter | undefined
       analyze?: AnalyzeNotebookScripts
+      analyzeSource?: AnalyzeNotebookSource
       resolveInterpreter?: (
         run: NotebookRunRecord
       ) => Promise<NotebookDependencyInterpreter | undefined>
@@ -2292,13 +2294,15 @@ class NotebookDependencyAnalyzer {
               ? await analyzePythonFileAccesses([run.script], analysisContext)
               : await analyzeRFileAccesses([run.script], analysisContext))[0]
           }
-        : await (
-            language === 'repl'
-              ? analyzeReplNotebookSource
-              : language === 'python'
-                ? analyzePythonNotebookSource
-                : analyzeRNotebookSource
-          )(run.script, analysisContext)
+        : this.options.analyzeSource
+          ? await this.options.analyzeSource(language, run.script, analysisContext)
+          : await (
+              language === 'repl'
+                ? analyzeReplNotebookSource
+                : language === 'python'
+                  ? analyzePythonNotebookSource
+                  : analyzeRNotebookSource
+            )(run.script, analysisContext)
       const normalizedFacts = normalizeFacts(analysis.facts)
       const persistedFacts = helperEvidenceIncomplete
         ? {
@@ -2561,5 +2565,6 @@ export type {
   NotebookDependencyProjection,
   NotebookDependencyInterpreter,
   AnalyzeNotebookScripts,
+  AnalyzeNotebookSource,
   NotebookRunDependencyFacts
 }

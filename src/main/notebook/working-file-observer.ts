@@ -9,10 +9,8 @@ import { nodeRuntimeEnvironment } from '../node-process-host'
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
-import {
-  analyzeNotebookSourceFileAccess,
-  verifiedSerializedValues
-} from '@aipoch/notebook-analysis'
+import { verifiedSerializedValues } from '@aipoch/notebook-analysis'
+import { analyzeNotebookSourceFileAccessOffMainThread } from './source-analysis-worker'
 import type {
   NotebookSourceFileAccessContext,
   NotebookSourceFileWriteScope
@@ -1787,7 +1785,7 @@ const prepareSourceFileAccess = async (
         OPEN_SCIENCE_HANDOFF_DIR: join(resolve(request.notebookSessionRoot), 'handoff')
       }
     : undefined
-  const analysis = await analyzeNotebookSourceFileAccess(
+  const analysis = await analyzeNotebookSourceFileAccessOffMainThread(
     request.kind === 'repl' ? 'repl' : (request.language ?? 'python'),
     request.code,
     context ? { ...context, managedEnvironment } : undefined
