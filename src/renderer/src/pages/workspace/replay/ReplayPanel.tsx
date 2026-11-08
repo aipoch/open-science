@@ -988,24 +988,7 @@ const ReplayPanelContent = ({
           ) : null}
         </div>
       ) : null}
-      <div className="relative shrink-0">
-        {onAskStep && showAskPrompt && !playing && scene.step ? (
-          <div
-            className="pointer-events-none absolute inset-x-3 bottom-[calc(100%+0.5rem)] z-20 flex justify-end"
-            data-testid="replay-ask-step-prompt"
-          >
-            <Button
-              variant="secondary"
-              type="button"
-              className="pointer-events-auto h-9 gap-2 rounded-full px-3 text-xs shadow-menu ring-1 ring-border-200"
-              onClick={ask}
-              aria-label={t('Ask about this step')}
-            >
-              <MessageSquare size={14} aria-hidden="true" />
-              {t('Ask about this step')}
-            </Button>
-          </div>
-        ) : null}
+      <div className="shrink-0">
         <ReplayControls
           key={scene.branchId}
           playing={playing}
@@ -1028,7 +1011,8 @@ const ReplayPanelContent = ({
           }
           onSeek={seek}
           onSpeed={setSpeed}
-          onAsk={onAskStep && !(showAskPrompt && !playing) ? ask : undefined}
+          onAsk={onAskStep ? ask : undefined}
+          askPromptVisible={onAskStep && showAskPrompt && !playing && scene.step ? true : undefined}
         />
       </div>
     </div>

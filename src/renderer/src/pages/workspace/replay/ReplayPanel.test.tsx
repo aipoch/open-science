@@ -381,6 +381,10 @@ describe('research replay interaction', () => {
       act(() => vi.advanceTimersByTime(1))
       expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
       expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
+      const prompt = screen.getByTestId('replay-ask-step-prompt')
+      const askButton = within(prompt).getByRole('button')
+      expect(askButton.textContent).toContain('Ask')
+      expect(askButton.className).toContain('max-w-36')
       fireEvent.click(within(screen.getByTestId('replay-ask-step-prompt')).getByRole('button'))
       expect(props.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'two' }))
 
@@ -391,6 +395,7 @@ describe('research replay interaction', () => {
       expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
       act(() => vi.advanceTimersByTime(800))
       expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+      expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
     } finally {
       vi.useRealTimers()
     }
