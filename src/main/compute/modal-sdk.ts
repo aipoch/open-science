@@ -69,10 +69,11 @@ async function invoke(action: string, request: object, signal?: AbortSignal): Pr
             )
           )
         } else if (
-          ['create-volume', 'launch'].includes(action) &&
-          ['InvalidError', 'InvalidUsageError', 'PermissionDeniedError', 'AuthError'].includes(
-            response.error
-          )
+          (action === 'launch' && response.error === 'sandbox-not-started') ||
+          (action === 'create-volume' &&
+            ['InvalidError', 'InvalidUsageError', 'PermissionDeniedError', 'AuthError'].includes(
+              response.error
+            ))
         ) {
           reject(new ModalCreateRejectedError('Modal rejected resource creation.'))
         } else {

@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -235,11 +236,17 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
   }
 }, 30_000)
 
-it.each(['cancellation', 'timeout'])(
-  'recovers the owned volume after pre-launch %s and database restart',
-  exerciseVolumeCleanup
-)
-async function exerciseVolumeCleanup(reason: string): Promise<void> {
+it.each([
+  ['cancellation', 'failed', 'job_cancelled'],
+  ['timeout', 'timeout', 'timeout'],
+  ['preflight rejection', 'error', 'dispatch_failed']
+])('recovers the owned volume after pre-launch %s and database restart', exerciseVolumeCleanup)
+
+async function exerciseVolumeCleanup(
+  reason: string,
+  status: string,
+  errorCode: string
+): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'modal-cleanup-'))
   let client = createProjectDbClient(root)
   const jobs = new ComputeJobRepository(async () => client)
@@ -296,18 +303,21 @@ async function exerciseVolumeCleanup(reason: string): Promise<void> {
         where: { id },
         data: { submittedAt: new Date(Date.now() - 180_000) }
       })
-    } else {
+    } else if (reason === 'cancellation') {
       await operations.request(id, 'cancel', scope, new Date())
+    } else {
+      vi.mocked(sdk.stageModalInputs).mockResolvedValueOnce(undefined)
+      vi.mocked(sdk.createModalSandbox).mockRejectedValueOnce(new sdk.ModalCreateRejectedError())
     }
     await runtime.tick()
-    expect(cleanup).toHaveBeenCalledTimes(reason === 'timeout' ? 0 : 1)
+    expect(cleanup).toHaveBeenCalledTimes(reason === 'cancellation' ? 1 : 0)
     await runtime.stop()
     await client.$disconnect()
     client = createProjectDbClient(root)
     expect(await jobs.get(id)).toMatchObject({
-      status: reason === 'timeout' ? 'timeout' : 'failed',
-      error_code: reason === 'timeout' ? 'timeout' : 'job_cancelled',
-      harvested_at: expect.any(Number),
+      status,
+      error_code: errorCode,
+      ...(reason !== 'preflight rejection' && { harvested_at: expect.any(Number) }),
       remote_cleanup_disposition: 'pending'
     })
     if (reason === 'cancellation')
@@ -318,7 +328,7 @@ async function exerciseVolumeCleanup(reason: string): Promise<void> {
     runtime = newRuntime()
     runtime.start()
     await runtime.tick()
-    if (reason === 'timeout') {
+    if (reason !== 'cancellation') {
       expect(cleanup).not.toHaveBeenCalled()
       const job = (await jobs.get(id))!
       await expect(runtime.manualCleanup(job)).rejects.toThrow('Temporary cleanup failure')
@@ -332,7 +342,7 @@ async function exerciseVolumeCleanup(reason: string): Promise<void> {
     ])
     expect((await jobs.get(id))?.remote_cleanup_disposition).toBe('cleaned')
     expect(harvest).not.toHaveBeenCalled()
-    expect(sdk.createModalSandbox).not.toHaveBeenCalled()
+    expect(sdk.createModalSandbox).toHaveBeenCalledTimes(reason === 'preflight rejection' ? 1 : 0)
   } finally {
     await runtime.stop()
     await client.$disconnect()
@@ -340,3 +350,50 @@ async function exerciseVolumeCleanup(reason: string): Promise<void> {
     await rm(root, { recursive: true, force: true })
   }
 }
+
+it('classifies the same SDK error by whether sandbox creation was entered', ({ skip }) => {
+  const python =
+    process.env.OPEN_SCIENCE_TEST_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')
+  const exerciseHelper = `
+import io, json, runpy, sys
+from unittest.mock import Mock, patch
+class AuthError(Exception): pass
+sdk = Mock()
+sdk.App.lookup.return_value.app_id = 'ap-test'
+sdk.Volume.from_id.return_value.read_file.return_value = [b'nonce']
+sdk.Sandbox.create.side_effect = AuthError('private details')
+config = Mock(DEFAULT_SERVER_URL='https://api.modal.com', config={'server_url':'https://api.modal.com'})
+req = dict(environmentName='dev', appName='lab', appId='ap-test', volumeId='vo-owned',
+           nonce='nonce', command='true', image='python', cpus=1, memoryMiB=512, timeoutSeconds=60)
+helper = sys.argv[1]
+sys.argv = [helper, 'launch']
+with patch.dict(sys.modules, {'modal':sdk, 'modal.config':config}), patch('importlib.metadata.version', return_value='1.6.3'):
+    for image_error in [AuthError('private details'), None]:
+        sdk.Image.from_registry.side_effect = image_error
+        with patch('sys.stdin', io.StringIO(json.dumps({'request':req}))):
+            runpy.run_path(helper, run_name='__main__')
+        assert sdk.Sandbox.create.call_count == (0 if image_error else 1)
+`
+  const result = spawnSync(
+    python,
+    ['-I', '-c', exerciseHelper, join(process.cwd(), 'resources', 'compute-modal.py')],
+    {
+      encoding: 'utf8',
+      timeout: 10_000
+    }
+  )
+  if (
+    !process.env.OPEN_SCIENCE_TEST_PYTHON &&
+    (result.error as NodeJS.ErrnoException)?.code === 'ENOENT'
+  ) {
+    skip('The Modal helper requires Python.')
+  }
+  expect(result.error).toBeUndefined()
+  expect(result.status).toBe(0)
+  expect(
+    result.stdout
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line))
+  ).toEqual([{ error: 'sandbox-not-started' }, { error: 'AuthError' }])
+})

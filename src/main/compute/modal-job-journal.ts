@@ -59,6 +59,13 @@ export function readModalJournal(job: ComputeJob): ModalJobJournal {
     throw new Error('Invalid Modal job binding.')
   return record
 }
+// Called only when the local deadline or the helper proves Sandbox.create was never invoked.
+export function withUnstartedModalLaunch(journal: ModalJobJournal): string | undefined {
+  if (journal.sandbox?.id) throw new Error('Modal Sandbox already exists.')
+  if (!journal.volume?.id) return undefined
+  return JSON.stringify({ ...journal, sandbox: undefined, launchNotStarted: true })
+}
+
 export function withModalPublication(
   job: ComputeJob,
   files: readonly z.infer<typeof file>[]

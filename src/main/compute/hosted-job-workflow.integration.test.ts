@@ -312,6 +312,10 @@ async function exerciseSubmission(
       expect(computePackage.cleanupHuggingFaceBucketFiles).not.toHaveBeenCalled()
       await expect(jobs.deleteByOwner({ projectId: scope.projectId })).rejects.toThrow('cleanup')
       const pending = (await jobs.get(job_id))!
+      const historicJournal = { ...JSON.parse(pending.remote_handle!), launchNotStarted: undefined }
+      expect(
+        jobs.getManualStagedCleanup({ ...pending, remote_handle: JSON.stringify(historicJournal) })
+      ).toBeUndefined()
       const cleanup = vi.mocked(computePackage.cleanupHuggingFaceBucketFiles)
       cleanup.mockRejectedValueOnce(new Error('Unexpected input')).mockResolvedValue(undefined)
       await expect(runtime.manualCleanup(pending)).rejects.toThrow('Unexpected input')

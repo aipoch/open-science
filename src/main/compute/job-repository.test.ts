@@ -577,6 +577,16 @@ describe('ComputeJob repository (SQLite integration)', () => {
       }
     )
     const journal = { ...JSON.parse(job.remote_handle!), volume: { id: 'original' } }
+    const attempted = await repo.update(job.job_id, {
+      remoteHandle: JSON.stringify({ ...journal, sandbox: {} })
+    })
+    expect(await repo.rejectModalSubmission(attempted, 'Launch preflight failed')).toBe(true)
+    const rejected = (await repo.get(job.job_id))!
+    expect(JSON.parse(rejected.remote_handle!)).toEqual({ ...journal, launchNotStarted: true })
+    expect(repo.getManualStagedCleanup(rejected)?.kind).toBe('modal_sandbox')
+    expect(
+      repo.getManualStagedCleanup({ ...rejected, remote_handle: JSON.stringify(journal) })
+    ).toBeUndefined()
     const expired = await repo.update(job.job_id, {
       status: 'timeout',
       errorCode: 'timeout',

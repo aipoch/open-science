@@ -36,13 +36,23 @@ export function getManualStagedCleanup(job: ComputeJob): ManualStagedCleanup | u
     }
     if (
       job.execution_mode === 'modal_sandbox' &&
-      job.status === 'timeout' &&
-      job.error_code === 'timeout' &&
-      job.harvested_at !== undefined
+      (job.status === 'timeout' || job.status === 'error')
     ) {
       const journal = readModalJournal(job)
-      // In older records, the absence of the durable create intent proves no Sandbox call was made.
-      if (journal.volume?.id && !journal.sandbox && !journal.published) {
+      // Legacy deadline settlement is safe only when no Sandbox intent was ever persisted.
+      // A rejected launch additionally needs structured evidence from the pre-launch helper.
+      const expiredBeforeLaunch =
+        job.status === 'timeout' && job.error_code === 'timeout' && job.harvested_at !== undefined
+      const rejectedBeforeLaunch =
+        job.status === 'error' &&
+        job.error_code === 'dispatch_failed' &&
+        journal.launchNotStarted === true
+      if (
+        (expiredBeforeLaunch || rejectedBeforeLaunch) &&
+        journal.volume?.id &&
+        !journal.sandbox &&
+        !journal.published
+      ) {
         return {
           kind: 'modal_sandbox',
           environmentName: journal.target.environmentName,

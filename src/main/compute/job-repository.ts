@@ -20,6 +20,7 @@ import {
   initialModalJournal,
   MODAL_CREATION_UNCONFIRMED,
   readModalJournal,
+  withUnstartedModalLaunch,
   type ModalJobJournal,
   type ModalJobTarget
 } from './modal-job-journal'
@@ -1398,7 +1399,6 @@ export class ComputeJobRepository {
   }
   async expireUnlaunchedModalJob(job: ComputeJob, noVolume: boolean): Promise<boolean> {
     const journal = readModalJournal(job)
-    if (journal.sandbox?.id) throw new Error('Modal Sandbox already exists.')
     return this.updateFencedJob(
       'modal_sandbox',
       job,
@@ -1407,9 +1407,7 @@ export class ComputeJobRepository {
         errorCode: 'timeout',
         finishedAt: new Date(),
         harvestedAt: new Date(),
-        ...(journal.volume?.id && {
-          remoteHandle: JSON.stringify({ ...journal, sandbox: undefined, launchNotStarted: true })
-        }),
+        remoteHandle: withUnstartedModalLaunch(journal),
         harvestError: noVolume
           ? null
           : 'Deadline elapsed before launch; staged files are retained.',
@@ -1420,6 +1418,7 @@ export class ComputeJobRepository {
     )
   }
   async rejectModalSubmission(job: ComputeJob, message: string): Promise<boolean> {
+    const journal = readModalJournal(job)
     return this.updateFencedJob(
       'modal_sandbox',
       job,
@@ -1427,11 +1426,12 @@ export class ComputeJobRepository {
         status: 'error',
         errorCode: 'dispatch_failed',
         errorMessage: message,
+        remoteHandle: withUnstartedModalLaunch(journal),
         lastPollError: null,
         finishedAt: new Date()
       },
       false,
-      !readModalJournal(job).volume?.id
+      !journal.volume?.id
     )
   }
 
