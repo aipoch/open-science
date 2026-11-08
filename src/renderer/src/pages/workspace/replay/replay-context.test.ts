@@ -232,3 +232,35 @@ describe('step-scoped captured records', () => {
     ).toMatchObject({ truncated: true })
   })
 })
+
+it('captures only the selected cell at its input or result boundary, including paged runs', () => {
+  const runs = Array.from({ length: 6 }, (_, i) => ({ ...execution.runs[0], runId: `r${i}` }))
+  const step = {
+    ...execution,
+    runs,
+    evidence: runs.map((run) => ({ ...execution.evidence[0], id: run.runId }))
+  }
+  const doc = { ...document, branches: [{ ...document.branches[0], steps: [step] }] }
+  const selected = { id: 'r4', title: 'Notebook run 4' }
+  const detail = details.run
+  if (detail.status !== 'ready') throw new Error('Expected a recorded fixture')
+  const runDetails = { r4: { ...detail, run: { ...detail.run, runId: 'r4' } } }
+  for (const [offset, part, text] of [
+    [100, 'input', detail.run.script],
+    [800, 'record', detail.run.script + '\nMean = 4.50']
+  ] as const) {
+    const context = captureDiscussionStep(
+      doc,
+      projectReplayScene(doc, 'main', offset),
+      runDetails,
+      {},
+      selected
+    )
+    expect(context.evidence).toEqual([{ ...step.evidence[4], part }])
+    expect(context.records).toEqual([expect.objectContaining({ id: 'notebook-run:r4', text })])
+    expect(createSessionDiscussionAnnotation(context, 'selection')?.source).toMatchObject({
+      itemId: 'r4',
+      itemType: 'notebook-run'
+    })
+  }
+})

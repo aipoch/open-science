@@ -181,6 +181,7 @@ const ReplayPanelContent = ({
   const materialsId = useId()
   const materialsTrigger = useRef<HTMLButtonElement>(null)
   const [notebookLimit, setNotebookLimit] = useState<number>()
+  const [revealedRun, setRevealedRun] = useState<string>()
   const [notebookFollowing, setNotebookFollowing] = useState(true)
   const [conversationFocusRequest, setConversationFocusRequest] = useState(0)
   const [filePage, setFilePage] = useState(0)
@@ -241,6 +242,11 @@ const ReplayPanelContent = ({
     : scene.visibleSteps
         .flatMap((step) => step.runs.slice(0, REPLAY_MATERIAL_RUN_LIMIT))
         .slice(-REPLAY_MATERIAL_RUN_LIMIT)
+  // Reveal one out-of-page cell without fetching every intervening Notebook run.
+  if (materialsOpen && revealedRun && !pageRuns.some((run) => run.runId === revealedRun)) {
+    const target = scene.step?.runs.find((run) => run.runId === revealedRun)
+    if (target) pageRuns.unshift(target)
+  }
   const pageFiles = materialCatalog.files.slice(
     currentFilePage * DRAWER_PAGE_SIZE,
     (currentFilePage + 1) * DRAWER_PAGE_SIZE
@@ -466,6 +472,7 @@ const ReplayPanelContent = ({
       setSelectedResourceId(undefined)
       setPositionMs(position)
       setConversationFocusRequest((request) => request + 1)
+      setRevealedRun(undefined)
       setNotebookFollowing(true)
 
       setNotebookLimit(undefined)
@@ -488,10 +495,19 @@ const ReplayPanelContent = ({
         setSeekMissing(true)
         return
       }
+      if (target.runId && !step.runs.some((run) => run.runId === target.runId)) {
+        setSeekMissing(true)
+        return
+      }
       setSeekMissing(false)
       setBranchId(targetBranch!.id)
       const offset = Number.isFinite(target.stepOffsetMs) ? target.stepOffsetMs! : 0
       seek(step.startMs + Math.max(0, Math.min(step.durationMs, offset)))
+      if (target.runId) {
+        setMaterialsOverride(true)
+        setNotebookFollowing(false)
+        setRevealedRun(target.runId)
+      }
     }
     const unsubscribe = subscribeReplaySeek(receive)
     const pending = consumeReplaySeek(
@@ -507,6 +523,19 @@ const ReplayPanelContent = ({
     setPlaying(false)
     if (scene.step) onAskStep?.(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
+  const askHistorical = useCallback(
+    (step: ReplayStep, run?: { id: string; title: string }): void => {
+      const view = viewRef.current
+      if (!view || view.branchId !== step.branchId) return
+      cancelAskPrompt()
+      setPlaying(false)
+      // A completed card shows its final frame. endMs itself belongs to the next step.
+      const time = view.stepId === step.id ? view.timeMs : step.endMs - 1
+      const selected = projectReplayScene(replayDocument, view.branchId, time)
+      onAskStep?.(captureDiscussionStep(replayDocument, selected, runDetails, resources, run))
+    },
+    [cancelAskPrompt, replayDocument, onAskStep, runDetails, resources]
+  )
   const askSession = (): void => {
     cancelAskPrompt()
     setPlaying(false)
@@ -517,6 +546,7 @@ const ReplayPanelContent = ({
     if (!branch?.steps.length) return
     setSelectedResourceId(undefined)
     setConversationFocusRequest((request) => request + 1)
+    setRevealedRun(undefined)
     setNotebookFollowing(true)
 
     setNotebookLimit(undefined)
@@ -693,6 +723,7 @@ const ReplayPanelContent = ({
                   : undefined
               setBranchId(value)
               setPositionMs(restored?.positionMs ?? 0)
+              setRevealedRun(undefined)
               setNotebookFollowing(true)
 
               setNotebookLimit(undefined)
@@ -926,6 +957,8 @@ const ReplayPanelContent = ({
             materialsTrigger.current?.focus()
           }}
           onSeek={seek}
+          onAskHistorical={onAskStep ? askHistorical : undefined}
+          revealedRun={revealedRun}
           notebookRuns={pageRuns}
           fileResources={pageFiles}
           notebookHistoryControl={
