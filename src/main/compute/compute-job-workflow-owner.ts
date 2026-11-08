@@ -404,14 +404,12 @@ export class ComputeJobWorkflowOwner {
         ? `${command.slice(0, COMMAND_PREVIEW_MAX_LEN)}…`
         : command
     const jobRepository = this.jobRepository
-    let evidenceCaptureStarted = false
+    let evidenceCaptured = false
     let rowCreated = false
     let rowCreationAttempted = false
     let initialStatus: 'submitted' | 'queued' = 'submitted'
     const freezeInputs = async (): Promise<void> => {
       if (!this.storageRoot) return
-      evidenceCaptureStarted = true
-
       const uploads = stagedEntries.filter(
         (entry): entry is Extract<StagedInputEntry, { kind: 'upload' }> => entry.kind === 'upload'
       )
@@ -428,6 +426,7 @@ export class ComputeJobWorkflowOwner {
         })),
         signal
       })
+      evidenceCaptured = true
       const frozenByDestination = new Map(frozen.map((entry) => [entry.dstFilename, entry]))
       const evidenceStorageRoot = await realpath(this.storageRoot)
       stagedEntries = stagedEntries.map((entry) => {
@@ -541,7 +540,7 @@ export class ComputeJobWorkflowOwner {
             ...(context.producerRunId ? { parentActivityId: context.producerRunId } : {}),
             state: 'unavailable',
             scientificOutputCount: 0,
-            initialViewState: evidenceCaptureStarted ? 'complete' : 'unavailable',
+            initialViewState: evidenceCaptured ? 'complete' : 'unavailable',
             managedRootsFinalState: 'unavailable',
             scientificOutputAnalysis: 'unavailable',
             fileReads: 'unavailable',
@@ -611,7 +610,7 @@ export class ComputeJobWorkflowOwner {
         }
       }
     } catch (error) {
-      if (evidenceCaptureStarted && !rowCreated && this.storageRoot) {
+      if (evidenceCaptured && !rowCreated && this.storageRoot) {
         const rowDefinitelyAbsent =
           !rowCreationAttempted ||
           (await jobRepository
