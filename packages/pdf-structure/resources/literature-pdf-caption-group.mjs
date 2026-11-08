@@ -398,11 +398,18 @@ export function captionKind(text) {
   const narrativeReferencePanel =
     '(?:\\s+(?!a\\s+(?:review|display|measure|list|report|contrast|complement|plot|split|break|set|use|show|exhibit)\\b)[A-Za-z](?=\\s)|\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\)(?:\\s*(?:,|and|&)\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\))*)?'
   const narrativeReferenceVerb =
-    '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|contrasts?|measures?|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|flips|clarifies|assesses|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|highlights?|details?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|retains?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|scores?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
+    '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|contrasts?|measures?|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|flips|clarifies|assesses|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|highlights?|details?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|retains?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
   const narrativeReference = new RegExp(
     `^${narrativeReferenceLabel}${narrativeReferencePanel}(?:\\s*(?:,|and|&)\\s*(?:${narrativeReferenceLabel}|[A-Z]?\\d+(?:\\.\\d+)?)${narrativeReferencePanel})*\\s+(?:(?:also|further|first)\\s+)?${narrativeReferenceVerb}\\b`,
     'i'
   )
+  // Keep "score" as a noun in titles such as "Figure 2 score distributions";
+  // reject only the finite-verb form when a following object establishes prose.
+  const scoredReference = new RegExp(
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+scores?\\s+\\p{L}{2,}(?:\\s+(?:by|on|across|over|for|using|with|from)\\b|\\s+\\p{L}{2,}\\b)`,
+    'iu'
+  )
+  if (scoredReference.test(text)) return undefined
   // An unpunctuated figure subject followed by an inflected transitive verb
   // and a determiner-led object is running prose. Require the complete local
   // grammar: noun titles and punctuation-delimited captions retain ownership.

@@ -75,6 +75,7 @@ it('rejects figure score sentences that start with an unpunctuated label', () =>
     captionKind('Figure 11 scores texts by the mean over all pairs of a feature’s texts.')
   ).toBeUndefined()
   expect(captionKind('Figure 11. Scores for the held-out evaluation.')).toBe('figure')
+  expect(captionKind('Figure 2 score distributions')).toBe('figure')
 })
 
 it('keeps a normal cited figure caption when the citation describes the source', () => {
