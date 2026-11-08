@@ -2661,6 +2661,12 @@ export function recoverCaptionedRuledTables(
       // evidence that the caption already owns a complete table.
       const nativeRows = objects.filter((object) => object.label === 'table row').length
       const nativeColumns = objects.filter((object) => object.label === 'table column').length
+      const nativeGridProof =
+        nativeRows >= 2 &&
+        nativeColumns >= 2 &&
+        objects
+          .filter((object) => object.label === 'table row' || object.label === 'table column')
+          .every((object) => validRect(object.rect) && containsRect(crop, object.rect))
       const rows = Math.max(nativeRows, Array.isArray(table.grid) ? table.grid.length : 0)
       const columns = Math.max(
         nativeColumns,
@@ -2677,7 +2683,7 @@ export function recoverCaptionedRuledTables(
       const numeric = source.filter((item) => /\d/u.test(item.text)).length
       const assigned = (table.cells ?? []).flatMap((cell) => cell.sourceRects ?? [])
       const completeSource =
-        (nativeRows >= 2 && nativeColumns >= 2) ||
+        nativeGridProof ||
         (assigned.length >= rows * columns * 0.5 &&
           assigned.every((rect) => containsRect(crop, rect)))
       return baselines.size >= 2 && numeric >= 2 && completeSource

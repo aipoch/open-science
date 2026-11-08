@@ -3373,7 +3373,7 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
           (line) =>
             line.y < upper[1] &&
             line.y > priorCaptionBottom &&
-            upper[1] - line.y <= Math.max(32, page.height * 0.04) &&
+            upper[1] - line.y <= Math.max(48, page.height * 0.06) &&
             line.y + line.height <= upper[1] + 4 &&
             /^\(a\)(?:\s|$)/iu.test(line.text?.trim() ?? '') &&
             line.x + line.width > upper[0] &&
