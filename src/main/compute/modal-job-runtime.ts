@@ -82,7 +82,8 @@ class DeadlineElapsedBeforeCreate extends Error {}
 function remaining(job: ComputeJob): number {
   if (!Number.isSafeInteger(job.timeout_seconds) || !job.timeout_seconds)
     throw new Error('Missing approved Modal deadline.')
-  return Math.floor((job.created_at + job.timeout_seconds * 1000 - Date.now()) / 1000)
+  const dispatchedAt = job.submitted_at ?? job.created_at
+  return Math.floor((dispatchedAt + job.timeout_seconds * 1000 - Date.now()) / 1000)
 }
 type VolumeScope = {
   environmentName: string
@@ -158,15 +159,16 @@ export function createModalJobRuntime(deps: Deps): {
   const createOnce = async (
     job: ComputeJob,
     intent: ModalJobJournal,
-    create: () => Promise<ModalJobJournal>
+    create: (remainingSeconds: number) => Promise<ModalJobJournal>
   ): Promise<void> => {
     const encoded = JSON.stringify(intent)
     if (!(await repo.replaceModalJournal(job, encoded, true))) return
     const fenced = { ...job, remote_handle: encoded }
     let receipt: ModalJobJournal
     try {
-      if (remaining(job) < 1) throw new DeadlineElapsedBeforeCreate()
-      receipt = await create()
+      const remainingSeconds = remaining(job)
+      if (remainingSeconds < 1) throw new DeadlineElapsedBeforeCreate()
+      receipt = await create(remainingSeconds)
     } catch (error) {
       if (error instanceof DeadlineElapsedBeforeCreate) {
         if (await repo.expireUnlaunchedModalJob(fenced, !intent.volume?.id))
@@ -232,7 +234,6 @@ export function createModalJobRuntime(deps: Deps): {
           { ...scope, files, maxBytes: LOCAL_RESOURCE_BUDGETS.artifactTurnBytes },
           signal
         )
-        if (!job.timeout_seconds) throw new Error('Missing Modal timeout.')
         const intent = { ...j, sandbox: {} }
         const config = {
           ...scope,
@@ -240,12 +241,13 @@ export function createModalJobRuntime(deps: Deps): {
           cpus: j.target.cpus,
           memoryMiB: j.target.memoryMiB,
           gpu: j.target.gpu,
-          timeoutSeconds: remaining(job),
           command: job.command
         }
-        await createOnce(job, intent, async () => ({
+        await createOnce(job, intent, async (timeoutSeconds) => ({
           ...intent,
-          sandbox: { id: (await createModalSandbox(config, signal)).sandboxId }
+          sandbox: {
+            id: (await createModalSandbox({ ...config, timeoutSeconds }, signal)).sandboxId
+          }
         }))
         return
       }

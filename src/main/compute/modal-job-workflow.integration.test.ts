@@ -164,6 +164,7 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
     })
     sessions.set(scope.sessionId, [target.providerId])
     const { job_id } = await agent.submitJob(scope, target.providerId, 'verify result', command, {
+      timeoutSeconds: 120,
       workspaceCwd: workspace,
       inputs: [{ src: 'source.bin', dst_filename: 'input.bin' }],
       outputManifest: JSON.stringify(['result.bin'])
@@ -178,10 +179,19 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
     })
     expect(sdk.createModalVolume).not.toHaveBeenCalled()
     await writeFile(source, 'changed after approval')
+    // Resume a job that spent three minutes queued and was dispatched thirty seconds ago.
+    const submittedAt = new Date(Date.now() - 30_000)
+    await client.computeJob.update({
+      where: { id: job_id },
+      data: { createdAt: new Date(submittedAt.getTime() - 180_000), submittedAt }
+    })
     runtime.start()
     for (let n = 0; n < 5 && !vi.mocked(sdk.createModalSandbox).mock.calls.length; n++)
       await runtime.tick()
     expect(sdk.createModalSandbox).toHaveBeenCalledTimes(1)
+    const { timeoutSeconds } = vi.mocked(sdk.createModalSandbox).mock.calls[0][0]
+    expect(timeoutSeconds).toBeGreaterThan(0)
+    expect(timeoutSeconds).toBeLessThanOrEqual(90)
     await runtime.stop()
     await client.$disconnect()
     client = createProjectDbClient(root)
