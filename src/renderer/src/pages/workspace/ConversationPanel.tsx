@@ -1614,6 +1614,7 @@ const ConversationPanel = ({
                 sourceSession={sourceSession}
                 onOpenSession={sessionTools.openSession}
                 onEdit={sessionTools.editSession}
+                canTogglePin={!isImported}
                 onTogglePin={sessionTools.togglePin}
               />
             ) : (

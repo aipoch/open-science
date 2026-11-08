@@ -1958,6 +1958,7 @@ const WorkspacePage = ({
                     canMutateConversations: isSessionPersistenceReady,
                     canDeleteConversations: false,
                     canDownloadArtifacts: false,
+                    canTogglePin: !activeSession?.packageOrigin,
                     canArchiveSession,
                     packageBusy,
                     onTogglePin: sessionController.actions.togglePin,

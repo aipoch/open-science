@@ -2882,6 +2882,26 @@ describe('WorkspaceSidebar accessible render', () => {
     sidebar.cleanup()
   })
 
+  it('reopens the selected session group when selection moves into a collapsed group', async () => {
+    const sidebar = await mountProjectSidebar([])
+    const active = createSession({ id: 'active', status: 'running', updatedAt: 2 })
+    const recent = createSession({ id: 'recent', status: 'idle', updatedAt: 1 })
+
+    await sidebar.rerenderSessions([active, recent])
+    await sidebar.selectSession('active')
+
+    const recents = sidebar.container.querySelector<HTMLDetailsElement>(
+      'details[data-section="Recents"]'
+    )
+    expect(recents?.open).toBe(true)
+    await act(async () => recents?.querySelector<HTMLElement>('summary')?.click())
+    expect(recents?.open).toBe(false)
+
+    await sidebar.selectSession('recent')
+    expect(recents?.open).toBe(true)
+    sidebar.cleanup()
+  })
+
   it('presents an in-memory credential request as an active Session needing input', async () => {
     const html = await renderSidebar(
       [

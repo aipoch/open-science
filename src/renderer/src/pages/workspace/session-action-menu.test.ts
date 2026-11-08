@@ -121,6 +121,39 @@ describe('session action menu', () => {
     expect(actions).not.toContain('delete')
   })
 
+  it('hides pin controls when the owner disallows pinning', () => {
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: false,
+      canDownloadArtifacts: false,
+      canTogglePin: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn()
+    })
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'imported-session',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      invocation(
+        createSession({
+          packageOrigin: {
+            importId: 'import',
+            sourceProjectId: 'project',
+            sourceSessionId: 'source',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        })
+      )
+    )
+    expect(entries.some((entry) => entry.kind === 'action' && entry.action === 'toggle-pin')).toBe(
+      false
+    )
+  })
+
   it('offers discussion and replay for ordinary running Sessions and forwards the selected source', async () => {
     const onViewReplay = vi.fn()
     const onDiscussSession = vi.fn(async () => undefined)

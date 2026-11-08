@@ -735,10 +735,12 @@ const SessionRow = memo(function SessionRow({
 
 const SessionList = ({
   activeSessionId,
+  activeSectionLabel,
   visible,
   children
 }: {
   activeSessionId: string | undefined
+  activeSectionLabel: SidebarSessionSection['label'] | undefined
   visible: boolean
   children: React.ReactNode
 }): React.JSX.Element => {
@@ -749,6 +751,13 @@ const SessionList = ({
       ?.querySelector<HTMLElement>('[aria-current="page"]')
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
   }, [activeSessionId, visible])
+  useLayoutEffect(() => {
+    if (!activeSectionLabel) return
+    const section = Array.from(
+      listRef.current?.querySelectorAll<HTMLDetailsElement>('details[data-section]') ?? []
+    ).find((details) => details.dataset.section === activeSectionLabel)
+    if (section && !section.open) section.open = true
+  }, [activeSectionLabel, activeSessionId])
   return (
     <div ref={listRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto py-1">
       {children}
@@ -820,6 +829,9 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     credentialPendingSessionIds,
     pendingInteractionFactsBySession
   )
+  const activeSectionLabel = sections.find((section) =>
+    section.items.some((session) => session.id === activeSessionId)
+  )?.label
   const shortcutNumberBySessionId = new Map(
     sections
       .flatMap((section) => section.items)
@@ -1308,6 +1320,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
             >
               <SessionList
                 activeSessionId={activeSessionId}
+                activeSectionLabel={activeSectionLabel}
                 visible={
                   (!mobileMode || isMobileOpen) &&
                   sessions.some((session) => session.id === activeSessionId)
