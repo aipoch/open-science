@@ -681,8 +681,10 @@ export const createJobUpdatedBroadcaster =
     void (async () => {
       let displayName = job.provider_id
       try {
-        const host = await hostRepository.get(job.provider_id)
-        if (host) displayName = host.displayName
+        const target = externalComputeMode(job.provider_id)
+          ? await hostRepository.getComputeTarget(job.provider_id)
+          : await hostRepository.get(job.provider_id)
+        if (target) displayName = target.displayName
       } catch {
         // Preserve provider fallback; likewise, only a successful null Job lookup proves deletion.
       }

@@ -42,7 +42,7 @@ import {
   toJobSummary
 } from './ipc'
 import type { ComputeJobRepository } from './job-repository'
-import type { ComputeHostRepository } from './repository'
+import { ComputeHostRepository } from './repository'
 
 // ---------------------------------------------------------------------------
 // electron mock — captures ipcMain.handle registrations and stubs BrowserWindow
@@ -2066,6 +2066,35 @@ describe('createJobUpdatedBroadcaster', () => {
     expect(summary.provider_id).toBe('ssh:biowulf')
     expect(summary.display_name).toBe('Biowulf HPC')
     expect(summary.job_id).toBe('job-bcast')
+  })
+
+  it('broadcasts the configured name of an external compute target', async () => {
+    const modalTargets = new ModalTargetCatalog(() => storageRoot)
+    const target = await modalTargets.create({
+      displayName: 'Research GPU',
+      appName: 'lab',
+      environmentName: 'main',
+      image: 'python',
+      cpus: 1,
+      memoryMiB: 512
+    })
+    const hosts = new ComputeHostRepository(
+      async () => {
+        throw new Error('Unexpected SSH host lookup')
+      },
+      { modalTargets }
+    )
+    const job = sampleJob({
+      provider_id: target.providerId,
+      execution_mode: 'modal_sandbox',
+      shape: 'bridge_runner'
+    })
+    const captured = captureNextBroadcast()
+    createJobUpdatedBroadcaster(hosts, storageRoot, { get: async () => job })(job)
+    expect((await captured).payload).toMatchObject({
+      provider_id: target.providerId,
+      display_name: 'Research GPU'
+    })
   })
 
   it('falls back to the provider_id as display_name when hostRepository.get rejects', async () => {
