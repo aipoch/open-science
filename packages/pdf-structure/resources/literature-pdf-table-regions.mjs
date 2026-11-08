@@ -2661,12 +2661,6 @@ export function recoverCaptionedRuledTables(
       // evidence that the caption already owns a complete table.
       const nativeRows = objects.filter((object) => object.label === 'table row').length
       const nativeColumns = objects.filter((object) => object.label === 'table column').length
-      const nativeGridProof =
-        nativeRows >= 2 &&
-        nativeColumns >= 2 &&
-        objects
-          .filter((object) => object.label === 'table row' || object.label === 'table column')
-          .every((object) => validRect(object.rect) && containsRect(crop, object.rect))
       const rows = Math.max(nativeRows, Array.isArray(table.grid) ? table.grid.length : 0)
       const columns = Math.max(
         nativeColumns,
@@ -2683,7 +2677,7 @@ export function recoverCaptionedRuledTables(
       const numeric = source.filter((item) => /\d/u.test(item.text)).length
       const assigned = (table.cells ?? []).flatMap((cell) => cell.sourceRects ?? [])
       const completeSource =
-        nativeGridProof ||
+        (nativeRows >= 2 && nativeColumns >= 2) ||
         (assigned.length >= rows * columns * 0.5 &&
           assigned.every((rect) => containsRect(crop, rect)))
       return baselines.size >= 2 && numeric >= 2 && completeSource
@@ -2734,11 +2728,25 @@ export function recoverCaptionedRuledTables(
       completeCaptionedTable &&
       openRuleCandidate &&
       existing.length > 0 &&
-      (completeCaptionedTables.some(
-        (table) =>
+      (completeCaptionedTables.some((table) => {
+        const objects = table.structure?.objects ?? []
+        const rows = objects.filter((object) => object.label === 'table row').length
+        const columns = objects.filter((object) => object.label === 'table column').length
+        const nativeGridProof =
+          rows >= 2 &&
+          columns >= 2 &&
+          objects
+            .filter((object) => object.label === 'table row' || object.label === 'table column')
+            .every((object) => validRect(object.rect) && containsRect(table.cropRect, object.rect))
+        const assigned = (table.cells ?? []).flatMap((cell) => cell.sourceRects ?? [])
+        const cellProof =
+          assigned.length > 0 && assigned.every((rect) => containsRect(table.cropRect, rect))
+        return (
+          (nativeGridProof || cellProof) &&
           validRect(table.cropRect) &&
           intersect(table.cropRect, openRuleCandidate.cropRect) > area(table.cropRect) * 0.5
-      ) ||
+        )
+      }) ||
         spansMultipleCompleteTables ||
         // A captioned detector grid can be followed by an Algorithm/step
         // block.  The open-rule fallback sees the first rule and walks through
