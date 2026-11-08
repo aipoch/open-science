@@ -7,6 +7,7 @@ export type DiscussionStep = {
   id: string
   title: string
   branchIndex?: number
+  showTitle?: boolean
   stepNumber?: number
 }
 
@@ -54,7 +55,9 @@ export const SessionDiscussionBar = ({
           const stepLabel = wholeResearch
             ? undefined
             : step.stepNumber
-              ? t('Step {{step}}', { step: step.stepNumber })
+              ? [t('Step {{step}}', { step: step.stepNumber }), step.showTitle && step.title]
+                  .filter(Boolean)
+                  .join(' · ')
               : steps.length > 1
                 ? step.title
                 : undefined

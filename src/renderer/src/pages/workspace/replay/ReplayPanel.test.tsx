@@ -1854,3 +1854,31 @@ it('generates directly from the replay source branch without opening a discussio
   )
   expect(props.onAskStep).not.toHaveBeenCalled()
 })
+
+it('quotes a completed card from the displayed branch only on explicit Ask', () => {
+  const doc = makeDocument()
+  const branch = doc.branches[1]
+  branch.steps = Array.from({ length: 11 }, (_, i) => ({
+    ...step(`b${i}`, i * 1000, `Branch observation ${i}`),
+    branchId: branch.id
+  }))
+  branch.durationMs = 11000
+  const props = callbacks()
+  const { container } = render(<ReplayPanel document={doc} {...props} />)
+  chooseBranch('Other branch')
+  seekProgress(10500)
+  const card = container.querySelector<HTMLElement>('[data-replay-step="b2"]')!
+  fireEvent.wheel(card, { deltaY: -100 })
+  expect(props.onAskStep).not.toHaveBeenCalled()
+  fireEvent.click(within(card).getByRole('button', { name: 'Ask' }))
+  expect(props.onAskStep).toHaveBeenCalledWith(
+    expect.objectContaining({
+      stepNumber: 3,
+      stepId: 'b2',
+      branchId: branch.id,
+      excerpt: 'Branch observation 2',
+      stepOffsetMs: 999
+    })
+  )
+  expect(screen.getByTestId('replay-current-step').textContent).toContain('11')
+})

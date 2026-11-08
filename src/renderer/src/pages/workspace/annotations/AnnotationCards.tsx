@@ -229,6 +229,9 @@ const AnnotationDraftCards = ({
                 return {
                   id: annotation.id,
                   title: step ? step[2] : selection,
+                  showTitle:
+                    annotation.source.kind === 'session-item' &&
+                    annotation.source.itemType === 'notebook-run',
                   stepNumber: step ? Number(step[1]) : undefined
                 }
               })}
