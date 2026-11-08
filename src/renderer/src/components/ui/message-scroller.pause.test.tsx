@@ -72,7 +72,7 @@ const WindowedTranscript = ({ count }: { count: number }): React.JSX.Element => 
         mountedItemCount={window.entries.length}
         following={window.isFollowingEnd}
       />
-      <MessageScrollerFollowIntent active onPauseChange={setPaused} />
+      <MessageScrollerFollowIntent active onScrollStateChange={setPaused} />
       <MessageScrollerButton behavior="instant" onClick={() => window.followEnd()} />
     </>
   )
