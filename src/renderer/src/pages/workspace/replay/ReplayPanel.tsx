@@ -111,6 +111,7 @@ const restoredPosition = (
 
 const buttonClass = 'h-auto min-h-8 max-w-full px-3 py-1.5 text-xs'
 const DRAWER_PAGE_SIZE = 40
+const ASK_STEP_PROMPT_DELAY_MS = 800
 const EMPTY_STEPS: readonly ReplayStep[] = []
 
 const defaultNotebookReader: ReplayNotebookRunReader = (source, index, options) =>
@@ -159,6 +160,7 @@ const ReplayPanelContent = ({
   const [speed, setSpeed] = useState<ReplaySpeed>(initial.speed)
   const [playing, setPlaying] = useState(false)
   const [showAskPrompt, setShowAskPrompt] = useState(false)
+  const askPromptTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [ready, setReady] = useState(false)
   const [wide, setWide] = useState(false)
   const [materialsOverride, setMaterialsOverride] = useState<boolean>()
@@ -197,6 +199,21 @@ const ReplayPanelContent = ({
     () => projectReplayScene(replayDocument, branchId, positionMs),
     [replayDocument, branchId, positionMs]
   )
+  const cancelAskPrompt = useCallback(() => {
+    if (askPromptTimer.current !== undefined) {
+      clearTimeout(askPromptTimer.current)
+      askPromptTimer.current = undefined
+    }
+    setShowAskPrompt(false)
+  }, [])
+  const scheduleAskPrompt = useCallback(() => {
+    cancelAskPrompt()
+    askPromptTimer.current = setTimeout(() => {
+      askPromptTimer.current = undefined
+      setShowAskPrompt(true)
+    }, ASK_STEP_PROMPT_DELAY_MS)
+  }, [cancelAskPrompt])
+  useEffect(() => cancelAskPrompt, [cancelAskPrompt])
   const branch = replayDocument.branches.find((item) => item.id === scene.branchId)
   const currentStepLabel = scene.step ? replayStepExcerpt(scene.step) : undefined
   const materialCatalog = useMemo(() => {
@@ -443,7 +460,7 @@ const ReplayPanelContent = ({
   const seek = useCallback(
     (position: number) => {
       setPlaying(false)
-      setShowAskPrompt(true)
+      scheduleAskPrompt()
       setSelectedResourceId(undefined)
       setPositionMs(position)
       setConversationFocusRequest((request) => request + 1)
@@ -452,7 +469,7 @@ const ReplayPanelContent = ({
       setNotebookLimit(undefined)
       setFilePage(0)
     },
-    [setPlaying, setPositionMs, setSelectedResourceId]
+    [scheduleAskPrompt, setPlaying, setPositionMs, setSelectedResourceId]
   )
   useEffect(() => {
     const receive = (target: ReplaySeekTarget): void => {
@@ -484,7 +501,7 @@ const ReplayPanelContent = ({
   }, [replayDocument, seek])
 
   const ask = (): void => {
-    setShowAskPrompt(false)
+    cancelAskPrompt()
     pause()
     if (scene.step) onAskStep?.(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
@@ -504,7 +521,8 @@ const ReplayPanelContent = ({
     if (scene.ended) setPositionMs(0)
     const nextPlaying = !playing
     setPlaying(nextPlaying)
-    setShowAskPrompt(!nextPlaying)
+    if (nextPlaying) cancelAskPrompt()
+    else scheduleAskPrompt()
   }
 
   const renderMaterialPagination = (

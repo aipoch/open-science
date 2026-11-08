@@ -367,22 +367,33 @@ describe('research replay interaction', () => {
   })
 
   it('offers the current step as a contextual question after seeking or pausing', () => {
+    vi.useFakeTimers()
     const props = callbacks()
-    render(<ReplayPanel document={makeDocument()} {...props} />)
+    try {
+      render(<ReplayPanel document={makeDocument()} {...props} />)
 
-    expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
-    expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
-    fireEvent.click(within(screen.getByTestId('replay-ask-step-prompt')).getByRole('button'))
-    expect(props.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'two' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(799))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+      expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
+      fireEvent.click(within(screen.getByTestId('replay-ask-step-prompt')).getByRole('button'))
+      expect(props.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'two' }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
-    expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }))
-    expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(800))
+      expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('browses only the selected branch, pauses, and returns focus after a direct step jump', async () => {
