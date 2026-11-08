@@ -245,13 +245,20 @@ const makeJobRepo = (
   updates: { jobId: string; data: unknown }[]
 } => {
   const updates: { jobId: string; data: unknown }[] = []
+  let current = job
   const repo = {
-    update: vi.fn((jobId: string, data: unknown) => {
+    update: vi.fn((jobId: string, data: Parameters<ComputeJobRepository['update']>[1]) => {
       updates.push({ jobId, data })
-      return Promise.resolve({ ...job, ...(data as object) })
+      current = {
+        ...current,
+        ...(data.harvestedAt && { harvested_at: data.harvestedAt.getTime() }),
+        ...(data.harvestError !== undefined && { harvest_error: data.harvestError ?? undefined }),
+        ...(data.fileEvidence && { file_evidence: data.fileEvidence })
+      }
+      return Promise.resolve(current)
     }),
     claimNotification: vi.fn((_jobId: string, notifiedAt: Date) =>
-      Promise.resolve({ ...job, notified_at: notifiedAt.getTime() })
+      Promise.resolve({ ...current, notified_at: notifiedAt.getTime() })
     )
   } as unknown as Pick<ComputeJobRepository, 'update' | 'claimNotification'>
   return { repo, updates }
@@ -1208,7 +1215,7 @@ describe('harvestJob — harvest_failed', () => {
       expect(updates[0]?.data).not.toHaveProperty('harvestedAt')
       expect(publishJobUpdated).toHaveBeenCalledOnce()
       expect(publishJobUpdated).toHaveBeenCalledWith(
-        expect.objectContaining({ harvestError: 'harvest pending: authentication_failed' })
+        expect.objectContaining({ harvest_error: 'harvest pending: authentication_failed' })
       )
 
       // Simulate the restart scan selecting the still-unharvested row after credentials are repaired.

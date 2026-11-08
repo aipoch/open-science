@@ -371,6 +371,7 @@ export type JobSummary = {
   // Human-readable host name, denormalized from ComputeHost.displayName at query time.
   display_name: string
   shape: string
+  execution_mode?: ComputeExecutionMode
   // Session the job was submitted in — needed for the renderer store to filter by active session.
   session_id: string
   project_id?: string
@@ -400,6 +401,7 @@ export type JobSummary = {
   analysis_updated_at?: number
   // Phase 3b: compute_done payload fields (spec §11.3). Present when notified_at is set.
   featured_files?: string[]
+  hidden_files?: string[]
   featured_file_count?: number
   left_on_remote_count?: number
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
@@ -420,3 +422,51 @@ export type ComputeJobsListFilter =
   | Readonly<{ projectId: string; since: number }>
 
 export type ComputeJobsPendingNotificationFilter = string | Readonly<{ allSessions: true }>
+
+type ComputeOutputLocator = { projectId: string; sessionId: string; jobId: string; path: string }
+const computeOutputPrefix = 'compute-output:v1:'
+// Archive paths cross desktop platforms and must never address a device, stream or aliased directory.
+const reservedWindowsSegment = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i
+// eslint-disable-next-line no-control-regex
+const unsafeOutputCharacters = /[/\\:\x00-\x1f\x7f]/u
+const safeOutputSegment = (part: string): boolean =>
+  !!part &&
+  !/[. ]$/.test(part) &&
+  !reservedWindowsSegment.test(part) &&
+  !unsafeOutputCharacters.test(part)
+
+export function createComputeOutputPreviewKey(locator: ComputeOutputLocator): string {
+  const { projectId, sessionId, jobId, path } = locator
+  if (
+    ![projectId, sessionId, jobId].every(
+      (part) =>
+        typeof part === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) &&
+        safeOutputSegment(part)
+    ) ||
+    typeof path !== 'string'
+  )
+    throw new Error('Invalid compute output reference.')
+  const parts = path.split('/')
+  if (
+    parts.length < 4 ||
+    parts[0] !== 'hpc' ||
+    parts[1] !== jobId ||
+    !['featured', 'hidden'].includes(parts[2]) ||
+    !parts.every(safeOutputSegment)
+  )
+    throw new Error('Invalid compute output path.')
+  return computeOutputPrefix + [projectId, sessionId, ...parts].map(encodeURIComponent).join('/')
+}
+export function parseComputeOutputPreviewKey(key: string): ComputeOutputLocator {
+  if (typeof key !== 'string' || !key.startsWith(computeOutputPrefix) || key.length > 32768)
+    throw new Error('Invalid compute output reference.')
+  const [projectId, sessionId, ...parts] = key
+    .slice(computeOutputPrefix.length)
+    .split('/')
+    .map(decodeURIComponent)
+  const locator = { projectId, sessionId, jobId: parts[1], path: parts.join('/') }
+  if (createComputeOutputPreviewKey(locator) !== key)
+    throw new Error('Noncanonical compute output reference.')
+  return locator
+}

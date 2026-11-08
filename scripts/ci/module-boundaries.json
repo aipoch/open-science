@@ -256,6 +256,8 @@
         "src/main/compute/compute-job-operation-repository.ts",
         "src/main/compute/compute-remote-operation-owner.ts",
         "src/main/compute/job-runtime.ts",
+        "src/main/compute/job-archive-receipt.ts",
+        "src/main/compute/job-output-preview.ts",
         "src/main/compute/job-notifier.ts",
         "src/main/compute/harvest-engine.ts",
         "src/main/compute/job-repository.ts",
@@ -343,6 +345,7 @@
         "src/main/compute/job-deletion-runtime-drain.test.ts",
         "src/main/compute/job-deletion-runtime-isolation.test.ts",
         "src/main/compute/harvest-engine.test.ts",
+        "src/main/compute/job-output-preview.test.ts",
         "src/main/compute/job-notifier.test.ts",
         "src/main/compute/remote-compute-skill.test.ts",
         "src/main/compute/authentication-runtime.test.ts",
@@ -434,6 +437,7 @@
         "src/main/compute/job-deletion-runtime-drain.test.ts",
         "src/main/compute/job-deletion-runtime-isolation.test.ts",
         "src/main/compute/harvest-engine.test.ts",
+        "src/main/compute/job-output-preview.test.ts",
         "src/main/compute/job-notifier.test.ts",
         "src/main/compute/remote-compute-skill.test.ts",
         "src/main/compute/authentication-runtime.test.ts",
@@ -9377,6 +9381,7 @@
     },
     "workspace_job_presentation": {
       "sources": [
+        "src/renderer/src/components/ComputeJobOutputs.tsx",
         "src/renderer/src/components/JobDetailModal.tsx",
         "src/renderer/src/components/JobStatusBadge.tsx",
         "src/renderer/src/components/RemoteJobRow.tsx"

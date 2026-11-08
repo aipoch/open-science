@@ -12,7 +12,7 @@ const fields = [
   ['displayName', 'Name'],
   ['context', 'Context'],
   ['namespace', 'Namespace'],
-  ['image', 'Image'],
+  ['image', 'Container image'],
   ['transferImage', 'Transfer image']
 ] as const
 

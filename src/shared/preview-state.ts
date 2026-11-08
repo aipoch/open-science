@@ -3,6 +3,7 @@
 // Only restart-durable content is stored: file previews and the Session-scoped Subagents selection.
 // Notebook and other tool tabs are runtime-only and re-appear from their existing owners.
 
+import { parseComputeOutputPreviewKey } from './compute'
 import type { ProjectFileOriginSession } from './project-files'
 
 export const PREVIEW_STATE_VERSION = 1
@@ -109,13 +110,36 @@ export const createEmptyPersistedPreviewState = (): PersistedPreviewState => ({
 })
 
 // Rebuilds a single persisted file item from untrusted data, dropping anything without a usable path.
-const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | undefined => {
+const sanitizePreviewFileItem = (
+  value: unknown,
+  projectId?: string
+): PersistedPreviewFileItem | undefined => {
   if (!isRecord(value)) return undefined
 
-  const id = asBoundedString(value.id, MAX_PREVIEW_ID_LENGTH)
+  const archivedOutput = value.source === 'compute-output'
   const sessionId = asBoundedString(value.sessionId, MAX_PREVIEW_ID_LENGTH)
-  const path = asBoundedString(value.path, MAX_PREVIEW_PATH_LENGTH)
   const name = asBoundedString(value.name, MAX_PREVIEW_LABEL_LENGTH)
+  let id: string | undefined
+  let path: string | undefined
+  if (archivedOutput) {
+    // Archived tab IDs are scoped locators. Their encoded paths can exceed ordinary ID limits.
+    if (typeof value.path !== 'string' || value.id !== value.path) return undefined
+    try {
+      const scope = parseComputeOutputPreviewKey(value.path)
+      if (
+        scope.sessionId !== sessionId ||
+        (projectId !== undefined && scope.projectId !== projectId)
+      )
+        return undefined
+    } catch {
+      return undefined
+    }
+    id = value.path
+    path = value.path
+  } else {
+    id = asBoundedString(value.id, MAX_PREVIEW_ID_LENGTH)
+    path = asBoundedString(value.path, MAX_PREVIEW_PATH_LENGTH)
+  }
 
   if (!id || !sessionId || !path || !name) return undefined
 
@@ -127,6 +151,7 @@ const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | und
     format: asBoundedString(value.format, MAX_PREVIEW_METADATA_LENGTH) ?? 'unknown',
     name
   }
+  if (archivedOutput) return { ...item, source: 'compute-output' }
   const source = asBoundedString(value.source, MAX_PREVIEW_METADATA_LENGTH)
   const mimeType = asBoundedString(value.mimeType, MAX_PREVIEW_METADATA_LENGTH)
   const size = asNonNegativeNumber(value.size)
@@ -171,13 +196,16 @@ const sanitizeSubagentsPreviewItem = (
 }
 
 // Produces the only preview-state shape the renderer and main process should consume.
-export const normalizePersistedPreviewState = (value: unknown): PersistedPreviewState => {
+export const normalizePersistedPreviewState = (
+  value: unknown,
+  projectId?: string
+): PersistedPreviewState => {
   if (!isRecord(value)) return createEmptyPersistedPreviewState()
 
   const serializedItems = Array.isArray(value.items) ? value.items : []
   const items = serializedItems.length
     ? serializedItems
-        .map(sanitizePreviewFileItem)
+        .map((item) => sanitizePreviewFileItem(item, projectId))
         .filter((item): item is PersistedPreviewFileItem => !!item)
         .slice(-MAX_PERSISTED_PREVIEW_ITEMS)
     : []
@@ -187,13 +215,10 @@ export const normalizePersistedPreviewState = (value: unknown): PersistedPreview
       ? serializedItems.map(sanitizeSubagentsPreviewItem).find(Boolean)
       : undefined)
   const panelState: PersistedPreviewPanelState = value.panelState === 'open' ? 'open' : 'collapsed'
-  const requestedActiveItemId = asBoundedString(value.activeItemId, MAX_PREVIEW_ID_LENGTH)
-  // Keep the active id only when it still points at a persisted item.
-  const activeItemId = [...items, ...(subagents ? [subagents] : [])].some(
-    (item) => item.id === requestedActiveItemId
-  )
-    ? requestedActiveItemId
-    : undefined
+  // Select only an already-validated identity, including a long archived-output locator.
+  const activeItemId = [...items, ...(subagents ? [subagents] : [])].find(
+    (item) => item.id === value.activeItemId
+  )?.id
 
   const state: PersistedPreviewState = {
     version: PREVIEW_STATE_VERSION,

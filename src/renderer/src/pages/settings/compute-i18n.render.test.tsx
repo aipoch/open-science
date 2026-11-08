@@ -142,6 +142,15 @@ describe('ComputePanel i18n', () => {
     expect(container.textContent).not.toContain('Modal Sandbox targets')
     expect(container.textContent).not.toContain('No SSH hosts yet')
 
+    const addCluster = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '添加 Kubernetes 目标'
+    )
+    expect(addCluster).toBeDefined()
+    act(() => addCluster!.click())
+    expect(container.querySelector('input[name="image"]')?.closest('label')?.textContent).toBe(
+      '容器镜像'
+    )
+
     switchTo('zh-Hant')
     expect(container.textContent).toContain('Modal Sandbox 目標')
     expect(container.textContent).toContain('SSH 主機')

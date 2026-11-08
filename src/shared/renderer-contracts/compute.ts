@@ -1,3 +1,4 @@
+import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../artifacts'
 import type { KubernetesTarget, KubernetesTargetConfig } from '../compute'
 import type { HostedTarget, HostedTargetConfig } from '../compute'
 import type { RayTarget, RayTargetConfig } from '../compute'
@@ -57,6 +58,9 @@ export const contracts = {
     'compute',
     ['compute:create-ray-target', LOCAL]
   ),
+  'compute.readOutputPreview': callable<
+    (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
+  >()('compute', ['compute:read-output-preview']),
   'compute.listModalTargets': callable<() => Promise<ModalTarget[]>>()('compute', [
     'compute:list-modal-targets'
   ]),

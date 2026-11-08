@@ -164,6 +164,16 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:create-hosted-target': z.tuple([hostedTargetConfigSchema]),
   'compute:list-ray-targets': z.tuple([]),
   'compute:create-ray-target': z.tuple([rayTargetConfigSchema]),
+  'compute:read-output-preview': z.tuple([
+    z.strictObject({
+      path: z.string().min(1),
+      projectId: z.string().optional(),
+      sessionId: z.string().optional(),
+      maxBytes: z.number().int().nonnegative().optional(),
+      offset: z.number().int().nonnegative().optional(),
+      encoding: z.enum(['utf8', 'base64']).optional()
+    })
+  ]),
   'compute:list-modal-targets': z.tuple([]),
   'compute:create-modal-target': z.tuple([modalTargetConfigSchema]),
   'compute:get': z.tuple([z.string()]),
@@ -252,6 +262,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:list-ray-targets', () => handlers.listRayTargets())
   handleComputeIpc('compute:create-ray-target', (_event, config) =>
     handlers.createRayTarget(config)
+  )
+  handleComputeIpc('compute:read-output-preview', (_event, request) =>
+    handlers.readOutputPreview(request)
   )
   handleComputeIpc('compute:list-modal-targets', () => handlers.listModalTargets())
   handleComputeIpc('compute:create-modal-target', (_event, config) =>

@@ -1,13 +1,12 @@
+import { readComputeOutputPreview } from './job-output-preview'
 import { externalComputeMode } from '../../shared/compute'
 import { MODAL_CREATION_UNCONFIRMED } from './modal-job-journal'
 import { KubernetesTargetCatalog } from './kubernetes-target-catalog'
 import { HostedTargetCatalog } from './hosted-target-catalog'
 import { RayTargetCatalog } from './ray-target-catalog'
 import { ModalTargetCatalog } from './modal-target-catalog'
-import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/compute/node'
+import { createComputeExecution } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import { desktopShellInteraction } from '../desktop-interaction'
 import type { ArtifactResolver } from './compute-job-workflow-owner'
 import type { ComputeHandlers } from './handler-contract'
@@ -49,101 +48,11 @@ import {
   type LegacyComputeGrantPort
 } from './permission-grant-adapter'
 import { SessionCacheOwner } from './session-cache-owner'
-import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
+import { toJobSummary } from './job-notifier'
+export { toJobSummary } from './job-notifier'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
-
-// Recursive readdir helper (returns absolute paths of all files).
-const readdirRecursive = async (dir: string): Promise<string[]> => {
-  const entries = await readdir(dir, { withFileTypes: true })
-  const results: string[] = []
-  for (const entry of entries) {
-    const full = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      results.push(...(await readdirRecursive(full)))
-    } else {
-      results.push(full)
-    }
-  }
-  return results
-}
-
-// Converts a full ComputeJob to the lightweight JobSummary sent over IPC. The display_name is
-// denormalized from the host list at query time in listJobSummaries below.
-// Phase 3b: includes notification inbox timestamps so the renderer can decide whether to trigger
-// an analysis turn (issue 05/07). The featured_files are computed by scanning the harvest directory.
-export const toJobSummary = async (
-  job: ComputeJob,
-  displayName: string,
-  storageRoot: string
-): Promise<JobSummary> => {
-  // Parse left_on_remote JSON safely (stored as string in DB, but JobSummary expects array).
-  let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
-  if (job.left_on_remote) {
-    try {
-      leftOnRemote = JSON.parse(job.left_on_remote)
-    } catch {
-      // Malformed JSON — fall back to empty array.
-    }
-  }
-
-  // Compute featured_files by scanning the harvest directory (same logic as buildComputeDonePayload).
-  const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
-  const featuredDir = join(harvestDir, 'featured')
-  const workspaceCwd = join(harvestDir, '..', '..')
-
-  let featuredFiles: string[] = []
-  if (!job.harvest_error) {
-    try {
-      const entries = await readdirRecursive(featuredDir)
-      featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
-    } catch {
-      // Directory does not exist or is unreadable — emit an empty list.
-    }
-  }
-
-  return {
-    job_id: job.job_id,
-    provider_id: job.provider_id,
-    display_name: displayName,
-    shape: job.shape,
-    session_id: job.session_id,
-    project_id: job.project_id,
-    status: job.status,
-    raw_status: job.raw_status,
-    integrity_issues: job.integrity_issues,
-    needs_attention: job.needs_attention,
-    cancellation_status: job.cancellation_status,
-    cancellation_error: job.cancellation_error,
-    cancellation_revision: job.cancellation_revision,
-    scheduler_job_id: parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir),
-    intent: job.intent,
-    created_at: job.created_at,
-    started_at: job.started_at,
-    finished_at: job.finished_at,
-    exit_code: job.exit_code,
-    error_code: job.error_code,
-    error_message: job.error_message,
-    last_poll_error: job.last_poll_error,
-    remote_workdir: job.remote_workdir,
-    stdout_tail: job.stdout_tail,
-    stderr_tail: job.stderr_tail,
-    // Phase 3b notification inbox timestamps (issue 06).
-    notified_at: job.notified_at,
-    notification_consumed_at: job.notification_consumed_at,
-    analysis_state: job.analysis_state,
-    analysis_message_id: job.analysis_message_id,
-    analysis_updated_at: job.analysis_updated_at,
-    // Phase 3b compute_done payload fields (spec §11.3).
-    featured_files: featuredFiles,
-    featured_file_count: featuredFiles.length,
-    left_on_remote_count: leftOnRemote.length,
-    left_on_remote: leftOnRemote,
-    harvest_error: job.harvest_error ?? undefined,
-    harvested_at: job.harvested_at
-  }
-}
 
 // Renderer-callable Compute commands; transport and credential details remain behind their owners.
 
@@ -391,6 +300,21 @@ const createComputeHandlers = (
     }
   }
 
+  // Read one archive receipt at a time so a long Session history cannot exhaust file handles or memory.
+  const summarizeJobs = async (
+    jobs: ComputeJob[],
+    root: string,
+    includeDelivery: boolean
+  ): Promise<JobSummary[]> => {
+    const names = await listHostNames()
+    const result: JobSummary[] = []
+    for (const job of jobs) {
+      const summary = await summarizeJob(job, names.get(job.provider_id) ?? job.provider_id, root)
+      result.push(includeDelivery ? await projectDeliveryPath(summary) : summary)
+    }
+    return result
+  }
+
   const createHostWithLifecycle = <Request extends { sshAlias: string }>(
     request: Request,
     createHost: () => Promise<ComputeHost>
@@ -427,6 +351,7 @@ const createComputeHandlers = (
         if (!repository.rayTargets) throw new Error('Compute settings unavailable.')
         return repository.rayTargets.create(config)
       }),
+    readOutputPreview: readComputeOutputPreview,
     listModalTargets: () => repository.listModalTargets(),
     createModalTarget: (config) =>
       runHostLifecycleMutation(async () => {
@@ -550,29 +475,18 @@ const createComputeHandlers = (
       broker.finishSessionDeletion(sessionId, retained),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
-      const hostNameMap = await listHostNames()
       if ('projectId' in filter) {
         const jobs = await jobRepository.findProjectOverview(
           filter.projectId,
           new Date(filter.since)
         )
-        return Promise.all(
-          jobs.map((job) =>
-            summarizeJob(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
-          )
-        )
+        return summarizeJobs(jobs, storageRoot, false)
       }
       const jobs =
         'nonTerminal' in filter
           ? await jobRepository.findNonTerminal(true)
           : await jobRepository.findBySession(filter.sessionId, filter.status)
-      return Promise.all(
-        jobs.map(async (j) =>
-          projectDeliveryPath(
-            await summarizeJob(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
-          )
-        )
-      )
+      return summarizeJobs(jobs, storageRoot, true)
     },
     jobsCancel: (request) =>
       service.cancelJob(request.jobId, {
@@ -610,18 +524,11 @@ const createComputeHandlers = (
     },
     jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
-      const hostNameMap = await listHostNames()
       const jobs =
         typeof filter === 'string'
           ? await jobRepository.findPendingNotifications(filter)
           : await jobRepository.findPendingNotifications()
-      return Promise.all(
-        jobs.map(async (j) =>
-          projectDeliveryPath(
-            await summarizeJob(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
-          )
-        )
-      )
+      return summarizeJobs(jobs, storageRoot, true)
     },
     jobsMarkConsumed: async (sessionId, jobIds) => {
       if (!jobRepository) return
@@ -640,18 +547,7 @@ const createComputeHandlers = (
           log.warn('compute analysis transition broadcast failed', errorLogFields(error))
         }
       }
-      const hostNameMap = await listHostNames()
-      return Promise.all(
-        jobs.map(async (job) =>
-          projectDeliveryPath(
-            await summarizeJob(
-              job,
-              hostNameMap.get(job.provider_id) ?? job.provider_id,
-              storageRoot
-            )
-          )
-        )
-      )
+      return summarizeJobs(jobs, storageRoot, true)
     },
     jobDeletionOwner
   }

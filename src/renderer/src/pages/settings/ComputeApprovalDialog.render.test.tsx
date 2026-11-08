@@ -114,7 +114,12 @@ describe('ComputeApprovalDialog', () => {
     act(() => root.render(<ComputeApprovalDialog />))
     act(() => findButton('Show full command')!.click())
     const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')!
-    expect(viewport.textContent).toContain(commandFull)
+    const commandRegion = viewport.querySelector<HTMLElement>(
+      '[role="region"][aria-label="Command"]'
+    )!
+    expect(commandRegion.textContent).toBe(commandFull)
+    expect(commandRegion.tabIndex).toBe(0)
+    expect(commandRegion.contains(findButton('Show less')!)).toBe(false)
     expect(viewport.contains(findButton('Deny')!)).toBe(false)
     await act(async () => findButton('Deny')!.click())
     expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, 'deny')

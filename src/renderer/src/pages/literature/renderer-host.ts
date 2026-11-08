@@ -9,7 +9,10 @@ import type {
   LiteratureScopeReference,
   SessionPdfContextSource
 } from '../../../../shared/session-persistence'
-import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
+import type {
+  ManagedPreviewResource,
+  ManagedPreviewSource
+} from '../../../../shared/preview-resources'
 import type {
   NcbiCredentialsView,
   OpenAlexCredentialView,
@@ -46,7 +49,7 @@ export type LiteraturePreviewItem = {
   title: string
   type: 'file'
   format: LiteraturePreviewFormat
-  source?: 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
+  source?: ManagedPreviewSource
   path: string
   name: string
   mimeType?: string

@@ -30,7 +30,7 @@ export type PdfContextTarget = SessionPdfContextSource
 
 // A managed PDF is linkable once it has immutable Version identity; local files never are.
 export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget | undefined => {
-  if (item.format !== 'pdf' || item.source === 'local') {
+  if (item.format !== 'pdf' || item.source === 'local' || item.source === 'compute-output') {
     return undefined
   }
   if (item.source === 'literature') {
@@ -110,7 +110,11 @@ export const usePdfContextAction = (
 
   const pdfContextTarget = item ? resolvePdfContextTarget(item) : undefined
   const managedPdfContextUnavailable = Boolean(
-    item && item.format === 'pdf' && item.source !== 'local' && !pdfContextTarget
+    item &&
+    item.format === 'pdf' &&
+    item.source !== 'local' &&
+    item.source !== 'compute-output' &&
+    !pdfContextTarget
   )
   const stagedPdfAttachmentId =
     item &&

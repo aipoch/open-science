@@ -1,3 +1,4 @@
+import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../../shared/artifacts'
 import type { KubernetesTarget, KubernetesTargetConfig } from '../../shared/compute'
 import type { HostedTarget, HostedTargetConfig } from '../../shared/compute'
 import type { RayTarget, RayTargetConfig } from '../../shared/compute'
@@ -41,6 +42,7 @@ export type ComputeHandlers = {
   createHostedTarget: (config: HostedTargetConfig) => Promise<HostedTarget>
   listRayTargets: () => Promise<RayTarget[]>
   createRayTarget: (config: RayTargetConfig) => Promise<RayTarget>
+  readOutputPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   listModalTargets: () => Promise<ModalTarget[]>
   createModalTarget: (config: ModalTargetConfig) => Promise<ModalTarget>
   list: () => Promise<ComputeHost[]>

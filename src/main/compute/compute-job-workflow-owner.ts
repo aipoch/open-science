@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
-import { readdir, realpath } from 'node:fs/promises'
-import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 
 import type { JobStatusResult, SubmitJobResult } from '@aipoch/compute'
@@ -49,7 +49,7 @@ import {
 } from './job-repository'
 import { bindExternalJob, findExternalJobConfig } from './external-job-submission'
 import type { ComputeHostRepository } from './repository'
-import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
+import { listArchivedJobFiles } from './workspace-path'
 
 const COMMAND_PREVIEW_MAX_LEN = 120
 const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600
@@ -707,16 +707,8 @@ export class ComputeJobWorkflowOwner {
       return jobResultWithFiles(job, localOutputRoot, [], [], leftOnRemote)
     }
 
-    const harvestDir = getJobHarvestDir(
-      this.storageRoot,
-      job.project_id,
-      job.session_id,
-      job.job_id
-    )
-    const workspaceCwd = getNotebookSessionRoot(this.storageRoot, job.project_id, job.session_id)
-    const featuredFiles = await scanDirRelative(join(harvestDir, 'featured'), workspaceCwd)
-    const hiddenFiles = await scanDirRelative(join(harvestDir, 'hidden'), workspaceCwd)
-    return jobResultWithFiles(job, localOutputRoot, featuredFiles, hiddenFiles, leftOnRemote)
+    const { featured_files, hidden_files } = await listArchivedJobFiles(job, this.storageRoot)
+    return jobResultWithFiles(job, localOutputRoot, featured_files, hidden_files, leftOnRemote)
   }
 
   async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
@@ -770,31 +762,3 @@ const jobResultWithFiles = (
   stderr_tail: job.stderr_tail,
   harvest_error: job.harvest_error
 })
-
-async function scanDirRelative(dir: string, workspaceCwd: string): Promise<string[]> {
-  const results: string[] = []
-  try {
-    await collectFiles(dir, workspaceCwd, results)
-  } catch {
-    // Missing or unreadable harvest directories project as empty file lists.
-  }
-  return results
-}
-
-async function collectFiles(
-  currentDir: string,
-  workspaceCwd: string,
-  results: string[]
-): Promise<void> {
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await readdir(currentDir, { withFileTypes: true })
-  } catch {
-    return
-  }
-  for (const entry of entries) {
-    const fullPath = join(currentDir, entry.name)
-    if (entry.isDirectory()) await collectFiles(fullPath, workspaceCwd, results)
-    else if (entry.isFile()) results.push(workspaceRelativePath(workspaceCwd, fullPath))
-  }
-}

@@ -604,6 +604,7 @@ const installWebApi = async (): Promise<EventCursor> => {
                 ...(request.versionId ? { versionId: request.versionId } : {})
               }
               break
+            case 'compute-output':
             case 'notebook-input':
             case 'literature':
             case 'local':

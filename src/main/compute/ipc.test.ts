@@ -1793,7 +1793,7 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     submitted_at: undefined,
     started_at: undefined,
     finished_at: undefined,
-    harvested_at: undefined,
+    harvested_at: 100,
     ...overrides
   })
 
@@ -1803,7 +1803,14 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     await writeFile(join(featuredDir, 'result.csv'), 'a,b\n1,2\n')
     await writeFile(join(featuredDir, 'sub', 'nested.txt'), 'nested')
 
+    const hiddenDir = join(featuredDir, '..', 'hidden')
+    await mkdir(hiddenDir, { recursive: true })
+    await writeFile(join(hiddenDir, 'log.txt'), 'output')
     const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
+    expect(summary.hidden_files).toEqual(['hpc/job-harvest/hidden/log.txt'])
+    expect(
+      await toJobSummary(sampleJob({ harvested_at: undefined }), 'Biowulf HPC', storageRoot)
+    ).toMatchObject({ featured_files: [], hidden_files: [] })
 
     // Relative to <storageRoot>/notebooks/proj-1/sess-1 (workspaceCwd = harvestDir/../..).
     // IPC paths are logical workspace paths and must stay POSIX-shaped on Windows.
@@ -2661,6 +2668,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:list-hosted-targets',
       'compute:list-ray-targets',
       'compute:list-modal-targets',
+      'compute:read-output-preview',
       'compute:get',
       'compute:create',
       'compute:create-kubernetes-target',

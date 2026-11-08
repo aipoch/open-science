@@ -4,7 +4,12 @@ import { useTranslation } from 'react-i18next'
 import { isComputeJobCancelled } from '@aipoch/compute'
 import { ArrowUpRight, ChevronDown, Cpu, RadioTower } from 'lucide-react'
 
-import type { JobSummary } from '../../../../shared/compute'
+import {
+  externalComputeMode,
+  isComputeProviderId,
+  type JobSummary
+} from '../../../../shared/compute'
+import { ComputeJobOutputs } from '@/components/ComputeJobOutputs'
 import type {
   NotebookProjectActivity,
   NotebookProjectBackgroundRunActivity,
@@ -127,6 +132,25 @@ const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t
     undefined,
     t
   )
+
+const backendLabels = {
+  direct_ssh: 'Direct SSH',
+  slurm: 'Slurm',
+  kubernetes: 'Kubernetes',
+  hugging_face_jobs: 'Hugging Face Jobs',
+  ray_jobs: 'Ray Jobs',
+  modal_sandbox: 'Modal Sandboxes'
+} as const
+
+function jobTargetLabel(job: JobSummary, t: ReturnType<typeof useTranslation>['t']): string {
+  const mode =
+    job.execution_mode ??
+    (isComputeProviderId(job.provider_id) ? externalComputeMode(job.provider_id) : undefined)
+  const name = job.display_name || job.provider_id
+  if (!mode || !Object.hasOwn(backendLabels, mode)) return name
+  const backend = t(backendLabels[mode])
+  return name === backend ? name : `${backend} · ${name}`
+}
 
 const ProjectComputeInbox = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -410,17 +434,18 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                 </h2>
                 <div
                   role="row"
-                  className="hidden grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(140px,1fr)_100px_110px_28px] gap-4 border-b border-border-200 bg-bg-10 px-3.5 py-2 text-[10px] font-semibold tracking-wide text-text-100 uppercase @3xl/compute:grid"
+                  className="hidden grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_100px_110px_28px] gap-4 border-b border-border-200 bg-bg-10 px-3.5 py-2 text-[10px] font-semibold tracking-wide text-text-100 uppercase @3xl/compute:grid"
                 >
                   <span role="columnheader">{t('Task')}</span>
                   <span role="columnheader">{t('Session')}</span>
-                  <span role="columnheader">{t('Host')}</span>
+                  <span role="columnheader">{t('Target')}</span>
                   <span role="columnheader">{t('Status')}</span>
                   <span role="columnheader">{t('Updated')}</span>
                   <span aria-hidden="true" />
                 </div>
                 {jobs.map((job) => {
                   const session = sessionById.get(job.session_id)
+                  const target = jobTargetLabel(job, t)
                   const updatedAt = job.finished_at ?? job.started_at ?? job.created_at
                   return (
                     <div
@@ -436,6 +461,9 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium" title={job.intent}>
                               {job.intent}
+                            </span>
+                            <span className="block wrap-anywhere text-[11px] text-text-100">
+                              {target}
                             </span>
                             <span className="mt-1 flex items-center gap-1.5 text-[11px] text-text-100">
                               <span>{jobStatusLabel(job, t)}</span>
@@ -459,15 +487,9 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                               {session?.title ?? t('Deleted Session')}
                             </dd>
                           </div>
-                          <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
-                            <dt className="text-[10px] font-semibold tracking-wide text-text-100 uppercase">
-                              {t('Host')}
-                            </dt>
-                            <dd className="truncate text-text-100">{job.display_name}</dd>
-                          </div>
                         </dl>
                       </details>
-                      <dl className="hidden grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(140px,1fr)_100px_110px_28px] items-center gap-4 @3xl/compute:grid">
+                      <dl className="hidden grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_100px_110px_28px] items-center gap-4 @3xl/compute:grid">
                         <div>
                           <dt className="sr-only">{t('Task')}</dt>
                           <dd className="flex min-w-0 items-center gap-2 font-medium">
@@ -487,8 +509,8 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                           </dd>
                         </div>
                         <div>
-                          <dt className="sr-only">{t('Host')}</dt>
-                          <dd className="truncate text-text-100">{job.display_name}</dd>
+                          <dt className="sr-only">{t('Target')}</dt>
+                          <dd className="wrap-anywhere text-text-100">{target}</dd>
                         </div>
                         <div>
                           <dt className="sr-only">{t('Status')}</dt>
@@ -511,7 +533,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                         type="button"
                         variant="ghost"
                         size="icon-xs"
-                        className="absolute top-3 right-3 text-text-100 hover:text-text-000 @3xl/compute:top-1/2 @3xl/compute:-translate-y-1/2"
+                        className="absolute top-3 right-3 text-text-100 hover:text-text-000"
                         disabled={!session}
                         aria-label={t('Go to Session')}
                         title={t('Go to Session')}
@@ -519,6 +541,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
                       >
                         <ArrowUpRight aria-hidden="true" />
                       </Button>
+                      <ComputeJobOutputs job={job} />
                     </div>
                   )
                 })}

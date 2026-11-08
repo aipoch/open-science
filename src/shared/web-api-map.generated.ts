@@ -78,6 +78,7 @@ export const WEB_INVOKE_CHANNELS = {
   'compute.listRayTargets': 'compute:list-ray-targets',
   'compute.passwordCapability': 'compute:password-capability',
   'compute.probe': 'compute:probe',
+  'compute.readOutputPreview': 'compute:read-output-preview',
   'compute.replayApproval': 'compute:approval-replay',
   'compute.replayPendingApprovals': 'compute:approval-replay-pending',
   'compute.resetPassword': 'compute:reset-password',

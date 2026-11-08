@@ -30,6 +30,7 @@ type ComputeCommandOwner = Pick<
   | 'createHostedTarget'
   | 'listRayTargets'
   | 'createRayTarget'
+  | 'readOutputPreview'
   | 'listModalTargets'
   | 'createModalTarget'
   | 'get'
@@ -126,6 +127,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'createRayTarget'>,
     OwnerResult<ComputeCommandOwner, 'createRayTarget'>
   >('compute:create-ray-target'),
+  readOutputPreview: defineApplicationCommand<
+    'compute:read-output-preview',
+    OwnerArgs<ComputeCommandOwner, 'readOutputPreview'>,
+    OwnerResult<ComputeCommandOwner, 'readOutputPreview'>
+  >('compute:read-output-preview'),
   listModalTargets: defineApplicationCommand<
     'compute:list-modal-targets',
     OwnerArgs<ComputeCommandOwner, 'listModalTargets'>,
@@ -325,6 +331,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.createHostedTarget,
   computeApplicationCommands.listRayTargets,
   computeApplicationCommands.createRayTarget,
+  computeApplicationCommands.readOutputPreview,
   computeApplicationCommands.listModalTargets,
   computeApplicationCommands.createModalTarget,
   computeApplicationCommands.bookmarksGet,
@@ -428,6 +435,7 @@ const registerComputeApplicationCommands = (
         assertLocalCommand(callerContext, 'compute:create-ray-target')
         return dependencies.compute.createRayTarget(args[0])
       },
+      'compute:read-output-preview': ({ args }) => dependencies.compute.readOutputPreview(args[0]),
       'compute:list-modal-targets': () => dependencies.compute.listModalTargets(),
       'compute:create-modal-target': ({ args, callerContext }) => {
         assertLocalCommand(callerContext, 'compute:create-modal-target')

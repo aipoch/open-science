@@ -89,6 +89,9 @@ type ManagedPreviewResourcesOptions = {
     source: 'artifact' | 'upload',
     request: { projectId: string; fileId: string; versionId: string }
   ) => Promise<ManagedFileReadLease>
+  openComputeOutput?: (
+    request: Extract<AcquireManagedPreviewRequest, { source: 'compute-output' }>
+  ) => Promise<ManagedPreviewTrustedLease>
   openNotebookInput?: (
     request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' }>
   ) => Promise<ManagedPreviewTrustedLease>
@@ -667,6 +670,11 @@ class ManagedPreviewResources {
       if (!this.options.openLiterature)
         return Promise.reject(new Error('Literature preview lease is not configured.'))
       return this.options.openLiterature(request.path)
+    }
+    if (request.source === 'compute-output') {
+      if (!this.options.openComputeOutput)
+        return Promise.reject(new Error('Compute output preview is unavailable.'))
+      return this.options.openComputeOutput(request)
     }
     if (request.source === 'notebook-input') {
       if (!this.options.openNotebookInput) {
