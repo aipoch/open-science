@@ -1237,6 +1237,23 @@ it('retains complete generic figure labels only when the crop owns every native 
   }
 })
 
+it('cleans a generic figure page when graphic anchor inspection fails', async () => {
+  const f = await genericFigureWithoutSourceItems()
+  const cleanup = vi.spyOn(f.native, 'cleanup')
+  const getOperatorList = f.native.getOperatorList.bind(f.native)
+  f.native.getOperatorList = async () => {
+    throw new Error('synthetic operator-list failure')
+  }
+  try {
+    await applyCachedPdfFigureSources(f.args)
+    expect(cleanup).toHaveBeenCalled()
+  } finally {
+    f.native.getOperatorList = getOperatorList
+    cleanup.mockRestore()
+    await f.loading.destroy()
+  }
+})
+
 it('retains complete generic Extended Data figure labels', async () => {
   const f = await genericFigureWithoutSourceItems('Extended Data Fig. 1: Generic panel')
   try {

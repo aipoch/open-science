@@ -532,9 +532,12 @@ export async function applyCachedPdfFigureSources({
         if (!graphicAnchors.has(pageNumber)) {
           current()
           const page = await document.getPage(pageNumber)
-          const { images, vectors } = await graphicRegions(page, OPS, signal)
-          graphicAnchors.set(pageNumber, [...images, ...vectors])
-          page.cleanup()
+          try {
+            const { images, vectors } = await graphicRegions(page, OPS, signal)
+            graphicAnchors.set(pageNumber, [...images, ...vectors])
+          } finally {
+            page.cleanup()
+          }
           current()
         }
         const anchors = graphicAnchors.get(pageNumber) ?? []
