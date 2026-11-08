@@ -94,6 +94,7 @@ type WorkingFileObservationDependencies = {
   evidenceQueueTimeoutMs?: number
   getAvailableBytes?: typeof availableBytes
   runEvidenceWorker?: typeof runEvidenceWorker
+  analyzeSourceFileAccess?: typeof analyzeNotebookSourceFileAccess
 }
 
 type ActiveObservation = { conflicted: boolean }
@@ -1776,7 +1777,8 @@ const beginEvidenceCapture = async (
 }
 
 const prepareSourceFileAccess = async (
-  request: WorkingFileObservationRequest
+  request: WorkingFileObservationRequest,
+  analyze: typeof analyzeNotebookSourceFileAccess = analyzeNotebookSourceFileAccess
 ): Promise<WorkingFileObservationRequest['sourceFileAccess']> => {
   if (request.code === undefined) return undefined
   const context = request.sourceFileAccessContext
@@ -1787,7 +1789,7 @@ const prepareSourceFileAccess = async (
         OPEN_SCIENCE_HANDOFF_DIR: join(resolve(request.notebookSessionRoot), 'handoff')
       }
     : undefined
-  const analysis = await analyzeNotebookSourceFileAccess(
+  const analysis = await analyze(
     request.kind === 'repl' ? 'repl' : (request.language ?? 'python'),
     request.code,
     context ? { ...context, managedEnvironment } : undefined
@@ -2120,12 +2122,15 @@ const startWorkingFileObservation = async (
 ): Promise<WorkingFileObservation> => {
   const preparedRequest = {
     ...request,
-    sourceFileAccess: await prepareSourceFileAccess({
-      ...request,
-      sourceFileAccessContext: request.sourceFileAccessContext
-        ? { ...request.sourceFileAccessContext, verifiedSerializedValues: [] }
-        : undefined
-    }).catch(() => ({
+    sourceFileAccess: await prepareSourceFileAccess(
+      {
+        ...request,
+        sourceFileAccessContext: request.sourceFileAccessContext
+          ? { ...request.sourceFileAccessContext, verifiedSerializedValues: [] }
+          : undefined
+      },
+      dependencies.analyzeSourceFileAccess
+    ).catch(() => ({
       readState: 'unavailable' as const,
       writeState: 'unavailable' as const,
       externalState: 'unavailable' as const,
@@ -2170,13 +2175,16 @@ const startWorkingFileObservation = async (
       [...capture.initialGenerationChecksums].map(([path, checksum]) => ({ path, checksum })),
       executionRoot
     )
-    preparedRequest.sourceFileAccess = await prepareSourceFileAccess({
-      ...request,
-      sourceFileAccessContext: {
-        ...request.sourceFileAccessContext,
-        verifiedSerializedValues: verified
-      }
-    }).catch(() => preparedRequest.sourceFileAccess)
+    preparedRequest.sourceFileAccess = await prepareSourceFileAccess(
+      {
+        ...request,
+        sourceFileAccessContext: {
+          ...request.sourceFileAccessContext,
+          verifiedSerializedValues: verified
+        }
+      },
+      dependencies.analyzeSourceFileAccess
+    ).catch(() => preparedRequest.sourceFileAccess)
   }
   let finished = false
   return {

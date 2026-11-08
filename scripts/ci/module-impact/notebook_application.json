@@ -135,6 +135,10 @@
     "src/main/notebook/kernel-epoch-contract.ts",
     "src/main/notebook/runtime-service.architecture.test.ts",
     "src/main/notebook/runtime-service.ts",
+    "src/main/notebook/source-analysis-request.ts",
+    "src/main/notebook/source-analysis-worker-entry.ts",
+    "src/main/notebook/source-analysis-worker.ts",
+    "src/main/notebook/source-analysis-worker.test.ts",
     "src/main/notebook-payload.integration.test.ts",
     "src/main/notebook/authorized-directories.integration.test.ts"
   ],
@@ -331,7 +335,8 @@
       "src/main/notebook/powershell-search-parser.test.ts",
       "src/main/notebook/analysis-file-evidence.test.ts",
       "src/main/notebook/runtime-service.architecture.test.ts",
-      "src/main/notebook-payload.integration.test.ts"
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/notebook/source-analysis-worker.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

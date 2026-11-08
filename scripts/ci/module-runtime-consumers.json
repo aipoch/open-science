@@ -271,5 +271,10 @@
   "packages/research-film/src/runtime-assets.json": ["packages/research-film/src/runtime.ts"],
   "packages/research-film/resources/authoring/KIT.md": ["packages/research-film/src/authoring.ts"],
   "packages/research-film/src/ffmpeg-assets.json": ["packages/research-film/src/ffmpeg-catalog.ts"],
-  "packages/research-film/src/skill-video.schema.json": ["packages/research-film/src/screenplay.ts"]
+  "packages/research-film/src/skill-video.schema.json": [
+    "packages/research-film/src/screenplay.ts"
+  ],
+  "src/main/notebook/source-analysis-worker-entry.ts": [
+    "src/main/notebook/source-analysis-worker.ts"
+  ]
 }
