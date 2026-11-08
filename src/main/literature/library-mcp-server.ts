@@ -37,7 +37,7 @@ const LITERATURE_LIBRARY_BATCH_ABSTRACT_LIMIT = 5
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_MAX_CHARACTERS = 5_000
 export const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
 // Reads name their record directly, so `items` has no selection to apply there.
-const LITERATURE_LIBRARY_READ_SCOPES = ['library', 'project', 'collection'] as const
+export const LITERATURE_LIBRARY_READ_SCOPES = ['library', 'project', 'collection'] as const
 
 type LiteratureLibraryScope = (typeof LITERATURE_LIBRARY_SCOPES)[number]
 

@@ -25,7 +25,8 @@ import {
   LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
   LITERATURE_LIBRARY_SAVE_TOOL_NAME,
   LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
-  LITERATURE_LIBRARY_SCOPES
+  LITERATURE_LIBRARY_SCOPES,
+  LITERATURE_LIBRARY_READ_SCOPES
 } from '../literature/library-mcp-server'
 import {
   LITERATURE_MCP_SERVER_NAME,
@@ -68,6 +69,8 @@ const SKILL_IMPORT_TOOLS: ResponsesNamespacedTool[] = [
 ]
 
 const libraryScope = z.enum(LITERATURE_LIBRARY_SCOPES)
+// Abstract and PDF reads reject the search-only "items" scope.
+const libraryReadScope = z.enum(LITERATURE_LIBRARY_READ_SCOPES)
 const itemId = z.string().trim().min(1).max(512)
 // The runtime validator normalizes nested identifiers with Zod transforms, which cannot be
 // represented in the provider JSON Schema. Keep the bridge declaration structural; the MCP
@@ -98,7 +101,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
     z.object({
       itemId: itemId.optional(),
       itemIds: z.array(itemId).min(1).max(5).optional(),
-      scope: libraryScope.optional(),
+      scope: libraryReadScope.optional(),
       collectionId: itemId.optional()
     })
   ),
@@ -110,7 +113,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
       itemId,
       attachmentId: itemId.optional(),
       query: z.string().trim().min(1).max(2_000),
-      scope: libraryScope.optional(),
+      scope: libraryReadScope.optional(),
       collectionId: itemId.optional()
     })
   ),
