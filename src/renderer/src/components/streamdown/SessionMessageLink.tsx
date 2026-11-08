@@ -346,7 +346,7 @@ const SessionMessageLink = ({
               data-source-preview-hover-url=""
               href={sourceItem.url}
               title={sourceItem.url}
-              className="min-w-0 flex-1 truncate text-xs font-medium text-text-100 hover:underline"
+              className="min-w-0 flex-1 truncate text-xs font-medium text-primary hover:underline"
               onClick={(event) => {
                 event.preventDefault()
                 activateSource(true)
@@ -363,7 +363,7 @@ const SessionMessageLink = ({
                     size="icon-xs"
                     data-source-preview-hover-external=""
                     aria-label={t('Open source in browser')}
-                    className="text-text-100 hover:text-text-000"
+                    className="text-primary hover:text-primary"
                     onClick={(event) => {
                       event.stopPropagation()
                       dismissSourcePreview(true)

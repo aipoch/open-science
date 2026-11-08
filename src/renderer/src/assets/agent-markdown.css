@@ -1061,7 +1061,7 @@
 @media (hover: hover) and (pointer: fine) {
   .agent-markdown [data-session-message-link]:hover,
   .agent-markdown [data-session-message-link].is-hover {
-    @apply text-sd-ink;
+    @apply text-primary;
     text-decoration-thickness: 0.12em;
   }
 }

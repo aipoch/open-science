@@ -605,6 +605,17 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(hoverUrl).toHaveAttribute('href', 'https://citation.example/paper')
   const externalButton = hoverCard.getByRole('button', { name: 'Open source in browser' })
   await expect(externalButton).toBeVisible()
+  const linkColor = await hoverCard.evaluate((card) => {
+    const swatch = document.createElement('span')
+    swatch.style.color = 'var(--primary)'
+    card.append(swatch)
+    const color = getComputedStyle(swatch).color
+    swatch.remove()
+    return color
+  })
+  await expect(sourceLink).toHaveCSS('color', linkColor)
+  await expect(hoverUrl).toHaveCSS('color', linkColor)
+  await expect(externalButton).toHaveCSS('color', linkColor)
   expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
   const hoverAccessibility = (await hoverCard.evaluate(async (element) => {
