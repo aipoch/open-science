@@ -3373,6 +3373,8 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
           (line) =>
             line.y < upper[1] &&
             line.y > priorCaptionBottom &&
+            upper[1] - line.y <= Math.max(32, page.height * 0.04) &&
+            line.y + line.height <= upper[1] + 4 &&
             /^\(a\)(?:\s|$)/iu.test(line.text?.trim() ?? '') &&
             line.x + line.width > upper[0] &&
             line.x < upper[2]
@@ -3385,7 +3387,9 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
           candidate !== caption &&
           candidate.page === caption.page &&
           captionKind(candidate.lines?.[0] ?? '') === 'table' &&
-          intersection(candidate.rect, [upper[0], upper[1] - 24, upper[2], upper[3]]) > 0
+          candidate.rect[3] <= upper[1] &&
+          candidate.rect[2] > upper[0] &&
+          candidate.rect[0] < upper[2]
       )
     if (upper && upperTitle && !hasTableCaption) {
       const band = [

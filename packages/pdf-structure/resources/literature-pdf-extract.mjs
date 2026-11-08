@@ -2543,7 +2543,7 @@ try {
               })) &&
             hasSourceTableEvidence(table, index)
         )
-        const recognizedTableRects = refined
+        let recognizedTableRects = refined
           .filter((_, index) => acceptedTables[index])
           .map((table) => table.cropRect.map((v) => v / 1.5))
         const graphicalTables = associateGraphicalTables(
@@ -3154,6 +3154,11 @@ try {
               continue
             acceptedTables[index] = false
           }
+          // Keep every downstream exclusion and competing-rectangle list in sync
+          // with the late panel-owned table suppression above.
+          recognizedTableRects = refined
+            .filter((_, index) => acceptedTables[index])
+            .map((table) => table.cropRect.map((v) => v / 1.5))
         }
         // This optional path owns only a complete native body and literal caption.
         // It cannot enter label recovery, prose suppression or crop expansion.
