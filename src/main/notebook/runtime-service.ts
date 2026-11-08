@@ -41,6 +41,7 @@ import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/
 import { analyzePowerShellCodeRisk, type NotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import {
   analyzeNotebookCodeRiskOffMainThread,
+  analyzeNotebookSourceFileAccessOffMainThread,
   analyzeNotebookSourceOffMainThread
 } from './source-analysis-worker'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
@@ -907,6 +908,7 @@ class NotebookRuntimeService {
       executorFactory: options.executorFactory,
       defaultExecutorOptions: () => ({
         ...resolveDefaultExecutorOptions(),
+        analyzeSourceFileAccess: analyzeNotebookSourceFileAccessOffMainThread,
         ...(options.processSandbox ? { processSandbox: options.processSandbox } : {})
       }),
       platform: options.platform,
