@@ -459,13 +459,14 @@ describe('HostViewImageService', () => {
   )
 
   it.each([false, true])(
-    'preserves the first image when a second RPC is aborted (native images: %s)',
+    'completes the first image before an aborted second RPC settles (native images: %s)',
     async (native) => {
+      const prepareVisionEvidence = vi.fn(async ({ images }) => `Inspected ${images.length} image`)
       const h = harness({
         backend: visualBackend({ supportsImageInput: native }),
         items: [catalogItem('artifact'), catalogItem('upload')],
         captureVisionRelay: () => true,
-        prepareVisionEvidence: async ({ images }) => `Inspected ${images.length} image`
+        prepareVisionEvidence
       })
       const firstRpc = new AbortController()
       await h.service.stage(
@@ -483,11 +484,16 @@ describe('HostViewImageService', () => {
       const pending = new Promise<void>((resolve) => {
         finishSecond = resolve
       })
-      h.prepareImage.mockImplementationOnce(async (_path, _options, signal) => {
+      h.prepareImage.mockImplementationOnce(async () => {
         secondStarted()
         await pending
-        signal?.throwIfAborted()
-        throw new Error('An aborted request must not prepare an image')
+        // A provider may ignore cancellation and return the prepared image late.
+        return {
+          data: Buffer.from('late image').toString('base64'),
+          mimeType: 'image/png',
+          originalSize: { width: 20, height: 10 },
+          outputSize: { width: 20, height: 10 }
+        }
       })
       const secondRpc = new AbortController()
       const second = h.service.stage(
@@ -497,11 +503,83 @@ describe('HostViewImageService', () => {
       )
       await started
       secondRpc.abort()
-      finishSecond()
-      await expect(second).rejects.toMatchObject({ name: 'AbortError' })
       await expect(h.service.complete('run-1')).resolves.toEqual(
         native ? [{ data: 'cG5n', mimeType: 'image/png' }] : [{ evidence: 'Inspected 1 image' }]
       )
+      if (native) expect(prepareVisionEvidence).not.toHaveBeenCalled()
+      else {
+        expect(prepareVisionEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({ images: [{ data: 'cG5n', mimeType: 'image/png' }] })
+        )
+      }
+      finishSecond()
+      await expect(second).rejects.toMatchObject({ name: 'AbortError' })
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
+
+  it.each([false, true])(
+    'keeps whole-batch Stop authoritative before an aborted RPC settles (native images: %s)',
+    async (native) => {
+      const backend = visualBackend({ supportsImageInput: native })
+      let completing = false
+      let finishBackend!: (backend: HostViewImageBackend) => void
+      let completionStarted!: () => void
+      const startedCompletion = new Promise<void>((resolve) => {
+        completionStarted = resolve
+      })
+      const pendingBackend = new Promise<HostViewImageBackend>((resolve) => {
+        finishBackend = resolve
+      })
+      const prepareVisionEvidence = vi.fn(async () => 'unexpected evidence')
+      const h = harness({
+        captureBackend: () => {
+          if (!completing) return backend
+          completionStarted()
+          return pendingBackend
+        },
+        items: [catalogItem('artifact'), catalogItem('upload')],
+        captureVisionRelay: () => true,
+        prepareVisionEvidence
+      })
+      await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+      let secondStarted!: () => void
+      let finishSecond!: () => void
+      const startedSecond = new Promise<void>((resolve) => {
+        secondStarted = resolve
+      })
+      const pendingSecond = new Promise<void>((resolve) => {
+        finishSecond = resolve
+      })
+      h.prepareImage.mockImplementationOnce(async () => {
+        secondStarted()
+        await pendingSecond
+        return {
+          data: Buffer.from('late image').toString('base64'),
+          mimeType: 'image/png',
+          originalSize: { width: 20, height: 10 },
+          outputSize: { width: 20, height: 10 }
+        }
+      })
+      const rpc = new AbortController()
+      const second = h.service.stage(
+        { versionId: 'upload-version-1' },
+        {},
+        { ...context(), signal: rpc.signal }
+      )
+      await startedSecond
+      rpc.abort()
+      completing = true
+      const stop = new AbortController()
+      const completion = h.service.complete('run-1', stop.signal)
+      await startedCompletion
+      const reason = new Error('foreground caller stopped')
+      stop.abort(reason)
+      finishSecond()
+      await expect(second).rejects.toMatchObject({ name: 'AbortError' })
+      finishBackend(backend)
+      await expect(completion).rejects.toBe(reason)
+      expect(prepareVisionEvidence).not.toHaveBeenCalled()
       await expect(h.service.complete('run-1')).resolves.toEqual([])
     }
   )

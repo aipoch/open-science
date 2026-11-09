@@ -197,7 +197,8 @@ describe('host.viewImage caller and request ownership', () => {
     async (native) => {
       const cwd = await workspace()
       const preparingSecond = deferred()
-      const secondSettled = deferred()
+      const serverSawDisconnect = deferred()
+      const finishSecond = deferred()
       let prepareCount = 0
       const hostViewImage = new HostViewImageService({
         catalog: { readHostArtifactCatalog: async () => [] },
@@ -208,19 +209,10 @@ describe('host.viewImage caller and request ownership', () => {
         prepareImage: async (_path, _options, signal) => {
           if (++prepareCount === 2) {
             preparingSecond.resolve()
-            await new Promise<void>((_resolve, reject) => {
-              signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
-            })
+            signal!.addEventListener('abort', serverSawDisconnect.resolve, { once: true })
+            await finishSecond.promise
           }
           return image
-        }
-      })
-      const stage = hostViewImage.stage.bind(hostViewImage)
-      vi.spyOn(hostViewImage, 'stage').mockImplementation(async (...args) => {
-        try {
-          return await stage(...args)
-        } finally {
-          if (prepareCount === 2) secondSettled.resolve()
         }
       })
       server = new NotebookLocalRpcServer({} as never, { transport: 'tcp', hostViewImage })
@@ -250,8 +242,10 @@ describe('host.viewImage caller and request ownership', () => {
       await preparingSecond.promise
       disconnect.abort()
       await rejected
-      await secondSettled.promise
-      const viewImages = await control.completeControlInvocation('run-1')
+      await serverSawDisconnect.promise
+      const viewImages = await control
+        .completeControlInvocation('run-1')
+        .finally(finishSecond.resolve)
       const content = buildNotebookToolContent(
         { status: 'completed', stdout: 'computed 42 after catching RPC failure', viewImages },
         {

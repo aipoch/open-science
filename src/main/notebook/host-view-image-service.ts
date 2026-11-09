@@ -386,6 +386,17 @@ export class HostViewImageService {
     invocation.reserved.add(ordinal)
     // A disconnected RPC cancels only this reservation. Stop and owner teardown cancel the batch.
     const signal = AbortSignal.any([context.signal, invocation.abortController.signal])
+    const releaseReservation = (): void => {
+      invocation.reserved.delete(ordinal)
+      if (
+        invocation.reserved.size === 0 &&
+        this.invocations.get(context.controlInvocationId) === invocation
+      ) {
+        this.discard(context.controlInvocationId)
+      }
+    }
+    // Completion can race a disconnected RPC whose image preparation has not settled yet.
+    context.signal.addEventListener('abort', releaseReservation, { once: true })
 
     try {
       const backend = await this.options.captureBackend(invocation.caller)
@@ -508,19 +519,15 @@ export class HostViewImageService {
       )
       return frozenResult(sourceKind, image)
     } catch (error) {
-      invocation.reserved.delete(ordinal)
-      if (
-        invocation.reserved.size === 0 &&
-        this.invocations.get(context.controlInvocationId) === invocation
-      ) {
-        this.discard(context.controlInvocationId)
-      }
+      releaseReservation()
       if (error instanceof HostViewImageError) throw error
       if (error instanceof ImageContentError) {
         throw new HostViewImageError(error.message, error)
       }
       if (error instanceof DOMException && error.name === 'AbortError') throw error
       throw new HostViewImageError('could not prepare the authorized image source.', error)
+    } finally {
+      context.signal.removeEventListener('abort', releaseReservation)
     }
   }
 
