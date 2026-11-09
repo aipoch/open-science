@@ -37,8 +37,8 @@ const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
 const CONFIG_DIRECTORY = '.open-science'
 const PROCESS_TIMEOUT_MS = 120_000
 // The silent NSIS install unpacks a 650 MB+ payload; loaded CI runners can need several minutes.
-// Keep two minutes of the ten-minute step budget for launch, migrations, and shutdown checks.
-const INSTALLER_TIMEOUT_MS = 8 * 60_000
+// Keep the four-install plan and two eight-minute Notebook provisions within the 40-minute job.
+const INSTALLER_TIMEOUT_MS = 330_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
