@@ -16,7 +16,9 @@ flowchart TB
   subgraph Owners[State owners]
     Settings[Settings and credentials]
     ACP[ACP runtime coordinator]
+    Builtin[Built-in Open-Science Agent]
     Notebook[Notebook runtime]
+    Jobs[Compute jobs]
     Library[Literature library]
     Store[Sessions, files and artifacts]
   end
@@ -24,14 +26,15 @@ flowchart TB
   subgraph External[External services]
     Frameworks[Claude Code · OpenCode · Codex · CodeBuddy · Pi]
     Connectors[MCP and scientific connectors]
-    Compute[SSH hosts · Slurm]
+    Compute[SSH · Slurm · Kubernetes · Hugging Face Jobs · Modal · Ray]
   end
 
   Desktop & Web & Mobile & CLI --> Router
-  Router --> Settings & ACP & Notebook & Library & Store
+  Router --> Settings & ACP & Notebook & Jobs & Library & Store
+  ACP --> Builtin
   ACP --> Frameworks
   ACP --> Connectors
-  Notebook --> Compute
+  Jobs --> Compute
   Notebook --> Store
   Library --> Store
 ```
@@ -40,19 +43,19 @@ Layer details: [current architecture](PRD.md#8-current-architecture-what-is-actu
 
 ## Capability Map
 
-| Area                   | Capabilities                                                                                                                                                                  | Boundary                                                                                                                 |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Projects and sessions  | Projects, conversation branches, writable forks, side chats, queued messages, review-gated plans, bookmarks, notifications, global search                                     | Side chats stay out of research packages and forks                                                                       |
-| Agents and models      | Five agent frameworks, built-in agent runtime, built-in and custom providers, subscription sign-in, scenario-specific model policies, project memory, compaction, token usage | Protocol support follows the selected framework; no backend-independent gateway                                          |
-| Specialists and skills | Specialists, subagent delegation, file-based skills, signed marketplace, packages and GitHub imports                                                                          | No user-facing version pinning                                                                                           |
-| Scientific connectors  | Built-in life-science resources, custom MCP servers, shared credentials, per-agent access and tool permissions                                                                | Coverage depends on each upstream service                                                                                |
-| Literature             | Library, collections, duplicate merge, full-text lookup, smart screening, PDF extraction, persistent annotations, citations                                                   | Full text depends on the source; screening is triage, not a systematic-review protocol                                   |
-| Files and previews     | Streaming uploads, versioned text editing, previews for tables, sequences, PDFs, Office, images, code, HTML, molecules                                                        | The 10 GiB upload limit is separate from parsing, preview and model-context limits                                       |
-| Compute                | Persistent Python/R kernels, shell, managed environments, background jobs, SSH and Slurm, Kubernetes, Hugging Face Jobs, Modal and Ray job submission, `.ipynb` export        | Remote targets need user-provisioned accounts, software, and permissions; jobs run under the approved target's authority |
-| Provenance and replay  | Immutable artifact versions, lineage, optional reviewer, artifact replay checks, environment bundles                                                                          | Missing evidence is reported, not reconstructed; no whole-session replay                                                 |
-| Research exchange      | `.science` packages, read-only import, writable fork, Markdown/PDF export, RO-Crate export                                                                                    | Imports run no code and restore no credentials                                                                           |
-| Permissions and data   | Scoped grants, approved folders, network controls, central credentials, storage relocation, diagnostic export                                                                 | Protection varies by execution path and platform                                                                         |
-| Access and delivery    | macOS, Windows and Linux installers, auto-update, localhost Web, headless CLI/Task SDK, paired mobile, interface translations                                                 | Web and CLI do not imply desktop parity or a hosted multi-tenant service                                                 |
+| Area                   | Capabilities                                                                                                                                                                                                                  | Boundary                                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Projects and sessions  | Projects, conversation branches, writable forks, side chats, queued messages, review-gated plans, bookmarks, notifications, global search                                                                                     | Side chats stay out of research packages and forks                                                                       |
+| Agents and models      | Built-in Open-Science Agent by default on new installations, five other selectable frameworks, built-in and custom providers, subscription sign-in, scenario-specific model policies, project memory, compaction, token usage | Protocol support follows the selected framework; no backend-independent gateway                                          |
+| Specialists and skills | Specialists, subagent delegation, file-based skills, signed marketplace, packages and GitHub imports                                                                                                                          | No user-facing version pinning                                                                                           |
+| Scientific connectors  | Built-in life-science resources, custom MCP servers, shared credentials, per-agent access and tool permissions                                                                                                                | Coverage depends on each upstream service                                                                                |
+| Literature             | Library, collections, duplicate merge, full-text lookup, smart screening, PDF extraction, persistent annotations, citations                                                                                                   | Full text depends on the source; screening is triage, not a systematic-review protocol                                   |
+| Files and previews     | Streaming uploads, versioned text editing, previews for tables, sequences, PDFs, Office, images, code, HTML, molecules                                                                                                        | The 10 GiB upload limit is separate from parsing, preview and model-context limits                                       |
+| Compute                | Persistent Python/R kernels, shell, managed environments, background jobs, SSH and Slurm, Kubernetes, Hugging Face Jobs, Modal and Ray job submission, `.ipynb` export                                                        | Remote targets need user-provisioned accounts, software, and permissions; jobs run under the approved target's authority |
+| Provenance and replay  | Immutable artifact versions, lineage, optional reviewer, artifact replay checks, environment bundles                                                                                                                          | Missing evidence is reported, not reconstructed; no whole-session replay                                                 |
+| Research exchange      | `.science` packages, read-only import, writable fork, Markdown/PDF export, RO-Crate export                                                                                                                                    | Imports run no code and restore no credentials                                                                           |
+| Permissions and data   | Scoped grants, approved folders, network controls, central credentials, storage relocation, diagnostic export                                                                                                                 | Protection varies by execution path and platform                                                                         |
+| Access and delivery    | macOS, Windows and Linux installers, auto-update, localhost Web, headless CLI/Task SDK, paired mobile, interface translations                                                                                                 | Web and CLI do not imply desktop parity or a hosted multi-tenant service                                                 |
 
 Per-release detail lives in the [release notes](#releases). Surface and platform differences are in [usage scope](usage-scope.md) and [known limitations](known-limitations.md).
 
@@ -112,7 +115,7 @@ Conversation annotations send selected evidence to the agent. Private bookmarks 
 
 ### Frameworks, platforms, and trust
 
-Model compatibility follows the chosen framework and endpoint protocol; scenario-specific settings are routing choices, not a universal gateway. Network protection restricts outbound access to defaults and approved destinations. Windows protected execution requires administrator setup, and WSL2 Bash is an explicit opt-in preview. Sandbox coverage is not identical for every external tool or provider. See [security](security.md) and [known limitations](known-limitations.md).
+Model compatibility follows the chosen framework and endpoint protocol; scenario-specific settings are routing choices, not a universal gateway. Notebook network policy covers approved destinations and, when the public read channel is available, restricted HTTPS reads to other public hosts. Windows protected execution requires administrator setup, and WSL2 Bash is an explicit opt-in preview. Sandbox coverage is not identical for every external tool or provider. See [security](security.md) and [known limitations](known-limitations.md).
 
 ### Non-goals
 

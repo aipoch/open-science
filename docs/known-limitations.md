@@ -8,8 +8,8 @@ for suspected vulnerabilities; do not add undisclosed exploit details here.
 
 ## Review baseline
 
-The entries below were reviewed against source and documentation at `830a995ac733` (tag `v1.1.0`)
-on **2026-11-06**. The application package version at that revision is **1.1.0**. Each entry's scope applies to that
+The entries below were reviewed against source and documentation at [`v1.2.0`](https://github.com/aipoch/open-science/tree/v1.2.0)
+(commit `2be1d2665461`, application version **1.2.0**) on **2026-11-09**. Each entry's scope applies to that
 baseline; historical affected ranges and later fixes must be established separately. Independent
 packages retain their own versions. This review does not constitute new runtime testing, a security
 certification, or a claim that every release/platform combination has been exercised.
@@ -17,7 +17,7 @@ certification, or a claim that every release/platform combination has been exerc
 All entries share that review date unless an entry records a newer one. **Documented boundary** means
 the limitation remains relevant at this baseline, not that a fix is scheduled. **Verification gap**
 means the stated assurance has not been established by this review. Release-specific changes belong
-in the [release notes](../release-notes/README.md).
+in the [release notes](../release-notes/1.2.0/en.md).
 
 ## Source risk detection is bounded
 
@@ -59,7 +59,7 @@ in the [release notes](../release-notes/README.md).
 
 ## Local-first storage does not prevent external disclosure
 
-- **Scope / status:** Model/scenario requests, Connectors, MCP servers, remote jobs, research-film
+- **Scope / status:** Model/scenario requests, Connectors, MCP servers, source-link previews, remote jobs, research-film
   narration resources, and exports;
   documented boundary.
 - **Trigger and impact:** Requests disclose the content prepared for their recipients. Read-only
@@ -119,14 +119,16 @@ in the [release notes](../release-notes/README.md).
 
 ## Extensions and remote work retain their granted authority
 
-- **Scope / status:** Skills, Specialist packages, MCP servers, environment installers, and SSH/Slurm jobs;
+- **Scope / status:** Skills, Specialist packages, MCP servers, environment installers, SSH/Slurm jobs,
+  and jobs on user-connected Kubernetes, Hugging Face Jobs, Modal, and Ray targets;
   documented boundary.
 - **Trigger and impact:** Imported instructions can influence tool use; executable components and
   remote scripts can modify data or consume resources within their process/account permissions.
   Source integrity or schema validation does not establish harmless behavior. Disconnecting a client
   or stopping observation does not establish that a remote job has stopped.
 - **Precautions:** Review sources and updates, limit credentials and writable data, set resource
-  budgets, and confirm remote termination and cleanup separately.
+  budgets, and confirm remote termination and cleanup separately. For cloud jobs, check the
+  target, command, resources, and outputs in the per-job approval.
 - **Details:** [Extension and automation precautions](usage-scope.md#extensions-remote-access-and-automation)
   and [Compute safety](../packages/compute/README.md#safety-and-integration).
 
