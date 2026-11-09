@@ -42,9 +42,27 @@ for (const dark of [false, true]) {
       )
     }
     await page.screenshot({ path: testInfo.outputPath('narrow.png') })
+    const selector = page.getByRole('combobox', { name: 'Subagent Frame' })
+    await selector.click()
+    await page.getByRole('listbox').screenshot({ path: testInfo.outputPath('narrow-selector.png') })
+    await page.keyboard.press('Escape')
     await page.setViewportSize({ width: 768, height: 800 })
+    await selector.click()
+    await page.getByRole('option', { name: 'PyCos, completed' }).click()
+    const previewBounds = await page
+      .getByRole('region', { name: 'Subagents', exact: true })
+      .boundingBox()
+    await page.screenshot({
+      path: testInfo.outputPath('completed-preview.png'),
+      clip: { ...previewBounds!, height: 200 }
+    })
+    await selector.click()
+    await page.getByRole('listbox').screenshot({ path: testInfo.outputPath('selector.png') })
+    await page.keyboard.press('Escape')
     await trigger.click()
-    await page.screenshot({ path: testInfo.outputPath('list.png') })
+    const list = bar.locator('[aria-label="Subagents"]')
+    await expect(list).not.toContainText('Main Agent')
+    await list.screenshot({ path: testInfo.outputPath('list.png') })
     expect(errors).toEqual([])
   })
 }

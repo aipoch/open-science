@@ -295,6 +295,28 @@ describe('release-gate Subagent surfaces', () => {
     expect(screen.getByTestId('subagents-bar')).toBeTruthy()
   })
 
+  it('omits repeated agent identities but retains mixed identities and origin warnings', () => {
+    const session = createSession()
+    const { rerender } = renderSurface(<SubagentsBar session={session} permissions={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: '2 subagents, 1 running' }))
+    expect(screen.getByText('Main Agent')).toBeTruthy()
+    expect(screen.getByText('Risk Specialist')).toBeTruthy()
+
+    const uniform = structuredClone(session)
+    const child = uniform.conversationGraph!.frames.find(({ id }) => id === 'child-b')!
+    child.agentName = 'Main Agent'
+    child.originBindingState = 'legacy-unavailable'
+    delete child.originMessageId
+    Object.assign(uniform.runtimeContext!.delegatedWork!.records[1].attempts[0], {
+      resolvedAgent: { kind: 'main' }
+    })
+    rerender(<SubagentsBar session={uniform} permissions={[]} />)
+    expect(screen.queryByText('Main Agent')).toBeNull()
+    expect(screen.queryByText('Risk Specialist')).toBeNull()
+    expect(screen.getByText('Imported history may be incomplete')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Challenge assumptions, error' })).toBeTruthy()
+  })
+
   it('keeps imported child history readable without counting it as current running work', () => {
     const session = createSession()
     session.packageOrigin = {

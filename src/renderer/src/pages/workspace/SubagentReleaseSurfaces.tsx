@@ -58,12 +58,11 @@ const SUBAGENT_STATUS_LABELS = {
 } as const satisfies Record<SubagentRawStatus, string>
 
 const statusClassName: Record<SubagentRawStatus, string> = {
-  running:
-    'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground',
+  running: 'bg-session-running/10 text-session-running',
   awaiting_user:
     'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
-  completed: 'bg-bg-200 text-text-100',
-  cancelled: 'bg-bg-200 text-text-200',
+  completed: 'text-text-100',
+  cancelled: 'text-text-300',
   error:
     'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
 }
@@ -168,6 +167,9 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
   }
 
   const single = summary.children.length === 1 ? summary.children[0] : undefined
+  const showAgentLabels = summary.children.some(
+    (child) => child.agentLabel !== summary.children[0].agentLabel
+  )
   const label =
     single?.title ??
     t('{{count}} subagents', {
@@ -277,20 +279,22 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                 >
                   {child.title}
                 </span>
-                <span className="mt-0.5 block truncate text-[10px] leading-4 text-text-300">
-                  {child.agentLabel}
-                  {child.originUnavailable ? (
-                    <>
-                      {' · '}
-                      <span
-                        id={`subagent-origin-warning-${session.id}-${child.frameId}`}
-                        className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                      >
-                        {t('Imported history may be incomplete')}
-                      </span>
-                    </>
-                  ) : null}
-                </span>
+                {showAgentLabels || child.originUnavailable ? (
+                  <span className="mt-0.5 block truncate text-[10px] leading-4 text-text-300">
+                    {showAgentLabels ? child.agentLabel : null}
+                    {child.originUnavailable ? (
+                      <>
+                        {showAgentLabels ? ' · ' : null}
+                        <span
+                          id={`subagent-origin-warning-${session.id}-${child.frameId}`}
+                          className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                        >
+                          {t('Imported history may be incomplete')}
+                        </span>
+                      </>
+                    ) : null}
+                  </span>
+                ) : null}
               </span>
               <span className="flex items-center gap-1.5">
                 <SubagentStatus
