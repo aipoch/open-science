@@ -133,7 +133,14 @@ export const createLiteratureCommandOwner = ({
   citationStyles: (request) =>
     withCitationStyleErrors(() => literatureCitationFormatter.citationStyles(request)),
   lookupMetadata: async (doi) => {
-    const reference = doi.startsWith('10.') ? 'doi:' + doi : doi
+    const input = doi.trim()
+    const separator = input.indexOf(':')
+    const scheme = separator >= 0 ? input.slice(0, separator).toLowerCase() : ''
+    const reference = ['doi', 'pmid', 'pmcid', 'arxiv'].includes(scheme)
+      ? input
+      : input.startsWith('10.')
+        ? `doi:${input}`
+        : input
     const resolved = await literatureReferenceResolver.lookup(reference)
     return resolved.item
   },

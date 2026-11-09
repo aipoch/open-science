@@ -18,10 +18,11 @@ const normalizeDoi = (value: unknown): string => {
     .trim()
     .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')
     .replace(/^doi:\s*/i, '')
-    .toLowerCase()
   if (!/^10\.\d{4,9}\/\S+$/u.test(doi)) throw new Error('A valid DOI or doi.org URL is required')
   return doi
 }
+
+const doiKey = (value: string): string => value.replace(/[A-Z]/g, (letter) => letter.toLowerCase())
 
 const object = z.record(z.string(), z.unknown())
 const crossrefUpdate = z.object({ DOI: z.string().min(1), type: z.string().min(1) }).passthrough()
@@ -62,7 +63,8 @@ const datacitePage = z.object({
 })
 
 const assertIdentity = (actual: string, expected: string): void => {
-  if (normalizeDoi(actual) !== expected) throw new Error('Upstream returned a different DOI')
+  if (doiKey(normalizeDoi(actual)) !== doiKey(expected))
+    throw new Error('Upstream returned a different DOI')
 }
 
 const summarizeDataCite = (record: z.infer<typeof dataciteRecord>): Record<string, unknown> => {

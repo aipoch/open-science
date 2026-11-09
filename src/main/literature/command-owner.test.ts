@@ -429,8 +429,11 @@ describe('selected reference import', () => {
 it.each([
   ['10.1234/paper', 'doi:10.1234/paper'],
   ['pmid:12345', 'pmid:12345'],
+  [' PMID:12345 ', 'PMID:12345'],
   ['pmcid:PMC12345', 'pmcid:PMC12345'],
-  ['arxiv:2401.12345', 'arxiv:2401.12345']
+  [' PMCID:PMC12345 ', 'PMCID:PMC12345'],
+  ['arxiv:2401.12345', 'arxiv:2401.12345'],
+  [' ArXiv:2401.12345 ', 'ArXiv:2401.12345']
 ])('looks up %s without mutating the library', async (input, reference) => {
   const item = { title: 'Resolved reference' }
   const lookup = vi.fn().mockResolvedValue({ item })

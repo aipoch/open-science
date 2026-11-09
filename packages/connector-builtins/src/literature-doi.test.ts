@@ -65,10 +65,10 @@ const mockCall = (
 }
 
 describe('literature / DOI metadata', () => {
-  it('normalizes DOI URLs and keeps bibliographic fields without inventing missing values', async () => {
+  it('unwraps DOI URLs while preserving the opaque suffix', async () => {
     const { call, fetchImpl } = mockCall(crossref())
     const result = await call('crossref_get_work', { doi: ' HTTPS://DOI.ORG/10.1038/NATURE12968 ' })
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://api.crossref.org/works/10.1038%2Fnature12968')
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://api.crossref.org/works/10.1038%2FNATURE12968')
     expect(result).toMatchObject({
       doi: '10.1038/nature12968',
       authors: [],
