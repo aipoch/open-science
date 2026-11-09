@@ -330,6 +330,13 @@ const createProductionDelegatedFrameworkRuntime = (
             }
           }
           const capability = await options.notebookRpcServer().issueDelegatedNotebookConnection({
+            viewImageBackend: {
+              frameworkId: runtimeBackend.framework.id,
+              backendId: runtimeBackend.backendId,
+              modelRoute: runtimeBackend.modelRoute,
+              model: runtimeBackend.contextUsageModel ?? runtimeBackend.sessionModel,
+              supportsImageInput: runtimeBackend.supportsImageInput === true
+            },
             permissionPrompts,
             projectId: input.session.projectId,
             sessionId: input.session.sessionId,

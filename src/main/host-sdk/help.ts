@@ -767,8 +767,8 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     ]
   },
   constraints: [
-    'Available only during an active repl_execute on a certified visual route.',
-    'The returned JavaScript object is attachment metadata, not image bytes. Images reach the Agent only after the enclosing repl_execute succeeds; a failed invocation discards every image it staged.',
+    'Use host.viewImage during a foreground repl_execute. Only path sources require a trusted execution workspace.',
+    'The returned JavaScript object is attachment metadata, not image bytes. Visual results reach the Agent only after the enclosing repl_execute succeeds. A visual model receives images. A text-only model receives descriptions from the configured Vision model. A failed invocation discards every image it staged.',
     'Attach at most four images per repl_execute invocation. Split larger sets across successful invocations.',
     'Only PNG and JPEG sources are supported.',
     'The output long edge is at most 1568 pixels and is never upscaled. Omit maxSize for the maximum available resolution; use a crop whose long edge is at most 1568 pixels when native pixels are required.'
@@ -782,7 +782,11 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   resolveAvailability: ({ capabilities }) =>
     capabilities.viewImage
       ? { status: 'available' }
-      : { status: 'unavailable', reason: 'host.viewImage requires a certified visual route.' }
+      : {
+          status: 'unavailable',
+          reason:
+            'Use a foreground repl_execute on a supported model route. For a text-only main model, configure a Vision model in Settings > Model.'
+        }
 }
 
 const CURRENT_MODEL_DESCRIPTOR: HostSdkHelpOperationDescriptor = {

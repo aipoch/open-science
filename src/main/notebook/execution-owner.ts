@@ -39,6 +39,7 @@ import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
 import type { TransientViewImage } from './execution-model-contract'
+import { HostViewImageError } from './host-view-image-service'
 import { getNotebookInputRoot } from './input-staging'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
@@ -79,6 +80,7 @@ type NotebookControlResult = Pick<
 > & {
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
+  viewImageError?: 'evidence-unavailable'
 }
 
 type NotebookControlCompletionInterceptor = {
@@ -1290,8 +1292,16 @@ class NotebookExecutionOwner {
         session.discardControlInvocation(controlInvocationId)
         return result
       }
-      const viewImages = await session.completeControlInvocation(controlInvocationId)
-      return viewImages.length > 0 ? { ...result, viewImages } : result
+      try {
+        const viewImages = await session.completeControlInvocation(controlInvocationId, signal)
+        return viewImages.length > 0 ? { ...result, viewImages } : result
+      } catch (error) {
+        if (signal?.aborted || !(error instanceof HostViewImageError)) throw error
+        return {
+          ...result,
+          viewImageError: 'evidence-unavailable'
+        }
+      }
     } catch (error) {
       session.discardControlInvocation(controlInvocationId)
       throw error

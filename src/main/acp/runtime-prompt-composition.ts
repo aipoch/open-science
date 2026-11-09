@@ -29,12 +29,10 @@ type AcpRuntimePromptHost = Readonly<{
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   onProviderPromptAccepted?: (sessionId: string) => void
-  requestArtifactPublicationContinuation?: (input: {
-    permissionPrompts?: AcpPromptRequest['permissionPrompts']
-    sessionId: string
-    provenanceContext?: AcpPromptRequest['provenanceContext']
+  artifactPublicationPrompt?: (
+    sessionId: string,
     files: readonly NotebookWorkingFile[]
-  }) => void
+  ) => string | undefined
 }>
 
 const log = createLogger('acp')
@@ -364,7 +362,7 @@ const composeAcpRuntimePromptOwners = (
       sideChatRelays: options.sideChatRelays,
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
-      requestArtifactPublicationContinuation: host.requestArtifactPublicationContinuation,
+      artifactPublicationPrompt: host.artifactPublicationPrompt,
       diagnosticContext,
       pushUserMessage: ({ sessionId, promptMessageId, text, attribution }) =>
         session.publication.pushEvent({
@@ -387,11 +385,8 @@ const composeAcpRuntimePromptOwners = (
         artifact ? base.artifactTurns?.snapshot(artifact).promptMessageId : undefined,
       publish: publishArtifact,
       dispose: disposeArtifact,
-      publicationCount: (artifact) => {
-        if (!artifact || !base.artifactTurns) return 0
-        const terminal = base.artifactTurns.snapshot(artifact).terminalResult
-        return terminal?.kind === 'publication' ? terminal.artifactCount : 0
-      }
+      sealForPublication: async (artifact) =>
+        (await base.artifactTurns!.finalize(artifact)) ? 'ready' : 'empty'
     },
     plan: host.plan,
     finalization: {

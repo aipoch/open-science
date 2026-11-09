@@ -117,12 +117,10 @@ type AcpPromptTurnEnvironment = Readonly<{
       | undefined
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
-  requestArtifactPublicationContinuation?: (input: {
-    permissionPrompts?: AcpPromptRequest['permissionPrompts']
-    sessionId: string
-    provenanceContext?: AcpPromptRequest['provenanceContext']
+  artifactPublicationPrompt?: (
+    sessionId: string,
     files: readonly NotebookWorkingFile[]
-  }) => void
+  ) => string | undefined
   diagnosticContext: () => Record<string, unknown>
   pushUserMessage: (input: {
     sessionId: string
@@ -152,7 +150,7 @@ type AcpPromptTurnArtifacts = Readonly<{
     onPublished: () => void
   ) => Promise<void>
   dispose: (artifact: ArtifactTurnHandle | undefined) => Promise<void>
-  publicationCount: (artifact: ArtifactTurnHandle | undefined) => number
+  sealForPublication: (artifact: ArtifactTurnHandle) => Promise<'empty' | 'ready'>
 }>
 
 type AcpPromptTurnPlanWorkflow = Readonly<{
@@ -622,6 +620,8 @@ class AcpPromptTurnWorkflow {
       let resumeAccepted: (() => Promise<void>) | undefined
       let resumeDispatch: (() => Promise<void>) | undefined
       let resumeNotDispatched: (() => Promise<void>) | undefined
+      let publicationPrompt: string | undefined
+      let publicationAttempted = false
       let deliveryClaimed = false
       let providerDispatched = false
       let accumulatedFacts: AcpProviderTurnResult | undefined
@@ -637,6 +637,28 @@ class AcpPromptTurnWorkflow {
           isCurrent: () => this.isCurrent(turn),
           beforeDispatch: async () => {
             if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
+            if (publicationPrompt && artifact) {
+              // The provider slot may have been queued. Revalidate the same execution
+              // against durable session state before issuing another write capability.
+              if (!this.isCurrent(turn)) return 'cancelled'
+              await this.options.beginRuntimeSessionTurn?.(
+                request,
+                turnToken,
+                turn.mode.kind === 'user'
+                  ? (turn.mode.runtimeReviewOwner ?? 'renderer')
+                  : 'renderer'
+              )
+              const promptMessageId = artifacts.promptMessageIdFor(artifact)
+              await artifacts.dispose(artifact)
+              artifact = undefined
+              if ((await this.checkpoint(interaction)) === 'cancelled' || !this.isCurrent(turn))
+                return 'cancelled'
+              artifact = await artifacts.open(
+                sessionId,
+                turnToken,
+                request.provenanceContext ?? (promptMessageId ? { promptMessageId } : undefined)
+              )
+            }
             await env.beforePromptDispatch?.({
               appSessionId: sessionId,
               framework,
@@ -670,14 +692,27 @@ class AcpPromptTurnWorkflow {
           onDispatched: () => {
             providerDispatched = true
           },
-          captureStop: () => {
+          captureStop: (response) => {
             if (plan.isProviderPaused?.(interaction)) {
               plan.providerStopped?.(interaction)
               return true
             }
+            if (
+              response.stopReason === 'end_turn' &&
+              artifact &&
+              !publicationAttempted &&
+              turn.mode.kind !== 'app-continuation' &&
+              env.tooling().artifacts
+            ) {
+              const files = notebookWorkingFiles.snapshot()
+              if (files.length)
+                publicationPrompt = env.artifactPublicationPrompt?.(sessionId, files)
+              if (publicationPrompt) return true
+            }
             return interactions.captureTerminal(interaction, 'stop')
           },
           onAccepted: async () => {
+            if (publicationPrompt) return
             authorizationNotice?.commit()
             if (resumeAccepted) {
               const accept = resumeAccepted
@@ -758,6 +793,26 @@ class AcpPromptTurnWorkflow {
         accumulatedFacts = accumulatedFacts
           ? combineProviderPromptFacts(accumulatedFacts, outcome.facts)
           : outcome.facts
+        if (publicationPrompt && !publicationAttempted && artifact) {
+          publicationAttempted = true
+          // Drain outstanding writes before deciding whether this run is empty. A sealed
+          // run with files is reused by the finalizer, including its existing claim.
+          const sealed = await artifacts.sealForPublication(artifact).catch((error: unknown) => {
+            // Leave publication failures to the normal finalizer and its bounded retry.
+            log.warn('could not check Notebook artifact publication', {
+              sessionId,
+              ...errorLogFields(error)
+            })
+          })
+          if (sealed === 'empty') {
+            providerContent = publicationPrompt
+            resumeDispatch = undefined
+            resumeNotDispatched = undefined
+            continue
+          }
+          if (!interactions.captureTerminal(interaction, 'stop'))
+            return { kind: 'superseded', response: outcome.response }
+        }
         if (!plan.isProviderPaused?.(interaction)) {
           return { ...outcome, facts: accumulatedFacts }
         }
@@ -771,6 +826,7 @@ class AcpPromptTurnWorkflow {
           interactions.captureTerminal(interaction, 'cancelled')
           return { kind: 'stopped', response: { stopReason: 'cancelled' }, facts: accumulatedFacts }
         }
+        publicationPrompt = undefined
         providerContent = resumed.content
         resumeAccepted = resumed.accepted
         resumeDispatch = resumed.dispatch
@@ -788,7 +844,7 @@ class AcpPromptTurnWorkflow {
       sideChatRelay.restore()
     }
     const model = env.backend().session.model
-    const response = await finalizer.finalize(
+    return finalizer.finalize(
       {
         sessionId,
         ...eventIdentity,
@@ -835,24 +891,6 @@ class AcpPromptTurnWorkflow {
       },
       outcome
     )
-    const unpublishedFiles = notebookWorkingFiles.snapshot()
-    if (
-      response.stopReason === 'end_turn' &&
-      turn.mode.kind !== 'app-continuation' &&
-      env.tooling().artifacts &&
-      artifacts.publicationCount(artifact) === 0 &&
-      unpublishedFiles.length > 0
-    ) {
-      this.safeCallback('artifact publication continuation callback failed', () =>
-        env.requestArtifactPublicationContinuation?.({
-          permissionPrompts: request.permissionPrompts,
-          sessionId,
-          provenanceContext: request.provenanceContext,
-          files: unpublishedFiles
-        })
-      )
-    }
-    return response
   }
 
   private activeSession(sessionId: string): ActiveSession | undefined {
