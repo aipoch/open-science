@@ -290,16 +290,26 @@ describe('authenticated delegatedWorkCall route', () => {
         partialCatalog.result.topics.map(({ id, availability }) => [id, availability.status])
       )
     ).toEqual({
+      'host.agents': 'unavailable',
+      'host.artifactPath': 'unavailable',
+      'host.artifacts': 'unavailable',
+      'host.capabilities': 'available',
       'host.children': 'unavailable',
       'host.collect': 'unavailable',
+      'host.compute': 'unavailable',
       'host.currentModel': 'unavailable',
       'host.delegate': 'unavailable',
+      'host.frames': 'unavailable',
+      'host.help': 'available',
+      'host.lineage': 'unavailable',
       'host.listModels': 'unavailable',
       'host.llm': 'unavailable',
+      'host.mcp': 'unavailable',
       'host.messageReceipt': 'unavailable',
       'host.resolveMessage': 'unavailable',
       'host.sessions': 'unavailable',
       'host.sendFrameMessage': 'unavailable',
+      'host.skills': 'unavailable',
       'host.stopChild': 'unavailable',
       'host.submitOutput': 'unavailable',
       'host.viewImage': 'unavailable'
