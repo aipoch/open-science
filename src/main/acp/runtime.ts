@@ -1399,6 +1399,7 @@ class AcpRuntime {
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
     const hooks: AcpAgentConnectionHooks = {
+      toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
       observeSessionUpdate: (notification) => {

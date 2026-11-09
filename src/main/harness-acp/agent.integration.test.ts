@@ -11,7 +11,12 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { afterEach, expect, it, vi } from 'vitest'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
 import { createHarnessAcpAgent } from './agent'
-import { HARNESS_AUTH_METHOD, HARNESS_INSTRUCTIONS, HARNESS_OWNER } from './config'
+import {
+  HARNESS_AUTH_METHOD,
+  HARNESS_INSTRUCTIONS,
+  HARNESS_OWNER,
+  HARNESS_TOOL_LESS
+} from './config'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
 import { HARNESS_INVOCATION, HARNESS_RECEIPT_METHOD, receiptResponseSchema } from './tool-receipts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -389,6 +394,21 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   )
   expect(thoughts).toHaveLength(2)
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
+})
+
+it('sends task-only instructions without a tool catalog on the provider wire', async () => {
+  const model = await modelServer()
+  const a = await fixture(model.endpoint)
+  const created = await a.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: a.directory,
+    mcpServers: [],
+    _meta: { [HARNESS_INSTRUCTIONS]: 'Translate faithfully.', [HARNESS_TOOL_LESS]: true }
+  })
+  await prompt(a.connection, created.sessionId, 'Cell')
+  expect(model.requests).toHaveLength(1)
+  expect(model.requests[0].tools ?? []).toEqual([])
+  expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])
+  expect(JSON.stringify(model.requests[0].messages)).toContain('Translate faithfully.')
 })
 
 it('uses the package across turns and resumes durable history without replay duplication', async () => {

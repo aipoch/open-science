@@ -37,6 +37,7 @@ const resolveFallbackProviderConfiguration = async (
 type AcpConnectionLifecycleWorkflowOptions = Readonly<{
   appVersion: string
   separateProviderNotices?: boolean
+  toolLess?: boolean
   defaultCwd: string
   currentConnection: () => ClientConnection | undefined
   currentStatus: () => AcpStateSnapshot['status']
@@ -171,10 +172,12 @@ class AcpConnectionLifecycleWorkflow {
           version: this.options.appVersion
         },
         clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
           session: { configOptions: { boolean: {} } },
-          plan: {},
-          elicitation: { form: {} },
+          ...(!this.options.toolLess && {
+            fs: { readTextFile: true, writeTextFile: true },
+            plan: {},
+            elicitation: { form: {} }
+          }),
           ...(this.options.separateProviderNotices === true &&
           (spawnedFramework === 'codex' || spawnedFramework === 'claude-code')
             ? {

@@ -16,6 +16,7 @@ import {
   HARNESS_ACP_ARG,
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
+  HARNESS_TOOL_LESS,
   harnessConfigSchema
 } from '../harness-acp/config'
 import type { AgentFramework } from './types'
@@ -151,7 +152,10 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
             ]
           }
         : {}),
-      meta: { [HARNESS_INSTRUCTIONS]: instructions },
+      meta: {
+        [HARNESS_INSTRUCTIONS]: instructions,
+        ...(context.toolLess ? { [HARNESS_TOOL_LESS]: true } : {})
+      },
       persistentSystemPrompt: instructions,
       ...(context.turnPromptReminders?.length
         ? { promptPrefix: context.turnPromptReminders.join('\n\n') }
