@@ -29,7 +29,10 @@ jobs:
   windows-upgrade-smoke:
     if: ${{ !inputs.dry_run }}
     runs-on: windows-latest
-    timeout-minutes: 40
+    # The five-cycle smoke can spend up to 22 minutes on installers and 16 minutes on the two
+    # current-phase Notebook provisions; keep setup, downloads, startup, migration, and cleanup
+    # inside a separate 20-minute margin.
+    timeout-minutes: 60
     env:
       CURRENT_TAG: ${{ github.event.client_payload.tag || inputs.tag }}
     steps:
