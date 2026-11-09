@@ -1065,8 +1065,16 @@ it('recovers a fragmented terminal value in a hyperparameter row', () => {
       items: []
     }))
   )
-  const header = [token('Hyperparameter', 8, 4), token('Search Space', 108, 4), token('Sampling', 208, 4)]
-  const previous = [token('Batch size', 8, 21), token('[16, 128]', 108, 21), token('Discrete', 208, 21)]
+  const header = [
+    token('Hyperparameter', 8, 4),
+    token('Search Space', 108, 4),
+    token('Sampling', 208, 4)
+  ]
+  const previous = [
+    token('Batch size', 8, 21),
+    token('[16, 128]', 108, 21),
+    token('Discrete', 208, 21)
+  ]
   const missing = [
     token('Weight decay', 8, 33),
     token('[10', 108, 33),
@@ -1078,13 +1086,23 @@ it('recovers a fragmented terminal value in a hyperparameter row', () => {
     token('1]', 190, 33),
     token('Loguniform', 208, 33)
   ]
-  const next = [token('Base learning rate', 8, 45), token('[10−5, 10−2]', 108, 45), token('Loguniform', 208, 45)]
+  const next = [
+    token('Base learning rate', 8, 45),
+    token('[10−5, 10−2]', 108, 45),
+    token('Loguniform', 208, 45)
+  ]
   const assignments = new Map<unknown, unknown>()
   previous.forEach((item, column) =>
-    assignments.set(item, cells.find((cell) => cell.row === 1 && cell.column === column))
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 1 && cell.column === column)
+    )
   )
   next.forEach((item, column) =>
-    assignments.set(item, cells.find((cell) => cell.row === 2 && cell.column === column))
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 2 && cell.column === column)
+    )
   )
   const repairs: string[] = []
   const recovered = recoverUnassignedInsertedParameterRows({
@@ -1102,6 +1120,73 @@ it('recovers a fragmented terminal value in a hyperparameter row', () => {
   expect(rows).toHaveLength(4)
   expect(repairs).toContain('unassigned-parameter-row-inserted')
   expect(missing.every((item) => (assignments.get(item) as { row?: number })?.row === 2)).toBe(true)
+})
+
+it('rejects a parameter row contaminated by an out-of-grid token', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 3), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columnRects = [0, 100, 200].map((left) => [left, 0, left + 100, 80])
+  const rows = [0, 20, 40].map((top) => ({ rect: [0, top, 300, top + 12], origin: 'model' }))
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      origin: 'model',
+      items: []
+    }))
+  )
+  const header = [token('Parameter', 8, 4), token('Value', 108, 4), token('Description', 208, 4)]
+  const previous = [
+    token('alpha_rate', 8, 21),
+    token('0.2', 108, 21),
+    token('Learning rate', 208, 21)
+  ]
+  const missing = [
+    token('target_update_interval', 8, 33),
+    token('1', 108, 33),
+    token('Frequency of target updates', 208, 33),
+    token('unrelated', -40, 33)
+  ]
+  const next = [
+    token('target_entropy', 8, 45),
+    token('auto', 108, 45),
+    token('Target entropy', 208, 45)
+  ]
+  const assignments = new Map<unknown, unknown>()
+  previous.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 1 && cell.column === column)
+    )
+  )
+  next.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 2 && cell.column === column)
+    )
+  )
+  const repairs: string[] = []
+  const recovered = recoverUnassignedInsertedParameterRows({
+    items: [...header, ...previous, ...missing, ...next],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs,
+    captions: [{ lines: ['Table 1: Hyperparameters'] }]
+  })
+  expect(recovered).toBe(0)
+  expect(repairs).not.toContain('unassigned-parameter-row-inserted')
 })
 
 it('splits complete body baselines while retaining an unmeasured fused header', () => {

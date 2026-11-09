@@ -3627,19 +3627,36 @@ export function recoverUnassignedInsertedParameterRows({
       group.baseline = (group.baseline + item.baseline) / 2
       group.top = Math.min(group.top, item.rect[1])
       group.bottom = Math.max(group.bottom, item.rect[3])
-    } else groups.push({ baseline: item.baseline, items: [item], top: item.rect[1], bottom: item.rect[3] })
+    } else
+      groups.push({
+        baseline: item.baseline,
+        items: [item],
+        top: item.rect[1],
+        bottom: item.rect[3]
+      })
   }
   let recovered = 0
   for (const group of groups) {
     const lanes = Array.from({ length: 3 }, () => [])
     for (const item of group.items) {
       const center = (item.rect[0] + item.rect[2]) / 2
-      const column = columnRects.findIndex((candidate) => center >= candidate[0] && center <= candidate[2])
-      if (column >= 0) lanes[column].push(item)
+      const columns = columnRects
+        .map((candidate, index) => (center >= candidate[0] && center <= candidate[2] ? index : -1))
+        .filter((index) => index >= 0)
+      if (columns.length !== 1) {
+        lanes.length = 0
+        break
+      }
+      lanes[columns[0]].push(item)
     }
+    if (lanes.length !== 3) continue
     if (lanes[0].length !== 1 || !lanes[1].length || !lanes[2].length) continue
     const source = lanes.flat().sort((a, b) => a.rect[0] - b.rect[0])
-    const laneText = (lane) => lane.map((item) => item.text.trim()).join(' ').replace(/\s+/gu, ' ')
+    const laneText = (lane) =>
+      lane
+        .map((item) => item.text.trim())
+        .join(' ')
+        .replace(/\s+/gu, ' ')
     const parameterText = laneText(lanes[0])
     const valueText = laneText(lanes[1])
     const descriptionText = laneText(lanes[2])
