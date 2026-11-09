@@ -1,8 +1,8 @@
-name: PR Author Action Label
+name: PR Review Status
 
 on:
   workflow_run:
-    workflows: [PR Review Submitted]
+    workflows: [PR Review Signal]
     types: [completed]
 
 permissions: {}
@@ -11,8 +11,9 @@ jobs:
   resolve:
     name: Resolve reviewed PR
     if: >-
-      github.event.workflow_run.event == 'pull_request_review' &&
-      github.event.workflow_run.path == '.github/workflows/pr-review-submitted.yml' &&
+      (github.event.workflow_run.event == 'pull_request_review' ||
+       github.event.workflow_run.event == 'pull_request_target') &&
+      github.event.workflow_run.path == '.github/workflows/pr-review-signal.yml' &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -30,7 +31,7 @@ jobs:
             const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
               ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
             });
-            if (!data.jobs.some(job => job.name === 'Signal review decision' &&
+            if (!data.jobs.some(job => job.name === 'Signal review status change' &&
                 job.conclusion === 'success')) return;
 
             const base = context.payload.repository;
@@ -52,13 +53,13 @@ jobs:
             if (matching.length === 1) core.setOutput('number', matching[0].number);
 
   sync:
-    name: Sync needs-author-action
+    name: Sync review handoff labels
     needs: resolve
     if: needs.resolve.outputs.number != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
-      group: pr-author-action-${{ needs.resolve.outputs.number }}
+      group: pr-review-status-${{ needs.resolve.outputs.number }}
       cancel-in-progress: false
     permissions:
       pull-requests: write
@@ -71,11 +72,13 @@ jobs:
         with:
           script: |
             const number = Number(process.env.PR_NUMBER);
-            const label = 'needs-author-action';
+            const authorLabel = 'needs-author-action';
+            const reviewLabel = 'needs-review';
             let cursor = null;
             let head;
-            let blocked = false;
-            let approved = false;
+            let changesOnHead = false;
+            let earlierChanges = false;
+            let headApproved = false;
             do {
               const { repository: { pullRequest: pr } } = await github.graphql(`
                 query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
@@ -97,21 +100,39 @@ jobs:
                   (head && pr.headRefOid !== head)) return;
               head = pr.headRefOid;
               const { nodes, pageInfo } = pr.latestOpinionatedReviews;
-              blocked ||= nodes.some(review => review.state === 'CHANGES_REQUESTED');
-              approved ||= nodes.some(review => review.state === 'APPROVED' && review.commit?.oid === head);
+              for (const review of nodes) {
+                const onHead = review.commit?.oid === head;
+                if (review.state === 'CHANGES_REQUESTED') {
+                  if (onHead) changesOnHead = true;
+                  else earlierChanges = true;
+                }
+                if (review.state === 'APPROVED' && onHead) headApproved = true;
+              }
               cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
-            } while (cursor && !blocked);
+            } while (cursor && !changesOnHead);
+
+            // Read current labels and refuse to use review data from a head that has since changed.
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (pr.state !== 'open' || pr.head.sha !== head ||
+                pr.base.ref !== context.payload.repository.default_branch) return;
+            const labels = new Set(pr.labels.map(label => label.name));
+            const pushed = context.payload.workflow_run.event === 'pull_request_target';
+
+            let desired;
+            if (changesOnHead) desired = authorLabel;
+            else if (earlierChanges) desired = reviewLabel;
+            else if (headApproved) desired = null;
+            else if (pushed && labels.has(authorLabel)) desired = reviewLabel;
+            else return;
 
             const target = { ...context.repo, issue_number: number };
-            if (blocked) {
-              await github.rest.issues.addLabels({ ...target, labels: [label] });
-            } else if (approved) {
-              // A push during reconciliation invalidates the approval for this purpose.
-              const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
-              if (pr.state !== 'open' || pr.head.sha !== head ||
-                  pr.base.ref !== context.payload.repository.default_branch) return;
+            if (desired && !labels.has(desired)) {
+              await github.rest.issues.addLabels({ ...target, labels: [desired] });
+            }
+            for (const name of [authorLabel, reviewLabel]) {
+              if (name === desired || !labels.has(name)) continue;
               try {
-                await github.rest.issues.removeLabel({ ...target, name: label });
+                await github.rest.issues.removeLabel({ ...target, name });
               } catch (error) {
                 if (error.status !== 404) throw error;
               }

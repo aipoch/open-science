@@ -193,9 +193,10 @@ lines excluding lockfiles. File-based area labels are not generated. Other human
 untouched. Labels do not control CI or merges.
 
 On open PRs to `main`, a formal GitHub **Request changes** review from a reviewer with write access
-sets `needs-author-action`. It clears after an approval of the current head when no such reviewer
-still requests changes. A push or ordinary review comment does not clear the label. The review
-signal follows GitHub's normal Actions approval policy for forks.
+sets `needs-author-action`. Pushing an updated commit switches it to `needs-review`. A new request
+for changes on that commit switches it back. Approval of the current commit clears both labels once
+no requests for changes remain. Ordinary comments leave the status alone. The review signal follows
+GitHub's normal Actions approval policy for forks; push handling runs from the trusted base.
 
 New template issues receive `needs-triage` and their category; maintainers remove `needs-triage`
 after assessment. Existing issues and PRs are not assigned intake labels in bulk.
