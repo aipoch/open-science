@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentMessage, ModelRequest } from '@aipoch/agent-harness'
 
-import { createContextMeter, createToolResultClearing } from './context-budget'
+import { createContextMeter, createToolResultClearing } from './agent'
 
 const request = (id: string, messages: AgentMessage[]): ModelRequest => ({
   requestId: id,

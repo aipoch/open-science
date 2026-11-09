@@ -11596,8 +11596,7 @@
         "src/main/harness-acp/mcp.ts",
         "src/main/harness-acp/entry.ts",
         "src/main/harness-acp/tool-receipts.ts",
-        "src/main/harness-acp/storage-cleanup.ts",
-        "src/main/harness-acp/context-budget.ts"
+        "src/main/harness-acp/storage-cleanup.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -11606,7 +11605,6 @@
         "src/main/harness-acp/agent.integration.test.ts",
         "src/main/harness-acp/tool-receipts.test.ts",
         "src/main/harness-acp/storage-cleanup.test.ts",
-        "src/main/harness-acp/context-budget.test.ts",
         "src/main/composition/project-lifecycle.test.ts",
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],

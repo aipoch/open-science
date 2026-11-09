@@ -8,7 +8,6 @@
     "src/main/harness-acp/tool-receipts.test.ts",
     "src/main/harness-acp/storage-cleanup.ts",
     "src/main/harness-acp/storage-cleanup.test.ts",
-    "src/main/harness-acp/context-budget.ts",
     "src/main/harness-acp/context-budget.test.ts"
   ],
   "interfacePaths": [
