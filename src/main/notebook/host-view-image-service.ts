@@ -266,9 +266,8 @@ const backendIdentity = (backend: HostViewImageBackend): string =>
     backendGenerationId(backend)
   ])
 
-export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): boolean =>
-  backend.supportsImageInput === true &&
-  ((backend.frameworkId === 'claude-code' && backend.modelRoute === 'claude-anthropic') ||
+export const isHostViewImageRouteCertified = (backend: HostViewImageBackend): boolean =>
+  (backend.frameworkId === 'claude-code' && backend.modelRoute === 'claude-anthropic') ||
     (backend.frameworkId === 'opencode' &&
       (backend.modelRoute === 'opencode-openai' || backend.modelRoute === 'opencode-anthropic')) ||
     (backend.frameworkId === 'codex' &&
@@ -277,7 +276,10 @@ export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): 
         backend.modelRoute === 'codex-bridge')) ||
     (backend.frameworkId === 'codebuddy' && backend.modelRoute === 'codebuddy-openai') ||
     (backend.frameworkId === 'pi' && backend.modelRoute === 'pi') ||
-    (backend.frameworkId === 'open-science-agent' && backend.modelRoute === 'open-science-agent'))
+    (backend.frameworkId === 'open-science-agent' && backend.modelRoute === 'open-science-agent')
+
+export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): boolean =>
+  backend.supportsImageInput === true && isHostViewImageRouteCertified(backend)
 
 /**
  * A model may inspect a Notebook image either natively or through the app-owned Vision relay.
@@ -285,7 +287,8 @@ export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): 
  * the trusted workspace capability needed by `source.path`.
  */
 export const isHostViewImageBackendCompatible = (backend: HostViewImageBackend): boolean =>
-  isHostViewImageBackendCertified(backend) || backend.supportsImageRelay === true
+  isHostViewImageBackendCertified(backend) ||
+  (isHostViewImageRouteCertified(backend) && backend.supportsImageRelay === true)
 
 const frozenResult = (
   sourceKind: HostViewImageResult['sourceKind'],
@@ -314,7 +317,10 @@ export class HostViewImageService {
     const backend = this.options.captureBackend(context.sessionId)
     if (!backend) return false
     if (isHostViewImageBackendCompatible(backend)) return true
-    return (await this.options.captureVisionRelay?.()) === true
+    return (
+      isHostViewImageRouteCertified(backend) &&
+      (await this.options.captureVisionRelay?.()) === true
+    )
   }
 
   async stage(
@@ -328,7 +334,11 @@ export class HostViewImageService {
     const relayAvailable =
       backend?.supportsImageRelay === true ||
       (await this.options.captureVisionRelay?.()) === true
-    if (!backend || (!isHostViewImageBackendCertified(backend) && !relayAvailable)) {
+    if (
+      !backend ||
+      !isHostViewImageRouteCertified(backend) ||
+      (!isHostViewImageBackendCertified(backend) && !relayAvailable)
+    ) {
       throw new HostViewImageError(
         'is unavailable for the current route; select a visual model on a certified provider path.'
       )
@@ -427,6 +437,7 @@ export class HostViewImageService {
         (await this.options.captureVisionRelay?.()) === true
       if (
         !currentBackend ||
+        !isHostViewImageRouteCertified(currentBackend) ||
         (!isHostViewImageBackendCertified(currentBackend) && !currentRelayAvailable) ||
         backendIdentity(currentBackend) !== identity
       ) {
