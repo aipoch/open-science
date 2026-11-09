@@ -9,6 +9,8 @@ for (const dark of [false, true]) {
     await page.goto(`/subagent-layout.html?${dark ? 'dark' : ''}`)
     const bar = page.getByTestId('subagents-bar')
     const trigger = bar.locator(':scope > button')
+    await expect(trigger).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Subagent Frame' })).toHaveCount(0)
     for (const width of [768, 414, 375, 320]) {
       await page.setViewportSize({ width, height: 800 })
       await trigger.click()

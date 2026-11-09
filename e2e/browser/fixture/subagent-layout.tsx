@@ -164,6 +164,8 @@ const session: ChatSession = {
   }
 }
 useSessionStore.setState({ sessions: [session] })
+// Start with no preview: selecting a row in SubagentsBar creates and activates the item through
+// openSubagentPreview. Fixture subscribes below so this exercises the real opening path.
 usePreviewWorkbenchStore.getState().activateProject('project')
 
 export function Fixture(): React.JSX.Element {
