@@ -39,10 +39,19 @@ public static class InstallDirectory {
   static extern bool FindNextFile(IntPtr search, out FindData data);
   [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr search);
   sealed class PendingRemoval {
+    public string Path;
     public SafeFileHandle Handle;
     public SafeFileHandle AttributeHandle;
     public uint OriginalAttributes;
     public bool Marked;
+  }
+  static Exception CleanupError(Exception error, string operation, string path) {
+    error.Data["operation"] = operation;
+    error.Data["path"] = path;
+    return error;
+  }
+  static Exception NativeCleanupError(int code, string operation, string path) {
+    return CleanupError(new Win32Exception(code), operation, path);
   }
   static void SetAttributes(SafeFileHandle handle, uint attributes) {
     var info = new BasicInformation();
@@ -58,7 +67,7 @@ public static class InstallDirectory {
     if (search == new IntPtr(-1)) {
       var error = Marshal.GetLastWin32Error();
       if (error == 2) yield break;
-      throw new Win32Exception(error, directory);
+      throw NativeCleanupError(error, "enumerate-program-files", directory);
     }
     try {
       do {
@@ -69,7 +78,7 @@ public static class InstallDirectory {
         } else yield return path;
       } while (FindNextFile(search, out data));
       var error = Marshal.GetLastWin32Error();
-      if (error != 18) throw new Win32Exception(error, directory);
+      if (error != 18) throw NativeCleanupError(error, "enumerate-program-files", directory);
     } finally { FindClose(search); }
   }
   // Only the caller's freshly staged program tree is accepted. No configured data is staged.
@@ -79,46 +88,61 @@ public static class InstallDirectory {
     if (!directory.StartsWith(@"\\?\", StringComparison.Ordinal))
       directory = directory.StartsWith(@"\\", StringComparison.Ordinal)
         ? @"\\?\UNC\" + directory.Substring(2) : @"\\?\" + directory;
-    using (Hold(directory)) {
+    SafeFileHandle directoryHandle;
+    try { directoryHandle = Hold(directory); }
+    catch (Exception error) { throw CleanupError(error, "hold-staging-directory", directory); }
+    using (directoryHandle) {
       var pending = new List<PendingRemoval>();
       try {
         try {
           foreach (var path in ProgramLeaves(directory)) {
             var entry = new PendingRemoval();
+            entry.Path = path;
             pending.Add(entry);
             // Exclusive data/delete sharing; OPEN_REPARSE_POINT removes links, never targets.
             entry.Handle = CreateFile(path, 0x10080, 0, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-            if (entry.Handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
+            if (entry.Handle.IsInvalid) throw NativeCleanupError(Marshal.GetLastWin32Error(), "open-delete-handle", path);
             Information info;
-            if (!GetFileInformationByHandle(entry.Handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
-            if ((info.Attributes & 0x410) == 0x10) throw new IOException("Program entry became a directory: " + path);
+            if (!GetFileInformationByHandle(entry.Handle, out info)) throw NativeCleanupError(Marshal.GetLastWin32Error(), "read-attributes", path);
+            if ((info.Attributes & 0x410) == 0x10) throw CleanupError(new IOException("Program entry became a directory."), "validate-program-entry", path);
             if ((info.Attributes & 1) != 0) {
               // Attribute-only access is compatible with the exclusive deletion handle.
               entry.AttributeHandle = CreateFile(path, 0x100, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-              if (entry.AttributeHandle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
-              SetAttributes(entry.AttributeHandle, info.Attributes & ~1u);
+              if (entry.AttributeHandle.IsInvalid) throw NativeCleanupError(Marshal.GetLastWin32Error(), "open-attribute-handle", path);
+              try { SetAttributes(entry.AttributeHandle, info.Attributes & ~1u); }
+              catch (Exception error) { throw CleanupError(error, "clear-readonly-attribute", path); }
               entry.OriginalAttributes = info.Attributes;
             }
             byte remove = 1;
-            if (!SetFileInformationByHandle(entry.Handle, 4, ref remove, 1)) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
+            if (!SetFileInformationByHandle(entry.Handle, 4, ref remove, 1)) throw NativeCleanupError(Marshal.GetLastWin32Error(), "mark-deletion", path);
             entry.Marked = true;
           }
         } catch (Exception failure) {
           var errors = new List<Exception>();
           errors.Add(failure);
+          var cancellationSucceeded = true;
+          var attributesSucceeded = true;
           // Cancel every pending deletion before releasing any handle or restoring attributes.
           foreach (var entry in pending) {
             if (!entry.Marked) continue;
             byte keep = 0;
-            if (!SetFileInformationByHandle(entry.Handle, 4, ref keep, 1))
-              errors.Add(new Win32Exception(Marshal.GetLastWin32Error(), "Could not cancel program deletion."));
+            if (!SetFileInformationByHandle(entry.Handle, 4, ref keep, 1)) {
+              errors.Add(NativeCleanupError(Marshal.GetLastWin32Error(), "cancel-deletion", entry.Path));
+              cancellationSucceeded = false;
+            }
           }
           foreach (var entry in pending) {
             if (entry.OriginalAttributes == 0) continue;
             try { SetAttributes(entry.AttributeHandle, entry.OriginalAttributes); }
-            catch (Exception error) { errors.Add(error); }
+            catch (Exception error) {
+              errors.Add(CleanupError(error, "restore-attributes", entry.Path));
+              attributesSucceeded = false;
+            }
           }
-          throw new AggregateException("Program cleanup failed before commit.", errors);
+          var aggregate = new AggregateException("Program cleanup failed before commit.", errors);
+          aggregate.Data["deletionCancellation"] = cancellationSucceeded ? "succeeded" : "failed";
+          aggregate.Data["attributeRestoration"] = attributesSucceeded ? "succeeded" : "failed";
+          throw aggregate;
         }
       } finally {
         // Closing commits only after all entries are marked, or after cancellation on failure.
@@ -157,9 +181,20 @@ public static class InstallDirectory {
     if (!CreateDirectory(path, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
   }
   public static SafeFileHandle Hold(string path) {
+    return Hold(path, 0);
+  }
+  public static SafeFileHandle HoldForProgramCleanup(string path) {
+    // Metadata-only opens do not participate in delete sharing. Directory-list access keeps
+    // the cleanup root from being renamed/replaced between retries, including while idle.
+    return Hold(path, 1);
+  }
+  static SafeFileHandle Hold(string path, uint access) {
     // No delete sharing: the installation ancestors cannot be renamed while this action runs.
-    var handle = CreateFile(path, 0, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-    if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+    var handle = CreateFile(path, access, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+    if (handle.IsInvalid) {
+      var error = Marshal.GetLastWin32Error();
+      handle.Dispose(); throw new Win32Exception(error);
+    }
     Information info;
     if (!GetFileInformationByHandle(handle, out info) || (info.Attributes & 0x410) != 0x10) {
       handle.Dispose(); throw new InvalidOperationException("Expected a directory without a reparse point: " + path);
