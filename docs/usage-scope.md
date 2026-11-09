@@ -14,7 +14,8 @@ Read the [security model](security.md) for implemented controls and data flows, 
 - Explore literature, extract or translate document content, and organize sources for review.
 - Develop and run Python, R, and Shell analyses on data you are authorized to process.
 - Use selected models, Connectors, Skills, and Specialists to assist a researcher-controlled task.
-- Submit authorized work to configured SSH hosts or Slurm clusters.
+- Submit authorized work to configured SSH hosts, Slurm clusters, or user-connected Kubernetes,
+  Hugging Face Jobs, Modal, and Ray targets.
 - Inspect captured code, inputs, execution evidence, and output comparisons; share selected records
   after reviewing their contents and sharing permissions.
 
@@ -64,7 +65,8 @@ the corresponding identity or integrity check, not that its behavior is harmless
 
 Enable only the capabilities needed for the task. Review source and update changes before installing
 extensions. For remote compute, use a dedicated account with limited filesystem access and an
-appropriate resource budget; local sandbox settings do not configure the remote host's isolation.
+appropriate resource budget. For cloud jobs, review the target, command, requested resources,
+and outputs before approving submission. The remote account determines access and bears any costs.
 
 Remote browser access controls the workspace on the host computer. Approve pairing only for the
 browser you intend to authorize, avoid persistent trust on shared browser profiles, revoke unused
