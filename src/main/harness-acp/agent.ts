@@ -70,9 +70,11 @@ export type ContextMeter = {
   measureMessages(messages: AgentMessage[]): number | undefined
   /** Records a main request immediately before dispatch. */
   admitted(request: ModelRequest): void
+  /** Records a compaction summary request immediately before dispatch, for overflow pricing only. */
+  summarizing(request: ModelRequest): void
   /** Applies the provider's report for an admitted request. */
   reported(requestId: string, usage: ModelUsage): void
-  /** The provider rejected the last admitted request as too large for its context window. */
+  /** The provider rejected the last dispatched request as too large for its context window. */
   overflowed(contextWindow: number): void
   /** Estimated tokens for one message, using the current ratio. */
   messageTokens(message: AgentMessage): number
@@ -106,6 +108,10 @@ export function createContextMeter(): ContextMeter {
     admitted(request) {
       const current = snapshot(request)
       last = request
+      pending.set(request.requestId, { snapshot: current, bytes: total(request, current) })
+    },
+    summarizing(request) {
+      const current = snapshot(request)
       pending.set(request.requestId, { snapshot: current, bytes: total(request, current) })
     },
     reported(requestId, usage) {
@@ -514,7 +520,10 @@ export function createHarnessAcpAgent(directory: string): {
           keepRecentItems: 1,
           maxOutputTokens: Math.min(2048, target.maxOutputTokens),
           measure: meter.measure,
-          admit: (request) => admit(request, 'Summary exceeds the model context budget')
+          admit: (request) => {
+            admit(request, 'Summary exceeds the model context budget')
+            meter.summarizing(request)
+          }
         },
         transformContext: (messages) => clearing.project(messages),
         admit: (request) => {

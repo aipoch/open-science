@@ -60,6 +60,18 @@ describe('context meter', () => {
     expect(meter.measure(rejected)).toBeGreaterThan(16_000)
     expect(meter.measure(request('r2', [user('u1', 'short')]))).toBeLessThan(16_000 * 0.9)
   })
+
+  it('prices a rejected compaction summary after the main request was reported', () => {
+    const meter = createContextMeter()
+    meter.admitted(request('r1', [user('u1', 'hello')]))
+    meter.reported('r1', { inputTokens: 10_000, outputTokens: 10 })
+
+    const summary = request('s1', [user('u1', 'hello'), user('u2', 'summarize')])
+    expect(meter.measure(summary)).toBeLessThan(16_000)
+    meter.summarizing(summary)
+    meter.overflowed(16_000)
+    expect(meter.measure(summary)).toBeGreaterThan(16_000)
+  })
 })
 
 describe('tool result clearing', () => {
