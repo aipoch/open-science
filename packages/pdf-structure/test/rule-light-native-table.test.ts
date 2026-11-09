@@ -250,6 +250,63 @@ it('does not add a prose-spanning open-rule duplicate when a complete table owns
   expect(recoverCaptionedRuledTables(items, rules, [caption], 1, [existing])).toEqual([])
 })
 
+it('uses a detector grid and source rectangles to suppress an open-rule duplicate', () => {
+  const caption = {
+    page: 1,
+    lines: ['Table 15 | Benchmark scores.'],
+    rect: [20, 150, 220, 160]
+  }
+  const items = [
+    token('Method', 25, 50),
+    token('Score', 125, 50),
+    token('Alpha', 25, 75),
+    token('0.91', 125, 75),
+    token('Beta', 25, 100),
+    token('0.87', 125, 100),
+    token('Method Score', 25, 185, 160),
+    token('Gamma 0.82', 25, 215, 160),
+    token('Delta 0.79', 25, 245, 160)
+  ]
+  const rules = [
+    [20, 180, 220, 180],
+    [20, 205, 220, 205],
+    [20, 275, 220, 275]
+  ]
+  const existing = {
+    id: 'detector-table-grid-only',
+    cropRect: [20, 40, 220, 120],
+    grid: [
+      ['Method', 'Score'],
+      ['Alpha', '0.91'],
+      ['Beta', '0.87']
+    ],
+    cells: [
+      [
+        ['Method', 25, 50, 95, 60],
+        ['Score', 125, 50, 195, 60]
+      ],
+      [
+        ['Alpha', 25, 75, 95, 85],
+        ['0.91', 125, 75, 195, 85]
+      ],
+      [
+        ['Beta', 25, 100, 95, 110],
+        ['0.87', 125, 100, 195, 110]
+      ]
+    ].flatMap((row, r) =>
+      row.map(([text, x0, y0, x1, y1], c) => ({
+        row: r,
+        column: c,
+        rowSpan: 1,
+        colSpan: 1,
+        text,
+        sourceRects: [[x0, y0, x1, y1]]
+      }))
+    )
+  }
+  expect(recoverCaptionedRuledTables(items, rules, [caption], 1, [existing])).toEqual([])
+})
+
 it('does not add an early below-caption open-rule duplicate when a complete table owns the caption', () => {
   const caption = {
     page: 1,

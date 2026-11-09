@@ -17,6 +17,22 @@ it('resolves the actual engine recipe with the installed package exports', async
   expect(recipe.fingerprint).toMatch(/^[a-f0-9]{64}$/)
   expect(recipe.modelRevision).toBe('test')
 })
+it('rejects inputs above the bounded 50 MiB snapshot limit before spawning a worker', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-input-limit-'))
+  roots.push(root)
+  const runtime = {
+    spawn: vi.fn(() => {
+      throw new Error('worker must not start for an oversized input')
+    }),
+    stop: vi.fn(async () => undefined)
+  }
+  const request = requestAt(root)
+  request.identity.sourceSizeBytes = 50 * 1024 ** 2 + 1
+  const job = createEngineAt(root, { modelRecipe, runtime }).start(request)
+  await expect(job.result).rejects.toThrow('PDF resources or request limits are unsupported.')
+  expect(runtime.spawn).not.toHaveBeenCalled()
+  await job.stop()
+})
 afterEach(async () => {
   vi.restoreAllMocks()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
