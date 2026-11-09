@@ -83,6 +83,8 @@ export function usePromptOptimization(options: Options): OptimizationState {
   }, [scope])
   // Observe user actions, not programmatic clearing/restoration during send preparation.
   const edited = (): void => {
+    setPrevious(undefined)
+    setNotice(undefined)
     if (!successful.current || successful.current.edited) return
     successful.current.edited = true
     record('edit')

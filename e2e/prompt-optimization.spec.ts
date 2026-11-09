@@ -37,11 +37,7 @@ test('optimizes drafts without sending and persists project-specific templates',
   let editor = page.getByRole('textbox', { name: 'Ask anything' })
   let optimize = page.getByRole('button', { name: 'Optimize question', exact: true })
   await expect(optimize).toBeDisabled()
-  const split = page.getByRole('group', { name: 'Optimize question', exact: true })
-  await expect.poll(async () => (await split.boundingBox())?.width).toBe(32)
-  expect(await split.evaluate((element) => getComputedStyle(element).transitionDuration)).toContain(
-    '0.22s'
-  )
+  await expect(optimize).toBeVisible()
   await editor.fill('Prompt optimization cancellation fixture.')
   await optimize.click()
   const cancel = page.getByRole('button', { name: 'Cancel optimization', exact: true })
@@ -60,30 +56,31 @@ test('optimizes drafts without sending and persists project-specific templates',
   expect(
     await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
   ).toHaveLength(0)
-  await expect.poll(async () => (await split.boundingBox())?.width).toBe(60)
   const undo = page.getByRole('button', { name: 'Undo optimization', exact: true })
   await undo.hover()
   await expect(page.getByRole('tooltip')).toHaveText('Undo optimization')
   await editor.fill(`${improved} Prompt optimization cancellation fixture.`)
-  await page.getByRole('button', { name: 'Optimize again', exact: true }).click()
-  await expect(undo).toBeDisabled()
-  await expect.poll(async () => (await split.boundingBox())?.width).toBe(60)
+  await page.getByRole('button', { name: 'Optimize question', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Cancel optimization', exact: true })).toBeEnabled()
   await cancel.click()
-  await expect(undo).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Optimize question', exact: true })).toBeEnabled()
+  await expect(undo).toHaveCount(0)
   await expect(editor).toHaveText(`${improved} Prompt optimization cancellation fixture.`)
-  await editor.fill(`${improved} Keep the evidence.`)
-  await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
-  await expect(editor).toHaveText(original)
-  await expect(optimize).toBeFocused()
-  await expect.poll(async () => (await split.boundingBox())?.width).toBe(32)
+  const editedDraft = `${improved} Keep the evidence.`
+  await editor.fill(editedDraft)
   await optimize.click()
-  await expect(editor).toHaveText(improved)
+  await expect(editor).toHaveText(`Deterministic reply: ${editedDraft}`)
+  await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
+  await expect(editor).toHaveText(editedDraft)
+  await expect(optimize).toBeFocused()
+  await expect(optimize).toBeVisible()
+  await optimize.click()
+  await expect(editor).toContainText('Deterministic reply:')
   await page.screenshot({ path: testInfo.outputPath('optimized-draft.png') })
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  expect(await split.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe('0s')
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.setViewportSize({ width: 430, height: 900 })
-  await expect(page.getByRole('button', { name: 'Optimize again', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({
     ratio: 1
   })
@@ -97,7 +94,7 @@ test('optimizes drafts without sending and persists project-specific templates',
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)
   await expect(page.getByText('Response completed.', { exact: true })).toBeVisible()
 
-  // Exercise real paste staging and deletion; undo must send the recovered text, not a dead upload ID.
+  // Exercise real paste staging and deletion; removing the attachment invalidates the undo snapshot.
   const longText = 'Measured value: 42.\n'.repeat(600)
   const prefix = 'Optimize pasted text regression: '
   await editor.fill(prefix)
@@ -116,21 +113,8 @@ test('optimizes drafts without sending and persists project-specific templates',
   await expect(editor).toContainText('Improved pasted text:')
   await pastedAttachment.getByRole('button', { name: /^Remove attachment/ }).click()
   await expect(pastedAttachment).toHaveCount(0)
-  await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
-  await expect(editor).toHaveText(prefix + longText)
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect
-    .poll(() =>
-      page.evaluate(
-        async () =>
-          (await window.api.sessions.loadAll()).sessions
-            .flatMap(({ messages }) => messages)
-            .filter(({ role }) => role === 'user')
-            .at(-1)?.content
-      )
-    )
-    .toBe((prefix + longText).trim())
-  await expect(page.getByText('Response completed.', { exact: true }).last()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)
+  await expect(optimize).toBeEnabled()
 
   // A model response which drops a protected span must leave the draft untouched.
   await editor.fill('Explain `print(1)`')

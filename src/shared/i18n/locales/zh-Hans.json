@@ -7667,7 +7667,6 @@
     "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details.": "在保留用户原始意图和重要细节的前提下，将用户输入改写为清晰、具体且可执行的提示词。",
     "Optimize question": "优化提问",
     "Cancel optimization": "取消优化",
-    "Optimize again": "重新优化",
     "Undo optimization": "撤销优化",
     "Shorten your question to optimize it (maximum 16,000 characters).": "请缩短提问后再优化（最多 16,000 个字符）。",
     "Could not optimize your question. Your draft was kept. Please try again.": "无法优化提问，已保留原草稿，请重试。",

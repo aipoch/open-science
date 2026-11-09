@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { usePromptOptimization } from './use-prompt-optimization'
-import { docFromText, docToText, docToMessageParts, type ComposerDoc } from './composer-doc'
+import { docFromText, docToText, type ComposerDoc } from './composer-doc'
 import type { OptimizePromptRequest } from '../../../../../shared/prompt-optimization'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -131,36 +131,29 @@ describe('composer prompt optimization', () => {
     await act(async () => request.resolve({ text: 'Improved' }))
     unmount()
   })
-  it.each([false, true])(
-    'restores pasted text without losing content when attachment removed=%s',
-    async (removed) => {
-      const text = 'research data\n'.repeat(1000)
-      const pasted = { type: 'pasted-text' as const, id: 'paste', attachmentId: 'upload', text }
-      const original = { nodes: [{ type: 'text' as const, text: 'Analyze ' }, pasted] }
-      const { result, request, optimize, rerender, unmount } = harness(original, ['upload'])
-      act(() => {
-        void result.current.optimization.optimize()
-      })
-      await act(async () =>
-        request.resolve({ text: `Improved: ${optimize.mock.calls[0][0].input}` })
-      )
-      if (removed) {
-        act(() => result.current.setDoc(docFromText('Improved: Analyze ')))
-        rerender({ sessionKey: 'one', attachmentIds: [] })
-      }
-      act(() => result.current.optimization.undo())
-      if (removed) {
-        expect(docToText(result.current.doc)).toBe(`Analyze ${text}`)
-        expect(docToMessageParts(result.current.doc)).toEqual([
-          { type: 'text', text: 'Analyze ' },
-          { type: 'text', text }
-        ])
-      } else expect(result.current.doc).toEqual(original)
-      unmount()
+  it.each([false, true])('handles pasted text undo when attachment removed=%s', async (removed) => {
+    const text = 'research data\n'.repeat(1000)
+    const pasted = { type: 'pasted-text' as const, id: 'paste', attachmentId: 'upload', text }
+    const original = { nodes: [{ type: 'text' as const, text: 'Analyze ' }, pasted] }
+    const { result, request, optimize, rerender, unmount } = harness(original, ['upload'])
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    await act(async () => request.resolve({ text: `Improved: ${optimize.mock.calls[0][0].input}` }))
+    if (removed) {
+      act(() => result.current.optimization.edited())
+      act(() => result.current.setDoc(docFromText('Improved: Analyze ')))
+      rerender({ sessionKey: 'one', attachmentIds: [] })
     }
-  )
+    act(() => result.current.optimization.undo())
+    if (removed) {
+      expect(docToText(result.current.doc)).toBe('Improved: Analyze ')
+      expect(result.current.optimization.canUndo).toBe(false)
+    } else expect(result.current.doc).toEqual(original)
+    unmount()
+  })
 
-  it('replaces the draft only after success and restores the complete original on undo', async () => {
+  it('invalidates undo when the optimized draft is edited', async () => {
     const { result, request, unmount } = harness()
     act(() => {
       void result.current.optimization.optimize()
@@ -168,9 +161,30 @@ describe('composer prompt optimization', () => {
     expect(docToText(result.current.doc)).toBe('Original')
     await act(async () => request.resolve({ text: 'Improved' }))
     expect(docToText(result.current.doc)).toBe('Improved')
-    act(() => result.current.setDoc(docFromText('Edited improved')))
+    act(() => {
+      result.current.optimization.edited()
+      result.current.setDoc(docFromText('Edited improved'))
+    })
     act(() => result.current.optimization.undo())
-    expect(docToText(result.current.doc)).toBe('Original')
+    expect(docToText(result.current.doc)).toBe('Edited improved')
+    unmount()
+  })
+  it('clears the undo snapshot when the optimized draft changes', async () => {
+    const { result, request, unmount } = harness()
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    await act(async () => request.resolve({ text: 'Improved' }))
+    expect(result.current.optimization.canUndo).toBe(true)
+
+    act(() => {
+      result.current.optimization.edited()
+      result.current.setDoc(docFromText('Edited improved'))
+    })
+
+    expect(result.current.optimization.canUndo).toBe(false)
+    act(() => result.current.optimization.undo())
+    expect(docToText(result.current.doc)).toBe('Edited improved')
     unmount()
   })
   it('discards results even if the user edits away and back to the original input', async () => {
