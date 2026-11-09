@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Conservative post-processing for the offline ONNX probe. The production
 // extractor applies its own native-source admission gates; this helper only
 // removes exact duplicate detector boxes before the probe renders crops.

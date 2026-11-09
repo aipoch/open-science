@@ -6,7 +6,11 @@ const { deduplicateTableDetections, intersectionOverUnion } = await import(
   pathToFileURL(resolve('resources/literature-pdf-onnx-postprocess.mjs')).href
 )
 
-const table = (rect: number[], score: number, label = 'table') => ({ label, score, rect })
+const table = (
+  rect: number[],
+  score: number,
+  label = 'table'
+): { label: string; score: number; rect: number[] } => ({ label, score, rect })
 
 it('calculates overlap for identical and disjoint boxes', () => {
   expect(intersectionOverUnion([0, 0, 10, 10], [0, 0, 10, 10])).toBe(1)

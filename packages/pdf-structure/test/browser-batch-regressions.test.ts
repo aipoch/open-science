@@ -90,8 +90,20 @@ it('joins an explicitly left-right figure with a text-heavy right panel', () => 
       { text: 'What this paper tests', x: 300, y: 90, width: 150, height: 12 },
       { text: '1 Do generators produce valid references?', x: 300, y: 110, width: 220, height: 12 },
       { text: 'Varied: base vs. post-trained variants.', x: 312, y: 124, width: 190, height: 12 },
-      { text: '2 Do the references cover varied expressions?', x: 300, y: 150, width: 230, height: 12 },
-      { text: 'Varied: model variant and reference count.', x: 312, y: 164, width: 190, height: 12 },
+      {
+        text: '2 Do the references cover varied expressions?',
+        x: 300,
+        y: 150,
+        width: 230,
+        height: 12
+      },
+      {
+        text: 'Varied: model variant and reference count.',
+        x: 312,
+        y: 164,
+        width: 190,
+        height: 12
+      },
       { text: 'Left panel content', x: 100, y: 110, width: 120, height: 12 }
     ],
     graphicsBounds: [
@@ -105,7 +117,12 @@ it('joins an explicitly left-right figure with a text-heavy right panel', () => 
     lines: ['Figure 1: The benchmark (left) and the conditions behind its scores (right).'],
     rect: [70, 300, 530, 330]
   }
-  const result = recoverCaptionedPanelGrid(page, { caption, rect: [70, 86, 380, 270] }, [caption], [])
+  const result = recoverCaptionedPanelGrid(
+    page,
+    { caption, rect: [70, 86, 380, 270] },
+    [caption],
+    []
+  )
   expect(result?.rect[0]).toBeLessThanOrEqual(70)
   expect(result?.rect[2]).toBeGreaterThanOrEqual(530)
   expect(result?.rect[3]).toBeLessThanOrEqual(300)

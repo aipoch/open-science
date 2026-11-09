@@ -1289,8 +1289,8 @@ export function deduplicateSourceOwnedTableSubsets(tables, nativeTokens, measure
                 )) ||
               [third, ...partsOf(third)].some((part) =>
                 part.cells?.some((cell) =>
-                  [...arrayOrEmpty(cell.sourceItems), ...arrayOrEmpty(cell.sourceSegments)].some((origin) =>
-                    target.has(key(origin))
+                  [...arrayOrEmpty(cell.sourceItems), ...arrayOrEmpty(cell.sourceSegments)].some(
+                    (origin) => target.has(key(origin))
                   )
                 )
               ))

@@ -3474,10 +3474,7 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
         heading.y + heading.height,
         ...numbered.map((line) => line.y + line.height)
       )
-      const panelRight = Math.max(
-        ...panelLines.map((line) => line.x + line.width),
-        current[2]
-      )
+      const panelRight = Math.max(...panelLines.map((line) => line.x + line.width), current[2])
       const panelRect = [panelLeft, heading.y - 4, panelRight, panelBottom + 4]
       const competing =
         candidates.some(
@@ -3517,7 +3514,12 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
           rect: union([
             current,
             panelRect,
-            ...panelLines.map((line) => [line.x, line.y, line.x + line.width, line.y + line.height]),
+            ...panelLines.map((line) => [
+              line.x,
+              line.y,
+              line.x + line.width,
+              line.y + line.height
+            ]),
             ...rightGraphics
           ]),
           graphicsCount: rightGraphics.length,

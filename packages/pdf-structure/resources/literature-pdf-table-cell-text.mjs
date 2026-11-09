@@ -3603,7 +3603,7 @@ export function recoverUnassignedInsertedParameterRows({
     const value = text.trim()
     const unit = value.match(/[A-Za-z]{1,3}$/u)
     const core = (unit ? value.slice(0, -unit[0].length) : value).trimEnd()
-    return /(?=.*\d)^[<>≤≥−+\-\d\s.,()\[\]%±–—\/<>=]+$/u.test(core)
+    return /(?=.*\d)^[<>≤≥−+\x2d\d\s.,()\x5b\x5d%±–—\x2f<>=]+$/u.test(core)
   }
   const groups = []
   for (const item of items
