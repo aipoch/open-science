@@ -113,11 +113,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { scope: host, shard: 1, total: 5 }
-          - { scope: host, shard: 2, total: 5 }
-          - { scope: host, shard: 3, total: 5 }
-          - { scope: host, shard: 4, total: 5 }
-          - { scope: host, shard: 5, total: 5 }
+          - { scope: host, shard: 1, total: 4 }
+          - { scope: host, shard: 2, total: 4 }
+          - { scope: host, shard: 3, total: 4 }
+          - { scope: host, shard: 4, total: 4 }
           - { scope: packages, shard: 1, total: 2 }
           - { scope: packages, shard: 2, total: 2 }
     steps:
@@ -199,7 +198,7 @@ jobs:
           SHARDS_RESULT: ${{ needs.verify_tests.result }}
         run: |
           test "$SHARDS_RESULT" = success
-          for shard in host-{1..5} packages-{1..2}; do
+          for shard in host-{1..4} packages-{1..2}; do
             test -s "vitest-reports/blob-$shard.json"
           done
       - name: Merge test reports and enforce coverage

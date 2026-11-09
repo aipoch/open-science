@@ -1140,7 +1140,7 @@ describe('build verification throughput', () => {
     expect(tests.needs).toBeUndefined()
     expect(tests['runs-on']).toBe('ubuntu-latest')
     expect(tests.strategy?.matrix?.include).toEqual([
-      ...[1, 2, 3, 4, 5].map((shard) => ({ scope: 'host', shard, total: 5 })),
+      ...[1, 2, 3, 4].map((shard) => ({ scope: 'host', shard, total: 4 })),
       ...[1, 2].map((shard) => ({ scope: 'packages', shard, total: 2 }))
     ])
     expect(tests['timeout-minutes']).toBe(60)
