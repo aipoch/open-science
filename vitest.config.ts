@@ -183,6 +183,10 @@ function coverageThresholdsFor(env: NodeJS.ProcessEnv): CoverageThresholds | und
   }
 }
 
+const coveragePackageNames: string[] = JSON.parse(
+  readFileSync(new URL('./scripts/ci/package-test-boundaries.json', import.meta.url), 'utf8')
+).packages.map(({ root }: { root: string }) => basename(root))
+
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
 export default defineConfig({
@@ -316,14 +320,10 @@ export default defineConfig({
       // text for the CI log, lcov for upload/tooling, html for local inspection.
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
+      // Group registered packages so V8 coverage need not compile one matcher per package for each file.
       include: [
         'src/**/*.{ts,tsx}',
-        ...JSON.parse(
-          readFileSync(
-            new URL('./scripts/ci/package-test-boundaries.json', import.meta.url),
-            'utf8'
-          )
-        ).packages.map(({ root }: { root: string }) => `${root}/src/**/*.{ts,tsx}`)
+        `packages/@(${coveragePackageNames.join('|')})/src/**/*.{ts,tsx}`
       ],
       // Exclude non-logic files so coverage reflects testable code, not wiring/types.
       exclude: VITEST_COVERAGE_EXCLUDE_PATTERNS,
