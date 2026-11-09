@@ -160,7 +160,7 @@ Side Chat conversations, private reading bookmarks, and credentials are excluded
 
 ## Benchmark Results
 
-AIPOCH evaluated AIPOCH Open-Science on tasks ranging from finding a paper to answering questions about its contents and carrying out a research plan. The results below come from AIPOCH's own runs. Each score describes a particular task and evaluation setup.
+AIPOCH evaluated AIPOCH Open-Science on literature search and question answering, research workflows, biomedical data analysis, computational reproducibility, and hypothesis discovery. The results below come from AIPOCH’s own runs. Each score describes a particular task and evaluation setup.
 
 | Task                                  | What AIPOCH Open-Science achieved                                                                                                                                                   |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -169,6 +169,8 @@ AIPOCH evaluated AIPOCH Open-Science on tasks ranging from finding a paper to an
 | Synthesize a cited answer             | On 100 ScholarQA-CS2 validation questions, Open-Science earned a **composite quality score of 0.9289/1** using deepseek-v4-flash. Official test references use different questions. |
 | Carry out research workflows          | In local ASI-Bench runs using the same model, Open-Science scored **59.46** on B4 and Codex scored **55.45**. On B2 the scores were nearly identical (**56.11** and **56.09**).     |
 | Analyze biomedical data               | On BiomniBench-DA Public 50, two judges scored the outputs **81.04** and **77.06**. Their equal-weight mean was **79.05**.                                                          |
+| Reproduce published results           | On CORE-Bench-Hard, Open-Science answered **36 of 37 test tasks correctly (97.30% task accuracy)** in a local evaluation. The final tally includes retests.                         |
+| Discover hypotheses from data         | On a **25-task subset of the DiscoveryBench validation split**, Open-Science earned a **mean score of 0.7467/1** with a local model judge.                                          |
 
 ### AstaBench — Literature tasks
 
@@ -202,6 +204,22 @@ The local ScholarQA-CS2 result measures the quality of cited answers on 100 Vali
 ![AIPOCH Open-Science ScholarQA-CS2 comparison: 0.9289 local Validation composite score, shown separately from official Test references](docs/images/readme/astabench-scholarqa-cs2.jpg)
 
 The composite score is reported on a 0–1 scale; it is not the percentage of questions answered completely correctly.
+
+</details>
+
+### AstaBench — Reproducibility and hypothesis discovery
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36 of 37 tasks correct, including retests</strong></summary>
+
+Given a study’s code, data, and README, the agent must reproduce the requested results. AIPOCH ran DeepSeek Flash with Max reasoning and used the official programmatic scorer locally. A task earns one point only if all required answers are correct. All 37 tasks received a score. The November 6 tally includes retests and is not a first-pass success rate. [Evaluation report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — mean score of 0.7467/1 on 25 validation tasks</strong></summary>
+
+AIPOCH used deepseek-v4-flash both to generate hypotheses and to judge them with a local implementation of the DiscoveryBench scoring procedure. Of the 25 tasks scored, 18 received full credit, 2 received partial credit, and 5 received zero. The November 9 run used a validation subset and a different judge from the official full-test evaluation, so the scores cannot be ranked together.
 
 </details>
 

@@ -162,15 +162,17 @@ Les conversations Side Chat, les signets privés de lecture et les identifiants 
 
 ## Résultats des benchmarks
 
-AIPOCH a évalué AIPOCH Open-Science sur des tâches allant de la recherche d’un article aux réponses sur son contenu et à l’exécution d’un plan de recherche. Les résultats ci-dessous proviennent des propres essais d’AIPOCH. Chaque score correspond à une tâche et à une configuration d’évaluation précises.
+AIPOCH a évalué AIPOCH Open-Science sur des tâches allant de la recherche d’un article aux réponses sur son contenu et à l’exécution d’un plan de recherche. Les résultats ci-dessous proviennent des propres essais d’AIPOCH. Chaque score correspond à une tâche et à une configuration d’évaluation précises. Les évaluations couvrent aussi la reproduction de résultats de calcul et la formulation d’hypothèses à partir de données.
 
-| Tâche                                | Résultat d’AIPOCH Open-Science                                                                                                                                                                              |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Trouver l’article cible              | Pour **68 des 75 questions de test**, l’article cible figurait parmi les 30 premiers résultats sur LitQA2-FullText-Search (**Recall@30 de 90.67%**, gpt-6-astra).                                           |
-| Répondre à partir de la littérature  | Lors d’un essai distinct sur LitQA2-FullText, Open-Science a répondu correctement à **70 questions sur 75** (**93.33% d’exactitude**, deepseek-flash avec raisonnement Max).                                |
-| Produire une synthèse avec citations | Sur 100 questions de validation de ScholarQA-CS2, Open-Science a obtenu un **score composite de qualité de 0.9289/1** avec deepseek-v4-flash. Les références du test officiel utilisent d’autres questions. |
-| Exécuter des workflows de recherche  | Lors d’essais locaux ASI-Bench avec le même modèle, Open-Science a obtenu **59.46** en B4 et Codex **55.45**. Les scores B2 étaient presque identiques (**56.11** et **56.09**).                            |
-| Analyser des données biomédicales    | Sur BiomniBench-DA Public 50, deux modèles juges ont attribué **81.04** et **77.06** aux résultats. Leur moyenne à poids égaux était de **79.05**.                                                          |
+| Tâche                                       | Résultat d’AIPOCH Open-Science                                                                                                                                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trouver l’article cible                     | Pour **68 des 75 questions de test**, l’article cible figurait parmi les 30 premiers résultats sur LitQA2-FullText-Search (**Recall@30 de 90.67%**, gpt-6-astra).                                           |
+| Répondre à partir de la littérature         | Lors d’un essai distinct sur LitQA2-FullText, Open-Science a répondu correctement à **70 questions sur 75** (**93.33% d’exactitude**, deepseek-flash avec raisonnement Max).                                |
+| Produire une synthèse avec citations        | Sur 100 questions de validation de ScholarQA-CS2, Open-Science a obtenu un **score composite de qualité de 0.9289/1** avec deepseek-v4-flash. Les références du test officiel utilisent d’autres questions. |
+| Exécuter des workflows de recherche         | Lors d’essais locaux ASI-Bench avec le même modèle, Open-Science a obtenu **59.46** en B4 et Codex **55.45**. Les scores B2 étaient presque identiques (**56.11** et **56.09**).                            |
+| Analyser des données biomédicales           | Sur BiomniBench-DA Public 50, deux modèles juges ont attribué **81.04** et **77.06** aux résultats. Leur moyenne à poids égaux était de **79.05**.                                                          |
+| Reproduire des résultats publiés            | CORE-Bench-Hard — 36 tâches de test sur 37 réussies en local (97,30 %), nouveaux essais compris.                                                                                                            |
+| Formuler des hypothèses à partir de données | DiscoveryBench — Sur 25 tâches du jeu de validation, la note moyenne attribuée par le modèle juge en local est de 0,7467/1.                                                                                 |
 
 ### AstaBench — Tâches documentaires
 
@@ -204,6 +206,22 @@ Le résultat local ScholarQA-CS2 mesure la qualité des réponses avec citations
 ![Comparaison ScholarQA-CS2 d’AIPOCH Open-Science : score composite local de Validation de 0.9289, séparé des références officielles de Test](../images/readme/astabench-scholarqa-cs2.jpg)
 
 Le score composite utilise une échelle de 0 à 1 ; il ne représente pas le pourcentage de questions entièrement résolues.
+
+</details>
+
+### AstaBench — Reproductibilité et formulation d’hypothèses
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+Le 6 novembre, AIPOCH a utilisé DeepSeek Flash avec le raisonnement Max pour reproduire des résultats à partir du code, des données et du README d’une étude. Le programme officiel de notation, exécuté en local, accorde un point uniquement si toutes les réponses requises sont correctes. Les 37 tâches ont été notées et le bilan inclut les nouveaux essais. [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0,7467/1</strong></summary>
+
+Le 9 novembre, AIPOCH a utilisé deepseek-v4-flash pour formuler les hypothèses et les noter avec une implémentation locale de la procédure d’évaluation. Sur 25 tâches, 18 ont obtenu la note maximale, deux une note partielle et cinq un zéro. Les tâches et le modèle juge diffèrent de ceux du test officiel complet, ce qui exclut un classement commun.
 
 </details>
 

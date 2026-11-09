@@ -162,7 +162,7 @@ Side Chat 對話、私人閱讀書籤與憑證不隨包匯出，所含檔案取�
 
 ## 基準測試結果
 
-AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回答論文內容相關問題和執行研究計畫。以下結果來自 AIPOCH 自行進行的測試，每項成績對應特定任務與評測設定。
+AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回答論文內容相關問題和執行研究計畫。以下結果來自 AIPOCH 自行進行的測試，每項成績對應特定任務與評測設定。 評測也涵蓋計算結果重現及從資料提出假設。
 
 | 任務             | AIPOCH Open-Science 的結果                                                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -171,6 +171,8 @@ AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回�
 | 綜合附引用的答案 | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道驗證題上獲得 **0.9289/1 的綜合品質分數**。官方測試參考結果使用不同的題目。                |
 | 執行研究流程     | 在使用相同模型的本機 ASI-Bench 測試中，Open-Science 的 B4 得分為 **59.46**，Codex 為 **55.45**。B2 得分幾乎相同（**56.11** 與 **56.09**）。 |
 | 分析生物醫學資料 | 在 BiomniBench-DA Public 50 上，兩個評審模型的評分分別為 **81.04** 和 **77.06**，等權平均為 **79.05**。                                     |
+| 重現已發表的結果 | CORE-Bench-Hard — 本機評測答對 37 項測試任務中的 36 項（97.30%），最終統計包含複測。                                                        |
+| 根據資料提出假設 | DiscoveryBench — 在驗證集的 25 項任務上，本機模型評分平均為 0.7467/1。                                                                      |
 
 ### AstaBench — 文獻任務
 
@@ -204,6 +206,22 @@ AIPOCH 執行了 AstaBench v0.5.4 中 LitQA2-FullText 的 75 題 Test 集。圖�
 ![AIPOCH Open-Science ScholarQA-CS2 比較：本機 Validation 綜合得分 0.9289，與官方 Test 參考結果分開呈現](../images/readme/astabench-scholarqa-cs2.jpg)
 
 綜合分數的範圍為 0–1，並非完全答對題目的百分比。
+
+</details>
+
+### AstaBench — 計算結果重現與假設發現
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+11 月 6 日，AIPOCH 使用 DeepSeek Flash（Max 推理），依據程式碼、資料與 README 重現論文結果。本機執行官方評分程式，一項任務的所有必答項均正確才得 1 分。37 項均獲評分，含複測。 [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0.7467/1</strong></summary>
+
+11 月 9 日，AIPOCH 使用 deepseek-v4-flash 產生假設，並以同一模型依本機實作的評測流程評分。25 項中，18 項滿分、2 項部分得分、5 項零分。題集與評分模型均與官方完整測試不同，分數無法直接排名。
 
 </details>
 
