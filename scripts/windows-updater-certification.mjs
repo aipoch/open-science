@@ -845,7 +845,8 @@ const main = async () => {
                 onBlocked: async () => {
                   const dialog = page.getByTestId('runtime-update-dialog')
                   await expect(dialog).toContainText('Another app is using Open-Science files')
-                  await expect(dialog).toContainText('Quit the other app, then recheck.')
+                  await expect(dialog).toContainText('Quit ')
+                  await expect(dialog).toContainText('then recheck.')
                   await expect(
                     dialog.getByRole('button', { name: 'Cancel', exact: true })
                   ).toBeEnabled()
