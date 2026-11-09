@@ -1970,7 +1970,7 @@ const ConversationPanel = ({
                           : 'jobs'
                     }
                     className={cn(
-                      'flex px-2',
+                      'relative flex min-w-0 px-2',
                       notebookReference || messageQueue.items.length > 0 || hasBookmarkEntry
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card',
