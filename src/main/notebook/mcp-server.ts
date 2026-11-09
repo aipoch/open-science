@@ -1202,6 +1202,10 @@ const buildNotebookToolContent = (
     return { type: 'image', data: image.data, mimeType: image.mimeType }
   })
   content.push(...images)
+  const evidence = viewImages
+    .map((candidate) => asRecord(candidate)?.evidence)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+  if (evidence.length > 0) content.push({ type: 'text', text: evidence.join('\n\n') })
   return content
 }
 

@@ -165,6 +165,55 @@ describe('HostViewImageService', () => {
     expect(isHostViewImageBackendCertified(backend)).toBe(false)
   })
 
+  it('accepts a text-only main model when the app-owned Vision relay is available', async () => {
+    const h = harness({
+      backend: visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact')]
+    })
+    const relay = vi.fn(async () => true)
+    const service = new HostViewImageService({
+      catalog: { readHostArtifactCatalog: h.readHostArtifactCatalog },
+      managedFileVersions: { openVersion: h.openVersion },
+      captureBackend: () => visualBackend({ supportsImageInput: false }),
+      captureVisionRelay: relay,
+      prepareImage: h.prepareImage
+    })
+
+    await expect(service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(true)
+    await expect(
+      service.stage({ versionId: 'artifact-version-1' }, {}, { ...context(), executionCwd: undefined })
+    ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
+    expect(relay).toHaveBeenCalled()
+  })
+
+  it('attaches Vision evidence to text-only tool results', async () => {
+    const h = harness({
+      backend: visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact')]
+    })
+    const service = new HostViewImageService({
+      catalog: { readHostArtifactCatalog: h.readHostArtifactCatalog },
+      managedFileVersions: { openVersion: h.openVersion },
+      captureBackend: () => visualBackend({ supportsImageInput: false }),
+      captureVisionRelay: () => true,
+      prepareVisionEvidence: async ({ mimeType, data, projectId, sessionId }) =>
+        `evidence:${mimeType}:${data}:${projectId}:${sessionId}`,
+      prepareImage: h.prepareImage
+    })
+
+    await service.stage({ versionId: 'artifact-version-1' }, {}, {
+      ...context(),
+      executionCwd: undefined
+    })
+    await expect(service.complete('run-1')).resolves.toEqual([
+      {
+        data: Buffer.from('png').toString('base64'),
+        mimeType: 'image/png',
+        evidence: 'evidence:image/png:cG5n:project-a:calling-session'
+      }
+    ])
+  })
+
   it('delivers native images through the Codex Chat bridge and rejects text-only models', async () => {
     const backend = visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge' })
     const h = harness({ backend, items: [catalogItem('artifact')] })
@@ -239,6 +288,17 @@ describe('HostViewImageService', () => {
       undefined
     )
     expect(h.closeVersion).toHaveBeenCalledTimes(2)
+  })
+
+  it('opens a versionId without an execution workspace while keeping path sources gated', async () => {
+    const artifact = catalogItem('artifact')
+    const h = harness({ items: [artifact] })
+    await expect(
+      h.service.stage({ versionId: artifact.versionId }, {}, { ...context(), executionCwd: undefined })
+    ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
+    await expect(
+      h.service.stage({ path: 'image.png' }, {}, { ...context('') })
+    ).rejects.toThrow(/trusted execution workspace/u)
   })
 
   it('closes the version lease when image preparation fails', async () => {

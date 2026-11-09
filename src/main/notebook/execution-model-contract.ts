@@ -6,4 +6,5 @@ export type NotebookKernelEpochOwnership = Readonly<{
 export type TransientViewImage = Readonly<{
   data: string
   mimeType: 'image/png' | 'image/jpeg'
+  evidence?: string
 }>

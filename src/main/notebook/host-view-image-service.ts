@@ -70,6 +70,13 @@ type HostViewImageServiceOptions = Readonly<{
   captureBackend(sessionId: string): HostViewImageBackend | undefined
   /** Optional app-owned Vision relay capability for text-only active models. */
   captureVisionRelay?: () => boolean | Promise<boolean>
+  /** Converts a staged image into text evidence for a text-only active model. */
+  prepareVisionEvidence?: (input: {
+    data: string
+    mimeType: 'image/png' | 'image/jpeg'
+    projectId: string
+    sessionId: string
+  }) => Promise<string | undefined>
   prepareImage?: (
     filePath: string,
     options: { crop?: ImageCrop; maxSize?: number },
@@ -481,11 +488,24 @@ export class HostViewImageService {
     ) {
       return []
     }
-    return Object.freeze(
-      [...invocation.images.entries()]
-        .sort(([left], [right]) => left - right)
-        .map(([, image]) => image)
-    )
+    const images = [...invocation.images.entries()].sort(([left], [right]) => left - right)
+    const evidence = !isHostViewImageBackendCertified(backend)
+      ? await Promise.all(
+          images.map(async ([, image]) => ({
+            ...image,
+            ...(this.options.prepareVisionEvidence
+              ? {
+                  evidence: await this.options.prepareVisionEvidence({
+                    ...image,
+                    projectId: invocation.projectId,
+                    sessionId: invocation.sessionId
+                  })
+                }
+              : {})
+          }))
+        )
+      : images.map(([, image]) => image)
+    return Object.freeze(evidence)
   }
 
   discard(controlInvocationId: string): void {

@@ -193,7 +193,23 @@ export async function composeNotebookBridge({
           }
         : undefined
     },
-    captureVisionRelay: async () => (await imageInputCompatibility?.isAvailable()) === true
+    captureVisionRelay: async () => (await imageInputCompatibility?.isAvailable()) === true,
+    prepareVisionEvidence: async ({ data, mimeType, projectId, sessionId }) => {
+      const prepared = await imageInputCompatibility.prepare({
+        content: [{ type: 'image', data, mimeType }],
+        supportsImageInput: false,
+        projectId,
+        sessionId,
+        historyImageCount: 0
+      })
+      if (typeof prepared === 'string') return prepared
+      return prepared
+        .filter(
+          (block): block is { type: 'text'; text: string } => block.type === 'text'
+        )
+        .map((block) => block.text)
+        .join('\n\n')
+    }
   })
   const resolveHostReferencedSession = async (
     context: { sessionId: string },
