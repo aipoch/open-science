@@ -7837,6 +7837,7 @@
     "Internet": "インターネット",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Pinggy を使ってインターネット経由で接続します。通信はサードパーティのサーバーを経由します。",
     "Connect your mobile device to the same WiFi as this computer.": "モバイルデバイスをこのコンピューターと同じ WiFi に接続してください。",
+    "Choose WiFi or Internet to connect a mobile device.": "モバイルデバイスを接続するには、WiFi またはインターネットを選択してください。",
     "Local network address": "ローカルネットワークアドレス",
     "Connection unavailable": "接続できません",
     "Establishing secure tunnel…": "安全なトンネルを確立しています…",

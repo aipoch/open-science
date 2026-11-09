@@ -47,18 +47,30 @@ const mount = async (mode: RemoteAccessMode): Promise<ReturnType<typeof vi.fn>> 
   return setMode
 }
 
-describe('ConnectMobilePanel default mode', () => {
-  it('starts WiFi pairing when remote access is off', async () => {
-    const setMode = await mount('off')
-    expect(setMode).toHaveBeenCalledOnce()
-    expect(setMode).toHaveBeenCalledWith({ mode: 'lan' })
-  })
-
-  it.each(['lan', 'pinggy', 'remoteit', 'remoteit-public'] as const)(
-    'keeps the explicitly chosen %s mode',
+describe('ConnectMobilePanel mode switch', () => {
+  it.each(['off', 'lan', 'pinggy', 'remoteit', 'remoteit-public'] as const)(
+    'does not change the %s mode on open',
     async (mode) => {
       const setMode = await mount(mode)
       expect(setMode).not.toHaveBeenCalled()
     }
   )
+
+  it('offers Off, WiFi, and Internet with Off selected by default', async () => {
+    await mount('off')
+    const radios = [...container.querySelectorAll('[role="radio"]')]
+    expect(radios.map((radio) => radio.textContent)).toEqual(['Off', 'WiFi', 'Internet'])
+    expect(radios.map((radio) => radio.getAttribute('aria-checked'))).toEqual([
+      'true',
+      'false',
+      'false'
+    ])
+  })
+
+  it('turns remote access off from the Off option', async () => {
+    const setMode = await mount('lan')
+    const off = container.querySelector<HTMLButtonElement>('[role="radio"]')
+    await act(async () => off?.click())
+    expect(setMode).toHaveBeenCalledWith({ mode: 'off' })
+  })
 })

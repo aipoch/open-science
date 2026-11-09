@@ -1,6 +1,6 @@
 import { QRCodeSVG } from '@rc-component/qrcode'
-import { Copy, RefreshCw, Wifi, Globe2, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Copy, RefreshCw, Wifi, Globe2, Power, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RemoteAccessMode, RemoteAccessSnapshot } from '../../../../shared/remote-access'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,6 @@ export const ConnectMobilePanel = ({
   embedded = false
 }: ConnectMobilePanelProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const defaultModeRequested = useRef(false)
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot>()
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -29,23 +28,6 @@ export const ConnectMobilePanel = ({
           if (!mounted) return
           setSnapshot(value)
           setError(undefined)
-          // Default to WiFi when remote access is off, so the QR code is ready without extra
-          // clicks. Only the first load decides; an explicitly chosen mode is left alone.
-          if (defaultModeRequested.current) return
-          defaultModeRequested.current = true
-          if (value.mode !== 'off' || !value.canManage) return
-          setBusy(true)
-          void window.api.remoteAccess
-            .setMode({ mode: 'lan' })
-            .then((next) => {
-              if (mounted) setSnapshot(next)
-            })
-            .catch((cause: unknown) => {
-              if (mounted) setError(String(cause))
-            })
-            .finally(() => {
-              if (mounted) setBusy(false)
-            })
         })
         .catch((cause: unknown) => {
           if (mounted) setError(String(cause))
@@ -91,22 +73,27 @@ export const ConnectMobilePanel = ({
   const devices = snapshot?.connectedDevices ?? snapshot?.trustedBrowsers ?? []
   const remaining = offer ? Math.ceil((offer.expiresAt - now) / 1000) : 0
   const isTunnel = snapshot?.mode === 'pinggy'
+  const isLan = snapshot?.mode === 'lan'
+  // Only the WiFi and Internet routes pair through this panel; Remote.it modes show no QR code here.
+  const selectedMode: 'off' | 'lan' | 'pinggy' = isLan ? 'lan' : isTunnel ? 'pinggy' : 'off'
   const placeholder =
-    snapshot?.lifecycle === 'error'
-      ? t('Connection unavailable')
-      : isTunnel
-        ? t('Establishing secure tunnel…')
-        : t('Preparing connection…')
+    selectedMode === 'off'
+      ? t('Remote access is off')
+      : snapshot?.lifecycle === 'error'
+        ? t('Connection unavailable')
+        : isTunnel
+          ? t('Establishing secure tunnel…')
+          : t('Preparing connection…')
   const shownError = error ?? snapshot?.error
 
   const modeSwitch = (
     <div
-      className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1"
+      className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1"
       role="radiogroup"
       aria-label={t('Connection mode')}
     >
-      {(['lan', 'pinggy'] as const).map((mode) => {
-        const Icon = mode === 'lan' ? Wifi : Globe2
+      {(['off', 'lan', 'pinggy'] as const).map((mode) => {
+        const Icon = mode === 'off' ? Power : mode === 'lan' ? Wifi : Globe2
         const selected = snapshot?.mode === mode
         return (
           <button
@@ -114,16 +101,18 @@ export const ConnectMobilePanel = ({
             type="button"
             role="radio"
             aria-checked={selected}
-            disabled={busy}
+            disabled={busy || !snapshot?.canManage}
             className={`flex h-8 items-center justify-center gap-2 rounded-md text-sm transition-colors disabled:cursor-not-allowed ${
               selected
                 ? 'bg-background font-medium text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
-            onClick={() => chooseMode(mode)}
+            onClick={() => {
+              if (!selected) chooseMode(mode)
+            }}
           >
             <Icon className="size-4" aria-hidden="true" />
-            {mode === 'lan' ? t('WiFi') : t('Internet')}
+            {mode === 'off' ? t('Off') : mode === 'lan' ? t('WiFi') : t('Internet')}
           </button>
         )
       })}
@@ -132,11 +121,13 @@ export const ConnectMobilePanel = ({
 
   const modeHint = (
     <p className="text-xs leading-relaxed text-muted-foreground">
-      {isTunnel
-        ? t(
-            'Connect over the internet through Pinggy. Traffic passes through a third-party server.'
-          )
-        : t('Connect your mobile device to the same WiFi as this computer.')}
+      {selectedMode === 'off'
+        ? t('Choose WiFi or Internet to connect a mobile device.')
+        : isTunnel
+          ? t(
+              'Connect over the internet through Pinggy. Traffic passes through a third-party server.'
+            )
+          : t('Connect your mobile device to the same WiFi as this computer.')}
     </p>
   )
 

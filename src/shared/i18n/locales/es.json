@@ -8177,6 +8177,7 @@
     "Internet": "Internet",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Conexión por Internet mediante Pinggy. El tráfico pasa por un servidor de terceros.",
     "Connect your mobile device to the same WiFi as this computer.": "Conecte su dispositivo móvil a la misma red WiFi que este equipo.",
+    "Choose WiFi or Internet to connect a mobile device.": "Seleccione WiFi o Internet para conectar un dispositivo móvil.",
     "Local network address": "Dirección de red local",
     "Connection unavailable": "Conexión no disponible",
     "Establishing secure tunnel…": "Estableciendo conexión segura…",

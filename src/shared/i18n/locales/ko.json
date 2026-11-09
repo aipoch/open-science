@@ -7835,6 +7835,7 @@
     "Internet": "인터넷",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Pinggy를 통해 인터넷으로 연결합니다. 트래픽은 타사 서버를 거칩니다.",
     "Connect your mobile device to the same WiFi as this computer.": "모바일 기기를 이 컴퓨터와 같은 WiFi에 연결하세요.",
+    "Choose WiFi or Internet to connect a mobile device.": "모바일 기기를 연결하려면 WiFi 또는 인터넷을 선택하세요.",
     "Local network address": "로컬 네트워크 주소",
     "Connection unavailable": "연결할 수 없음",
     "Establishing secure tunnel…": "보안 터널을 설정하는 중…",

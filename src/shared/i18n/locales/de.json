@@ -8003,6 +8003,7 @@
     "Internet": "Internet",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Verbindung über das Internet mit Pinggy. Der Datenverkehr läuft über einen Server eines Drittanbieters.",
     "Connect your mobile device to the same WiFi as this computer.": "Verbinden Sie Ihr Mobilgerät mit demselben WLAN wie diesen Computer.",
+    "Choose WiFi or Internet to connect a mobile device.": "Wählen Sie WLAN oder Internet, um ein Mobilgerät zu verbinden.",
     "Local network address": "Adresse im lokalen Netzwerk",
     "Connection unavailable": "Verbindung nicht verfügbar",
     "Establishing secure tunnel…": "Sicherer Tunnel wird aufgebaut…",

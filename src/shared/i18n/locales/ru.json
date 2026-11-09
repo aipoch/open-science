@@ -8323,6 +8323,7 @@
     "Internet": "Интернет",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Подключение через интернет с помощью Pinggy. Трафик проходит через сторонний сервер.",
     "Connect your mobile device to the same WiFi as this computer.": "Подключите мобильное устройство к той же сети WiFi, что и этот компьютер.",
+    "Choose WiFi or Internet to connect a mobile device.": "Выберите WiFi или Интернет, чтобы подключить мобильное устройство.",
     "Local network address": "Адрес в локальной сети",
     "Connection unavailable": "Подключение недоступно",
     "Establishing secure tunnel…": "Создание защищённого туннеля…",
