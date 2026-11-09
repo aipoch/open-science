@@ -1640,6 +1640,31 @@ describe('repl_execute tool', () => {
     ).toEqual([{ type: 'text', text: expect.any(String) }])
   })
 
+  it('delivers only text to a text-only model after Vision inspects a plot (#1159)', () => {
+    const evidence = '<attached-image-evidence>Sine and Cosine</attached-image-evidence>'
+    const content = buildNotebookToolContent(
+      { status: 'completed', viewImages: [{ evidence }] },
+      tool!
+    )
+
+    expect(content).toEqual([
+      { type: 'text', text: expect.stringContaining('"status": "completed"') },
+      { type: 'text', text: evidence }
+    ])
+  })
+
+  it('rejects a relay result carrying both evidence and raw pixels', () => {
+    expect(() =>
+      buildNotebookToolContent(
+        {
+          status: 'completed',
+          viewImages: [{ evidence: 'plot', data: 'YQ==', mimeType: 'image/png' }]
+        },
+        tool!
+      )
+    ).toThrow(/invalid transient image content/u)
+  })
+
   it('fails the entire transient image attachment when any image block is malformed', () => {
     const valid = Buffer.from('valid-image').toString('base64')
 

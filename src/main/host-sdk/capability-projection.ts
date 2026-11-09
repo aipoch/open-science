@@ -38,7 +38,6 @@ type HostCapabilityProjectionContext = Readonly<{
   callerRole: 'main' | 'delegate'
   isControl: boolean
   hasActiveControlInvocation: boolean
-  hasWorkspace: boolean
   allowsMethod(method: string): boolean
   delegatedWorkReady: boolean
   delegationAllowed: boolean

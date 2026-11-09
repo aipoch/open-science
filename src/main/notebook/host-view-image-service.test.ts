@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE } from '../../shared/acp'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
@@ -44,13 +44,14 @@ const catalogItem = (
 })
 
 let root: string | undefined
+type PrepareImageMock = Mock<NonNullable<HostViewImageServiceOptions['prepareImage']>>
 
 type HostViewImageTestHarness = {
   service: HostViewImageService
   readHostArtifactCatalog: ReturnType<typeof vi.fn>
   openVersion: ReturnType<typeof vi.fn>
   closeVersion: ReturnType<typeof vi.fn>
-  prepareImage: ReturnType<typeof vi.fn>
+  prepareImage: PrepareImageMock
   setBackend(next: HostViewImageBackend): void
 }
 
@@ -63,8 +64,10 @@ const harness = (
   options: {
     backend?: HostViewImageBackend
     items?: HostArtifactCatalogItem[]
-    prepareImage?: ReturnType<typeof vi.fn>
+    prepareImage?: PrepareImageMock
     openVersion?: HostViewImageServiceOptions['managedFileVersions']['openVersion']
+    captureVisionRelay?: HostViewImageServiceOptions['captureVisionRelay']
+    prepareVisionEvidence?: HostViewImageServiceOptions['prepareVisionEvidence']
   } = {}
 ): HostViewImageTestHarness => {
   let backend = options.backend ?? visualBackend()
@@ -97,7 +100,9 @@ const harness = (
     catalog: { readHostArtifactCatalog },
     managedFileVersions: { openVersion },
     captureBackend: () => backend,
-    prepareImage: prepareImage as NonNullable<HostViewImageServiceOptions['prepareImage']>
+    captureVisionRelay: options.captureVisionRelay,
+    prepareVisionEvidence: options.prepareVisionEvidence,
+    prepareImage
   })
   return {
     service,
@@ -166,53 +171,280 @@ describe('HostViewImageService', () => {
   })
 
   it('accepts a text-only main model when the app-owned Vision relay is available', async () => {
+    const relay = vi.fn(async () => true)
     const h = harness({
       backend: visualBackend({ supportsImageInput: false }),
-      items: [catalogItem('artifact')]
-    })
-    const relay = vi.fn(async () => true)
-    const service = new HostViewImageService({
-      catalog: { readHostArtifactCatalog: h.readHostArtifactCatalog },
-      managedFileVersions: { openVersion: h.openVersion },
-      captureBackend: () => visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact')],
       captureVisionRelay: relay,
-      prepareImage: h.prepareImage
+      prepareVisionEvidence: async () => 'Image evidence'
     })
 
-    await expect(service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(true)
+    await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(true)
     await expect(
-      service.stage({ versionId: 'artifact-version-1' }, {}, { ...context(), executionCwd: undefined })
+      h.service.stage(
+        { versionId: 'artifact-version-1' },
+        {},
+        { ...context(), executionCwd: undefined }
+      )
     ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
     expect(relay).toHaveBeenCalled()
   })
 
-  it('attaches Vision evidence to text-only tool results', async () => {
+  it('relays one ordered batch and attaches only Vision evidence to text-only tool results', async () => {
+    const prepareVisionEvidence = vi.fn(async () => 'Image 1: a plot. Image 2: a table.')
     const h = harness({
       backend: visualBackend({ supportsImageInput: false }),
-      items: [catalogItem('artifact')]
-    })
-    const service = new HostViewImageService({
-      catalog: { readHostArtifactCatalog: h.readHostArtifactCatalog },
-      managedFileVersions: { openVersion: h.openVersion },
-      captureBackend: () => visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact'), catalogItem('upload')],
       captureVisionRelay: () => true,
-      prepareVisionEvidence: async ({ mimeType, data, projectId, sessionId }) =>
-        `evidence:${mimeType}:${data}:${projectId}:${sessionId}`,
-      prepareImage: h.prepareImage
+      prepareVisionEvidence
     })
 
-    await service.stage({ versionId: 'artifact-version-1' }, {}, {
-      ...context(),
-      executionCwd: undefined
-    })
-    await expect(service.complete('run-1')).resolves.toEqual([
+    await h.service.stage(
+      { versionId: 'artifact-version-1' },
+      {},
       {
-        data: Buffer.from('png').toString('base64'),
-        mimeType: 'image/png',
-        evidence: 'evidence:image/png:cG5n:project-a:calling-session'
+        ...context(),
+        executionCwd: undefined
       }
+    )
+    await h.service.stage({ versionId: 'upload-version-1' }, {}, context())
+    await expect(h.service.complete('run-1')).resolves.toEqual([
+      { evidence: 'Image 1: a plot. Image 2: a table.' }
     ])
+    expect(prepareVisionEvidence).toHaveBeenCalledExactlyOnceWith({
+      images: [
+        { data: 'cG5n', mimeType: 'image/png' },
+        { data: 'cG5n', mimeType: 'image/png' }
+      ],
+      projectId: 'project-a',
+      sessionId: 'calling-session',
+      signal: expect.any(AbortSignal)
+    })
+    await expect(h.service.complete('run-1')).resolves.toEqual([])
   })
+
+  it('reserves call order before asynchronous relay availability checks', async () => {
+    let finishFirstCheck!: (available: boolean) => void
+    const firstCheck = new Promise<boolean>((resolve) => {
+      finishFirstCheck = resolve
+    })
+    let checkCount = 0
+    const prepareVisionEvidence = vi.fn(async () => 'Ordered image evidence')
+    const h = harness({
+      backend: visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact'), catalogItem('upload')],
+      captureVisionRelay: () => (++checkCount === 1 ? firstCheck : true),
+      prepareVisionEvidence,
+      prepareImage: vi.fn(async (filePath: string) => ({
+        data: Buffer.from(filePath.includes('artifact') ? 'first' : 'second').toString('base64'),
+        mimeType: 'image/png' as const,
+        originalSize: { width: 20, height: 10 },
+        outputSize: { width: 20, height: 10 }
+      }))
+    })
+
+    const first = h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    await h.service.stage({ versionId: 'upload-version-1' }, {}, context())
+    finishFirstCheck(true)
+    await first
+    await h.service.complete('run-1')
+    expect(prepareVisionEvidence).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        images: [
+          { data: Buffer.from('first').toString('base64'), mimeType: 'image/png' },
+          { data: Buffer.from('second').toString('base64'), mimeType: 'image/png' }
+        ]
+      })
+    )
+  })
+
+  it.each(['discard', 'session', 'shutdown', 'backend'] as const)(
+    'keeps %s authoritative while relay availability is pending',
+    async (change) => {
+      let finishCheck!: (available: boolean) => void
+      const check = new Promise<boolean>((resolve) => {
+        finishCheck = resolve
+      })
+      const h = harness({
+        backend: visualBackend({ supportsImageInput: false }),
+        items: [catalogItem('artifact')],
+        captureVisionRelay: () => check,
+        prepareVisionEvidence: async () => 'Image evidence'
+      })
+
+      const staging = h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+      if (change === 'discard') h.service.discard('run-1')
+      else if (change === 'session') h.service.discardSession('calling-session')
+      else if (change === 'shutdown') h.service.shutdown()
+      else h.setBackend(visualBackend({ supportsImageInput: false, model: 'changed-model' }))
+      finishCheck(true)
+      await expect(staging).rejects.toThrow(change === 'backend' ? /changed/u : /aborted/u)
+      expect(h.readHostArtifactCatalog).not.toHaveBeenCalled()
+      expect(h.openVersion).not.toHaveBeenCalled()
+      expect(h.prepareImage).not.toHaveBeenCalled()
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
+
+  it('keeps native image completion independent of the Vision relay', async () => {
+    const captureVisionRelay = vi.fn(async () => {
+      throw new Error('Vision relay must not be consulted for native images')
+    })
+    const prepareVisionEvidence = vi.fn(async () => 'unused evidence')
+    const h = harness({
+      items: [catalogItem('artifact')],
+      captureVisionRelay,
+      prepareVisionEvidence
+    })
+
+    await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(true)
+    await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    await expect(h.service.complete('run-1')).resolves.toEqual([
+      { data: 'cG5n', mimeType: 'image/png' }
+    ])
+    expect(captureVisionRelay).not.toHaveBeenCalled()
+    expect(prepareVisionEvidence).not.toHaveBeenCalled()
+  })
+
+  it('requires an installed evidence producer even when relay capability is available', async () => {
+    const h = harness({
+      backend: visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact')],
+      captureVisionRelay: () => true
+    })
+
+    await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(false)
+    await expect(
+      h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    ).rejects.toThrow(/unavailable/u)
+    await expect(h.service.complete('run-1')).resolves.toEqual([])
+    expect(h.prepareImage).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, '', ' \n '])(
+    'fails closed when the relay returns missing or blank evidence (%j)',
+    async (evidence) => {
+      const h = harness({
+        backend: visualBackend({ supportsImageInput: false }),
+        items: [catalogItem('artifact')],
+        captureVisionRelay: () => true,
+        prepareVisionEvidence: async () => evidence
+      })
+
+      await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+      await expect(h.service.complete('run-1')).rejects.toThrow(/no image evidence/u)
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
+
+  it.each([
+    new Error('Vision request failed with private image data: cG5n'),
+    new DOMException('Vision request aborted with private image data: cG5n', 'AbortError')
+  ])('fails closed when the Vision relay is removed or rejects with %s', async (providerError) => {
+    let available = true
+    let relaySignal: AbortSignal | undefined
+    const prepareVisionEvidence = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+      relaySignal = signal
+      throw providerError
+    })
+    const h = harness({
+      backend: visualBackend({ supportsImageInput: false }),
+      items: [catalogItem('artifact')],
+      captureVisionRelay: () => available,
+      prepareVisionEvidence
+    })
+
+    await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    available = false
+    await expect(h.service.complete('run-1')).rejects.toThrow(/relay is unavailable/u)
+    expect(prepareVisionEvidence).not.toHaveBeenCalled()
+    available = true
+    await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    await expect(h.service.complete('run-1')).rejects.toMatchObject({
+      message: 'host.viewImage could not prepare Vision evidence for the current model.',
+      cause: providerError
+    })
+    expect(relaySignal?.aborted).toBe(true)
+    await expect(h.service.complete('run-1')).resolves.toEqual([])
+  })
+
+  it.each(['model', 'generation'] as const)(
+    'discards evidence when the backend %s changes during relay analysis',
+    async (change) => {
+      let finishAnalysis!: (evidence: string) => void
+      let analysisStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        analysisStarted = resolve
+      })
+      const backend = visualBackend({ supportsImageInput: false, generationToken: {} })
+      const h = harness({
+        backend,
+        items: [catalogItem('artifact')],
+        captureVisionRelay: () => true,
+        prepareVisionEvidence: () => {
+          analysisStarted()
+          return new Promise<string>((resolve) => {
+            finishAnalysis = resolve
+          })
+        }
+      })
+
+      await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+      const completing = h.service.complete('run-1')
+      await started
+      h.setBackend({
+        ...backend,
+        ...(change === 'model' ? { model: 'another-model' } : { generationToken: {} })
+      })
+      finishAnalysis('stale image evidence')
+      await expect(completing).resolves.toEqual([])
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
+
+  it.each(['signal', 'discard', 'session', 'shutdown'] as const)(
+    'cancels in-flight relay analysis on %s and refuses late evidence',
+    async (cancellation) => {
+      const controller = new AbortController()
+      let finishAnalysis!: (evidence: string) => void
+      let analysisStarted!: () => void
+      let relaySignal: AbortSignal | undefined
+      const started = new Promise<void>((resolve) => {
+        analysisStarted = resolve
+      })
+      const h = harness({
+        backend: visualBackend({ supportsImageInput: false }),
+        items: [catalogItem('artifact')],
+        captureVisionRelay: () => true,
+        prepareVisionEvidence: ({ signal }) => {
+          relaySignal = signal
+          analysisStarted()
+          return new Promise<string>((resolve) => {
+            finishAnalysis = resolve
+          })
+        }
+      })
+
+      await h.service.stage(
+        { versionId: 'artifact-version-1' },
+        {},
+        { ...context(), signal: controller.signal }
+      )
+      const completing = h.service.complete('run-1')
+      await started
+      if (cancellation === 'signal') controller.abort(new Error('private cancellation reason cG5n'))
+      else if (cancellation === 'discard') h.service.discard('run-1')
+      else if (cancellation === 'session') h.service.discardSession('calling-session')
+      else h.service.shutdown()
+      expect(relaySignal?.aborted).toBe(true)
+      finishAnalysis('late image evidence')
+      await expect(completing).rejects.toMatchObject({
+        name: 'AbortError',
+        message: 'host.viewImage image inspection was aborted.'
+      })
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
 
   it('delivers native images through the Codex Chat bridge and rejects text-only models', async () => {
     const backend = visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge' })
@@ -294,11 +526,15 @@ describe('HostViewImageService', () => {
     const artifact = catalogItem('artifact')
     const h = harness({ items: [artifact] })
     await expect(
-      h.service.stage({ versionId: artifact.versionId }, {}, { ...context(), executionCwd: undefined })
+      h.service.stage(
+        { versionId: artifact.versionId },
+        {},
+        { ...context(), executionCwd: undefined }
+      )
     ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
-    await expect(
-      h.service.stage({ path: 'image.png' }, {}, { ...context('') })
-    ).rejects.toThrow(/trusted execution workspace/u)
+    await expect(h.service.stage({ path: 'image.png' }, {}, { ...context('') })).rejects.toThrow(
+      /trusted execution workspace/u
+    )
   })
 
   it('closes the version lease when image preparation fails', async () => {

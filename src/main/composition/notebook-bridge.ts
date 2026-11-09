@@ -154,10 +154,20 @@ export async function composeNotebookBridge({
     onPublishedSkillsChanged: requestSkillCatalogRefresh
   })
   const hostLlmLog = createLogger('notebook:host-llm')
-  // The Notebook host service is constructed before the ACP image relay owner below. Keep this
-  // indirection app-owned and read it at call time so capability projection reflects the current
-  // Vision configuration without coupling the Notebook service to ACP runtime construction.
-  let imageInputCompatibility!: ImageInputCompatibilityOwner
+  const visionInferenceRunner = new RestrictedInferenceRunner({
+    appVersion: runtimeMetadata().version,
+    configRoot,
+    profileNamespace: 'vision-evidence',
+    resolveTarget: (target, context) =>
+      settingsService.resolveExplicitAgentBackend(target, context),
+    allowNativeCodexSubscription: true
+  })
+  const imageInputCompatibility = new ImageInputCompatibilityOwner({
+    captureTarget: () => settingsService.admitVisionModel(),
+    runner: visionInferenceRunner,
+    evidenceRepository: visionEvidenceRepository,
+    recordUsage: recordAuxiliaryUsage
+  })
   const hostModelService = new HostModelService({
     captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
     captureSessionModel: (sessionId) => runtimeRef.current?.captureSessionModel(sessionId),
@@ -193,21 +203,26 @@ export async function composeNotebookBridge({
           }
         : undefined
     },
-    captureVisionRelay: async () => (await imageInputCompatibility?.isAvailable()) === true,
-    prepareVisionEvidence: async ({ data, mimeType, projectId, sessionId }) => {
+    captureVisionRelay: () => imageInputCompatibility.isAvailable(),
+    prepareVisionEvidence: async ({ images, projectId, sessionId, signal }) => {
       const prepared = await imageInputCompatibility.prepare({
-        content: [{ type: 'image', data, mimeType }],
+        content: images.map(({ data, mimeType }) => ({ type: 'image', data, mimeType })),
         supportsImageInput: false,
         projectId,
         sessionId,
-        historyImageCount: 0
+        historyImageCount: 0,
+        signal
       })
-      if (typeof prepared === 'string') return prepared
+      if (typeof prepared === 'string' || prepared.length !== images.length) {
+        throw new Error('Vision relay did not return evidence for every image.')
+      }
       return prepared
-        .filter(
-          (block): block is { type: 'text'; text: string } => block.type === 'text'
-        )
-        .map((block) => block.text)
+        .map((block) => {
+          if (block.type !== 'text' || !block.text.trim()) {
+            throw new Error('Vision relay did not return evidence for every image.')
+          }
+          return block.text
+        })
         .join('\n\n')
     }
   })
@@ -403,35 +418,19 @@ export async function composeNotebookBridge({
     .catch((error) =>
       hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
     )
-  const visionInferenceRunner = new RestrictedInferenceRunner({
-    appVersion: runtimeMetadata().version,
-    configRoot,
-    profileNamespace: 'vision-evidence',
-    resolveTarget: (target, context) =>
-      settingsService.resolveExplicitAgentBackend(target, context),
-    allowNativeCodexSubscription: true
-  })
   void visionInferenceRunner
     .sweepStaleProfiles()
     .catch((error) =>
       hostLlmLog.error('stale Vision model profile cleanup failed', diagnosticErrorFields(error))
     )
-  imageInputCompatibility = await modules.add(
-    new ImageInputCompatibilityOwner({
-      captureTarget: () => settingsService.admitVisionModel(),
-      runner: visionInferenceRunner,
-      evidenceRepository: visionEvidenceRepository,
-      recordUsage: recordAuxiliaryUsage
-    }),
-    (owner) => ({
-      name: 'image-input-compatibility',
-      capability: owner,
-      dispose: () => {
-        owner.clear()
-        return visionInferenceRunner.shutdown()
-      }
-    })
-  )
+  await modules.add(imageInputCompatibility, (owner) => ({
+    name: 'image-input-compatibility',
+    capability: owner,
+    dispose: () => {
+      owner.clear()
+      return visionInferenceRunner.shutdown()
+    }
+  }))
   notebookRpcServerRef.current = notebookRpcServer
   composition.phase('notebook-rpc')
   // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook

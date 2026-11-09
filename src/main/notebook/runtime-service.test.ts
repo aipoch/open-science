@@ -3257,6 +3257,51 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('discards pending image analysis when the foreground caller stops after REPL completion', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    let finish!: () => void
+    const analyzing = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const completeControlInvocation = vi.fn(async () => {
+      await analyzing
+      return []
+    })
+    const discardControlInvocation = vi.fn(finish)
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1/x',
+      token: 'session-token',
+      completeControlInvocation,
+      discardControlInvocation
+    }))
+    const stop = new AbortController()
+    const execution = service.executeControl(
+      { sessionId: 'session-1', workspaceCwd: root, code: 'return 1' },
+      stop.signal
+    )
+    await vi.waitFor(() => expect(completeControlInvocation).toHaveBeenCalledOnce())
+    stop.abort(new Error('Stopped during image analysis'))
+    await expect(execution).rejects.toThrow('Stopped during image analysis')
+    expect(discardControlInvocation).toHaveBeenCalledOnce()
+  })
+
   it('returns the canonical foreground REPL result when a submission identity is retried', async () => {
     const root = await createStorageRoot()
     const execute = vi.fn(

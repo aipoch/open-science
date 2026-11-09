@@ -1290,7 +1290,7 @@ class NotebookExecutionOwner {
         session.discardControlInvocation(controlInvocationId)
         return result
       }
-      const viewImages = await session.completeControlInvocation(controlInvocationId)
+      const viewImages = await session.completeControlInvocation(controlInvocationId, signal)
       return viewImages.length > 0 ? { ...result, viewImages } : result
     } catch (error) {
       session.discardControlInvocation(controlInvocationId)

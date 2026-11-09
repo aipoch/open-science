@@ -1937,7 +1937,6 @@ class NotebookLocalRpcServer {
         callerRole,
         isControl: Boolean(sessionBinding.isControl),
         hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
-        hasWorkspace: Boolean(sessionBinding.executionCwd),
         allowsMethod,
         delegatedWorkReady,
         delegationAllowed,
@@ -2941,11 +2940,7 @@ class NotebookLocalRpcServer {
       if (!projectId || !sessionId || !controlInvocationId) {
         throw new RpcHttpError(403, 'host.viewImage trusted capability identity is incomplete.')
       }
-      if (
-        isRecord(params.source) &&
-        Object.hasOwn(params.source, 'path') &&
-        !executionCwd
-      ) {
+      if (isRecord(params.source) && Object.hasOwn(params.source, 'path') && !executionCwd) {
         throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
       }
       return this.hostViewImage.stage(params.source, params.options, {

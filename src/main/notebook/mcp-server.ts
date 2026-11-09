@@ -1188,8 +1188,19 @@ const buildNotebookToolContent = (
   if (!Array.isArray(viewImages)) {
     throw new Error('repl_execute returned invalid transient image content.')
   }
-  const images = viewImages.map((candidate): Extract<NotebookToolContent, { type: 'image' }> => {
+  const attachments = viewImages.map((candidate): NotebookToolContent => {
     const image = asRecord(candidate)
+    if (image && Object.hasOwn(image, 'evidence')) {
+      if (
+        typeof image.evidence !== 'string' ||
+        !image.evidence.trim() ||
+        Object.hasOwn(image, 'data') ||
+        Object.hasOwn(image, 'mimeType')
+      ) {
+        throw new Error('repl_execute returned invalid transient image content.')
+      }
+      return { type: 'text', text: image.evidence }
+    }
     if (
       typeof image?.data !== 'string' ||
       image.data.length === 0 ||
@@ -1201,11 +1212,10 @@ const buildNotebookToolContent = (
     }
     return { type: 'image', data: image.data, mimeType: image.mimeType }
   })
-  content.push(...images)
-  const evidence = viewImages
-    .map((candidate) => asRecord(candidate)?.evidence)
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
-  if (evidence.length > 0) content.push({ type: 'text', text: evidence.join('\n\n') })
+  if (attachments.some((block) => block.type !== attachments[0].type)) {
+    throw new Error('repl_execute returned invalid transient image content.')
+  }
+  content.push(...attachments)
   return content
 }
 
