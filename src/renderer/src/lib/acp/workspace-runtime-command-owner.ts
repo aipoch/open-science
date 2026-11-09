@@ -43,8 +43,6 @@ import {
 } from '../../../../shared/uploads'
 import { i18next } from '../../i18n'
 import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
-import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
-import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import { isSessionDeletionAllowed } from '../../stores/session-actionability'
 import type { ChatMessage } from '../../stores/session-store-contract'
@@ -112,7 +110,6 @@ type SendWorkspaceMessageIntent = {
   turnIntent?: 'plan-first'
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
-  discussionFocus?: SessionDiscussionCapture
   cwd?: string
   projectId?: string
   permissionProfile?: PermissionProfileId
@@ -1139,12 +1136,8 @@ const performSendWorkspaceMessage = async (
         }
       : input.pdfContext
   const attachments = input.attachments ?? []
-  const annotations =
-    input.discussionFocus && !replayPrompt
-      ? await prepareDiscussionSendAnnotations(input.annotations ?? [], input.discussionFocus)
-      : (input.annotations ?? [])
+  const annotations = input.annotations ?? []
   if (lifecycle.isCurrent?.() === false) return undefined
-  input = { ...input, annotations }
   if (annotationProtocol.validateAnnotations(annotations, content)) return undefined
   if (
     input.supportsImageInput !== true &&

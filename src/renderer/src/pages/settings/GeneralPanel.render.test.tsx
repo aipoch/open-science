@@ -61,6 +61,25 @@ const switchTo = (language: string): void => {
   })
 }
 
+it('opens the existing export dialog from Settings without requiring an active session', async () => {
+  const inspectDiagnostics = vi.fn().mockResolvedValue({ items: [] })
+  Object.assign(window.api, {
+    sessions: {
+      inspectDiagnostics,
+      exportDiagnostics: vi.fn(),
+      cancelDiagnostics: vi.fn().mockResolvedValue(undefined)
+    }
+  })
+  await act(async () => root.render(<GeneralPanel />))
+  await flush()
+  await act(async () => fireEvent.click(findButton(/^Export diagnostics…$/)!))
+  expect(inspectDiagnostics).toHaveBeenCalledWith({
+    scope: 'application',
+    operationId: expect.any(String)
+  })
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Export diagnostics')
+})
+
 beforeEach(() => {
   switchTo('en')
   container = document.createElement('div')
@@ -458,7 +477,7 @@ describe('GeneralPanel diagnostics', () => {
     await flush()
     await act(async () => findButton(/^open$/i)!.click())
     await flush()
-    await act(async () => findButton(/^reveal$/i)!.click())
+    await act(async () => findButton(/^show in folder$/i)!.click())
     await flush()
     // Web RPC serializes positional arguments: [undefined] becomes [null], not [].
     expect(
@@ -476,6 +495,9 @@ describe('GeneralPanel diagnostics', () => {
     await flush()
 
     const logPath = container.querySelector<HTMLElement>('[aria-label="Log file path"]')!
+    const location = logPath.closest('details')!
+    expect(location.open).toBe(false)
+    location.open = true
     expect(logPath.tabIndex).toBe(0)
     logPath.focus()
     expect(document.activeElement).toBe(logPath)
@@ -517,7 +539,7 @@ describe('GeneralPanel diagnostics', () => {
       expect(getStatus).toHaveBeenCalledTimes(2)
       expect(diagnostics.querySelector('[role="alert"]')).toBeNull()
       expect(findButton(/^open$/i)?.disabled).toBe(false)
-      expect(findButton(/^reveal$/i)?.disabled).toBe(false)
+      expect(findButton(/^show in folder$/i)?.disabled).toBe(false)
     }
   )
 
@@ -572,7 +594,9 @@ describe('GeneralPanel diagnostics', () => {
         lastWriteSucceeded: false,
         lastFailureCategory: 'append'
       })
-      const button = findButton(new RegExp(`^${action}$`, 'i'))!
+      const button = findButton(
+        new RegExp(`^${action === 'reveal' ? 'Show in folder' : action}$`, 'i')
+      )!
       await act(async () => button.click())
       await flush()
       expect.soft(getStatus).toHaveBeenCalledTimes(2)
@@ -613,7 +637,7 @@ describe('GeneralPanel diagnostics', () => {
       'The app could not write to the log file during its most recent attempt.'
     )
     expect(findButton(/^open$/i)?.disabled).toBe(false)
-    expect(findButton(/^reveal$/i)?.disabled).toBe(false)
+    expect(findButton(/^show in folder$/i)?.disabled).toBe(false)
   })
 })
 
@@ -728,7 +752,7 @@ it('selects a historical startup log for both Open and Reveal and retains it on 
   )
   await act(async () => findButton(/^open$/i)!.click())
   await flush()
-  await act(async () => findButton(/^reveal$/i)!.click())
+  await act(async () => findButton(/^show in folder$/i)!.click())
   await flush()
   expect(window.api.logs.openFile).toHaveBeenCalledWith(name)
   expect(window.api.logs.revealInFolder).toHaveBeenCalledWith(name)

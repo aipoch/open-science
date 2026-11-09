@@ -471,7 +471,9 @@ for (const borrowed of [false, true])
             await window.api.sessions.saveSession({ ...session!, title })
             return 'unexpected success'
           } catch (error) {
-            return String(error)
+            return error && typeof error === 'object' && 'message' in error
+              ? error.message
+              : String(error)
           }
         },
         { session: savedBeforeLoss, title: lostTitle }

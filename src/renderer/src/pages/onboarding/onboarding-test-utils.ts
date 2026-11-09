@@ -152,6 +152,7 @@ const resetOnboardingStores = (): {
 } => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
+    agentFrameworkId: 'claude-code',
     checkEnvironment: vi.fn().mockResolvedValue(undefined),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
     detectCodeBuddy: vi.fn().mockResolvedValue(undefined),

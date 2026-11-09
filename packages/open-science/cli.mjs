@@ -31,7 +31,8 @@ import {
 
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
-const STOP_TIMEOUT_MS = 22_000
+// Cover the service's 40s authentication-aware stop budget plus exit-record observation.
+const STOP_TIMEOUT_MS = 42_000
 const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
@@ -84,6 +85,13 @@ Commands:
   literature styles
   literature format <item-id>... --style <style-id> [--locale en-US|zh-CN]
   literature lookup <doi | pmid:<n> | pmcid:PMC<n> | arxiv:<id>>
+  literature import <path | -> [--commit [--duplicates <policy>] [--collection <id>] [--project <id-or-name>]]
+  literature add <doi | pmid:<n> | pmcid:PMC<n> | arxiv:<id>>
+  literature link | unlink <item-id>... --project <id-or-name>
+  literature collection create <name> [--description <text>] [--parent <collection-id>]
+  literature collection add | remove <collection-id> <item-id>...
+  literature status <unread|reading|read> <item-id>...
+  literature trash | restore <item-id>...
 
 Options:
   --port <port>          Web service port (default: 44100)
@@ -114,7 +122,7 @@ Options:
   --no-memory            Disable Memory for this Session
   --specialist <id-or-name>  Bind a new Session to a Specialist
   --delegation <policy>  allow or deny new delegated children
-  --framework <id>       claude-code, opencode, codex, codebuddy, or pi
+  --framework <id>       open-science-agent, claude-code, opencode, codex, codebuddy, or pi
   --reviewer-inherit | --reviewer-provider <id> --reviewer-model <id> [--reviewer-effort <effort>]
   --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
@@ -128,6 +136,10 @@ Options:
   --locale <locale>      Citation locale: en-US (default) or zh-CN (literature format)
   --limit <n>            Page size, 1-100 (literature search)
   --offset <n>           Page offset (literature search)
+  --commit               Save a literature import; without it import only previews
+  --duplicates <policy>  reuse (default), separate, or fill-missing (literature import --commit)
+  --collection <id>      Add imported records to a collection (literature import --commit)
+  --parent <id>          Parent collection (literature collection create)
   --new-project <name>   Import into a new Project with this name (session import)
   --non-interactive      Import without an interactive preview confirmation (session import)
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
@@ -185,7 +197,10 @@ const VALUE_OPTIONS = {
   '--style': 'style',
   '--locale': 'locale',
   '--limit': 'limit',
-  '--offset': 'offset'
+  '--offset': 'offset',
+  '--duplicates': 'duplicates',
+  '--collection': 'collection',
+  '--parent': 'parent'
 }
 
 const TASK_COMMANDS = new Set([
@@ -267,7 +282,9 @@ const POSITIONAL_LIMITS = new Map([
   ['artifacts download', 1],
   ['literature show', 1],
   ['literature styles', 0],
-  ['literature lookup', 1]
+  ['literature lookup', 1],
+  ['literature import', 1],
+  ['literature add', 1]
 ])
 
 export class CliUsageError extends Error {
@@ -345,6 +362,7 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--return-on-attention') options.returnOnAttention = true
     else if (arg === '--plan-first') options.planFirst = true
     else if (arg === '--non-interactive') options.nonInteractive = true
+    else if (arg === '--commit') options.commit = true
     else if (arg === '--provider-default-model') options.providerDefaultModel = true
     else if (arg === '--clear-compute-hosts') options.clearComputeHosts = true
     else if (arg === '--memory') {
@@ -396,7 +414,7 @@ export const parseCliArgs = (argv) => {
       if (arg === '--credential-store' && options.credentialStore !== undefined)
         throw new CliUsageError('Specify --credential-store only once.')
       options[VALUE_OPTIONS[arg]] = value
-    } else if (arg.startsWith('-')) {
+    } else if (arg.startsWith('-') && arg !== '-') {
       throw new CliUsageError(`Unknown option: ${arg}`)
     } else {
       positionals.push(arg)
@@ -457,7 +475,9 @@ export const parseCliArgs = (argv) => {
   }
   if (
     options.framework !== undefined &&
-    !['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'].includes(options.framework)
+    !['open-science-agent', 'claude-code', 'opencode', 'codex', 'codebuddy', 'pi'].includes(
+      options.framework
+    )
   ) {
     throw new CliUsageError(`Invalid framework: ${options.framework}`)
   }
@@ -562,8 +582,17 @@ export const parseCliArgs = (argv) => {
   if (options.name !== undefined && !options.name.trim()) {
     throw new CliUsageError('--name requires a non-empty value.')
   }
-  if (options.description !== undefined && !isProjectCreate && !isProjectUpdate) {
-    throw new CliUsageError('--description requires project create or project update.')
+  const isCollectionCreate =
+    command === 'literature' && subcommand === 'collection' && positionals[0] === 'create'
+  if (
+    options.description !== undefined &&
+    !isProjectCreate &&
+    !isProjectUpdate &&
+    !isCollectionCreate
+  ) {
+    throw new CliUsageError(
+      '--description requires project create, project update, or literature collection create.'
+    )
   }
   if (options.agentContext !== undefined) {
     const context = options.agentContext.trim()
@@ -685,6 +714,28 @@ export const parseCliArgs = (argv) => {
   }
   if (options.locale !== undefined && !['en-US', 'zh-CN'].includes(options.locale)) {
     throw new CliUsageError(`Invalid citation locale: ${options.locale}`)
+  }
+  const isLiteratureImport = command === 'literature' && subcommand === 'import'
+  if (options.commit && !isLiteratureImport) {
+    throw new CliUsageError('--commit requires literature import.')
+  }
+  if (
+    (options.duplicates !== undefined || options.collection !== undefined) &&
+    !(isLiteratureImport && options.commit)
+  ) {
+    throw new CliUsageError('--duplicates and --collection require literature import --commit.')
+  }
+  if (isLiteratureImport && options.project !== undefined && !options.commit) {
+    throw new CliUsageError('--project requires literature import --commit.')
+  }
+  if (
+    options.duplicates !== undefined &&
+    !['reuse', 'separate', 'fill-missing'].includes(options.duplicates)
+  ) {
+    throw new CliUsageError(`Invalid duplicate policy: ${options.duplicates}`)
+  }
+  if (options.parent !== undefined && !isCollectionCreate) {
+    throw new CliUsageError('--parent requires literature collection create.')
   }
   assertPositionalLimit(command, subcommand, positionals)
   return parsed
@@ -1886,6 +1937,96 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!identifier)
       throw new CliUsageError('A DOI, pmid:, pmcid: or arxiv: identifier is required.')
     deps.log(JSON.stringify(await client.getReferenceMetadata(identifier)))
+    return
+  }
+  if (command === 'literature' && subcommand === 'import') {
+    const source = positionals[0]
+    if (!source) throw new CliUsageError('A reference file path or - for stdin is required.')
+    const content = source === '-' ? await deps.readStdin() : await deps.readFile(source)
+    if (!content.trim()) throw new CliUsageError('Reference import content is empty.')
+    const result = await client.importLiterature({
+      mode: options.commit ? 'commit' : 'preview',
+      content,
+      ...(options.duplicates ? { duplicatePolicy: options.duplicates } : {}),
+      ...(options.collection ? { collectionId: options.collection } : {}),
+      ...(options.project ? { projectId: await resolveCliProjectId(client, options.project) } : {})
+    })
+    if (options.json) deps.log(JSON.stringify(result))
+    else {
+      for (const entry of result.entries)
+        deps.log(`${entry.index}\t${entry.status}\t${entry.title}`)
+      deps.log(
+        result.imported
+          ? `Imported ${result.imported.createdCount} new and reused ${result.imported.reusedCount} existing record(s).`
+          : 'Preview only; nothing was saved. Re-run with --commit to import.'
+      )
+    }
+    return
+  }
+  if (command === 'literature' && subcommand === 'add') {
+    const identifier = positionals[0]
+    if (!identifier)
+      throw new CliUsageError('A DOI, pmid:, pmcid: or arxiv: identifier is required.')
+    outputValue(await client.createLiteratureItem(identifier), options, deps)
+    return
+  }
+  if (command === 'literature' && (subcommand === 'link' || subcommand === 'unlink')) {
+    if (!positionals.length) throw new CliUsageError('At least one literature item id is required.')
+    if (!options.project) throw new CliUsageError('--project is required.')
+    const projectId = await resolveCliProjectId(client, options.project)
+    outputValue(
+      await client.setProjectLiterature(projectId, positionals, subcommand === 'link'),
+      options,
+      deps
+    )
+    return
+  }
+  if (command === 'literature' && subcommand === 'collection') {
+    const [action, ...rest] = positionals
+    if (action === 'create') {
+      const name = rest.join(' ').trim()
+      if (!name) throw new CliUsageError('Collection name is required.')
+      outputValue(
+        await client.createLiteratureCollection({
+          name,
+          ...(options.description === undefined ? {} : { description: options.description }),
+          ...(options.parent === undefined ? {} : { parentId: options.parent })
+        }),
+        options,
+        deps
+      )
+      return
+    }
+    if (action !== 'add' && action !== 'remove')
+      throw new CliUsageError('Use literature collection create, add, or remove.')
+    const [collectionId, ...itemIds] = rest
+    if (!collectionId || !itemIds.length)
+      throw new CliUsageError('Collection id and at least one literature item id are required.')
+    outputValue(
+      await client.setCollectionLiterature(collectionId, itemIds, action === 'add'),
+      options,
+      deps
+    )
+    return
+  }
+  if (command === 'literature' && subcommand === 'status') {
+    const [readingStatus, ...itemIds] = positionals
+    if (!['unread', 'reading', 'read'].includes(readingStatus))
+      throw new CliUsageError('Reading status must be unread, reading, or read.')
+    if (!itemIds.length) throw new CliUsageError('At least one literature item id is required.')
+    outputValue(await client.setLiteratureReadingStatus(itemIds, readingStatus), options, deps)
+    return
+  }
+  if (command === 'literature' && (subcommand === 'trash' || subcommand === 'restore')) {
+    if (!positionals.length) throw new CliUsageError('At least one literature item id is required.')
+    outputValue(
+      await client.setLiteratureLifecycle(
+        positionals,
+        subcommand === 'trash' ? 'deleted' : 'active'
+      ),
+      options,
+      deps
+    )
     return
   }
   if (command === 'run' && subcommand === 'status') {

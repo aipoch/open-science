@@ -779,7 +779,12 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Batch overviews' }))
     const batch = screen.getByRole('dialog', { name: 'Batch overviews' })
     expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
-    expect(within(batch).getAllByRole('button', { name: 'View details' })).toHaveLength(4)
+    expect(within(batch).queryByRole('button', { name: 'View details' })).toBeNull()
+    const savedRow = within(batch).getByRole('button', { name: records[1].item.title })
+    expect(savedRow.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(savedRow)
+    expect(savedRow.getAttribute('aria-expanded')).toBe('true')
+    expect(within(batch).getAllByRole('button', { name: 'View details' })).toHaveLength(1)
     expect(
       within(batch).getByText('Add an abstract or readable full-text PDF to generate an overview.')
     ).toBeTruthy()

@@ -1,4 +1,11 @@
+import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import { agentUserChoiceOutcomes, USER_CHOICE_SKIP_GUIDANCE } from './elicitation-owner'
+import {
+  registerResourceObservation,
+  recordResourceEvent,
+  recordResourceSnapshot,
+  type ResourceFacts
+} from '../resource-diagnostics/recorder'
 import type {
   ActiveSession,
   ClientConnection,
@@ -335,6 +342,7 @@ class AcpRuntime {
   >()
   private cancellationTeardown: Promise<AcpStateSnapshot> | undefined
   private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
+  private readonly resourceRuntimeId: string
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -343,6 +351,7 @@ class AcpRuntime {
     session: AcpRuntimeSessionOwners
   ) {
     this.spawnAgent = options.spawnAgent
+    this.resourceRuntimeId = base.resourceRuntimeId
     this.artifactOptions = options.artifacts
     this.snapshotOwner = base.snapshotOwner
     this.connectionAdapter = base.connectionAdapter
@@ -512,6 +521,39 @@ class AcpRuntime {
     this.sessionReplacement = providerSessions.sessionReplacement
     this.sessionDeletion = providerSessions.sessionDeletion
     session.bindToolFailureObserver((failure) => this.handleToolFailure(failure))
+    registerResourceObservation(this, this.resourceRuntimeId)
+  }
+
+  resourceDiagnosticSnapshot(): ResourceFacts {
+    const sessions = this.sessionRegistry.entries(true)
+    const interactions = this.sessionInteractions.snapshot()
+    return {
+      epoch: this.connectionResources.epoch,
+      framework: this.framework.id,
+      status: this.snapshotOwner.status,
+      ...this.generationActivity.diagnosticSnapshot(),
+      ...this.connectionTransitions.diagnosticSnapshot(),
+      sessions: sessions.slice(0, 256).map(({ appSessionId, attachment, aggregate }) => ({
+        sessionId: appSessionId,
+        providerSessionId: attachment?.providerSessionId,
+        generation: attachment?.generation,
+        projectId: aggregate.snapshot().projectId
+      })),
+      interactions: interactions.slice(0, 256).map(({ sessionId, kind }) => {
+        const scope = this.sessionInteractions.current(sessionId)
+        const provenance = scope?.kind === 'prompt' ? scope.provenanceContext : undefined
+        return {
+          sessionId,
+          kind,
+          sequence: scope?.sequence,
+          turnId: scope?.kind === 'prompt' ? scope.turnToken : undefined,
+          frameId: provenance?.agentFrameId ?? provenance?.rootFrameId,
+          activeBranchId: provenance?.messageBranchId
+        }
+      }),
+      inFlight: this.getInFlightSessionIds().slice(0, 256),
+      truncated: sessions.length > 256 || interactions.length > 256
+    }
   }
 
   private handleToolFailure(failure: AcpToolFailureDiagnostic): void {
@@ -1250,11 +1292,14 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    const epoch = this.connectionResources.epoch
+    recordResourceSnapshot(this.resourceRuntimeId, this, 'teardown-started')
     this.clearAllPlanDeliveryClaimRetries()
     try {
       return await this.connectionClose.disconnect(emitClosedStatus)
     } finally {
       this.clearAllPlanDeliveryClaimRetries()
+      recordResourceEvent('teardown-ended', { runtimeId: this.resourceRuntimeId, epoch })
     }
   }
 
@@ -1309,6 +1354,7 @@ class AcpRuntime {
   // Retain a bounded idle connection briefly; expiry releases physical resources.
   // Active workflows defer release; subsequent cold turns use ordinary Session resume.
   requestIdleRelease(): void {
+    recordResourceSnapshot(this.resourceRuntimeId, this, 'idle-release-requested')
     if (this.snapshotOwner.status === 'connected') this.connectionTransitions.requestIdleRelease()
   }
 
@@ -1407,6 +1453,11 @@ class AcpRuntime {
     return this.connectionAdapter.open(
       {
         epoch: identity.epoch,
+        resourceRuntimeId: this.resourceRuntimeId,
+        resourceExitExpected: (child) => {
+          const disposition = this.processEventDisposition(child, identity.epoch)
+          return disposition === 'stale' ? undefined : disposition === 'expected'
+        },
         resolveBackend: async () => {
           let grantedLocalRoots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[] = []
           try {
@@ -2986,6 +3037,14 @@ class AcpRuntime {
     signal?: AbortSignal
   }): Promise<boolean> {
     return this.permissionContext.requestAppApproval(input)
+  }
+
+  networkApprovalRecordStatus(
+    projectId: string,
+    sessionId: string,
+    recordId: string
+  ): Promise<NetworkApprovalRecordStatus | undefined> {
+    return this.sandboxNetworkApprovalOwner.recordStatus(projectId, sessionId, recordId)
   }
 
   async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {

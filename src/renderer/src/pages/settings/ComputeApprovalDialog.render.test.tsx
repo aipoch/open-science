@@ -114,7 +114,12 @@ describe('ComputeApprovalDialog', () => {
     act(() => root.render(<ComputeApprovalDialog />))
     act(() => findButton('Show full command')!.click())
     const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')!
-    expect(viewport.textContent).toContain(commandFull)
+    const commandRegion = viewport.querySelector<HTMLElement>(
+      '[role="region"][aria-label="Command"]'
+    )!
+    expect(commandRegion.textContent).toBe(commandFull)
+    expect(commandRegion.tabIndex).toBe(0)
+    expect(commandRegion.contains(findButton('Show less')!)).toBe(false)
     expect(viewport.contains(findButton('Deny')!)).toBe(false)
     await act(async () => findButton('Deny')!.click())
     expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, 'deny')
@@ -237,6 +242,46 @@ describe('ComputeApprovalDialog', () => {
     expect(dialogText).toContain('Slurm')
     expect(dialogText).toContain('Environment')
     expect(dialogText).toContain('protein-gpu')
+  })
+
+  it('shows the bound Modal App and frozen input with only one-time approval', () => {
+    const sha256 = 'a'.repeat(64)
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          ...request,
+          operation: 'submit_job',
+          executionMode: 'modal_sandbox',
+          timeoutSeconds: 14400,
+          remoteWorkdir: '/mnt/openscience/outputs',
+          modal: {
+            appName: 'research',
+            appId: 'ap-test',
+            environmentName: 'dev',
+            image: 'python:3.12',
+            cpus: 2,
+            memoryMiB: 512,
+            gpu: 'L4',
+            inputFiles: [{ source: 'local.csv', destination: 'input.csv', sizeBytes: 12, sha256 }],
+            outputManifest: '["plot.png"]'
+          }
+        }
+      ]
+    })
+    act(() => root.render(<ComputeApprovalDialog />))
+    const text = document.body.querySelector('[role="dialog"]')?.textContent
+    for (const detail of [
+      'research (ap-test)',
+      'python:3.12',
+      '2 / L4',
+      '512 MiB',
+      'local.csv → input.csv (12 B)',
+      sha256,
+      'plot.png'
+    ])
+      expect(text).toContain(detail)
+    expect(findButton('Allow once')).toBeDefined()
+    expect(findButton('Choose authorization scope')).toBeUndefined()
   })
 
   it('warns without blocking approval when job data will be stored unencrypted', () => {

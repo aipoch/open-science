@@ -429,7 +429,10 @@ gate('notebook capability certification (E2E)', () => {
   )
 
   it('8. lifecycle: idle kernel auto-shuts-down (terminated), next run respawns with a cleared namespace', async () => {
-    const h = (active = await makeHarness({ idleTimeoutMs: 300 }))
+    // The idle window starts when the kernel replies; Run finalization (environment capture, file
+    // evidence, persistence) follows before execute() returns. Keep the window well above that tail
+    // so the state read after the respawn run observes this kernel rather than a second idle reclaim.
+    const h = (active = await makeHarness({ idleTimeoutMs: 2_000 }))
 
     const seed = await h.service.execute({
       sessionId: SESSION,

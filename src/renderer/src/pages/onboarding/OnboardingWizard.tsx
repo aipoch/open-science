@@ -5,11 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
-import {
-  isSupportedCodexAcpVersion,
-  isSupportedCodexCliVersion
-} from '../../../../shared/codex-runtime'
-import type { AgentFrameworkId } from '../../../../shared/settings'
 import type { StorageInfo } from '../../../../shared/storage'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -181,13 +176,6 @@ const OnboardingWizard = ({
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
-  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
-  const preflight = useSettingsStore((state) => state.preflight)
-  const codexVersion = useSettingsStore((state) => state.codex.version)
-  const codexNativeVersion = useSettingsStore((state) => state.codex.nativeVersion)
-  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
-
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to agent setup after reviewing it.
 
@@ -269,79 +257,6 @@ const OnboardingWizard = ({
 
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
-  const didSelectInitialAgent = useRef(false)
-  const [isSelectingInitialAgent, setIsSelectingInitialAgent] = useState(false)
-
-  useEffect(() => {
-    if (step !== 'environment') {
-      didSelectInitialAgent.current = true
-      return
-    }
-    if (
-      didSelectInitialAgent.current ||
-      isCheckingEnvironment ||
-      !environmentCheck ||
-      environmentCheck.agentFrameworkId !== agentFrameworkId ||
-      environmentCheck.runtime.found ||
-      !['system', 'storage'].every((id) =>
-        environmentCheck.checks.some((check) => check.id === id && check.status === 'passed')
-      ) ||
-      environmentCheck.checks.some(
-        (check) =>
-          check.status === 'failed' && check.id !== 'agent' && check.id !== 'install-network'
-      )
-    ) {
-      return
-    }
-    // Match AgentPanel's installed-runtime ordering and Codex native/adapter compatibility guards.
-    const ready: Record<AgentFrameworkId, boolean> = {
-      'claude-code': preflight.claudeReady,
-      opencode: preflight.opencodeReady,
-      codex:
-        preflight.codexReady &&
-        isSupportedCodexCliVersion(codexNativeVersion) &&
-        (!codexVersion || isSupportedCodexAcpVersion(codexVersion)),
-      codebuddy: preflight.codebuddyReady,
-      pi: preflight.piReady === true
-    }
-    if (ready[agentFrameworkId]) return
-    const installed = agentFrameworks.find((framework) => ready[framework.id])
-    if (!installed) return
-
-    didSelectInitialAgent.current = true
-    didRequestCheck.current = true
-    useSettingsStore.setState({ environmentCheck: undefined, environmentCheckError: undefined })
-    void Promise.resolve().then(async () => {
-      setIsSelectingInitialAgent(true)
-      try {
-        await setAgentFramework(installed.id)
-        await checkEnvironment({ force: true })
-      } catch (error) {
-        didSelectInitialAgent.current = false
-        useSettingsStore.setState({
-          environmentCheckError:
-            error instanceof Error
-              ? error.message
-              : t('Could not switch to {{name}}', { name: installed.displayName })
-        })
-      } finally {
-        setIsSelectingInitialAgent(false)
-      }
-    })
-  }, [
-    step,
-    isCheckingEnvironment,
-    environmentCheck,
-    agentFrameworkId,
-    agentFrameworks,
-    preflight,
-    codexVersion,
-    codexNativeVersion,
-    setAgentFramework,
-    checkEnvironment,
-    t
-  ])
-
   // Fetch the current data location once, up front, for Location display and relaunch resume.
   const handleDataRootInfoSuccess = useCallback((info: StorageInfo): void => {
     setDataRootInfo(info)
@@ -475,10 +390,7 @@ const OnboardingWizard = ({
             {/* Each step owns its validation gate and advances only through its callback. The shell
                 owns cross-step drafts so Back/Continue never discards provider or location input. */}
             {step === 'environment' ? (
-              <EnvironmentStep
-                isSelectingAgent={isSelectingInitialAgent}
-                onContinue={() => setStep('location')}
-              />
+              <EnvironmentStep onContinue={() => setStep('location')} />
             ) : step === 'location' ? (
               <LocationStep
                 dataRootInfo={dataRootInfo}

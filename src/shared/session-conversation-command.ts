@@ -1,3 +1,4 @@
+import { discussionParentForFirstMessage } from './replay-reference'
 import { z } from 'zod'
 import { AGENT_FRAMEWORK_ID_VALUES } from './agent-framework-id'
 import type { SessionConversationCommand } from './conversation-command-contract'
@@ -217,6 +218,14 @@ export const applySessionConversationCommands = (
           )
         if (branch.id !== command.branchId || branch.headMessageId !== command.parentMessageId) {
           throw new Error('Conversation Branch changed before the user Message was admitted.')
+        }
+        if (!graph.messages.length && !result.parentSessionId) {
+          const parentSessionId = discussionParentForFirstMessage(
+            result.projectId,
+            command.message.annotations
+          )
+          if (parentSessionId && parentSessionId !== result.id)
+            result = { ...result, parentSessionId }
         }
         graph = synchronizeActiveConversationMessages(
           graph,

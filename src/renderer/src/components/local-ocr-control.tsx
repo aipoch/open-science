@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Check, ScanText, Trash2 } from 'lucide-react'
+import { Check, Download, ScanText, Trash2 } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { localModelDownloadProgress } from '../../../shared/local-models'
@@ -125,12 +125,13 @@ export function LocalOcrControl({
     return null
   return (
     <div
-      className={compact ? 'space-y-2' : 'space-y-3 rounded-lg border border-border bg-card p-4'}
+      data-slot="local-model-card"
+      className={compact ? 'space-y-2' : 'space-y-3 rounded-xl border border-border bg-card p-4'}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <ScanText
-            className={compact ? 'size-4 shrink-0' : 'mr-1 size-5 shrink-0 text-primary'}
+            className={compact ? 'size-4 shrink-0' : 'size-5 shrink-0 text-primary'}
             aria-hidden="true"
           />
           <span className="text-sm font-semibold">{t('Text recognition (OCR)')}</span>
@@ -143,7 +144,7 @@ export function LocalOcrControl({
             </span>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+        <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {snapshot && !compact && (
             <span>{size(installed ? snapshot.installedBytes : snapshot.downloadBytes)}</span>
           )}
@@ -184,6 +185,7 @@ export function LocalOcrControl({
               }
               onClick={() => void run('install')}
             >
+              <Download className="size-4" aria-hidden="true" />
               {snapshot?.error
                 ? t('Retry')
                 : snapshot?.updateAvailable
@@ -194,10 +196,12 @@ export function LocalOcrControl({
         </div>
       </div>
       {installing && snapshot && (
-        <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
+        <div className={compact ? undefined : 'border-t border-border pt-4'}>
+          <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
+        </div>
       )}
       {!compact && snapshot?.ocrLanguages ? (
-        <fieldset aria-busy={pending} className="space-y-2 border-t border-border pt-3">
+        <fieldset aria-busy={pending} className="space-y-2 border-t border-border pt-4">
           <legend className="sr-only">{t('OCR languages')}</legend>
           <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
             {snapshot.ocrLanguages.map((language) => {

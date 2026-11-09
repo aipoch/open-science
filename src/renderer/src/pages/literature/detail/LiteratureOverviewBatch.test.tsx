@@ -125,7 +125,11 @@ it('offers retry with pending references without rerunning saved references', as
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
-      literature: { overviewBatch, get: vi.fn(async (id) => ({ item: { title: titles[id] } })) }
+      literature: {
+        overviewBatch,
+        get: vi.fn(async (id) => ({ item: { title: titles[id] } })),
+        studySnapshot: vi.fn().mockResolvedValue({ issue: 'source-unavailable' })
+      }
     }
   })
   render(<LiteratureOverviewBatch hasSelection={false} resolveSelection={async () => []} />)
@@ -136,6 +140,19 @@ it('offers retry with pending references without rerunning saved references', as
   for (const title of Object.values(titles)) expect(screen.getByText(title)).toBeTruthy()
   const retry = screen.getByRole('button', { name: 'Retry failed overviews' })
   expect(screen.getByText('1 failed overview')).toBeTruthy()
+  const originalSaved = screen.getByRole('button', { name: 'Saved study' })
+  fireEvent.click(originalSaved)
+  await screen.findByText('Could not load the overview. Try again.')
+  const originalSavedRow = originalSaved.closest('li')!
+  vi.spyOn(originalSavedRow, 'getBoundingClientRect').mockReturnValue({
+    ...originalSavedRow.getBoundingClientRect(),
+    height: 377
+  })
+  const failedRow = screen.getByText('Failed study').closest('li')!
+  vi.spyOn(failedRow, 'getBoundingClientRect').mockReturnValue({
+    ...failedRow.getBoundingClientRect(),
+    height: 120
+  })
   fireEvent.click(retry)
   await waitFor(() =>
     expect(within(screen.getByRole('list')).getAllByText('Overview saved')).toHaveLength(3)
@@ -148,6 +165,22 @@ it('offers retry with pending references without rerunning saved references', as
     'advance'
   ])
   expect(screen.queryByRole('button', { name: 'Retry failed overviews' })).toBeNull()
+  expect(originalSaved.getAttribute('aria-expanded')).toBe('true')
+  expect(originalSavedRow.style.minHeight).toBe('377px')
+  fireEvent.click(originalSaved)
+  expect(originalSaved.getAttribute('aria-expanded')).toBe('false')
+  expect(originalSavedRow.style.minHeight).toBe('')
+  expect(originalSaved.style.minHeight).toBe('')
+  expect(failedRow.style.minHeight).toBe('120px')
+  const savedRow = screen.getByRole('button', { name: 'Failed study' })
+  // The entire reserved row height must remain clickable after retry succeeds.
+  expect(savedRow.style.minHeight).toBe('120px')
+  fireEvent.click(savedRow)
+  await screen.findByText('Could not load the overview. Try again.')
+  expect(savedRow.style.minHeight).toBe('')
+  fireEvent.click(savedRow)
+  expect(savedRow.style.minHeight).toBe('')
+  expect(failedRow.style.minHeight).toBe('')
 })
 it('rejects oversized selections before fetching references or generating', async () => {
   const overviewBatch = vi.fn().mockResolvedValue(null)
@@ -445,27 +478,46 @@ it('shows five independent results with controlled per-reference failure reasons
     expect(within(rows[index]).getByText('Overview failed')).toBeTruthy()
     expect(within(rows[index]).getByText(reason)).toBeTruthy()
   })
-  expect(within(rows[4]).getByRole('button', { name: 'View details' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'View details' })).toBeNull()
+  for (const row of rows.slice(0, 4)) expect(within(row).queryByRole('button')).toBeNull()
   expect(screen.getByRole('button', { name: 'Retry failed overviews' })).toBeTruthy()
   const expand = within(rows[4]).getByRole('button', { name: 'study-4' })
-  fireEvent.click(expand)
+  const statusIcon = rows[4].querySelector('svg.lucide-check')!
+  expect(statusIcon).toBeTruthy()
+  expect(statusIcon.closest('button')).toBe(expand)
+  fireEvent.click(statusIcon)
   await screen.findByText('Could not load the overview. Try again.')
   expect(expand.getAttribute('aria-expanded')).toBe('true')
   fireEvent.click(within(rows[4]).getByRole('button', { name: 'Retry' }))
-  await screen.findByText('Saved findings')
+  const findings = await screen.findByText('Saved findings')
+  fireEvent.click(findings)
+  expect(expand.getAttribute('aria-expanded')).toBe('true')
   expect(studySnapshot.mock.calls).toEqual([
     [{ ...job.rows[4].request, mode: 'read' }],
     [{ ...job.rows[4].request, mode: 'read' }]
   ])
   fireEvent.click(expand)
   expect(screen.queryByText('Saved findings')).toBeNull()
-  fireEvent.click(within(rows[4]).getByRole('button', { name: 'View details' }))
+  expect(screen.queryByRole('button', { name: 'View details' })).toBeNull()
+  fireEvent.click(expand)
+  await screen.findByText('Saved findings')
+  const details = within(rows[4]).getByRole('button', { name: 'View details' })
+  expect(details.closest('button')).toBe(details)
+  expect(expand.contains(details)).toBe(false)
+  fireEvent.click(details)
   await waitFor(() =>
     expect(onOpenOverview).toHaveBeenCalledWith(
       { item: { title: 'study-4' } },
       screen.getByRole('button', { name: 'Batch overviews' })
     )
   )
+  expect(onOpenOverview).toHaveBeenCalledTimes(1)
+  expect(studySnapshot.mock.calls).toEqual([
+    [{ ...job.rows[4].request, mode: 'read' }],
+    [{ ...job.rows[4].request, mode: 'read' }],
+    [{ ...job.rows[4].request, mode: 'read' }]
+  ])
+  expect(overviewBatch.mock.calls).toEqual([[{ action: 'read' }]])
   expect(screen.queryByRole('dialog')).toBeNull()
 })
 it.each(['generation-failed', 'private backend exception', undefined])(

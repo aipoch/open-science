@@ -37,7 +37,9 @@
     "src/main/navigation-policy.ts",
     "src/main/source-preview-webview.test.ts",
     "src/main/source-preview-webview.ts",
-    "src/main/window-ipc.ts"
+    "src/main/window-ipc.ts",
+    "src/main/ipc-surfaces/resource-recording.ts",
+    "src/main/ipc-surfaces/resource-recording.test.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -108,7 +110,8 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts"
+    "src/main/websocket-frame-sender.ts",
+    "src/main/ipc-surfaces/resource-recording.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -126,7 +129,8 @@
       "src/main/ipc-surfaces/session-persistence.test.ts",
       "src/main/ipc-surfaces/office-preview.test.ts",
       "src/main/session-package/desktop-composition.test.ts",
-      "src/main/source-preview-webview.test.ts"
+      "src/main/source-preview-webview.test.ts",
+      "src/main/ipc-surfaces/resource-recording.test.ts"
     ],
     "contract": [
       "src/main/artifacts/ipc.test.ts",
@@ -1068,5 +1072,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Explicit resource recording controls add desktop-only authenticated commands; retain full validation for the expanded command surface."
 }

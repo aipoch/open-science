@@ -1,0 +1,26 @@
+{
+  "ownerPaths": [
+    "src/main/settings/source-link-metadata.ts",
+    "src/main/settings/source-link-metadata.test.ts",
+    "src/renderer/src/components/streamdown/SourceLinkSummary.tsx"
+  ],
+  "interfacePaths": [
+    "src/main/settings/source-link-metadata.ts",
+    "src/renderer/src/components/streamdown/SourceLinkSummary.tsx"
+  ],
+  "consumerModules": ["renderer_streamdown", "settings_service_facade"],
+  "testFiles": {
+    "owner": ["src/main/settings/source-link-metadata.test.ts"],
+    "contract": [
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/settings/application-commands.test.ts"
+    ],
+    "consumer": [
+      "src/renderer/src/components/streamdown/SessionMessageLink.test.tsx",
+      "src/preload/index.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["settings_ipc", "e2e_regressions"],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Conversation link summaries introduce an authenticated cross-process metadata reader and outbound HTTPS policy boundary. Run full CI until the new boundary is reviewed."
+}

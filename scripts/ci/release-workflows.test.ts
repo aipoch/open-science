@@ -28,7 +28,9 @@ type Job = {
   permissions?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
-  strategy?: { matrix?: { shard?: number[] } }
+  strategy?: {
+    matrix?: { shard?: number[]; include?: { scope: string; shard: number; total: number }[] }
+  }
   'timeout-minutes'?: number | string
   uses?: string
   with?: Record<string, unknown>
@@ -51,6 +53,77 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('validates a source-only baseline before installing and restores the candidate before packaging', () => {
+    const document = workflow('windows-full-test.yml')
+    const job = document.jobs.windows_dependencies
+    const guard = step(job, 'Validate and select native source baseline')
+    const steps = job.steps ?? []
+    const sourceSteps = [
+      guard,
+      step(job, 'Restore candidate source'),
+      step(job, 'Setup native producer Node'),
+      step(job, 'Build candidate process-tree source'),
+      step(job, 'Restore test Node'),
+      step(job, 'Rebuild candidate packages')
+    ]
+    for (const sourceStep of sourceSteps) {
+      expect(sourceStep.if).toBe("${{ inputs.native_source_base != '' }}")
+    }
+    expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(step(job, 'Install dependencies')))
+    expect(steps.indexOf(sourceSteps[1])).toBeGreaterThan(
+      steps.indexOf(step(job, 'Install dependencies'))
+    )
+    expect(sourceSteps.map((entry) => steps.indexOf(entry))).toEqual(
+      sourceSteps.map((entry) => steps.indexOf(entry)).sort((a, b) => a - b)
+    )
+    expect(steps.indexOf(sourceSteps.at(-1)!)).toBeLessThan(
+      steps.indexOf(step(job, 'Pack dependencies'))
+    )
+    expect(step(job, 'Restore candidate source').run).toBe('git checkout --detach "$GITHUB_SHA"')
+    expect(document.jobs.notebook_mutation.if).not.toContain("inputs.mode == 'portable'")
+
+    const root = mkdtempSync(join(tmpdir(), 'native-source-baseline-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }).trim()
+    const commit = (path: string, contents: string): string => {
+      writeFileSync(join(root, path), contents)
+      git('add', path)
+      git('commit', '-qm', 'fixture')
+      return git('rev-parse', 'HEAD')
+    }
+    const runGuard = (base: string, head: string, mode = 'portable'): string =>
+      execFileSync('bash', ['-e', '-c', guard.run!], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, SOURCE_BASE: base, GITHUB_SHA: head, SOURCE_MODE: mode }
+      })
+    try {
+      git('init', '-q')
+      git('config', 'user.email', 'fixture@example.invalid')
+      git('config', 'user.name', 'Fixture')
+      git('config', 'commit.gpgsign', 'false')
+      const base = commit('package-lock.json', '{}')
+      const head = commit('candidate.txt', 'diagnostic source')
+      expect(() => runGuard(base, head)).not.toThrow()
+      expect(git('rev-parse', 'HEAD')).toBe(base)
+      git('checkout', '--detach', head)
+      expect(() => runGuard(base, head, 'full')).toThrow()
+      expect(() => runGuard('--help', head)).toThrow()
+      expect(() => runGuard(head, base)).toThrow()
+      expect(git('rev-parse', 'HEAD')).toBe(head)
+      const incompatible = commit('package-lock.json', '{"changed":true}')
+      expect(() => runGuard(base, incompatible)).toThrow()
+      expect(git('rev-parse', 'HEAD')).toBe(incompatible)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['0189093', '0000000', '1234567', 'abc1234', null])(
     'keeps backend and installer versions identical for commit %s (null is stable)',
     (shortSha) => {
@@ -194,7 +267,14 @@ describe('release and scheduled workflow topology', () => {
     expect(schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions', 'scheduled-fixes']
+      options: [
+        'full',
+        'portable',
+        'notebook-sandbox',
+        'notebook-mutation',
+        'regressions',
+        'scheduled-fixes'
+      ]
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -207,7 +287,7 @@ describe('release and scheduled workflow topology', () => {
     })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
-      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'portable' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
       'timeout-minutes': 60
     })
     expect(sandbox).toMatchObject({
@@ -219,7 +299,9 @@ describe('release and scheduled workflow topology', () => {
     expect(sandboxSmoke.run).toContain('vendor/windows-src/ci/smoke.ps1')
     expect(sandboxSmoke.run).toContain('vendor/windows/x64/notebook-appcontainer-host.exe')
     expect(sandboxSmoke.run).toContain('-Mode Full')
-    expect(test.if).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}")
+    expect(test.if).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' }}"
+    )
     const regressions = step(job, 'Test recent Windows regressions')
     expect(regressions.if).toBe(
       "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}"
@@ -1051,20 +1133,26 @@ describe('build verification throughput', () => {
     }
   })
 
-  it('runs Ubuntu static checks independently from six complete portable shards', () => {
+  it('runs Ubuntu static checks independently from complete host and package shards', () => {
     const { verify, verify_tests: tests, verify_macos: macos } = workflow('build.yml').jobs
     expect(verify['runs-on']).toBe('ubuntu-latest')
     expect(verify.needs).toBeUndefined()
     expect(tests.needs).toBeUndefined()
     expect(tests['runs-on']).toBe('ubuntu-latest')
-    expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3, 4, 5, 6])
+    expect(tests.strategy?.matrix?.include).toEqual([
+      ...[1, 2, 3, 4].map((shard) => ({ scope: 'host', shard, total: 4 })),
+      ...[1, 2].map((shard) => ({ scope: 'packages', shard, total: 2 }))
+    ])
     expect(tests['timeout-minutes']).toBe(60)
     expect(step(tests, 'Test complete suite shard').run).toContain('--testTimeout=60000')
     expect(tests.env).toEqual({
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
-      VITEST_PORTABLE_CI: '1'
+      VITEST_PORTABLE_CI: '1',
+      OPEN_SCIENCE_CI_PORTABLE_SCOPE: '${{ matrix.scope }}'
     })
-    expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/6')
+    expect(step(tests, 'Test complete suite shard').run).toContain(
+      '--shard=${{ matrix.shard }}/${{ matrix.total }}'
+    )
     expect(step(tests, 'Test complete suite shard').run).toContain('--coverage')
     expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=blob')
     expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=github-actions')
@@ -1113,8 +1201,6 @@ describe('build verification throughput', () => {
     const guard = step(job, 'Require complete successful shards')
     expect(guard.env).toEqual({ SHARDS_RESULT: '${{ needs.verify_tests.result }}' })
     expect(guard.run).toContain('test "$SHARDS_RESULT" = success')
-    expect(guard.run).toContain('for shard in 1 2 3 4 5 6; do')
-    expect(guard.run).toContain('test -s "vitest-reports/blob-$shard.json"')
     expect(step(job, 'Merge test reports and enforce coverage').run).toBe(
       'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     )
@@ -1124,42 +1210,32 @@ describe('build verification throughput', () => {
     })
   })
 
-  it.each([
-    'complete',
-    'missing-4',
-    'empty-4',
-    'missing-5',
-    'empty-5',
-    'missing-6',
-    'empty-6',
-    'failed-shard'
-  ])('checks actual shard artifacts before coverage: %s', (scenario) => {
+  it('requires a non-empty artifact for every successful matrix entry', () => {
+    const jobs = workflow('build.yml').jobs
+    const guard = step(jobs.verify_coverage, 'Require complete successful shards')
     const cwd = mkdtempSync(join(tmpdir(), 'build-coverage-guard-'))
+    const files = jobs.verify_tests.strategy!.matrix!.include!.map(({ scope, shard }) =>
+      join(cwd, 'vitest-reports', `blob-${scope}-${shard}.json`)
+    )
+    const run = (result = 'success'): void => {
+      execFileSync('bash', ['-e', '-c', guard.run!], {
+        cwd,
+        env: { ...process.env, SHARDS_RESULT: result },
+        stdio: 'pipe'
+      })
+    }
     try {
       mkdirSync(join(cwd, 'vitest-reports'))
-      for (const shard of [1, 2, 3, 4, 5, 6]) {
-        if (scenario === `missing-${shard}`) continue
-        writeFileSync(
-          join(cwd, `vitest-reports/blob-${shard}.json`),
-          scenario === `empty-${shard}` ? '' : '{}'
-        )
+      for (const file of files) writeFileSync(file, '{}')
+      run()
+      expect(() => run('failure')).toThrow()
+      for (const file of files) {
+        rmSync(file)
+        expect(() => run()).toThrow()
+        writeFileSync(file, '')
+        expect(() => run()).toThrow()
+        writeFileSync(file, '{}')
       }
-      const guard = step(
-        workflow('build.yml').jobs.verify_coverage,
-        'Require complete successful shards'
-      )
-      const run = (): void => {
-        execFileSync('bash', ['-e', '-c', guard.run!], {
-          cwd,
-          env: {
-            ...process.env,
-            SHARDS_RESULT: scenario === 'failed-shard' ? 'failure' : 'success'
-          },
-          stdio: 'pipe'
-        })
-      }
-      if (scenario === 'complete') expect(run).not.toThrow()
-      else expect(run).toThrow()
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

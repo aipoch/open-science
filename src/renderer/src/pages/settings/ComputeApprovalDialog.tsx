@@ -1,6 +1,6 @@
 import { PermissionScopeButton } from '@/pages/workspace/PermissionScopeButton'
 import { ErrorNotice } from '@/components/error-notice'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ShieldAlert, ChevronDown, ChevronUp, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
@@ -30,6 +30,25 @@ type PendingBroadScope = Readonly<{
   requestId: string
   scope: BroadPermissionScope
 }>
+
+function ApprovalRow({
+  label,
+  children,
+  mono
+}: {
+  label: string
+  children: ReactNode
+  mono?: boolean
+}): React.JSX.Element {
+  return (
+    <tr>
+      <th scope="row" className="py-1 pr-3 text-left font-normal text-muted-foreground">
+        {label}
+      </th>
+      <td className={cn('py-1', mono && 'whitespace-pre-wrap font-mono')}>{children}</td>
+    </tr>
+  )
+}
 
 // Closing releases the UI immediately and denies idle requests through the store.
 //
@@ -94,18 +113,49 @@ export function ComputeApprovalDialog({
       : dialogRequest.operation === 'submit_job'
         ? t('Allow remote job submission?')
         : t('Allow remote command?')
-  const description =
-    dialogRequest.operation === 'download'
+  const job = dialogRequest.operation === 'submit_job' ? dialogRequest : undefined
+  const modal = job?.modal,
+    ray = job?.ray,
+    hosted = job?.hosted,
+    kubernetes = job?.kubernetes
+  const files = modal ?? ray ?? hosted ?? kubernetes
+  const backendName = modal
+    ? t('Modal Sandboxes')
+    : ray
+      ? t('Ray Jobs')
+      : hosted
+        ? t('Hugging Face Jobs')
+        : kubernetes
+          ? t('Kubernetes')
+          : undefined
+
+  const description = modal
+    ? t(
+        'Only declared outputs are archived. After verified publication the job volume and its remaining files are deleted. The volume is retained if collection is incomplete.'
+      )
+    : ray
       ? t(
-          "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path."
+          'Declared outputs are archived and originals stay in the shared directory. The driver limits command runtime. The app requests a stop for overdue jobs when connected.'
         )
-      : dialogRequest.operation === 'submit_job'
+      : hosted
         ? t(
-            'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.'
+            'Only declared outputs are archived. After verification, the job files are removed from the bucket.'
           )
-        : t(
-            'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
-          )
+        : kubernetes
+          ? t(
+              'The command runs in the selected Kubernetes namespace. The job volume is retained until results are collected.'
+            )
+          : dialogRequest.operation === 'download'
+            ? t(
+                "The remote file will be copied into this Session's local cache. Approve only if you trust the source and path."
+              )
+            : dialogRequest.operation === 'submit_job'
+              ? t(
+                  'This job will run as your account on the host and is not sandboxed. Review the command, resources, remote workdir, and timeout before approving.'
+                )
+              : t(
+                  'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
+                )
   const broadScopeSubject =
     dialogRequest.operation === 'download'
       ? t('remote file downloads from {{host}}', { host: dialogRequest.providerName })
@@ -159,114 +209,167 @@ export function ComputeApprovalDialog({
             className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0"
           >
             <div className={dialogBodyClassName}>
-              <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
-                <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
-                  <span className="min-w-0 truncate font-medium text-foreground">
-                    {dialogRequest.providerName}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
-                  <span className="min-w-0 break-words text-foreground">
-                    {dialogRequest.intent}
-                  </span>
-                </div>
-                {hasCommand ? (
-                  <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">{t('Command')}</span>
-                    <div className="min-w-0 flex-1">
-                      <span className="break-all font-mono text-muted-foreground">
-                        {showFull ? dialogRequest.commandFull : dialogRequest.commandPreview}
-                      </span>
-                      {isLongCommand && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedRequestId((id) =>
-                              id === dialogRequest.id ? null : dialogRequest.id
+              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <table
+                  aria-label={title}
+                  className="w-full table-fixed border-collapse text-xs text-foreground [overflow-wrap:anywhere]"
+                >
+                  <colgroup>
+                    <col className="w-[30%]" />
+                    <col />
+                  </colgroup>
+                  <tbody className="[&>tr]:align-top">
+                    <ApprovalRow label={t('Host')}>
+                      <span className="font-medium">{dialogRequest.providerName}</span>
+                    </ApprovalRow>
+                    <ApprovalRow label={t('Intent')}>{dialogRequest.intent}</ApprovalRow>
+                    {hasCommand ? (
+                      <ApprovalRow label={t('Command')}>
+                        {showFull ? (
+                          <pre
+                            role="region"
+                            aria-label={t('Command')}
+                            tabIndex={0}
+                            className="max-h-[min(8rem,25svh)] overflow-y-auto rounded border border-border bg-background p-2 whitespace-pre-wrap focus-visible:outline-2 focus-visible:outline-ring"
+                          >
+                            <code>{dialogRequest.commandFull}</code>
+                          </pre>
+                        ) : (
+                          <code className="whitespace-pre-wrap font-mono">
+                            {dialogRequest.commandPreview}
+                          </code>
+                        )}
+                        {isLongCommand && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedRequestId((id) =>
+                                id === dialogRequest.id ? null : dialogRequest.id
+                              )
+                            }
+                            className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
+                            aria-expanded={showFull}
+                          >
+                            {showFull ? (
+                              <>
+                                <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="size-3" aria-hidden="true" />{' '}
+                                {t('Show full command')}
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </ApprovalRow>
+                    ) : (
+                      <ApprovalRow label={t('Remote path')} mono>
+                        {dialogRequest.remotePath}
+                      </ApprovalRow>
+                    )}
+                    {job?.inputsSummary && (
+                      <ApprovalRow label={t('Inputs')}>{job.inputsSummary}</ApprovalRow>
+                    )}
+                    {job?.executionMode && (
+                      <ApprovalRow label={t('Execution mode')}>
+                        {backendName ??
+                          (job.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH'))}
+                      </ApprovalRow>
+                    )}
+                    {job &&
+                      files &&
+                      [
+                        ...(modal
+                          ? [
+                              [t('Environment'), modal.environmentName],
+                              ['Modal App', modal.appName + ' (' + modal.appId + ')'],
+                              [t('Container image'), modal.image],
+                              ['CPU / GPU', modal.cpus + ' / ' + (modal.gpu ?? '—')],
+                              [t('Memory'), modal.memoryMiB + ' MiB']
+                            ]
+                          : []),
+                        ...(ray
+                          ? [
+                              [t('Dashboard'), ray.endpoint],
+                              [t('Session'), ray.sessionName],
+                              ['CPU / GPU', ray.cpus + ' / ' + ray.gpus],
+                              [t('Local shared directory'), ray.sharedRoot]
+                            ]
+                          : []),
+                        ...(hosted
+                          ? [
+                              [t('Billing account'), hosted.namespace],
+                              [t('Container image'), hosted.image],
+                              [t('Flavor'), hosted.flavor],
+                              [
+                                t('Compute rate'),
+                                `USD ${hosted.rateMicroUsdPerMinute / 1_000_000}/min`
+                              ],
+                              [
+                                t('Estimated compute cost'),
+                                `USD ${((Math.ceil(job.timeoutSeconds / 60) * hosted.rateMicroUsdPerMinute) / 1_000_000).toFixed(6)}`
+                              ],
+                              [
+                                t('Bucket'),
+                                `hf://buckets/${hosted.bucket}/open-science/${hosted.runId}/`
+                              ]
+                            ]
+                          : []),
+                        ...(kubernetes
+                          ? [
+                              [t('Context'), kubernetes.context],
+                              [t('Namespace'), kubernetes.namespace],
+                              ['API', kubernetes.endpoint],
+                              [t('Container image'), kubernetes.image],
+                              [t('Transfer image'), kubernetes.transferImage],
+                              ['PVC', kubernetes.sizeMiB + ' MiB']
+                            ]
+                          : []),
+                        [
+                          t('Inputs'),
+                          files.inputFiles
+                            .map(
+                              (file) =>
+                                `${file.source} → ${file.destination} (${file.sizeBytes} B)\nSHA-256 ${file.sha256}`
                             )
-                          }
-                          className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
-                          aria-expanded={showFull}
+                            .join('\n') || '—'
+                        ],
+                        [t('Outputs'), files.outputManifest ?? '[]'],
+                        ...(files.harvestConfig ? [[t('Harvest'), files.harvestConfig]] : [])
+                      ].map(([label, value]) => (
+                        <ApprovalRow key={label} label={label} mono>
+                          {value}
+                        </ApprovalRow>
+                      ))}
+                    {job?.environment && (
+                      <ApprovalRow label={t('Environment')} mono>
+                        {job.environment}
+                      </ApprovalRow>
+                    )}
+                    {job?.resources && (
+                      <ApprovalRow label={t('Resources')} mono>
+                        {job.resources}
+                      </ApprovalRow>
+                    )}
+                    {job && (
+                      <>
+                        <ApprovalRow label={t('Timeout')}>
+                          {t('{{count}} seconds', {
+                            count: job.timeoutSeconds,
+                            defaultValue_one: '{{count}} second'
+                          })}
+                        </ApprovalRow>
+                        <ApprovalRow
+                          label={modal || ray ? t('Output directory') : t('Remote workdir')}
+                          mono
                         >
-                          {showFull ? (
-                            <>
-                              <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
-                            </>
-                          ) : (
-                            <>
-                              <ChevronDown className="size-3" aria-hidden="true" />{' '}
-                              {t('Show full command')}
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">{t('Remote path')}</span>
-                    <span className="min-w-0 break-all font-mono text-muted-foreground">
-                      {dialogRequest.remotePath}
-                    </span>
-                  </div>
-                )}
-                {dialogRequest.operation === 'submit_job' && dialogRequest.inputsSummary && (
-                  <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">{t('Inputs')}</span>
-                    <span className="min-w-0 break-words text-foreground">
-                      {dialogRequest.inputsSummary}
-                    </span>
-                  </div>
-                )}
-                {dialogRequest.operation === 'submit_job' && dialogRequest.executionMode && (
-                  <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">
-                      {t('Execution mode')}
-                    </span>
-                    <span className="min-w-0 text-foreground">
-                      {dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
-                    </span>
-                  </div>
-                )}
-                {dialogRequest.operation === 'submit_job' && dialogRequest.environment && (
-                  <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">{t('Environment')}</span>
-                    <span className="min-w-0 break-all font-mono text-muted-foreground">
-                      {dialogRequest.environment}
-                    </span>
-                  </div>
-                )}
-                {dialogRequest.operation === 'submit_job' && dialogRequest.resources && (
-                  <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">{t('Resources')}</span>
-                    <span className="min-w-0 break-all font-mono text-muted-foreground">
-                      {dialogRequest.resources}
-                    </span>
-                  </div>
-                )}
-                {dialogRequest.operation === 'submit_job' && (
-                  <>
-                    <div className="flex gap-2">
-                      <span className="w-20 shrink-0 text-muted-foreground">{t('Timeout')}</span>
-                      <span className="min-w-0 text-foreground">
-                        {t('{{count}} seconds', {
-                          count: dialogRequest.timeoutSeconds,
-                          defaultValue_one: '{{count}} second'
-                        })}
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <span className="w-20 shrink-0 text-muted-foreground">
-                        {t('Remote workdir')}
-                      </span>
-                      <span className="min-w-0 break-all font-mono text-muted-foreground">
-                        {dialogRequest.remoteWorkdir}
-                      </span>
-                    </div>
-                  </>
-                )}
+                          {job.remoteWorkdir}
+                        </ApprovalRow>
+                      </>
+                    )}
+                  </tbody>
+                </table>
               </div>
               {dialogRequest.willPersistUnencrypted ? (
                 <ErrorNotice
@@ -296,7 +399,7 @@ export function ComputeApprovalDialog({
             </Button>
             <PermissionScopeButton
               key={dialogRequest.id}
-              available={['once', 'session', 'project', 'global']}
+              available={files ? ['once'] : ['once', 'session', 'project', 'global']}
               disabled={responding}
               onAllow={(scope) => {
                 if (scope === 'project' || scope === 'global')

@@ -85,6 +85,7 @@ it('round-trips private grants through a fresh settings repository and preserves
   const dir = await mkdtemp(join(tmpdir(), 'open-science-private-service-'))
   const rule = {
     hostname: 'lab.internal.example',
+    protocol: 'http' as const,
     port: 8443,
     approvedAddresses: ['10.32.0.7', 'fd12::7']
   }

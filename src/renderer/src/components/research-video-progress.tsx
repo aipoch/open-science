@@ -4,9 +4,11 @@ import { ProgressBar } from './ui/progress-bar'
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
 export function ResearchVideoProgressLine({
-  progress
+  progress,
+  compact = false
 }: {
   progress: ResearchVideoProgress
+  compact?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
@@ -36,6 +38,38 @@ export function ResearchVideoProgressLine({
     failed: t('Research video failed')
   }
   const counted = progress.total !== undefined && progress.completed !== undefined
+  const elapsed = t('Elapsed: {{seconds}} s', {
+    seconds: Math.max(0, Math.floor(((progress.endedAt ?? now) - progress.startedAt) / 1000))
+  })
+
+  if (compact) {
+    return (
+      <div className="min-w-0 flex-1 space-y-1 text-xs">
+        <div role="status" className="flex min-w-0 items-center justify-between gap-2">
+          <p className="min-w-0 truncate font-medium text-foreground">{labels[progress.phase]}</p>
+          <p className="shrink-0 tabular-nums text-muted-foreground">
+            {counted
+              ? t('{{completed}} / {{total}} completed', {
+                  completed: progress.completed,
+                  total: progress.total
+                })
+              : elapsed}
+          </p>
+        </div>
+        {!terminal && (
+          <ProgressBar
+            value={
+              counted && progress.total! > 0
+                ? (progress.completed! / progress.total!) * 100
+                : undefined
+            }
+            label={labels[progress.phase]}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="min-w-0 space-y-2 text-xs text-muted-foreground">
       <div role="status" className="space-y-1">
@@ -66,11 +100,7 @@ export function ResearchVideoProgressLine({
           label={labels[progress.phase]}
         />
       )}
-      <p className="tabular-nums">
-        {t('Elapsed: {{seconds}} s', {
-          seconds: Math.max(0, Math.floor(((progress.endedAt ?? now) - progress.startedAt) / 1000))
-        })}
-      </p>
+      <p className="tabular-nums">{elapsed}</p>
     </div>
   )
 }

@@ -42,6 +42,7 @@ type RegisterFileSaveHandlersOptions = {
     }
   ) => Promise<ManagedFilePathResolution>
   openManagedFile?: (sourcePath: string) => Promise<ManagedFileHandle>
+  openComputeOutput?: (request: { path: string }) => Promise<ManagedFileHandle>
   openNotebookInput?: (request: { path: string }) => Promise<ManagedFileHandle>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
@@ -105,6 +106,7 @@ const assertSaveManagedFileRequest: (
     (source !== 'artifact' &&
       source !== 'upload' &&
       source !== 'notebook-input' &&
+      source !== 'compute-output' &&
       source !== 'literature' &&
       source !== 'local') ||
     typeof candidate.suggestedName !== 'string'
@@ -705,46 +707,43 @@ export const createFileSaveCommands = (
       assertSaveManagedFileRequest(request)
       const versionedRequest =
         request.source === 'artifact' || request.source === 'upload' ? request : undefined
-      const notebookInputRequest = request.source === 'notebook-input' ? request : undefined
-      const pathRequest =
-        request.source === 'local' || request.source === 'literature'
-          ? { source: request.source, path: request.path }
-          : undefined
-      if (versionedRequest) {
-        if (
-          versionedRequest.versionId
-            ? !options.openManagedFileVersion
-            : !options.openLatestManagedFile
-        ) {
-          throw new Error('Managed file Version lease is not configured.')
-        }
-      } else if (
-        notebookInputRequest ? !options.openNotebookInput : !options.resolveManagedFilePath
+      if (
+        versionedRequest &&
+        (versionedRequest.versionId
+          ? !options.openManagedFileVersion
+          : !options.openLatestManagedFile)
       ) {
-        throw new Error('Managed file resolver is not configured.')
+        throw new Error('Managed file Version lease is not configured.')
       }
-
-      const pathManagedFile = notebookInputRequest
-        ? await options.openNotebookInput!({ path: notebookInputRequest.path })
-        : pathRequest
-          ? await (options.openManagedFile ?? openManagedFile)(
-              getManagedFilePath(
-                await options.resolveManagedFilePath!(pathRequest.source, {
-                  path: pathRequest.path
-                })
-              )
-            )
-          : undefined
-      const requestedBaseName = basename(request.suggestedName.trim())
-      const safeName =
-        requestedBaseName && requestedBaseName !== '.' && requestedBaseName !== '..'
-          ? requestedBaseName
-          : versionedRequest
-            ? versionedRequest.fileId
-            : basename((notebookInputRequest ?? pathRequest)!.path)
+      const fallbackName =
+        'path' in request
+          ? request.source === 'compute-output'
+            ? 'download'
+            : request.path
+          : request.fileId
+      const safeName = getSafeFilename(request.suggestedName, fallbackName)
       const dialogOptions = {
         defaultPath: join(runtimeMetadata().downloadsPath, safeName),
         title: (options.translate ?? englishNativeTranslator)('Save file')
+      }
+      // Capture path-based identities before Save As. Opaque keys only enter their owning resolver.
+      let pathManagedFile: ManagedFileHandle | undefined
+      if (request.source === 'compute-output' || request.source === 'notebook-input') {
+        const openLease =
+          request.source === 'compute-output'
+            ? options.openComputeOutput
+            : options.openNotebookInput
+        if (!openLease) throw new Error('Managed file resolver is not configured.')
+        pathManagedFile = await openLease({ path: request.path })
+      } else if (request.source === 'local' || request.source === 'literature') {
+        if (!options.resolveManagedFilePath)
+          throw new Error('Managed file resolver is not configured.')
+        const resolved = await options.resolveManagedFilePath(request.source, {
+          path: request.path
+        })
+        pathManagedFile = await (options.openManagedFile ?? openManagedFile)(
+          getManagedFilePath(resolved)
+        )
       }
       try {
         const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(

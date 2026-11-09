@@ -658,7 +658,9 @@ service token.
 
 ## Agent routing settings
 
-Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing:
+Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing.
+Supported framework IDs are `open-science-agent` (built in), `claude-code`, `opencode`, `codex`,
+`codebuddy`, and `pi`:
 
 ```bash
 open-science settings agent-routing show --json
@@ -781,11 +783,43 @@ citations and BibTeX/RIS exports. `--locale` accepts `en-US` (default) or `zh-CN
 for style IDs. `lookup` accepts a DOI, `pmid:<n>`, `pmcid:PMC<n>`, or `arxiv:<id>` and always
 prints JSON. It queries external registries through the service and does not save the record.
 
-These commands do not import, edit, or delete records, styles, or attachments, and do not read
-PDF full text. Record objects mirror the running service's Literature schema; only `id`, `item`,
-`entries`, `nextOffset`, `references`, and `exports` are stable fields. A missing or stale item ID
-returns `literature_item_not_found` (exit code `4`) for both `show` and `format`. Older services
-without these commands return `unsupported_capability`.
+Record objects mirror the running service's Literature schema; only `id`, `item`, `entries`,
+`nextOffset`, `references`, `exports`, and `imported` are stable fields. A missing or stale item
+ID returns `literature_item_not_found` (exit code `4`) for both `show` and `format`. Older
+services without these commands return `unsupported_capability`.
+
+### Adding and organising records
+
+```bash
+open-science literature import ./refs.bib
+open-science literature import ./refs.ris --commit --project "First review" --json
+open-science literature add 10.1038/s41586-020-2649-2
+open-science literature link <item-id> <item-id> --project "First review"
+open-science literature unlink <item-id> --project "First review"
+open-science literature collection create "Methods" --parent <collection-id>
+open-science literature collection add <collection-id> <item-id> <item-id>
+open-science literature status read <item-id>
+open-science literature trash <item-id>
+open-science literature restore <item-id>
+```
+
+`import` reads BibTeX, RIS, or NBIB from a file, or from stdin with `-`. Without `--commit` it
+only previews entries, statuses (`ready`, `warning`, `existing`, `conflict`, `invalid`), and
+warnings, and saves nothing. `--commit` imports the records. `--duplicates` defaults to `reuse`,
+which keeps the existing record for a matching identifier; `separate` keeps a second copy and
+`fill-missing` completes empty fields on the existing record. `--collection` adds the imported
+records to a collection, and `--project` links them to a Project after import. If the Project
+link fails, the records stay imported, the error code is `literature_project_link_failed`, and
+the message lists the item IDs; link them with `literature link` instead of importing again.
+
+`add` resolves a DOI, `pmid:<n>`, `pmcid:PMC<n>`, or `arxiv:<id>` and saves it, reusing an
+existing record with the same identifier. `unlink` and `collection remove` only remove the
+membership. `trash` moves records to the Literature trash and `restore` returns them; neither
+deletes permanently. These commands write through the same service owners as the desktop and
+Web UI, which refresh automatically.
+
+Permanent deletion, collection deletion, merges, metadata edits, smart collections, PDF and
+attachment imports, citation style imports, and journal binding are not available from the CLI.
 
 ## Current scope
 
@@ -945,6 +979,13 @@ schema and behavior annotations through `tools/list`.
 | `list_citation_styles`         | List citation styles available for formatting            |
 | `format_references`            | Format records as citations with BibTeX/RIS exports      |
 | `get_reference_metadata`       | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
+| `import_literature`            | Preview, then commit a BibTeX/RIS/NBIB or item import    |
+| `create_literature_item`       | Add one record from a DOI/PMID/PMCID/arXiv identifier    |
+| `update_project_literature`    | Link or unlink records and a project                     |
+| `create_literature_collection` | Create a collection                                      |
+| `update_collection_items`      | Add or remove records in a collection                    |
+| `set_reading_status`           | Set unread, reading, or read                             |
+| `set_literature_lifecycle`     | Move records to the trash or restore them                |
 
 A typical workflow calls `list_projects`, `start_run` with `{ "projectId": "…", "prompt": "…" }`,
 then polls `get_run` with the returned run ID and calls `list_artifacts` with the session ID.
@@ -962,16 +1003,21 @@ be combined with `turnIntent: "plan-first"`. Plan approval/rejection requires th
 revision from `get_plan`. Configuration updates require the revision from
 `get_session_configuration`.
 
-Literature tools are read-only. `search_literature` returns at most 20 records per page and
-`format_references` defaults to `en-US`. `get_reference_metadata` contacts external registries
-through the service, so it is marked open-world; none of these tools save records.
+`search_literature` returns at most 20 records per page and `format_references` defaults to
+`en-US`. `get_reference_metadata` and `create_literature_item` contact external registries
+through the service, so they are marked open-world. `import_literature` takes reference text or
+item objects in the call, not a file path; call it with `mode: "preview"` before `"commit"`. If
+its Project link fails after commit, the error includes `itemIds`; link them with
+`update_project_literature` rather than repeating the import. Literature writes never delete
+records permanently: `set_literature_lifecycle` with `deleted` moves them to the trash.
 
 MCP access grants the listed operations for the selected profile under its existing permissions.
 The adapter is not a separate sandbox or a read-only view. Project/configuration changes, plan
-responses and research runs persist through existing business owners and may write files or
-incur model costs. No new database schema, historical-data migration, business status enum,
-credential store or background service is introduced. There is no arbitrary shell/RPC tool,
-credential-management tool, file import/export/download-to-path tool or remote HTTP MCP endpoint.
+responses, Literature changes and research runs persist through existing business owners and may
+write files or incur model costs. No new database schema, historical-data migration, business
+status enum, credential store or background service is introduced. There is no arbitrary
+shell/RPC tool, credential-management tool, file-path import/export/download tool or remote HTTP
+MCP endpoint.
 
 Standard output carries only MCP protocol messages. Closing stdin or sending SIGINT/SIGTERM
 closes the adapter and its pending network requests; it neither stops the service nor cancels

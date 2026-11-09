@@ -289,6 +289,7 @@ it('restores the committed Plan HTTP route and RPC credential when replacement p
     })
   })
   expect(toolResponse.status).toBe(200)
+  await toolResponse.text()
   expect(planCall).toHaveBeenCalledWith(
     expect.objectContaining({
       projectId: 'project',

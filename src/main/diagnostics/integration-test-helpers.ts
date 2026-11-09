@@ -9,7 +9,10 @@ import {
   createSessionDiagnosticsDesktop,
   type SessionDiagnosticsOptions
 } from '../session-diagnostics/desktop'
-import type { SessionDiagnosticExportRequest } from '../../shared/session-diagnostics'
+import type {
+  DiagnosticTarget,
+  SessionDiagnosticExportRequest
+} from '../../shared/session-diagnostics'
 
 // Host integration fixtures exercise installed public operations, never package internals.
 export async function captureDiagnosticLogs(
@@ -30,7 +33,8 @@ export async function captureDiagnosticLogs(
 
 export async function exportDiagnosticFiles(
   sources: ReturnType<SessionDiagnosticsOptions['resolveSources']>,
-  request: Omit<SessionDiagnosticExportRequest, 'operationId'>
+  request: DiagnosticTarget &
+    Omit<SessionDiagnosticExportRequest, 'operationId' | 'scope' | 'projectId' | 'sessionId'>
 ): Promise<Record<string, string>> {
   const root = await mkdtemp(join(tmpdir(), 'diagnostic-export-contract-'))
   const archive = join(root, 'diagnostic.tar.gz')

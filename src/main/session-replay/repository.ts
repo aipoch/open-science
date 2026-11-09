@@ -12,7 +12,7 @@ import {
 
 export type SessionReplayClient = Pick<
   PrismaClient,
-  '$transaction' | 'project' | 'sessionReplayProgress' | 'sessionDiscussionSnapshot'
+  '$transaction' | 'project' | 'session' | 'sessionReplayProgress' | 'sessionDiscussionSnapshot'
 >
 export type SessionReplayClientProvider = () => Promise<SessionReplayClient>
 export const replayViewSnapshot = (

@@ -288,7 +288,7 @@ it('stops after one failed correction without generating or publishing invalid c
   expect((await owner.status(request)).progress?.endedAt).toBe(progress.endedAt)
   expect(f.options.writeScreenplay).toHaveBeenCalledTimes(2)
   expect(f.options.generate).not.toHaveBeenCalled()
-  expect(f.release).toHaveBeenCalledOnce()
+  await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
   await owner.close()
 })
 

@@ -170,7 +170,12 @@ describe('ACP Runtime base composition', () => {
       reconnect: false,
       retirement: false
     })
-    await owners.generationActivity.withActivity(async () => undefined)
+    await owners.generationActivity.withActivity(async () => {
+      const { resourceActivity } = await import('../resource-diagnostics/activity')
+      expect(resourceActivity.state.sampling).toBe(true)
+    })
+    const { resourceActivity } = await import('../resource-diagnostics/activity')
+    expect(resourceActivity.state.sampling).toBe(false)
     expect(activityChanged).toHaveBeenCalledTimes(2)
 
     await owners.connectionTransitions.requestProviderReconnect()

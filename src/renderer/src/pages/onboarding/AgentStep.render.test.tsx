@@ -1008,3 +1008,41 @@ describe('AgentStep', () => {
     )
   })
 })
+
+it('offers the built-in Agent as an explicit choice without an installer or automatic switch', async () => {
+  const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+  useSettingsStore.setState({
+    agentFrameworkId: 'claude-code',
+    agentFrameworks: [
+      ...twoFrameworks,
+      {
+        id: 'open-science-agent',
+        displayName: 'Open-Science Agent',
+        supportsSkills: false,
+        supportsDelegatedWork: false,
+        supportedApiTypes: ['chat-completions']
+      }
+    ],
+    preflight: {
+      claudeReady: false,
+      opencodeReady: false,
+      codexReady: false,
+      codebuddyReady: false,
+      openScienceAgentReady: true,
+      agentFrameworkId: 'claude-code',
+      agentReady: false,
+      activeProviderReady: false
+    },
+    setAgentFramework
+  })
+  await renderStep()
+  expect(setAgentFramework).not.toHaveBeenCalled()
+  expect(container.querySelector('[aria-label="Install Open-Science Agent"]')).toBeNull()
+  const choice = container.querySelector<HTMLElement>('[aria-label="Use Open-Science Agent"]')
+  expect(choice).not.toBeNull()
+  await act(async () => {
+    choice?.click()
+    await Promise.resolve()
+  })
+  expect(setAgentFramework).toHaveBeenCalledWith('open-science-agent')
+})

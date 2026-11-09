@@ -965,12 +965,17 @@ describe('module test impact commands', () => {
     {
       name: 'deleted sources',
       diff: 'D\0src/renderer/src/stores/session-store-persistence-merge.ts\0',
-      include: '__no_changed_sources__'
+      include: undefined
     },
     {
       name: 'renamed sources',
       diff: 'R100\0src/renderer/src/stores/session-store-persistence-merge.ts\0src/renderer/src/stores/renamed.ts\0',
       include: 'src/renderer/src/stores/renamed.ts'
+    },
+    {
+      name: 'c8-excluded sources',
+      diff: 'M\0src/main/notebook/fixtures/windows-interrupted-shell-launch.ts\0',
+      include: undefined
     }
   ])('scopes coverage for $name', async ({ diff, include }) => {
     const { spawn, invocation } = captureNpmInvocation()
@@ -989,7 +994,8 @@ describe('module test impact commands', () => {
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
-      expect(invocation.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
+      if (include) expect(invocation.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
+      else expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage')
       expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
     } finally {
       write.mockRestore()
@@ -1322,9 +1328,11 @@ it.each(['genomes-ensembl', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])
 it.each([
   'src/main/session-diagnostics/notebook.ts',
   'src/main/session-diagnostics/worker-entry.ts',
-  'src/main/session-diagnostics/desktop.ts'
-])('keeps Session export selective with storage, transport and UI contracts for %s', (path) => {
+  'src/main/session-diagnostics/desktop.ts',
+  'src/main/session-diagnostics/resources.ts'
+])('retains full validation and export contracts for the expanded diagnostics owner %s', (path) => {
   const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
+  const module = manifest.modules.session_diagnostics
   const plan = createAffectedTestPlan(
     [{ path, status: 'modified' }],
     {
@@ -1333,20 +1341,31 @@ it.each([
     },
     manifest
   )
-  expect(plan.mode).toBe('selective')
-  expect(plan.modules).toEqual(['session_diagnostics'])
-  expect(plan.testFiles).toEqual(
+  expect(module.fullTestReason).toBeTruthy()
+  for (const candidate of [plan, createModuleTestPlan('session_diagnostics', manifest)]) {
+    expect(candidate.mode).toBe('full')
+    expect(candidate.reasonChains).toEqual([
+      `session_diagnostics -> ${module.fullTestReason} -> full`
+    ])
+  }
+  // Full plans do not enumerate individual tests; retain the registered contracts for
+  // review and any future reclassification of this expanded source boundary.
+  const registeredTests = Object.values(module.testFiles).flat()
+  expect(registeredTests).toEqual(
     expect.arrayContaining([
-      ...Object.values(manifest.modules.session_diagnostics.testFiles).flat(),
       'src/main/session-diagnostics/desktop.test.ts',
       'src/main/session-diagnostics/collector.test.ts',
+      'src/main/session-diagnostics/database.test.ts',
+      'src/main/session-diagnostics/resources.test.ts',
+      'src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx',
+      'src/shared/session-diagnostics-contracts.test.ts',
       'src/main/desktop-runtime-transport.integration.test.ts'
     ])
   )
-  expect(plan.capabilityOverlays).toEqual(
+  expect(module.capabilityOverlays).toEqual(
     expect.arrayContaining(['e2e_regressions', 'windows_sensitive'])
   )
-  expect(plan.testFiles.some((file) => file.startsWith('packages/connector-'))).toBe(false)
+  expect(registeredTests.some((file) => file.startsWith('packages/connector-'))).toBe(false)
 })
 
 it.each([

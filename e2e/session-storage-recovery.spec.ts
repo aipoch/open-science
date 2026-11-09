@@ -37,7 +37,7 @@ type LiveAgent = { model: string; executable: string; version: string }
 type PersistenceErrorProbe = {
   name: string
   code: string | null
-  stackFrames: number
+  hasNonRendererStackFrame: boolean
   messageKind: string
 }
 
@@ -173,10 +173,13 @@ const test = base.extend<{ desktop: Desktop }>({
                     : 'other',
                 code:
                   typeof error?.code === 'string' && codes.includes(error.code) ? error.code : null,
-                stackFrames:
-                  typeof error?.stack === 'string'
-                    ? Math.max(0, error.stack.split(/\r?\n/).length - 1)
-                    : 0,
+                // Reconstructing the public error in the renderer creates a local stack.
+                hasNonRendererStackFrame:
+                  typeof error?.stack === 'string' &&
+                  error.stack
+                    .split(/\r?\n/)
+                    .slice(1)
+                    .some((frame) => !frame.includes(new URL('.', location.href).href)),
                 messageKind: message.includes('result of a submitted operation is unknown')
                   ? 'submitted-result-unknown'
                   : message.includes('byte persistence limit')
@@ -648,7 +651,7 @@ test('verifies a saved Session after losing its acknowledgement on the real runt
       expect.arrayContaining([
         expect.objectContaining({
           code: 'desktop-runtime-disconnected',
-          stackFrames: 0,
+          hasNonRendererStackFrame: false,
           messageKind: 'submitted-result-unknown'
         })
       ])
@@ -766,7 +769,7 @@ test('preserves size-limit classification across the real Electron preload bound
       expect.arrayContaining([
         expect.objectContaining({
           code: 'session-size-limit',
-          stackFrames: 0,
+          hasNonRendererStackFrame: false,
           messageKind: 'session-size-limit'
         })
       ])

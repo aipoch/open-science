@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { replayAnnotationId } from './replay-reference'
 import { createLinearConversationGraph } from './conversation-graph'
 import {
   applySessionConversationCommands,
@@ -52,6 +53,61 @@ const rootBranchId = (session: PersistedChatSession): string =>
     .activeBranchId
 
 describe('Session conversation commands', () => {
+  it('only establishes the parent on the first explicit discussion message', () => {
+    const base = fixture()
+    const empty = {
+      ...base,
+      messages: [],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: base.id,
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+    }
+    const append = (
+      target: PersistedChatSession,
+      message: PersistedChatMessage
+    ): PersistedChatSession =>
+      applySessionConversationCommands(target, [
+        {
+          id: message.id,
+          kind: 'append-user',
+          branchId: rootBranchId(target),
+          parentMessageId: target.messages.at(-1)?.id,
+          message,
+          timestamp: 10
+        }
+      ])
+    const ask = (id: string, sourceSessionId: string): PersistedChatMessage =>
+      prompt(id, 'Explain', 10, {
+        annotations: [
+          {
+            kind: 'text',
+            target: 'agent',
+            quote: 'Study',
+            id: replayAnnotationId(
+              { projectId: base.projectId, sourceSessionId, branchId: 'main', stepId: 'step' },
+              'snapshot'
+            ),
+            source: { kind: 'agent-message', messageId: 'm', sessionId: sourceSessionId }
+          }
+        ]
+      })
+    const child = append(empty, ask('first', 'import-a'))
+    expect(child.parentSessionId).toBe('import-a')
+    expect(append(child, ask('later', 'import-b')).parentSessionId).toBe('import-a')
+    expect(append(base, ask('later', 'import-b')).parentSessionId).toBeUndefined()
+    expect(
+      append(
+        empty,
+        prompt('mention', '#Study', 10, {
+          parts: [{ type: 'session', sessionId: 'import-a', title: 'Study' }]
+        })
+      ).parentSessionId
+    ).toBeUndefined()
+  })
+
   it('authorizes recovery with durable evidence and reuses its run across retries', () => {
     const initial = fixture()
     initial.resumeRecovery = {

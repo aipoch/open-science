@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind } from './literature-pdf-caption-group.mjs'
-import { hasUniqueRecordTokens, readSourceRow } from './literature-pdf-source-records.mjs'
+import {
+  groupSourceRowsWithScripts,
+  hasUniqueRecordTokens,
+  readSourceRow
+} from './literature-pdf-source-records.mjs'
 
 const center = (i) => (i.rect[1] + i.rect[3]) / 2
 const scalar = (s) => /^(?:[−–-]|[+−-]?\d+(?:\.\d+)?(?:[%×])?)$/u.test(s.replace(/\s/g, ''))
@@ -195,6 +199,8 @@ export function recoverNativeMeasuredRecordGrid(table, items, captions, rules) {
 // measured parameter/value baselines. Category placement alone never proves
 // a group: all rows and both value lanes must be complete inside every band.
 export function recoverNativeGroupedParameterGrid(table, items, captions, rules) {
+  const mixed = recoverNativeMixedParameterGrid(table, items, captions, rules)
+  if (mixed) return mixed
   const crop = table.cropRect
   const model = table.structure.objects
     .filter((o) => o.label === 'table column')
@@ -372,6 +378,232 @@ export function recoverNativeGroupedParameterGrid(table, items, captions, rules)
     cropRect: nativeCrop,
     rows: edges.slice(1).map((y, n) => [nativeCrop[0], edges[n], nativeCrop[2], y]),
     columns: cuts.slice(1).map((x, n) => [cuts[n], nativeCrop[1], x, nativeCrop[3]]),
+    spans,
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true,
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// A named category column and complete paired baselines support literal and
+// scripted values. The detector's padded crop is not the printed frame: every
+// repeated full rule must agree with the independently predicted outer lanes.
+export function recoverNativeMixedParameterGrid(table, items, captions, rules) {
+  const valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3],
+    contains = (a, b) => b.every((v, n) => (n < 2 ? v >= a[n] - 1e-6 : v <= a[n] + 1e-6)),
+    hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
+    crop = table.cropRect,
+    model = table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    !valid(crop) ||
+    model.length !== 3 ||
+    model.some((o) => !valid(o.rect)) ||
+    rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite)) ||
+    items.some(
+      (i) =>
+        i.text?.trim() &&
+        (!valid(i.rect) ||
+          !Number.isFinite(i.baseline) ||
+          !Number.isFinite(i.height) ||
+          i.height <= 0)
+    )
+  )
+    return
+  const near = items.filter((i) => i.text?.trim() && hit(i.rect, crop)),
+    h = near.map((i) => i.height).sort((a, b) => a - b)[Math.floor(near.length / 2)],
+    left = crop[0] + model[0].rect[0],
+    right = crop[0] + model[2].rect[2]
+  if (!(h > 0)) return
+  const full = rules
+    .filter(
+      (r) =>
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[1] === r[3] &&
+        r[1] >= crop[1] &&
+        r[1] <= crop[3] &&
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length < 5 ||
+    full.length > 12 ||
+    full.some(
+      (r, n) =>
+        n &&
+        (r[1] <= full[n - 1][1] ||
+          Math.abs(r[0] - full[0][0]) > h * 0.002 ||
+          Math.abs(r[2] - full[0][2]) > h * 0.002)
+    )
+  )
+    return
+  const opening = full[0],
+    divider = full[1],
+    closing = full.at(-1),
+    frame = [opening[0], opening[1], opening[2], closing[1]]
+  if (
+    !contains(crop, frame) ||
+    divider[1] - opening[1] < h ||
+    divider[1] - opening[1] > 3 * h ||
+    rules.some(
+      (r) =>
+        !full.includes(r) &&
+        r.length === 4 &&
+        r[0] < frame[2] &&
+        r[2] > frame[0] &&
+        r[1] > frame[1] &&
+        r[1] < frame[3]
+    ) ||
+    rules.some(
+      (r) =>
+        r[0] === r[2] && r[0] > frame[0] && r[0] < frame[2] && r[1] < frame[3] && r[3] > frame[1]
+    )
+  )
+    return
+  // Include boundary-crossing items before checking containment; a center-only
+  // selection would silently discard foreign or clipped source fragments.
+  const source = items.filter((i) => i.text?.trim() && hit(i.rect, frame)),
+    origins = new Set()
+  // Native rule endpoints and text advances have separate float rounding. Use
+  // the same endpoint agreement as the rules, then retain the actual advance
+  // in the frame rather than clipping it to that tolerance.
+  if (
+    !source.length ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        i.rect[0] < frame[0] - h * 0.002 ||
+        i.rect[2] > frame[2] + h * 0.002 ||
+        i.rect[1] < frame[1] ||
+        i.rect[3] > frame[3] ||
+        !i.sourceItem ||
+        !Number.isSafeInteger(i.sourceItem.index) ||
+        i.sourceItem.index < 0 ||
+        !Number.isSafeInteger(i.sourceItem.pageNumber) ||
+        i.sourceItem.pageNumber < 1 ||
+        i.sourceItem.text !== i.text ||
+        origins.has(i.sourceItem.index) ||
+        !origins.add(i.sourceItem.index)
+    ) ||
+    source.some((i) => i.sourceItem.pageNumber !== source[0].sourceItem.pageNumber)
+  )
+    return
+  frame[0] = Math.min(frame[0], ...source.map((i) => i.rect[0]))
+  frame[2] = Math.max(frame[2], ...source.map((i) => i.rect[2]))
+  if (items.some((i) => i.text?.trim() && hit(i.rect, frame) && !source.includes(i))) return
+  if (
+    captions.filter(
+      (c) =>
+        (c.page === undefined || c.page === source[0].sourceItem.pageNumber) &&
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[0] < frame[2] &&
+        c.rect[2] > frame[0] &&
+        c.rect[3] <= frame[1] &&
+        frame[1] - c.rect[3] < 2 * h
+    ).length !== 1
+  )
+    return
+  const proposed = [
+      frame[0],
+      ...model.slice(1).map((c, n) => crop[0] + (model[n].rect[2] + c.rect[0]) / 2),
+      frame[2]
+    ],
+    lanes = proposed
+      .slice(1)
+      .map((x, n) =>
+        source.filter(
+          (i) => (i.rect[0] + i.rect[2]) / 2 >= proposed[n] && (i.rect[0] + i.rect[2]) / 2 < x
+        )
+      )
+  if (lanes.some((l) => !l.length) || !hasUniqueRecordTokens(source, lanes)) return
+  const cuts = [frame[0]]
+  for (let n = 1; n < 3; n++) {
+    const a = Math.max(...lanes[n - 1].map((i) => i.rect[2])),
+      b = Math.min(...lanes[n].map((i) => i.rect[0]))
+    if (b - a < h * 0.25) return
+    cuts.push((a + b) / 2)
+  }
+  cuts.push(frame[2])
+  const header = source.filter((i) => i.rect[3] < divider[1]),
+    head = readSourceRow(header, cuts),
+    headerRows = groupSourceRowsWithScripts(
+      [...header].sort((a, b) => a.baseline - b.baseline),
+      h,
+      0.05
+    )
+  if (!head?.every((t) => /\p{L}/u.test(t)) || headerRows?.length !== 1) return
+  const records = [],
+    groups = [],
+    edges = [frame[1], divider[1]],
+    spans = []
+  for (let g = 1; g < full.length - 1; g++) {
+    const band = [frame[0], full[g][1], frame[2], full[g + 1][1]],
+      members = source.filter((i) => hit(i.rect, band)),
+      stub = members.filter((i) => i.rect[2] <= cuts[1]),
+      body = members.filter((i) => i.rect[0] >= cuts[1])
+    if (
+      stub.length !== 1 ||
+      !/\p{L}/u.test(stub[0].text) ||
+      members.some((i) => !contains(band, i.rect)) ||
+      !hasUniqueRecordTokens(members, [stub, body])
+    )
+      return
+    const physical = groupSourceRowsWithScripts(
+      [...body].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+      h,
+      0.1
+    )
+    if (!physical || physical.length < 2 || physical.length > 16) return
+    const bounds = physical.map((row) => [
+        Math.min(...row.map((i) => i.rect[1])),
+        Math.max(...row.map((i) => i.rect[3]))
+      ]),
+      middle = (bounds[0][0] + bounds.at(-1)[1]) / 2
+    if (Math.abs(center(stub[0]) - middle) > h * 0.6) return
+    const first = records.length + 1
+    for (let n = 0; n < physical.length; n++) {
+      const row = physical[n],
+        text = readSourceRow(row, cuts),
+        base = row.filter((i) => i.height >= h * 0.8)
+      if (
+        !text ||
+        text[0] ||
+        !/\p{L}/u.test(text[1]) ||
+        !text[2] ||
+        !base.length ||
+        base.some((i) => Math.abs(i.height - h) > h * 0.02) ||
+        row.some(
+          (i) =>
+            !(
+              (i.rect[0] >= cuts[1] && i.rect[2] <= cuts[2]) ||
+              (i.rect[0] >= cuts[2] && i.rect[2] <= cuts[3])
+            )
+        )
+      )
+        return
+      if (n) {
+        const previous = physical[n - 1].filter((i) => i.height >= h * 0.8),
+          gap = base[0].baseline - previous[0].baseline
+        if (gap < h * 0.9 || gap > h * 1.8 || bounds[n - 1][1] >= bounds[n][0]) return
+        edges.push((bounds[n - 1][1] + bounds[n][0]) / 2)
+      }
+      records.push(row)
+    }
+    groups.push(stub)
+    edges.push(full[g + 1][1])
+    spans.push({ row: first, column: 0, rowSpan: physical.length, colSpan: 1 })
+  }
+  if (!hasUniqueRecordTokens(source, [header, ...records, ...groups])) return
+  return {
+    cropRect: frame,
+    rows: edges.slice(1).map((y, n) => [frame[0], edges[n], frame[2], y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], frame[1], x, frame[3]]),
     spans,
     headerRows: [0],
     completeSpans: true,

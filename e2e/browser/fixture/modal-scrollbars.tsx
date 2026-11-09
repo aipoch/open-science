@@ -45,6 +45,7 @@ const reference = {
 window.api = {
   platform: 'win32',
   literature: {
+    overviewBatch: async () => null,
     onChanged: () => () => {},
     search: async ({ scope }: { scope: string }) => ({
       entries:

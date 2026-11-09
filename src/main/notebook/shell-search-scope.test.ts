@@ -6,16 +6,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { runShellCommand } from './shell-process'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import * as windowsRuntime from './windows-notebook-runtime'
 
 describe('Shell search filesystem policy delegation', () => {
   let root: string
   let cwd: string
+  let nodeRuntimeResolver: { mockRestore: () => void }
   beforeEach(async () => {
+    nodeRuntimeResolver = vi
+      .spyOn(windowsRuntime, 'resolveWindowsNotebookNodeRuntime')
+      .mockReturnValue({ root: 'D:\\bundled', node: 'D:\\bundled\\node.exe' })
     root = await mkdtemp(join(tmpdir(), 'shell-search-policy-'))
     cwd = join(root, 'workspace')
     await mkdir(cwd)
   })
   afterEach(async () => {
+    nodeRuntimeResolver.mockRestore()
     await rm(root, { recursive: true, force: true })
   })
 

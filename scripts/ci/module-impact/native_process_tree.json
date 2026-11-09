@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "packages/process-tree-native/src/windows_resource_snapshot.cc",
     "packages/process-tree-native/binding.gyp",
     "packages/process-tree-native/index.cjs",
     "packages/process-tree-native/index.d.ts",
@@ -7,16 +8,24 @@
     "packages/process-tree-native/src/process_tree_native.cc",
     "packages/process-tree-native/src/windows_owned_process.cc",
     "packages/process-tree-native/test/arguments.cjs",
-    "packages/process-tree-native/test/windows-process-identity.cjs",
     "packages/process-tree-native/test/windows-process-query.cjs",
+    "packages/process-tree-native/test/resource-snapshot.cjs",
+    "packages/process-tree-native/test/windows-process-identity.cjs",
     "src/main/windows-process-query.ts",
     "src/main/windows-process-query.test.ts"
   ],
-  "interfacePaths": ["packages/process-tree-native/index.cjs", "src/main/windows-process-query.ts"],
+  "interfacePaths": [
+    "packages/process-tree-native/index.cjs",
+    "packages/process-tree-native/index.d.ts",
+    "src/main/windows-process-query.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": ["src/main/windows-process-query.test.ts"],
-    "contract": ["scripts/native-components.test.ts"],
+    "contract": [
+      "scripts/native-components.test.ts",
+      "src/main/resource-diagnostics/native.integration.test.ts"
+    ],
     "consumer": [
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/desktop-runtime-recovery.integration.test.ts",

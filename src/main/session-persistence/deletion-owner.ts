@@ -157,6 +157,7 @@ type SessionPersistenceDeletionOwnerOptions = {
   log: Logger
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
+  notifyDiscussionDetached(session: PersistedChatSession): void
   notifySessionsDeleted(sessionIds: string[]): Promise<void>
 }
 
@@ -188,6 +189,7 @@ class SessionPersistenceDeletionOwner {
   private readonly log: Logger
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
+  private readonly notifyDiscussionDetached: (session: PersistedChatSession) => void
   private readonly notifySessionsDeleted: (sessionIds: string[]) => Promise<void>
 
   constructor(options: SessionPersistenceDeletionOwnerOptions) {
@@ -202,6 +204,7 @@ class SessionPersistenceDeletionOwner {
     this.log = options.log
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
+    this.notifyDiscussionDetached = options.notifyDiscussionDetached
     this.notifySessionsDeleted = options.notifySessionsDeleted
   }
 
@@ -637,6 +640,8 @@ class SessionPersistenceDeletionOwner {
         this.stateOwner.replaceMetadata(scan.result.sessions, true)
         for (const session of scan.result.sessions) {
           if (session.projectId !== projectId) continue
+          if (session.deletedDiscussionSourceId === sessionId)
+            this.notifyDiscussionDetached(session)
           const changedSources = await this.fileIndex.syncSession(session).catch(() => undefined)
           if (changedSources?.length) {
             survivorChanges.push({ sessionId: session.id, sources: changedSources })
@@ -680,6 +685,7 @@ class SessionPersistenceDeletionOwner {
       const scan = await this.repository.loadProjectWithDiagnostics(projectId)
       if (!scan.isComplete || !this.stateOwner.metadataSnapshot().isComplete) return false
       for (const session of scan.sessions) {
+        if (session.deletedDiscussionSourceId === sessionId) this.notifyDiscussionDetached(session)
         const changedSources = await this.fileIndex.syncSession(session).catch(() => undefined)
         if (changedSources?.length) {
           survivorChanges.push({ sessionId: session.id, sources: changedSources })

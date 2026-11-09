@@ -272,6 +272,48 @@ describe('ACP runtime event normalization', () => {
     }
   )
 
+  it('terminalizes a cancelled versioned compaction without exposing summary content', () => {
+    expect(
+      toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'compact-1',
+            status: 'failed',
+            _meta: { contextCompaction: { version: 1, reason: 'automatic', cancelled: true } },
+            content: [{ type: 'content', content: { type: 'text', text: 'PRIVATE SUMMARY' } }]
+          }
+        },
+        'cancel'
+      )
+    ).toMatchObject({
+      kind: 'compaction',
+      status: 'cancelled',
+      title: 'Context compaction cancelled',
+      compactionReason: 'automatic',
+      toolCallId: 'compact-1'
+    })
+    expect(
+      JSON.stringify(
+        toAcpRuntimeEvent(
+          {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'compact-1',
+              status: 'failed',
+              _meta: {
+                contextCompaction: { version: 1, reason: 'PRIVATE SUMMARY', cancelled: 'true' }
+              }
+            }
+          },
+          'failure'
+        )
+      )
+    ).not.toContain('PRIVATE SUMMARY')
+  })
+
   it.each(['tool_call', 'tool_call_update'] as const)(
     'maps Codex %s completion events for live updates and history replay',
     (sessionUpdate) => {

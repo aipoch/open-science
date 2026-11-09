@@ -1,3 +1,4 @@
+import { ComputeBackendAdapterRegistry, type ComputeBackendAdapter } from './backend'
 import { ComputeJobCancellationReaper, type ReaperOptions } from './compute-job-cancellation-owner'
 import { ConcurrencyManager } from './concurrency-manager'
 import type { ComputeConnectionBrokerAcquirer } from './connection'
@@ -9,9 +10,13 @@ import { JobPoller, type JobPollerDeps } from './job-poller'
 import type { ComputeJobOperationRepository, ComputeJobRepository } from './ports'
 
 /** One execution scope per host runtime. In-flight dispatch never crosses scope boundaries. */
-export const createComputeExecution = (): ComputeExecution => {
+export const createComputeExecution = (
+  options: Readonly<{ backendAdapters?: readonly ComputeBackendAdapter[] }> = {}
+): ComputeExecution => {
   const tracker = new DispatchTracker()
+  const backendAdapters = new ComputeBackendAdapterRegistry(options.backendAdapters)
   return {
+    backendAdapters,
     holdDispatch(jobId: string): () => void {
       tracker.begin(jobId)
       let held = true
@@ -65,6 +70,8 @@ export type ComputeQueueOptions = {
   sessionPolicy?: import('./ports').SessionComputePolicyAuthority
 }
 export interface ComputeExecution {
+  /** Adapter lookup is scoped with dispatch/poll/cancellation ownership. */
+  readonly backendAdapters: ComputeBackendAdapterRegistry
   holdDispatch(jobId: string): () => void
   isDispatching(jobId: string): boolean
   waitForDispatch(jobIds: readonly string[]): Promise<void>

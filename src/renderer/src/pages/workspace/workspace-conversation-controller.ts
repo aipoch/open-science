@@ -633,7 +633,6 @@ const useWorkspaceConversationController = (
             text: docToText(snapshot.doc),
             attachments: snapshot.attachments,
             annotations: snapshot.annotations,
-            discussionFocus: snapshot.discussionFocus,
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
             parts: docToMessageParts(snapshot.doc),
             pdfContext: snapshot.pdfContext,

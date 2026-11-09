@@ -1,6 +1,4 @@
 import { useSettingsStore } from '@/stores/settings-store'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
-import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { act, createElement, StrictMode } from 'react'
@@ -204,7 +202,6 @@ const mounted: Array<ReturnType<typeof renderController>> = []
 const originalApi = window.api
 
 afterEach(() => {
-  useSessionReplayStore.setState({ playhead: undefined })
   for (const hook of mounted.splice(0)) hook.unmount()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   window.api = originalApi
@@ -230,7 +227,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.errorProviderValidations).toBeUndefined()
   })
 
-  it('replaces a discussion source atomically, preserves ordinary annotations, and allows undo', () => {
+  it('rejects changing the parent, updates its step and preserves ordinary annotations through undo', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
     const selected = (sourceSessionId: string, stepId: string): TextAnnotation =>
@@ -258,64 +255,40 @@ describe('workspace composer controller', () => {
       hook.result.current.actions.addAnnotation(first)
       hook.result.current.actions.addAnnotation(second)
     })
-    expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
-    act(() => hook.result.current.actions.addAnnotation(replacement))
-    expect(hook.result.current.view.annotations).toEqual([annotation(), replacement])
+    expect(hook.result.current.view.annotations).toEqual([annotation(), second])
+    expect(hook.result.current.actions.addAnnotation(replacement)).toBe('invalid')
+    expect(hook.result.current.view.annotations).toEqual([annotation(), second])
     act(() => hook.result.current.actions.undo())
-    expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
+    expect(hook.result.current.view.annotations).toEqual([annotation(), first])
   })
 
-  it('captures the linked replay only at Send without changing the draft or an earlier snapshot', () => {
+  it('protects ordinary and other-source drafts while permitting another step from the same source', () => {
     const hook = renderController()
     mounted.push(hook)
-    const context: SessionDiscussionCapture = {
-      projectId: 'project',
-      sourceSessionId: 'source',
-      sourceTitle: 'Study',
-      fingerprint: 'fp',
-      branchId: 'main',
-      stepId: 'one',
-      stepNumber: 1,
-      stepOffsetMs: 0,
-      excerpt: '',
-      evidence: [{ kind: 'message', id: 'one', projectId: 'project', sessionId: 'source' }]
-    }
-    const capture = vi.fn(() => context)
-    act(() => {
-      hook.selectSession({
-        id: 'session-a',
-        projectId: 'project',
-        runtimeContext: {
-          revision: 1,
-          sessionContext: {
-            version: 1,
-            bindings: [
-              {
-                projectId: 'project',
-                sessionId: 'source',
-                contextId: 'old',
-                title: 'Study',
-                branchId: 'main',
-                promptMessageId: 'previous'
-              }
-            ]
-          }
-        }
-      })
-      hook.result.current.actions.changeDoc(textDoc('Explain this step.'))
-      useSessionReplayStore.setState({ playhead: { ...context, capture } })
-    })
-    context.stepId = 'two'
-    context.stepNumber = 2
-    expect(capture).not.toHaveBeenCalled()
-    const sent = hook.result.current.lifecycle.captureSend()
-    context.stepId = 'three'
-    context.stepNumber = 3
-    expect(sent.discussionFocus).toMatchObject({ stepId: 'two', stepNumber: 2 })
-    expect(hook.result.current.view.annotations).toEqual([])
-    expect(docToText(hook.result.current.view.doc)).toBe('Explain this step.')
-    expect(hook.result.current.lifecycle.captureSend().discussionFocus?.stepId).toBe('three')
-    expect(hook.result.current.lifecycle.captureSend(false).discussionFocus).toBeUndefined()
+    const conflict = (): boolean =>
+      hook.result.current.lifecycle.discussionDraftConflict('p', 'import-a')
+    expect(conflict()).toBe(false)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Keep me')))
+    expect(conflict()).toBe(true)
+    const selected = (sourceSessionId: string): TextAnnotation =>
+      createSessionDiscussionAnnotation(
+        {
+          projectId: 'p',
+          sourceSessionId,
+          branchId: 'main',
+          stepId: 'step',
+          stepOffsetMs: 0,
+          sourceTitle: 'Study',
+          excerpt: '',
+          fingerprint: 'fp',
+          evidence: [{ kind: 'message', id: 'm', projectId: 'p', sessionId: sourceSessionId }]
+        },
+        'snapshot'
+      )!
+    act(() => hook.result.current.actions.addAnnotation(selected('import-b')))
+    expect(conflict()).toBe(true)
+    expect(hook.result.current.actions.addAnnotation(selected('import-a'))).toBe('invalid')
+    expect(conflict()).toBe(true)
   })
 
   it('replaces repeated Ask snapshots by logical step and keeps whole-research scope singular', () => {
@@ -351,7 +324,7 @@ describe('workspace composer controller', () => {
       hook.result.current.actions.addAnnotation(repeated)
       hook.result.current.actions.addAnnotation(second)
     })
-    expect(hook.result.current.view.annotations).toEqual([annotation(), repeated, second])
+    expect(hook.result.current.view.annotations).toEqual([annotation(), second])
     const whole = selected('one', 'whole', 'session')
     const wholeAgain = selected('one', 'whole-again', 'session')
     act(() => {
@@ -363,7 +336,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.annotations).toEqual([annotation(), first])
     const alternative = selected('one', 'alternative', undefined, 'other')
     act(() => hook.result.current.actions.addAnnotation(alternative))
-    expect(hook.result.current.view.annotations).toEqual([annotation(), first, alternative])
+    expect(hook.result.current.view.annotations).toEqual([annotation(), alternative])
     act(() => hook.result.current.actions.undo())
     expect(hook.result.current.view.annotations).toEqual([annotation(), first])
   })

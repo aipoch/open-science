@@ -32,16 +32,18 @@ import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { composerContextRowClassName } from './SessionDiscussionBar'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { discussionDraftAnnotations } from './discussion-send-context'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
 import { SessionHeaderMenu } from './SessionHeaderMenu'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { isImportedSession } from './session-action-menu'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { mentionProjectFile } from './project-file-mention'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { NotificationBell } from '@/components/NotificationBell'
@@ -542,6 +544,9 @@ const ConversationPanel = ({
       dismissAutomaticReading
     }
   } = composer
+  const discussionAnnotations = discussionDraftAnnotations(activeSession, annotations).filter(
+    (item) => replayAnnotationTarget(item)
+  )
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
   const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
@@ -935,7 +940,10 @@ const ConversationPanel = ({
     !preparationNoticeBaseline.promptMessageId
       ? preparationNoticeBaseline.state
       : activeSession
-  const sessionRecovery = resolveSessionRecoveryPresentation(activeSession)
+  const sessionRecovery = resolveSessionRecoveryPresentation(
+    activeSession,
+    persistenceIssue?.terminalScopes
+  )
   const showSessionRecovery = Boolean(sessionRecovery || isResuming)
   const resolvedRunError = resolveRunError(legacyDisplayState?.error)
   // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,
@@ -977,7 +985,10 @@ const ConversationPanel = ({
       },
       {
         id: 'composer',
-        message: composerError !== actionError ? composerError : undefined,
+        message:
+          composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
+            ? composerError
+            : undefined,
         detail: composerErrorDetail
       },
       {
@@ -1607,6 +1618,7 @@ const ConversationPanel = ({
                 sourceSession={sourceSession}
                 onOpenSession={sessionTools.openSession}
                 onEdit={sessionTools.editSession}
+                canTogglePin={!isImportedSession(activeSession)}
                 onTogglePin={sessionTools.togglePin}
               />
             ) : (
@@ -1806,6 +1818,19 @@ const ConversationPanel = ({
               )}
               <div className="px-1 md:px-3">
                 <ComposerNoticeSlot
+                  draftConflict={
+                    composerError === DISCUSSION_DRAFT_CONFLICT
+                      ? {
+                          description: t(
+                            'Send or clear your current draft before starting a discussion.'
+                          ),
+                          dismissButton: {
+                            label: t('Dismiss'),
+                            onClick: () => onSetComposerError(null)
+                          }
+                        }
+                      : undefined
+                  }
                   notices={composerNotices.notices}
                   handlers={noticeHandlers}
                   onDismiss={composerNotices.dismiss}
@@ -2155,50 +2180,53 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-2xl bg-bg-200 p-2"
+                        className="relative z-10 rounded-2xl border border-border-200/70 bg-bg-200 p-2.5"
                         aria-label={t('Imported research history')}
                       >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <SessionDiscussionButton
-                            key={activeSession.id}
-                            projectId={activeSession.projectId}
-                            sessionId={activeSession.id}
-                          />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="px-2 text-xs"
-                            aria-controls="right-panel"
-                            onClick={() => {
-                              usePreviewWorkbenchStore
-                                .getState()
-                                .upsertAndActivateItem(
-                                  createSessionReplayItem(
-                                    activeSession.projectId,
-                                    activeSession.id,
-                                    activeSession.title
-                                  )
-                                )
-                            }}
-                          >
-                            <Play className="size-4" aria-hidden="true" />
-                            {t('View replay')}
-                          </Button>
-                          <ResearchVideoButton
-                            key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
-                            projectId={activeSession.projectId}
-                            sessionId={activeSession.id}
-                            branchId={
-                              activeSession.conversationGraph?.frames.find(
-                                (frame) => frame.id === activeSession.conversationGraph?.rootFrameId
-                              )?.activeBranchId
-                            }
-                          />
-                          {sessionForkAvailable() ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                            <SessionDiscussionButton
+                              key={activeSession.id}
+                              projectId={activeSession.projectId}
+                              sessionId={activeSession.id}
+                            />
                             <Button
                               variant="outline"
                               size="sm"
                               className="px-2 text-xs"
+                              aria-controls="right-panel"
+                              onClick={() => {
+                                usePreviewWorkbenchStore
+                                  .getState()
+                                  .upsertAndActivateItem(
+                                    createSessionReplayItem(
+                                      activeSession.projectId,
+                                      activeSession.id,
+                                      activeSession.title
+                                    )
+                                  )
+                              }}
+                            >
+                              <Play className="size-4" aria-hidden="true" />
+                              {t('View replay')}
+                            </Button>
+                            <ResearchVideoButton
+                              key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
+                              projectId={activeSession.projectId}
+                              sessionId={activeSession.id}
+                              branchId={
+                                activeSession.conversationGraph?.frames.find(
+                                  (frame) =>
+                                    frame.id === activeSession.conversationGraph?.rootFrameId
+                                )?.activeBranchId
+                              }
+                            />
+                          </div>
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="w-full px-3 text-xs font-semibold sm:w-auto"
                               onClick={() => {
                                 void forkSession(activeSession)
                               }}
@@ -2296,7 +2324,7 @@ const ConversationPanel = ({
                             aria-hidden="true"
                           />
                         ) : null}
-                        {annotations.some((annotation) => replayAnnotationTarget(annotation)) ||
+                        {discussionAnnotations.length > 0 ||
                         activeSession?.runtimeContext?.sessionContext?.bindings.length ||
                         pdfContext.bindings.length > 0 ||
                         pdfContext.automaticAttachmentCount > 0 ? (
@@ -2305,9 +2333,8 @@ const ConversationPanel = ({
                             data-testid="composer-context-header"
                           >
                             <AnnotationDraftCards
-                              annotations={annotations.filter((annotation) =>
-                                replayAnnotationTarget(annotation)
-                              )}
+                              annotations={discussionAnnotations}
+                              fixedParent={Boolean(activeSession?.parentSessionId)}
                               disabled={!canEditDraft || pdfContext.isPending}
                               onReveal={requestAnnotationReveal}
                               onUpdateNote={onUpdateAnnotationNote}
@@ -2319,6 +2346,7 @@ const ConversationPanel = ({
                             ) ? (
                               <SessionDiscussionSource
                                 key={activeSession.id}
+                                parentSessionId={activeSession.parentSessionId}
                                 projectId={activeSession.projectId}
                                 sessionId={activeSession.id}
                                 context={activeSession.runtimeContext}

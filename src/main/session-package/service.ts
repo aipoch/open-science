@@ -263,6 +263,8 @@ const portableMessage = <T extends PersistedChatSession['messages'][number]>(mes
 // sensitive, never silently removed from the evidence.
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
+  parentSessionId: undefined,
+  deletedDiscussionSourceId: undefined,
   messages: session.messages.map(portableMessage),
   conversationGraph: session.conversationGraph
     ? {
@@ -296,6 +298,8 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const session = hasEnvelopeField ? envelope.session : envelope
   if (!isRecord(session)) return false
   if (
+    Object.hasOwn(session, 'parentSessionId') ||
+    Object.hasOwn(session, 'deletedDiscussionSourceId') ||
     Object.hasOwn(session, 'promptPreparation') ||
     Object.hasOwn(session, 'providerSessionId') ||
     Object.hasOwn(session, 'providerContinuityToken')
@@ -1618,6 +1622,7 @@ export class SessionPackageService {
       )
       let session: PersistedChatSession = {
         ...mappedSession,
+        parentSessionId: undefined,
         id: sessionId,
         projectId,
         number: undefined,

@@ -556,12 +556,16 @@ describe('WorkspaceSidebar accessible render', () => {
               }
             : undefined
         }),
-        createSession({ id: 'local', title: 'New analysis', status: 'idle' })
+        createSession({ id: 'local', title: 'New analysis', status: 'idle' }),
+        createSession({ id: 'discussion', parentSessionId: 'import-session', contentLoaded: false })
       ])
       const container = document.createElement('div')
       container.innerHTML = html
       const imported = container.querySelector('[data-session-id="import-session"]')
       const icon = imported?.querySelector('[role="img"][aria-label="Read-only"]')
+      const child = container.querySelector('[data-session-id="discussion"]')
+      expect(child?.getAttribute('data-parent-session-id')).toBe('import-session')
+      expect(imported?.parentElement?.textContent).toContain('Imported research')
       expect(icon).not.toBeNull()
       expect(icon?.textContent).toBe('')
       expect(
@@ -919,7 +923,6 @@ describe('WorkspaceSidebar accessible render', () => {
       ).toEqual([
         'toggle-pin',
         'edit',
-        'discuss',
         'view-replay',
         'download-artifacts',
         'view-notebook',
@@ -950,7 +953,6 @@ describe('WorkspaceSidebar accessible render', () => {
       ).toEqual([
         'toggle-pin',
         'edit',
-        'discuss',
         'view-replay',
         'download-artifacts',
         'view-notebook',
@@ -969,7 +971,12 @@ describe('WorkspaceSidebar accessible render', () => {
 
   it('applies Session hidden, disabled, and danger presentation to the right-click menu', async () => {
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const session = createSession({ id: 'restricted', title: 'Restricted session', status: 'idle' })
+    const session = createSession({
+      id: 'import-restricted',
+      title: 'Restricted session',
+      status: 'idle',
+      contentLoaded: false
+    })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -1002,7 +1009,7 @@ describe('WorkspaceSidebar accessible render', () => {
         )
       })
 
-      const target = container.querySelector<HTMLElement>('[data-session-id="restricted"]')
+      const target = container.querySelector<HTMLElement>('[data-session-id="import-restricted"]')
       await act(async () => {
         target?.dispatchEvent(
           new MouseEvent('contextmenu', {
@@ -1017,7 +1024,6 @@ describe('WorkspaceSidebar accessible render', () => {
       const actions = Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? [])
 
       expect(actions.map((item) => item.dataset.actionId)).toEqual([
-        'toggle-pin',
         'edit',
         'discuss',
         'view-replay',
@@ -1025,7 +1031,7 @@ describe('WorkspaceSidebar accessible render', () => {
         'archive',
         'delete'
       ])
-      for (const actionId of ['toggle-pin', 'edit', 'archive', 'delete']) {
+      for (const actionId of ['edit', 'archive', 'delete']) {
         expect(
           actions.find((item) => item.dataset.actionId === actionId)?.getAttribute('aria-disabled')
         ).toBe('true')
@@ -2754,21 +2760,25 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onViewNotebook).toHaveBeenCalledWith(sessions[1])
   })
 
-  it('renders a Pinned section above Active only when a session is pinned', async () => {
+  it('renders Pinned before Imported research and Active only when those sections have items', async () => {
     const withoutPins = await renderSidebar([createSession({ id: 'session-a' })])
     expect(withoutPins).not.toContain('>Pinned<')
     expect(withoutPins).toContain('>Active<')
 
     const withPin = await renderSidebar([
       createSession({ id: 'pinned-session', title: 'Kept handy', pinned: true }),
+      createSession({ id: 'import-source', title: 'Imported source', contentLoaded: false }),
       createSession({ id: 'plain-session', title: 'Everyday work' })
     ])
-    // The pinned header must precede the active header so pinned conversations sit at the top.
+    // Pinned conversations sit at the top, followed by live sessions and then Recents.
     expect(withPin).toContain('>Pinned<')
+    expect(withPin).toContain('>Imported research<')
     expect(withPin.indexOf('>Pinned<')).toBeLessThan(withPin.indexOf('>Active<'))
+    expect(withPin.indexOf('>Pinned<')).toBeLessThan(withPin.indexOf('>Imported research<'))
+    expect(withPin.indexOf('>Imported research<')).toBeLessThan(withPin.indexOf('>Active<'))
   })
 
-  it('groups unpinned sessions by live activity, recent completion, and local date', async () => {
+  it('groups unpinned sessions by live activity and Recents', async () => {
     vi.useFakeTimers()
     const now = new Date(2026, 7, 9, 13, 30).getTime()
     vi.setSystemTime(now)
@@ -2838,7 +2848,7 @@ describe('WorkspaceSidebar accessible render', () => {
         })
       ])
 
-      const headings = ['Pinned', 'Active', 'Today', 'Yesterday', 'This week', 'Older']
+      const headings = ['Pinned', 'Active', 'Recents']
       headings.reduce((previousIndex, heading) => {
         const index = html.indexOf(`>${heading}<`)
         expect(index).toBeGreaterThan(previousIndex)
@@ -2846,16 +2856,50 @@ describe('WorkspaceSidebar accessible render', () => {
       }, -1)
 
       expect(html.indexOf('Pinned running session')).toBeLessThan(html.indexOf('>Active<'))
-      expect(html.indexOf('Waiting for approval')).toBeLessThan(html.indexOf('>Today<'))
-      expect(html.indexOf('Waiting for an answer')).toBeLessThan(html.indexOf('>Today<'))
-      expect(html.indexOf('Waiting for plan approval')).toBeLessThan(html.indexOf('>Today<'))
-      expect(html.indexOf('Just completed')).toBeLessThan(html.indexOf('>Today<'))
-      expect(html.indexOf('Earlier today')).toBeGreaterThan(html.indexOf('>Today<'))
-      expect(html.indexOf('Failed today')).toBeGreaterThan(html.indexOf('>Today<'))
-      expect(html.indexOf('Older conversation')).toBeGreaterThan(html.indexOf('>Older<'))
+      expect(html.indexOf('Waiting for approval')).toBeLessThan(html.indexOf('>Recents<'))
+      expect(html.indexOf('Waiting for an answer')).toBeLessThan(html.indexOf('>Recents<'))
+      expect(html.indexOf('Waiting for plan approval')).toBeLessThan(html.indexOf('>Recents<'))
+      expect(html.indexOf('Just completed')).toBeLessThan(html.indexOf('>Recents<'))
+      expect(html.indexOf('Older conversation')).toBeGreaterThan(html.indexOf('>Recents<'))
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('lets session groups collapse without removing their rows from the document', async () => {
+    const sidebar = await mountProjectSidebar([])
+    const active = sidebar.container.querySelector<HTMLDetailsElement>(
+      'details[data-section="Active"]'
+    )
+    expect(active?.open).toBe(true)
+
+    await act(async () => {
+      active?.querySelector<HTMLElement>('summary')?.click()
+    })
+
+    expect(active?.open).toBe(false)
+    expect(active?.querySelector('[data-session-id="session-a"]')).not.toBeNull()
+    sidebar.cleanup()
+  })
+
+  it('reopens the selected session group when selection moves into a collapsed group', async () => {
+    const sidebar = await mountProjectSidebar([])
+    const active = createSession({ id: 'active', status: 'running', updatedAt: 2 })
+    const recent = createSession({ id: 'recent', status: 'idle', updatedAt: 1 })
+
+    await sidebar.rerenderSessions([active, recent])
+    await sidebar.selectSession('active')
+
+    const recents = sidebar.container.querySelector<HTMLDetailsElement>(
+      'details[data-section="Recents"]'
+    )
+    expect(recents?.open).toBe(true)
+    await act(async () => recents?.querySelector<HTMLElement>('summary')?.click())
+    expect(recents?.open).toBe(false)
+
+    await sidebar.selectSession('recent')
+    expect(recents?.open).toBe(true)
+    sidebar.cleanup()
   })
 
   it('presents an in-memory credential request as an active Session needing input', async () => {
@@ -2948,7 +2992,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('moves a recently completed idle session to Today when its Active grace period expires', async () => {
+  it('moves a recently completed idle session to Recents when its Active grace period expires', async () => {
     vi.useFakeTimers()
     const now = new Date(2026, 7, 9, 13, 30).getTime()
     vi.setSystemTime(now)
@@ -2994,14 +3038,14 @@ describe('WorkspaceSidebar accessible render', () => {
       })
 
       expect(container.textContent).toContain('Active')
-      expect(container.textContent).not.toContain('Today')
+      expect(container.textContent).not.toContain('Recents')
 
       await act(async () => {
         vi.advanceTimersByTime(60_001)
       })
 
       expect(container.textContent).not.toContain('Active')
-      expect(container.textContent).toContain('Today')
+      expect(container.textContent).toContain('Recents')
       expect(container.textContent).toContain('Just completed')
     } finally {
       act(() => root.unmount())
@@ -3139,7 +3183,8 @@ describe('WorkspaceSidebar accessible render', () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Unpinned one' }),
-      createSession({ id: 'session-b', title: 'Pinned one', pinned: true })
+      createSession({ id: 'session-b', title: 'Pinned one', pinned: true }),
+      createSession({ id: 'import-session', title: 'Imported one', contentLoaded: false })
     ]
     const onTogglePin = vi.fn()
     const tree = WorkspaceSidebarView({
@@ -3170,15 +3215,20 @@ describe('WorkspaceSidebar accessible render', () => {
     })
     const unpinnedTarget = getSessionActionTargetProps(tree, sessions[0].id)
     const pinnedTarget = getSessionActionTargetProps(tree, sessions[1].id)
+    const importedTarget = getSessionActionTargetProps(tree, sessions[2].id)
     const pinItem = resolveSessionTargetEntries(unpinnedTarget).find(
       (entry) => entry.kind === 'action' && entry.action === 'toggle-pin'
     )
     const unpinItem = resolveSessionTargetEntries(pinnedTarget).find(
       (entry) => entry.kind === 'action' && entry.action === 'toggle-pin'
     )
+    const importedPinItem = resolveSessionTargetEntries(importedTarget).find(
+      (entry) => entry.kind === 'action' && entry.action === 'toggle-pin'
+    )
 
     // The unpinned session-a shows "Pin"; the pinned session-b shows "Unpin".
     expect(pinItem).toMatchObject({ labelKey: 'Pin' })
+    expect(importedPinItem).toBeUndefined()
     await unpinnedTarget.bindings['toggle-pin']?.execute(unpinnedTarget.invocation)
     expect(onTogglePin).toHaveBeenCalledWith(sessions[0])
 

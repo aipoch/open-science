@@ -1,3 +1,4 @@
+import { LOCAL_SERVICE_STOP_BUDGET_MS } from '../src/main/local-service-lifetime'
 import { findBrowserImportPort } from '../src/main/session-package/test-helpers/browser-import-port'
 import { test, expect } from '@playwright/test'
 import { chmod, mkdir, mkdtemp, readFile, writeFile, unlink, stat } from 'node:fs/promises'
@@ -565,7 +566,7 @@ for (const stalled of [false, true]) {
       }
       await expect
         .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
-          timeout: 30_000
+          timeout: LOCAL_SERVICE_STOP_BUDGET_MS + 10_000
         })
         .toBe(true)
       const desktopExitObservedAt = Date.now()
@@ -657,12 +658,12 @@ for (const stalled of [false, true]) {
       expect(f.build.buildId).not.toBe('unrecorded')
       expect(
         Math.max(desktopExitObservedAt, serviceExitObservedAt, cliExitObservedAt) - confirmedAt
-      ).toBeLessThan(27_000)
+      ).toBeLessThan(stalled ? LOCAL_SERVICE_STOP_BUDGET_MS + 7_000 : 27_000)
       expect(residualReceipts).toEqual([])
       if (activeShutdownStartedAt !== undefined)
         expect(
           Math.max(desktopExitObservedAt, serviceExitObservedAt) - activeShutdownStartedAt
-        ).toBeLessThan(22_000)
+        ).toBeLessThan(stalled ? LOCAL_SERVICE_STOP_BUDGET_MS + 2_000 : 22_000)
       if (stalled) expect(activeShutdownStartedAt).toBeDefined()
       expect(controlAlive).toBe(true)
       expect(processEvidence.every((entry) => entry.exited)).toBe(true)
@@ -678,7 +679,7 @@ for (const stalled of [false, true]) {
           await readFile(join(f.roots.storageRoot, 'relaunch-control-close-stalled'), 'utf8')
         ).toBe('stalled')
         expect(Date.now() - started).toBeGreaterThan(15_000)
-        expect(Date.now() - started).toBeLessThan(27_000)
+        expect(Date.now() - started).toBeLessThan(LOCAL_SERVICE_STOP_BUDGET_MS + 7_000)
       }
       {
         // Recreate the two old, count-only diagnostic receipts from the actual owned launches.
@@ -1007,6 +1008,20 @@ test('App-only quit releases its retained socket hold after the desktop exits', 
       await readFile(join(f.roots.storageRoot, 'runtime-owner.json'), 'utf8')
     )
     const token = (await readFile(join(f.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    // A service promoted to persistent running must not retain this Desktop's crash handler.
+    const crashDumps = await f.app.evaluate(({ app }) => app.getPath('crashDumps'))
+    const fixtureCrashpads = async (): Promise<string[]> => {
+      const { stdout } = await promisify(execFile)('/bin/ps', ['-axo', 'command='], {
+        maxBuffer: 16 * 1024 * 1024
+      })
+      return stdout
+        .split('\n')
+        .filter(
+          (line) =>
+            line.includes('/chrome_crashpad_handler ') && line.includes(`--database=${crashDumps} `)
+        )
+    }
+    if (process.platform === 'darwin') expect(await fixtureCrashpads()).toHaveLength(1)
     await f.app.evaluate(({ app }) => app.quit())
     await expect
       .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
@@ -1025,6 +1040,7 @@ test('App-only quit releases its retained socket hold after the desktop exits', 
       })
       .toMatchObject({ apps: 0, explicit: true, stopping: false })
     expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+    if (process.platform === 'darwin') await expect.poll(fixtureCrashpads).toHaveLength(0)
     await f.cli('stop', '--json')
     await expect.poll(() => isRuntimeProcessAlive(f.target.pid), { timeout: 25_000 }).toBe(false)
     acquireRuntimeDirectorySync(f.roots.storageRoot).release()

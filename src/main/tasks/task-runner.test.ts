@@ -1720,13 +1720,8 @@ describe('TaskRunner', () => {
       versionId: 'version-1',
       mimeType: 'text/markdown'
     })
-    await expect(runner.acquireArtifact('artifact-1')).resolves.toMatchObject({
-      resourceId: 'resource-1',
-      name: 'report.md'
-    })
     await runner.releaseArtifact('resource-1')
-    await runner.releaseArtifact('resource-1')
-    expect(released).toEqual(['resource-1', 'resource-1'])
+    expect(released).toEqual(['resource-1'])
   })
 
   it('rejects malformed run requests before crossing a port', async () => {

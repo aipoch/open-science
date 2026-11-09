@@ -4,10 +4,13 @@ export const AGENT_FRAMEWORK_ID_VALUES = Object.freeze([
   'opencode',
   'codex',
   'codebuddy',
-  'pi'
+  'pi',
+  'open-science-agent'
 ] as const)
 
 export type AgentFrameworkId = (typeof AGENT_FRAMEWORK_ID_VALUES)[number]
+
+export const DEFAULT_AGENT_FRAMEWORK_ID: AgentFrameworkId = 'open-science-agent'
 
 export const isAgentFrameworkId = (value: unknown): value is AgentFrameworkId =>
   typeof value === 'string' && (AGENT_FRAMEWORK_ID_VALUES as readonly string[]).includes(value)

@@ -20,6 +20,7 @@ import {
   usePackageOperationStore
 } from '../../stores/package-operation-store'
 
+import { parseApplicationCommandError } from '../../../../shared/application-command-contract'
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest,
@@ -83,6 +84,8 @@ import {
   SessionWriteUnconfirmedError,
   type RetainedSessionWrite,
   type SessionWriteIntent,
+  type SessionSnapshotWriteIntent,
+  type SessionFieldWriteIntent,
   type SessionWriteIssue
 } from './session-write-recovery'
 
@@ -587,7 +590,9 @@ const sessionFieldValuesEqual = (
       )
     : jsonValuesEqual(left, right)
 
-const sessionIntentFields = (intent: SessionWriteIntent): (keyof PersistedChatSession)[] => {
+const sessionIntentFields = (
+  intent: SessionSnapshotWriteIntent
+): (keyof PersistedChatSession)[] => {
   const named = intent.options?.conflictRebaseFields ?? []
   if (
     intent.base?.runtimeTranscriptOwner === 'main' ||
@@ -622,6 +627,92 @@ const sessionIntentFields = (intent: SessionWriteIntent): (keyof PersistedChatSe
   )
 }
 
+const sessionPreferenceValuesEqual = (
+  key: SessionConflictRebaseField,
+  left: unknown,
+  right: unknown
+): boolean => {
+  if (key === 'pinned') return Boolean(left) === Boolean(right)
+  if (key === 'memoryEnabled') return (left !== false) === (right !== false)
+  return sessionFieldValuesEqual(key, left, right)
+}
+
+const captureSessionFieldWrite = (
+  base: PersistedChatSession | undefined,
+  session: PersistedChatSession,
+  options?: SaveSessionOptions,
+  retained?: SessionWriteIntent
+): SessionFieldWriteIntent | undefined => {
+  const fields = options?.conflictRebaseFields
+  if (
+    !base ||
+    base.id !== session.id ||
+    base.projectId !== session.projectId ||
+    base.runtimeTranscriptOwner !== 'main' ||
+    session.runtimeTranscriptOwner !== 'main' ||
+    !fields?.length ||
+    options?.conversationCommands?.length ||
+    options?.runtimeWriterToken ||
+    fields.some((field) => !SESSION_CONFLICT_REBASE_FIELDS.includes(field))
+  )
+    return undefined
+  // Unknown renderer changes and transcript changes keep the full-snapshot fallback.
+  const changedFields = new Set<string>(fields)
+  const retainedFields =
+    retained?.kind === 'fields' &&
+    retained.session.id === session.id &&
+    retained.session.projectId === session.projectId
+      ? retained.changes
+      : undefined
+  for (const key of new Set([...Object.keys(base), ...Object.keys(session)]) as Set<
+    keyof PersistedChatSession
+  >) {
+    if (changedFields.has(key) || key === 'updatedAt' || MAIN_OWNED_SESSION_FIELDS.has(key))
+      continue
+    const retainedChange = retainedFields?.[key as SessionConflictRebaseField]
+    if (
+      retainedChange &&
+      sessionPreferenceValuesEqual(
+        key as SessionConflictRebaseField,
+        retainedChange.after,
+        session[key]
+      )
+    )
+      continue
+    if (!sessionFieldValuesEqual(key, base[key], session[key])) return undefined
+  }
+  const changes: SessionFieldWriteIntent['changes'] = {}
+  for (const field of fields) {
+    Object.assign(changes, {
+      [field]: {
+        before: structuredClone(base[field]),
+        after: structuredClone(session[field])
+      }
+    })
+  }
+  return {
+    kind: 'fields',
+    session: { id: session.id, projectId: session.projectId, title: session.title },
+    baseRevision: sessionRevision(base),
+    changes,
+    options: structuredClone(options)
+  }
+}
+
+const captureSessionWriteIntent = (
+  base: PersistedChatSession | undefined,
+  session: PersistedChatSession,
+  options?: SaveSessionOptions,
+  retained?: SessionWriteIntent
+): SessionWriteIntent =>
+  captureSessionFieldWrite(base, session, options, retained) ?? { base, session, options }
+
+const sessionWriteHasBase = (intent: SessionWriteIntent | undefined): boolean =>
+  intent !== undefined && (intent.kind === 'fields' || intent.base !== undefined)
+
+const sessionWriteBaseRevision = (intent: SessionWriteIntent): number =>
+  intent.kind === 'fields' ? intent.baseRevision : sessionRevision(intent.base ?? intent.session)
+
 const isSessionWriteSatisfied = (
   intent: SessionWriteIntent,
   authority: PersistedChatSession
@@ -631,6 +722,14 @@ const isSessionWriteSatisfied = (
   const acknowledged = new Set(authority.runtimeConversationCommandIds ?? [])
   const commands = retainActivePreparationCommands(intent.options?.conversationCommands ?? [])
   if (commands.some(({ id }) => !acknowledged.has(id))) return false
+  if (intent.kind === 'fields')
+    return Object.entries(intent.changes).every(([key, change]) =>
+      sessionPreferenceValuesEqual(
+        key as SessionConflictRebaseField,
+        change.after,
+        authority[key as SessionConflictRebaseField]
+      )
+    )
   return sessionIntentFields(intent).every((key) =>
     key === 'pinned'
       ? Boolean(intent.session.pinned) === Boolean(authority.pinned)
@@ -642,15 +741,57 @@ const mergeSessionWriteIntent = (
   retained: SessionWriteIntent,
   next: SessionWriteIntent
 ): SessionWriteIntent => {
-  const session = structuredClone(retained.session)
-  const base = retained.base ? structuredClone(retained.base) : undefined
-  const retainedFields = new Set(sessionIntentFields(retained))
-  for (const key of sessionIntentFields(next)) {
-    Object.assign(session, { [key]: structuredClone(next.session[key]) })
-    if (base && !retainedFields.has(key))
-      Object.assign(base, { [key]: structuredClone(next.base?.[key]) })
+  const options = mergeSaveSessionOptions(retained.options, next.options)
+  if (retained.kind === 'fields' && next.kind === 'fields') {
+    const changes = structuredClone(retained.changes)
+    for (const [field, change] of Object.entries(next.changes)) {
+      const previous = changes[field as SessionConflictRebaseField]
+      Object.assign(changes, {
+        [field]: {
+          before: previous ? previous.before : change.before,
+          after: structuredClone(change.after)
+        }
+      })
+    }
+    return { ...retained, session: next.session, changes, options }
   }
-  return { base, session, options: mergeSaveSessionOptions(retained.options, next.options) }
+  const snapshot = retained.kind === 'fields' ? next : retained
+  if (snapshot.kind === 'fields') throw new SessionWriteUnconfirmedError()
+  const session = structuredClone(snapshot.session)
+  const base = snapshot.base ? structuredClone(snapshot.base) : undefined
+  const retainedFields =
+    retained.kind === 'fields'
+      ? (Object.keys(retained.changes) as SessionConflictRebaseField[])
+      : sessionIntentFields(retained)
+  const nextFields =
+    next.kind === 'fields'
+      ? (Object.keys(next.changes) as SessionConflictRebaseField[])
+      : sessionIntentFields(next)
+  if (retained.kind === 'fields') {
+    for (const field of retainedFields as SessionConflictRebaseField[]) {
+      const change = retained.changes[field]!
+      if (base) Object.assign(base, { [field]: structuredClone(change.before) })
+      if (!nextFields.includes(field))
+        Object.assign(session, { [field]: structuredClone(change.after) })
+    }
+  } else {
+    for (const key of nextFields) {
+      const change =
+        next.kind === 'fields' ? next.changes[key as SessionConflictRebaseField] : undefined
+      Object.assign(session, {
+        [key]: structuredClone(
+          change ? change.after : next.kind === 'fields' ? undefined : next.session[key]
+        )
+      })
+      if (base && !retainedFields.includes(key))
+        Object.assign(base, {
+          [key]: structuredClone(
+            change ? change.before : next.kind === 'fields' ? undefined : next.base?.[key]
+          )
+        })
+    }
+  }
+  return { base, session, options }
 }
 
 // Task completion and live renderer projection can assign different IDs to the same reply.
@@ -1134,7 +1275,9 @@ const createOrderedSessionPersistence = (
       const result = await task()
       failedWritesByTarget.delete(target)
       return result
-    } catch (error) {
+    } catch (cause) {
+      // Electron session writes can reject with a public command envelope across contextBridge.
+      const error = cause instanceof Error ? cause : (parseApplicationCommandError(cause) ?? cause)
       if (
         !(error instanceof SessionPersistenceGenerationChangedError) &&
         !(error instanceof SessionExportSaveDeferred)
@@ -1326,9 +1469,15 @@ const createOrderedSessionPersistence = (
       // pending buffer after an older save waits in the queue can attach a newer Message command.
       const submittedOptions = withPendingConversationCommands(session, options)
       const base = acknowledgedSessions.get(session.id)
+      const intent = captureSessionWriteIntent(
+        base,
+        session,
+        submittedOptions,
+        recovery.get(`session:${session.id}`)?.intent
+      )
       return recovery.trackSession(
         `session:${session.id}`,
-        () => ({ base, session, options: submittedOptions }),
+        () => intent,
         () =>
           enqueue(`session:${session.id}`, () => saveSubmittedSession(session, submittedOptions))
       )
@@ -1336,9 +1485,15 @@ const createOrderedSessionPersistence = (
     saveSessionWithRecovery: (session, options, recover) => {
       const submittedOptions = withPendingConversationCommands(session, options)
       const base = acknowledgedSessions.get(session.id)
+      const intent = captureSessionWriteIntent(
+        base,
+        session,
+        submittedOptions,
+        recovery.get(`session:${session.id}`)?.intent
+      )
       return recovery.trackSession(
         `session:${session.id}`,
-        () => ({ base, session, options: submittedOptions }),
+        () => intent,
         () =>
           enqueue(`session:${session.id}`, async () => {
             const submitted = structuredClone(session)
@@ -1419,44 +1574,63 @@ const saveSessionInOrder = async (
   const target = `session:${session.id}`
   let saveOptions = withPendingConversationCommands(session, options)
   const retained = persistence.recovery.get(target)
-  const retainedCommands = retained?.intent?.options?.conversationCommands
-  const rejectedCommand = retainedCommands?.length === 1 ? retainedCommands[0] : undefined
-  const commands = saveOptions?.conversationCommands
-  const command = commands?.length === 1 ? commands[0] : undefined
-  if (
-    retained?.state === 'failed' &&
-    !retained.reviewRequired &&
-    retained.intent?.session.projectId === session.projectId &&
-    retained.intent.session.runtimeTranscriptOwner === 'main' &&
-    session.runtimeTranscriptOwner === 'main' &&
-    sessionIntentFields(retained.intent).length === 0 &&
-    !saveOptions?.conflictRebaseFields?.length &&
-    !saveOptions?.runtimeWriterToken &&
-    ((rejectedCommand?.kind === 'rollback-prompt' &&
-      command?.kind === 'rollback-prompt' &&
-      rejectedCommand.preparationId === command.preparationId &&
-      Boolean(rejectedCommand.preserveSubmittedMessage) ===
-        Boolean(command.preserveSubmittedMessage)) ||
-      (rejectedCommand?.kind === 'prepare-prompt' &&
-        command?.kind === 'prepare-prompt' &&
-        rejectedCommand.promptMessageId === command.promptMessageId &&
-        rejectedCommand.mode === command.mode) ||
-      (command?.kind === 'rollback-prompt' &&
-        session.promptPreparation?.id === command.preparationId &&
-        retainedCommands?.length &&
-        retainedCommands.every((pending) => pending.preparationId === command.preparationId) &&
-        retainActivePreparationCommands(retainedCommands).length === 0))
-  ) {
-    saveOptions = {
-      ...saveOptions,
-      conversationCommands: [
-        rejectedCommand?.kind === 'prepare-prompt' || rejectedCommand?.kind === 'rollback-prompt'
-          ? rejectedCommand
-          : command!
-      ]
+  if (retained) {
+    const rejected = retained.intent?.options?.conversationCommands ?? []
+    const requested = saveOptions?.conversationCommands ?? []
+    // An edited prompt can reset the provider context before its write fails. Keep the exact
+    // pending segment opens for that real reset alongside rollback of the rejected edit.
+    const segments = rejected.filter(
+      (entry) => entry.kind === 'open-segment' && !entry.preparationId
+    )
+    const pendingSegments = requested.filter((entry) => entry.kind === 'open-segment')
+    const replaySegments =
+      requested[0]?.kind === 'rollback-prompt' &&
+      segments.length === pendingSegments.length &&
+      segments.every((segment, index) => segment.id === pendingSegments[index].id)
+        ? segments
+        : []
+    const segmentIds = new Set(replaySegments.map(({ id }) => id))
+    const retainedCommands = rejected.filter(({ id }) => !segmentIds.has(id))
+    const rejectedCommand = retainedCommands.length === 1 ? retainedCommands[0] : undefined
+    const commands = requested.filter(({ id }) => !segmentIds.has(id))
+    const command = commands.length === 1 ? commands[0] : undefined
+    if (
+      retained.state === 'failed' &&
+      !retained.reviewRequired &&
+      retained.intent?.kind !== 'fields' &&
+      retained.intent?.session.projectId === session.projectId &&
+      retained.intent.session.runtimeTranscriptOwner === 'main' &&
+      session.runtimeTranscriptOwner === 'main' &&
+      sessionIntentFields(retained.intent).length === 0 &&
+      !saveOptions?.conflictRebaseFields?.length &&
+      !saveOptions?.runtimeWriterToken &&
+      ((rejectedCommand?.kind === 'rollback-prompt' &&
+        command?.kind === 'rollback-prompt' &&
+        rejectedCommand.preparationId === command.preparationId &&
+        Boolean(rejectedCommand.preserveSubmittedMessage) ===
+          Boolean(command.preserveSubmittedMessage)) ||
+        (rejectedCommand?.kind === 'prepare-prompt' &&
+          command?.kind === 'prepare-prompt' &&
+          rejectedCommand.promptMessageId === command.promptMessageId &&
+          rejectedCommand.mode === command.mode) ||
+        (command?.kind === 'rollback-prompt' &&
+          session.promptPreparation?.id === command.preparationId &&
+          retainedCommands.length > 0 &&
+          retainedCommands.every((pending) => pending.preparationId === command.preparationId) &&
+          retainActivePreparationCommands(retainedCommands).length === 0))
+    ) {
+      saveOptions = {
+        ...saveOptions,
+        conversationCommands: [
+          rejectedCommand?.kind === 'prepare-prompt' || rejectedCommand?.kind === 'rollback-prompt'
+            ? rejectedCommand
+            : command!,
+          ...replaySegments
+        ]
+      }
+    } else {
+      persistence.recovery.assertSettled(target)
     }
-  } else {
-    persistence.recovery.assertSettled(target)
   }
   try {
     const durable = await persistence.saveSessionWithRecovery(
@@ -1880,7 +2054,9 @@ function reportSessionWriteRecovery(
   try {
     const expectedRevision =
       write.intent?.options?.expectedRevision ??
-      (write.intent?.base ? sessionRevision(write.intent.base) : undefined)
+      (write.intent && sessionWriteHasBase(write.intent)
+        ? sessionWriteBaseRevision(write.intent)
+        : undefined)
     reportSessionWriteDiagnostic(
       write.error,
       write.target === 'manifest'
@@ -2458,6 +2634,41 @@ const createStoreSaver = (
         let recoveryOptions = saveOptions
         let submittedAuthority = sourceAuthority
         let submittedSnapshot: PersistedChatSession | undefined
+        const captureFields = (
+          options: SaveSessionOptions | undefined
+        ): SessionFieldWriteIntent | undefined => {
+          if (
+            !sourceAuthority ||
+            !previousSession ||
+            selectionIntent ||
+            hasUnsavedContextReset ||
+            streamingDirtySessionIds.has(session.id) ||
+            (['messages', 'activities', 'activityGroups', 'conversationGraph'] as const).some(
+              (key) => previousSession[key] !== session[key]
+            )
+          )
+            return undefined
+          const allowed = new Set<string>([
+            ...(options?.conflictRebaseFields ?? []),
+            'updatedAt',
+            'unsavedTitle'
+          ])
+          const previous = withoutMainOwnedOrTransientSessionMetadata(previousSession)
+          const current = withoutMainOwnedOrTransientSessionMetadata(session)
+          if (
+            [...new Set([...Object.keys(previous), ...Object.keys(current)])].some(
+              (key) =>
+                !allowed.has(key) &&
+                previous[key as keyof ChatSession] !== current[key as keyof ChatSession]
+            )
+          )
+            return undefined
+          const candidate = { ...sourceAuthority }
+          for (const field of options?.conflictRebaseFields ?? [])
+            Object.assign(candidate, { [field]: session[field] })
+          return captureSessionFieldWrite(sourceAuthority, candidate, options)
+        }
+        let capturedFields = captureFields(recoveryOptions)
         let rebasedBeforeSave = false
         const serializeSession = (): PersistedChatSession => {
           let persisted = toPersistedSession(session, nextStreamingMessages)
@@ -2565,11 +2776,12 @@ const createStoreSaver = (
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
-          intent: () => ({
-            base: submittedAuthority,
-            session: submittedSnapshot ?? toPersistedSession(session, nextStreamingMessages),
-            options: recoveryOptions
-          }),
+          intent: () =>
+            capturedFields ?? {
+              base: submittedAuthority,
+              session: submittedSnapshot ?? toPersistedSession(session, nextStreamingMessages),
+              options: recoveryOptions
+            },
           run: isForced
             ? async () => {
                 const persisted = observePersistencePhase('session-serialize', serializeSession)
@@ -2641,7 +2853,12 @@ const createStoreSaver = (
                   // In-flight turns flush intermediate snapshots at the relaxed streaming cadence;
                   // the terminal commit (streaming slice empty again) reverts to the normal one.
                   streamingSessionIds.has(session.id),
-                  { capture: (options) => (recoveryOptions = options) }
+                  {
+                    capture: (options) => {
+                      recoveryOptions = options
+                      capturedFields = captureFields(options)
+                    }
+                  }
                 )
         })
       }
@@ -2969,7 +3186,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             title: useSessionStore.getState().sessions.find(({ id }) => id === event.sessionId)
               ?.title,
             state: 'failed',
-            kind: 'storage'
+            kind: 'storage',
+            terminalScopes: [event.terminalScope]
           }
         ]
       })
@@ -3149,10 +3367,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
-    setWriteError(undefined)
-    setWriteErrorRetryable(true)
-    sizeLimitTargets.current.clear()
-    setPersistenceBlockedSessionIds([])
+    // Rechecking the catalog is not evidence that an outstanding write succeeded. Keep its
+    // notice and Session write gates until a matching acknowledgement or authoritative
+    // reconciliation resolves them.
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
@@ -3219,33 +3436,51 @@ const useSessionPersistence = (): SessionPersistenceState => {
               reason = 'missing-command-receipts'
               throw new SessionWriteUnconfirmedError()
             }
-            if (!authority && intent.base) {
+            if (!authority && sessionWriteHasBase(intent)) {
               reason = 'session-missing'
               throw new SessionWriteUnconfirmedError()
             }
-            let candidate =
-              authority && intent.base
-                ? rebaseSessionAfterRevisionConflict(intent.base, intent.session, authority)
-                : authority
-                  ? undefined
-                  : intent.session
-            if (authority?.runtimeTranscriptOwner === 'main' && intent.base) {
-              candidate = structuredClone(authority)
-              for (const key of sessionIntentFields(intent)) {
-                if (
-                  !sessionFieldValuesEqual(key, authority[key], intent.session[key]) &&
-                  !sessionFieldValuesEqual(key, authority[key], intent.base[key])
-                ) {
-                  candidate = undefined
-                  break
+            let candidate: PersistedChatSession | undefined
+            if (intent.kind === 'fields') {
+              if (authority?.runtimeTranscriptOwner === 'main') {
+                candidate = structuredClone(authority)
+                for (const [field, change] of Object.entries(intent.changes)) {
+                  const key = field as SessionConflictRebaseField
+                  if (
+                    !sessionPreferenceValuesEqual(key, authority[key], change.after) &&
+                    !sessionPreferenceValuesEqual(key, authority[key], change.before)
+                  ) {
+                    candidate = undefined
+                    break
+                  }
+                  Object.assign(candidate, { [key]: structuredClone(change.after) })
                 }
-                Object.assign(candidate, { [key]: structuredClone(intent.session[key]) })
+              }
+            } else {
+              candidate =
+                authority && intent.base
+                  ? rebaseSessionAfterRevisionConflict(intent.base, intent.session, authority)
+                  : authority
+                    ? undefined
+                    : intent.session
+              if (authority?.runtimeTranscriptOwner === 'main' && intent.base) {
+                candidate = structuredClone(authority)
+                for (const key of sessionIntentFields(intent)) {
+                  if (
+                    !sessionFieldValuesEqual(key, authority[key], intent.session[key]) &&
+                    !sessionFieldValuesEqual(key, authority[key], intent.base[key])
+                  ) {
+                    candidate = undefined
+                    break
+                  }
+                  Object.assign(candidate, { [key]: structuredClone(intent.session[key]) })
+                }
               }
             }
             if (!candidate)
               throw new SessionRevisionConflictError(
-                sessionRevision(intent.base ?? intent.session),
-                sessionRevision(authority ?? intent.session)
+                sessionWriteBaseRevision(intent),
+                authority ? sessionRevision(authority) : 0
               )
             const durable = await liveSessionPersistence.saveSession(candidate, {
               ...intent.options,
@@ -3437,7 +3672,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             liveSessionPersistence.recovery
               .getSnapshot()
               .flatMap(({ target, sessionId }) =>
-                sessionId && !liveSessionPersistence.recovery.get(target)?.intent?.base
+                sessionId &&
+                !sessionWriteHasBase(liveSessionPersistence.recovery.get(target)?.intent)
                   ? [sessionId]
                   : []
               )
@@ -3770,6 +4006,21 @@ const useSessionPersistence = (): SessionPersistenceState => {
     }
   }, [loadAttempt, presentOutstandingWriteFailures, recoveryLoadEpoch])
 
+  // A retained edit and a failed terminal commit can share a target. Keep the edit's
+  // recovery controls while exposing the executions owned by global Retry.
+  const writeIssues = new Map(retainedWriteIssues.map((issue) => [issue.target, issue]))
+  for (const issue of terminalWriteIssues) {
+    const existing = writeIssues.get(issue.target)
+    writeIssues.set(
+      issue.target,
+      existing
+        ? {
+            ...existing,
+            terminalScopes: [...(existing.terminalScopes ?? []), ...(issue.terminalScopes ?? [])]
+          }
+        : issue
+    )
+  }
   return {
     isHydrated,
     isLoading,
@@ -3783,9 +4034,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     writeErrorRetryable,
     isCheckingWrites: retainedWriteIssues.some(({ state }) => state === 'checking'),
     isRetryingWrites,
-    writeIssues: [...retainedWriteIssues, ...terminalWriteIssues].filter(
-      (issue, index, all) => all.findIndex(({ target }) => target === issue.target) === index
-    ),
+    writeIssues: [...writeIssues.values()],
     persistenceBlockedSessionIds: [
       ...new Set([
         ...persistenceBlockedSessionIds,

@@ -288,10 +288,9 @@ jobs:
       # portable zips, plus the electron-updater feed files so the manually dispatched website mirror
       # can republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
       # `*-mac.yml` covers the merged latest-mac.yml (the file the app polls) plus the per-arch
-      # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does
-      # full-zip updates in v1).
+      # arm64/x64-mac.yml intermediates it was built from. ZIP blockmaps accompany both macOS architectures.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: false
           prerelease: false

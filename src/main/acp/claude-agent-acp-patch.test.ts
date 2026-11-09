@@ -161,6 +161,8 @@ console.log(JSON.stringify(outcomes));
           PROBE_KIND: kind
         },
         timeout: 10_000
+      }).catch((error) => {
+        throw new Error(`Launch fixture failed: ${String(error.stderr ?? '')}`, { cause: error })
       })
       expect(JSON.parse(stdout)).toEqual([
         { length: 10, created: true, remaining: 0 },

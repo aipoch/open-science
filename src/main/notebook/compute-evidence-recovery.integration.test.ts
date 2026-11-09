@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   beginComputeJobFileEvidence,
+  closeResidentEvidenceWorker,
   publishComputeJobFileEvidence,
   reconcileComputeJobFileEvidence,
   runEvidenceWorker,
@@ -336,6 +337,8 @@ fs.rmSync = function (path, options) {
 };\n`
       )
       const originalNodeOptions = process.env.NODE_OPTIONS
+      // The resident worker predates the preload; the next request must start a new process.
+      await closeResidentEvidenceWorker()
       vi.stubEnv(
         'NODE_OPTIONS',
         `${originalNodeOptions ?? ''} --require ${JSON.stringify(preload)}`
@@ -344,6 +347,7 @@ fs.rmSync = function (path, options) {
         await expect(reconcileComputeJobFileEvidence(storageRoot, [committed])).rejects.toThrow()
       } finally {
         vi.unstubAllEnvs()
+        await closeResidentEvidenceWorker()
       }
       expect(await readFile(marker, 'utf8')).toBe('interrupted receipt removal')
       expect(await readdir(sessionRoot(committed.session_id))).not.toContain(

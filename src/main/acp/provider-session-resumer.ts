@@ -1,3 +1,4 @@
+import { HARNESS_OWNER } from '../harness-acp/config'
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
 import {
   recordMainAgentContext,
@@ -725,7 +726,15 @@ export class AcpProviderSessionResumer {
             sessionId: providerSessionId,
             cwd,
             mcpServers: sessionCapabilities.mcpServers,
-            ...specialistProjection.setup.metaArg
+            ...specialistProjection.setup.metaArg,
+            ...(backend.framework.id === 'open-science-agent'
+              ? {
+                  _meta: {
+                    ...specialistProjection.setup.metaArg._meta,
+                    [HARNESS_OWNER]: { projectId, sessionId: request.sessionId }
+                  }
+                }
+              : {})
           },
           { cancellationSignal }
         )

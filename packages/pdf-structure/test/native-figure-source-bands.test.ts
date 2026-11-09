@@ -1,11 +1,11 @@
 import { expect, it } from 'vitest'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 import { readPdfFixture } from './read-fixture'
 
-const { associateFigures, associatePreviousPageRasterFigure } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
-)
+const { associateFigures, associatePreviousPageRasterFigure, recoverIsolatedNativeVectorBand } =
+  await import(pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href)
 type Rect = number[]
 type Caption = { page: number; lines: string[]; rect: Rect }
 type Line = { text: string; x: number; y: number; width: number; height: number; fontSize: number }
@@ -100,6 +100,84 @@ it('does not claim an isolated vector strip already owned by a table', () => {
   const f = fixture('isolatedVectorBand')
   f.tableRects.push([330, 690, 500, 730])
   expect(associate(f)[0].rect?.[1] ?? 0).toBeLessThan(680)
+})
+
+it('keeps an entirely outlined plot below three complete prose lines', () => {
+  const lines = Array.from({ length: 3 }, (_, i) => ({
+    text: 'A separate paragraph continues its ordinary discussion of the results.',
+    x: 315,
+    y: 310 + i * 12,
+    width: 242,
+    height: 10,
+    fontSize: 10
+  }))
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. Measured response under controlled conditions.'],
+    rect: [315, 519, 557, 529]
+  }
+  lines.push({ text: caption.lines[0], x: 315, y: 519, width: 242, height: 10, fontSize: 10 })
+  const frame = [355, 375, 545, 483]
+  const plot = [
+    [330, 357, 550, 509],
+    frame,
+    [342, 412, 350, 446],
+    [365, 487, 381, 497],
+    [437, 493, 475, 509]
+  ]
+  const paths = [
+    [445, 161, 459, 167],
+    [509, 158, 526, 164],
+    [459, 176, 474, 186],
+    [526, 176, 540, 183],
+    ...plot
+  ]
+  const f: Fixture = {
+    page: {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds: paths.map((rect) => ({
+        kind: 'path',
+        normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+      }))
+    },
+    candidates: [caption],
+    tableRects: [],
+    rules: [],
+    closedFrames: [frame],
+    nativeTokens: lines.map((line) => ({
+      text: line.text,
+      rect: [line.x, line.y, line.x + line.width, line.y + line.height],
+      height: line.height,
+      baseline: line.y + line.height,
+      horizontal: true,
+      fontDescent: -0.2
+    })),
+    operatorContext: {
+      viewport: { transform: [1, 0, 0, 1, 0, 0] },
+      operators: {
+        fnArray: paths.map(() => OPS.constructPath),
+        argsArray: paths.map((rect) => [OPS.fill, [[]], rect])
+      }
+    }
+  }
+  const recover = (): Rect | undefined =>
+    recoverIsolatedNativeVectorBand(
+      f.page,
+      { caption, rect: [310, 150, 565, 510] },
+      f.candidates,
+      f.tableRects,
+      f.nativeTokens,
+      f.operatorContext,
+      f.closedFrames
+    )
+  expect(recover()).toEqual(plot[0])
+  f.operatorContext!.operators.argsArray[5][2] = [350, 370, 570, 485]
+  expect(recover()).toBeUndefined()
 })
 
 it('completes a native keyed plot plate including headings, vertical labels, and font descenders', () => {

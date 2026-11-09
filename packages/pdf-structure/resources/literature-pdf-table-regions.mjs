@@ -2576,6 +2576,48 @@ function recoverBelowCaptionBooktabs(items, rules, captions, pageNumber, caption
   }
 }
 
+// An open-rule fallback can walk past a complete detector grid into a printed
+// Algorithm/step block. Keep this proof separate so it can be regression-tested
+// without depending on the model's exact rule clustering.
+export function isAlgorithmExtendedOpenRuleDuplicate(
+  items,
+  completeTables,
+  candidate,
+  captions = []
+) {
+  if (!candidate?.id?.includes('open-rule')) return false
+  return completeTables.some((table) => {
+    const complete = table.cropRect,
+      open = candidate?.cropRect
+    if (
+      !validRect(complete) ||
+      !validRect(open) ||
+      open[1] > complete[3] + 4 ||
+      open[3] <= complete[3] + 12 ||
+      Math.min(complete[2], open[2]) - Math.max(complete[0], open[0]) <
+        Math.min(complete[2] - complete[0], open[2] - open[0]) * 0.8
+    )
+      return false
+    const continuation = items.filter(
+      (item) => item.text?.trim() && item.rect[1] >= complete[1] + 4 && item.rect[1] <= open[3] + 2
+    )
+    const algorithmCaption = captions.some(
+      (caption) =>
+        caption.rect?.[1] >= complete[1] + 4 &&
+        caption.rect?.[1] <= open[3] + 2 &&
+        caption.lines?.some((line) =>
+          /^(?:Algorithm\s+\d+|Input|Output|Require|Ensure|Step\s*\d*\s*:)/iu.test(line.trim())
+        )
+    )
+    return (
+      algorithmCaption ||
+      continuation.some((item) =>
+        /^(?:Algorithm\s+\d+|Input|Output|Require|Ensure|Step\s*\d*\s*:)/iu.test(item.text.trim())
+      )
+    )
+  })
+}
+
 // Use each explicit caption to bound a separate grid. Page frames and ordinary
 // forms cannot opt into recovery without a complete source-owned lattice.
 export function recoverCaptionedRuledTables(
@@ -2595,9 +2637,9 @@ export function recoverCaptionedRuledTables(
   // or below a table, so use a short gap on either side plus a real native
   // row/column grid before suppressing only that fallback.  A partial detector
   // box with unresolved source text remains eligible for recovery.
-  const hasCompleteCaptionedTable = (caption) => {
+  const findCompleteCaptionedTables = (caption, includeOverlappingCaption = false) => {
     const captionHeight = Math.max(1, caption.rect[3] - caption.rect[1])
-    return existing.some((table) => {
+    return existing.filter((table) => {
       const crop = table?.cropRect
       if (!crop) return false
       const overlap = Math.min(caption.rect[2], crop[2]) - Math.max(caption.rect[0], crop[0])
@@ -2605,13 +2647,27 @@ export function recoverCaptionedRuledTables(
       if (overlap / Math.max(1, width) < 0.5) return false
       const aboveGap = caption.rect[1] - crop[3]
       const belowGap = crop[1] - caption.rect[3]
-      const nearCaption =
-        (aboveGap >= -2 && aboveGap <= Math.max(36, captionHeight * 8)) ||
-        (belowGap >= -2 && belowGap <= Math.max(36, captionHeight * 8))
+      const captionOverlap =
+        Math.min(caption.rect[3], crop[3]) - Math.max(caption.rect[1], crop[1]) > 0
+      const nearCaption = includeOverlappingCaption
+        ? captionOverlap
+        : (aboveGap >= -2 && aboveGap <= Math.max(36, captionHeight * 8)) ||
+          (belowGap >= -2 && belowGap <= Math.max(36, captionHeight * 8))
       if (!nearCaption) return false
       const objects = table.structure?.objects ?? []
-      const rows = objects.filter((object) => object.label === 'table row').length
-      const columns = objects.filter((object) => object.label === 'table column').length
+      // Detector tables have already been source-assigned by this stage, but
+      // their compact serialized form may not retain the native structure
+      // objects.  A rectangular source-backed grid is equally strong
+      // evidence that the caption already owns a complete table.
+      const nativeRows = objects.filter((object) => object.label === 'table row').length
+      const nativeColumns = objects.filter((object) => object.label === 'table column').length
+      const rows = Math.max(nativeRows, Array.isArray(table.grid) ? table.grid.length : 0)
+      const columns = Math.max(
+        nativeColumns,
+        Array.isArray(table.grid)
+          ? Math.max(0, ...table.grid.map((row) => (Array.isArray(row) ? row.length : 0)))
+          : 0
+      )
       if (rows < 2 || columns < 2) return false
       const source = items.filter(
         (item) => item.horizontal && item.text?.trim() && intersect(item.rect, crop) > 0
@@ -2619,10 +2675,93 @@ export function recoverCaptionedRuledTables(
       if (source.length < rows) return false
       const baselines = new Set(source.map((item) => Math.round(item.baseline ?? item.rect[3])))
       const numeric = source.filter((item) => /\d/u.test(item.text)).length
-      return baselines.size >= 2 && numeric >= 2
+      const assigned = (table.cells ?? []).flatMap((cell) => cell.sourceRects ?? [])
+      const completeSource =
+        (nativeRows >= 2 && nativeColumns >= 2) ||
+        (assigned.length >= rows * columns * 0.5 &&
+          assigned.every((rect) => containsRect(crop, rect)))
+      return baselines.size >= 2 && numeric >= 2 && completeSource
     })
   }
   for (const [index, caption] of candidates.entries()) {
+    const completeCaptionedTables = [
+      ...new Set([
+        ...findCompleteCaptionedTables(caption),
+        ...findCompleteCaptionedTables(caption, true)
+      ])
+    ]
+    const completeCaptionedTable = completeCaptionedTables.length > 0
+    const earlyOpenRule = recoverCaptionedOpenRuleTable(
+      items,
+      rules,
+      pageNumber,
+      caption,
+      candidates,
+      true
+    )
+    const openRuleCandidate =
+      earlyOpenRule ?? recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption, candidates)
+    // A complete detector crop can include its caption. Suppress only an
+    // open-rule candidate that is entirely disjoint from every existing crop,
+    // or one that merges two complete side-by-side crops. A candidate touching
+    // one crop may still be a real continuation frame on a multi-table page.
+    const spansMultipleCompleteTables =
+      openRuleCandidate &&
+      completeCaptionedTables.filter(
+        (table) => intersect(table.cropRect, openRuleCandidate.cropRect) > 0
+      ).length >= 2 &&
+      completeCaptionedTables.some((left, leftIndex) =>
+        completeCaptionedTables.slice(leftIndex + 1).some((right) => {
+          const verticalOverlap =
+            Math.min(left.cropRect[3], right.cropRect[3]) -
+            Math.max(left.cropRect[1], right.cropRect[1])
+          const horizontalGap =
+            left.cropRect[2] <= right.cropRect[0]
+              ? right.cropRect[0] - left.cropRect[2]
+              : right.cropRect[2] <= left.cropRect[0]
+                ? left.cropRect[0] - right.cropRect[2]
+                : 0
+          return horizontalGap > 8 && verticalOverlap > 0
+        })
+      )
+    const suppressOpenRuleCandidate =
+      completeCaptionedTable &&
+      openRuleCandidate &&
+      existing.length > 0 &&
+      (completeCaptionedTables.some((table) => {
+        const objects = table.structure?.objects ?? []
+        const rows = objects.filter((object) => object.label === 'table row').length
+        const columns = objects.filter((object) => object.label === 'table column').length
+        const nativeGridProof =
+          rows >= 2 &&
+          columns >= 2 &&
+          objects
+            .filter((object) => object.label === 'table row' || object.label === 'table column')
+            .every((object) => validRect(object.rect) && containsRect(table.cropRect, object.rect))
+        const assigned = (table.cells ?? []).flatMap((cell) => cell.sourceRects ?? [])
+        const cellProof =
+          assigned.length > 0 && assigned.every((rect) => containsRect(table.cropRect, rect))
+        return (
+          (nativeGridProof || cellProof) &&
+          validRect(table.cropRect) &&
+          intersect(table.cropRect, openRuleCandidate.cropRect) > area(table.cropRect) * 0.5
+        )
+      }) ||
+        spansMultipleCompleteTables ||
+        // A captioned detector grid can be followed by an Algorithm/step
+        // block.  The open-rule fallback sees the first rule and walks through
+        // that block, producing a duplicate table whose extra rows are prose.
+        // Suppress only when the complete grid is contained near the top of
+        // the fallback and the continuation has an explicit algorithm marker.
+        isAlgorithmExtendedOpenRuleDuplicate(
+          items,
+          completeCaptionedTables,
+          openRuleCandidate,
+          captions
+        ) ||
+        existing.every(
+          (table) => !table.cropRect || intersect(table.cropRect, openRuleCandidate.cropRect) <= 0
+        ))
     const closed =
       recoverBelowCaptionTwoLeafGrid(
         items,
@@ -2641,7 +2780,7 @@ export function recoverCaptionedRuledTables(
         rulePaintBounds,
         runs
       ) ??
-      recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption, candidates, true)
+      (suppressOpenRuleCandidate ? undefined : earlyOpenRule)
     if (closed) {
       if (
         ![...existing, ...tables].some(
@@ -2671,7 +2810,7 @@ export function recoverCaptionedRuledTables(
         r[3] <= (next?.rect[1] ?? Infinity)
     )
     const ruled = recoverRuledTable(items, bounded, pageNumber, caption)
-    const openRule = hasCompleteCaptionedTable(caption)
+    const openRule = suppressOpenRuleCandidate
       ? undefined
       : recoverCaptionedOpenRuleTable(
           items,
@@ -2719,7 +2858,7 @@ export function recoverCaptionedRuledTables(
     recovered.id += `-${index}`
     tables.push(recovered)
   }
-  return tables
+  return tables.filter((table) => !isAlgorithmExtendedOpenRuleDuplicate(items, existing, table))
 }
 
 // Numbered symbolic records can prove an image region without proving cells.

@@ -1,7 +1,9 @@
-import { networkInterfaces } from 'node:os'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
-import { domainToASCII } from 'node:url'
+import {
+  normalizeNetworkHostname as normalizeRequestedHost,
+  formatNetworkHostname
+} from '../../../src/network-address.js'
 
 type Rule = Readonly<{
   suffix: string
@@ -14,7 +16,11 @@ type Rule = Readonly<{
 export type TrustedPrivateDestination = Readonly<{
   hostname: string
   port: number
+  protocol?: 'http' | 'https'
+  /** Kept for settings/grant compatibility; it is never used as an authorization condition. */
   approvedAddresses: readonly string[]
+  managedGrantId?: string
+  source?: 'global-destination-grant'
 }>
 
 type DestinationPolicyOptions = Readonly<{
@@ -26,8 +32,15 @@ type DestinationPolicyOptions = Readonly<{
 }>
 
 type DestinationVerdict =
-  | Readonly<{ kind: 'allow'; address: string }>
-  | Readonly<{ kind: 'ask'; source: 'explicit' | 'unknown'; host: string; address: string }>
+  | Readonly<{ kind: 'allow'; address: string; host?: string; addresses?: readonly string[] }>
+  | Readonly<{
+      kind: 'ask'
+      source: 'explicit' | 'unknown'
+      host: string
+      address: string
+      addresses?: readonly string[]
+      reason?: string
+    }>
   | Readonly<{ kind: 'deny'; reason: string; configurable: boolean }>
 
 const parseRule = (text: string): Rule => {
@@ -70,160 +83,16 @@ const ruleAccepts = (rule: Rule, host: string, port: number): boolean => {
   return rule.subdomains ? host.endsWith(`.${rule.suffix}`) : host === rule.suffix
 }
 
-const normalizeRequestedHost = (input: string): string | undefined => {
-  const unwrapped = input.startsWith('[') && input.endsWith(']') ? input.slice(1, -1) : input
-  if (isIP(unwrapped)) return unwrapped.toLowerCase()
-  const ascii = domainToASCII(unwrapped.trim().replace(/\.$/, '').toLowerCase())
-  if (!ascii || ascii.length > 253) return undefined
-  const labels = ascii.split('.')
-  if (
-    labels.some(
-      (label) => !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label)
-    )
-  ) {
-    return undefined
-  }
-  return ascii
-}
-
-const ipv4Number = (address: string): number => {
-  const octets = address.split('.').map(Number)
-  return (((octets[0]! * 256 + octets[1]!) * 256 + octets[2]!) * 256 + octets[3]!) >>> 0
-}
-
-const ipv4In = (address: number, base: string, bits: number): boolean => {
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
-  return (address & mask) === (ipv4Number(base) & mask)
-}
-
-const parseIpv6 = (address: string): bigint | undefined => {
-  const withoutZone = address.split('%', 1)[0]!
-  const halves = withoutZone.split('::')
-  if (halves.length > 2) return undefined
-  const read = (part: string): number[] | undefined => {
-    if (!part) return []
-    const words: number[] = []
-    for (const token of part.split(':')) {
-      if (token.includes('.')) {
-        if (isIP(token) !== 4) return undefined
-        const value = ipv4Number(token)
-        words.push((value >>> 16) & 0xffff, value & 0xffff)
-      } else {
-        if (!/^[0-9a-f]{1,4}$/i.test(token)) return undefined
-        words.push(Number.parseInt(token, 16))
-      }
-    }
-    return words
-  }
-  const left = read(halves[0]!)
-  const right = read(halves[1] ?? '')
-  if (!left || !right) return undefined
-  const missing = 8 - left.length - right.length
-  if (missing < 0 || (halves.length === 1 && missing !== 0)) return undefined
-  const words = [...left, ...Array.from({ length: missing }, () => 0), ...right]
-  return words.reduce((value, word) => (value << 16n) | BigInt(word), 0n)
-}
-
-const ipv6In = (address: bigint, base: bigint, bits: number): boolean => {
-  const shift = BigInt(128 - bits)
-  return address >> shift === base >> shift
-}
-
-// Conservative destination classification, reviewed against IANA's special-purpose
-// registries (2025-10-09 revisions). Protocol-assignment blocks remain excluded,
-// including their globally reachable exceptions: they are not ordinary web hosts.
-// https://www.iana.org/assignments/iana-ipv4-special-registry/
-// https://www.iana.org/assignments/iana-ipv6-special-registry/
-const NON_PUBLIC_IPV4: readonly (readonly [string, number])[] = [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.0.2.0', 24],
-  ['192.88.99.0', 24], // Deprecated 6to4 / non-public 6a44 relay
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['198.51.100.0', 24],
-  ['203.0.113.0', 24],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4]
-]
-
-// Only global unicast 2000::/3 is eligible below. This excludes mapped,
-// compatible and NAT64 translation forms, discard/dummy prefixes, SRv6,
-// unique-local, link/site-local, multicast and currently unallocated space.
-const SPECIAL_GLOBAL_IPV6 = (
-  [
-    ['2001::', 23], // IETF assignments, including Teredo, ORCHID and benchmarking
-    ['2001:db8::', 32],
-    ['2002::', 16], // 6to4 embeds an IPv4 destination
-    ['3fff::', 20]
-  ] as const
-).map(([base, bits]) => [parseIpv6(base)!, bits] as const)
-const GLOBAL_UNICAST_IPV6 = parseIpv6('2000::')!
-
-const isInternetAddress = (address: string): boolean => {
-  if (address.includes('%')) return false
-  const family = isIP(address)
-  if (family === 4) {
-    const value = ipv4Number(address)
-    return !NON_PUBLIC_IPV4.some(([base, bits]) => ipv4In(value, base, bits))
-  }
-  if (family !== 6) return false
-  const value = parseIpv6(address)
-  return (
-    value !== undefined &&
-    ipv6In(value, GLOBAL_UNICAST_IPV6, 3) &&
-    !SPECIAL_GLOBAL_IPV6.some(([base, bits]) => ipv6In(value, base, bits))
-  )
-}
-
-// Private trust is narrower than the complement of isInternetAddress. Never admit
-// loopback, metadata/link-local, CGNAT, transition encodings or host interfaces.
-const isPrivateServiceAddress = (address: string): boolean => {
-  if (address.includes('%')) return false
-  if (isIP(address) === 4) {
-    const value = ipv4Number(address)
-    return (
-      [
-        ['10.0.0.0', 8],
-        ['172.16.0.0', 12],
-        ['192.168.0.0', 16]
-      ] as const
-    ).some(([base, bits]) => ipv4In(value, base, bits))
-  }
-  const value = isIP(address) === 6 ? parseIpv6(address) : undefined
-  // AWS IMDS uses a unique-local address, rather than the usual link-local range.
-  // https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html
-  return (
-    value !== undefined &&
-    value !== parseIpv6('fd00:ec2::254') &&
-    ipv6In(value, parseIpv6('fc00::')!, 7)
-  )
-}
-
 const canonicalAddress = (address: string): string => {
   const unscoped = address.split('%', 1)[0]!
   return isIP(unscoped) === 6 ? new URL(`http://[${unscoped}]/`).hostname.slice(1, -1) : unscoped
 }
 
-const isHostAddress = (address: string): boolean =>
-  Object.values(networkInterfaces()).some((entries) =>
-    entries?.some((entry) => canonicalAddress(entry.address) === canonicalAddress(address))
-  )
-
 const validPrivateService = (value: { hostname: string; port: number }): boolean =>
   Boolean(
     value &&
     typeof value.hostname === 'string' &&
-    normalizeRequestedHost(value.hostname) === value.hostname &&
-    value.hostname.includes('.') &&
-    !isIP(value.hostname) &&
-    value.hostname !== 'localhost' &&
-    !value.hostname.endsWith('.localhost') &&
+    normalizeRequestedHost(value.hostname) !== undefined &&
     Number.isInteger(value.port) &&
     value.port >= 1 &&
     value.port <= 65535
@@ -231,64 +100,60 @@ const validPrivateService = (value: { hostname: string; port: number }): boolean
 
 const validPrivateDestination = (value: TrustedPrivateDestination): boolean =>
   validPrivateService(value) &&
+  (value.protocol === undefined || value.protocol === 'http' || value.protocol === 'https') &&
   Array.isArray(value.approvedAddresses) &&
-  value.approvedAddresses.length > 0 &&
-  value.approvedAddresses.every(
-    (address) => typeof address === 'string' && isPrivateServiceAddress(address)
-  )
+  value.approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45)
 
 const reviewPrivateDestination = async (request: {
   hostname: string
   port: number
+  protocol?: 'http' | 'https'
 }): Promise<
   | { ok: true; destination: TrustedPrivateDestination }
   | { ok: false; reason: 'invalid' | 'ineligible' | 'dns' }
 > => {
   if (!request || typeof request.hostname !== 'string') return { ok: false, reason: 'invalid' }
-  // domainToASCII uses URL host parsing and would otherwise discard a path or query.
-  if (/[\s/\\:@?#%]/.test(request.hostname.trim())) return { ok: false, reason: 'invalid' }
+  if (/[\s/\\@?#%]/.test(request.hostname.trim())) return { ok: false, reason: 'invalid' }
   const hostname = normalizeRequestedHost(request.hostname)
   if (!hostname || !validPrivateService({ hostname, port: request.port }))
     return { ok: false, reason: 'invalid' }
-  const addresses = await lookup(hostname, { all: true, verbatim: true }).then(
-    (records) => records.map(({ address }) => address),
-    () => []
-  )
-  if (!addresses.length) return { ok: false, reason: 'dns' }
-  if (addresses.some((address) => !isPrivateServiceAddress(address) || isHostAddress(address)))
-    return { ok: false, reason: 'ineligible' }
+  if (request.protocol !== 'http' && !isIP(hostname)) return { ok: false, reason: 'ineligible' }
   return {
     ok: true,
     destination: {
       hostname,
       port: request.port,
-      approvedAddresses: [...new Set(addresses.map(canonicalAddress))].sort()
+      protocol: request.protocol ?? 'https',
+      approvedAddresses: []
     }
   }
 }
 
 class DestinationPolicy {
-  readonly #private: readonly TrustedPrivateDestination[]
-  readonly #allowed: readonly Rule[]
-  readonly #asked: readonly Rule[]
+  readonly #trusted: readonly TrustedPrivateDestination[]
   readonly #denied: readonly Readonly<{ raw: string; rule: Rule }>[]
   readonly #reasons: Readonly<Record<string, string>>
 
   constructor(options: DestinationPolicyOptions) {
-    this.#private = (options.trustedPrivateDestinations ?? [])
+    this.#trusted = (options.trustedPrivateDestinations ?? [])
       .filter(validPrivateDestination)
       .map((entry) => ({
         ...entry,
-        approvedAddresses: entry.approvedAddresses.map(canonicalAddress)
+        hostname: normalizeRequestedHost(entry.hostname)!,
+        protocol: entry.protocol ?? 'https'
       }))
-    this.#allowed = options.allowedDomains.map(parseRule)
-    this.#asked = (options.askDomains ?? []).map(parseRule)
     this.#denied = options.deniedDomains.map((raw) => ({ raw, rule: parseRule(raw) }))
     this.#reasons = options.deniedDomainReasons ?? {}
   }
 
-  async inspect(input: string, port: number): Promise<DestinationVerdict> {
+  async inspect(
+    input: string,
+    port: number,
+    protocol: 'http' | 'https' = 'https'
+  ): Promise<DestinationVerdict> {
     const host = normalizeRequestedHost(input)
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      return { kind: 'deny', reason: 'invalid port', configurable: false }
     if (!host) return { kind: 'deny', reason: 'malformed host', configurable: false }
     const blocked = this.#denied.find(({ rule }) => ruleAccepts(rule, host, port))
     if (blocked) {
@@ -298,50 +163,35 @@ class DestinationPolicy {
         configurable: false
       }
     }
+    const trusted = this.#trusted.find(
+      (entry) => entry.hostname === host && entry.port === port && entry.protocol === protocol
+    )
     const addresses = isIP(host)
       ? [host]
       : await lookup(host, { all: true, verbatim: true }).then(
           (records) => records.map(({ address }) => address),
           () => []
         )
-    if (addresses.length === 0) {
+    if (!addresses.length)
       return { kind: 'deny', reason: 'host did not resolve', configurable: false }
-    }
-    if (addresses.some((address) => !isInternetAddress(address))) {
-      const trusted = this.#private.find((entry) => entry.hostname === host && entry.port === port)
-      if (
-        trusted &&
-        addresses.every(
-          (address) =>
-            isPrivateServiceAddress(address) &&
-            !isHostAddress(address) &&
-            trusted.approvedAddresses.includes(canonicalAddress(address))
-        )
-      ) {
-        return { kind: 'allow', address: addresses[0]! }
-      }
-      return {
-        kind: 'deny',
-        reason: trusted
-          ? 'private service addresses changed or are ineligible; review the service in Settings'
-          : 'destination resolves to a non-public network address',
-        configurable: false
-      }
-    }
+    if (trusted) return { kind: 'allow', address: addresses[0]! }
     const address = addresses[0]!
-    const needsApproval = this.#asked.some((rule) => ruleAccepts(rule, host, port))
-    if (
-      this.#allowed.some(
-        (rule) =>
-          ruleAccepts(rule, host, port) &&
-          (!needsApproval || (!rule.subdomains && !rule.labels && !rule.all))
-      )
-    ) {
-      return { kind: 'allow', address }
+    if (protocol === 'https' && !isIP(host)) return { kind: 'allow', address }
+    return {
+      kind: 'ask',
+      source: 'explicit',
+      host,
+      address,
+      addresses: [...new Set(addresses.map(canonicalAddress))].sort()
     }
-    return { kind: 'ask', source: needsApproval ? 'explicit' : 'unknown', host, address }
   }
 }
 
-export { DestinationPolicy, isInternetAddress, reviewPrivateDestination, validPrivateDestination }
+export {
+  DestinationPolicy,
+  formatNetworkHostname,
+  normalizeRequestedHost,
+  reviewPrivateDestination,
+  validPrivateDestination
+}
 export type { DestinationPolicyOptions, DestinationVerdict }

@@ -20,6 +20,15 @@ foreach ($root in $roots) {
 $installation = [IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 # Read-only process inventory. An unavailable inventory must not authorize deletion.
 $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+# The uninstaller invokes this script as a child of its own process. A historical update PID can
+# be reused by that process, and its executable identity may be hidden from the elevated WMI query.
+# Exclude the current cleanup process and its observed ancestors before evaluating recorded owners.
+$ancestors = [Collections.Generic.HashSet[uint32]]::new()
+$cursor = $processes | Where-Object { $_.ProcessId -eq $PID } | Select-Object -First 1
+while ($cursor -and $cursor.ParentProcessId -and $ancestors.Add([uint32]$cursor.ParentProcessId)) {
+  $parentPid = $cursor.ParentProcessId
+  $cursor = $processes | Where-Object { $_.ProcessId -eq $parentPid } | Select-Object -First 1
+}
 $uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 $owned = "^(request\.json|config\.bin|helper\.exe|cancel|(accepted|installing|installed|failed|ready|closed|aborted|handoff|unconfirmed)\.receipt)(?:\.$uuid\.tmp|\.tmp)?$"
 foreach ($root in $roots) {
@@ -47,6 +56,7 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   catch { continue }
   $helper = Join-Path $directory.FullName 'helper.exe'
   $active = @($processes | Where-Object {
+    if ($_.ProcessId -eq $PID -or $ancestors.Contains([uint32]$_.ProcessId)) { return $false }
     # Historic PIDs can be reused by unrelated processes after an update or reboot. A readable
     # different executable is not an owner; preserve uncertainty only when its identity is hidden.
     $recordedPid = $_.ProcessId -eq $request.parentPid -or

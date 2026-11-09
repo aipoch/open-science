@@ -62,3 +62,14 @@ export const validateRelativeTransferPath = (path: string): string | undefined =
   if (SHELL_UNSAFE_CHARS.test(path)) return 'shell-unsafe characters in path'
   return undefined
 }
+
+// ZIP members and files on a shared mount must have the same meaning on every supported host.
+export const isPortableComputeFileName = (name: string): boolean =>
+  name.length > 0 &&
+  name !== '.' &&
+  name !== '..' &&
+  Buffer.byteLength(name) <= 255 &&
+  !/[\\/:*?"<>|]/.test(name) &&
+  !CONTROL_CHARS.test(name) &&
+  !/[. ]$/.test(name) &&
+  !/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)

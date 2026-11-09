@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // Tests for JobDetailModal — tab switching, Back navigation, and session jobs list.
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +10,7 @@ import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // Mock radix Dialog to avoid portal / overlay complexity in jsdom
-vi.mock('radix-ui', () => {
+vi.mock('radix-ui', async (load) => {
   const Root = ({
     open,
     children
@@ -50,6 +51,7 @@ vi.mock('radix-ui', () => {
   )
 
   return {
+    ...(await load<typeof import('radix-ui')>()),
     Dialog: { Root, Portal, Overlay, Content, Close },
     Tooltip: {
       Root: TooltipRoot,
@@ -413,6 +415,69 @@ describe('JobDetailModal — detail view', () => {
     expect(container.textContent).toContain('Cancelling')
   })
 
+  it('confirms the exact staged prefix and retries cleanup for the same job', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      provider_id: 'hf-jobs:target',
+      status: 'error',
+      manualStagedCleanup: {
+        kind: 'hugging_face_jobs',
+        bucket: 'lab/files',
+        prefix: 'open-science/job-abc'
+      }
+    })
+    const jobsSetRemoteCleanup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(undefined)
+    const jobsList = vi.fn(async () => [{ ...job, manualStagedCleanup: undefined }])
+    Object.assign(window, { api: { compute: { jobsSetRemoteCleanup, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(
+        <JobDetailModal open sessionId={job.session_id} initialJob={job} onClose={vi.fn()} />
+      )
+    )
+    const button = (label: string): HTMLButtonElement =>
+      Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === label)!
+    act(() => button('Clean up staged resources').click())
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'open-science/job-abc'
+    )
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('lab/files')
+    expect(jobsSetRemoteCleanup).not.toHaveBeenCalled()
+    await act(async () => button('Delete').click())
+    expect(document.querySelector('[role="alertdialog"] [role="alert"]')).not.toBeNull()
+    await act(async () => button('Delete').click())
+    expect(jobsSetRemoteCleanup).toHaveBeenLastCalledWith({
+      providerId: job.provider_id,
+      jobId: job.job_id,
+      sessionId: job.session_id,
+      projectId: job.project_id,
+      disposition: 'cleaned',
+      manualStagedCleanup: true
+    })
+    expect(button('Clean up staged resources')).toBeUndefined()
+  })
+
+  it('hides local staged cleanup controls on the remote Web surface', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      manualStagedCleanup: { kind: 'modal_sandbox', environmentName: 'dev', volumeId: 'vo-demo' }
+    })
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    try {
+      act(() =>
+        root.render(
+          <JobDetailModal open sessionId={job.session_id} initialJob={job} onClose={vi.fn()} />
+        )
+      )
+      expect(container.textContent).not.toContain('Clean up staged resources')
+    } finally {
+      document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    }
+  })
+
   it('refreshes details by fetching the Session job list', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob({ status: 'running', stdout_tail: 'old output' })
@@ -631,44 +696,76 @@ describe('JobDetailModal — detail view', () => {
     expect(container.querySelector('[data-testid="session-jobs-list"]')).toBeTruthy()
   })
 
-  it('renders remote workdir link', async () => {
+  it('closes the detail after opening an archived output in the workbench', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
-    const job = makeJob({ remote_workdir: '/home/user/.openscience/jobs/job-abc' })
-    useSessionJobStore.getState().applyUpdate(job)
-
-    act(() => {
-      root.render(
-        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
-      )
-    })
-
-    expect(container.textContent).toContain('/home/user/.openscience/jobs/job-abc')
-  })
-
-  it('opens FileBrowserModal when workdir link is clicked', async () => {
-    const { JobDetailModal } = await import('./JobDetailModal')
+    const { usePreviewWorkbenchStore } = await import('@/stores/preview-workbench-store')
+    const onClose = vi.fn()
     const job = makeJob({
-      remote_workdir: '/home/user/.openscience/jobs/job-abc',
-      provider_id: 'ssh:biowulf'
+      status: 'success',
+      execution_mode: 'ray_jobs',
+      provider_id: 'ray:cluster',
+      harvested_at: Date.now(),
+      featured_files: ['hpc/job-abc/featured/summary.tsv']
     })
-    useSessionJobStore.getState().applyUpdate(job)
-
-    act(() => {
-      root.render(
-        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
-      )
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={onClose} />)
+    )
+    const output = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'summary.tsv'
+    )
+    expect(output).toBeDefined()
+    act(() => output!.click())
+    const { activeItemId, items } = usePreviewWorkbenchStore.getState()
+    expect(items.find((item) => item.id === activeItemId)).toMatchObject({
+      name: 'summary.tsv',
+      source: 'compute-output',
+      projectId: 'project-1',
+      sessionId: 'sess-1'
     })
-
-    // Find the workdir link button
-    const workdirBtn = container.querySelector(
-      '[data-testid="job-meta"] button'
-    ) as HTMLButtonElement
-    act(() => workdirBtn.click())
-
-    const browser = container.querySelector('[data-testid="file-browser-modal"]')
-    expect(browser).toBeTruthy()
-    expect(browser?.getAttribute('data-provider')).toBe('ssh:biowulf')
+    expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    ['ssh:biowulf', undefined, true],
+    ['ssh:biowulf', 'direct_ssh', true],
+    ['ssh:biowulf', 'slurm', true],
+    ['kubernetes:cluster', 'kubernetes', false],
+    ['hf-jobs:worker', 'hugging_face_jobs', false],
+    ['ray:cluster', 'ray_jobs', false],
+    ['modal:worker', 'modal_sandbox', false],
+    ['unknown:worker', undefined, false],
+    ['unknown:worker', 'direct_ssh', false]
+  ] as const)(
+    'gates workdir browsing for %s (%s)',
+    async (providerId, executionMode, browsable) => {
+      const { JobDetailModal } = await import('./JobDetailModal')
+      const workdir = '/work/job-abc'
+      const job = makeJob({
+        remote_workdir: workdir,
+        provider_id: providerId,
+        execution_mode: executionMode
+      })
+      useSessionJobStore.getState().applyUpdate(job)
+      act(() => {
+        root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+      })
+      const meta = container.querySelector('[data-testid="job-meta"]')!
+      expect(meta.textContent).toContain(workdir)
+      const link = Array.from(meta.querySelectorAll('button')).find(
+        (button) => button.textContent === workdir
+      )
+      expect(Boolean(link)).toBe(browsable)
+      if (link) {
+        act(() => link.click())
+        expect(
+          container
+            .querySelector('[data-testid="file-browser-modal"]')
+            ?.getAttribute('data-provider')
+        ).toBe(providerId)
+      }
+    }
+  )
 })
 
 describe('JobDetailModal — session jobs list view', () => {

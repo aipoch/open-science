@@ -1,4 +1,9 @@
 import type { CredentialsServiceId, CredentialsView } from '../../lib/settings-navigation'
+import { RayCredentials } from './RayCredentials'
+import rayIcon from '@/assets/provider-icons/ray.svg'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
+import { ComputeAccountRow, ComputeCredentialDetail } from './ComputeAccountControls'
+import { computeAccountActionsAvailable } from './use-compute-account'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
@@ -63,6 +68,10 @@ export function CredentialsPanel({
   onLeaveStateChange
 }: CredentialsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
+  const rayTokensAvailable =
+    typeof window !== 'undefined' &&
+    document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) !== 'remote' &&
+    typeof window.api?.compute?.listRayTokens === 'function'
   const fileCredentialNotice = useFileCredentialNotice()
   const semanticScholar = useSettingsStore((state) => state.semanticScholar)
   const setSemanticScholarCredential = useSettingsStore(
@@ -125,7 +134,8 @@ export function CredentialsPanel({
         emailDraft.value !== storedEmail))
 
   const delegatesLeaveState =
-    view.kind === 'service' && (view.serviceId === 'unpaywall' || view.serviceId === 'github')
+    view.kind === 'service' &&
+    (view.serviceId === 'unpaywall' || view.serviceId === 'github' || view.serviceId === 'ray')
   useLayoutEffect(() => {
     if (view.kind === 'service' && !delegatesLeaveState) onLeaveStateChange?.({ dirty, busy })
   }, [busy, delegatesLeaveState, dirty, onLeaveStateChange, view.kind])
@@ -279,6 +289,19 @@ export function CredentialsPanel({
   }
 
   if (view.kind === 'service') {
+    if (view.serviceId === 'ray')
+      return rayTokensAvailable ? (
+        <RayCredentials onLeaveStateChange={onLeaveStateChange} />
+      ) : (
+        <p className="p-5 text-sm text-muted-foreground">{t('Desktop only')}</p>
+      )
+    if (view.serviceId === 'hugging-face' || view.serviceId === 'modal') {
+      return computeAccountActionsAvailable() ? (
+        <ComputeCredentialDetail key={view.serviceId} provider={view.serviceId} />
+      ) : (
+        <p className="p-5 text-sm text-muted-foreground">{t('Desktop only')}</p>
+      )
+    }
     if (view.serviceId === 'unpaywall')
       return (
         <div className="space-y-5 p-5">
@@ -570,6 +593,28 @@ export function CredentialsPanel({
             )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">
+          {computeAccountActionsAvailable() &&
+            (['hugging-face', 'modal'] as const).map((provider) => (
+              <ComputeAccountRow
+                key={provider}
+                provider={provider}
+                onManage={() => onNavigate({ kind: 'service', serviceId: provider })}
+              />
+            ))}
+          {rayTokensAvailable && (
+            <div className="flex min-w-0 items-center gap-3 px-4 py-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
+                <img src={rayIcon} alt="" className="size-5 dark:invert" />
+              </span>
+              <div className="min-w-0 flex-1 text-sm font-medium">{t('Ray Jobs')}</div>
+              <Button
+                variant="outline"
+                onClick={() => onNavigate({ kind: 'service', serviceId: 'ray' })}
+              >
+                {t('Manage')}
+              </Button>
+            </div>
+          )}
           {services.map(({ id, label, description, configured, desktopOnly, Icon }) => {
             const checking = desktopOnly && desktopCredentialAvailability === 'checking'
             const unavailable = desktopOnly && desktopCredentialAvailability === 'unavailable'

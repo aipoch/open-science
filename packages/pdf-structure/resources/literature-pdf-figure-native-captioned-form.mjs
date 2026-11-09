@@ -650,7 +650,13 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
 // Type3 charprocs execute on the caller's CanvasGraphics stack. Verify their
 // live control flow rather than assuming the surrounding Form clip survives.
 // Internal path geometry stays opaque and never grants Source ownership.
-function liveType3FormStack(context, glyphs, scope) {
+const type3FontProgramPurpose = Symbol('type3-font-program-current')
+// A caller with its own complete render-stream proof can reuse the live font
+// and charproc guard without pretending API image ids are renderer image ids.
+export function liveType3FontPrograms(context, glyphs, scope) {
+  return liveType3FormStack(context, glyphs, scope, type3FontProgramPurpose)
+}
+function liveType3FormStack(context, glyphs, scope, purpose) {
   if (!glyphs.length) return () => true
   const arrayData = (value) => {
       if (
@@ -678,8 +684,9 @@ function liveType3FormStack(context, glyphs, scope) {
     actual.length !== raw.length ||
     !Array.isArray(operators?.fnArray) ||
     !Array.isArray(operators.argsArray) ||
-    !equal(operators.fnArray, sourceOps.fnArray) ||
-    operators.argsArray.length !== sourceOps.argsArray.length
+    (purpose !== type3FontProgramPurpose &&
+      (!equal(operators.fnArray, sourceOps.fnArray) ||
+        operators.argsArray.length !== sourceOps.argsArray.length))
   )
     return
   for (const [i, row] of raw.entries()) {
@@ -696,7 +703,7 @@ function liveType3FormStack(context, glyphs, scope) {
     forward.set(row.fontName, other.fontName)
     reverse.set(other.fontName, row.fontName)
   }
-  for (const [i, op] of sourceOps.fnArray.entries())
+  for (const [i, op] of (purpose === type3FontProgramPurpose ? [] : sourceOps.fnArray).entries())
     if (op === OPS.setFont) {
       const a = sourceOps.argsArray[i],
         b = operators.argsArray[i]
@@ -716,7 +723,7 @@ function liveType3FormStack(context, glyphs, scope) {
       forward.set(a[0], b[0])
       reverse.set(b[0], a[0])
     }
-  for (const [i, op] of sourceOps.fnArray.entries()) {
+  for (const [i, op] of (purpose === type3FontProgramPurpose ? [] : sourceOps.fnArray).entries()) {
     const args = sourceOps.argsArray[i],
       expected =
         op === OPS.setFont
@@ -774,11 +781,19 @@ function liveType3FormStack(context, glyphs, scope) {
     used.get(id).add(name)
   }
   const fonts = []
+  const fontKeys = [
+    'isType3Font',
+    'loadedName',
+    'charProcOperatorList',
+    ...(purpose === type3FontProgramPurpose
+      ? ['fontMatrix', 'missingFile', 'isInvalidPDFjsFont', 'vertical']
+      : [])
+  ]
   for (const [id, names] of used) {
     const font = get.call(store, id),
-      chain = slots(font, ['isType3Font', 'loadedName', 'charProcOperatorList'])
+      chain = slots(font, fontKeys)
     if (!chain) return
-    for (const key of ['isType3Font', 'loadedName', 'charProcOperatorList']) {
+    for (const key of fontKeys) {
       const entry = chain.find((level) =>
           level.descriptors.find(([name, descriptor]) => name === key && descriptor)
         ),

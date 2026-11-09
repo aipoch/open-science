@@ -6,7 +6,7 @@ test('withdraws a cancelled network approval on an incremental state update', as
   await page.setViewportSize({ width: 1000, height: 550 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/web-permission.html?network=1')
-  const approval = page.getByTestId('permission-header')
+  const approval = page.getByTestId('permission-card')
   await expect(approval).toBeVisible()
   await expect(approval).toContainText('tcga-xena-hub.s3.us-east-1.amazonaws.com')
   await page.screenshot({

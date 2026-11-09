@@ -1745,6 +1745,27 @@ class NotebookLocalRpcServer {
     }
   }
 
+  /** Read-only identity for an embedded harness borrowing this turn's execution capability. */
+  getArtifactTurnScope(sessionId: string):
+    | {
+        sessionId: string
+        projectId: string
+        ownerExecutionId: string
+        promptMessageId: string
+      }
+    | undefined {
+    const canonical = this.sessionAliases.get(sessionId) ?? sessionId
+    const binding = this.activeArtifactTurnBindings.get(canonical)
+    return binding
+      ? {
+          sessionId: canonical,
+          projectId: binding.projectId,
+          ownerExecutionId: binding.ownerExecutionId,
+          promptMessageId: binding.provenanceContext.promptMessageId
+        }
+      : undefined
+  }
+
   async clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): Promise<void> {
     const ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
     const binding = ownedTurns?.get(ownerExecutionId)
@@ -1819,7 +1840,7 @@ class NotebookLocalRpcServer {
     if (method !== 'artifactSaveVersion') {
       throw new RpcHttpError(
         409,
-        'Artifact save protocol changed. Restart the Agent MCP connection.'
+        'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact save protocol changed. Do not retry this turn; tell the user to start a new conversation turn.'
       )
     }
     if (!capability.sourceScope)

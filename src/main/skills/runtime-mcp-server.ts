@@ -10,6 +10,7 @@ import { isAbsolute, join } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import type { McpServer } from '@agentclientprotocol/sdk'
@@ -90,21 +91,35 @@ const createSkillRuntimeMcpServer = async (
   environment: SkillRuntimeEnvironment
 ): Promise<ModelContextProtocolServer> => {
   const catalog = await readSkillRuntimeCatalog(environment)
-  const server = new ModelContextProtocolServer({
-    name: SKILL_RUNTIME_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: SKILL_RUNTIME_MCP_SERVER_NAME, version: '1.0.0' })
+  )
   server.registerTool(
     LOAD_SKILL_TOOL_NAME,
     {
       title: 'Load Skill',
       description: LOAD_SKILL_DESCRIPTION_HEADER,
-      inputSchema: { skill: createSkillNameInputSchema(catalog), args: z.string().optional() },
+      inputSchema: {
+        skill: createSkillNameInputSchema(catalog),
+        args: z
+          .string()
+          .optional()
+          .describe('Optional arguments substituted for $ARGUMENTS in the Skill document.')
+      },
       _meta: { 'anthropic/alwaysLoad': true }
     },
-    async ({ skill, args }) => ({
-      content: [{ type: 'text', text: await loadSkillDocument(environment, skill, args) }]
-    })
+    async ({ skill, args }) => {
+      try {
+        return {
+          content: [{ type: 'text', text: await loadSkillDocument(environment, skill, args) }]
+        }
+      } catch (error) {
+        throw new Error(
+          `SKILL_NOT_FOUND: ${error instanceof Error ? error.message : String(error)}. Pass an exact canonical name from the skill parameter schema or the user's request; do not guess similar names.`,
+          { cause: error }
+        )
+      }
+    }
   )
   return server
 }

@@ -4313,7 +4313,10 @@ it.each([
 const savedHatchApi = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
 )
-const anonymousSavedHatch = (variant = ''): ReturnType<typeof JSON.parse> => {
+const anonymousSavedHatch = (
+  variant = '',
+  completePrefix = false
+): ReturnType<typeof JSON.parse> => {
   const f = anonymousCertifiedPicture([], undefined, false, false, [])
   for (const a of [
     f.context.operators.fnArray,
@@ -4366,21 +4369,38 @@ const anonymousSavedHatch = (variant = ''): ReturnType<typeof JSON.parse> => {
     ])
   pattern('#c7c7c7')
   f.shape(60, 100, 270, 150)
+  if (completePrefix) {
+    f.add(OPS.restore, null)
+    f.add(OPS.save, null)
+  }
   pattern('#ecb78c')
   f.shape(90, 125, 210, 100)
+  if (completePrefix) {
+    f.add(OPS.restore, null)
+    f.add(OPS.save, null)
+    pattern('#888888')
+    const a = f.context.operators.argsArray.at(-1)
+    a[5] = a[6] = 5.2
+    f.shape(110, 150, 150, 50)
+  }
   f.add(OPS.setFillRGBColor, ['#000000'])
   f.text('North axis', 90, 140)
   f.text('Panel A', 90, 160)
   f.text('Panel B', 200, 180)
   f.text('Summary', 100, 230)
   if (variant !== 'unclosed-save') f.add(OPS.restore, null)
+  if (completePrefix && variant === 'retained-descender') {
+    f.text('Panel summary', 120, 250)
+    f.context.glyphBounds[0].glyphs.at(-1).bounds[1] = -0.5
+  }
+  if (completePrefix && variant === 'foreign-paint') f.shape(80, 110, 5, 5)
   if (variant === 'foreign-overlap') f.text('Unrelated exterior label', 80, 160)
   const line = 'Figure 1. Independent diagram.'
   f.text(line, 60, 285)
   f.figure = {
     id: 'saved-hatch-view',
     page: 1,
-    rect: [50, 65, 350, 270],
+    rect: completePrefix ? [110, 100, 330, 250] : [50, 65, 350, 270],
     caption: { page: 1, rect: [60, 275, 230, 285], lines: [line] }
   }
   f.captions = [f.figure.caption]
@@ -4463,6 +4483,96 @@ it.each(['unsupported-cell', 'unclosed-save', 'foreign-overlap', 'open-body', 'm
 const keyedPairModule = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
 )
+
+function anonymousDualApiHatch(): ReturnType<typeof JSON.parse> {
+  const f = anonymousSavedHatch()
+  f.text('µ', 20, 350)
+  const raw = f.context.content.items.at(-1),
+    token = f.tokens.at(-1),
+    glyph = f.context.operators.argsArray.at(-2)[0][0]
+  glyph.originalCharCode = 181
+  raw.str = raw.sourceItem.text = token.text = 'μ'
+  const defaultContent = structuredClone(f.context.content)
+  defaultContent.items.forEach((r) => delete r.sourceItem)
+  const rawContent = structuredClone(defaultContent)
+  rawContent.items.at(-1).str = 'µ'
+  const viewport = { ...f.context.viewport }
+  delete viewport.convertToViewportPoint
+  f.context.dualApiEvidence = {
+    schema: 'same-pdfjs-page-dual-api-capture-v1',
+    pdfjsVersion: nativePdfVersion,
+    apiDefaultOptions: {},
+    apiRawOptions: { disableNormalization: true },
+    pageNumber: 1,
+    sourceSha256: f.context.sourceSha256,
+    defaultContent,
+    rawContent,
+    renderContext: {
+      pageNumber: 1,
+      sourceSha256: f.context.sourceSha256,
+      viewport,
+      operators: structuredClone(f.context.operators),
+      content: structuredClone(defaultContent),
+      glyphBounds: structuredClone(f.context.glyphBounds),
+      graphicsBounds: structuredClone(f.page.graphicsBounds)
+    }
+  }
+  return f
+}
+
+it('binds foreign micro-sign occurrences in a saved hatch crop without rewriting either source API', () => {
+  const f = anonymousDualApiHatch(),
+    before = JSON.stringify(f),
+    plan = savedHatchPlan(f)
+  expect(plan?.kind).toBe('complete-native-uncolored-saved-pixel')
+  expect(plan.rect).toEqual([58, 98, 332, 252])
+  expect(plan.sourceItems).toBeUndefined()
+  expect(plan.nativeBody).toBeUndefined()
+  expect(f.context.content.items.at(-1).str).toBe('μ')
+  expect(f.context.dualApiEvidence.rawContent.items.at(-1).str).toBe('µ')
+  expect(JSON.stringify(f)).toBe(before)
+})
+
+it.each(['raw-width', 'other-pdf', 'missing-charcode', 'foreign-paint'])(
+  'rejects an unproved saved-hatch dual API relation: %s',
+  (variant) => {
+    const f = anonymousDualApiHatch(),
+      e = f.context.dualApiEvidence
+    if (variant === 'raw-width') e.rawContent.items.at(-1).width += 1
+    if (variant === 'other-pdf') e.sourceSha256 = 'b'.repeat(64)
+    if (variant === 'missing-charcode') {
+      delete f.context.operators.argsArray.at(-2)[0][0].originalCharCode
+      delete e.renderContext.operators.argsArray.at(-2)[0][0].originalCharCode
+    }
+    if (variant === 'foreign-paint') f.text('Unowned', 80, 160)
+    expect(savedHatchPlan(f)).toBeUndefined()
+  }
+)
+
+it.each(['raw-value', 'outline'])(
+  'revokes a saved-hatch dual API plan after late %s drift',
+  (variant) => {
+    const f = anonymousDualApiHatch(),
+      plan = savedHatchPlan(f)
+    expect(plan).toBeDefined()
+    const canvas = createCanvas(1096, 616)
+    try {
+      const png = canvas.toBuffer('image/png')
+      expect(nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+      if (variant === 'raw-value') f.context.dualApiEvidence.rawContent.items.at(-1).str = 'u'
+      if (variant === 'outline') f.context.glyphBounds[0].glyphs.at(-1).bounds[0] += 0.1
+      expect(nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+    } finally {
+      canvas.width = canvas.height = 0
+    }
+  }
+)
+
+it('keeps a literal saved hatch proof independent of an unused additional API relation', () => {
+  const f = anonymousSavedHatch()
+  f.context.dualApiEvidence = { unrelated: true }
+  expect(savedHatchPlan(f)?.rect).toEqual([58, 98, 332, 252])
+})
 const { groupPageLines: keyedPairGroupLines } = await import(
   pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
 )
@@ -6887,3 +6997,65 @@ it.each(['broken-side', 'source-literal', 'foreign-contact', 'white-box'])(
     expect(proofTailPlan(f)).toBeUndefined()
   }
 )
+
+it.each([
+  'complete',
+  'retained-descender',
+  'auxiliary-viewport',
+  'type3',
+  'unsupported-cell',
+  'unclosed-save',
+  'foreign-overlap',
+  'missing-outline',
+  'foreign-paint',
+  'malformed-period',
+  'four-patterns',
+  'old-caption'
+])('completes clipped native prefixes in a three-pattern saved picture: %s', (variant) => {
+  const f = anonymousSavedHatch(variant, true)
+  if (variant === 'malformed-period')
+    f.context.operators.argsArray.find(
+      (a: ReturnType<typeof JSON.parse>) => a?.[0] === 'TilingPattern'
+    )[6] += 1
+  if (variant === 'four-patterns') {
+    const i = f.context.operators.fnArray.indexOf(OPS.setFillColorN)
+    f.context.operators.fnArray.splice(i, 0, OPS.setFillColorN)
+    f.context.operators.argsArray.splice(i, 0, structuredClone(f.context.operators.argsArray[i]))
+  }
+  if (variant === 'old-caption') f.figure.rect[3] = 286
+  if (variant === 'auxiliary-viewport') {
+    class AuxiliaryViewport {
+      scale = 1
+    }
+    f.context.runningHeadWitness = { witnessViewport: new AuxiliaryViewport() }
+  }
+  if (variant === 'type3') f.context.type3GlyphPrograms = []
+  const before = JSON.stringify(f),
+    plan = savedHatchPlan(f)
+  if (['complete', 'retained-descender', 'auxiliary-viewport'].includes(variant)) {
+    expect(plan).toBeDefined()
+    expect(plan.rect).toEqual([58, 98, 332, variant === 'retained-descender' ? 257 : 252])
+    expect(plan.sourceItems).toBeUndefined()
+    const canvas = createCanvas(
+        Math.ceil((plan.rect[2] - plan.rect[0]) * 4),
+        Math.ceil((plan.rect[3] - plan.rect[1]) * 4)
+      ),
+      png = canvas.toBuffer('image/png')
+    expect(nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    if (variant === 'auxiliary-viewport') {
+      const original = f.context.runningHeadWitness
+      f.context.runningHeadWitness = { ...original }
+      expect(nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+      f.context.runningHeadWitness = original
+      expect(nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    }
+    f.context.operators.argsArray.find(
+      (a: ReturnType<typeof JSON.parse>) => a?.[0] === 'TilingPattern'
+    )[5] += 1
+    expect(nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+    canvas.width = canvas.height = 0
+  } else {
+    expect(plan).toBeUndefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+})

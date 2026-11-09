@@ -507,7 +507,7 @@ const adaptMigrationOperationsForCurrentSchema = async (
       continue
     }
     const adaptedTableNames = new Set<string>()
-    let addsSlurmColumns = false
+    let addsNullableColumns = false
     const tables: (typeof operation.tables)[number][] = []
     for (const table of operation.tables) {
       const current = CURRENT_TARGET_TABLES.get(table.tableName)
@@ -520,16 +520,19 @@ const adaptMigrationOperationsForCurrentSchema = async (
         `PRAGMA table_info(${quoteSqliteIdentifier(table.tableName)})`
       )
       const existingColumns = new Set(columns.map(({ name }) => name))
-      // Released pre-ledger schemas already contain the managed-file-era Compute tables. The
-      // Slurm suffix adds only these nullable diagnostics; they must not force an old rebuild
-      // that discards or rejects the other existing columns.
-      const slurmAdditions = SLURM_JOB_RELIABILITY_ADDED_COLUMNS[table.tableName] ?? []
+      // A pre-ledger Compute table can lack nullable suffix columns. Adapt the rebuild to
+      // the current target DDL while copying every column present in the historical table.
+      const nullableAdditions = [
+        ...(SLURM_JOB_RELIABILITY_ADDED_COLUMNS[table.tableName] ?? []),
+        ...(table.tableName === 'ComputeJob' ? ['kubernetesWorkspace'] : [])
+      ]
       if (
         [...current.columns.keys()].every(
-          (column) => existingColumns.has(column) || slurmAdditions.includes(column)
+          (column) => existingColumns.has(column) || nullableAdditions.includes(column)
         )
       ) {
-        if (slurmAdditions.some((column) => !existingColumns.has(column))) addsSlurmColumns = true
+        if (nullableAdditions.some((column) => !existingColumns.has(column)))
+          addsNullableColumns = true
         adaptedTableNames.add(table.tableName)
         currentTableNames.add(table.tableName)
         tables.push({
@@ -553,7 +556,7 @@ const adaptMigrationOperationsForCurrentSchema = async (
       ...operation,
       // Adding the nullable suffix may now require a rebuild that was previously adopted.
       // Preserve inbound references with the existing replacement-first rebuild path.
-      version: addsSlurmColumns ? 2 : operation.version,
+      version: addsNullableColumns ? 2 : operation.version,
       tables,
       indexes: [...retainedIndexes, ...currentIndexes]
     })

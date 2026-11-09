@@ -50,13 +50,26 @@ export class SessionReplayService {
       this.repository.get(request),
       this.sessions.read(request.projectId, request.sourceSessionId)
     ])
-    const sourceStatus = !project
-      ? 'missing'
-      : source.status !== 'found'
-        ? source.status
-        : project.archivedAt || source.session.archivedAt !== undefined
-          ? 'archived'
-          : 'available'
+    const deleted =
+      project &&
+      source.status === 'missing' &&
+      (await client.session.findFirst({
+        where: {
+          projectId: request.projectId,
+          id: request.sourceSessionId,
+          deletedAtMs: { not: null }
+        },
+        select: { id: true }
+      }))
+    const sourceStatus = deleted
+      ? 'deleted'
+      : !project
+        ? 'missing'
+        : source.status !== 'found'
+          ? source.status
+          : project.archivedAt || source.session.archivedAt !== undefined
+            ? 'archived'
+            : 'available'
     return {
       ...request,
       sourceStatus,

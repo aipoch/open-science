@@ -17,7 +17,7 @@ const { associateFigures } = await import(
 const { collectTableRules } = await import(
   pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
 )
-const { preciseNativeGraphicsBounds } = await import(
+const { preciseNativeGraphicsBounds, nativeCaptionGeometryPage } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-table-boundary-ink.mjs')).href
 )
 type NativeLine = {
@@ -43,6 +43,136 @@ const page = (
   width: 600,
   height: 800,
   lines
+})
+
+const isolatedAuthorCaption = (): ReturnType<typeof JSON.parse> => ({
+  ...page([
+    line('Figure 2: We compare two independently measured responses across trials.', 80, 310, 440),
+    line('The left panel displays the first group with its complete measurements.', 80, 321, 440),
+    line('The right panel retains the second group under the same conditions.', 80, 332, 440),
+    line('Both panels use a separate collection of observations for each setting', 80, 343, 440),
+    line('and include the controls.', 80, 354, 110),
+    line('An unrelated paragraph follows below the complete caption.', 80, 400, 440)
+  ]),
+  invalidGraphicsBounds: 0,
+  graphicsBounds: [
+    { kind: 'path', normalizedRect: [80 / 600, 70 / 800, 300 / 600, 290 / 800] },
+    { kind: 'path', normalizedRect: [320 / 600, 70 / 800, 520 / 600, 290 / 800] },
+    { kind: 'image', normalizedRect: [340 / 600, 90 / 800, 500 / 600, 270 / 800] }
+  ]
+})
+
+it('recovers an isolated author-led caption from its complete paragraph and native plate', () => {
+  const p = isolatedAuthorCaption(),
+    before = structuredClone(p)
+  const captions = findCaptionCandidates([p])
+  expect(captions).toHaveLength(1)
+  expect(captions[0].lines).toEqual(p.lines.slice(0, 5).map((l: NativeLine) => l.text))
+  expect(associateFigures(p, captions, [])).toHaveLength(1)
+  expect(p).toEqual(before)
+})
+
+it.each([
+  'no plate',
+  'unknown graphics',
+  'unclosed paragraph',
+  'intervening prose',
+  'crossing paint',
+  'duplicate row'
+])('keeps an author-led reference as prose without the complete isolated proof: %s', (failure) => {
+  const p = isolatedAuthorCaption()
+  if (failure === 'no plate') p.graphicsBounds = []
+  if (failure === 'unknown graphics') p.invalidGraphicsBounds = 1
+  if (failure === 'unclosed paragraph') p.lines[4].text = 'and include the controls'
+  if (failure === 'intervening prose')
+    p.lines.push(
+      line('A preceding paragraph discusses independent results in some detail.', 80, 296, 440)
+    )
+  if (failure === 'crossing paint')
+    p.graphicsBounds.push({
+      kind: 'path',
+      normalizedRect: [100 / 600, 300 / 800, 500 / 600, 320 / 800]
+    })
+  if (failure === 'duplicate row') p.lines.push({ ...p.lines[2] })
+  expect(findCaptionCandidates([p])).toEqual([])
+})
+
+const quantizedAuthorCaption = (): ReturnType<typeof JSON.parse> => {
+  const p = isolatedAuthorCaption()
+  const rectangles = [
+    [80, 70, 300, 290],
+    [320, 70, 520, 290],
+    [340, 90, 500, 270]
+  ]
+  p.graphicsBounds = rectangles.map((r, operationIndex) => ({
+    kind: 'path',
+    operationIndex,
+    normalizedRect: [r[0] / 600, r[1] / 800, r[2] / 600, (operationIndex ? r[3] : 315) / 800]
+  }))
+  const context = {
+    pageNumber: 1,
+    graphicsBounds: structuredClone(p.graphicsBounds),
+    viewport: {
+      width: 600,
+      height: 800,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 800],
+      viewBox: [0, 0, 600, 800]
+    },
+    operators: {
+      fnArray: rectangles.map(() => OPS.constructPath),
+      argsArray: rectangles.map(([x0, y0, x1, y1]) => [
+        OPS.fill,
+        [new Float32Array([0, x0, 800 - y0, 1, x1, 800 - y0, 1, x1, 800 - y1, 1, x0, 800 - y1, 4])]
+      ])
+    }
+  }
+  return { p, context }
+}
+
+it('uses exact native operation bounds to distinguish a caption from a quantized crossing', () => {
+  const { p, context } = quantizedAuthorCaption(),
+    before = structuredClone({ p, context })
+  expect(findCaptionCandidates([p])).toEqual([])
+  const precise = nativeCaptionGeometryPage(p, context)
+  expect(precise).toBeDefined()
+  const captions = findCaptionCandidates([precise])
+  expect(captions).toHaveLength(1)
+  expect(captions[0].lines).toEqual(p.lines.slice(0, 5).map((l: NativeLine) => l.text))
+  expect(associateFigures(p, captions, [], [], [], [], context)).toHaveLength(1)
+  expect({ p, context }).toEqual(before)
+})
+
+it.each([
+  'wrong page',
+  'wrong viewport',
+  'changed operation',
+  'duplicate operation',
+  'foreign crossing paint'
+])('declines caption geometry without complete native operation evidence: %s', (failure) => {
+  const { p, context } = quantizedAuthorCaption()
+  if (failure === 'wrong page') context.pageNumber++
+  if (failure === 'wrong viewport') context.viewport.width++
+  if (failure === 'changed operation') context.graphicsBounds[0].normalizedRect[0] += 0.001
+  if (failure === 'duplicate operation')
+    context.graphicsBounds.push({ ...context.graphicsBounds[0] })
+  if (failure === 'foreign crossing paint') {
+    context.operators.fnArray.push(OPS.constructPath)
+    context.operators.argsArray.push([
+      OPS.fill,
+      [new Float32Array([0, 100, 500, 1, 200, 500, 1, 200, 480, 1, 100, 480, 4])]
+    ])
+    context.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: 3,
+      normalizedRect: [100 / 600, 300 / 800, 200 / 600, 320 / 800]
+    })
+    // Earlier page filtering must not erase a foreign paint barrier from the full inventory.
+    const precise = nativeCaptionGeometryPage(p, context)
+    expect(precise).toBeDefined()
+    expect(findCaptionCandidates([precise])).toEqual([])
+  } else expect(nativeCaptionGeometryPage(p, context)).toBeUndefined()
 })
 
 const romanVariableCaption = (): ReturnType<typeof JSON.parse> => {

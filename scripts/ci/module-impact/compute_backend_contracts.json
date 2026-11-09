@@ -1,0 +1,12 @@
+{
+  "ownerPaths": ["packages/compute/src/backend.test.ts", "packages/compute/src/backend.ts"],
+  "interfacePaths": ["packages/compute/src/backend.ts"],
+  "consumerModules": ["compute_package", "compute_external_runtime"],
+  "testFiles": {
+    "owner": ["packages/compute/src/backend.test.ts"],
+    "contract": ["packages/compute/src/kubernetes-backend.test.ts"],
+    "consumer": []
+  },
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime"
+}

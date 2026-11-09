@@ -377,15 +377,17 @@ it.each(['figure', 'reference', 'code', 'literal', 'missing', 'mismatched', 'emp
 it.each([
   { corrupted: false, retained: false },
   { corrupted: true, retained: false },
-  { corrupted: false, retained: true }
+  { corrupted: false, retained: true },
+  { corrupted: true, retained: false, mixed: true }
 ])(
   'checks reflowed text and explicitly retained originals before display (%j)',
-  async ({ corrupted, retained }) => {
+  async ({ corrupted, retained, mixed }) => {
     vi.stubGlobal('Uint8Array', Object.getPrototypeOf(Buffer.prototype).constructor)
     const pdf = await PDFDocument.create(),
       font = await pdf.embedFont(StandardFonts.Helvetica)
     const page = pdf.addPage([400, 500])
     page.drawText('Original.', { font, x: 40, y: 440, size: 12 })
+    if (mixed) pdf.addPage([400, 500]).drawText('Healthy.', { font, x: 40, y: 440, size: 12 })
     if (retained) page.setRotation(degrees(90))
     const bytes = await pdf.save(),
       originalTask = getDocument({ data: bytes.slice() }),
@@ -393,7 +395,7 @@ it.each([
     const source = createPdfTranslationSource({
       resourceRequestKey: 'reflow',
       fingerprint: original.fingerprints[0]!,
-      pages: [{ width: 400, height: 500 }],
+      pages: pdf.getPages().map(() => ({ width: 400, height: 500 })),
       units: [
         {
           id: 'a',
@@ -401,7 +403,18 @@ it.each([
           fragments: [
             { pageNumber: 1, rect: { x: 0.1, y: 0.08, width: 0.8, height: 0.05 }, items: [] }
           ]
-        }
+        },
+        ...(mixed
+          ? [
+              {
+                id: 'b',
+                source: 'Healthy.',
+                fragments: [
+                  { pageNumber: 2, rect: { x: 0.1, y: 0.08, width: 0.8, height: 0.05 }, items: [] }
+                ]
+              }
+            ]
+          : [])
       ]
     })
     const writer = new PdfTranslationWriter(() =>
@@ -417,7 +430,7 @@ it.each([
           isCurrent: () => true
         }
       )
-      if (corrupted && output) {
+      if (corrupted && output && request.units[0].translation !== request.units[0].source) {
         const changed = await PDFDocument.load(output.data),
           font = await changed.embedFont(StandardFonts.Helvetica)
         changed.getPage(0).drawText('CORRUPTED', { font, size: 10, x: 45, y: 790 })
@@ -429,7 +442,12 @@ it.each([
     const results = {
       source,
       units: [
-        { id: 'a', translationSource: 'Original.', translation: '译文应完整排入 PDF。'.repeat(500) }
+        {
+          id: 'a',
+          translationSource: 'Original.',
+          translation: '译文应完整排入 PDF。'.repeat(500)
+        },
+        ...(mixed ? [{ id: 'b', translationSource: 'Healthy.', translation: '正常译文。' }] : [])
       ]
     }
     const hook = renderHook(() =>
@@ -439,6 +457,17 @@ it.each([
       await waitFor(() => expect(['ready', 'error']).toContain(hook.result.current.state.status), {
         timeout: 15000
       })
+      if (mixed) {
+        expect(hook.result.current.ready?.retainedUnitIds).toEqual(['a'])
+        expect(hook.result.current.layoutFailures.a).toMatchObject({
+          code: 'validation-failed',
+          phase: 'verification',
+          pageNumbers: [1]
+        })
+        expect(hook.result.current.ready?.unitFragments?.b.length).toBeGreaterThan(0)
+        expect(generatePdf).toHaveBeenCalledTimes(2)
+        return
+      }
       if (corrupted) {
         expect(hook.result.current.state.status).toBe('error')
         expect(hook.result.current.ready).toBeUndefined()

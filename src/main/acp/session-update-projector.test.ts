@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AgentFrameworkId } from '../../shared/settings'
 
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
-  framework?: 'claude-code' | 'codex' | 'opencode' | 'codebuddy'
+  framework?: AgentFrameworkId
   model?: string
   appSessionId?: string
   eventId: string
@@ -996,49 +997,52 @@ describe('AcpSessionUpdateProjector', () => {
     expect(effects.at(-1)).not.toHaveProperty('event.text')
   })
 
-  it('confirms a structured Codex compaction lifecycle before publishing completion', () => {
-    const projector = createProjector()
-    const notification: SessionNotification = {
-      sessionId: 'session-1',
-      update: {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: 'provider-compaction',
-        status: 'completed',
-        _meta: { contextCompaction: true }
-      }
-    }
-    const effects = projector.route(notification, {
-      framework: 'codex',
-      eventId: 'event-compaction',
-      visible: true,
-      reconnectPending: false,
-      mcpServerNames: []
-    })
-
-    expect(effects).toMatchObject([
-      { kind: 'context-observation' },
-      { kind: 'provider-compaction-completed', sessionId: 'session-1' },
-      { kind: 'context-refresh' },
-      {
-        kind: 'visible-event',
-        event: {
-          kind: 'compaction',
+  it.each(['codex', 'open-science-agent'] as const)(
+    'confirms a structured %s compaction lifecycle before publishing completion',
+    (framework) => {
+      const projector = createProjector()
+      const notification: SessionNotification = {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'provider-compaction',
           status: 'completed',
-          toolCallId: 'provider-compaction'
+          _meta: { contextCompaction: true }
         }
       }
-    ])
-
-    expect(
-      projector.route(notification, {
-        framework: 'codex',
-        eventId: 'event-replayed-compaction',
+      const effects = projector.route(notification, {
+        framework,
+        eventId: 'event-compaction',
         visible: true,
-        reconnectPending: true,
+        reconnectPending: false,
         mcpServerNames: []
       })
-    ).not.toContainEqual(expect.objectContaining({ kind: 'provider-compaction-completed' }))
-  })
+
+      expect(effects).toMatchObject([
+        { kind: 'context-observation' },
+        { kind: 'provider-compaction-completed', sessionId: 'session-1' },
+        { kind: 'context-refresh' },
+        {
+          kind: 'visible-event',
+          event: {
+            kind: 'compaction',
+            status: 'completed',
+            toolCallId: 'provider-compaction'
+          }
+        }
+      ])
+
+      expect(
+        projector.route(notification, {
+          framework,
+          eventId: 'event-replayed-compaction',
+          visible: true,
+          reconnectPending: true,
+          mcpServerNames: []
+        })
+      ).not.toContainEqual(expect.objectContaining({ kind: 'provider-compaction-completed' }))
+    }
+  )
 
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {
     const projector = createProjector()

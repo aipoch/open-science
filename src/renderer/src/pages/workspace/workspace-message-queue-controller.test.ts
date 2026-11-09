@@ -644,19 +644,6 @@ describe('workspace message queue controller', () => {
     mounted.push(hook)
     const queued = admission('queued with annotation')
     queued.snapshot.annotations = [annotation]
-    queued.snapshot.discussionFocus = {
-      projectId: 'project',
-      sourceSessionId: 'source',
-      sourceTitle: 'Study',
-      fingerprint: 'fp',
-      branchId: 'main',
-      stepId: 'queued-step',
-      stepNumber: 2,
-      stepOffsetMs: 42,
-      excerpt: '',
-      evidence: []
-    }
-
     act(() => hook.result.current.lifecycle.enqueue(queued))
     currentSession = session('idle')
     hook.rerender({
@@ -669,8 +656,7 @@ describe('workspace message queue controller', () => {
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'queued with annotation',
-        annotations: [annotation],
-        discussionFocus: queued.snapshot.discussionFocus
+        annotations: [annotation]
       })
     )
   })

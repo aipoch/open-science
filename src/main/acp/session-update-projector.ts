@@ -356,7 +356,7 @@ class AcpSessionUpdateProjector {
 
     if (
       !routing.reconnectPending &&
-      routing.framework === 'codex' &&
+      (routing.framework === 'codex' || routing.framework === 'open-science-agent') &&
       event.kind === 'compaction' &&
       event.status === 'completed'
     ) {

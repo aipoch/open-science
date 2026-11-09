@@ -610,6 +610,79 @@ describe('SessionPersistenceCoordinator contracts', () => {
     })
   })
 
+  it('keeps a child under its original research across renderer saves and reading patches', async () => {
+    const child = createSession({ parentSessionId: 'import-a' })
+    const { repository } = createRepository([child])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const saved = await coordinator.saveSession({ ...child, parentSessionId: 'import-b' })
+    expect(saved.parentSessionId).toBe('import-a')
+    const binding = {
+      projectId: child.projectId,
+      sessionId: 'import-a',
+      contextId: 'new-step',
+      title: 'A',
+      branchId: 'main',
+      promptMessageId: 'question'
+    }
+    const patch = (
+      bindings: (typeof binding)[],
+      expectedRevision: number
+    ): ReturnType<typeof coordinator.patchSessionRuntimeContext> =>
+      coordinator.patchSessionRuntimeContext({
+        projectId: child.projectId,
+        sessionId: child.id,
+        expectedRevision,
+        patch: { sessionContext: { version: 1, bindings } }
+      })
+    await expect(patch([binding], 0)).resolves.toMatchObject({ revision: 1 })
+    await expect(patch([], 1)).rejects.toThrow('parent research')
+    await expect(patch([{ ...binding, sessionId: 'import-b' }], 1)).rejects.toThrow(
+      'parent research'
+    )
+    await expect(patch([{ ...binding, projectId: 'other' }], 1)).rejects.toThrow('parent research')
+    await expect(patch([{ ...binding, contextId: 'later' }], 1)).resolves.toMatchObject({
+      revision: 2
+    })
+  })
+
+  it('rejects stale attempts to restore a permanently deleted discussion source', async () => {
+    const detached = createSession({
+      deletedDiscussionSourceId: 'import-deleted',
+      runtimeContext: { version: 1, revision: 2 }
+    })
+    const { repository } = createRepository([detached])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const stale = await coordinator.saveSession({
+      ...detached,
+      parentSessionId: 'import-deleted',
+      deletedDiscussionSourceId: undefined
+    })
+    expect(stale.parentSessionId).toBeUndefined()
+    expect(stale.deletedDiscussionSourceId).toBe('import-deleted')
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: detached.projectId,
+        sessionId: detached.id,
+        expectedRevision: 2,
+        patch: {
+          sessionContext: {
+            version: 1,
+            bindings: [
+              {
+                projectId: detached.projectId,
+                sessionId: 'import-deleted',
+                title: 'Deleted',
+                contextId: 'snapshot',
+                branchId: 'main',
+                promptMessageId: 'old'
+              }
+            ]
+          }
+        }
+      })
+    ).rejects.toThrow('permanently deleted')
+  })
+
   it('keeps runtime context as revisioned main-owned authority across renderer saves', async () => {
     const { repository, sessions } = createRepository()
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())

@@ -57,6 +57,7 @@ describe('ProviderKindIcon', () => {
 
 describe('AgentFrameworkIcon', () => {
   it.each([
+    ['open-science-agent', 'AIPOCH', 'currentColor'],
     ['claude-code', 'Claude', '#D97757'],
     ['opencode', 'opencode', 'currentColor'],
     ['codex', 'Codex', 'currentColor']

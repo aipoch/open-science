@@ -67,7 +67,8 @@ export type ReplayControlsProps = {
   onNext: () => void
   onSeek: (positionMs: number) => void
   onSpeed: (speed: ReplaySpeed) => void
-  onAsk: () => void
+  onAsk?: () => void
+  askPromptVisible?: boolean
 }
 
 const PAGE_SIZE = 40
@@ -252,33 +253,60 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
               <ChevronDown size={12} aria-hidden="true" />
             </Button>
           </PopoverTrigger>
-          <div role="group" aria-label={t('Step actions')} className="ml-auto shrink-0">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger
-                  asChild
-                  onFocus={(event) => {
-                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-                  }}
-                >
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    className={controlClass}
-                    onClick={props.onAsk}
-                    disabled={empty}
-                    aria-label={t('Ask about this step')}
+          {props.onAsk && (
+            <div
+              role="group"
+              aria-label={t('Step actions')}
+              className="ml-auto shrink-0"
+              data-testid={props.askPromptVisible ? 'replay-ask-step-prompt' : undefined}
+            >
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
                   >
-                    <MessageSquare size={14} />
-                    <span className={width < 560 ? 'sr-only' : 'min-w-0 truncate'}>
-                      {t('Ask about this step')}
-                    </span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('Ask about this step')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+                    <Button
+                      variant={props.askPromptVisible ? 'secondary' : 'ghost'}
+                      type="button"
+                      className={cn(
+                        controlClass,
+                        'overflow-hidden whitespace-nowrap transition-[max-width,padding,gap,background-color,box-shadow,color] duration-300 ease-out motion-reduce:transition-none',
+                        props.askPromptVisible &&
+                          'bg-primary/10 text-primary ring-2 ring-primary/30 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-200 motion-reduce:animate-none',
+                        width < 560 && !props.askPromptVisible ? 'max-w-8' : 'max-w-36'
+                      )}
+                      onClick={props.onAsk}
+                      disabled={empty}
+                      aria-label={t('Ask about this step')}
+                      data-ask-prompt={props.askPromptVisible ? 'true' : undefined}
+                    >
+                      <MessageSquare size={14} />
+                      {width < 560 ? (
+                        <>
+                          <span
+                            className={cn(
+                              'min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-300 ease-out motion-reduce:transition-none',
+                              props.askPromptVisible ? 'max-w-28 opacity-100' : 'max-w-0 opacity-0'
+                            )}
+                            aria-hidden="true"
+                          >
+                            {t('Ask')}
+                          </span>
+                          <span className="sr-only">{t('Ask about this step')}</span>
+                        </>
+                      ) : (
+                        <span className="min-w-0 truncate">{t('Ask about this step')}</span>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Ask about this step')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          )}
         </div>
         <div
           ref={track}

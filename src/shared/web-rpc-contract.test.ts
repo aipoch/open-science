@@ -85,16 +85,24 @@ describe('Web RPC contract', () => {
     expect(WEB_EVENT_CHANNELS['permissions.onChanged']).toBe('permissions:changed')
 
     expect(invokePaths.filter((path) => path.startsWith('compute.'))).toEqual([
+      'compute.accountStatus',
       'compute.bookmarksGet',
       'compute.bookmarksSet',
+      'compute.cancelAccountConnection',
       'compute.changeAuthentication',
       'compute.concurrencySet',
+      'compute.connectAccount',
       'compute.create',
+      'compute.createHostedTarget',
+      'compute.createKubernetesTarget',
+      'compute.createModalTarget',
       'compute.createPassword',
+      'compute.createRayTarget',
       'compute.delete',
       'compute.deletionStatus',
       'compute.detailsGet',
       'compute.detailsSave',
+      'compute.disconnectAccount',
       'compute.download',
       'compute.enabledHostsGet',
       'compute.enabledHostsSet',
@@ -111,8 +119,15 @@ describe('Web RPC contract', () => {
       'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
+      'compute.listHostedTargets',
+      'compute.listKubernetesTargets',
+      'compute.listModalTargets',
+      'compute.listRayTargets',
+      'compute.listRayTokens',
       'compute.passwordCapability',
       'compute.probe',
+      'compute.readOutputPreview',
+      'compute.removeRayToken',
       'compute.replayApproval',
       'compute.replayPendingApprovals',
       'compute.resetPassword',
@@ -120,7 +135,11 @@ describe('Web RPC contract', () => {
       'compute.revealInFolder',
       'compute.scratchClear',
       'compute.scratchSet',
-      'compute.sshConfigAliases'
+      'compute.setRayToken',
+      'compute.sshConfigAliases',
+      'compute.updateTarget',
+      'compute.useLocalAccount',
+      'compute.verifyTarget'
     ])
     expect(
       invokePaths

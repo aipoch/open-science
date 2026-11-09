@@ -127,7 +127,11 @@ class ProviderAccountsModule {
   }
 
   async dispose(): Promise<void> {
-    await Promise.all([this.auth.dispose(), Promise.resolve().then(() => this.xai.cancelLogin())])
+    await Promise.all([this.auth.dispose(), this.xai.dispose()])
+  }
+
+  quiesceAuthentication(): ReturnType<XaiProviderAccountOwner['quiesce']> {
+    return this.xai.quiesce()
   }
 
   async prepareBootstrapCodex(): Promise<void> {

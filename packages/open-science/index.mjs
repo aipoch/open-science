@@ -149,8 +149,25 @@ const callLiteratureRpc = async (client, channel, args, options) => {
         { code: 'unsupported_capability', status: error.status }
       )
     }
+    if (error instanceof OpenScienceApiError && error.code === 'invalid-command-arguments') {
+      throw new OpenScienceApiError(error.message, {
+        code: 'invalid_request',
+        status: error.status
+      })
+    }
     throw error
   }
+}
+
+// Matches the Literature UI batch size for Project and lifecycle updates.
+const LITERATURE_BATCH_SIZE = 200
+
+const literatureBatches = (itemIds) => {
+  const unique = [...new Set(itemIds)]
+  const batches = []
+  for (let offset = 0; offset < unique.length; offset += LITERATURE_BATCH_SIZE)
+    batches.push(unique.slice(offset, offset + LITERATURE_BATCH_SIZE))
+  return batches
 }
 
 export class OpenScienceClient {
@@ -528,6 +545,110 @@ export class OpenScienceClient {
 
   getReferenceMetadata(identifier, options) {
     return callLiteratureRpc(this, 'literature:lookup-metadata', [identifier], options)
+  }
+
+  async importLiterature(
+    { mode, content, items, selectedItemIndexes, duplicatePolicy, collectionId, projectId },
+    options
+  ) {
+    if (mode !== 'preview' && mode !== 'commit')
+      throw new TypeError('Literature import mode must be preview or commit.')
+    if (mode === 'preview' && (duplicatePolicy || collectionId || projectId))
+      throw new TypeError('Import destinations and duplicate policy require commit mode.')
+    const result = await callLiteratureRpc(
+      this,
+      'literature:import-records',
+      [
+        {
+          mode,
+          ...(content === undefined ? { items } : { content }),
+          ...(selectedItemIndexes ? { selectedItemIndexes } : {}),
+          ...(duplicatePolicy ? { duplicatePolicy } : {}),
+          ...(collectionId ? { collectionId } : {})
+        }
+      ],
+      options
+    )
+    const itemIds = result.imported?.itemIds ?? []
+    if (projectId && itemIds.length) {
+      try {
+        await this.setProjectLiterature(projectId, itemIds, true, options)
+      } catch (error) {
+        // Records are already committed; retrying the import would not repair the Project link.
+        const linkError = new OpenScienceApiError(
+          `Imported ${itemIds.length} Literature item(s) but could not link them to the Project. Retry the Project link with item IDs: ${itemIds.join(', ')}`,
+          { code: 'literature_project_link_failed', status: error?.status }
+        )
+        linkError.itemIds = itemIds
+        throw linkError
+      }
+    }
+    return result
+  }
+
+  async createLiteratureItem(identifier, options) {
+    const item = await this.getReferenceMetadata(identifier, options)
+    return callLiteratureRpc(this, 'literature:transact', [{ kind: 'create-item', item }], options)
+  }
+
+  async setProjectLiterature(projectId, itemIds, included, options) {
+    for (const batch of literatureBatches(itemIds))
+      await callLiteratureRpc(
+        this,
+        'literature:transact',
+        [{ kind: 'set-project-items', projectId, itemIds: batch, included, source: 'library' }],
+        options
+      )
+    return { projectId, itemIds: [...new Set(itemIds)], included }
+  }
+
+  createLiteratureCollection({ name, description, parentId }, options) {
+    return callLiteratureRpc(
+      this,
+      'literature:transact',
+      [
+        {
+          kind: 'create-collection',
+          name,
+          ...(description === undefined ? {} : { description }),
+          ...(parentId === undefined ? {} : { parentId })
+        }
+      ],
+      options
+    )
+  }
+
+  async setCollectionLiterature(collectionId, itemIds, included, options) {
+    for (const itemId of new Set(itemIds))
+      await callLiteratureRpc(
+        this,
+        'literature:transact',
+        [{ kind: 'set-collection-item', collectionId, itemId, included }],
+        options
+      )
+    return { collectionId, itemIds: [...new Set(itemIds)], included }
+  }
+
+  async setLiteratureReadingStatus(itemIds, readingStatus, options) {
+    for (const batch of literatureBatches(itemIds))
+      await callLiteratureRpc(
+        this,
+        'literature:transact',
+        [{ kind: 'set-reading-status', itemIds: batch, readingStatus }],
+        options
+      )
+    return { itemIds: [...new Set(itemIds)], readingStatus }
+  }
+
+  async setLiteratureLifecycle(itemIds, state, options) {
+    for (const batch of literatureBatches(itemIds))
+      await callLiteratureRpc(
+        this,
+        'literature:transact',
+        [{ kind: 'set-item-lifecycle', itemIds: batch, state }],
+        options
+      )
+    return { itemIds: [...new Set(itemIds)], state }
   }
 
   async downloadArtifact(artifactId, { signal, timeoutMs } = {}) {

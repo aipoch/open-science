@@ -22,7 +22,11 @@ export function moduleRegistrationTests(files, read) {
 }
 
 export function runModuleRegistrationTests({ cwd = process.cwd(), spawn = spawnSync } = {}) {
-  const files = execFileSync('git', ['ls-files', '-z'], { cwd, encoding: 'utf8' })
+  const files = execFileSync('git', ['ls-files', '-z'], {
+    cwd,
+    encoding: 'utf8',
+    maxBuffer: 128 * 1024 * 1024
+  })
     .split('\0')
     .filter(Boolean)
   const tests = moduleRegistrationTests(files, (path) => readFileSync(resolve(cwd, path), 'utf8'))

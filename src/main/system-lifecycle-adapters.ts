@@ -1,4 +1,4 @@
-import type { BrowserWindow, PowerMonitor } from 'electron'
+import type { App, BrowserWindow, PowerMonitor } from 'electron'
 
 import { NETWORK_SYSTEM_RESUMED_CHANNEL } from '../shared/network'
 
@@ -73,3 +73,47 @@ export const installSystemLifecycleAdapters = (
 }
 
 export type { ShutdownSignalSource, SystemLifecycleAdapterDeps, SystemLifecycleWindow }
+
+// Notifications only. No polling, power-save blocker, wake timer or resume catch-up loop.
+export function installResourceActivityRelay(deps: {
+  app: Pick<App, 'on' | 'removeListener'>
+  powerMonitor: Pick<PowerMonitor, 'on' | 'removeListener'>
+  hasFocusedWindow: () => boolean
+  send: (state: { foreground: boolean; suspended: boolean }) => void
+}): { state(): { foreground: boolean; suspended: boolean }; dispose(): void } {
+  let suspended = false
+  const state = (): { foreground: boolean; suspended: boolean } => ({
+    foreground: deps.hasFocusedWindow(),
+    suspended
+  })
+  const publish = (): void => {
+    try {
+      deps.send(state())
+    } catch {
+      /* A lost backend cannot affect desktop lifecycle. */
+    }
+  }
+  const suspend = (): void => {
+    suspended = true
+    publish()
+  }
+  const resume = (): void => {
+    suspended = false
+    publish()
+  }
+  deps.app.on('browser-window-focus', publish)
+  deps.app.on('browser-window-blur', publish)
+  deps.app.on('window-all-closed', publish)
+  deps.powerMonitor.on('suspend', suspend)
+  deps.powerMonitor.on('resume', resume)
+  return {
+    state,
+    dispose: () => {
+      deps.app.removeListener('browser-window-focus', publish)
+      deps.app.removeListener('browser-window-blur', publish)
+      deps.app.removeListener('window-all-closed', publish)
+      deps.powerMonitor.removeListener('suspend', suspend)
+      deps.powerMonitor.removeListener('resume', resume)
+    }
+  }
+}

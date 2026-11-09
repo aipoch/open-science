@@ -1,3 +1,4 @@
+import { readNativeOccludedText } from './native-occluded-text.js'
 import { createNativeRuledAlgorithmCaptionReader } from './ruled-algorithm-packets.js'
 import { createNativeTaggedReferenceReader } from './tagged-reference-packets.js'
 import { terminalContactSources } from './terminal-contact-source.js'
@@ -35,7 +36,7 @@ import {
 } from './math-diagram.js'
 
 export type PdfTranslationExclusionReason =
-  'invalid-geometry' | 'unsupported-orientation' | 'outside-page'
+  'invalid-geometry' | 'unsupported-orientation' | 'outside-page' | 'occluded-native-text'
 
 export type PdfTranslationExtraction = Readonly<{
   source: PdfTranslationSource
@@ -165,6 +166,16 @@ export async function extractPdfTranslationSource({
     nativeDocumentFactory,
     signal
   })
+  const occlusionProofs: NonNullable<Awaited<ReturnType<typeof readNativeOccludedText>>>[] = []
+  const checkOcclusions = (): void => {
+    if (
+      occlusionProofs.length &&
+      (document.fingerprints[0] !== fingerprint ||
+        document.numPages !== navigationPageCount ||
+        occlusionProofs.some((proof) => !proof.current()))
+    )
+      throw new Error('PDF source changed during occluded text verification')
+  }
   const pages: PdfLayoutPage[] = []
   const onlineContexts: Parameters<typeof readNativeOnlineAppendixRestart>[0][] = []
   const scopedDisplays: {
@@ -217,6 +228,9 @@ export async function extractPdfTranslationSource({
       }
     )
     signal.throwIfAborted()
+    const occlusion = await readNativeOccludedText(page, content, viewport)
+    signal.throwIfAborted()
+    if (occlusion) occlusionProofs.push(occlusion)
     let pageTextItems = 0
     const items = content.items.map((item, index) => {
       const empty = {
@@ -227,17 +241,28 @@ export async function extractPdfTranslationSource({
         transform: [0, 0, 0, 0, 0, 0],
         hasEOL: 'hasEOL' in item ? item.hasEOL : undefined
       }
-      if (!('str' in item) || !item.str.trim()) return empty
-      textItemCount++
-      pageTextItems++
+      if (!('str' in item) || !item.str) return empty
+      const hasText = !!item.str.trim()
+      if (hasText) {
+        textItemCount++
+        pageTextItems++
+      }
       if (
         item.transform.length !== 6 ||
         ![...item.transform, item.width, item.height].every(Number.isFinite) ||
         item.width < 0 ||
         item.height < 0
       ) {
+        if (hasText)
+          exclusions.push({
+            reason: 'invalid-geometry',
+            items: [{ pageNumber, index, text: item.str }]
+          })
+        return empty
+      }
+      if (hasText && occlusion?.indexes.has(index)) {
         exclusions.push({
-          reason: 'invalid-geometry',
+          reason: 'occluded-native-text',
           items: [{ pageNumber, index, text: item.str }]
         })
         return empty
@@ -245,7 +270,8 @@ export async function extractPdfTranslationSource({
       // Express PDF coordinates in the reader's default viewport, including CropBox
       // offsets and UserUnit scaling. Grouping uses a bottom-up virtual PDF axis.
       const [a, b, c, d, x, y] = item.transform
-      const partial = nativePartialNavigation(item, content.styles?.[item.fontName], viewport)
+      const partial =
+        hasText && nativePartialNavigation(item, content.styles?.[item.fontName], viewport)
       if (partial) partialNavigation.set(`${pageNumber}:${index}`, partial)
       const [ma, mb, mc, md, mx, my] = viewport.transform
       const scale = Math.hypot(ma, mb)
@@ -388,6 +414,7 @@ export async function extractPdfTranslationSource({
     signal.throwIfAborted()
   }
   checkType3Navigation()
+  checkOcclusions()
   await terminalCaptions.prepare(pages)
   signal.throwIfAborted()
   // ponytail: grouping is synchronous; move it to a worker if long-document profiling requires it.
@@ -653,6 +680,7 @@ export async function extractPdfTranslationSource({
   })
   signal.throwIfAborted()
   checkType3Navigation()
+  checkOcclusions()
   if (
     !nativeReferenceRolePagesCurrent(pages, unreliableItems) ||
     !nativeOwnedReferenceRolesCurrent(pages)

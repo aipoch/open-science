@@ -531,7 +531,6 @@ const sendIntentKeys = [
   'pdfProseReadingSelections',
   'pendingPdfContextAttachmentIds',
   'pendingPdfContextVersions',
-  'discussionFocus',
   'parts',
   'specialistId',
   'enabledComputeHosts',

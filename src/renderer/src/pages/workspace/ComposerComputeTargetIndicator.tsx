@@ -20,10 +20,18 @@ const ComposerComputeTargetIndicator = ({
   const { t } = useTranslation()
   const hosts = useComputeStore((state) => state.hosts)
 
+  const kubernetesTargets = useComputeStore((state) => state.kubernetesTargets)
+  const hostedTargets = useComputeStore((state) => state.hostedTargets)
+  const rayTargets = useComputeStore((state) => state.rayTargets)
+  const modalTargets = useComputeStore((state) => state.modalTargets)
+
   if (targetProviderIds.length === 0) return null
 
   const targetNames = targetProviderIds.map(
-    (providerId) => hosts.find((host) => host.providerId === providerId)?.displayName ?? providerId
+    (providerId) =>
+      [...hosts, ...kubernetesTargets, ...hostedTargets, ...rayTargets, ...modalTargets].find(
+        (host) => host.providerId === providerId
+      )?.displayName ?? providerId
   )
   const targetNamesLabel = targetNames.join(', ')
   const targetCount = targetProviderIds.length

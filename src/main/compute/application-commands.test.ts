@@ -44,6 +44,16 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     list: vi.fn(async () => [host]),
     get: vi.fn(async () => host),
     create: vi.fn(async () => host),
+    accountStatus: vi.fn(),
+    connectAccount: vi.fn(),
+    useLocalAccount: vi.fn(),
+    cancelAccountConnection: vi.fn(),
+    disconnectAccount: vi.fn(),
+    listRayTokens: vi.fn(),
+    setRayToken: vi.fn(),
+    removeRayToken: vi.fn(),
+    verifyTarget: vi.fn(),
+    updateTarget: vi.fn(async () => undefined),
     createPassword: vi.fn(async () => ({ ok: true as const, host })),
     resetPassword: vi.fn(async () => ({ ok: true as const, host })),
     changeAuthentication: vi.fn(async () => ({ ok: true as const, host })),
@@ -98,14 +108,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 36 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 55 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(36)
+    expect(publicComputeChannels).toHaveLength(55)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -429,7 +439,65 @@ describe('Compute application commands', () => {
         )
       )
     ).rejects.toThrow('Channel only available from the local app: compute:jobs:set-remote-cleanup')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.jobsSetRemoteCleanup,
+        invocation(
+          [
+            {
+              jobId: 'j',
+              providerId: 'modal:lab',
+              projectId: 'p',
+              sessionId: 's',
+              disposition: 'cleaned',
+              manualStagedCleanup: true
+            }
+          ],
+          createTaskCallerContext()
+        )
+      )
+    ).rejects.toThrow('requires a current local user')
     expect(dependencies.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
+
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.updateTarget,
+        invocation(
+          [
+            'modal:sample',
+            {
+              displayName: 'Trial',
+              environmentName: 'main',
+              appName: 'sample',
+              image: 'debian',
+              cpus: 1,
+              memoryMiB: 256
+            }
+          ],
+          callerContext
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: compute:update-target')
+    expect(dependencies.compute.updateTarget).not.toHaveBeenCalled()
+
+    for (const context of [callerContext, createTaskCallerContext()]) {
+      await expect(
+        router.dispatcher.invoke(
+          computeApplicationCommands.connectAccount,
+          invocation(['modal'], context)
+        )
+      ).rejects.toThrow(/local/)
+    }
+    expect(dependencies.compute.connectAccount).not.toHaveBeenCalled()
+    for (const context of [callerContext, createTaskCallerContext()]) {
+      await expect(
+        router.dispatcher.invoke(
+          computeApplicationCommands.setRayToken,
+          invocation(['https://cluster.example', 'example'], context)
+        )
+      ).rejects.toThrow(/local/)
+    }
+    expect(dependencies.compute.setRayToken).not.toHaveBeenCalled()
 
     await expect(
       router.dispatcher.invoke(

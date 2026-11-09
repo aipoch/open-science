@@ -1177,9 +1177,7 @@ class TaskRunner {
     const candidates = sessions.flatMap((session) =>
       (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
     )
-    const owner =
-      candidates.find((candidate) => candidate.artifact.id === artifactId) ??
-      [...candidates].reverse().find((candidate) => candidate.artifact.artifactId === artifactId)
+    const owner = candidates.find((candidate) => candidate.artifact.id === artifactId)
     if (!owner?.artifact) {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }

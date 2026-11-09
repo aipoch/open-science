@@ -1,0 +1,38 @@
+{
+  "ownerPaths": [
+    "src/main/harness-acp/agent.ts",
+    "src/main/harness-acp/mcp.ts",
+    "src/main/harness-acp/entry.ts",
+    "src/main/harness-acp/agent.integration.test.ts",
+    "src/main/harness-acp/tool-receipts.ts",
+    "src/main/harness-acp/tool-receipts.test.ts",
+    "src/main/harness-acp/storage-cleanup.ts",
+    "src/main/harness-acp/storage-cleanup.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/harness-acp/entry.ts",
+    "src/main/harness-acp/tool-receipts.ts",
+    "src/main/harness-acp/storage-cleanup.ts"
+  ],
+  "consumerModules": ["desktop_composition", "acp_runtime"],
+  "testFiles": {
+    "owner": [
+      "src/main/harness-acp/agent.integration.test.ts",
+      "src/main/harness-acp/tool-receipts.test.ts",
+      "src/main/harness-acp/storage-cleanup.test.ts"
+    ],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/main/acp/mcp-http-host.test.ts",
+      "src/main/notebook/host-view-image-service.test.ts",
+      "src/main/acp/permission-context.test.ts"
+    ],
+    "consumer": [
+      "src/main/agent-framework/harness.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/acp/runtime.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

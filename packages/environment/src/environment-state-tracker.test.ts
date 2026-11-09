@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, win32, posix } from 'node:path'
+import { delimiter, dirname, join, win32, posix } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,7 @@ import {
 let dataRoot: string | undefined
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   if (dataRoot) await rm(dataRoot, { recursive: true, force: true })
   dataRoot = undefined
 })
@@ -558,6 +559,60 @@ describe('EnvironmentStateTracker', () => {
     }
   )
 
+  it.each(['python', 'r'] as const)(
+    'skips the %s fingerprint probe while its library metadata is unchanged',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'fingerprint-observer-'))
+      const library = join(dataRoot, 'library')
+      const userLibrary = join(dataRoot, 'user-library')
+      const packageDir = (name: string): string =>
+        join(library, language === 'python' ? `${name}-1.0.dist-info` : name)
+      await mkdir(packageDir('demo'), { recursive: true })
+      const probe = vi.fn(async () => ({
+        stdout: `RUNTIME\t1\nWATCH\t${userLibrary}\nROOT\t${library}\t1\t1\n`,
+        stderr: ''
+      }))
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        execFile: probe,
+        inspectInstalled: async () => ({ packages: [] })
+      })
+      const probeTarget = { ...target, language, command: join(dataRoot, 'bin', 'interpreter') }
+      const fingerprints = []
+      for (let run = 0; run < 4; run++) {
+        fingerprints.push((await tracker.prepareRun(probeTarget)).fingerprint)
+      }
+      // The first run re-probes after its inventory scan, which confirms the observation.
+      expect(probe).toHaveBeenCalledTimes(2)
+      expect(new Set(fingerprints).size).toBe(1)
+
+      await mkdir(packageDir('added'))
+      for (let run = 0; run < 3; run++) await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(4)
+      await mkdir(userLibrary)
+      await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(5)
+
+      // Any probe environment variable can move library roots (for example R_LIBS_SITE).
+      process.env.OPEN_SCIENCE_TEST_LIBRARY_INPUT = 'changed'
+      try {
+        await tracker.prepareRun(probeTarget)
+      } finally {
+        delete process.env.OPEN_SCIENCE_TEST_LIBRARY_INPUT
+      }
+      expect(probe).toHaveBeenCalledTimes(6)
+      await tracker.prepareRun(probeTarget)
+      await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(8)
+
+      // A PATH-resolved command can select another interpreter without any observed path changing.
+      const bareTarget = { ...probeTarget, command: language === 'r' ? 'Rscript' : 'python' }
+      for (let run = 0; run < 3; run++) await tracker.prepareRun(bareTarget)
+      // First run probes before and after its inventory scan; later runs probe once each.
+      expect(probe).toHaveBeenCalledTimes(12)
+    }
+  )
+
   it('merges equivalent live Python release spellings', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'python-equivalent-version-'))
     const tracker = new EnvironmentStateTracker({
@@ -640,24 +695,10 @@ describe('EnvironmentStateTracker', () => {
         const second = join(dataRoot, 'second')
         await mkdir(first)
         await mkdir(second)
-        let libraries = [first, second]
+        const variable = language === 'python' ? 'PYTHONPATH' : 'R_LIBS'
+        vi.stubEnv(variable, [first, second].join(delimiter))
         const inspectInstalled = vi.fn(async () => ({ packages: [] }))
-        const execute = promisify(execFile)
-        const tracker = new EnvironmentStateTracker({
-          dataRoot,
-          inspectInstalled,
-          execFile: async (executable, args, options) => {
-            const setup =
-              language === 'python'
-                ? `import sys\nsys.path[:0] = ${JSON.stringify(libraries)}\n`
-                : `.libPaths(c(${libraries.map((path) => JSON.stringify(path)).join(',')}, .libPaths()))\n`
-            return execute(
-              executable,
-              [...args.slice(0, -1), setup + args[args.length - 1]],
-              options
-            )
-          }
-        })
+        const tracker = new EnvironmentStateTracker({ dataRoot, inspectInstalled })
         const probeTarget = {
           ...target,
           language,
@@ -670,7 +711,7 @@ describe('EnvironmentStateTracker', () => {
         expect(unchanged.fingerprint).toBe(initial.fingerprint)
         expect(unchanged.inventoryRefreshed).toBe(false)
 
-        libraries = [second, first]
+        vi.stubEnv(variable, [second, first].join(delimiter))
         const reordered = await tracker.prepareRun(probeTarget)
         expect(reordered.fingerprint).not.toBe(initial.fingerprint)
         expect(reordered.inventoryRefreshed).toBe(true)

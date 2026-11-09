@@ -109,7 +109,9 @@ for (const action of ['send a follow-up', 'delete the session'] as const) {
         ),
         persistedSessions,
         // A modal Radix menu hides the composer from the accessibility tree while open.
-        sendEnabled: await page.locator('button[aria-label="Send message"]').isEnabled(),
+        sendEnabled: await page
+          .locator('button[aria-label="Send message"]')
+          .evaluateAll((buttons) => buttons.some((button) => !button.matches(':disabled'))),
         resumeVisible: await page
           .getByRole('button', { name: 'Resume session', exact: true })
           .isVisible(),

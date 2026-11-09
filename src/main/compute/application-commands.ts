@@ -1,3 +1,4 @@
+import { computeAccountProviders } from '../../shared/compute-accounts'
 import { type SetComputeJobRemoteCleanupRequest } from '@aipoch/compute'
 import {
   normalizeComputeApprovalDecision,
@@ -24,6 +25,25 @@ import type { ComputeHandlers } from './handler-contract'
 type ComputeCommandOwner = Pick<
   ComputeHandlers,
   | 'list'
+  | 'listKubernetesTargets'
+  | 'createKubernetesTarget'
+  | 'listHostedTargets'
+  | 'accountStatus'
+  | 'connectAccount'
+  | 'useLocalAccount'
+  | 'cancelAccountConnection'
+  | 'disconnectAccount'
+  | 'listRayTokens'
+  | 'setRayToken'
+  | 'removeRayToken'
+  | 'verifyTarget'
+  | 'updateTarget'
+  | 'createHostedTarget'
+  | 'listRayTargets'
+  | 'createRayTarget'
+  | 'readOutputPreview'
+  | 'listModalTargets'
+  | 'createModalTarget'
   | 'get'
   | 'create'
   | 'createPassword'
@@ -88,6 +108,101 @@ type OwnerResult<Owner, Method extends keyof Owner> = Owner[Method] extends (
   : never
 
 const computeApplicationCommands = Object.freeze({
+  listKubernetesTargets: defineApplicationCommand<
+    'compute:list-kubernetes-targets',
+    OwnerArgs<ComputeCommandOwner, 'listKubernetesTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listKubernetesTargets'>
+  >('compute:list-kubernetes-targets'),
+  createKubernetesTarget: defineApplicationCommand<
+    'compute:create-kubernetes-target',
+    OwnerArgs<ComputeCommandOwner, 'createKubernetesTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createKubernetesTarget'>
+  >('compute:create-kubernetes-target'),
+  listHostedTargets: defineApplicationCommand<
+    'compute:list-hosted-targets',
+    OwnerArgs<ComputeCommandOwner, 'listHostedTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listHostedTargets'>
+  >('compute:list-hosted-targets'),
+  accountStatus: defineApplicationCommand<
+    'compute:account-status',
+    OwnerArgs<ComputeCommandOwner, 'accountStatus'>,
+    OwnerResult<ComputeCommandOwner, 'accountStatus'>
+  >('compute:account-status'),
+  connectAccount: defineApplicationCommand<
+    'compute:connect-account',
+    OwnerArgs<ComputeCommandOwner, 'connectAccount'>,
+    OwnerResult<ComputeCommandOwner, 'connectAccount'>
+  >('compute:connect-account'),
+  useLocalAccount: defineApplicationCommand<
+    'compute:use-local-account',
+    OwnerArgs<ComputeCommandOwner, 'useLocalAccount'>,
+    OwnerResult<ComputeCommandOwner, 'useLocalAccount'>
+  >('compute:use-local-account'),
+  cancelAccountConnection: defineApplicationCommand<
+    'compute:cancel-account-connection',
+    OwnerArgs<ComputeCommandOwner, 'cancelAccountConnection'>,
+    OwnerResult<ComputeCommandOwner, 'cancelAccountConnection'>
+  >('compute:cancel-account-connection'),
+  disconnectAccount: defineApplicationCommand<
+    'compute:disconnect-account',
+    OwnerArgs<ComputeCommandOwner, 'disconnectAccount'>,
+    OwnerResult<ComputeCommandOwner, 'disconnectAccount'>
+  >('compute:disconnect-account'),
+  listRayTokens: defineApplicationCommand<
+    'compute:list-ray-tokens',
+    OwnerArgs<ComputeCommandOwner, 'listRayTokens'>,
+    OwnerResult<ComputeCommandOwner, 'listRayTokens'>
+  >('compute:list-ray-tokens'),
+  setRayToken: defineApplicationCommand<
+    'compute:set-ray-token',
+    OwnerArgs<ComputeCommandOwner, 'setRayToken'>,
+    OwnerResult<ComputeCommandOwner, 'setRayToken'>
+  >('compute:set-ray-token'),
+  removeRayToken: defineApplicationCommand<
+    'compute:remove-ray-token',
+    OwnerArgs<ComputeCommandOwner, 'removeRayToken'>,
+    OwnerResult<ComputeCommandOwner, 'removeRayToken'>
+  >('compute:remove-ray-token'),
+  verifyTarget: defineApplicationCommand<
+    'compute:verify-target',
+    OwnerArgs<ComputeCommandOwner, 'verifyTarget'>,
+    OwnerResult<ComputeCommandOwner, 'verifyTarget'>
+  >('compute:verify-target'),
+  updateTarget: defineApplicationCommand<
+    'compute:update-target',
+    OwnerArgs<ComputeCommandOwner, 'updateTarget'>,
+    OwnerResult<ComputeCommandOwner, 'updateTarget'>
+  >('compute:update-target'),
+  createHostedTarget: defineApplicationCommand<
+    'compute:create-hosted-target',
+    OwnerArgs<ComputeCommandOwner, 'createHostedTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createHostedTarget'>
+  >('compute:create-hosted-target'),
+  listRayTargets: defineApplicationCommand<
+    'compute:list-ray-targets',
+    OwnerArgs<ComputeCommandOwner, 'listRayTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listRayTargets'>
+  >('compute:list-ray-targets'),
+  createRayTarget: defineApplicationCommand<
+    'compute:create-ray-target',
+    OwnerArgs<ComputeCommandOwner, 'createRayTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createRayTarget'>
+  >('compute:create-ray-target'),
+  readOutputPreview: defineApplicationCommand<
+    'compute:read-output-preview',
+    OwnerArgs<ComputeCommandOwner, 'readOutputPreview'>,
+    OwnerResult<ComputeCommandOwner, 'readOutputPreview'>
+  >('compute:read-output-preview'),
+  listModalTargets: defineApplicationCommand<
+    'compute:list-modal-targets',
+    OwnerArgs<ComputeCommandOwner, 'listModalTargets'>,
+    OwnerResult<ComputeCommandOwner, 'listModalTargets'>
+  >('compute:list-modal-targets'),
+  createModalTarget: defineApplicationCommand<
+    'compute:create-modal-target',
+    OwnerArgs<ComputeCommandOwner, 'createModalTarget'>,
+    OwnerResult<ComputeCommandOwner, 'createModalTarget'>
+  >('compute:create-modal-target'),
   list: defineApplicationCommand<
     'compute:list',
     OwnerArgs<ComputeCommandOwner, 'list'>,
@@ -271,6 +386,25 @@ const computeApplicationCommands = Object.freeze({
 })
 
 const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', [
+  computeApplicationCommands.accountStatus,
+  computeApplicationCommands.connectAccount,
+  computeApplicationCommands.useLocalAccount,
+  computeApplicationCommands.cancelAccountConnection,
+  computeApplicationCommands.disconnectAccount,
+  computeApplicationCommands.listRayTokens,
+  computeApplicationCommands.setRayToken,
+  computeApplicationCommands.removeRayToken,
+  computeApplicationCommands.verifyTarget,
+  computeApplicationCommands.updateTarget,
+  computeApplicationCommands.listKubernetesTargets,
+  computeApplicationCommands.createKubernetesTarget,
+  computeApplicationCommands.listHostedTargets,
+  computeApplicationCommands.createHostedTarget,
+  computeApplicationCommands.listRayTargets,
+  computeApplicationCommands.createRayTarget,
+  computeApplicationCommands.readOutputPreview,
+  computeApplicationCommands.listModalTargets,
+  computeApplicationCommands.createModalTarget,
   computeApplicationCommands.bookmarksGet,
   computeApplicationCommands.bookmarksSet,
   computeApplicationCommands.changeAuthentication,
@@ -330,10 +464,20 @@ const withSerializedRemoteFsError = async <Result>(
   }
 }
 
+function assertAccountProvider(provider: (typeof computeAccountProviders)[number]): void {
+  if (!computeAccountProviders.includes(provider))
+    throw new Error('Unknown compute account provider.')
+}
+
 const assertLocalCommand = (context: CallerContext, channel: string): void => {
   if (context.location !== 'local') {
     throw new Error(`Channel only available from the local app: ${channel}`)
   }
+}
+
+function assertAccountSettingsCaller(context: CallerContext, channel: string): void {
+  assertLocalCommand(context, channel)
+  if (!canSatisfyHumanApproval(context)) throw new Error('Account settings require a local user.')
 }
 
 const registerComputeApplicationCommands = (
@@ -357,6 +501,75 @@ const registerComputeApplicationCommands = (
   }
   try {
     scope.registerGroup(computeApplicationCommandGroup, {
+      'compute:list-kubernetes-targets': () => dependencies.compute.listKubernetesTargets(),
+      'compute:create-kubernetes-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-kubernetes-target')
+        return dependencies.compute.createKubernetesTarget(args[0])
+      },
+      'compute:list-hosted-targets': () => dependencies.compute.listHostedTargets(),
+      'compute:account-status': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:account-status')
+        assertAccountProvider(args[0])
+        if (args[1] !== undefined && typeof args[1] !== 'boolean')
+          throw new Error('Invalid refresh option.')
+        return dependencies.compute.accountStatus(...args)
+      },
+      'compute:connect-account': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:connect-account')
+        assertAccountProvider(args[0])
+        return dependencies.compute.connectAccount(args[0])
+      },
+      'compute:use-local-account': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:use-local-account')
+        assertAccountProvider(args[0])
+        return dependencies.compute.useLocalAccount(args[0])
+      },
+      'compute:cancel-account-connection': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:cancel-account-connection')
+        assertAccountProvider(args[0])
+        return dependencies.compute.cancelAccountConnection(args[0])
+      },
+      'compute:disconnect-account': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:disconnect-account')
+        assertAccountProvider(args[0])
+        return dependencies.compute.disconnectAccount(args[0])
+      },
+      'compute:list-ray-tokens': ({ callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:list-ray-tokens')
+        return dependencies.compute.listRayTokens()
+      },
+      'compute:set-ray-token': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:set-ray-token')
+        return dependencies.compute.setRayToken(...args)
+      },
+      'compute:remove-ray-token': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:remove-ray-token')
+        return dependencies.compute.removeRayToken(...args)
+      },
+      'compute:verify-target': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:verify-target')
+        if (typeof args[0] !== 'string') throw new Error('Invalid compute target.')
+        return dependencies.compute.verifyTarget(args[0])
+      },
+      'compute:update-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:update-target')
+        return dependencies.compute.updateTarget(...args)
+      },
+      'compute:create-hosted-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-hosted-target')
+        return dependencies.compute.createHostedTarget(args[0])
+      },
+      'compute:list-ray-targets': () => dependencies.compute.listRayTargets(),
+      'compute:create-ray-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-ray-target')
+        return dependencies.compute.createRayTarget(args[0])
+      },
+      'compute:read-output-preview': ({ args }) => dependencies.compute.readOutputPreview(args[0]),
+      'compute:list-modal-targets': () => dependencies.compute.listModalTargets(),
+      'compute:create-modal-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:create-modal-target')
+        return dependencies.compute.createModalTarget(args[0])
+      },
       'compute:list': () => dependencies.compute.list(),
       'compute:get': ({ args }) => dependencies.compute.get(args[0]),
       'compute:create': ({ args }) => dependencies.compute.create(args[0]),
@@ -431,6 +644,8 @@ const registerComputeApplicationCommands = (
       'compute:jobs:retry-harvest': ({ args }) => dependencies.compute.jobsRetryHarvest(args[0]),
       'compute:jobs:set-remote-cleanup': ({ args, callerContext }) => {
         assertLocalCommand(callerContext, 'compute:jobs:set-remote-cleanup')
+        if (args[0].manualStagedCleanup && !canSatisfyHumanApproval(callerContext))
+          throw new Error('Staged resource cleanup requires a current local user.')
         return dependencies.compute.jobsSetRemoteCleanup(args[0])
       },
       'compute:jobs:pending-notification': ({ args }) =>

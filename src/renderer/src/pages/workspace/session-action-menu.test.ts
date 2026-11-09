@@ -8,6 +8,7 @@ import {
   SESSION_ACTION_CATALOG,
   SESSION_ACTION_RECIPE,
   createSessionActionBindings,
+  isImportedSession,
   type SessionActionInvocation
 } from './session-action-menu'
 
@@ -39,6 +40,21 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it.each([
+    createSession({
+      packageOrigin: {
+        importId: 'import',
+        sourceProjectId: 'project',
+        sourceSessionId: 'source',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    }),
+    createSession({ id: 'import-lazy', contentLoaded: false })
+  ])('recognizes imported sessions before and after hydration', (session) => {
+    expect(isImportedSession(session)).toBe(true)
+  })
+
   it.each([true, false])(
     'allows deletion of a stopped first-prompt draft with pending=%s',
     (isPending) => {
@@ -119,6 +135,39 @@ describe('session action menu', () => {
     expect(actions).not.toContain('download-artifacts')
     expect(actions).not.toContain('view-notebook')
     expect(actions).not.toContain('delete')
+  })
+
+  it('hides pin controls when the owner disallows pinning', () => {
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: false,
+      canDownloadArtifacts: false,
+      canTogglePin: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn()
+    })
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'imported-session',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      invocation(
+        createSession({
+          packageOrigin: {
+            importId: 'import',
+            sourceProjectId: 'project',
+            sourceSessionId: 'source',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        })
+      )
+    )
+    expect(entries.some((entry) => entry.kind === 'action' && entry.action === 'toggle-pin')).toBe(
+      false
+    )
   })
 
   it('offers discussion and replay for ordinary running Sessions and forwards the selected source', async () => {

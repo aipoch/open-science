@@ -33,6 +33,7 @@ import {
   beginComputeJobFileEvidence,
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
+  ensureWorkingFileEvidenceProject,
   reconcileComputeJobFileEvidence,
   reconcileWorkingFileEvidence,
   runEvidenceWorker,
@@ -78,7 +79,9 @@ const createWorkerBlobPool = async (): Promise<{
 }
 
 afterEach(async () => {
-  if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
+  // Windows can briefly keep deleted evidence entries pending after the resident worker replies.
+  if (storageRoot)
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
   storageRoot = undefined
 })
 
@@ -1061,7 +1064,15 @@ describe('working-file evidence', () => {
     })
   })
 
-  it.each(['cross-project', 'missing', 'replaced', 'corrupt', 'symlink', 'working-file'] as const)(
+  it.each([
+    'cross-project',
+    'missing',
+    'replaced',
+    'corrupt',
+    'symlink',
+    'working-file',
+    'working-file-unsafe-identity'
+  ] as const)(
     'freezes an isolated input when immutable sharing is unsafe: %s',
     async (condition) => {
       const { sessionRoot, dataRoot } = await createRoots()
@@ -1129,16 +1140,17 @@ describe('working-file evidence', () => {
                 await rename(originalPath, `${originalPath}.old`)
                 await symlink(workingPath, originalPath)
               }
-              if (
-                condition === 'working-file' &&
-                Number.isSafeInteger(working.dev) &&
-                Number.isSafeInteger(working.ino)
-              )
-                item.immutableSource = {
-                  physicalPath: workingPath,
-                  dev: working.dev,
-                  ino: working.ino
-                }
+              if (condition === 'working-file' || condition === 'working-file-unsafe-identity') {
+                const identity =
+                  condition === 'working-file-unsafe-identity'
+                    ? { dev: working.dev, ino: Number.MAX_SAFE_INTEGER + 1 }
+                    : working
+                // Unsafe working-file IDs must remove the original valid sharing candidate too.
+                item.immutableSource =
+                  Number.isSafeInteger(identity.dev) && Number.isSafeInteger(identity.ino)
+                    ? { physicalPath: workingPath, dev: identity.dev, ino: identity.ino }
+                    : undefined
+              }
             }
             return runEvidenceWorker(root, request, signal)
           }
@@ -4146,6 +4158,28 @@ describe('working-file evidence', () => {
     await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-rename-gap')
 
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('reuses verified Project ownership until deletion or a failed evidence request', async () => {
+    await createRoots()
+    const worker = vi.fn(runEvidenceWorker)
+    const ensureOperations = (): number =>
+      worker.mock.calls.filter(([, request]) => request.operation === 'ensure-project').length
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    expect(ensureOperations()).toBe(1)
+
+    await deleteWorkingFileEvidenceProject(storageRoot!, 'project-reused')
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    expect(ensureOperations()).toBe(2)
+
+    // Any failed queued request drops verified ownership, including one for another Project.
+    worker.mockRejectedValueOnce(new Error('worker failed'))
+    await expect(
+      ensureWorkingFileEvidenceProject(storageRoot!, 'project-other', worker)
+    ).rejects.toThrow('worker failed')
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    expect(ensureOperations()).toBe(4)
   })
 
   it('retries a partially removed Project tombstone while preserving its marker until last', async () => {

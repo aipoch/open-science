@@ -1,3 +1,5 @@
+import { createKubernetesJobRuntime } from './kubernetes-job-runtime'
+import { MODAL_CREATION_UNCONFIRMED } from './modal-job-journal'
 import { createComputeExecution } from '@aipoch/compute/node'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -49,6 +51,564 @@ afterEach(async () => {
 })
 
 describe('ComputeJob repository (SQLite integration)', () => {
+  it('resumes an approved Kubernetes workspace after a lost response and a host restart', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-workspace-restart-'))
+    let client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const owner = { jobId: 'job', projectId: 'p', sessionId: 's', providerId: 'cluster' }
+    let metadata: Record<string, unknown>
+    let created = false
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        if (created) return Response.json({}, { status: 409 })
+        created = true
+        metadata = { ...JSON.parse(String(init.body)).metadata, namespace: 'ns', uid: 'claim-uid' }
+        throw new Error('response lost')
+      }
+      return Response.json({ metadata })
+    })
+    const options = {
+      context: 'test-context',
+      endpoint: 'https://cluster.example',
+      namespace: 'ns',
+      image: 'worker',
+      fetch
+    }
+    const resolver = vi.fn(async () => options)
+    const open = (): ComputeJobRepository =>
+      new ComputeJobRepository(async () => client, protectedFields(), resolver)
+    const repo = open()
+    expect(
+      await repo.createApprovedKubernetesJob(
+        {
+          ...owner,
+          id: owner.jobId,
+          command: 'true',
+          commandHash: 'hash',
+          intent: 'trial'
+        },
+        options,
+        64
+      )
+    ).toEqual(owner)
+
+    await expect(repo.prepareKubernetesWorkspace(owner)).rejects.toThrow('response lost')
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    const reopened = open()
+    await expect(
+      reopened.prepareKubernetesWorkspace({ ...owner, sessionId: 'foreign' })
+    ).rejects.toThrow('unavailable')
+    resolver.mockResolvedValueOnce({ ...options, namespace: 'other' })
+    await expect(reopened.prepareKubernetesWorkspace(owner)).rejects.toThrow('changed')
+    resolver.mockResolvedValueOnce({ ...options, context: 'other' })
+    await expect(reopened.prepareKubernetesWorkspace(owner)).rejects.toThrow('changed')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const receipt = await reopened.prepareKubernetesWorkspace(owner)
+    expect(receipt.uid).toBe('claim-uid')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(await open().prepareKubernetesWorkspace(owner)).toEqual(receipt)
+    expect(fetch).toHaveBeenCalledTimes(3)
+    const token = await reopened.claimKubernetesLaunch(owner)
+    expect(token).toBeTruthy()
+    expect(await open().claimKubernetesLaunch(owner)).toBeUndefined()
+    expect((await open().getKubernetesReservation(owner)).binding.launchToken).toBe(token)
+    const row = await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })
+    await expect(reopened.releasePublishedKubernetesWorkspace(owner)).rejects.toThrow(
+      'fully published'
+    )
+    await expect(reopened.deleteByOwner({ projectId: owner.projectId })).rejects.toThrow(
+      'requires cleanup'
+    )
+    expect(row.kubernetesWorkspace).not.toContain('claim-uid')
+    expect(await reopened.findNonTerminal()).toEqual([])
+    expect((await reopened.get('job'))?.execution_mode).toBe('kubernetes')
+    await client.computeJob.update({
+      where: { id: 'job' },
+      data: {
+        status: 'success',
+        harvestedAt: new Date(),
+        leftOnRemote: protectedFields().protectJson('[]', 'array'),
+        lastPollError: 'Kubernetes job recovery is pending.',
+        fileEvidence: JSON.stringify({
+          schemaVersion: 1,
+          activityId: 'job',
+          activityKind: 'compute-job',
+          state: 'available',
+          evidenceId: 'published',
+          checksum: 'a'.repeat(64),
+          storageKey: 'execution-file-evidence/p/s/activity-job/evidence.json',
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'complete',
+          scientificOutputAnalysis: 'complete',
+          fileReads: 'unavailable',
+          externalPaths: 'unavailable',
+          writerAttribution: 'complete',
+          reasonCodes: []
+        })
+      }
+    })
+    fetch.mockImplementationOnce(async (_url, init) => {
+      expect(JSON.parse(String(init?.body)).preconditions.uid).toBe(receipt.uid)
+      return Response.json({}, { status: 202 })
+    })
+    expect(await reopened.releasePublishedKubernetesWorkspace(owner)).toBe('requested')
+    expect(
+      (await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })).kubernetesWorkspace
+    ).toBe(row.kubernetesWorkspace)
+    fetch.mockResolvedValueOnce(Response.json({}, { status: 404 }))
+    expect(await reopened.releasePublishedKubernetesWorkspace(owner)).toBe('confirmed')
+    expect(
+      (await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })).lastPollError
+    ).toBeNull()
+    expect(await reopened.findByOwner({ projectId: 'p' })).toEqual([])
+    await reopened.deleteByOwner({ projectId: 'p' })
+  })
+
+  it('recovers a lost Kubernetes launch response and cancels the original UID without resubmitting', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-launch-recovery-'))
+    let client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    let claim: Record<string, unknown> | undefined
+    let launched: Record<string, unknown> | undefined
+    let launches = 0
+    const fetch = async (url: string, init?: RequestInit): Promise<Response> => {
+      if (url.includes('persistentvolumeclaims')) {
+        if (init?.method === 'POST')
+          claim = { ...JSON.parse(String(init.body)).metadata, uid: 'claim-uid', namespace: 'ns' }
+        return Response.json({ metadata: claim })
+      }
+      if (url.includes('/jobs')) {
+        if (init?.method === 'POST') {
+          launches++
+          launched = { ...JSON.parse(String(init.body)).metadata, uid: 'original-uid' }
+          throw Error('simulated connection loss after launch')
+        }
+        if (init?.method === 'DELETE') {
+          expect(JSON.parse(String(init.body)).preconditions.uid).toBe('original-uid')
+          // The API server has already removed the resource when its delete response arrives.
+          return Response.json({}, { status: 404 })
+        }
+        return Response.json({ metadata: launched, status: { ready: 1 } })
+      }
+      return Response.json({ items: [] })
+    }
+    const target = {
+      context: 'test',
+      namespace: 'ns',
+      image: 'worker',
+      transferImage: 'transfer',
+      endpoint: 'https://cluster.example',
+      fetch
+    }
+    const provider = async (): Promise<typeof client> => client
+    const repo = new ComputeJobRepository(provider, protectedFields(), async () => target)
+    const operations = new ComputeJobOperationRepository(provider, protectedFields())
+    const runtime = (): ReturnType<typeof createKubernetesJobRuntime> =>
+      createKubernetesJobRuntime({
+        jobRepository: repo,
+        operationRepository: operations,
+        storageRoot: storageRoot!,
+        onJobUpdated: vi.fn(),
+        harvest: vi.fn()
+      })
+    const request = {
+      id: 'job',
+      providerId: 'cluster',
+      projectId: 'p',
+      sessionId: 's',
+      intent: 'recovery',
+      command: 'echo done',
+      commandHash: 'hash'
+    }
+    await repo.createApprovedKubernetesJob(request, target, 8)
+    const first = runtime()
+    try {
+      first.start()
+      await first.tick()
+    } finally {
+      await first.stop()
+    }
+    expect(launches).toBe(1)
+    expect((await repo.get('job'))?.remote_handle).toBeUndefined()
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    const second = runtime()
+    try {
+      second.start()
+      await second.tick()
+      expect((await repo.get('job'))?.status).toBe('running')
+      await operations.request('job', 'cancel', request, new Date())
+      await second.tick()
+      expect((await repo.get('job'))?.cancellation_status).toBe('cancelled')
+      expect(launches).toBe(1)
+    } finally {
+      await second.stop()
+    }
+  })
+
+  it('retains a partially published Kubernetes job until its owner explicitly abandons cleanup', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-partial-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    const owner = await repo.createApprovedKubernetesJob(
+      {
+        id: 'partial',
+        providerId: 'cluster',
+        projectId: 'p',
+        sessionId: 's',
+        command: 'true',
+        commandHash: 'hash',
+        intent: 'trial'
+      },
+      {
+        context: 'trial',
+        endpoint: 'https://cluster.test',
+        namespace: 'team',
+        image: 'worker',
+        transferImage: 'transfer'
+      },
+      8
+    )
+    const fileEvidence = JSON.stringify({
+      schemaVersion: 1,
+      activityId: owner.jobId,
+      activityKind: 'compute-job',
+      state: 'partial',
+      evidenceId: 'published',
+      checksum: 'b'.repeat(64),
+      storageKey: 'execution-file-evidence/p/s/activity-partial/evidence.json',
+      scientificOutputCount: 1,
+      initialViewState: 'complete',
+      managedRootsFinalState: 'complete',
+      scientificOutputAnalysis: 'complete',
+      fileReads: 'unavailable',
+      externalPaths: 'unavailable',
+      writerAttribution: 'complete',
+      reasonCodes: []
+    })
+    const publishedAt = new Date()
+    await client.computeJob.update({
+      where: { id: owner.jobId },
+      data: {
+        status: 'success',
+        harvestedAt: publishedAt,
+        leftOnRemote: protectedFields().protectJson('[{"uri":"file-remaining"}]', 'array'),
+        fileEvidence
+      }
+    })
+    await expect(repo.releasePublishedKubernetesWorkspace(owner)).rejects.toThrow('fully published')
+    await expect(repo.findByOwner({ projectId: 'p', sessionId: 's' })).rejects.toThrow('cleanup')
+    await expect(repo.deleteByOwner({ projectId: 'p' })).rejects.toThrow('cleanup')
+    await expect(repo.settleRemoteCleanup({ ...owner, disposition: 'cleaned' })).rejects.toThrow(
+      'confirmed release'
+    )
+    await repo.settleRemoteCleanup({ ...owner, disposition: 'abandoned' })
+    expect(await client.computeJob.findUniqueOrThrow({ where: { id: owner.jobId } })).toMatchObject(
+      {
+        harvestedAt: publishedAt,
+        fileEvidence,
+        kubernetesWorkspace: null,
+        remoteCleanupDisposition: 'abandoned'
+      }
+    )
+    await repo.deleteByOwner({ projectId: 'p' })
+    expect(await repo.get(owner.jobId)).toBeNull()
+  })
+
+  it('recovers the encrypted hosted launch fence across SQLite reopen and isolates SSH scans', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'hf-launch-fence-'))
+    let client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    let repo = makeJobRepository(client)
+    const job = await repo.createApprovedHuggingFaceJob(
+      {
+        id: 'job',
+        providerId: 'hf-jobs:test',
+        sessionId: 's',
+        projectId: 'p',
+        shape: 'bridge_runner',
+        intent: 'trial',
+        command: 'true',
+        commandHash: 'hash',
+        timeoutSeconds: 20,
+        remoteWorkdir: '/outputs'
+      },
+      {
+        account: 'stable-account',
+        namespace: 'test',
+        image: 'ubuntu',
+        flavor: 'cpu-basic',
+        rateMicroUsdPerMinute: 167,
+        bucket: 'test/private'
+      }
+    )
+    expect(await repo.findNonTerminal()).toEqual([])
+    expect(await repo.findHostedWork()).toHaveLength(1)
+    expect(
+      (await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })).remoteHandle
+    ).not.toContain('stable-account')
+    const next = JSON.stringify({ ...JSON.parse(job.remote_handle!), staging: true })
+    expect(await repo.replaceHostedJournal(job, next, true)).toBe(true)
+    expect(await repo.replaceHostedJournal(job, next, true)).toBe(false)
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    repo = makeJobRepository(client)
+    expect((await repo.findHostedWork())[0]?.remote_handle).toBe(next)
+    await expect(repo.findByOwner({ projectId: 'p' })).rejects.toThrow('cleanup')
+    await expect(repo.deleteByOwner({ projectId: 'p' })).rejects.toThrow('cleanup')
+    await expect(
+      repo.settleRemoteCleanup({
+        jobId: 'job',
+        providerId: job.provider_id,
+        sessionId: 's',
+        projectId: 'p',
+        disposition: 'abandoned'
+      })
+    ).rejects.toThrow('terminal')
+  })
+
+  it('recovers the encrypted Ray package fence across SQLite reopen and isolates SSH scans', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'ray-launch-fence-'))
+    let client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    let repo = makeJobRepository(client)
+    const job = await repo.createApprovedRayJob(
+      {
+        id: 'job',
+        providerId: 'ray:test',
+        sessionId: 's',
+        projectId: 'p',
+        shape: 'bridge_runner',
+        intent: 'trial',
+        command: 'true',
+        commandHash: 'hash',
+        timeoutSeconds: 20,
+        remoteWorkdir: '/outputs'
+      },
+      {
+        endpoint: 'http://127.0.0.1:8265',
+        sharedRoot: '/tmp/output',
+        remoteRoot: '/mnt/output',
+        sessionName: 'session-1',
+        cpus: 1,
+        gpus: 0
+      }
+    )
+    expect(await repo.findNonTerminal()).toEqual([])
+    expect(await repo.findRayWork()).toHaveLength(1)
+    expect(
+      (await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })).remoteHandle
+    ).not.toContain('session-1')
+    const next = JSON.stringify({
+      ...JSON.parse(job.remote_handle!),
+      packageSha256: 'a'.repeat(64)
+    })
+    expect(await repo.replaceRayJournal(job, next, true)).toBe(true)
+    expect(await repo.replaceRayJournal(job, next, true)).toBe(false)
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    repo = makeJobRepository(client)
+    expect((await repo.findRayWork())[0]?.remote_handle).toBe(next)
+    await expect(repo.findByOwner({ projectId: 'p' })).rejects.toThrow('cleanup')
+    await expect(repo.deleteByOwner({ projectId: 'p' })).rejects.toThrow('cleanup')
+    await expect(
+      repo.settleRemoteCleanup({
+        jobId: 'job',
+        providerId: job.provider_id,
+        sessionId: 's',
+        projectId: 'p',
+        disposition: 'abandoned'
+      })
+    ).rejects.toThrow('terminal')
+  })
+
+  it('assigns mixed-backend cancellation claims only to their execution owner after reopening SQLite', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'compute-cancel-owners-'))
+    let client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const modes = [
+      'kubernetes',
+      'hugging_face_jobs',
+      'ray_jobs',
+      'modal_sandbox',
+      'direct_ssh',
+      'slurm'
+    ] as const
+    let operations = new ComputeJobOperationRepository(async () => client, protectedFields())
+    for (const mode of modes) {
+      // Existing SSH rows rely on the database execution-mode default.
+      await client.computeJob.create({
+        data: {
+          id: mode,
+          providerId: 'provider-' + mode,
+          sessionId: 's',
+          projectId: 'p',
+          shape: 'bridge_runner',
+          ...(mode !== 'direct_ssh' && { executionMode: mode }),
+          status: 'submitted',
+          intent: 'test',
+          command: 'true',
+          commandHash: 'hash'
+        }
+      })
+      expect(
+        (
+          await operations.request(
+            mode,
+            'cancel',
+            { providerId: 'provider-' + mode, projectId: 'p', sessionId: 's' },
+            new Date()
+          )
+        ).found
+      ).toBe(true)
+    }
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    operations = new ComputeJobOperationRepository(async () => client, protectedFields())
+    const observed = await makeJobRepository(client).findBySession('s')
+    expect(new Set(observed.map((job) => job.execution_mode))).toEqual(new Set(modes))
+    const now = new Date()
+    const ssh = (): ReturnType<typeof operations.claimNext> =>
+      operations.claimNext('cancel', now, 60000, 'ssh-worker')
+    expect(new Set([(await ssh())?.jobId, (await ssh())?.jobId])).toEqual(
+      new Set(['slurm', 'direct_ssh'])
+    )
+    expect(await ssh()).toBeNull()
+    for (const mode of ['ray_jobs', 'kubernetes', 'modal_sandbox', 'hugging_face_jobs'] as const) {
+      expect((await operations.claimNext('cancel', now, 60000, mode, mode))?.jobId).toBe(mode)
+      expect(await operations.claimNext('cancel', now, 60000, mode, mode)).toBeNull()
+    }
+  })
+
+  it('requires operator resolution for an unconfirmed Modal create after SQLite restart', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'modal-create-receipt-'))
+    let client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    let repo = makeJobRepository(client)
+    const target = {
+      appName: 'lab',
+      environmentName: 'test',
+      appId: 'app-secret-test',
+      cpus: 1,
+      memoryMiB: 512,
+      image: 'ubuntu'
+    }
+    const scope = { providerId: 'modal:test', projectId: 'p', sessionId: 's' }
+    const job = await repo.createApprovedModalJob(
+      {
+        id: 'job',
+        ...scope,
+        shape: 'bridge_runner',
+        intent: 'test',
+        command: 'true',
+        commandHash: 'hash',
+        timeoutSeconds: 60
+      },
+      target
+    )
+    const next = JSON.stringify({
+      ...JSON.parse(job.remote_handle!),
+      volume: { id: 'vol-original' },
+      sandbox: {}
+    })
+    expect(await repo.replaceModalJournal(job, next, true)).toBe(true)
+    expect(await repo.replaceModalJournal(job, next, true)).toBe(false)
+    expect(await repo.findNonTerminal()).toEqual([])
+    const raw = await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })
+    expect(raw.remoteHandle).not.toContain('app-secret-test')
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    repo = makeJobRepository(client)
+    const [restored] = await repo.findModalWork()
+    expect(restored.remote_handle).toBe(next)
+    const abandon = { jobId: 'job', ...scope, disposition: 'abandoned' as const }
+    await expect(repo.settleRemoteCleanup(abandon)).rejects.toThrow('unconfirmed')
+    const ops = new ComputeJobOperationRepository(async () => client, protectedFields())
+    await ops.request('job', 'cancel', scope, new Date())
+    expect(await ops.claimNext('cancel', new Date(), 5000, 'ssh-worker')).toBeNull()
+    expect(await repo.markModalCreationUnconfirmed(restored)).toBe(true)
+    expect((await repo.get('job'))?.last_poll_error).toBe(MODAL_CREATION_UNCONFIRMED)
+    await expect(repo.deleteByOwner({ projectId: 'p' })).rejects.toThrow('cleanup')
+    expect(await repo.settleRemoteCleanup(abandon)).toMatchObject({
+      status: 'error',
+      error_code: 'dispatch_failed',
+      remote_cleanup_disposition: 'abandoned',
+      cancellation_status: 'failed'
+    })
+    expect(await repo.replaceModalJournal(restored, next, false)).toBe(false)
+    expect(await repo.findModalWork()).toEqual([])
+    await repo.deleteByOwner({ projectId: 'p' })
+  })
+  it('confirms legacy Modal staging only while the original pre-launch volume is still bound', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'modal-legacy-cleanup-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    const job = await repo.createApprovedModalJob(
+      {
+        id: 'job',
+        providerId: 'modal:test',
+        projectId: 'p',
+        sessionId: 's',
+        shape: 'bridge_runner',
+        intent: 'test',
+        command: 'true',
+        commandHash: 'hash',
+        timeoutSeconds: 60
+      },
+      {
+        appName: 'lab',
+        environmentName: 'dev',
+        appId: 'app',
+        cpus: 1,
+        memoryMiB: 512,
+        image: 'ubuntu'
+      }
+    )
+    const journal = { ...JSON.parse(job.remote_handle!), volume: { id: 'original' } }
+    const attempted = await repo.update(job.job_id, {
+      remoteHandle: JSON.stringify({ ...journal, sandbox: {} })
+    })
+    expect(await repo.rejectModalSubmission(attempted, 'Launch preflight failed')).toBe(true)
+    const rejected = (await repo.get(job.job_id))!
+    expect(JSON.parse(rejected.remote_handle!)).toEqual({ ...journal, launchNotStarted: true })
+    expect(repo.getManualStagedCleanup(rejected)?.kind).toBe('modal_sandbox')
+    expect(
+      repo.getManualStagedCleanup({ ...rejected, remote_handle: JSON.stringify(journal) })
+    ).toBeUndefined()
+    const expired = await repo.update(job.job_id, {
+      status: 'timeout',
+      errorCode: 'timeout',
+      finishedAt: new Date(),
+      harvestedAt: new Date(),
+      harvestError: 'Deadline elapsed before launch; staged files are retained.',
+      remoteHandle: JSON.stringify(journal)
+    })
+    expect(repo.getManualStagedCleanup(expired)).toEqual({
+      kind: 'modal_sandbox',
+      environmentName: 'dev',
+      volumeId: 'original'
+    })
+    const fenced = await repo.update(job.job_id, {
+      remoteHandle: JSON.stringify({ ...journal, sandbox: {} })
+    })
+    expect(repo.getManualStagedCleanup(fenced)).toBeUndefined()
+    expect(repo.getManualStagedCleanup({ ...expired, remote_handle: '{' })).toBeUndefined()
+    await expect(repo.confirmManualStagedCleanup(expired)).rejects.toThrow('confirmed')
+    expect((await repo.get(job.job_id))?.remote_cleanup_disposition).toBe('pending')
+  })
+
   it('PERF-04 returns status without decrypting historical payloads', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'concurrency-projection-'))
     const client = createProjectDbClient(storageRoot)

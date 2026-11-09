@@ -61,6 +61,10 @@ class AcpModelChangeWorkflow {
     return this.barrierPromise
   }
 
+  get applying(): Promise<void> | undefined {
+    return this.drainPromise
+  }
+
   async apply(target: AgentModelChangeTarget): Promise<boolean> {
     if (!this.canApply(target)) return false
 

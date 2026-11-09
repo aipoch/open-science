@@ -393,6 +393,8 @@ describe('Compute service architecture', () => {
         'execution',
         'appendDetails',
         'bindJobHarvestRetry',
+        'bindExternalJobRuntime',
+        'cleanStagedJob',
         'callCommand',
         'cancelJob',
         'clearScratchRoot',
@@ -405,6 +407,12 @@ describe('Compute service architecture', () => {
         'handleJobCancellationConfirmed',
         'list',
         'listDir',
+        'listKubernetesTargets',
+        'listHostedTargets',
+        'listRayTargets',
+        'listModalTargets',
+        'wakeExternalJobs',
+        'reconcileExternalJobs',
         'probe',
         'replaceDetails',
         'retryJobHarvest',
@@ -457,6 +465,7 @@ describe('Compute service architecture', () => {
     }
 
     expect(referencedMembersOn(computePaths.jobRuntime, ['deps', 'computeService'])).toEqual([
+      'bindExternalJobRuntime',
       'bindJobHarvestRetry',
       'execution',
       'handleJobCancellationConfirmed',
@@ -491,18 +500,32 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(39)
+    expect(computeContracts).toHaveLength(58)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )
     expect(remoteRestricted.map(({ channel }) => channel).sort()).toEqual([
+      'compute:account-status',
+      'compute:cancel-account-connection',
       'compute:change-authentication',
+      'compute:connect-account',
+      'compute:create-hosted-target',
+      'compute:create-kubernetes-target',
+      'compute:create-modal-target',
       'compute:create-password',
+      'compute:create-ray-target',
+      'compute:disconnect-account',
       'compute:download',
       'compute:jobs:set-remote-cleanup',
+      'compute:list-ray-tokens',
       'compute:password-capability',
+      'compute:remove-ray-token',
       'compute:reset-password',
-      'compute:reveal-in-folder'
+      'compute:reveal-in-folder',
+      'compute:set-ray-token',
+      'compute:update-target',
+      'compute:use-local-account',
+      'compute:verify-target'
     ])
     for (const contract of remoteRestricted) {
       expect(contract.surfaceInstallation).toEqual({

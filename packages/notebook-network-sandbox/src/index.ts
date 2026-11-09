@@ -175,6 +175,14 @@ class NotebookNetworkSandbox {
         try {
           const allowed = await command.onNetworkAccessRequest({
             host: request.host,
+            ...(request.protocol ? { protocol: request.protocol } : {}),
+            ...(request.addresses
+              ? {
+                  addresses: request.addresses,
+                  reason: request.reason,
+                  policyAllowed: request.policyAllowed
+                }
+              : {}),
             purpose: request.purpose,
             ...(request.canResume ? { canResume: request.canResume } : {}),
             ...(request.port === undefined ? {} : { port: request.port }),
@@ -286,6 +294,7 @@ class NotebookNetworkSandbox {
     return {
       argv: wrapped.argv,
       env: wrapped.env,
+      ...(wrapped.processTreeProof ? { processTreeProof: wrapped.processTreeProof } : {}),
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
@@ -558,4 +567,9 @@ export type {
   NotebookTrustBundle
 } from './types.js'
 
-export { reviewPrivateDestination } from '../runtime/src/gateway/address-policy.js'
+export {
+  formatNetworkHostname,
+  normalizeRequestedHost,
+  reviewPrivateDestination,
+  validPrivateDestination
+} from '../runtime/src/gateway/address-policy.js'

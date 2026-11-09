@@ -1,6 +1,7 @@
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
@@ -70,6 +71,7 @@ import {
 } from './types'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
+export type ProviderChange = Readonly<{ id: string; current?: StoredProvider }>
 type Write = Promise<StoredSettings>
 type DataRootUpdate = Readonly<{
   dataRoot: string
@@ -94,6 +96,15 @@ const validationScopeKey = (target: ProviderValidationTarget): string =>
 
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
+  private readonly providerListeners = new Set<(changes: readonly ProviderChange[]) => void>()
+
+  // Commit notifications must stay synchronous; observers schedule drains without awaiting them.
+  subscribeProviders(listener: (changes: readonly ProviderChange[]) => void): () => void {
+    this.providerListeners.add(listener)
+    return () => {
+      this.providerListeners.delete(listener)
+    }
+  }
   private readonly store: SettingsDocumentStore
   // In-flight requests cannot survive this repository's process. Retain recovery scopes only in
   // memory so validating B does not erase A's recovery watermark or suppress an unrelated C failure.
@@ -1292,7 +1303,30 @@ class SettingsRepository {
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
   private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
-    return this.store.mutate(update)
+    let previous: StoredProvider[] = []
+    return this.store
+      .mutate((settings) => {
+        previous = structuredClone(settings.providers)
+        return update(settings)
+      })
+      .then((settings) => {
+        const before = new Map(previous.map((provider) => [provider.id, provider]))
+        const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
+        const changes = [...new Set([...before.keys(), ...after.keys()])]
+          .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
+          .map((id) => ({ id, current: after.get(id) }))
+        if (changes.length) {
+          for (const listener of this.providerListeners) {
+            try {
+              listener(structuredClone(changes))
+            } catch {
+              // The write has committed; observer failure cannot turn it into a failed save.
+              createLogger('settings:repository').error('Provider change listener failed')
+            }
+          }
+        }
+        return settings
+      })
   }
 }
 

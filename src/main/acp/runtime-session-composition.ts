@@ -1,4 +1,5 @@
 import { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
+import { recordResourceEvent } from '../resource-diagnostics/recorder'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
@@ -111,7 +112,17 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     }
   })
   const sessionRegistry: AcpSessionRegistry = new AcpSessionRegistry({
-    onAttachmentChanged: ({ appSessionId, attachment, aggregate }) => {
+    onAttachmentChanged: ({ appSessionId, attachment, aggregate, generation }) => {
+      recordResourceEvent(attachment ? 'session-attached' : 'session-detached', {
+        runtimeId: base.resourceRuntimeId,
+        // Teardown may already have superseded the connection. The retained attachment generation
+        // joins detach to its original attach without attributing it to the replacement epoch.
+        epoch: attachment ? base.connectionResources.epoch : undefined,
+        sessionId: appSessionId,
+        providerSessionId: attachment?.providerSessionId,
+        generation,
+        projectId: aggregate.snapshot().projectId
+      })
       const profile = aggregate.snapshot().permissionProfile
       if (attachment && profile) {
         permissionContext.setLivePermissionProfile(
@@ -176,7 +187,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     new SandboxNetworkApprovalOwner(
       options.permissionWait?.sessions,
       options.permissionWait?.onSessionUpdated,
-      options.permissionWait?.allowNetworkDomain
+      options.permissionWait?.allowNetworkDomain,
+      options.permissionWait?.allowNetworkDestination
     )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,

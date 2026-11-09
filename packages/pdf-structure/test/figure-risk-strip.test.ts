@@ -1,8 +1,13 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
-const { isFigureRiskTable, isFigureOwnedPartialTable, isNativeFigureOwnedClippedTable } =
-  await import(pathToFileURL(resolve('resources/literature-pdf-table-evidence.mjs')).href)
+const {
+  isFigureRiskTable,
+  isFigureOwnedPartialTable,
+  isFigureOwnedCaptionLeakTable,
+  isFigureOwnedCaptionlessPanelTable,
+  isNativeFigureOwnedClippedTable
+} = await import(pathToFileURL(resolve('resources/literature-pdf-table-evidence.mjs')).href)
 it('rejects a risk strip even when detector padding captures adjacent prose', () => {
   const cells = Array.from({ length: 8 }, (_, i) => ({
     row: Math.floor(i / 4),
@@ -51,6 +56,70 @@ it('rejects an uncaptioned partial table crop owned by a larger figure panel', (
   const figures = [{ rect: [108, 80, 506, 196] }]
   expect(isFigureOwnedPartialTable(table, figures)).toBe(true)
   expect(isFigureOwnedPartialTable({ ...table, issues: [], unassigned: [] }, figures)).toBe(false)
+})
+
+it('rejects a caption-leaking figure panel table with unresolved crop evidence', () => {
+  const table = {
+    cropRect: [158, 658, 761, 1004],
+    grid: [
+      [
+        't13–25 Sets up the venv',
+        't6–16 Subtour solver',
+        't8–18 Finds SciPy',
+        't2–22 Sets up the venv'
+      ],
+      [
+        'Figure 8:',
+        'Qualitative example on the ALE-CM task',
+        'branch_bound_atsp',
+        '(Math & Science).'
+      ]
+    ],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text'],
+    unassigned: ['t86', 'Submits.']
+  }
+  const figures = [
+    {
+      rect: [106, 484, 508, 654],
+      caption: { lines: ['Figure 8: Qualitative example on the ALE-CM task.'] }
+    }
+  ]
+  expect(isFigureOwnedCaptionLeakTable(table, figures)).toBe(true)
+  expect(
+    isFigureOwnedCaptionLeakTable({ ...table, caption: { lines: ['Table 1.'] } }, figures)
+  ).toBe(false)
+  expect(isFigureOwnedCaptionLeakTable({ ...table, grid: [['not a figure']] }, figures)).toBe(false)
+})
+
+it('rejects a captionless upper panel table inside a resolved two-panel figure', () => {
+  const table = {
+    cropRect: [88, 269, 693, 423],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text'],
+    unassigned: ['#', 'candidate (ours)', 'command (verbatim)']
+  }
+  const figures = [
+    {
+      rect: [58, 82, 561, 652],
+      caption: { lines: ['Figure 9: (a) first panel and (b) second panel.'] }
+    }
+  ]
+  expect(isFigureOwnedCaptionlessPanelTable(table, figures)).toBe(true)
+  expect(isFigureOwnedCaptionlessPanelTable({ ...table, unassigned: [] }, figures)).toBe(false)
+})
+
+it('keeps an unresolved table whose detector crop extends outside the figure', () => {
+  const table = {
+    cropRect: [88, 269, 900, 423],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text'],
+    unassigned: ['adjacent table content']
+  }
+  const figures = [
+    {
+      rect: [58, 82, 561, 652],
+      caption: { lines: ['Figure 9: (a) first panel and (b) second panel.'] }
+    }
+  ]
+  expect(isFigureOwnedCaptionlessPanelTable(table, figures)).toBe(false)
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type

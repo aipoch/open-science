@@ -20,7 +20,7 @@ import {
   dialogCloseButtonClassName
 } from '@/components/ui/dialog-chrome'
 import type {
-  SessionDiagnosticIdentity,
+  DiagnosticTarget,
   SessionDiagnosticItem,
   SessionDiagnosticExportResult
 } from '../../../../shared/session-diagnostics'
@@ -69,7 +69,7 @@ export const SessionDiagnosticsDialog = ({
   identity,
   onClose
 }: {
-  identity: SessionDiagnosticIdentity
+  identity: DiagnosticTarget
   onClose: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -90,7 +90,7 @@ export const SessionDiagnosticsDialog = ({
   >(undefined)
   const closing = useRef(false)
   const mounted = useRef(true)
-  const { projectId, sessionId } = identity
+  const { projectId, sessionId, scope } = identity
   const hasSelectedNotebook = items.some(
     (item) => item.kind === 'notebook' && item.available && selected.includes(item.id)
   )
@@ -100,7 +100,11 @@ export const SessionDiagnosticsDialog = ({
     const operationId = crypto.randomUUID()
     operation.current = operationId
     void window.api.sessions
-      .inspectDiagnostics({ projectId, sessionId, operationId })
+      .inspectDiagnostics(
+        scope === 'application'
+          ? { scope, operationId }
+          : { projectId: projectId!, sessionId: sessionId!, operationId }
+      )
       .then((inspection) => {
         if (!mounted.current || operation.current !== operationId) return
         setItems(inspection.items)
@@ -113,7 +117,8 @@ export const SessionDiagnosticsDialog = ({
                   item.id === 'log:main.log' ||
                   item.id.startsWith('desktop-log:') ||
                   item.id.startsWith('backend-log:')) &&
-                item.kind !== 'sensitive-file'
+                item.kind !== 'sensitive-file' &&
+                item.kind !== 'resource-log'
             )
             .map((item) => item.id)
         )
@@ -136,7 +141,7 @@ export const SessionDiagnosticsDialog = ({
       if (active)
         void window.api.sessions.cancelDiagnostics({ operationId: active }).catch(() => undefined)
     }
-  }, [projectId, sessionId, t])
+  }, [projectId, sessionId, scope, t])
 
   const close = async (): Promise<void> => {
     if (closing.current) return
@@ -168,8 +173,9 @@ export const SessionDiagnosticsDialog = ({
     setReportCopied(false)
     try {
       const promise = window.api.sessions.exportDiagnostics({
-        projectId,
-        sessionId,
+        ...(identity.scope === 'application'
+          ? { scope: 'application' as const }
+          : { projectId: identity.projectId, sessionId: identity.sessionId }),
         operationId,
         selectedItems: selected,
         ...(includeExecutionCode && hasSelectedNotebook ? { includeExecutionCode: true } : {})
@@ -292,7 +298,23 @@ export const SessionDiagnosticsDialog = ({
           ),
         ...logGroup('desktop-log:', t('Desktop logs')),
         ...logGroup('desktop-legacy-log:', t('Earlier desktop logs')),
-        ...logGroup('backend-log:', t('Backend startup logs'))
+        ...logGroup('backend-log:', t('Backend startup logs')),
+        ...items
+          .filter((item) => item.kind === 'resource-log')
+          .map((item) =>
+            single(
+              item,
+              t('Resource diagnostics'),
+              t(
+                'Memory, processes and session activity, including records retained before a failure. Originals remain on this device.'
+              ),
+              [
+                'logs/resources/incident-*.jsonl',
+                'logs/resources/live-*.jsonl',
+                'logs/resources/metadata.json'
+              ]
+            )
+          )
       ]
     },
     {
@@ -364,7 +386,7 @@ export const SessionDiagnosticsDialog = ({
             </div>
             <Dialog.Description className={dialogDescriptionClassName}>
               {t(
-                'Exports diagnostic records, error details and execution errors. Review for sensitive content before sharing. Saved locally; nothing is uploaded.'
+                'Choose what to save. Review the exported files before sharing; nothing is uploaded.'
               )}
             </Dialog.Description>
           </div>

@@ -172,7 +172,7 @@ const viewSnapshotSchema = z
   .strict()
 export const sessionReplaySnapshotSchema = sessionReplayRequestSchema
   .extend({
-    sourceStatus: z.enum(['available', 'archived', 'missing', 'unreadable']),
+    sourceStatus: z.enum(['available', 'archived', 'missing', 'unreadable', 'deleted']),
     sourceTitle: z.string().optional(),
     view: viewSnapshotSchema.optional()
   })

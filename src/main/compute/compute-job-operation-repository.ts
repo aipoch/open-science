@@ -123,6 +123,8 @@ class ComputeJobOperationRepository {
   }
 
   private cleanupStopError(job: PrismaComputeJob): string | null {
+    if (job.executionMode && job.executionMode !== 'direct_ssh' && job.executionMode !== 'slurm')
+      return null
     const protection = this.fieldProtection
     const reveal = (value: string | null): string | undefined =>
       value === null ? undefined : job.sensitiveDataEncrypted ? protection.reveal(value) : value
@@ -183,9 +185,19 @@ class ComputeJobOperationRepository {
           id: jobId,
           projectId: scope.projectId,
           sessionId: scope.sessionId,
-          providerId: scope.providerId
+          providerId: scope.providerId,
+          executionMode: {
+            in: [
+              'direct_ssh',
+              'slurm',
+              'kubernetes',
+              'ray_jobs',
+              'hugging_face_jobs',
+              'modal_sandbox'
+            ]
+          }
         },
-        select: { status: true }
+        select: { status: true, executionMode: true }
       })
       if (!job) return { found: false } as const
 
@@ -248,7 +260,18 @@ class ComputeJobOperationRepository {
           if (queued) {
             await transaction.computeJob.updateMany({
               where: { id: jobId, status: 'queued' },
-              data: { status: 'failed', finishedAt: now }
+              data: {
+                status: 'failed',
+                finishedAt: now,
+                ...(['modal_sandbox', 'hugging_face_jobs', 'ray_jobs', 'kubernetes'].includes(
+                  job.executionMode
+                ) && {
+                  ...(job.executionMode === 'kubernetes' && { kubernetesWorkspace: null }),
+                  remoteCleanupDisposition: 'cleaned',
+                  errorCode: 'job_cancelled',
+                  harvestedAt: now
+                })
+              }
             })
           }
           return {
@@ -266,7 +289,8 @@ class ComputeJobOperationRepository {
     kind: ComputeJobOperationKind,
     now: Date,
     leaseMs: number,
-    claimToken: string
+    claimToken: string,
+    backend?: 'modal_sandbox' | 'hugging_face_jobs' | 'ray_jobs' | 'kubernetes'
   ): Promise<ClaimedComputeJobOperation | null> {
     const client = await this.getClient()
     return runOperationTransaction(client, async (transaction, attempt) => {
@@ -277,7 +301,12 @@ class ComputeJobOperationRepository {
             where: {
               kind,
               phase: 'active',
-              job: { is: { status: { in: [...TERMINAL_STATUSES] } } }
+              job: {
+                is: {
+                  executionMode: backend ?? { in: ['slurm', 'direct_ssh'] },
+                  status: { in: [...TERMINAL_STATUSES] }
+                }
+              }
             },
             orderBy: { createdAt: 'asc' }
           })
@@ -304,7 +333,12 @@ class ComputeJobOperationRepository {
         where: {
           kind,
           phase: 'active',
-          job: { is: { status: { in: [...ACTIVE_STATUSES] } } },
+          job: {
+            is: {
+              executionMode: backend ?? { in: ['slurm', 'direct_ssh'] },
+              status: { in: [...ACTIVE_STATUSES] }
+            }
+          },
           OR: [
             {
               claimToken: null,
@@ -340,7 +374,8 @@ class ComputeJobOperationRepository {
   async fulfill(
     claim: ClaimedComputeJobOperation,
     now: Date,
-    remoteWorkdirAbsent = false
+    remoteWorkdirAbsent = false,
+    stagedInputsOnly = false
   ): Promise<boolean> {
     const client = await this.getClient()
     return runOperationTransaction(client, async (transaction) => {
@@ -370,7 +405,9 @@ class ComputeJobOperationRepository {
               lastPollError: this.cleanupStopError(job),
               // No launched workload means there are no results to harvest. Directory absence
               // remains a separate fact; only that fact can settle remote cleanup.
-              ...(this.cancellationDidNotLaunch(job)
+              ...(this.cancellationDidNotLaunch(job) ||
+              (['modal_sandbox', 'hugging_face_jobs', 'ray_jobs'].includes(job.executionMode) &&
+                stagedInputsOnly)
                 ? { harvestedAt: now, harvestError: null }
                 : {}),
               ...(remoteWorkdirAbsent

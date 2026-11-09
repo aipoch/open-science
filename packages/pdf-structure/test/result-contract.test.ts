@@ -27,6 +27,47 @@ describe('PDF result boundary', () => {
     engineFingerprint: fingerprint,
     requestedPages: [1]
   }
+  const grouped = (): PdfStructureResult => {
+    const result = resultFor(identity)
+    result.elements.push({
+      id: 'table-1',
+      kind: 'table',
+      regions: [{ page: 1, x: 0.1, y: 0.1, width: 0.8, height: 0.8 }],
+      caption: {
+        text: 'Table 1. Independent sections.',
+        regions: [{ page: 1, x: 0.1, y: 0.1, width: 0.8, height: 0.05 }]
+      },
+      tableParts: [0.2, 0.6].map((y, i) => ({
+        title: `${String.fromCharCode(65 + i)}. Group`,
+        regions: [{ page: 1, x: 0.2, y, width: 0.5, height: 0.2 }],
+        table: { rowCount: 1, columnCount: 1, cells: [], unassignedText: [], issues: [] }
+      })),
+      issues: []
+    })
+    return result
+  }
+  it('retains independent group-part boundaries while accepting legacy groups without them', () => {
+    const result = grouped()
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+    for (const part of result.elements[0].tableParts!) delete part.regions
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+  })
+  it.each(['partial', 'outside', 'overlap', 'page', 'too-many', 'no-caption'] as const)(
+    'rejects inconsistent group-part boundaries: %s',
+    (mode) => {
+      const result = grouped(),
+        element = result.elements[0],
+        parts = element.tableParts!
+      if (mode === 'partial') delete parts[1].regions
+      if (mode === 'outside') parts[0].regions![0].x = 0
+      if (mode === 'overlap') parts[1].regions![0].y = 0.3
+      if (mode === 'page') parts[0].regions![0].page = 2
+      if (mode === 'too-many')
+        parts[0].regions = Array.from({ length: 9 }, () => ({ ...parts[0].regions![0] }))
+      if (mode === 'no-caption') delete element.caption
+      expect(() => parsePdfStructureResult(result, identity)).toThrow()
+    }
+  )
   it('accepts sparse/merged cells without filling missing content', () => {
     const result = resultFor(identity)
     result.elements.push({

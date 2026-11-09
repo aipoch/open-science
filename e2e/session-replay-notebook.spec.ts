@@ -15,7 +15,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   const projectName = 'Standalone Notebook research'
   const projectId = await createProject(page, projectName)
   const source: PersistedChatSession = {
-    id: 'imported-standalone-notebook',
+    id: 'import-standalone-notebook',
     projectId,
     title: 'Archived standalone Notebook',
     // Native package import deliberately removes the originating machine's workspace path.
@@ -132,10 +132,6 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   const stepId = await replay.locator('[data-replay-active]').getAttribute('data-replay-step')
   const branchId = await page.getByTestId('replay-stage').getAttribute('data-replay-branch')
   await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-  await page
-    .getByRole('dialog', { name: 'Ask in a conversation' })
-    .getByRole('button', { name: 'New conversation', exact: true })
-    .click()
   const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
   await expect(page.locator('[data-session-discussion-source]')).toContainText(source.title)
   await expect(editor).not.toContainText('#session-replay:')
@@ -166,6 +162,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
       ),
     projectId
   )
+  expect(target?.parentSessionId).toBe(source.id)
   const user = target!.messages.find((message) => message.role === 'user')!
   expect(user.content).not.toContain('#session-replay:')
   const contextId = target!.runtimeContext!.sessionContext!.bindings[0].contextId
@@ -254,7 +251,8 @@ test('renders archived research with shared workspace messages, grouped tools an
     }
   })
   const source: PersistedChatSession = {
-    id: 'imported-tool-presentation',
+    id: 'import-tool-presentation',
+    number: 1,
     projectId,
     title: 'Archived plot',
     cwd: '',
@@ -504,4 +502,125 @@ test('renders archived research with shared workspace messages, grouped tools an
     sessionId: source.id
   })
   expect(saved?.activities?.[0].rawOutput).toEqual(source.activities?.[0].rawOutput)
+})
+
+test('restores the selected one of two Notebook runs from a historical step after restart', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  const projectName = 'Historical Notebook selection'
+  const projectId = await createProject(page, projectName)
+  const source: PersistedChatSession = {
+    id: 'import-selected-run',
+    projectId,
+    title: 'Two runs in one step',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 20,
+    messages: Array.from({ length: 10 }, (_, i) => ({
+      id: `m${i}`,
+      role: 'user',
+      content: `Observation ${i}`,
+      status: 'complete',
+      eventIds: [],
+      createdAt: i < 2 ? i + 1 : i + 4,
+      updatedAt: i < 2 ? i + 1 : i + 4
+    })),
+    activities: [
+      {
+        id: 'paired',
+        kind: 'tool',
+        title: 'Notebook run',
+        status: 'completed',
+        promptMessageId: 'm1',
+        executionInvocationId: 'pair',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 3,
+        updatedAt: 4
+      }
+    ],
+    packageOrigin: {
+      importId: 'pair-import',
+      importedAt: 20,
+      sourceProjectId: 'foreign-project',
+      sourceSessionId: 'foreign-source',
+      manifestChecksum: 'f'.repeat(64)
+    }
+  }
+  const runs: NotebookRunRecord[] = ['first', 'second'].map((id, i) => ({
+    runId: id,
+    cellId: `cell-${id}`,
+    kernelKind: 'python',
+    source: 'agent',
+    status: 'completed',
+    startedAt: 3 + i,
+    endedAt: 4 + i,
+    script: `print("${id}")`,
+    text: { stdout: `result-${id}`, stderr: '', traceback: '', plain: [] },
+    outputs: [],
+    artifacts: [],
+    workingFiles: [],
+    promptMessageId: 'm1',
+    executionInvocationId: 'pair'
+  }))
+  page = await app.restartWithSessionFixture(source, runs)
+  const openProject = async (): Promise<void> => {
+    await page
+      .getByRole('region', { name: 'Projects', exact: true })
+      .getByRole('button', { name: projectName, exact: true })
+      .click()
+  }
+  await openProject()
+  await page
+    .getByRole('region', { name: 'Imported research history' })
+    .getByRole('button', { name: 'View replay' })
+    .click()
+  const replay = page.getByTestId('replay-panel')
+  await replay.getByRole('slider').focus()
+  await page.keyboard.press('End')
+  await expect(replay.getByTestId('replay-current-step')).toHaveText('Step 11 of 11')
+  const drawer = replay.getByRole('button', { name: 'Notebook', exact: true })
+  if ((await drawer.getAttribute('aria-expanded')) === 'false') await drawer.click()
+  await replay
+    .locator('[data-replay-run-item="first"]')
+    .getByRole('button', { name: 'Ask', exact: true })
+    .click()
+  const draft = page.getByTestId('session-discussion-draft')
+  await expect(draft).toContainText('Step 3')
+  await expect(draft).toContainText('Notebook run 0')
+  const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
+  await editor.fill('Explain this recorded run.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toContainText(
+    'Deterministic reply:'
+  )
+  const snapshots = await page.evaluate(
+    (request) => window.api.sessionReplay.listSelectionSnapshots(request),
+    { projectId, sourceSessionId: source.id }
+  )
+  expect(snapshots).toHaveLength(1)
+  expect(snapshots[0]).toMatchObject({
+    stepId: 'activity:paired',
+    stepNumber: 3,
+    phase: 'result',
+    evidence: [{ kind: 'notebook-run', id: 'first', part: 'record' }],
+    records: [{ id: 'notebook-run:first', text: 'print("first")\nresult-first' }]
+  })
+  page = await app.restart()
+  await openProject()
+  const conversation = page.getByRole('region', { name: 'Conversation', exact: true })
+  const more = conversation.getByRole('button', { name: 'Show more', exact: true })
+  if (await more.isVisible()) await more.click()
+  await conversation.getByRole('button', { name: 'Show annotation source', exact: true }).click()
+  const restored = page.getByTestId('replay-panel')
+  await expect(restored.getByTestId('replay-current-step')).toHaveText('Step 3 of 11')
+  await expect(restored.locator('[data-replay-run-item="first"]')).toBeFocused()
+  await restored.getByRole('button', { name: 'Play replay', exact: true }).click()
+  await expect(restored.getByTestId('replay-current-step')).not.toHaveText('Step 3 of 11')
+  await conversation.getByRole('button', { name: 'Show annotation source', exact: true }).click()
+  await expect(restored.locator('[data-replay-run-item="first"]')).toBeFocused()
+  await expect(restored.getByTestId('replay-current-step')).toHaveText('Step 3 of 11')
 })

@@ -184,6 +184,7 @@ model SessionNumberSequence {
 // Session keeps this row as a tombstone after its JSON is removed.
 // The existing string `id` remains domain identity; `number` is an unreferenced alternate key.
 model Session {
+  parentSessionId       String?
   id                    String               @id
   number                Int                  @unique
   projectId             String
@@ -1130,6 +1131,7 @@ model ComputeJob {
   harvestConfig            String?
   timeoutSeconds           Int?
   remoteWorkdir            String?
+  kubernetesWorkspace      String?
   remoteHandle             String?
   remoteCleanupDisposition String                @default("pending")
   exitCode                 Int?

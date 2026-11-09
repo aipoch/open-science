@@ -936,7 +936,13 @@ const terminateWindowsTree = async (
   let killer: ChildProcess
   try {
     const windowsRoot = process.env.SystemRoot || process.env.WINDIR
-    const taskkill = windowsRoot ? win32.join(windowsRoot, 'System32', 'taskkill.exe') : 'taskkill'
+    const comSpec = process.env.ComSpec
+    const system32 = comSpec && win32.isAbsolute(comSpec) ? win32.dirname(comSpec) : undefined
+    const taskkill = windowsRoot
+      ? win32.join(windowsRoot, 'System32', 'taskkill.exe')
+      : system32
+        ? win32.join(system32, 'taskkill.exe')
+        : 'taskkill'
     killer = spawn(taskkill, ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
   } catch (error) {
     log?.error('taskkill failed to launch; falling back to direct kill', error)

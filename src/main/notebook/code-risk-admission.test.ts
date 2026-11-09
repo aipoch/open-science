@@ -548,6 +548,12 @@ describe('host-owned one-shot execution admission', () => {
         node: process.execPath,
         powershell: process.execPath
       })
+      const nodeRuntime = vi
+        .spyOn(windowsRuntime, 'resolveWindowsNotebookNodeRuntime')
+        .mockReturnValue({
+          root: process.cwd(),
+          node: process.execPath
+        })
       const parse = vi
         .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
         .mockResolvedValue([])
@@ -592,6 +598,7 @@ describe('host-owned one-shot execution admission', () => {
       } finally {
         analyze.mockRestore()
         parse.mockRestore()
+        nodeRuntime.mockRestore()
         runtime.mockRestore()
       }
     }

@@ -1016,7 +1016,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(container.textContent).toContain('SSH')
+    expect(container.textContent).toContain('cluster-1')
     expect(container.textContent).toContain('cluster-1')
     expect(container.textContent).toContain('gpu-box')
     expect(container.textContent).not.toContain('Session access')
@@ -1070,7 +1070,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(container.querySelector('[data-testid="compute-status-capsule"]')?.textContent).toBe(
       '2 hosts'
     )
-    expect(container.textContent).toContain('Run jobs on a remote SSH host, or manage hosts.')
+    expect(container.textContent).toContain('Compute')
 
     act(() => {
       root.render(
@@ -1152,7 +1152,7 @@ describe('ComposerAgentControlsMenu', () => {
       'Unavailable'
     )
     expect(container.textContent).not.toContain('0 hosts')
-    expect(container.textContent).not.toContain('No SSH hosts registered')
+    expect(container.textContent).not.toContain('No compute targets')
   })
 
   it('keeps long target names compact and reveals every selected name on hover', () => {
@@ -1338,7 +1338,23 @@ describe('ComposerAgentControlsMenu', () => {
     ).toBe(true)
   })
 
-  it('renders a Compute submenu trigger above the SSH hosts', () => {
+  it('renders a Modal-only target list without an SSH section heading', () => {
+    useComputeStore.setState({
+      hosts: [],
+      modalTargets: [
+        {
+          id: 'lab',
+          providerId: 'modal:205e1449-7f3c-46b4-b218-5ed529e9e9ba',
+          displayName: 'Research cluster',
+          environmentName: 'research',
+          appName: 'experiment',
+          image: 'ubuntu:24.04',
+          cpus: 2,
+          memoryMiB: 1024
+        }
+      ]
+    })
+
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
@@ -1354,8 +1370,8 @@ describe('ComposerAgentControlsMenu', () => {
     })
 
     expect(container.textContent).toContain('Compute')
-    // SSH hosts + Manage compute stay nested under that single Compute submenu.
-    expect(container.textContent).toContain('SSH')
+    expect(container.textContent).toContain('Research cluster')
+    expect(container.textContent).not.toContain('SSH')
     expect(container.textContent).toContain('Manage compute...')
   })
 

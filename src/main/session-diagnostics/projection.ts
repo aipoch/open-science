@@ -417,8 +417,7 @@ export function projectDiagnosticLog(
   }
   if (source.scope === 'desktop-runtime-recovery') {
     const credential = credentialDiagnosticSchema.safeParse(data.credentialDiagnostic)
-    if (credential.success && credential.data.code !== 'inventory-failed')
-      diagnostic.credentialDiagnostic = credential.data
+    if (credential.success) diagnostic.credentialDiagnostic = credential.data
   }
   if (source.scope === 'permission' && source.msg === 'permission decision trace') {
     for (const [key, allowed] of Object.entries(permissionLogStates)) {

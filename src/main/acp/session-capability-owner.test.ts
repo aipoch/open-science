@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { resolve } from 'node:path'
+import { harnessFramework } from '../agent-framework/harness'
+import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-server'
 
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
@@ -38,6 +41,122 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it('releases provisional and committed HTTP Skill loaders without revoking a successor', async () => {
+    const releases: ReturnType<typeof vi.fn>[] = []
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerNotebook: vi.fn(),
+      registerReceiptScope: vi.fn(),
+      urlFor: vi.fn((kind: string, id: string) => `http://127.0.0.1:5/${kind}/${id}`),
+      unregister: vi.fn(),
+      registerSkillRuntime: vi.fn(() => {
+        const release = vi.fn()
+        releases.push(release)
+        return {
+          routingId: `skills-${releases.length}`,
+          server: {
+            type: 'http',
+            name: 'skills',
+            url: `http://127.0.0.1:5/skills/${releases.length}`,
+            headers: []
+          },
+          release
+        }
+      })
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({ artifacts: undefined, skillImport: undefined, mcpHttpHost: host })
+    const prepare = async (): Promise<Awaited<ReturnType<typeof owner.provision>>> => {
+      const provision = await owner.provision({
+        stableAppSessionId: 'session',
+        sessionCwd: process.cwd(),
+        projectId: 'project',
+        framework: harnessFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+      })
+      provision.includeFrameworkMcpServers([
+        createSkillRuntimeAcpServerConfig({
+          command: process.execPath,
+          entryPath: resolve('entry.js'),
+          root: resolve('skills')
+        })
+      ])
+      return provision
+    }
+    const first = await prepare()
+    first.commit('session')
+    expect(host.registerReceiptScope).toHaveBeenCalledWith(
+      'skills-1',
+      JSON.stringify(['project', 'session', 'skills']),
+      'skills'
+    )
+    expect(host.registerReceiptScope).toHaveBeenCalledWith(
+      'session',
+      JSON.stringify(['project', 'session', 'notebook']),
+      'notebook'
+    )
+    const rolledBack = await prepare()
+    await rolledBack.release({ ownsStableIdentity: false })
+    expect(releases[0]).not.toHaveBeenCalled()
+    expect(releases[1]).toHaveBeenCalledOnce()
+    const next = await prepare()
+    next.commit('session')
+    expect(releases[0]).toHaveBeenCalledOnce()
+    await first.release({ ownsStableIdentity: false })
+    expect(releases[2]).not.toHaveBeenCalled()
+    owner.revokeSession('session')
+    expect(releases[2]).toHaveBeenCalledOnce()
+  })
+  it('converts an owned Skill runtime for a stdio-less framework without built-in MCP servers', async () => {
+    const registerSkillRuntime = vi.fn(() => ({
+      routingId: 'skills-only',
+      server: {
+        type: 'http' as const,
+        name: 'skills',
+        url: 'http://127.0.0.1:5/skills/skills-only',
+        headers: []
+      },
+      release: vi.fn()
+    }))
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerSkillRuntime,
+      registerReceiptScope: vi.fn(),
+      unregister: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host
+    })
+    const provision = await owner.provision({
+      framework: harnessFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+    const built = provision.includeFrameworkMcpServers([
+      createSkillRuntimeAcpServerConfig({
+        command: process.execPath,
+        entryPath: resolve('entry.js'),
+        root: resolve('skills')
+      })
+    ])
+    expect(registerSkillRuntime).toHaveBeenCalledOnce()
+    expect(built.mcpServers).toEqual([
+      {
+        type: 'http',
+        name: 'skills',
+        url: 'http://127.0.0.1:5/skills/skills-only',
+        headers: []
+      }
+    ])
+    expect(built.descriptor.transport).toBe('http')
+  })
   it.each([
     [claudeCodeFramework, 'open-science-library'],
     [codexFramework, 'open-science-library'],

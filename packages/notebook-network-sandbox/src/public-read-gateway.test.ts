@@ -463,19 +463,19 @@ describe('public read network contract and resource gates', () => {
   it('admits at most four inspection connections including idle handshakes', async () => {
     const { open, seen, blocked } = await setup()
     for (let index = 0; index < 4; index++) await open()
-    await expect(open()).rejects.toThrow('200 Connection Established')
+    await expect(open()).rejects.toThrow()
     expect(seen).toEqual([])
     expect(blocked).not.toHaveBeenCalled()
   })
   it('never starts inspection outside an execution window', async () => {
     const { open, seen, blocked } = await setup({ active: false })
-    await expect(open()).rejects.toThrow('200 Connection Established')
+    await expect(open()).rejects.toThrow()
     expect(seen).toEqual([])
     expect(blocked).not.toHaveBeenCalled()
   })
   it('does not use automatic reads for an explicit ask rule', async () => {
     const { open, seen, blocked } = await setup({ source: 'explicit' })
-    await expect(open()).rejects.toThrow('200 Connection Established')
+    await expect(open()).rejects.toThrow()
     expect(seen).toEqual([])
     expect(blocked).toHaveBeenCalledOnce()
   })

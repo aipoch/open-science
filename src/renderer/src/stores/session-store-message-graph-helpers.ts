@@ -412,6 +412,7 @@ export const copySnapshotMessage = (
   annotations: message.annotations?.map((annotation) => structuredClone(annotation)),
   turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
   modelCallUsage: message.modelCallUsage?.map((call) => ({ ...call })),
+  harnessTurn: message.harnessTurn ? structuredClone(message.harnessTurn) : undefined,
   sortIndex
 })
 

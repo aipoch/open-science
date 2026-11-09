@@ -15,10 +15,12 @@ type ReadingAction = { sourceSessionId: string; contextId?: string }
 export const SessionDiscussionSource = ({
   projectId,
   sessionId,
+  parentSessionId,
   context
 }: {
   projectId: string
   sessionId: string
+  parentSessionId?: string
   context?: SessionRuntimeContext
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -26,6 +28,16 @@ export const SessionDiscussionSource = ({
   const [pending, setPending] = useState<ReadingAction>()
   const bindings = context?.sessionContext?.bindings ?? []
   const binding = bindings.at(-1)
+  const archived = useSessionStore(
+    (state) =>
+      binding &&
+      state.sessions.some(
+        (row) =>
+          row.projectId === binding.projectId &&
+          row.id === binding.sessionId &&
+          row.archivedAt !== undefined
+      )
+  )
   if (!binding) return null
   const act = async (action: ReadingAction): Promise<void> => {
     const binding = bindings.find((row) => row.sessionId === action.sourceSessionId)
@@ -69,7 +81,9 @@ export const SessionDiscussionSource = ({
       <div className={composerContextRowClassName}>
         <SessionDiscussionBar
           scope={binding.scope}
-          title={binding.title}
+          title={
+            archived ? t('Archived source: {{title}}', { title: binding.title }) : binding.title
+          }
           steps={sessionReadingPositions(binding).map((position) => ({
             id: position.contextId,
             title: position.stepTitle ?? binding.title,
@@ -79,7 +93,9 @@ export const SessionDiscussionSource = ({
           disabled={Boolean(pending)}
           pending={Boolean(pending)}
           onReveal={(contextId) => void act({ sourceSessionId: binding.sessionId, contextId })}
-          onRemove={() => void act({ sourceSessionId: binding.sessionId })}
+          onRemove={
+            parentSessionId ? undefined : () => void act({ sourceSessionId: binding.sessionId })
+          }
           removeLabel={t('Unlink Session')}
           removeHint={t('Stop future reading. Sent messages are kept.')}
         />
@@ -96,7 +112,9 @@ export const SessionDiscussionSource = ({
             tone="amber"
             description={
               error.contextId
-                ? t('Could not open this source. Retry or unlink the Session.')
+                ? parentSessionId
+                  ? t('This replay reference is unavailable on this device.')
+                  : t('Could not open this source. Retry or unlink the Session.')
                 : t('Could not unlink the Session. Please retry.')
             }
             primaryButton={{

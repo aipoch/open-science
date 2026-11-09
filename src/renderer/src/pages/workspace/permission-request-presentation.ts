@@ -29,7 +29,13 @@ type PermissionPresentation = {
 type RequestInput = Record<string, unknown>
 
 type NotebookNetworkApproval = Readonly<{
+  addresses?: readonly string[]
+  risks?: readonly string[]
+  recordId?: string
+  revision?: number
+  blockReason?: string
   hostname: string
+  protocol: 'http' | 'https'
   port?: number
   runtime?: NotebookRuntime
   reason?: string
@@ -176,6 +182,8 @@ const getNotebookNetworkApproval = (
   ) {
     return undefined
   }
+  if (payload.protocol !== undefined && payload.protocol !== 'http' && payload.protocol !== 'https')
+    return undefined
   const runtime =
     payload.runtime === 'python' || payload.runtime === 'r' || payload.runtime === 'bash'
       ? payload.runtime
@@ -184,6 +192,16 @@ const getNotebookNetworkApproval = (
         : undefined
   return {
     hostname: payload.hostname,
+    protocol: payload.protocol === 'http' ? 'http' : 'https',
+    ...(Array.isArray(payload.addresses) && payload.addresses.every((v) => typeof v === 'string')
+      ? { addresses: payload.addresses as string[] }
+      : {}),
+    ...(Array.isArray(payload.risks)
+      ? { risks: payload.risks.filter((v): v is string => typeof v === 'string') }
+      : {}),
+    ...(typeof payload.recordId === 'string' ? { recordId: payload.recordId } : {}),
+    ...(typeof payload.revision === 'number' ? { revision: payload.revision } : {}),
+    ...(typeof payload.blockReason === 'string' ? { blockReason: payload.blockReason } : {}),
     ...(payload.port === undefined ? {} : { port: payload.port }),
     ...(runtime ? { runtime } : {}),
     ...(typeof payload.reason === 'string' && payload.reason.trim()
@@ -393,9 +411,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   const networkApproval = getNotebookNetworkApproval(request)
   if (networkApproval) {
     return {
-      actionTitle: `Connect to ${networkApproval.hostname}?`,
-      actionTitleKey: 'Connect to {{domain}}?',
-      actionTitleValues: { domain: networkApproval.hostname },
+      actionTitle: 'Network access required',
       categoryLabel: 'Network access',
       description: request.durable
         ? 'Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.'

@@ -1,0 +1,28 @@
+{
+  "ownerPaths": [
+    "scripts/agent-harness-acceptance.mjs",
+    "scripts/agent-harness-acceptance.test.ts",
+    "scripts/check-agent-harness-package.mjs",
+    "scripts/fixtures/agent-harness/consumer.mjs",
+    "scripts/fixtures/agent-harness/consumer.ts",
+    "scripts/fixtures/agent-harness/package-lock.json",
+    "scripts/fixtures/agent-harness/package.json",
+    "scripts/fixtures/agent-harness/vitest.config.ts"
+  ],
+  "interfacePaths": [
+    "scripts/agent-harness-acceptance.mjs",
+    "scripts/check-agent-harness-package.mjs"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["scripts/agent-harness-acceptance.test.ts"],
+    "contract": [
+      "scripts/ci/package-boundaries.test.ts",
+      "scripts/ci/module-graph/consumer-coverage.test.ts"
+    ],
+    "consumer": ["scripts/agent-harness-smoke.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "ci_integrity_surface",
+  "fullTestReason": "Standalone delivery scripts and consumer fixtures are build inputs outside source module routing; retain the full CI gate when they change."
+}

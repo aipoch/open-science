@@ -219,7 +219,9 @@ export class AcpSessionReplacementWorkflow {
       // Failed Codex reconfiguration also leaves no attachment. Reuse pending-binding recovery:
       // adopt fresh context and request history replay, rather than report an applied no-op.
       const requiresContextReset =
-        this.deps.currentFrameworkId() === 'claude-code' || (isCodex && !previousAttachment)
+        this.deps.currentFrameworkId() === 'claude-code' ||
+        this.deps.currentFrameworkId() === 'open-science-agent' ||
+        (isCodex && !previousAttachment)
       if (requiresContextReset) {
         const snapshot = aggregate.snapshot()
         await this.reset({

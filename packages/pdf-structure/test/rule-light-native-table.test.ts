@@ -249,3 +249,103 @@ it('does not add a prose-spanning open-rule duplicate when a complete table owns
   }
   expect(recoverCaptionedRuledTables(items, rules, [caption], 1, [existing])).toEqual([])
 })
+
+it('does not add an early below-caption open-rule duplicate when a complete table owns the caption', () => {
+  const caption = {
+    page: 1,
+    lines: ['Table 15: Benchmark scores.'],
+    rect: [20, 95, 220, 105]
+  }
+  const items = [
+    token('Start', 25, 25),
+    token('0.99', 125, 25),
+    token('0.44', 145, 25),
+    token('Method', 25, 45),
+    token('Score', 125, 45),
+    token('Alpha', 25, 65),
+    token('0.91', 125, 65),
+    token('0.31', 145, 65),
+    token('Beta', 25, 100),
+    token('0.87', 125, 100),
+    token('0.27', 145, 100),
+    token('Body', 25, 185, 120),
+    token('text', 25, 205, 120),
+    token('Body', 25, 225, 120),
+    token('Gamma', 25, 125),
+    token('0.82', 125, 125),
+    token('Delta', 25, 145),
+    token('0.79', 125, 145),
+    token('Epsilon', 25, 165),
+    token('0.77', 125, 165)
+  ]
+  const rules = [
+    [20, 20, 220, 20],
+    [20, 50, 220, 50],
+    [20, 80, 220, 80],
+    [120, 20, 120, 80]
+  ]
+  const existing = {
+    id: 'detector-table-above-caption',
+    cropRect: [20, 100, 220, 175],
+    structure: {
+      objects: [
+        { label: 'table row', rect: [0, 0, 200, 20] },
+        { label: 'table row', rect: [0, 20, 200, 40] },
+        { label: 'table row', rect: [0, 40, 200, 60] },
+        { label: 'table row', rect: [0, 60, 200, 80] },
+        { label: 'table column', rect: [0, 0, 100, 80] },
+        { label: 'table column', rect: [100, 0, 200, 80] }
+      ]
+    }
+  }
+  expect(recoverCaptionedRuledTables(items, rules, [caption], 1, [existing])).toEqual([])
+})
+
+it('does not merge two complete side-by-side tables into one open-rule candidate', () => {
+  const caption = {
+    page: 1,
+    lines: ['Table 1: Paired scores.'],
+    rect: [20, 10, 380, 20]
+  }
+  const items = [
+    ['Method', 'Score', 'Alpha', '0.91', 'Beta', '0.87', 'Gamma', '0.82'],
+    ['Method', 'Score', 'Alpha', '0.84', 'Beta', '0.81', 'Gamma', '0.79']
+  ].flatMap((group, groupIndex) =>
+    group.map((text, index) => {
+      const row = Math.floor(index / 2)
+      const column = index % 2
+      return token(
+        text,
+        (groupIndex ? 220 : 20) + (column ? 80 : 0),
+        40 + row * 30,
+        column ? 50 : 60
+      )
+    })
+  )
+  const rules = [
+    [20, 35, 180, 35],
+    [20, 65, 180, 65],
+    [20, 155, 180, 155],
+    [220, 35, 380, 35],
+    [220, 65, 380, 65],
+    [220, 155, 380, 155],
+    [20, 35, 20, 155],
+    [180, 35, 180, 155],
+    [220, 35, 220, 155],
+    [380, 35, 380, 155]
+  ]
+  const existing = [20, 220].map((left) => ({
+    cropRect: [left, 35, left + 160, 155],
+    structure: {
+      objects: [
+        ...Array.from({ length: 4 }, (_, row) => ({
+          label: 'table row',
+          rect: [left, 35 + row * 30, left + 160, 65 + row * 30]
+        })),
+        { label: 'table column', rect: [left, 35, left + 80, 155] },
+        { label: 'table column', rect: [left + 80, 35, left + 160, 155] }
+      ]
+    }
+  }))
+  expect(recoverCaptionedRuledTables(items, rules, [caption], 1, existing)).toEqual([])
+})

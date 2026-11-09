@@ -1,4 +1,6 @@
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
+import { ResourceRecorder, installResourceRecorder } from '../resource-diagnostics/recorder'
+import { ResourceLogStore } from '../resource-diagnostics/store'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import {
   RuntimeSessionOwner,
@@ -2675,6 +2677,7 @@ describe('host-owned Shell destination approval contract', () => {
               executionId: 'run-fixture',
               commandFingerprint: 'a'.repeat(64),
               hostname: 'service.example.test',
+              protocol: 'http',
               port: 443,
               runtime: 'bash'
             }
@@ -6885,6 +6888,9 @@ describe('ACP runtime session management', () => {
       const oldPromptGate = createDeferred()
       const resumedPromptGate = createDeferred()
       const resumedPromptStarted = createDeferred()
+      // Durable resume performs real disk I/O between provider reattachment and continuation.
+      // Keep the production idle window for that handoff instead of the suite's 10 ms shortcut.
+      vi.mocked(globalThis.setTimeout).mockRestore()
       const oldAgent = startFakeAgent(oldProcess, ['durable-disconnect-session'], {
         supportsResume: true,
         onPrompt: () => oldPromptGate.promise
@@ -7268,6 +7274,98 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'session-a', cwd: '/workspace' })
 
     expect(runtime.getSnapshot().sessionIds).toEqual(['session-b', 'session-a'])
+  })
+
+  it('correlates process, session, branch and prompt events through real runtime owners', async () => {
+    const root = await createTemporaryRoot()
+    const directory = join(root, 'resources')
+    const store = new ResourceLogStore({ directory })
+    const recorder = new ResourceRecorder({
+      runId: 'correlation-test',
+      store,
+      timers: false,
+      native: {
+        readWindowsResourceBirth: () => '134382258633725281',
+        sampleWindowsResources: async () => ({
+          supported: true,
+          complete: true,
+          startedAt: 1,
+          endedAt: 2,
+          processes: []
+        })
+      }
+    })
+    installResourceRecorder(recorder)
+    const process = new FakeAgentProcess()
+    process.pid = 4242
+    startFakeAgent(process, ['session-resource'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'PRIVATE PROMPT',
+        provenanceContext: {
+          promptMessageId: 'message-resource',
+          agentFrameId: 'frame-resource',
+          messageBranchId: 'branch-resource'
+        }
+      })
+      expect(runtime.resourceDiagnosticSnapshot()).toMatchObject({
+        activePrompts: false,
+        sessions: [expect.objectContaining({ sessionId: 'session-resource' })]
+      })
+      await runtime.disconnect()
+      await recorder.close(true)
+      const names = await readdir(directory)
+      expect(names.some((name) => name.startsWith('incident-'))).toBe(false)
+      const text = (
+        await Promise.all(
+          names
+            .filter((name) => name.endsWith('.jsonl'))
+            .map((name) => readFile(join(directory, name), 'utf8'))
+        )
+      ).join('')
+      const records = text
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      const born = records.find((record) => record.event === 'process-born').data
+      expect(born).toMatchObject({
+        pid: 4242,
+        birth: '134382258633725281',
+        framework: 'claude-code',
+        role: 'acp'
+      })
+      expect(records.find((record) => record.event === 'session-attached').data).toMatchObject({
+        runtimeId: born.runtimeId,
+        epoch: born.epoch,
+        sessionId: 'session-resource'
+      })
+      expect(records.find((record) => record.event === 'prompt-started').data).toMatchObject({
+        runtimeId: born.runtimeId,
+        frameId: 'frame-resource',
+        activeBranchId: 'branch-resource'
+      })
+      expect(records.find((record) => record.event === 'process-exited').data.expected).toBe(true)
+      expect(records.some((record) => record.event === 'prompt-ended')).toBe(true)
+      expect(records.some((record) => record.event === 'session-detached')).toBe(true)
+      const detached = records.find((record) => record.event === 'session-detached').data
+      expect(detached.generation).toBe(
+        records.find((record) => record.event === 'session-attached').data.generation
+      )
+      expect(detached.epoch).toBeUndefined()
+      expect(text).not.toContain('PRIVATE PROMPT')
+      expect(text).not.toContain('/workspace')
+    } finally {
+      installResourceRecorder(undefined)
+      await runtime.disconnect()
+      await recorder.close(false)
+    }
   })
 
   it('moves a context-reset session to its new attachment order', async () => {
@@ -7963,7 +8061,7 @@ describe('ACP runtime session management', () => {
       [
         {
           type: 'text',
-          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.\n\nsummarize without context'
+          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules. Pure in-memory computation needs no directory query.\n\nsummarize without context'
         }
       ]
     ])
@@ -32703,3 +32801,196 @@ it('protects disposable OpenCode homes at the ACP read boundary while allowing w
 })
 
 configureTestRuntimeMetadata()
+
+describe('Session deletion with an unanswered native selector', () => {
+  it.each([
+    { sibling: false, coordinated: false },
+    { sibling: true, coordinated: false },
+    { sibling: false, coordinated: true },
+    { sibling: true, coordinated: true }
+  ])(
+    'deletes through pending reconnect: sibling=$sibling coordinated=$coordinated',
+    async ({ sibling, coordinated }) => {
+      const process = new FakeAgentProcess()
+      let closeStarted = false
+      const releaseClose = createDeferred()
+      const fakeAgent = startFakeAgent(process, ['selector-asked', 'selector-idle'], {
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'selector-delete',
+          message: 'Choose a dataset',
+          requestedSchema: {
+            type: 'object',
+            properties: { question_0: { type: 'string', enum: ['Alpha', 'Beta'] } },
+            required: ['question_0']
+          }
+        }),
+        onClose: async () => {
+          closeStarted = true
+          await releaseClose.promise
+        }
+      })
+      const runtime = coordinated
+        ? new AcpRuntimeCoordinator(
+            (callbacks) =>
+              new AcpRuntime({
+                appVersion: '0.1.0',
+                defaultCwd: '/workspace',
+                callbacks,
+                spawnAgent: () => asAgentProcess(process)
+              })
+          )
+        : new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            spawnAgent: () => asAgentProcess(process)
+          })
+      let prompt: Promise<unknown> | undefined
+      let deleting: Promise<unknown> | undefined
+      try {
+        const asked = await runtime.createSession({ cwd: '/workspace' })
+        const idle = await runtime.createSession({ cwd: '/workspace' })
+        prompt = runtime
+          .sendPrompt({ sessionId: asked.sessionId, text: 'Ask first' })
+          .catch(() => undefined)
+        await vi.waitFor(() => expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1))
+        await runtime.requestProviderReconnect()
+
+        const target = sibling ? idle : asked
+        deleting = runtime.deleteSession({ sessionId: target.sessionId })
+        await vi.waitFor(() => expect(closeStarted).toBe(true))
+        // Cancelling the target question must not let reconnect reap the provider during close.
+        expect(process.killed).toBe(false)
+        if (sibling) {
+          expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1)
+          expect(fakeAgent.elicitationResponses).toEqual([])
+          expect(fakeAgent.cancelledSessions).toEqual([])
+        }
+        releaseClose.resolve()
+        await deleting
+        expect(fakeAgent.closedSessions).toEqual([target.sessionId])
+        expect(infoLogSpy).toHaveBeenCalledWith(
+          'session deletion phase',
+          expect.objectContaining({
+            sessionId: target.sessionId,
+            phase: 'completed',
+            operationId: expect.any(String)
+          })
+        )
+        expect(runtime.getSnapshot().sessionIds).not.toContain(target.sessionId)
+
+        if (sibling) {
+          expect(process.killed).toBe(false)
+          const question = runtime.getSnapshot().pendingElicitations?.[0]
+          expect(question).toBeDefined()
+          runtime.respondToElicitation({
+            requestId: question!.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'Alpha' }]
+          })
+          await prompt
+          expect(fakeAgent.elicitationResponses).toEqual([
+            { action: 'accept', content: { question_0: 'Alpha' } }
+          ])
+        } else {
+          await prompt
+          expect(fakeAgent.elicitationResponses).toEqual([{ action: 'cancel' }])
+        }
+        await vi.waitFor(() => expect(process.killed).toBe(true))
+      } finally {
+        releaseClose.resolve()
+        await (
+          runtime instanceof AcpRuntimeCoordinator
+            ? runtime.shutdownForQuit()
+            : runtime.disconnect()
+        ).catch(() => undefined)
+        await prompt?.catch(() => undefined)
+        await deleting?.catch(() => undefined)
+      }
+    }
+  )
+})
+
+it('connects the optional built-in harness through the host runtime and releases its generation', async () => {
+  const { createServer } = await import('node:http')
+  const { createHarnessAcpAgent } = await import('../harness-acp/agent')
+  const { harnessFramework } = await import('../agent-framework/harness')
+  const root = await mkdtemp(join(tmpdir(), 'harness-host-runtime-'))
+  const requests: { messages: { role: string; content: unknown }[] }[] = []
+  const http = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end(
+      'data: ' +
+        JSON.stringify({
+          choices: [{ index: 0, delta: { content: 'done' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 10 }
+        }) +
+        '\n\ndata: [DONE]\n\n'
+    )
+  })
+  const process = new FakeAgentProcess()
+  const owner = createHarnessAcpAgent(join(root, 'sessions'))
+  owner.app.connect(
+    acp.ndJsonStream(
+      Writable.toWeb(process.stdout),
+      Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+    )
+  )
+  const release = vi.fn(async () => undefined)
+  let runtime: AcpRuntime | undefined
+  try {
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve))
+    const address = http.address() as import('node:net').AddressInfo
+    const config = harnessFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        model: 'fixture-model',
+        agentProviderId: 'host-fixture',
+        contextWindow: 32768
+      },
+      {
+        storageRoot: root,
+        executablePath: join(root, 'main.cjs'),
+        responsesConnection: { baseUrl: `http://127.0.0.1:${address.port}`, token: 'local-fixture' }
+      }
+    )
+    runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: root,
+      resolveBackend: () => ({
+        framework: { ...harnessFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'open-science-agent:fixture',
+        modelRoute: 'open-science-agent',
+        providerId: 'fixture',
+        executablePath: join(root, 'main.cjs'),
+        env: {},
+        ...config,
+        systemPromptAppends: ['Stable host context'],
+        providerTransportLease: { setTarget: () => false, release }
+      })
+    })
+    const session = await runtime.createSession({ cwd: root })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'first fact' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+    expect(requests).toHaveLength(2)
+    expect(requests[1].messages.filter((m) => m.role === 'user')).toHaveLength(2)
+    expect(requests[0].messages[0]).toEqual(requests[1].messages[0])
+    expect(JSON.stringify(requests[0].messages)).toContain('Stable host context')
+    await runtime.requestProviderReconnect()
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    expect(process.killed).toBe(true)
+  } finally {
+    await runtime?.shutdownForQuit()
+    await owner.dispose()
+    process.stdin.destroy()
+    process.stdout.destroy()
+    process.stderr.destroy()
+    http.closeAllConnections()
+    await new Promise<void>((resolve) => http.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
+})

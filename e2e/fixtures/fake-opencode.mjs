@@ -224,12 +224,12 @@ const stringEnvironment = (overrides = []) => {
   return environment
 }
 
-const toolResult = (name, result) => {
+const toolResult = (name, result, { allowToolError = false } = {}) => {
   const text = result.content
     .filter((item) => item.type === 'text')
     .map((item) => item.text)
     .join('\n')
-  if (result.isError) throw new Error(`${name} failed: ${text}`)
+  if (result.isError && !allowToolError) throw new Error(`${name} failed: ${text}`)
   return JSON.parse(text)
 }
 
@@ -1367,10 +1367,13 @@ const createProvenanceArtifact = async (sessionId, markdown = false, withoutExec
         arguments: {
           filename: markdown ? 'publication-policy.md' : 'provenance-evidence.txt',
           mimeType: markdown ? 'text/markdown' : 'text/plain',
-          content: markdown
-            ? '# Publication report\n\nOriginal result.\n'
-            : 'artifact provenance e2e',
-          encoding: 'utf8',
+          source: {
+            kind: 'inline',
+            content: markdown
+              ? '# Publication report\n\nOriginal result.\n'
+              : 'artifact provenance e2e',
+            encoding: 'utf8'
+          },
           producerRunId
         }
       })
@@ -1394,9 +1397,12 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.html',
           mimeType: 'text/html',
-          content:
-            '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
-          encoding: 'utf8'
+          source: {
+            kind: 'inline',
+            content:
+              '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
+            encoding: 'utf8'
+          }
         }
       })
     )
@@ -1407,8 +1413,7 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.docx',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          content: PREVIEW_CONTEXT_MENU_DOCX_BASE64,
-          encoding: 'base64'
+          source: { kind: 'inline', content: PREVIEW_CONTEXT_MENU_DOCX_BASE64, encoding: 'base64' }
         }
       })
     )
@@ -1419,8 +1424,11 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.xlsx',
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          content: await createPreviewContextMenuXlsxBase64(),
-          encoding: 'base64'
+          source: {
+            kind: 'inline',
+            content: await createPreviewContextMenuXlsxBase64(),
+            encoding: 'base64'
+          }
         }
       })
     )
@@ -1480,8 +1488,7 @@ const createSpreadsheetSearchArtifacts = async (sessionId) => {
             arguments: {
               filename: file.filename,
               mimeType: file.mimeType,
-              content,
-              encoding: 'base64'
+              source: { kind: 'inline', content, encoding: 'base64' }
             }
           })
         )
@@ -2000,8 +2007,11 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'workspace-paired.pdf',
                     mimeType: 'application/pdf',
-                    content,
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content,
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2219,6 +2229,53 @@ if (process.argv.includes('--version')) {
             if (!run.runId) throw new Error('WSL background admission has no runId')
           })
           reply = 'WSL background task submitted for cancellation.'
+        } else if (/Verify network destination approval port (\d+)/u.test(prompt)) {
+          const port = /Verify network destination approval port (\d+)/u.exec(prompt)[1]
+          const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`
+          let retried = false
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const run = async (options) =>
+              toolResult(
+                'bash_execute',
+                await client.callTool({ name: 'bash_execute', arguments: { command } }),
+                options
+              )
+            // A blocked curl exits nonzero. Its structured stderr carries the trusted record.
+            const first = await run({ allowToolError: true })
+            if (first.exitCode === 0) return
+            const recordId = /OPEN_SCIENCE_NETWORK_BLOCK_RECORD: ([^\s]+)/u.exec(
+              first.stderr ?? ''
+            )?.[1]
+            if (!recordId) throw new Error(`No trusted block record: ${JSON.stringify(first)}`)
+            const decision = toolResult(
+              'request_network_access',
+              await client.callTool({
+                name: 'request_network_access',
+                arguments: {
+                  recordId,
+                  reason: 'Send the requested test payload to the local fixture.'
+                }
+              })
+            )
+            if (
+              decision.status !== 'allowed' &&
+              decision.status !== 'allowedOnce' &&
+              decision.status !== 'alreadyAllowed' &&
+              decision.status !== 'projectAllowed' &&
+              decision.status !== 'alwaysAllowed'
+            ) {
+              throw new Error(`Destination was not approved: ${JSON.stringify(decision)}`)
+            }
+            // The test server confirmed no payload was received before consent. The Agent now
+            // explicitly retries this known fixture command; the application never replays it.
+            const retry = await run()
+            if (retry.exitCode !== 0)
+              throw new Error(`Explicit retry failed: ${JSON.stringify(retry)}`)
+            retried = true
+          })
+          reply = retried
+            ? 'Network destination explicit retry verified.'
+            : 'Network destination saved access verified.'
         } else if (prompt.includes('Verify real WSL Bash execution.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             const execution = toolResult(
@@ -2553,10 +2610,13 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'sanitized-performance.png',
                     mimeType: 'image/png',
-                    content: (
-                      await readFile(new URL('./sanitized-performance.png', import.meta.url))
-                    ).toString('base64'),
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content: (
+                        await readFile(new URL('./sanitized-performance.png', import.meta.url))
+                      ).toString('base64'),
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2875,9 +2935,12 @@ if (process.argv.includes('--version')) {
                       // Fixed 160 × 112 chart makes manual full-preview acceptance visible.
                       filename: 'resumed-figure.png',
                       mimeType: 'image/png',
-                      content:
-                        'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
-                      encoding: 'base64'
+                      source: {
+                        kind: 'inline',
+                        content:
+                          'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
+                        encoding: 'base64'
+                      }
                     }
                   })
                 )

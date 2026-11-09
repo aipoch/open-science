@@ -164,6 +164,7 @@ Object.assign(window, { screeningFixture: { advance, commands } })
 window.api = {
   platform: 'darwin',
   literature: {
+    overviewBatch: async () => null,
     onChanged: (listener: (event: LiteratureChangedEvent) => void) => {
       listeners.add(listener)
       return () => listeners.delete(listener)

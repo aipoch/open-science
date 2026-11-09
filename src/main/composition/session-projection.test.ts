@@ -52,6 +52,7 @@ const fixture = (() => {
           executionId: 'run-fixture',
           commandFingerprint: 'a'.repeat(64),
           hostname: 'service.example.test',
+          protocol: 'http',
           port: 443,
           runtime: 'bash',
           originatingPromptMessageId: 'prompt-fixture',
@@ -62,8 +63,12 @@ const fixture = (() => {
       ]
     }
   }
-  const allowDomain = vi.fn(
-    async (_host: string, assertCurrent?: () => Promise<void>, finalize?: () => Promise<void>) => {
+  const allowDestination = vi.fn(
+    async (
+      _grant: import('../../shared/network-destination-grants').NetworkDestinationGrant,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => {
       await assertCurrent?.()
       await finalize?.()
     }
@@ -95,7 +100,10 @@ const fixture = (() => {
     recordSessionRecordProblem: vi.fn()
   }
   const composed = composeSessionProjection({
-    settingsService: { allowNotebookNetworkDomain: allowDomain },
+    settingsService: {
+      allowNotebookNetworkDomain: vi.fn(),
+      allowNotebookNetworkDestination: allowDestination
+    },
     sessionPersistenceCoordinator: coordinator,
     sessionRepository: { loadSession: async () => structuredClone(session) },
     sessionEnabledComputeHostsOwnerRef: {},
@@ -105,7 +113,7 @@ const fixture = (() => {
     auxiliaryUsageRecorder: {},
     archiveCoordinator: {}
   } as unknown as Parameters<typeof composeSessionProjection>[0])
-  return { ...composed, session, allowDomain, coordinator }
+  return { ...composed, session, allowDestination, coordinator }
 }) satisfies () => ReturnType<typeof composeSessionProjection> & { session: PersistedChatSession }
 
 describe('host network approval recovery', () => {
@@ -121,9 +129,9 @@ describe('host network approval recovery', () => {
               sessionId: f.session.id
             })
       expect(loaded?.runtimeContext?.networkApprovals).toBeUndefined()
-      expect(f.allowDomain).toHaveBeenCalledTimes(1)
+      expect(f.allowDestination).toHaveBeenCalledTimes(1)
       await f.loadAllSessions()
-      expect(f.allowDomain).toHaveBeenCalledTimes(1)
+      expect(f.allowDestination).toHaveBeenCalledTimes(1)
     }
   )
 
@@ -135,14 +143,14 @@ describe('host network approval recovery', () => {
       projectId: f.session.projectId,
       sessionId: f.session.id
     })
-    expect(f.allowDomain).not.toHaveBeenCalled()
+    expect(f.allowDestination).not.toHaveBeenCalled()
     expect(f.coordinator.patchSessionRuntimeContext).not.toHaveBeenCalled()
     expect(f.session.runtimeContext?.networkApprovals).toHaveLength(1)
   })
 
   it('keeps transcripts and saved consent on recovery failure, then retries the next catalog read', async () => {
     const f = fixture()
-    f.allowDomain.mockRejectedValueOnce(new Error('Settings unavailable'))
+    f.allowDestination.mockRejectedValueOnce(new Error('Settings unavailable'))
     const failed = await f.loadAllSessions()
     expect(failed.diagnostics).toMatchObject({
       isComplete: false,

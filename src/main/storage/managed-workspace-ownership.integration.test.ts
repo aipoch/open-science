@@ -82,6 +82,7 @@ const createDeletionOwner = (
     },
     assertArchiveMutable: vi.fn(),
     notifyFilesChanged: vi.fn(),
+    notifyDiscussionDetached: vi.fn(),
     notifySessionsDeleted: vi.fn().mockResolvedValue(undefined),
     workspaceOwnership: {
       reconcileProvisional: vi.fn().mockResolvedValue(undefined),

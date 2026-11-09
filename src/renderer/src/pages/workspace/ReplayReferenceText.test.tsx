@@ -84,6 +84,30 @@ describe('saved replay reference navigation', () => {
     )
     expect(consumeReplaySeek(source.projectId, 'source')).toMatchObject(source)
   })
+  it('keeps other replay links usable after the discussion source is deleted', async () => {
+    const otherId = '22222222-2222-4222-8222-222222222222'
+    get.mockImplementation(async ({ id: snapshotId }) =>
+      snapshotId === id ? context : { ...context, sourceSessionId: 'other' }
+    )
+    await act(async () =>
+      root.render(
+        createElement(ReplayReferenceText, {
+          projectId: 'p',
+          deletedDiscussionSourceId: 'source',
+          text: [
+            replayReferenceText(id, 'Removed study'),
+            replayReferenceText(otherId, 'Other study')
+          ].join(' ')
+        })
+      )
+    )
+    expect(container.textContent).toContain('Removed study · Source deleted')
+    const buttons = container.querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].textContent).toBe('Other study')
+    await act(async () => buttons[0].click())
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:other:replay')
+  })
   it('preserves malformed references as readable text and decodes valid Project identities', () => {
     const invalid = '[Recorded step](#session-replay:%ZZ:context)'
     expect(splitReplayReferenceText(invalid)).toEqual([{ kind: 'text', text: invalid }])

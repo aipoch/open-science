@@ -90,6 +90,7 @@ type NativeLockSpec = Readonly<{
 class InvalidEnvironmentLockError extends Error {}
 
 const MAX_NATIVE_LOCK_FILE_BYTES = 2 * 1024 * 1024
+const MAX_INSTALLER_VERSION_ENTRIES = 64
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 
 const NATIVE_LOCK_SPECS: Record<'python' | 'r', readonly NativeLockSpec[]> = {
@@ -934,6 +935,7 @@ const assessEnvironmentLock = (
 
 class EnvironmentLockCaptureOwner {
   private readonly cache = new Map<string, EnvironmentLockCacheEntry>()
+  private readonly installerVersions = new Map<string, string>()
 
   private async captureExternal(
     target: EnvironmentLockTarget,
@@ -954,15 +956,26 @@ class EnvironmentLockCaptureOwner {
       const observed = manifest.packages.filter((pkg) => pkg.priority !== 'base')
       const requested = observed.filter((pkg) => pkg.loadedState !== 'installed-only')
       if (!requested.length) return unavailable
-      const version = (
-        await options.execute([
-          target.command,
-          ...(target.args ?? []),
-          ...(target.language === 'r'
-            ? ['--slave', '-e', 'cat(as.character(utils::packageVersion("renv")))']
-            : ['-c', 'import importlib.metadata; print(importlib.metadata.version("pip"))'])
-        ])
-      ).trim()
+      const versionCommand = [
+        target.command,
+        ...(target.args ?? []),
+        ...(target.language === 'r'
+          ? ['--slave', '-e', 'cat(as.character(utils::packageVersion("renv")))']
+          : ['-c', 'import importlib.metadata; print(importlib.metadata.version("pip"))'])
+      ]
+      // The installer version can only change with the environment fingerprint.
+      const versionKey = options.environmentFingerprint
+        ? JSON.stringify([options.environmentFingerprint, versionCommand])
+        : undefined
+      const version =
+        (versionKey ? this.installerVersions.get(versionKey) : undefined) ??
+        (await options.execute(versionCommand)).trim()
+      if (versionKey && !this.installerVersions.has(versionKey)) {
+        this.installerVersions.set(versionKey, version)
+        if (this.installerVersions.size > MAX_INSTALLER_VERSION_ENTRIES) {
+          this.installerVersions.delete(this.installerVersions.keys().next().value!)
+        }
+      }
       if (target.language === 'r' && native.components.length === 0) {
         const script = `local({
           Sys.setenv(RENV_CONFIG_CACHE_ENABLED="FALSE", RENV_CONFIG_AUTO_SNAPSHOT="FALSE",

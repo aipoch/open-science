@@ -1,5 +1,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ClientConnection } from '@agentclientprotocol/sdk'
+import { randomUUID } from 'node:crypto'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type { AcpRuntimeEventInput, AcpStateSnapshot } from '../../shared/acp'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
@@ -16,7 +18,20 @@ import type { AcpSessionUpdateProjector } from './session-update-projector'
 type SessionDeletedEvent = AcpRuntimeEventInput
 type OperationLease = <Result>(work: () => Promise<Result>) => Promise<Result>
 
+const log = createLogger('acp-session-deletion')
 const DEFAULT_PROVIDER_DELETE_TIMEOUT_MS = 5_000
+
+type DeletionStage = (stage: string) => void
+
+const reportDeletion = (data: Readonly<Record<string, unknown>>, error?: unknown): void => {
+  try {
+    if (error !== undefined)
+      log.warn('session deletion failed', { ...data, ...diagnosticErrorFields(error) })
+    else log.info('session deletion phase', data)
+  } catch {
+    // Logging must not interrupt provider cleanup or hide its original failure.
+  }
+}
 
 class AcpProviderSessionDeletionTimeoutError extends Error {
   constructor() {
@@ -29,6 +44,7 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
   registry: Pick<AcpSessionRegistry, 'beginDelete' | 'lookup' | 'detach'>
   withOperation: OperationLease
   currentConnection: () => ClientConnection | undefined
+  currentGeneration: () => number
   supportsSessionDelete: () => boolean
   supportsSessionClose: () => boolean
   permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearSession'>
@@ -105,11 +121,35 @@ class AcpSessionDeletionWorkflow {
   }
 
   async delete(appSessionId: string): Promise<AcpStateSnapshot> {
-    // Begin synchronously before a reconnect/model barrier can delay the operation lease. This keeps
-    // same-ID startup blocked for the entire queued deletion, not only after provider work begins.
+    // Hold the deletion epoch through active-transition waits and protected provider cleanup.
     const deletion = this.deps.registry.beginDelete(appSessionId)
+    const operationId = randomUUID()
+    const started = Date.now()
+    let phase = 'started'
+    const reportStage: DeletionStage = (stage) => {
+      phase = stage
+      reportDeletion({
+        operationId,
+        sessionId: appSessionId,
+        generation: this.deps.currentGeneration(),
+        phase,
+        elapsedMs: Date.now() - started
+      })
+    }
+    reportStage('started')
     try {
-      return await this.deps.withOperation(() => this.deleteWithLease(appSessionId, deletion))
+      const snapshot = await this.deps.withOperation(() => {
+        reportStage('cleanup-admitted')
+        return this.deleteWithLease(appSessionId, deletion, reportStage)
+      })
+      reportStage('completed')
+      return snapshot
+    } catch (error) {
+      reportDeletion(
+        { operationId, sessionId: appSessionId, phase, elapsedMs: Date.now() - started },
+        error
+      )
+      throw error
     } finally {
       deletion.finish()
     }
@@ -117,8 +157,10 @@ class AcpSessionDeletionWorkflow {
 
   private async deleteWithLease(
     appSessionId: string,
-    deletion: ReturnType<AcpSessionRegistry['beginDelete']>
+    deletion: ReturnType<AcpSessionRegistry['beginDelete']>,
+    reportStage: DeletionStage
   ): Promise<AcpStateSnapshot> {
+    const generation = this.deps.currentGeneration()
     const target = this.deps.registry.lookup(appSessionId)
     const attachment = target?.attachment
 
@@ -126,7 +168,15 @@ class AcpSessionDeletionWorkflow {
     this.deps.clearUserChoiceProvenanceForSession(appSessionId)
     this.deps.elicitation.cancelForSession(appSessionId)
     this.deps.appContinuations.delete(appSessionId)
-    if (attachment) await this.deleteProviderSession(attachment.session.sessionId)
+    reportStage('target-interactions-cancelled')
+    if (generation !== this.deps.currentGeneration()) {
+      throw new Error('ACP Session deletion connection was superseded.')
+    }
+    if (attachment) {
+      reportStage('provider-request-started')
+      await this.deleteProviderSession(attachment.session.sessionId)
+      reportStage('provider-request-completed')
+    }
 
     if (attachment) {
       attachment.session.dispose()
@@ -139,6 +189,7 @@ class AcpSessionDeletionWorkflow {
       deletion.finish(target)
       return this.deps.getSnapshot()
     }
+    reportStage('setup-authority-cleanup')
     await this.deps.capabilities.forgetSetupSession?.(appSessionId)
     // No await occurs between this ownership check and local cleanup. A stale captured generation
     // may dispose its own provider object, but cannot erase app-keyed state owned by a replacement.
@@ -157,6 +208,7 @@ class AcpSessionDeletionWorkflow {
     this.deps.contextUsage.deleteSession(appSessionId)
     this.deps.projector.clearSession(appSessionId)
 
+    reportStage('runtime-cleanup-completed')
     if (removal.wasActive) {
       this.deps.pushEvent({
         kind: 'system',
@@ -172,6 +224,7 @@ class AcpSessionDeletionWorkflow {
 
   private async deleteProviderSession(providerSessionId: string): Promise<void> {
     const connection = this.deps.currentConnection()
+    const generation = this.deps.currentGeneration()
     if (connection && this.deps.supportsSessionDelete()) {
       await this.requestProviderDeletion(
         connection,
@@ -188,6 +241,12 @@ class AcpSessionDeletionWorkflow {
       await connection?.agent.notify(acp.methods.agent.session.cancel, {
         sessionId: providerSessionId
       })
+    }
+    if (
+      generation !== this.deps.currentGeneration() ||
+      connection !== this.deps.currentConnection()
+    ) {
+      throw new Error('ACP Session deletion connection was superseded.')
     }
   }
 

@@ -1551,11 +1551,18 @@ describe('provider registry', () => {
       expect(isVendorModelResponsesSupported('volcengine', 'doubao-seed-2-1-pro-260628')).toBe(true)
     })
 
-    it('returns true for every bundled DeepSeek V4 model', () => {
+    it('keeps DeepSeek Responses support limited to the documented model ids', () => {
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(false)
-      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
-      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-flash')).toBe(true)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(false)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(
+        false
+      )
+      expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-flash')).toEqual([
+        'messages',
+        'chat-completions'
+      ])
       expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-pro')).toEqual([
         'messages',
         'chat-completions',

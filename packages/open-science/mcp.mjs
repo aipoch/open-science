@@ -9,6 +9,8 @@ const sessionId = id('Session ID returned by list_sessions or start_run.')
 const projectId = id('Project ID returned by list_projects or create_project.')
 const runId = id('Run ID returned by start_run.')
 const literatureItemId = id('Literature item ID returned by search_literature.')
+const literatureItemIds = z.array(literatureItemId).min(1).max(1000)
+const collectionId = id('Literature collection ID returned by create_literature_collection.')
 const expectedRevision = z
   .number()
   .int()
@@ -46,6 +48,10 @@ const write = {
   idempotentHint: false,
   openWorldHint: true
 }
+// Local Literature writes: no external effects; membership/status updates converge on repeat.
+const libraryWrite = { ...write, openWorldHint: false }
+const libraryUpdate = { ...libraryWrite, idempotentHint: true }
+const libraryAdd = { ...libraryWrite, destructiveHint: false }
 const result = (value) => ({
   content: [{ type: 'text', text: JSON.stringify({ result: value ?? null }) }],
   structuredContent: { result: value ?? null }
@@ -62,6 +68,8 @@ const toolError = (error) => {
     session_not_found: 'Session not found. Refresh list_sessions.',
     run_not_found: 'Run not found. Check the ID returned by start_run.',
     literature_item_not_found: 'Literature item not found. Refresh search_literature.',
+    literature_project_link_failed:
+      'Records were imported but not linked to the Project. Do not repeat the import; call update_project_literature with the returned itemIds.',
     invalid_request: 'Invalid request. Check the tool arguments and service configuration.',
     request_timeout:
       'Request timed out. A write may already have succeeded; check its state before retrying.'
@@ -78,9 +86,16 @@ const toolError = (error) => {
         ? 'The operation conflicts with current state. Read the latest state and revision before retrying.'
         : (messages[code] ??
           'The operation failed. Check service readiness and request arguments. A write may already have succeeded; inspect its state before retrying.')
+  // Committed item IDs are service-generated identifiers, not error bodies.
+  const itemIds = code === 'literature_project_link_failed' ? error.itemIds : undefined
   return {
     isError: true,
-    content: [{ type: 'text', text: JSON.stringify({ error: { code, message } }) }]
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ error: { code, message, ...(itemIds ? { itemIds } : {}) } })
+      }
+    ]
   }
 }
 
@@ -91,12 +106,13 @@ export const createResearchMcpServer = ({
 }) => {
   const server = new McpServer({ name: 'open-science', version })
   const lifetime = new AbortController()
-  const register = (name, description, shape, annotations, invoke) => {
+  const register = (name, description, shape, annotations, invoke, refine) => {
+    const inputSchema = z.strictObject(shape)
     server.registerTool(
       name,
       {
         description,
-        inputSchema: z.strictObject(shape),
+        inputSchema: refine ? inputSchema.superRefine(refine) : inputSchema,
         outputSchema: z.object({ result: z.unknown() }),
         annotations
       },
@@ -323,6 +339,87 @@ export const createResearchMcpServer = ({
     { identifier: id('DOI, pmid:, pmcid: or arxiv: identifier.').max(2048) },
     { ...read, openWorldHint: true },
     (client, args, options) => client.getReferenceMetadata(args.identifier, options)
+  )
+  register(
+    'import_literature',
+    'Import BibTeX, RIS or NBIB text, or item objects, into the Literature library. Call with mode "preview" first to inspect entries, duplicates and warnings without saving; then call "commit" with the same source. duplicatePolicy defaults to reuse. Optionally add committed records to a collection and link them to a project.',
+    {
+      mode: z.enum(['preview', 'commit']),
+      content: z.string().min(1).optional(),
+      items: z
+        .array(z.record(z.string(), z.unknown()))
+        .min(1)
+        .max(1000)
+        .describe('Item objects in the get_literature_item "item" shape.')
+        .optional(),
+      selectedItemIndexes: z.array(z.number().int().nonnegative()).min(1).max(1000).optional(),
+      duplicatePolicy: z.enum(['reuse', 'separate', 'fill-missing']).optional(),
+      collectionId: collectionId.optional(),
+      projectId: projectId.optional()
+    },
+    libraryAdd,
+    (client, request, options) => client.importLiterature(request, options),
+    (request, context) => {
+      if ((request.content === undefined) === (request.items === undefined))
+        context.addIssue({ code: 'custom', message: 'Provide exactly one of content or items.' })
+      if (
+        request.mode === 'preview' &&
+        (request.duplicatePolicy || request.collectionId || request.projectId)
+      )
+        context.addIssue({
+          code: 'custom',
+          message: 'Preview does not accept import destinations.'
+        })
+    }
+  )
+  register(
+    'create_literature_item',
+    'Add one record to the Literature library from a DOI, pmid:<n>, pmcid:PMC<n> or arxiv:<id>. Metadata is resolved through external registries; an existing record with the same identifier is reused.',
+    { identifier: id('DOI, pmid:, pmcid: or arxiv: identifier.').max(2048) },
+    { ...libraryAdd, idempotentHint: true, openWorldHint: true },
+    (client, args, options) => client.createLiteratureItem(args.identifier, options)
+  )
+  register(
+    'update_project_literature',
+    'Link Literature records to a project, or unlink them with included false. Unlinking does not delete records.',
+    { projectId, itemIds: literatureItemIds, included: z.boolean() },
+    libraryUpdate,
+    (client, args, options) =>
+      client.setProjectLiterature(args.projectId, args.itemIds, args.included, options)
+  )
+  register(
+    'create_literature_collection',
+    'Create a Literature collection, optionally nested under a parent collection. Collection names must be unique.',
+    {
+      name: id('Collection name.').max(200),
+      description: z.string().trim().max(1000).optional(),
+      parentId: collectionId.optional()
+    },
+    libraryAdd,
+    (client, args, options) => client.createLiteratureCollection(args, options)
+  )
+  register(
+    'update_collection_items',
+    'Add Literature records to a collection, or remove them with included false. Removing does not delete records.',
+    { collectionId, itemIds: literatureItemIds, included: z.boolean() },
+    libraryUpdate,
+    (client, args, options) =>
+      client.setCollectionLiterature(args.collectionId, args.itemIds, args.included, options)
+  )
+  register(
+    'set_reading_status',
+    'Set the personal reading status of Literature records.',
+    { itemIds: literatureItemIds, readingStatus: z.enum(['unread', 'reading', 'read']) },
+    libraryUpdate,
+    (client, args, options) =>
+      client.setLiteratureReadingStatus(args.itemIds, args.readingStatus, options)
+  )
+  register(
+    'set_literature_lifecycle',
+    'Move Literature records to the trash with state "deleted", or restore them with "active". Records are not permanently deleted.',
+    { itemIds: literatureItemIds, state: z.enum(['active', 'deleted']) },
+    libraryUpdate,
+    (client, args, options) => client.setLiteratureLifecycle(args.itemIds, args.state, options)
   )
 
   const onclose = server.server.onclose

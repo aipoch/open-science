@@ -38,11 +38,12 @@ import type {
   ProvisionProgress
 } from '@aipoch/environment/contracts'
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import { analyzePowerShellCodeRisk, type NotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import {
-  analyzeNotebookCodeRisk,
-  analyzePowerShellCodeRisk,
-  type NotebookCodeRisk
-} from '@aipoch/notebook-code-risk'
+  analyzeNotebookCodeRiskOffMainThread,
+  analyzeNotebookSourceFileAccessOffMainThread,
+  analyzeNotebookSourceOffMainThread
+} from './source-analysis-worker'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
@@ -119,7 +120,7 @@ import {
 import { NotebookExportReader } from './export-reader'
 import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
-import { notebookLaneKey, notebookLaneScope } from './lane-identity'
+import { createRootNotebookLane, notebookLaneKey, notebookLaneScope } from './lane-identity'
 import type { ProbeDeps } from './mirror-probe'
 import {
   NotebookPackageOperations,
@@ -709,7 +710,7 @@ class NotebookRuntimeService {
             signal,
             run.cwdBefore
           )
-        : await analyzeNotebookCodeRisk(
+        : await analyzeNotebookCodeRiskOffMainThread(
             run.kernelKind,
             run.script,
             {
@@ -860,6 +861,7 @@ class NotebookRuntimeService {
       createNotebookDependencyAnalyzer({
         storageRoot: options.dataRoot,
         repository: this.repository,
+        analyzeSource: analyzeNotebookSourceOffMainThread,
         resolveInterpreter: (run) =>
           run.runtimeId && (run.kernelKind === 'python' || run.kernelKind === 'r')
             ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)
@@ -900,12 +902,17 @@ class NotebookRuntimeService {
       repository: this.repository,
       sessions: this.sessions,
       runtimeBindings: this.runtimeBindingOwner,
+      shellExecution: {
+        fenceShellRuns: (scope) => this.executionOwner.fenceShellRuns(scope),
+        cancelShellRuns: (scope, reason) => this.executionOwner.cancelShellRuns(scope, reason)
+      },
       waitForRevocationDrains: () => this.environmentOperations.waitForRevocationDrains(),
       ensureProcessRecovery: (laneKey) => this.kernelProcessLifecycle.ensureReadyForLane(laneKey),
       processLifecycle: this.kernelProcessLifecycle,
       executorFactory: options.executorFactory,
       defaultExecutorOptions: () => ({
         ...resolveDefaultExecutorOptions(),
+        analyzeSourceFileAccess: analyzeNotebookSourceFileAccessOffMainThread,
         ...(options.processSandbox ? { processSandbox: options.processSandbox } : {})
       }),
       platform: options.platform,
@@ -2167,9 +2174,15 @@ class NotebookRuntimeService {
     request: RequestNotebookNetworkAccessRequest,
     signal?: AbortSignal
   ): Promise<RequestNotebookNetworkAccessResult> {
+    if (!request.recordId)
+      return {
+        hostname: '',
+        status: 'blocked',
+        message: 'A trusted sandbox block record ID is required. No access was granted.'
+      }
     if (!this.options.processSandbox?.requestNetworkAccess) {
       return {
-        hostname: request.hostname,
+        hostname: request.hostname ?? '',
         status: 'unavailable',
         message:
           'Network access approval is unavailable for the current Notebook runtime. No user decision was requested and no access was granted.'
@@ -2178,7 +2191,8 @@ class NotebookRuntimeService {
     return this.options.processSandbox.requestNetworkAccess({
       sessionId: request.sessionId,
       projectId: resolveProjectId(request),
-      hostname: request.hostname,
+      hostname: request.hostname ?? '',
+      ...(request.recordId ? { recordId: request.recordId } : {}),
       reason: request.reason,
       ...(request.runtime ? { runtime: request.runtime } : {}),
       ...(request.command ? { command: request.command } : {}),
@@ -2191,6 +2205,15 @@ class NotebookRuntimeService {
   // ensureSession(), load run.json, discover runtimes, or create an executor.
   peekHandoffContext(sessionId: string): NotebookHandoffContext | undefined {
     return this.sessionReadModel.peekHandoffContext(sessionId)
+  }
+
+  // Missing live ownership proves old bindings are unavailable; an epoch alone cannot prove
+  // that a particular variable survived. Never restore history or start a kernel for this peek.
+  isReplNamespaceUnavailable(projectId: string, sessionId: string, rootFrameId?: string): boolean {
+    const lane = rootFrameId
+      ? createRootNotebookLane(projectId, sessionId, rootFrameId)
+      : this.sessionLifecycle.rootLane(sessionId, projectId)
+    return this.sessions.get(lane)?.currentKernelEpochId('repl') === undefined
   }
 
   async runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]> {
@@ -2506,44 +2529,15 @@ class NotebookRuntimeService {
   async shutdown(
     request: NotebookSessionRequest
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
-    const laneKey = notebookLaneKey(this.sessionLifecycle.laneForRequest(request))
-    const releaseFence = this.executionOwner.fenceShellRuns({ laneKey })
-    try {
-      await this.executionOwner.cancelShellRuns(
-        { laneKey },
-        new Error('Notebook Session is shutting down.')
-      )
-      return await this.sessionLifecycle.shutdown(request)
-    } finally {
-      releaseFence()
-    }
+    return this.sessionLifecycle.shutdown(request)
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    const releaseFence = this.executionOwner.fenceShellRuns({ sessionId })
-    try {
-      await this.executionOwner.cancelShellRuns(
-        { sessionId },
-        new Error('Notebook Session is shutting down.')
-      )
-      return await this.sessionLifecycle.shutdownSession(sessionId)
-    } finally {
-      releaseFence()
-    }
+    return this.sessionLifecycle.shutdownSession(sessionId)
   }
 
   async shutdownProject(projectId: string): Promise<void> {
-    this.sessionLifecycle.beginProjectDeletion(projectId)
-    const releaseFence = this.executionOwner.fenceShellRuns({ projectId })
-    try {
-      await this.executionOwner.cancelShellRuns(
-        { projectId },
-        new Error('Notebook Project is shutting down.')
-      )
-      return await this.sessionLifecycle.shutdownProject(projectId)
-    } finally {
-      releaseFence()
-    }
+    return this.sessionLifecycle.shutdownProject(projectId)
   }
 
   async deleteProjectFileEvidence(projectId: string): Promise<void> {

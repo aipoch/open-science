@@ -1,3 +1,4 @@
+import { harnessTurnAdapter } from './harness-turn-adapter'
 import type {
   ActiveSession,
   ContentBlock,
@@ -338,6 +339,7 @@ class AcpProviderPromptExecutor {
     if (frameworkId === 'codebuddy') return codeBuddyTurnAdapter
     // Pi ACP returns aggregate usage on PromptResponse; it has no OpenCode usage API to probe.
     if (frameworkId === 'pi') return piTurnAdapter
+    if (frameworkId === 'open-science-agent') return harnessTurnAdapter
 
     // Capture one generation's immutable API before adapter.begin awaits. Re-reading the owner for
     // the final snapshot could mix credentials or lose usage after a generation switch.

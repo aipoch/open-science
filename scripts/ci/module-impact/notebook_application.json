@@ -1,5 +1,9 @@
 {
   "ownerPaths": [
+    "src/main/notebook/harness-mcp-turn.ts",
+    "src/main/notebook/harness-mcp-turn.integration.test.ts",
+    "src/main/notebook/harness-tools.ts",
+    "src/main/notebook/harness-tools.integration.test.ts",
     "src/main/notebook/application-commands.test.ts",
     "src/main/notebook/application-commands.ts",
     "src/main/notebook/application.test.ts",
@@ -131,10 +135,16 @@
     "src/main/notebook/kernel-epoch-contract.ts",
     "src/main/notebook/runtime-service.architecture.test.ts",
     "src/main/notebook/runtime-service.ts",
+    "src/main/notebook/source-analysis-request.ts",
+    "src/main/notebook/source-analysis-worker-entry.ts",
+    "src/main/notebook/source-analysis-worker.ts",
+    "src/main/notebook/source-analysis-worker.test.ts",
     "src/main/notebook-payload.integration.test.ts",
     "src/main/notebook/authorized-directories.integration.test.ts"
   ],
   "interfacePaths": [
+    "src/main/notebook/harness-mcp-turn.ts",
+    "src/main/notebook/harness-tools.ts",
     "src/main/notebook/application-commands.ts",
     "src/main/notebook/application.ts",
     "src/main/notebook/conditional-restore-script.ts",
@@ -228,6 +238,8 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/notebook/harness-mcp-turn.integration.test.ts",
+      "src/main/notebook/harness-tools.integration.test.ts",
       "src/main/notebook/application-commands.test.ts",
       "src/main/notebook/application.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",
@@ -323,7 +335,8 @@
       "src/main/notebook/powershell-search-parser.test.ts",
       "src/main/notebook/analysis-file-evidence.test.ts",
       "src/main/notebook/runtime-service.architecture.test.ts",
-      "src/main/notebook-payload.integration.test.ts"
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/notebook/source-analysis-worker.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -73,6 +73,7 @@ const createManagedPreviewRequest = (
 // Selects the managed IPC reader once so callers remain source-neutral.
 const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFileReader => {
   if (source === 'upload') return window.api.uploads.readPreview
+  if (source === 'compute-output') return window.api.compute.readOutputPreview
   if (source === 'notebook-input') return window.api.notebook.readInputPreview
   if (source === 'local') return window.api.localFs.readPreview
   return window.api.artifacts.readPreview

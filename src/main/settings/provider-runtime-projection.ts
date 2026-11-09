@@ -140,6 +140,28 @@ class ProviderRuntimeProjectionOwner {
     selection: RuntimeProviderModelSelection,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
+    const target = this.resolveProviderTarget(storedProvider, selection)
+    return {
+      ...target,
+      frameworkCompatible: isProviderUsableByFramework(
+        { apiEndpoints: target.apiEndpoints, type: storedProvider.type },
+        framework
+      ),
+      needsChatResponsesToChatCompletionsBridge: requiresChatCompletionsBridge(
+        target.provider,
+        framework
+      ),
+      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
+        target.provider,
+        framework
+      )
+    }
+  }
+
+  resolveProviderTarget(
+    storedProvider: StoredProvider,
+    selection: RuntimeProviderModelSelection
+  ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
     if (
       selection.kind === 'configured' &&
@@ -189,13 +211,10 @@ class ProviderRuntimeProjectionOwner {
       apiEndpoints,
       provider,
       reasoningEffortProfile: resolveProviderReasoningEffortProfile(storedProvider, effectiveModel),
-      frameworkCompatible: isProviderUsableByFramework(
-        { apiEndpoints, type: storedProvider.type },
-        framework
-      ),
+      frameworkCompatible: false,
       modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
-      needsChatResponsesToChatCompletionsBridge: requiresChatCompletionsBridge(provider, framework),
-      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(provider, framework)
+      needsChatResponsesToChatCompletionsBridge: false,
+      needsNativeResponsesCompatibility: false
     }
   }
 
