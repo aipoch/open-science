@@ -252,7 +252,7 @@ Details stehen im [AstaBench- und ASI-Bench-Bericht](https://aipoch.com/benchmar
 
 4. **Werkzeuge und Rechenressourcen für die Analyse auswählen.**
    - Wählen Sie einen Modellanbieter und greifen Sie über **48 integrierte Konnektoren** auf wissenschaftliche Datenquellen zu. Einige Konnektoren müssen zuerst aktiviert werden.
-   - Für wiederkehrende Aufgaben stehen **24 integrierte Skills** bereit. Der [Skills-Marktplatz](https://github.com/aipoch/openscience-skill-marketplace) bietet **525 Skills** zur Installation. Um Teilaufgaben zu delegieren, wählen Sie aus **10 Spezialisten** auf dem [Spezialisten-Marktplatz](https://github.com/aipoch/openscience-specialist-marketplace).
+   - Für wiederkehrende Aufgaben stehen **24 integrierte Fähigkeiten** bereit. Der [Fähigkeiten-Marktplatz](https://github.com/aipoch/openscience-skill-marketplace) bietet **525 Fähigkeiten** zur Installation. Um Teilaufgaben zu delegieren, wählen Sie aus **10 Spezialisten** auf dem [Spezialisten-Marktplatz](https://github.com/aipoch/openscience-specialist-marketplace).
    - Führen Sie Analysen lokal aus oder übermitteln Sie sie über SSH, Slurm, Kubernetes, Hugging Face Jobs, Modal oder Ray an eine von Ihnen verwaltete Umgebung. Prüfen Sie Ziel, Befehl, Ressourcen und Ausgaben, bevor Sie einen entfernten Auftrag freigeben. Cloud-Aufträge können Kosten für das verbundene Konto verursachen.
 
 ## Modellanbieter
