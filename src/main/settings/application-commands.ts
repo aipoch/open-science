@@ -1,4 +1,4 @@
-import { readSourceLinkMetadata } from './source-link-metadata'
+import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { SourceLinkMetadata } from '../../shared/source-preview'
 import type {
   SavedSkillSource,
@@ -281,6 +281,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [url: string],
     SourceLinkMetadata
   >('settings:get-source-link-metadata'),
+  getSourceLinkImage: defineApplicationCommand<
+    'settings:get-source-link-image',
+    readonly [url: string],
+    string | undefined
+  >('settings:get-source-link-image'),
   getNotebookNetworkStatus: defineApplicationCommand<
     'settings:get-notebook-network-status',
     readonly [],
@@ -587,6 +592,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getPackageMirror,
   settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
   settingsCoreApplicationCommands.getSourceLinkMetadata,
+  settingsCoreApplicationCommands.getSourceLinkImage,
   settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getLocalShellRuntimePreference,
   settingsCoreApplicationCommands.getWsl2BashPreviewStatus,
@@ -729,8 +735,8 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:review-notebook-private-destination')
         return dependencies.service.reviewNotebookPrivateDestination(args[0])
       },
-      'settings:get-source-link-metadata': async ({ args }) =>
-        readSourceLinkMetadata(args[0], await dependencies.service.getNotebookNetwork()),
+      'settings:get-source-link-metadata': ({ args }) => readSourceLinkMetadata(args[0]),
+      'settings:get-source-link-image': ({ args }) => readSourceLinkImage(args[0]),
       'settings:get-notebook-network-status': () => dependencies.service.getNotebookNetworkStatus(),
       'settings:get-local-shell-runtime-preference': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-local-shell-runtime-preference')
