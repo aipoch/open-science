@@ -701,7 +701,11 @@ test('built-in harness relays host.viewImage through Vision for a text-only main
     expect(continuation.messages.at(-1)?.role).toBe('tool')
     const toolContent = continuation.messages.at(-1)?.content
     expect(typeof toolContent).toBe('string')
-    expect(toolContent).toContain('<attached-image-evidence')
+    expect(toolContent).not.toContain('answer directly from the supplied evidence')
+    expect(toolContent).toContain('write_artifact_file')
+    expect(toolContent).toContain('producerRunId')
+    expect(toolContent).toContain('<view-image-evidence schema-version=')
+    expect(toolContent).not.toContain('<attached-image-evidence')
     expect(toolContent).toContain('trust="untrusted"')
     expect(toolContent).toContain(evidence.summary)
     expect(toolContent).toContain(evidence.findings[0])

@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { HOST_SDK_OPERATION_IDS, HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from './help'
+import { HOST_VIEW_IMAGE_DELIVERY_GUIDANCE } from './view-image-guidance'
 
 const provisioned = Object.fromEntries(
   HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => [id.slice('host.'.length), true])
@@ -108,6 +109,10 @@ describe('Host SDK help', () => {
     expect(constraints).toMatch(/at most four images per repl_execute invocation/u)
     expect(constraints).toMatch(/Only PNG and JPEG sources/u)
     expect(constraints).toMatch(/long edge is at most 1568 pixels/u)
+    expect(named(fields(help.returns), 'attached').description).toContain(
+      'not published as an Artifact'
+    )
+    expect(help.constraints).toContain(HOST_VIEW_IMAGE_DELIVERY_GUIDANCE)
     expect(help.examples).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

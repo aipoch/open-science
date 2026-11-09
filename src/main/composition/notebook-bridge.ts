@@ -211,6 +211,7 @@ export async function composeNotebookBridge({
         projectId,
         sessionId,
         historyImageCount: 0,
+        evidenceContext: 'notebook-tool-result',
         signal
       })
       if (typeof prepared === 'string' || prepared.length !== images.length) {
