@@ -1,14 +1,16 @@
 import { mkdtemp, writeFile, rm, mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createEngineAt } from '../src/engine.js'
 import { createPdfStructureEngine } from '../src/index.js'
 const modelRecipe = { revision: 'test' }
-import { readWorkerResult } from '../src/worker-result.js'
+import * as workerResult from '../src/worker-result.js'
 import { isPdfStructureResourceLimitError } from '../src/errors.js'
 
-vi.mock('../src/worker-result.js', () => ({ readWorkerResult: vi.fn() }))
+beforeEach(() => {
+  vi.spyOn(workerResult, 'readWorkerResult')
+})
 const roots: string[] = []
 it('resolves the actual engine recipe with the installed package exports', async () => {
   const recipe = await createPdfStructureEngine({ modelRecipe }).describe()
@@ -16,8 +18,8 @@ it('resolves the actual engine recipe with the installed package exports', async
   expect(recipe.modelRevision).toBe('test')
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
-  vi.clearAllMocks()
 })
 it('joins main-process result conversion before deleting scratch after cancellation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pdf-engine-stop-'))
@@ -32,7 +34,7 @@ it('joins main-process result conversion before deleting scratch after cancellat
     `import {rmdir} from 'node:fs/promises'; export async function inspectScratch(root, remove) { if (remove) await rmdir(root); return 0 }`
   )
   let rejectConversion!: (error: Error) => void
-  vi.mocked(readWorkerResult).mockImplementation(
+  vi.mocked(workerResult.readWorkerResult).mockImplementation(
     () =>
       new Promise((_, reject) => {
         rejectConversion = reject
@@ -64,7 +66,9 @@ it('joins main-process result conversion before deleting scratch after cancellat
   })
   // This waits for a real Node process; startup under suite load can exceed
   // waitFor's one-second default before result conversion even begins.
-  await vi.waitFor(() => expect(readWorkerResult).toHaveBeenCalledOnce(), { timeout: 15_000 })
+  await vi.waitFor(() => expect(workerResult.readWorkerResult).toHaveBeenCalledOnce(), {
+    timeout: 15_000
+  })
   controller.abort()
   let stopped = false
   const stopping = handle.stop().then(() => {
@@ -168,7 +172,7 @@ it.each([
   )
   expect((error as Error).stack).toContain('(exitCode=37, signal=null)')
   expect(message).not.toContain('discarded-head:')
-  expect(readWorkerResult).not.toHaveBeenCalled()
+  expect(workerResult.readWorkerResult).not.toHaveBeenCalled()
 })
 
 it('classifies a host resource-limit failure for an explicit retry', async () => {
@@ -238,7 +242,7 @@ it('retains an actual nullable exit code and signal from the owned runtime close
   await expect(job.result).rejects.toThrow('PDF extraction failed. (exitCode=null, signal=SIGTERM)')
   await job.stop()
   expect(runtime.stop).not.toHaveBeenCalled()
-  expect(readWorkerResult).not.toHaveBeenCalled()
+  expect(workerResult.readWorkerResult).not.toHaveBeenCalled()
   child.stdin.destroy()
   child.stdout.destroy()
   child.stderr.destroy()
@@ -264,7 +268,7 @@ it('keeps an earlier runtime error instance instead of replacing it with close d
   child.emit('close', 37, null)
   await expect(job.result).rejects.toBe(original)
   await job.stop()
-  expect(readWorkerResult).not.toHaveBeenCalled()
+  expect(workerResult.readWorkerResult).not.toHaveBeenCalled()
   child.stdin.destroy()
   child.stdout.destroy()
   child.stderr.destroy()
