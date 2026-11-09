@@ -363,7 +363,10 @@ type NotebookLocalRpcServerOptions = {
       options: unknown,
       context: HostViewImageContext
     ): Promise<HostViewImageResult>
-    complete(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+    complete(
+      controlInvocationId: string,
+      signal?: AbortSignal
+    ): Promise<readonly TransientViewImage[]>
     discard(controlInvocationId: string): void
     discardSession(sessionId: string): void
     shutdown(): void
@@ -1626,7 +1629,10 @@ class NotebookLocalRpcServer {
   ): Promise<
     NotebookRpcConnection & {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
-      completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+      completeControlInvocation(
+        controlInvocationId: string,
+        signal?: AbortSignal
+      ): Promise<readonly TransientViewImage[]>
       discardControlInvocation(controlInvocationId: string): void
       revoke: () => void
       release: () => void
@@ -1674,10 +1680,10 @@ class NotebookLocalRpcServer {
           }
         }
       },
-      completeControlInvocation: async (controlInvocationId) => {
+      completeControlInvocation: async (controlInvocationId, signal) => {
         if (!ownedControlInvocationIds.has(controlInvocationId)) return []
         const images = this.hostViewImage
-          ? await this.hostViewImage.complete(controlInvocationId)
+          ? await this.hostViewImage.complete(controlInvocationId, signal)
           : []
         ownedControlInvocationIds.delete(controlInvocationId)
         return images

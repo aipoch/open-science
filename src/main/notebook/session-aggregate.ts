@@ -220,7 +220,8 @@ export type NotebookSessionMcpRpcConnection = {
   token: string
   beginControlInvocation?: (context: TrustedControlInvocationIdentity) => () => void
   completeControlInvocation?: (
-    controlInvocationId: string
+    controlInvocationId: string,
+    signal?: AbortSignal
   ) => Promise<readonly TransientViewImage[]>
   discardControlInvocation?: (controlInvocationId: string) => void
   // Revoke process authority without discarding output awaiting invocation completion.
@@ -855,26 +856,18 @@ export class NotebookSessionAggregate<
   ): Promise<readonly TransientViewImage[]> {
     const connection = this.controlInvocationConnections.get(controlInvocationId)
     if (!connection) return []
-    let discarded = false
-    const discard = (): void => {
-      if (discarded) return
-      discarded = true
-      connection.discardControlInvocation?.(controlInvocationId)
-    }
     try {
-      signal?.throwIfAborted()
-      signal?.addEventListener('abort', discard, { once: true })
-      const images = (await connection.completeControlInvocation?.(controlInvocationId)) ?? []
+      const images =
+        (await connection.completeControlInvocation?.(controlInvocationId, signal)) ?? []
       // Shutdown may retire the connection while image analysis is settling.
       if (this.controlInvocationConnections.get(controlInvocationId) !== connection) return []
-      signal?.throwIfAborted()
+      if (images.length > 0) signal?.throwIfAborted()
       return images
     } catch (error) {
       if (this.controlInvocationConnections.get(controlInvocationId) !== connection) return []
-      discard()
+      connection.discardControlInvocation?.(controlInvocationId)
       throw error
     } finally {
-      signal?.removeEventListener('abort', discard)
       this.finishControlInvocationConnection(controlInvocationId, connection)
     }
   }

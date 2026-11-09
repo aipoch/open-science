@@ -84,6 +84,7 @@ import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
 import { projectNotebookDependencies, type AnalyzedNotebookRun } from '@aipoch/notebook-analysis'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
+import { HostViewImageError } from './host-view-image-service'
 
 let storageRoot: string | undefined
 const liveShellServices: NotebookRuntimeService[] = []
@@ -3257,8 +3258,70 @@ describe('notebook runtime service', () => {
     })
   })
 
-  it('discards pending image analysis when the foreground caller stops after REPL completion', async () => {
+  it.each([false, true])(
+    'applies Stop after REPL completion only to staged image analysis (%s)',
+    async (staged) => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request) => ({
+            status: 'completed',
+            stdout: 'completed REPL result',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => ({ reaped: true })
+        })
+      })
+      const analyzing = createDeferred<void>()
+      const completeControlInvocation = vi.fn(async () => {
+        await analyzing.promise
+        return staged ? [{ evidence: 'late image evidence' }] : []
+      })
+      const discardControlInvocation = vi.fn()
+      service.setMcpRpcConnectionResolver(async () => ({
+        endpoint: 'http://127.0.0.1:1/x',
+        token: 'session-token',
+        completeControlInvocation,
+        discardControlInvocation
+      }))
+      const stop = new AbortController()
+      const execution = service.executeControl(
+        { sessionId: 'session-1', workspaceCwd: root, code: 'return 1' },
+        stop.signal
+      )
+      await vi.waitFor(() => expect(completeControlInvocation).toHaveBeenCalledOnce())
+      expect(completeControlInvocation).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(AbortSignal)
+      )
+      stop.abort(new Error('Stopped after REPL completion'))
+      analyzing.resolve()
+      if (staged) {
+        await expect(execution).rejects.toThrow('Stopped after REPL completion')
+        expect(discardControlInvocation).toHaveBeenCalledOnce()
+      } else {
+        await expect(execution).resolves.toMatchObject({
+          status: 'completed',
+          stdout: 'completed REPL result',
+          stderr: ''
+        })
+        expect(discardControlInvocation).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it('preserves completed REPL output and reports only safe diagnostics when image evidence fails', async () => {
     const root = await createStorageRoot()
+    const privateImage = Buffer.from('private staged image').toString('base64')
+    const privateError = `provider failed with ${privateImage} and credential secret-token`
+    const outputs = [{ type: 'stream' as const, name: 'stdout' as const, text: 'computed 42\n' }]
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -3267,39 +3330,56 @@ describe('notebook runtime service', () => {
       executorFactory: () => ({
         execute: async (request) => ({
           status: 'completed',
-          stdout: '',
-          stderr: '',
+          stdout: 'computed 42\n',
+          stderr: 'existing diagnostic',
           traceback: '',
           cwdAfter: request.cwd,
-          outputs: []
+          outputs
         }),
         shutdown: async () => ({ reaped: true })
       })
     })
-    let finish!: () => void
-    const analyzing = new Promise<void>((resolve) => {
-      finish = resolve
-    })
-    const completeControlInvocation = vi.fn(async () => {
-      await analyzing
-      return []
-    })
-    const discardControlInvocation = vi.fn(finish)
+    const discardControlInvocation = vi.fn()
     service.setMcpRpcConnectionResolver(async () => ({
       endpoint: 'http://127.0.0.1:1/x',
       token: 'session-token',
-      completeControlInvocation,
+      completeControlInvocation: async () => {
+        throw new HostViewImageError('could not prepare image evidence.', new Error(privateError))
+      },
       discardControlInvocation
     }))
-    const stop = new AbortController()
-    const execution = service.executeControl(
-      { sessionId: 'session-1', workspaceCwd: root, code: 'return 1' },
-      stop.signal
-    )
-    await vi.waitFor(() => expect(completeControlInvocation).toHaveBeenCalledOnce())
-    stop.abort(new Error('Stopped during image analysis'))
-    await expect(execution).rejects.toThrow('Stopped during image analysis')
+    const request = { sessionId: 'session-1', workspaceCwd: root, code: 'return 42' }
+
+    const result = await service.executeControl(request)
+
+    expect(result).toMatchObject({
+      status: 'completed',
+      stdout: 'computed 42\n',
+      stderr: 'existing diagnostic\nhost.viewImage could not prepare image evidence.',
+      traceback: '',
+      outputs
+    })
+    expect(result).not.toHaveProperty('viewImages')
     expect(discardControlInvocation).toHaveBeenCalledOnce()
+    const serializedResult = JSON.stringify(result)
+    for (const secret of [
+      privateImage,
+      privateError,
+      'secret-token',
+      'cause',
+      'HostViewImageError'
+    ]) {
+      expect(serializedResult).not.toContain(secret)
+    }
+    await expect(service.state(request)).resolves.toMatchObject({
+      runs: [
+        expect.objectContaining({
+          status: 'completed',
+          text: expect.objectContaining({ stdout: 'computed 42\n', stderr: 'existing diagnostic' }),
+          outputs
+        })
+      ]
+    })
   })
 
   it('returns the canonical foreground REPL result when a submission identity is retried', async () => {
@@ -3769,7 +3849,7 @@ describe('notebook runtime service', () => {
     releaseExecution.resolve()
     await service.waitForBackgroundRun(receipt.runId)
     expect(releaseInvocation).toHaveBeenCalledOnce()
-    expect(completeControlInvocation).toHaveBeenCalledWith(receipt.runId)
+    expect(completeControlInvocation).toHaveBeenCalledWith(receipt.runId, expect.any(AbortSignal))
     await expect(
       service.getBackgroundRun({
         sessionId: 'session-repl-lease',

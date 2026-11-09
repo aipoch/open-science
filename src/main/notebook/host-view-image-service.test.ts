@@ -402,7 +402,7 @@ describe('HostViewImageService', () => {
     }
   )
 
-  it.each(['signal', 'discard', 'session', 'shutdown'] as const)(
+  it.each(['signal', 'completion signal', 'discard', 'session', 'shutdown'] as const)(
     'cancels in-flight relay analysis on %s and refuses late evidence',
     async (cancellation) => {
       const controller = new AbortController()
@@ -428,20 +428,56 @@ describe('HostViewImageService', () => {
       await h.service.stage(
         { versionId: 'artifact-version-1' },
         {},
-        { ...context(), signal: controller.signal }
+        {
+          ...context(),
+          signal:
+            cancellation === 'completion signal' ? new AbortController().signal : controller.signal
+        }
       )
-      const completing = h.service.complete('run-1')
+      const completing = h.service.complete(
+        'run-1',
+        cancellation === 'completion signal' ? controller.signal : undefined
+      )
       await started
-      if (cancellation === 'signal') controller.abort(new Error('private cancellation reason cG5n'))
+      const reason = new Error('private cancellation reason cG5n')
+      if (cancellation === 'signal' || cancellation === 'completion signal')
+        controller.abort(reason)
       else if (cancellation === 'discard') h.service.discard('run-1')
       else if (cancellation === 'session') h.service.discardSession('calling-session')
       else h.service.shutdown()
       expect(relaySignal?.aborted).toBe(true)
       finishAnalysis('late image evidence')
-      await expect(completing).rejects.toMatchObject({
-        name: 'AbortError',
-        message: 'host.viewImage image inspection was aborted.'
+      if (cancellation === 'completion signal') await expect(completing).rejects.toBe(reason)
+      else {
+        await expect(completing).rejects.toMatchObject({
+          name: 'AbortError',
+          message: 'host.viewImage image inspection was aborted.'
+        })
+      }
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
+
+  it.each([false, true])(
+    'honors an already stopped completion only when images were staged (%s)',
+    async (staged) => {
+      const prepareVisionEvidence = vi.fn(async () => 'image evidence')
+      const h = harness({
+        backend: visualBackend({ supportsImageInput: false }),
+        items: [catalogItem('artifact')],
+        captureVisionRelay: () => true,
+        prepareVisionEvidence
       })
+      if (staged) await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+      const stop = new AbortController()
+      const reason = new Error('foreground caller stopped')
+      stop.abort(reason)
+
+      const completing = h.service.complete('run-1', stop.signal)
+
+      if (staged) await expect(completing).rejects.toBe(reason)
+      else await expect(completing).resolves.toEqual([])
+      expect(prepareVisionEvidence).not.toHaveBeenCalled()
       await expect(h.service.complete('run-1')).resolves.toEqual([])
     }
   )

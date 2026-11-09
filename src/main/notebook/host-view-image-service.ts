@@ -99,7 +99,7 @@ type StagedInvocation = {
 type NormalizedSource = { versionId: string } | { path: string }
 type NormalizedOptions = { crop?: ImageCrop; maxSize?: number }
 
-class HostViewImageError extends Error {
+export class HostViewImageError extends Error {
   constructor(message: string, cause?: unknown) {
     super(`host.viewImage ${message}`, cause === undefined ? undefined : { cause })
     this.name = 'HostViewImageError'
@@ -513,13 +513,22 @@ export class HostViewImageService {
     }
   }
 
-  async complete(controlInvocationId: string): Promise<readonly TransientViewImage[]> {
+  async complete(
+    controlInvocationId: string,
+    completionSignal?: AbortSignal
+  ): Promise<readonly TransientViewImage[]> {
     const invocation = this.invocations.get(controlInvocationId)
     if (!invocation || invocation.completing) return []
     invocation.completing = true
     const signal = invocation.abortController.signal
     const isCurrent = (): boolean => this.isCurrentInvocation(controlInvocationId, invocation)
+    const discard = (): void => {
+      if (this.invocations.get(controlInvocationId) === invocation)
+        this.discard(controlInvocationId)
+    }
     try {
+      completionSignal?.throwIfAborted()
+      completionSignal?.addEventListener('abort', discard, { once: true })
       signal.throwIfAborted()
       if (!isCurrent() || invocation.images.size !== invocation.reserved.size) return []
       const images = Object.freeze(
@@ -549,6 +558,7 @@ export class HostViewImageService {
       }
       return Object.freeze([Object.freeze({ evidence })])
     } catch (error) {
+      completionSignal?.throwIfAborted()
       if (signal.aborted) {
         throw new DOMException('host.viewImage image inspection was aborted.', 'AbortError')
       }
@@ -558,6 +568,7 @@ export class HostViewImageService {
         error
       )
     } finally {
+      completionSignal?.removeEventListener('abort', discard)
       invocation.abortController.abort()
       if (this.invocations.get(controlInvocationId) === invocation) {
         this.invocations.delete(controlInvocationId)
