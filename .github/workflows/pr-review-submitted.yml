@@ -1,0 +1,19 @@
+name: PR Review Submitted
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  signal:
+    name: Signal review decision
+    if: >-
+      github.event.pull_request.base.ref == 'main' &&
+      (github.event.review.state == 'changes_requested' || github.event.review.state == 'approved')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Fork reviews have a read-only token. The default-branch listener handles the label.
+      - run: 'true'
