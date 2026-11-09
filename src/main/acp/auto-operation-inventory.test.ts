@@ -171,10 +171,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
-        // Reviewed: failed cells and background Runs set isError, RPC errors gain a status-based
-        // next step, and descriptions are clarified. Schemas and Auto dispositions are unchanged.
+        // Reviewed: completed REPL results can carry visual evidence or an image diagnostic.
+        // The change only formats tool output; operation inputs and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '5e1e1a43b45176218fea7610a0680c54d57619730ffa5e97e8621c959ffe7ba7',
+          '0acd2a6ed97552600c52da35baaaf0f13799c70ed1dac61cc6f6759ccf275e5b',
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
