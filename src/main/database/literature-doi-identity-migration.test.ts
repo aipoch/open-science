@@ -16,7 +16,7 @@ import { LiteratureCatalog } from '../literature/catalog'
 import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 const DOI_MIGRATION_ID = '0053_literature_doi_identity'
-const CURRENT_MIGRATION_ID = '0058_project_optimization_prompt_scope'
+const CURRENT_MIGRATION_ID = '0057_project_optimization_prompt'
 
 describe('DOI identity migration', () => {
   let root: string | undefined

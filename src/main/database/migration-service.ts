@@ -1,7 +1,6 @@
 import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
 import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
 import { projectOptimizationPromptMigration } from './migrations/0057-project-optimization-prompt'
-import { projectOptimizationPromptScopeMigration } from './migrations/0058-project-optimization-prompt-scope'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -1028,16 +1027,6 @@ const MIGRATION_MANIFEST = [
       projectOptimizationPromptMigration.id,
       projectOptimizationPromptMigration.statements,
       projectOptimizationPromptMigration.verifiers
-    ),
-    backupOnApply: 'required',
-    backupRetention: 'retain'
-  },
-  {
-    ...projectOptimizationPromptScopeMigration,
-    checksum: checksumMigrationPayload(
-      projectOptimizationPromptScopeMigration.id,
-      projectOptimizationPromptScopeMigration.statements,
-      projectOptimizationPromptScopeMigration.verifiers
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

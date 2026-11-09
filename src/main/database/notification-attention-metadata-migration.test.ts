@@ -117,10 +117,10 @@ describe('notification attention metadata migration', () => {
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
 '0057_project_optimization_prompt',
-        '0058_project_optimization_prompt_scope'
+        '0057_project_optimization_prompt'
       ],
       from: '0006_database_domain_constraints',
-      to: '0058_project_optimization_prompt_scope'
+      to: '0057_project_optimization_prompt'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

@@ -17,7 +17,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0052_literature_personal_note_search'
-const currentMigrationId = '0058_project_optimization_prompt_scope'
+const currentMigrationId = '0057_project_optimization_prompt'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient

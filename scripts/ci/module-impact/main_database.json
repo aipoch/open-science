@@ -104,8 +104,7 @@
     "src/main/database/migrations/0055-session-discussion-parent.ts",
     "src/main/database/slurm-job-reliability-migration.test.ts",
     "src/main/database/migrations/0056-compute-kubernetes-workspace.ts",
-    "src/main/database/migrations/0057-project-optimization-prompt.ts",
-    "src/main/database/migrations/0058-project-optimization-prompt-scope.ts"
+    "src/main/database/migrations/0057-project-optimization-prompt.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
