@@ -77,7 +77,7 @@ describe('Windows installer smoke plan', () => {
       await expect(installApplication('setup.exe', installDirectory, {}, run)).rejects.toBe(failure)
       expect(run).toHaveBeenCalledWith('setup.exe', ['/S', `/D=${installDirectory}`], {
         env: {},
-        timeoutMs: 300_000
+        timeoutMs: 330_000
       })
       expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
         installer: 'setup.exe',

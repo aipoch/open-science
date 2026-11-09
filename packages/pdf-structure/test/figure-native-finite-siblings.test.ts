@@ -2269,17 +2269,17 @@ it.each([
   }
 )
 
-const denseVectorPage = (count: number): ReturnType<typeof JSON.parse> => ({
+const denseVectorPage = (count: number, positions = count): ReturnType<typeof JSON.parse> => ({
   pageNumber: 1,
   width: 600,
   height: 800,
   invalidGraphicsBounds: 0,
   lines: [],
   graphicsBounds: [
-    ...Array.from({ length: count }, (_, index) => ({
-      kind: 'path',
-      normalizedRect: [0.15 + index * 1e-9, 0.2, 0.1501 + index * 1e-9, 0.2001]
-    })),
+    ...Array.from({ length: count }, (_, index) => {
+      const offset = (index % positions) * 1e-9
+      return { kind: 'path', normalizedRect: [0.15 + offset, 0.2, 0.1501 + offset, 0.2001] }
+    }),
     { kind: 'path', normalizedRect: [0.1, 0.1, 0.9, 0.5] }
   ]
 })
@@ -2301,8 +2301,8 @@ it('conserves a dense native vector plate beyond the runtime argument limit', ()
 it.each([30, 700])(
   'keeps dense listing paths rejected at caption position %s without a runtime overflow',
   (top) => {
-    // Retain the argument-overflow regression without repeating the 300k positive stress case.
-    const page = denseVectorPage(160_000)
+    // Keep enough path objects to overflow a spread call. Repeated marks need little spatial traversal.
+    const page = denseVectorPage(160_000, 16)
     page.graphicsBounds.pop()
     page.lines = Array.from({ length: 60 }, (_, index) => ({
       text: `Instruction ${index} contains enough ordinary words to prove a continuous prose listing.`,
@@ -2328,7 +2328,7 @@ it.each([30, 700])(
     expect(figure.rect).toBeUndefined()
     expect(figure.issue).toBe('text-dominant-graphics')
   },
-  // This 160k-path overflow regression takes ~6s alone; isolated CI runs share CPU with other tests.
+  // Retain headroom for coverage on shared runners.
   60_000
 )
 

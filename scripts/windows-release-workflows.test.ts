@@ -961,7 +961,7 @@ describe('post-merge Windows validation', () => {
     expect(upgrade['runs-on']).toBe('windows-latest')
     expect(upgrade.needs).toBeUndefined()
     expect(upgrade['continue-on-error']).toBeUndefined()
-    expect(upgrade['timeout-minutes']).toBe(40)
+    expect(upgrade['timeout-minutes']).toBe(90)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
       with: { 'node-version': 24 }
