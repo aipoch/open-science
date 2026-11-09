@@ -1,5 +1,5 @@
 import { execFile, type ExecFileException } from 'node:child_process'
-import { lstat, open, readdir, realpath, unlink } from 'node:fs/promises'
+import { lstat, open, readdir, readFile, realpath, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveWindowsPowerShellExecutable } from './windows-powershell'
@@ -18,6 +18,51 @@ foreach ($name in ($env:OPEN_SCIENCE_PRUNE_LOGS | ConvertFrom-Json)) {
     [IO.FileStream]::new($path, 'Open', 'ReadWrite', 'None', 4096, 'DeleteOnClose').Dispose()
   } catch [IO.IOException] {} catch [UnauthorizedAccessException] {}
 }`
+
+function isGone(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code
+  return code === 'ENOENT' || code === 'ESRCH'
+}
+
+async function linuxOpenInodes(device: bigint): Promise<Set<string>> {
+  const inodes = new Set<string>()
+  const uid = process.geteuid!()
+  for (const pid of await readdir('/proc')) {
+    if (!/^\d+$/.test(pid)) continue
+    const dir = `/proc/${pid}/fd`
+    try {
+      // Startup logs are private to this user. Use the effective UID from status:
+      // procfs can report root ownership on a nondumpable same-user process.
+      const status = await readFile(`/proc/${pid}/status`, 'utf8')
+      const owner = /^Uid:\s+\d+\s+(\d+)/m.exec(status)
+      if (!owner) throw new Error('Could not inspect process ownership')
+      if (Number(owner[1]) !== uid) continue
+      for (const fd of await readdir(dir)) {
+        try {
+          const file = await stat(join(dir, fd), { bigint: true })
+          if (file.dev === device && file.isFile()) inodes.add('i' + file.ino)
+        } catch (error) {
+          if (!isGone(error)) throw error
+        }
+      }
+    } catch (error) {
+      if (!isGone(error)) throw error
+    }
+  }
+  return inodes
+}
+
+async function macOpenInodes(root: string): Promise<Set<string>> {
+  const { stdout, stderr } = await run('/usr/sbin/lsof', ['-nP', '-F0i', '+d', root], {
+    timeout: 10000
+  }).catch((error: ExecFileException & { stdout: string; stderr: string }) => {
+    // lsof exits 1 when any selected file has no open handles.
+    if (error.code === 1 && !error.killed && !error.signal) return error
+    throw error
+  })
+  if (stderr) return new Set()
+  return new Set(stdout.split('\0').filter((field) => /^i\d+$/.test(field)))
+}
 
 export async function pruneBackendStartupLogs(directory: string, current: string): Promise<void> {
   if (!(await lstat(directory)).isDirectory()) return
@@ -56,18 +101,10 @@ export async function pruneBackendStartupLogs(directory: string, current: string
   const probe = await open(join(root, current), 'r')
   let openInodes: Set<string>
   try {
-    const { stdout, stderr } = await run(
-      process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof',
-      ['-nP', '-F0i', '+d', root],
-      { timeout: 10000 }
-    ).catch((error: ExecFileException & { stdout: string; stderr: string }) => {
-      // lsof exits 1 when any selected file has no open handles.
-      if (error.code === 1 && !error.killed && !error.signal) return error
-      throw error
-    })
-    openInodes = new Set(stdout.split('\0').filter((field) => /^i\d+$/.test(field)))
-    const { ino } = await probe.stat({ bigint: true })
-    if (stderr || !openInodes.has('i' + ino)) return
+    const { ino, dev } = await probe.stat({ bigint: true })
+    openInodes =
+      process.platform === 'linux' ? await linuxOpenInodes(dev) : await macOpenInodes(root)
+    if (!openInodes.has('i' + ino)) return
   } finally {
     await probe.close()
   }
