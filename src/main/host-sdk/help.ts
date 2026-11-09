@@ -1,5 +1,6 @@
 import {
   HOST_CAPABILITY_OPERATION_KEYS,
+  type HostCapabilityKey,
   type HostCapabilityOperationKey
 } from './capability-projection'
 import { DELEGATION_DISABLED_MESSAGE } from '../delegation/durable-delegated-work-error'
@@ -10,6 +11,16 @@ const HOST_SDK_SUBAGENT_OPERATION_IDS = HOST_CAPABILITY_OPERATION_KEYS.map(
 const HOST_SDK_OPERATION_IDS = Object.freeze(
   [
     ...HOST_SDK_SUBAGENT_OPERATION_IDS,
+    'host.help',
+    'host.capabilities',
+    'host.skills',
+    'host.mcp',
+    'host.compute',
+    'host.agents',
+    'host.artifacts',
+    'host.artifactPath',
+    'host.lineage',
+    'host.frames',
     'host.currentModel',
     'host.llm',
     'host.listModels',
@@ -24,13 +35,7 @@ type HostSdkHelpContext = Readonly<{
   callerRole: 'main' | 'delegate'
   delegationAllowed?: boolean
   capabilities: Readonly<
-    Record<HostSdkSubagentOperation, boolean> & {
-      currentModel?: boolean
-      llm?: boolean
-      listModels?: boolean
-      sessions?: boolean
-      viewImage?: boolean
-    }
+    Record<HostSdkSubagentOperation, boolean> & Partial<Record<HostCapabilityKey, boolean>>
   >
 }>
 
@@ -1070,7 +1075,280 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         : { status: 'unavailable', reason: 'host.sessions is not provisioned for this Session.' }
 }
 
+// Namespace topics keep discovery compact; exact method queries resolve to the same
+// complete contract, so callers need not list the catalog before asking for a signature.
+const sdkTopic = (
+  name: string,
+  summary: string,
+  forms: readonly (readonly [signature: string, accepts: string])[],
+  requestFields: readonly (readonly [name: string, type: string, description: string])[],
+  returns: string,
+  constraints: readonly string[],
+  example: string,
+  capability?: HostCapabilityKey
+): HostSdkHelpOperationDescriptor => ({
+  kind: 'operation',
+  id: `host.${name}`,
+  path: `host.${name}`,
+  aliases: [name],
+  summary,
+  ...(name === 'agents'
+    ? {
+        backgroundSafety: 'unsafe' as const,
+        backgroundSafetyReason:
+          'Only agents.switch requires foreground; the other methods support background runs.'
+      }
+    : {}),
+  callForms: forms.map(([signature, accepts]) => ({ signature, accepts })),
+  request: {
+    fields: requestFields.map(([name, type, description]) => ({ name, type, description }))
+  },
+  options: NO_OPTIONS,
+  returns: { description: returns },
+  constraints,
+  examples: [{ title: summary, code: example }],
+  resolveAvailability: ({ capabilities }) =>
+    !capability || capabilities[capability]
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: `host.${name} is not provisioned for this Session.` }
+})
+
+const CORE_DESCRIPTORS = [
+  sdkTopic(
+    'help',
+    'Read a host API contract.',
+    [['await host.help(topic?)', 'Omit topic for catalog; exact namespace or method for usage.']],
+    [['topic', 'string', 'For example skills.read or host.compute.']],
+    'JSON object: catalog, operation or not_found with suggestions.',
+    [
+      'Use known calls directly. Help is optional and on demand. Return the object or JSON.stringify it; String(object) loses its contents.'
+    ],
+    "return await host.help('skills.read')"
+  ),
+  sdkTopic(
+    'capabilities',
+    'Inspect Session availability.',
+    [['await host.capabilities()', 'No arguments.']],
+    [],
+    'Object of boolean flags keyed by host capability.',
+    ['Availability only; signatures are in host.help(topic). Do not preflight documented calls.'],
+    'return await host.capabilities()'
+  ),
+  sdkTopic(
+    'skills',
+    'Read and author managed Skills.',
+    [
+      ['await host.skills.list()', 'List managed and draft Skills.'],
+      ["await host.skills.read(name, path = 'SKILL.md')", 'Positional strings, not an object.'],
+      ['await host.skills.validate(name)', 'Validate a package.'],
+      [
+        'await host.skills.edit(name, path, content, oldString?)',
+        'Create/replace draft file, or replace one matching non-empty oldString.'
+      ],
+      ['await host.skills.publish(name, overwrite = false)', 'Publish the validated draft.'],
+      ['await host.skills.delete(name)', 'Delete with application approval.']
+    ],
+    [
+      ['name', 'string', 'Canonical managed or draft Skill name.'],
+      ['path', 'string', 'Package-relative file path; read defaults to SKILL.md.'],
+      ['content', 'string', 'File content or replacement text.'],
+      ['oldString', 'string', 'Optional exact, non-empty text to replace.'],
+      ['overwrite', 'boolean', 'Whether to replace an existing Personal Skill; default false.']
+    ],
+    'list: [{ id, name, displayName, description, origin, editable }]; read: { name, path, content, origin, files? }; validate: { valid, name, origin, errors, warnings }; mutations: status and Skill identity.',
+    [
+      'This is the authoring API, not the generated Connector Skill loader. For mcp-* documentation, use the current framework Skill loader. The shared load_skill tool selects by skill, never by args; other loaders follow their own advertised schema.',
+      'Use an already loaded Connector document directly. If loading fails, report the failure; do not probe internal files or guess Connector methods.'
+    ],
+    "const doc = await host.skills.read('skill-creator'); return doc.content",
+    'skills'
+  ),
+  sdkTopic(
+    'mcp',
+    'Call a documented Connector method.',
+    [
+      [
+        'await host.mcp(server, method, args?)',
+        'Positional server and method strings, then one arguments object.'
+      ]
+    ],
+    [
+      ['server', 'string', 'Connector id from its loaded Skill, e.g. pubmed.'],
+      ['method', 'string', 'Exact method id from that document, e.g. search_articles.'],
+      [
+        'args',
+        'object',
+        'Method-specific Input keys; external field names are preserved. Defaults to {}.'
+      ]
+    ],
+    'The Connector method result, as documented by its Skill.',
+    [
+      'There is no host.mcp.list/read namespace. Load the relevant mcp-* Skill through the framework loader if not already loaded; do not guess method names or fields.',
+      'PubMed search uses max_results, date_from and date_to. Unknown parameters are rejected, not ignored.'
+    ],
+    "return await host.mcp('pubmed', 'search_articles', { query: 'CRISPR', max_results: 5 })",
+    'mcp'
+  ),
+  sdkTopic(
+    'artifacts',
+    'Find Project Artifacts.',
+    [['await host.artifacts(options?)', 'One optional filter object.']],
+    [
+      [
+        'options',
+        'object',
+        'Optional versionId, frameId, filename, exact (boolean), search, contentType, after, before, cursor, limit. Use nextCursor for the next page.'
+      ]
+    ],
+    '{ count, projectId, truncated, nextCursor?, artifacts: [{ id, filename, latestVersionId, contentType, sizeBytes, checksum, projectId, sessionId, rootFrameId, agentFrameId, isUserUpload, createdAt, latestVersionCreatedAt }] }',
+    [
+      'Results are scoped to the current Project. Use latestVersionId with artifactPath or lineage.'
+    ],
+    "return await host.artifacts({ filename: 'results.csv', exact: true })",
+    'artifacts'
+  ),
+  sdkTopic(
+    'artifactPath',
+    'Resolve a local Artifact path.',
+    [['await host.artifactPath(versionId)', 'One Artifact Version id string.']],
+    [['versionId', 'string', 'A Version in the current Project, not an Artifact id.']],
+    'Absolute local path string.',
+    [],
+    'const path = await host.artifactPath(versionId)',
+    'artifacts'
+  ),
+  sdkTopic(
+    'lineage',
+    'Inspect Artifact provenance.',
+    [
+      ['await host.lineage.get(versionId)', 'One Version id.'],
+      [
+        'await host.lineage.graph(versionId, options?)',
+        'One Version id and optional traversal limits.'
+      ]
+    ],
+    [
+      ['versionId', 'string', 'Artifact Version id in the current Project.'],
+      [
+        'options',
+        'object',
+        'direction: up (default) or down; maxDepth: default 5, max 20; maxNodes: default 100, max 500.'
+      ]
+    ],
+    'Version provenance or a bounded graph, with camelCase fields.',
+    [
+      'get accepts generated Versions only; Uploads are graph leaves/roots. Read Upload metadata with host.artifacts({ versionId }).'
+    ],
+    'return await host.lineage.get(versionId)',
+    'lineage'
+  ),
+  sdkTopic(
+    'frames',
+    'Inspect conversation Frames.',
+    [
+      ['await host.frames.list(options?)', 'Optional Project-scoped filters.'],
+      [
+        'await host.frames.get(frameId, options?)',
+        'Frame id and optional branch/transcript window.'
+      ]
+    ],
+    [
+      ['frameId', 'string', 'Frame id returned by list.'],
+      [
+        'list options',
+        'object',
+        'Optional sessionId, rootsOnly, kind, archived, search, after, before, limit, cursor.'
+      ],
+      ['get options', 'object', 'Optional sessionId, branchId, before, limit.']
+    ],
+    'list: { projectId, frames, totalCount, nextCursor? }; get: { projectId, session, frame, branch, transcript, runtimeSegments }.',
+    ['Keep branchId when following a transcript; messages may have multiple branches.'],
+    'return await host.frames.list({ rootsOnly: true, limit: 10 })',
+    'frames'
+  ),
+  sdkTopic(
+    'agents',
+    'Read and configure Specialists.',
+    [
+      ['await host.agents.list()', 'List profiles.'],
+      ['await host.agents.get(name)', 'Read a profile.'],
+      ['await host.agents.listSkills(nameOrId?)', 'List scoped Skill choices.'],
+      ['await host.agents.listConnectors(nameOrId?)', 'List scoped Connector choices.'],
+      ['await host.agents.create(input)', 'Create a profile.'],
+      ['await host.agents.update(name, patch)', 'Revision-guarded update.'],
+      ['await host.agents.attachSkill(name, skillRef, options)', 'Attach with revision.'],
+      ['await host.agents.detachSkill(name, skillRef, options)', 'Detach with revision.'],
+      ['await host.agents.attachConnector(name, connectorRef, options)', 'Attach with revision.'],
+      ['await host.agents.detachConnector(name, connectorRef, options)', 'Detach with revision.'],
+      ['await host.agents.switch(nameOrNull)', 'Switch this Session; null returns to Main.'],
+      ['await host.agents.delete(name, options)', 'Delete with revision.']
+    ],
+    [
+      [
+        'input',
+        'object',
+        'name plus optional displayName, description, systemPrompt, iconKey, colorKey, enabled, unrestricted, skillNames, connectorNames.'
+      ],
+      ['patch', 'object', 'revision plus editable input fields (not name).'],
+      ['options', 'object', '{ revision } from the latest profile.'],
+      ['skillRef / connectorRef', 'string', 'Use the corresponding catalog reference.']
+    ],
+    'Read operations return catalogs/profiles; ordinary mutations return the actual updated camelCase profile.',
+    [
+      'Load customize for the mutation workflow and approval rules. Switch/delete are privileged; do not retry a mutation just to refresh its result.'
+    ],
+    'return await host.agents.list()',
+    'agents'
+  ),
+  sdkTopic(
+    'compute',
+    'Run work on a Compute Host.',
+    [
+      ['await host.compute.listHosts()', 'Compact enabled-host catalog.'],
+      ['await host.compute.list()', 'Full enabled-host records.'],
+      ['await host.compute.listRegistered()', 'Registered enabled hosts.'],
+      ['await host.compute.listPreferred()', 'Preferred Session hosts.'],
+      ['await host.compute.listCompute()', 'Session-enabled compute hosts.'],
+      ['host.compute.create(providerId)', 'Synchronous provider handle; no network call.'],
+      ['await host.compute.details(providerId, options?)', 'Read/append/replace host knowledge.'],
+      ['await handle.callCommand(cmd, intent, options?)', 'Short remote command.'],
+      [
+        'await handle.submitJob(intent, command, options?)',
+        'Submit once; returns a durable job receipt.'
+      ],
+      ['handle.attachJob(jobId)', 'Synchronous job handle.'],
+      ['await job.status()', 'Read status.'],
+      ['await job.result()', 'Read collected outputs.'],
+      ['await job.cancel()', 'Cancel the job.'],
+      ['await handle.setConcurrencyLimit(k)', 'Integer 1..500.'],
+      ['await handle.status()', 'Session concurrency status.']
+    ],
+    [
+      ['providerId / jobId', 'string', 'Use catalog/receipt ids.'],
+      ['callCommand options', 'object', 'loginShell (default true), timeoutSeconds.'],
+      [
+        'submitJob options',
+        'object',
+        'environment, resources, inputs: [{ src, dstFilename?, remotePath? }], outputs, timeoutSeconds, harvest: { exclude?, maxFileMb?, maxTotalMb? }.'
+      ],
+      [
+        'details options',
+        'object',
+        "mode: 'read' (default), 'append' or 'replace'; text for writes; oldText for exact replace."
+      ]
+    ],
+    'Compute records retain their documented wire fields, including provider_id and job_id; submission also returns nextAction.',
+    [
+      'Load remote-compute-ssh for provider-specific resources and environments. Follow the submission receipt at the dependency point; do not resubmit to poll.',
+      'create/attachJob return handles without await; their methods are async.'
+    ],
+    'const handle = host.compute.create(providerId); return await handle.callCommand("pwd", "Inspect working directory")',
+    'compute'
+  )
+]
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
+  ...CORE_DESCRIPTORS,
   CHILDREN_DESCRIPTOR,
   COLLECT_DESCRIPTOR,
   CURRENT_MODEL_DESCRIPTOR,
@@ -1097,7 +1375,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 }
 
 const MAX_HELP_QUERY_CHARS = 128
-const MAX_CATALOG_RESULT_CHARS = 2_900
+const MAX_CATALOG_RESULT_CHARS = 5_000
 const MAX_OPERATION_RESULT_CHARS = 3_600
 const MAX_DELEGATE_RESULT_CHARS = 3_400
 
@@ -1132,7 +1410,16 @@ const editDistance = (left: string, right: string): number => {
 const entries = [...OPERATION_DESCRIPTORS].sort((left, right) => left.id.localeCompare(right.id))
 const topics = new Map<string, HostSdkHelpOperationDescriptor>()
 for (const descriptor of entries) {
-  for (const topic of [descriptor.id, descriptor.path, ...descriptor.aliases]) {
+  const methods = descriptor.callForms.flatMap(({ signature }) => {
+    const match = signature.match(/host\.([A-Za-z]+\.[A-Za-z]+)\(/)
+    // Compute reports parameter errors as host.compute.submitJob etc., although the
+    // actual call lives on a returned handle. Make those diagnostic names searchable.
+    const handleMethod = signature.match(/(?:handle|job)\.([A-Za-z]+)\(/)?.[1]
+    const method =
+      match?.[1] ?? (handleMethod ? `${descriptor.aliases[0]}.${handleMethod}` : undefined)
+    return method ? [method, `host.${method}`] : []
+  })
+  for (const topic of [descriptor.id, descriptor.path, ...descriptor.aliases, ...methods]) {
     const normalizedTopic = normalizeTopic(topic)
     const existing = topics.get(normalizedTopic)
     if (existing && existing !== descriptor) {
@@ -1181,6 +1468,7 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
             )
           )
         }))
+        .filter(({ score }) => score <= 3)
         .sort((left, right) => left.score - right.score || left.id.localeCompare(right.id))
         .slice(0, 3)
         .map(({ id }) => id)

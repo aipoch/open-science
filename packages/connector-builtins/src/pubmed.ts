@@ -526,6 +526,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Search PubMed (biomedical & life-sciences literature via NCBI esearch) for articles matching a query. Returns the total match count plus a page of PMIDs. Supports PubMed field tags ([Title], [Author], [Journal], [MeSH Terms], ...), Boolean operators, date filtering and sort. PubMed does not index physics / CS / math / pure-chemistry papers.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         query: { type: 'string', description: 'PubMed query (keywords, field tags, Boolean).' },
         max_results: { type: 'integer', default: 20 },
@@ -583,6 +584,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Retrieve detailed article metadata from PubMed by PMID (bulk, via efetch): identifiers (pmid/pmc/doi), title, abstract, journal, authors with affiliations, publication date, MeSH terms, article types, language and citation. On every use, cite PubMed and include the returned article DOIs (identifiers.doi) as links.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         pmids: {
           ...STRING_OR_STRING_ARRAY,
@@ -615,6 +617,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Find related PubMed content for one or more source PMIDs via NCBI elink. `pubmed_pubmed` (default) returns similar articles ranked by word-weighted similarity of titles/abstracts/MeSH (NOT citations); `pubmed_pmc` returns full-text PMC links; `pubmed_gene`/`pubmed_protein`/`pubmed_nucleotide` return linked sequence/gene records.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         pmids: { ...STRING_OR_STRING_ARRAY },
         link_type: {
@@ -674,6 +677,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Resolve bibliographic citations to PMIDs via NCBI ecitmatch. Each citation supplies some of {journal, year, volume, first_page, author, key}; provide 2-3+ fields for reliable matching. Use when you have a reference list and need PMIDs.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         citations: {
           type: 'array',
@@ -775,6 +779,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Convert between PMID, PMCID and DOI via the NCBI/PMC ID Converter. Homogeneous input ids per call (set `id_type` to match). Commonly used to check whether a PMID has a PMCID (i.e. full text in PMC) before calling get_full_text_article.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         ids: { ...STRING_OR_STRING_ARRAY },
         id_type: { type: 'string', enum: ['pmid', 'pmcid', 'doi'], default: 'pmid' }
@@ -828,6 +833,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Retrieve open-access full text from PubMed Central via Europe PMC by PMC id ("PMC12345" or "12345"). Returns structured section text plus the license; when full text is unavailable the reason is reported explicitly (fulltext_status). Only OA-subset articles have retrievable full text. On every use, cite PubMed and include the returned article DOIs as links.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: {
         pmc_ids: {
           ...STRING_OR_STRING_ARRAY,
@@ -929,6 +935,7 @@ export const PUBMED_TOOLS: ToolDescriptor[] = [
       'Report copyright and license status per PMID by combining PubMed CopyrightInformation, the PMC ID Converter (PMID -> PMCID/DOI), and the PMC <permissions> block (license type, ALI license URL, copyright statement/year). Use to check open-access reuse rights before reproducing content.',
     input: {
       type: 'object',
+      additionalProperties: false,
       properties: { pmids: { ...STRING_OR_STRING_ARRAY } },
       required: ['pmids']
     },

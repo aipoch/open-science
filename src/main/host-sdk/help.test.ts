@@ -73,13 +73,49 @@ describe('Host SDK help', () => {
         aliases: [id.slice('host.'.length)]
       }))
     )
-    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_900)
+    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(5_000)
 
     const unavailableCatalog = hostSdkHelp.query(undefined, {
       callerRole: 'main',
       capabilities: unprovisioned
     })
-    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_900)
+    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(5_000)
+  })
+
+  it('covers every exposed host capability and resolves exact namespace methods directly', () => {
+    const runtime = readFileSync(resolve('resources/notebook/repl_loop.js'), 'utf8')
+    const surface = runtime.match(/host: \{([\s\S]*?)\n {2}\}/)?.[1]
+    expect(surface).toBeDefined()
+    const exposed = [...surface!.matchAll(/^ {4}(\w+):/gm)].map((match) => `host.${match[1]}`)
+    expect([...exposed, ...HOST_SDK_SUBAGENT_OPERATION_IDS].sort()).toEqual([
+      ...HOST_SDK_OPERATION_IDS
+    ])
+    for (const topic of [
+      'skills.read',
+      'compute.create',
+      'compute.submitJob',
+      'compute.callCommand',
+      'agents.update',
+      'lineage.graph',
+      'frames.get',
+      'sessions.read'
+    ]) {
+      const namespace = topic.split('.')[0]
+      expect(hostSdkHelp.query(topic, mainContext)).toEqual(operation(namespace))
+      expect(hostSdkHelp.query(`host.${topic}`, mainContext)).toEqual(operation(namespace))
+    }
+    expect(operation('skills.read').callForms).toContainEqual(
+      expect.objectContaining({
+        signature: "await host.skills.read(name, path = 'SKILL.md')"
+      })
+    )
+    expect(operation('skills').constraints.join(' ')).toContain(
+      'not the generated Connector Skill loader'
+    )
+    expect(operation('mcp').callForms[0].signature).toBe('await host.mcp(server, method, args?)')
+    expect(hostSdkHelp.query('unrelated-invalid-topic', mainContext)).toMatchObject({
+      suggestions: []
+    })
   })
 
   it('documents the transient visual-model-gated viewImage contract', () => {
@@ -431,7 +467,7 @@ describe('Host SDK help', () => {
     expect(hostSdkHelp.query('delegte', mainContext)).toEqual({
       kind: 'not_found',
       query: 'delegte',
-      suggestions: ['host.delegate', 'host.collect', 'host.llm']
+      suggestions: ['host.delegate']
     })
     for (const unpublished of [
       'delegate.request',
