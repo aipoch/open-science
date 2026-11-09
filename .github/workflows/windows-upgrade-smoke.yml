@@ -29,7 +29,10 @@ jobs:
   windows-upgrade-smoke:
     if: ${{ !inputs.dry_run }}
     runs-on: windows-latest
-    timeout-minutes: 40
+    # Four full installers plus the orphaned-lock probe can spend about 22.5 minutes, and the two
+    # current-phase Notebook provisions can spend 16 minutes. Keep the five-cycle launch/close
+    # checks, isolated database probes, evidence, cleanup, setup, and downloads inside the margin.
+    timeout-minutes: 90
     env:
       CURRENT_TAG: ${{ github.event.client_payload.tag || inputs.tag }}
     steps:
