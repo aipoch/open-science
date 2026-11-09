@@ -187,10 +187,16 @@ See [nightly recovery](../release-notes/README.md#recovering-a-stale-nightly).
 
 ## PR and issue labels
 
-[`.github/labels.json`](../.github/labels.json) defines PR type, `size:*`, and issue intake labels.
-PR labels refresh on opening, reopening, new commits and title edits; size counts added/deleted
+[`.github/labels.json`](../.github/labels.json) defines PR type, `size:*`, review, and issue intake labels.
+PR type and size labels refresh on opening, reopening, new commits and title edits; size counts added/deleted
 lines excluding lockfiles. File-based area labels are not generated. Other human/bot labels remain
 untouched. Labels do not control CI or merges.
+
+On open PRs to `main`, a formal GitHub **Request changes** review from a reviewer with write access
+sets `needs-author-action`. Pushing an updated commit switches it to `needs-review`. A new request
+for changes on that commit switches it back. Approval of the current commit clears both labels once
+no requests for changes remain. Ordinary comments leave the status alone. The review signal follows
+GitHub's normal Actions approval policy for forks; push handling runs from the trusted base.
 
 New template issues receive `needs-triage` and their category; maintainers remove `needs-triage`
 after assessment. Existing issues and PRs are not assigned intake labels in bulk.
