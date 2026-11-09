@@ -278,6 +278,9 @@ FunctionEnd
 
 !macro customInit
   Call initializeUpdateReceipts
+  # Keep the explicit override empty so diagnostics.ps1 uses its ordinary-user LocalAppData fallback.
+  # Initializing the NSIS variable also keeps makensis warning-as-error builds clean.
+  StrCpy $installDiagnosticDirectory ""
   # Cache both registered locations before either uninstall pass deletes their registry data.
   # Discover interrupted backups from older installers without moving current data. The bundled
   # selective uninstaller replaces the unsafe old implementation on every attempt.
