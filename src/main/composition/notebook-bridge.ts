@@ -190,9 +190,9 @@ export async function composeNotebookBridge({
   const hostViewImageService = new HostViewImageService({
     catalog: projectFilesRepository,
     managedFileVersions: managedFileVersionService,
-    captureBackend: (caller) => {
+    captureBackend: (caller, options) => {
       if (caller.role === 'delegate') {
-        return notebookRpcServerRef.current?.captureDelegatedViewImageBackend(caller)
+        return notebookRpcServerRef.current?.captureDelegatedViewImageBackend(caller, options)
       }
       const backend = runtimeRef.current?.captureSessionBackend(caller.sessionId)
       return backend

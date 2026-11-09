@@ -25,6 +25,11 @@ export type HostViewImageBackend = Readonly<{
   generationToken?: object
 }>
 
+export type HostViewImageBackendCaptureOptions = Readonly<{
+  /** Refresh durable Attempt authority at admission and publication boundaries. */
+  requireWritableAttempt?: boolean
+}>
+
 export type HostViewImageCaller = Readonly<{
   projectId?: string
   sessionId: string
@@ -74,7 +79,8 @@ type HostViewImageServiceOptions = Readonly<{
   catalog: HostViewImageCatalog
   managedFileVersions: HostViewImageManagedFileReader
   captureBackend(
-    caller: HostViewImageCaller
+    caller: HostViewImageCaller,
+    options?: HostViewImageBackendCaptureOptions
   ): HostViewImageBackend | undefined | Promise<HostViewImageBackend | undefined>
   /** Optional app-owned Vision relay capability for text-only active models. */
   captureVisionRelay?: () => boolean | Promise<boolean>
@@ -318,7 +324,9 @@ export class HostViewImageService {
     const backend = await this.options.captureBackend(context)
     if (!backend) return false
     const available = isHostViewImageBackendCertified(backend) || (await this.canRelay(backend))
-    const currentBackend = await this.options.captureBackend(context)
+    const currentBackend = await this.options.captureBackend(context, {
+      requireWritableAttempt: true
+    })
     return (
       available &&
       !this.stopped &&
@@ -399,7 +407,9 @@ export class HostViewImageService {
     context.signal.addEventListener('abort', releaseReservation, { once: true })
 
     try {
-      const backend = await this.options.captureBackend(invocation.caller)
+      const backend = await this.options.captureBackend(invocation.caller, {
+        requireWritableAttempt: true
+      })
       signal.throwIfAborted()
       if (!backend || !isHostViewImageRouteCertified(backend)) {
         throw new HostViewImageError(
@@ -539,8 +549,8 @@ export class HostViewImageService {
     if (!invocation || invocation.completing) return []
     invocation.completing = true
     const signal = invocation.abortController.signal
-    const isCurrent = async (): Promise<boolean> => {
-      const current = await this.isCurrentInvocation(controlInvocationId, invocation)
+    const isCurrent = async (options?: HostViewImageBackendCaptureOptions): Promise<boolean> => {
+      const current = await this.isCurrentInvocation(controlInvocationId, invocation, options)
       signal.throwIfAborted()
       return current
     }
@@ -562,12 +572,14 @@ export class HostViewImageService {
       const backend = await this.options.captureBackend(invocation.caller)
       signal.throwIfAborted()
       if (!backend || backendIdentity(backend) !== invocation.backendIdentity) return []
-      if (isHostViewImageBackendCertified(backend)) return images
+      if (isHostViewImageBackendCertified(backend)) {
+        return (await isCurrent({ requireWritableAttempt: true })) ? images : []
+      }
       if (!(await this.canRelay(backend)) || !this.options.prepareVisionEvidence) {
         throw new HostViewImageError('Vision evidence relay is unavailable for the current model.')
       }
       signal.throwIfAborted()
-      if (!(await isCurrent())) return []
+      if (!(await isCurrent({ requireWritableAttempt: true }))) return []
       const evidence = await this.options.prepareVisionEvidence({
         images,
         projectId: invocation.projectId,
@@ -575,7 +587,7 @@ export class HostViewImageService {
         signal
       })
       signal.throwIfAborted()
-      if (!(await isCurrent())) return []
+      if (!(await isCurrent({ requireWritableAttempt: true }))) return []
       if (typeof evidence !== 'string' || evidence.trim().length === 0) {
         throw new HostViewImageError('Vision evidence relay returned no image evidence.')
       }
@@ -626,9 +638,10 @@ export class HostViewImageService {
 
   private async isCurrentInvocation(
     controlInvocationId: string,
-    invocation: StagedInvocation
+    invocation: StagedInvocation,
+    options?: HostViewImageBackendCaptureOptions
   ): Promise<boolean> {
-    const backend = await this.options.captureBackend(invocation.caller)
+    const backend = await this.options.captureBackend(invocation.caller, options)
     return (
       !this.stopped &&
       this.invocations.get(controlInvocationId) === invocation &&

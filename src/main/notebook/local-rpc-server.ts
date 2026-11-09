@@ -106,6 +106,7 @@ import { NotebookControlCompletionCapturedError } from './execution-owner'
 import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-contract'
 import type {
   HostViewImageBackend,
+  HostViewImageBackendCaptureOptions,
   HostViewImageCaller,
   HostViewImageContext,
   HostViewImageResult,
@@ -1621,10 +1622,9 @@ class NotebookLocalRpcServer {
     }
   }
 
-  // Resolve only an app-issued, still-writable Attempt; never fall back to its parent's model.
-  async captureDelegatedViewImageBackend(
+  private findDelegatedViewImageBinding(
     caller: HostViewImageCaller
-  ): Promise<HostViewImageBackend | undefined> {
+  ): NotebookRpcSessionBinding | undefined {
     if (
       caller.role !== 'delegate' ||
       !caller.projectId ||
@@ -1632,7 +1632,7 @@ class NotebookLocalRpcServer {
       !caller.attemptId
     )
       return undefined
-    for (const [token, binding] of this.sessionRpcCapabilities) {
+    for (const binding of this.sessionRpcCapabilities.values()) {
       const delegated = binding.delegatedNotebook
       if (
         !delegated ||
@@ -1643,12 +1643,28 @@ class NotebookLocalRpcServer {
         delegated.attemptId !== caller.attemptId
       )
         continue
-      if (!(await delegated.isAttemptWritable())) return undefined
-      return this.sessionRpcCapabilities.get(token) === binding && !delegated.revoked
-        ? delegated.viewImageBackend
-        : undefined
+      return binding
     }
     return undefined
+  }
+
+  // The image service requests durable Attempt authority only at admission and publication.
+  // Its repeated current-identity checks use the in-memory projection instead.
+  // Revocation and capability replacement take effect immediately without rereading the Session.
+  async captureDelegatedViewImageBackend(
+    caller: HostViewImageCaller,
+    options?: HostViewImageBackendCaptureOptions
+  ): Promise<HostViewImageBackend | undefined> {
+    const binding = this.findDelegatedViewImageBinding(caller)
+    const delegated = binding?.delegatedNotebook
+    if (!delegated) return undefined
+    if (
+      options?.requireWritableAttempt &&
+      (!(await delegated.isAttemptWritable()) ||
+        this.findDelegatedViewImageBinding(caller) !== binding)
+    )
+      return undefined
+    return delegated.viewImageBackend
   }
 
   // Issues a dedicated capability for the persistent control-plane REPL. Unlike the Agent-facing
