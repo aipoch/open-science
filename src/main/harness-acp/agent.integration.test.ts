@@ -725,6 +725,30 @@ it('compacts and continues the same turn once after a provider context overflow'
   ).toHaveLength(1)
 })
 
+it('classifies a rejected response from a bounded prefix without waiting for its end', async () => {
+  const server = createServer(async (request, response) => {
+    request.resume()
+    await once(request, 'end')
+    response.writeHead(400, { 'content-type': 'application/json' })
+    // More than the classification limit, and the body never ends.
+    response.write(JSON.stringify({ error: { message: 'x'.repeat(40_000) } }))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())))
+  })
+  const f = await fixture(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
+  )
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  await expect(prompt(f.connection, sessionId)).rejects.toThrow()
+})
+
 it('does not retry an MCP side effect after its response connection is lost', async () => {
   const managed = await mcpServer(true)
   const model = await modelServer((body, response) =>

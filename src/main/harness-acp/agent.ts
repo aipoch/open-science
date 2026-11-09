@@ -152,7 +152,6 @@ const cleared = (message: AgentMessage): AgentMessage => {
     (sum, block) => sum + (block.type === 'text' ? block.text.length : 0),
     0
   )
-  const media = message.content.filter((block) => block.type !== 'text').length
   const original = { ...message }
   // The stored preview, if any, describes the original result, not this reference.
   delete original.modelContent
@@ -161,7 +160,7 @@ const cleared = (message: AgentMessage): AgentMessage => {
     content: [
       {
         type: 'text',
-        text: `[Earlier tool result cleared to save context (${text} characters${media ? `, ${media} media blocks` : ''}). If it is needed again, call read_tool_result with invocationId=${JSON.stringify(message.invocationId)}; do not repeat the original tool.]`
+        text: `[Earlier tool result cleared to save context (${text} characters). If it is needed again, call read_tool_result with invocationId=${JSON.stringify(message.invocationId)}; do not repeat the original tool.]`
       }
     ]
   }
@@ -189,6 +188,8 @@ export function createToolResultClearing(
         if (tokens <= inputBudget * TARGET) break
         const message = view[index]
         if (ids.has(message.invocationId!)) continue
+        // read_tool_result returns text only, so a result with media stays in the request.
+        if (message.content.some((block) => block.type !== 'text')) continue
         const replacement = cleared(message)
         const saved = meter.messageTokens(message) - meter.messageTokens(replacement)
         if (saved < MIN_CLEARED_TOKENS) continue
@@ -214,15 +215,45 @@ type Entry = {
 const modes = { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Ask' }] }
 
 // Bounded read of a rejected response body; only its overflow classification leaves this process.
-const MAX_ERROR_BODY_CHARS = 16_384
-const isContextOverflowResponse = async (response: Response): Promise<boolean> => {
+// The cloned stream is cancelled at the byte limit, on timeout, or when the request is aborted.
+const MAX_ERROR_BODY_BYTES = 16_384
+const ERROR_BODY_TIMEOUT_MS = 5_000
+const readErrorPrefix = async (
+  response: Response,
+  signal?: AbortSignal | null
+): Promise<string> => {
+  const reader = response.clone().body?.getReader()
+  if (!reader) return ''
+  const stop = AbortSignal.any([
+    AbortSignal.timeout(ERROR_BODY_TIMEOUT_MS),
+    ...(signal ? [signal] : [])
+  ])
+  const cancel = (): void => void reader.cancel().catch(() => undefined)
+  stop.addEventListener('abort', cancel, { once: true })
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (size < MAX_ERROR_BODY_BYTES) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      size += value.byteLength
+    }
+  } catch {
+    // A failed or cancelled body is classified from the bytes already read.
+  } finally {
+    stop.removeEventListener('abort', cancel)
+    cancel()
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, MAX_ERROR_BODY_BYTES))
+}
+const isContextOverflowResponse = async (
+  response: Response,
+  signal?: AbortSignal | null
+): Promise<boolean> => {
   if (response.status === 413) return true
   if (response.status !== 400) return false
-  const text = await response
-    .clone()
-    .text()
-    .then((body) => body.slice(0, MAX_ERROR_BODY_CHARS))
-    .catch(() => '')
+  const text = await readErrorPrefix(response, signal)
   return (
     recognizeInput({ origin: 'provider', status: 400, text })?.reason === 'input/context-overflow'
   )
@@ -452,7 +483,7 @@ export function createHarnessAcpAgent(directory: string): {
           headers.set('user-agent', 'open-science-agent/0.1.0')
           if (target.sessionHeader) headers.set(target.sessionHeader, id)
           const response = await fetch(url, { ...init, headers })
-          if (!response.ok && (await isContextOverflowResponse(response))) {
+          if (!response.ok && (await isContextOverflowResponse(response, init?.signal))) {
             overflow = true
             meter.overflowed(target.contextWindow)
           }

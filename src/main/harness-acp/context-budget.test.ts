@@ -86,4 +86,21 @@ describe('tool result clearing', () => {
     const again = clearing.project(messages.slice(0, 5))
     expect(JSON.stringify(again[2].content)).toContain('read_tool_result')
   })
+
+  it('keeps old results that contain media, which read_tool_result cannot return', () => {
+    const meter = createContextMeter()
+    const exchanges = Array.from({ length: 10 }, (_, i) => exchange(i, 8_000))
+    exchanges[0][1].content.push({
+      type: 'image',
+      mimeType: 'image/png',
+      source: 'data:image/png;base64,AA=='
+    })
+    const messages = [user('u', 'go'), ...exchanges.flat()]
+    meter.admitted(request('r', messages))
+
+    const view = createToolResultClearing(40_000, meter).project(messages)
+
+    expect(view[2]).toBe(messages[2])
+    expect(JSON.stringify(view[4].content)).toContain('read_tool_result')
+  })
 })
