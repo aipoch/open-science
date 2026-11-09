@@ -602,7 +602,12 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     'Receipt is delivery evidence, not a reply; same requestId recovers, and uncertain is not auto-retried.',
     'A Subagent uses parent messaging only for coordination while its Attempt is running; its final response is already preserved as the canonical terminal result and should not be duplicated here.'
   ],
-  examples: [],
+  examples: [
+    {
+      title: 'Send coordination',
+      code: "await host.sendFrameMessage(target, 'The source review is ready.')"
+    }
+  ],
   resolveAvailability: messageAvailability('sendFrameMessage')
 }
 
@@ -770,10 +775,6 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   ],
   examples: [
     {
-      title: 'Inspect a workspace image',
-      code: "await host.viewImage({ path: 'results/plot.png' }, { maxSize: 1200 })"
-    },
-    {
       title: 'Inspect an Artifact crop',
       code: "await host.viewImage({ versionId: compositeVersionId }, { crop: { unit: 'pixels', left: 0, top: 0, right: 800, bottom: 600 } })"
     }
@@ -901,7 +902,6 @@ const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     'Each prompt is limited to 64 KiB; a batch is limited to 32 items and 512 KiB.'
   ],
   examples: [
-    { title: 'One-shot inference', code: "await host.llm('Summarize the findings.')" },
     {
       title: 'Bounded fan-out',
       code: "await host.llm(['Classify A.', 'Classify B.'], { maxConcurrency: 2 })"
@@ -1075,8 +1075,7 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         : { status: 'unavailable', reason: 'host.sessions is not provisioned for this Session.' }
 }
 
-// Namespace topics keep discovery compact; exact method queries resolve to the same
-// complete contract, so callers need not list the catalog before asking for a signature.
+// Namespace topics keep discovery compact. Method queries use the focused contracts below.
 const sdkTopic = (
   name: string,
   summary: string,
@@ -1347,6 +1346,346 @@ const CORE_DESCRIPTORS = [
   )
 ]
 
+// Method details are explicit: slicing a namespace's prose can retain unrelated fields
+// or remove a required safety constraint. Signatures and availability come from the owner.
+type MethodHelp = Readonly<{
+  parameters: readonly (readonly [name: string, type: string, description: string])[]
+  returns: string
+  constraints: readonly string[]
+  example: string
+}>
+const method = (
+  parameters: MethodHelp['parameters'],
+  returns: string,
+  example: string,
+  ...constraints: string[]
+): MethodHelp => ({ parameters, returns, example, constraints })
+const SKILL_NAME = ['name', 'string', 'Canonical managed or draft Skill name.'] as const
+const AGENT_NAME = ['name', 'string', 'Exact public Specialist name.'] as const
+const REVISION = [
+  'options',
+  'object',
+  '{ revision: positive integer } from the reviewed profile.'
+] as const
+const PROVIDER_ID = ['providerId', 'string', 'Enabled Compute Host id.'] as const
+const VERSION_ID = ['versionId', 'string', 'Artifact Version id in the current Project.'] as const
+const AUTHORING_SCOPE =
+  'Managed/draft Skills only. Use the current framework loader for generated mcp-* documents; do not probe internal files.'
+const AGENT_MUTATION =
+  'Follow the customize approval workflow; mutations return actual read-back state.'
+const COMPUTE_HANDLE =
+  'Bind handle = host.compute.create(providerId); this is a handle method, not a host.compute method.'
+const JOB_HANDLE =
+  'Bind job = host.compute.create(providerId).attachJob(jobId); this is a job handle method.'
+const METHOD_HELP: Readonly<Record<string, MethodHelp>> = {
+  'skills.list': method(
+    [],
+    '[{ id, name, displayName, description, origin, editable }]',
+    'return await host.skills.list()',
+    AUTHORING_SCOPE
+  ),
+  'skills.read': method(
+    [SKILL_NAME, ['path', 'string', 'Optional package-relative path; default SKILL.md.']],
+    '{ name, path, content, origin, files? }',
+    "const doc = await host.skills.read('skill-creator'); return doc.content",
+    AUTHORING_SCOPE
+  ),
+  'skills.validate': method(
+    [SKILL_NAME],
+    '{ valid, name, origin, errors, warnings }',
+    "return await host.skills.validate('my-skill')",
+    AUTHORING_SCOPE
+  ),
+  'skills.edit': method(
+    [
+      SKILL_NAME,
+      ['path', 'string', 'Package-relative file path.'],
+      ['content', 'string', 'Whole file content, or replacement text when oldString is supplied.'],
+      ['oldString', 'string', 'Optional non-empty exact text, which must match once.']
+    ],
+    "{ status: 'edited', name, path, origin: 'draft' }",
+    "return await host.skills.edit('my-skill', 'notes.txt', 'Updated notes')",
+    'Edits a draft; does not publish it. Existing files require oldString; omit it only when creating a new file.'
+  ),
+  'skills.publish': method(
+    [
+      SKILL_NAME,
+      [
+        'overwrite',
+        'boolean',
+        'Optional; default false. Allow replacing an existing Personal Skill.'
+      ]
+    ],
+    "{ status: 'published', id, name, origin: 'personal' }",
+    "return await host.skills.publish('my-skill')",
+    'Validates and promotes the draft; removes it after publication. Do not republish to retry a catalog refresh.'
+  ),
+  'skills.delete': method(
+    [SKILL_NAME],
+    "{ status: 'deleted', operation: 'delete', name } or { status: 'declined', operation: 'delete' }",
+    "return await host.skills.delete('my-skill')",
+    'Deletion requires application approval.'
+  ),
+  'lineage.get': method(
+    [VERSION_ID],
+    'Immutable Version provenance: producer, environment and typed input evidence, using camelCase fields.',
+    'return await host.lineage.get(versionId)',
+    'Generated Versions only; Uploads are rejected. Current Project only.'
+  ),
+  'lineage.graph': method(
+    [
+      VERSION_ID,
+      [
+        'options',
+        'object',
+        'Optional direction: up (default) or down; maxDepth: default 5, max 20; maxNodes: default 100, max 500.'
+      ]
+    ],
+    'Bounded provenance graph with nodes, edges and truncation/frontier evidence, using camelCase fields.',
+    "return await host.lineage.graph(versionId, { direction: 'up', maxDepth: 2 })",
+    'Current Project only. Uploads are permitted.'
+  ),
+  'frames.list': method(
+    [
+      [
+        'options',
+        'object',
+        'Optional sessionId, rootsOnly (default true), kind, archived (exclude/include/only), search, after, before, cursor, limit (default 20, max 100).'
+      ]
+    ],
+    '{ projectId, frames, totalCount, nextCursor? }',
+    'return await host.frames.list({ limit: 10 })',
+    'Metadata in the current Project; use nextCursor for the next page.'
+  ),
+  'frames.get': method(
+    [
+      ['frameId', 'string', 'Exact Frame id.'],
+      ['options', 'object', 'Optional sessionId, branchId, before, limit (default 40, max 100).']
+    ],
+    '{ projectId, session, frame, branch, transcript, runtimeSegments }',
+    'return await host.frames.get(frameId, { branchId, limit: 20 })',
+    'Defaults to the active Branch. Use transcript.previousCursor as before for older messages; retain branchId.'
+  ),
+  'sessions.list': method(
+    [
+      [
+        'options',
+        'object',
+        'Optional archived (exclude/include/only; default exclude), search, cursor, limit (default 20, max 100).'
+      ]
+    ],
+    '{ totalCount, sessions, nextCursor? }',
+    'return await host.sessions.list({ limit: 10 })',
+    'Main only; current Project metadata and live evidence, not transcripts.'
+  ),
+  'sessions.inspect': method(
+    [['sessionId', 'string', 'Exact Session id in the current Project.']],
+    'SessionDiagnostic: sessionId, title, status, createdAt, updatedAt, runtime, activeConversation?, latestObservation?.',
+    'return await host.sessions.inspect(sessionId)',
+    'Main only. Runtime describes now; no transcript or tool payloads.'
+  ),
+  'sessions.read': method(
+    [
+      [
+        'options',
+        'object',
+        'Optional kind (overview/context/message/activity/notebook-run/artifact-version/upload-version/review), id, part (input/result/record), offset, limit, branchId. Omit for the selected focus.'
+      ]
+    ],
+    'SessionRecordPage or SessionRecordText; next gives continuation options, incomplete marks missing/truncated source.',
+    'return await host.sessions.read()',
+    'Main only. Copy returned read/overview/nearby/next options. Text defaults to 8000 characters, max 20000; index pages hold up to 50 records.'
+  ),
+  'agents.list': method(
+    [],
+    '[{ id, name, displayName, description, enabled }]',
+    'return await host.agents.list()',
+    'Summaries omit revisions and configuration; those belong to agents.get(name).'
+  ),
+  'agents.get': method(
+    [AGENT_NAME],
+    'Current Specialist detail including id, name, revision and configuration.',
+    'return await host.agents.get(name)'
+  ),
+  'agents.listSkills': method(
+    [
+      ['nameOrId', 'string', 'Optional exact Skill name or id filter; omit for all visible Skills.']
+    ],
+    '[{ id, name, displayName, source, mainEnabled, available }]',
+    'return await host.agents.listSkills()'
+  ),
+  'agents.listConnectors': method(
+    [['nameOrId', 'string', 'Optional exact Connector name or id filter; omit for the catalog.']],
+    'Public Connector catalog records: identity, description, enabled/authentication/availability state and safe tool information.',
+    'return await host.agents.listConnectors()'
+  ),
+  'agents.create': method(
+    [
+      [
+        'input',
+        'object',
+        'name plus optional displayName, description, systemPrompt, iconKey, colorKey, enabled, unrestricted, skillNames, connectorNames.'
+      ]
+    ],
+    'Created camelCase Specialist profile including id and revision.',
+    "return await host.agents.create({ name: 'research-helper' })",
+    AGENT_MUTATION
+  ),
+  'agents.update': method(
+    [
+      AGENT_NAME,
+      [
+        'patch',
+        'object',
+        'revision plus changed displayName, description, systemPrompt, iconKey, colorKey, enabled, unrestricted, skillNames or connectorNames.'
+      ]
+    ],
+    'Updated camelCase Specialist profile including id and revision.',
+    "return await host.agents.update(name, { revision, description: 'Updated purpose' })",
+    AGENT_MUTATION,
+    'Use the reviewed revision; name is immutable.'
+  ),
+  'agents.attachSkill': method(
+    [AGENT_NAME, ['skillRef', 'string', 'Skill catalog id or canonical name.'], REVISION],
+    'Updated camelCase Specialist profile.',
+    'return await host.agents.attachSkill(name, skillRef, { revision })',
+    AGENT_MUTATION
+  ),
+  'agents.detachSkill': method(
+    [AGENT_NAME, ['skillRef', 'string', 'Skill catalog id or canonical name.'], REVISION],
+    'Updated camelCase Specialist profile.',
+    'return await host.agents.detachSkill(name, skillRef, { revision })',
+    AGENT_MUTATION
+  ),
+  'agents.attachConnector': method(
+    [AGENT_NAME, ['connectorRef', 'string', 'Connector catalog reference.'], REVISION],
+    'Updated camelCase Specialist profile.',
+    'return await host.agents.attachConnector(name, connectorRef, { revision })',
+    AGENT_MUTATION
+  ),
+  'agents.detachConnector': method(
+    [AGENT_NAME, ['connectorRef', 'string', 'Connector catalog reference.'], REVISION],
+    'Updated camelCase Specialist profile.',
+    'return await host.agents.detachConnector(name, connectorRef, { revision })',
+    AGENT_MUTATION
+  ),
+  'agents.switch': method(
+    [['nameOrNull', 'string | null', 'Target Specialist name; null returns to Main.']],
+    "{ status: 'approved', operation: 'switch', binding, pendingReconfigure } or { status: 'declined', operation: 'switch' }",
+    'return await host.agents.switch(null)',
+    'Foreground only; requires application approval and affects the trusted calling Session. Follow customize for the handoff workflow.'
+  ),
+  'agents.delete': method(
+    [AGENT_NAME, REVISION],
+    "{ status: 'deleted', name } or a declined result.",
+    'return await host.agents.delete(name, { revision })',
+    'Requires application approval. Bound conversations become unavailable rather than falling back to Main.'
+  ),
+  'compute.listHosts': method(
+    [],
+    '[{ provider_id, display_name, shape, execution_mode, status, role }]',
+    'return await host.compute.listHosts()',
+    'Enabled Session hosts. Status is saved probe evidence, not a live connectivity guarantee.'
+  ),
+  'compute.list': method(
+    [],
+    'Full enabled-host records with their existing wire fields.',
+    'return await host.compute.list()'
+  ),
+  'compute.listRegistered': method(
+    [],
+    'Registered enabled-host records.',
+    'return await host.compute.listRegistered()'
+  ),
+  'compute.listPreferred': method(
+    [],
+    'Preferred Session-host records.',
+    'return await host.compute.listPreferred()'
+  ),
+  'compute.listCompute': method(
+    [],
+    'string[] of enabled provider ids.',
+    'return await host.compute.listCompute()'
+  ),
+  'compute.create': method(
+    [PROVIDER_ID],
+    'Provider handle: provider_id and callCommand, submitJob, attachJob, setConcurrencyLimit, status methods.',
+    'const handle = host.compute.create(providerId)',
+    'Synchronous binding; no network call.'
+  ),
+  'compute.details': method(
+    [
+      PROVIDER_ID,
+      [
+        'options',
+        'object',
+        'Optional mode: read (default), append or replace; text for writes; oldText for replace.'
+      ]
+    ],
+    'Read: { doc, probe }; write: { ok: true }.',
+    'return await host.compute.details(providerId)',
+    'SSH hosts only. replace requires an exact oldText match. Writes update saved host knowledge, not the probe snapshot.'
+  ),
+  'compute.callCommand': method(
+    [
+      ['cmd', 'string', 'Remote shell command.'],
+      ['intent', 'string', 'Purpose of this command.'],
+      ['options', 'object', 'Optional loginShell (default true), timeoutSeconds.']
+    ],
+    '{ exit_code, stdout, stderr, truncated }',
+    'const handle = host.compute.create(providerId); return await handle.callCommand("pwd", "Inspect working directory")',
+    COMPUTE_HANDLE
+  ),
+  'compute.submitJob': method(
+    [
+      ['intent', 'string', 'Purpose of this job.'],
+      ['command', 'string', 'Job command.'],
+      [
+        'options',
+        'object',
+        'Optional environment, resources, inputs: [{ src, dstFilename?, remotePath? }], outputs, timeoutSeconds, harvest: { exclude?, maxFileMb? (0..100), maxTotalMb? (0..500) }.'
+      ]
+    ],
+    '{ job_id, provider_id, status, remote_workdir, nextAction }',
+    'const handle = host.compute.create(providerId); return await handle.submitJob("Run analysis", "python analysis.py")',
+    COMPUTE_HANDLE,
+    'Submit once; retain job_id and follow nextAction at the dependency point. Do not resubmit to poll. Provider-specific resources/environments are in remote-compute-ssh.'
+  ),
+  'compute.attachJob': method(
+    [['jobId', 'string', 'Durable id returned by submission.']],
+    'Job handle: job_id and async status, result, cancel methods.',
+    'const handle = host.compute.create(providerId); const job = handle.attachJob(jobId)',
+    COMPUTE_HANDLE,
+    'Synchronous binding; later reads verify provider and Session ownership.'
+  ),
+  'compute.status': method(
+    [],
+    'handle.status(): { session_limit, active_count, queued_count, provider_ceilings }; job.status(): job status record with status and result_final.',
+    'const handle = host.compute.create(providerId); return await handle.status()',
+    'handle = host.compute.create(providerId) reports Session concurrency; job = handle.attachJob(jobId) reports that job. These are distinct receivers.'
+  ),
+  'compute.result': method(
+    [],
+    'JobResult: job_id, status, result_final, exit_code, output_files, featured_files, hidden_files, local_output_root?, left_on_remote, remote_workdir, stdout_tail, stderr_tail, harvest_error, error?.',
+    'const job = host.compute.create(providerId).attachJob(jobId); return await job.result()',
+    JOB_HANDLE,
+    'Reads collected outputs; never triggers SSH or harvest. Use result_final to distinguish a final result.'
+  ),
+  'compute.cancel': method(
+    [],
+    'JobStatusResult with job_id, status, result_final and optional cancellation/error details.',
+    'const job = host.compute.create(providerId).attachJob(jobId); return await job.cancel()',
+    JOB_HANDLE,
+    'Requests durable cancellation; do not infer job completion from the request alone.'
+  ),
+  'compute.setConcurrencyLimit': method(
+    [['k', 'integer', 'Session limit, 1..500.']],
+    'No value (undefined) after updating the Session limit.',
+    'const handle = host.compute.create(providerId); return await handle.setConcurrencyLimit(2)',
+    COMPUTE_HANDLE
+  )
+}
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   ...CORE_DESCRIPTORS,
   CHILDREN_DESCRIPTOR,
@@ -1410,22 +1749,44 @@ const editDistance = (left: string, right: string): number => {
 const entries = [...OPERATION_DESCRIPTORS].sort((left, right) => left.id.localeCompare(right.id))
 const topics = new Map<string, HostSdkHelpOperationDescriptor>()
 for (const descriptor of entries) {
-  const methods = descriptor.callForms.flatMap(({ signature }) => {
-    const match = signature.match(/host\.([A-Za-z]+\.[A-Za-z]+)\(/)
-    // Compute reports parameter errors as host.compute.submitJob etc., although the
-    // actual call lives on a returned handle. Make those diagnostic names searchable.
-    const handleMethod = signature.match(/(?:handle|job)\.([A-Za-z]+)\(/)?.[1]
-    const method =
-      match?.[1] ?? (handleMethod ? `${descriptor.aliases[0]}.${handleMethod}` : undefined)
-    return method ? [method, `host.${method}`] : []
-  })
-  for (const topic of [descriptor.id, descriptor.path, ...descriptor.aliases, ...methods]) {
-    const normalizedTopic = normalizeTopic(topic)
-    const existing = topics.get(normalizedTopic)
-    if (existing && existing !== descriptor) {
-      throw new Error(`Host SDK help topic "${normalizedTopic}" is registered more than once.`)
+  const register = (topic: string, value: HostSdkHelpOperationDescriptor): void => {
+    const key = normalizeTopic(topic)
+    if (topics.has(key) && topics.get(key) !== value) {
+      throw new Error(`Host SDK help topic "${key}" is registered more than once.`)
     }
-    topics.set(normalizedTopic, descriptor)
+    topics.set(key, value)
+  }
+  for (const topic of [descriptor.id, descriptor.path, ...descriptor.aliases])
+    register(topic, descriptor)
+
+  const methods = new Map<string, HostSdkHelpOperationDescriptor['callForms'][number][]>()
+  for (const form of descriptor.callForms) {
+    const match = form.signature.match(/host\.([A-Za-z]+\.[A-Za-z]+)\(/)
+    const handleMethod = form.signature.match(/(?:handle|job)\.([A-Za-z]+)\(/)?.[1]
+    const name =
+      match?.[1] ?? (handleMethod ? `${descriptor.aliases[0]}.${handleMethod}` : undefined)
+    if (name) methods.set(name, [...(methods.get(name) ?? []), form])
+  }
+  for (const [name, callForms] of methods) {
+    const detail = METHOD_HELP[name]
+    if (!detail) throw new Error(`Missing Host SDK method help: ${name}`)
+    const focused: HostSdkHelpOperationDescriptor = {
+      ...descriptor,
+      id: `host.${name}`,
+      callForms,
+      request: {
+        fields: detail.parameters.map(([name, type, description]) => ({ name, type, description }))
+      },
+      options: NO_OPTIONS,
+      returns: { description: detail.returns },
+      constraints: detail.constraints,
+      examples: [{ title: name, code: detail.example }],
+      backgroundSafety: name === 'agents.switch' ? 'unsafe' : 'safe',
+      backgroundSafetyReason:
+        name === 'agents.switch' ? 'Switching requires foreground.' : undefined
+    }
+    register(name, focused)
+    register(`host.${name}`, focused)
   }
 }
 

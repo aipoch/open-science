@@ -101,8 +101,16 @@ describe('Host SDK help', () => {
       'sessions.read'
     ]) {
       const namespace = topic.split('.')[0]
-      expect(hostSdkHelp.query(topic, mainContext)).toEqual(operation(namespace))
-      expect(hostSdkHelp.query(`host.${topic}`, mainContext)).toEqual(operation(namespace))
+      const focused = operation(topic)
+      expect(focused.id).toBe(`host.${topic}`)
+      expect(focused.callForms).toHaveLength(1)
+      expect(focused.callForms[0].signature).toContain(`${topic.split('.')[1]}(`)
+      expect(focused.examples).toHaveLength(1)
+      expect(focused.examples[0].code).toContain(`${topic.split('.')[1]}(`)
+      expect(JSON.stringify(focused).length).toBeLessThan(
+        JSON.stringify(operation(namespace)).length
+      )
+      expect(hostSdkHelp.query(`host.${topic}`, mainContext)).toEqual(focused)
     }
     expect(operation('skills.read').callForms).toContainEqual(
       expect.objectContaining({
@@ -115,6 +123,46 @@ describe('Host SDK help', () => {
     expect(operation('mcp').callForms[0].signature).toBe('await host.mcp(server, method, args?)')
     expect(hostSdkHelp.query('unrelated-invalid-topic', mainContext)).toMatchObject({
       suggestions: []
+    })
+  })
+
+  it('keeps only method-specific fields, results and safety without another discovery call', () => {
+    const read = operation('skills.read')
+    expect(fields(read.request).map(({ name }) => name)).toEqual(['name', 'path'])
+    expect(JSON.stringify(read)).not.toMatch(/overwrite|skills\.publish|skills\.edit/)
+    expect(read.returns).toEqual({ description: '{ name, path, content, origin, files? }' })
+    expect(read.constraints.join(' ')).toContain('current framework loader')
+    expect(JSON.stringify(read).length).toBeLessThan(1000)
+
+    const command = operation('compute.callCommand')
+    expect(fields(command.request).map(({ name }) => name)).toEqual(['cmd', 'intent', 'options'])
+    expect(JSON.stringify(command)).not.toMatch(/submitJob|harvest|remote_workdir/)
+    expect(operation('compute.setConcurrencyLimit').returns.description).toContain('undefined')
+    const inspect = operation('sessions.inspect')
+    expect(fields(inspect.request).map(({ name }) => name)).toEqual(['sessionId'])
+    expect(inspect.returns.description).not.toContain('SessionRecord')
+    expect(operation('compute.status').callForms.map(({ signature }) => signature)).toEqual([
+      'await job.status()',
+      'await handle.status()'
+    ])
+    expect(operation('compute.status').examples).toHaveLength(1)
+
+    expect(operation('agents.get').backgroundSafety).toBe('safe')
+    expect(operation('agents.switch').backgroundSafety).toBe('unsafe')
+    expect(operation('sessions.read', 'delegate').availability.status).toBe('unavailable')
+    expect(
+      hostSdkHelp.query('skills.read', {
+        ...mainContext,
+        capabilities: { ...provisioned, skills: true }
+      })
+    ).toMatchObject({
+      availability: { status: 'available' }
+    })
+    expect(hostSdkHelp.query('skills.read', mainContext)).toMatchObject({
+      availability: { status: 'unavailable' }
+    })
+    expect(hostSdkHelp.query('skills.nonexistent', mainContext)).toMatchObject({
+      kind: 'not_found'
     })
   })
 
@@ -341,6 +389,9 @@ describe('Host SDK help', () => {
       expect(Array.isArray((help.request as { fields?: unknown }).fields)).toBe(true)
       expect(Array.isArray((help.options as { fields?: unknown }).fields)).toBe(true)
       expect(help).not.toHaveProperty('errors')
+      if (!help.callForms.some(({ signature }) => signature.includes(`${id}.`))) {
+        expect(help.examples).toHaveLength(1)
+      }
       expect(snakeCaseObjectKeys(help)).toEqual([])
       const serialized = JSON.stringify(help)
       expect(serialized).not.toContain('"oneOf"')
