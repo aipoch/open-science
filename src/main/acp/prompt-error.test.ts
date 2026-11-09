@@ -84,6 +84,16 @@ describe('describePromptError', () => {
     )
   })
 
+  it('surfaces a structured provider message from a generic API error wrapper', () => {
+    const error = agentError(
+      'Internal error: API Error: 400 {"error":{"message":"tool schema is invalid","type":"invalid_request_error"}}',
+      { errorKind: 'provider-error' }
+    )
+
+    expect(describePromptError(error, { model: 'deepseek-flash' })).toBe(
+      'Provider error for model "deepseek-flash" (HTTP 400): tool schema is invalid'
+    )
+  })
   it('does not treat an ACP protocol not-found (no APIError tag) as a model problem', () => {
     // A plain session-not-found with no upstream signal must stay verbatim (the resume path owns it).
     const error = Object.assign(new Error('Resource not found'), { code: -32002 })
