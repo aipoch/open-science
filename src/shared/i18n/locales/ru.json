@@ -190,7 +190,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "Вспомогательной программе системных учётных данных не удалось завершить операцию. Проверьте диагностический код и повторите запуск.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "Сбой вспомогательной программы системных учётных данных. Точное состояние разрешения или ключа неизвестно.",
     "System credential access failed": "Не удалось получить доступ к системным учётным данным",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск.",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "Вспомогательная программа системных учётных данных не вернула данные. Возможно, её блокирует защитное ПО. Разрешите Open-Science и повторите запуск.",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
     "Connect {{provider}}": "Подключение к {{provider}}",

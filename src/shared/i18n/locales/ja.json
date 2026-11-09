@@ -187,7 +187,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "システム認証情報ヘルパーが処理を完了できませんでした。診断コードを確認して起動を再試行してください。",
     "The system credential helper failed. The exact authorization or key status is unknown.": "システム認証情報ヘルパーが失敗しました。正確な許可または鍵の状態は不明です。",
     "System credential access failed": "システム認証情報へのアクセスに失敗しました",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。"
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "システム認証情報ヘルパーがデータを返しませんでした。セキュリティソフトウェアがブロックしている可能性があります。Open-Science を許可してから起動を再試行してください。",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
     "Connect {{provider}}": "{{provider}} に接続",

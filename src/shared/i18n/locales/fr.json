@@ -189,7 +189,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "L’utilitaire d’accès aux identifiants système n’a pas pu terminer son opération. Vérifiez le code de diagnostic et relancez le démarrage.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "L’utilitaire d’accès aux identifiants système a échoué. L’état exact de l’autorisation ou de la clé est inconnu.",
     "System credential access failed": "Échec de l’accès aux identifiants système",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés. Relancez le démarrage après avoir résolu le problème d’autorisation."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés. Relancez le démarrage après avoir résolu le problème d’autorisation.",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "L’utilitaire d’accès aux identifiants système n’a renvoyé aucune donnée. Un logiciel de sécurité le bloque peut-être. Autorisez Open-Science, puis relancez le démarrage.",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
     "Connect {{provider}}": "Se connecter à {{provider}}",
