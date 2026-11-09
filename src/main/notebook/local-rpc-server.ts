@@ -105,6 +105,8 @@ import { isRecord } from '../value-guards'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-contract'
 import type {
+  HostViewImageBackend,
+  HostViewImageCaller,
   HostViewImageContext,
   HostViewImageResult,
   TransientViewImage
@@ -357,7 +359,7 @@ type NotebookLocalRpcServerOptions = {
     ): Promise<HostLlmResult | readonly HostLlmBatchItem[]>
   }
   hostViewImage?: {
-    isAvailable(context: { sessionId: string }): Promise<boolean>
+    isAvailable(context: HostViewImageCaller): Promise<boolean>
     stage(
       source: unknown,
       options: unknown,
@@ -410,6 +412,7 @@ type NotebookRpcSessionBinding = {
   executionCwd?: string
   isControl?: true
   delegatedNotebook?: {
+    viewImageBackend?: HostViewImageBackend
     permissionPrompts?: 'none'
     attemptId: string
     workspaceCwd: string
@@ -436,6 +439,7 @@ type ActiveArtifactTurnBinding = Readonly<{
 }>
 
 type DelegatedNotebookConnectionRequest = Readonly<{
+  viewImageBackend?: HostViewImageBackend
   permissionPrompts?: 'none'
   projectId: string
   sessionId: string
@@ -1490,6 +1494,9 @@ class NotebookLocalRpcServer {
     const connection = await this.ensureStarted()
     const token = randomUUID()
     const delegatedNotebook: NonNullable<NotebookRpcSessionBinding['delegatedNotebook']> = {
+      viewImageBackend: scope.viewImageBackend
+        ? Object.freeze({ ...scope.viewImageBackend, generationToken: {} })
+        : undefined,
       permissionPrompts: scope.permissionPrompts,
       attemptId: scope.attemptId,
       workspaceCwd: scope.workspaceCwd,
@@ -1612,6 +1619,36 @@ class NotebookLocalRpcServer {
         this.revokeSessionCapability(token)
       }
     }
+  }
+
+  // Resolve only an app-issued, still-writable Attempt; never fall back to its parent's model.
+  async captureDelegatedViewImageBackend(
+    caller: HostViewImageCaller
+  ): Promise<HostViewImageBackend | undefined> {
+    if (
+      caller.role !== 'delegate' ||
+      !caller.projectId ||
+      !caller.agentFrameId ||
+      !caller.attemptId
+    )
+      return undefined
+    for (const [token, binding] of this.sessionRpcCapabilities) {
+      const delegated = binding.delegatedNotebook
+      if (
+        !delegated ||
+        delegated.revoked ||
+        binding.projectId !== caller.projectId ||
+        binding.sessionId !== caller.sessionId ||
+        binding.agentFrameId !== caller.agentFrameId ||
+        delegated.attemptId !== caller.attemptId
+      )
+        continue
+      if (!(await delegated.isAttemptWritable())) return undefined
+      return this.sessionRpcCapabilities.get(token) === binding && !delegated.revoked
+        ? delegated.viewImageBackend
+        : undefined
+    }
+    return undefined
   }
 
   // Issues a dedicated capability for the persistent control-plane REPL. Unlike the Agent-facing
@@ -1964,7 +2001,13 @@ class NotebookLocalRpcServer {
           listModels: Boolean(this.hostModel) && (await this.hostModel!.isListModelsAvailable()),
           viewImage:
             Boolean(this.hostViewImage) &&
-            (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId })),
+            (await this.hostViewImage!.isAvailable({
+              projectId: sessionBinding.projectId,
+              sessionId: sessionBinding.sessionId,
+              agentFrameId: sessionBinding.agentFrameId,
+              attemptId: sessionBinding.delegatedWorkAttemptId,
+              role: callerRole
+            })),
           delegate: Boolean(this.delegatedWorkService?.delegate),
           children: Boolean(this.delegatedWorkService?.children),
           collect: Boolean(this.delegatedWorkService?.collect),
@@ -2322,7 +2365,10 @@ class NotebookLocalRpcServer {
             ...(method === 'viewImageCall'
               ? {
                   executionCwd: sessionBinding.executionCwd,
-                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
+                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId,
+                  agentFrameId: sessionBinding.agentFrameId,
+                  attemptId: sessionBinding.delegatedWorkAttemptId,
+                  role: sessionBinding.delegatedWorkRole ?? 'main'
                 }
               : {}),
             ...(method === 'computeCall'
@@ -2952,6 +2998,9 @@ class NotebookLocalRpcServer {
       return this.hostViewImage.stage(params.source, params.options, {
         projectId,
         sessionId,
+        agentFrameId: typeof params.agentFrameId === 'string' ? params.agentFrameId : undefined,
+        attemptId: typeof params.attemptId === 'string' ? params.attemptId : undefined,
+        role: params.role === 'delegate' ? 'delegate' : 'main',
         executionCwd,
         controlInvocationId,
         signal

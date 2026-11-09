@@ -25,13 +25,21 @@ export type HostViewImageBackend = Readonly<{
   generationToken?: object
 }>
 
-export type HostViewImageContext = Readonly<{
-  projectId: string
+export type HostViewImageCaller = Readonly<{
+  projectId?: string
   sessionId: string
-  executionCwd?: string
-  controlInvocationId: string
-  signal: AbortSignal
+  agentFrameId?: string
+  attemptId?: string
+  role?: 'main' | 'delegate'
 }>
+
+export type HostViewImageContext = HostViewImageCaller &
+  Readonly<{
+    projectId: string
+    executionCwd?: string
+    controlInvocationId: string
+    signal: AbortSignal
+  }>
 
 export type HostViewImageResult = Readonly<{
   attached: true
@@ -65,7 +73,9 @@ type HostViewImageManagedFileReader = Readonly<{
 type HostViewImageServiceOptions = Readonly<{
   catalog: HostViewImageCatalog
   managedFileVersions: HostViewImageManagedFileReader
-  captureBackend(sessionId: string): HostViewImageBackend | undefined
+  captureBackend(
+    caller: HostViewImageCaller
+  ): HostViewImageBackend | undefined | Promise<HostViewImageBackend | undefined>
   /** Optional app-owned Vision relay capability for text-only active models. */
   captureVisionRelay?: () => boolean | Promise<boolean>
   /** Converts one invocation's staged images into text evidence for a text-only active model. */
@@ -84,15 +94,15 @@ type HostViewImageServiceOptions = Readonly<{
 }>
 
 type StagedInvocation = {
+  caller: HostViewImageCaller
   projectId: string
   sessionId: string
-  backendIdentity: string
+  backendIdentity?: string
   nextOrdinal: number
   reserved: Set<number>
   images: Map<number, NativeTransientViewImage>
   encodedImageBytes: number
   abortController: AbortController
-  releaseSignals: (() => void)[]
   completing: boolean
 }
 
@@ -303,12 +313,12 @@ export class HostViewImageService {
     this.prepareImage = options.prepareImage ?? prepareImageContentData
   }
 
-  async isAvailable(context: { sessionId: string }): Promise<boolean> {
+  async isAvailable(context: HostViewImageCaller): Promise<boolean> {
     if (this.stopped) return false
-    const backend = this.options.captureBackend(context.sessionId)
+    const backend = await this.options.captureBackend(context)
     if (!backend) return false
     const available = isHostViewImageBackendCertified(backend) || (await this.canRelay(backend))
-    const currentBackend = this.options.captureBackend(context.sessionId)
+    const currentBackend = await this.options.captureBackend(context)
     return (
       available &&
       !this.stopped &&
@@ -332,31 +342,25 @@ export class HostViewImageService {
   ): Promise<HostViewImageResult> {
     if (this.stopped) throw new HostViewImageError('service is shut down.')
     context.signal.throwIfAborted()
-    const backend = this.options.captureBackend(context.sessionId)
-    if (
-      !backend ||
-      (!isHostViewImageBackendCertified(backend) &&
-        (!isHostViewImageRouteCertified(backend) || !this.options.prepareVisionEvidence))
-    ) {
-      throw new HostViewImageError(
-        'is unavailable for the current route; select a visual model on a certified provider path.'
-      )
-    }
-    const identity = backendIdentity(backend)
     const source = normalizeSource(sourceValue)
     const options = normalizeOptions(optionsValue)
     let invocation = this.invocations.get(context.controlInvocationId)
     if (!invocation) {
       invocation = {
+        caller: {
+          projectId: context.projectId,
+          sessionId: context.sessionId,
+          agentFrameId: context.agentFrameId,
+          attemptId: context.attemptId,
+          role: context.role
+        },
         projectId: context.projectId,
         sessionId: context.sessionId,
-        backendIdentity: identity,
         nextOrdinal: 0,
         reserved: new Set(),
         images: new Map(),
         encodedImageBytes: 0,
         abortController: new AbortController(),
-        releaseSignals: [],
         completing: false
       }
       this.invocations.set(context.controlInvocationId, invocation)
@@ -364,7 +368,9 @@ export class HostViewImageService {
     if (
       invocation.projectId !== context.projectId ||
       invocation.sessionId !== context.sessionId ||
-      invocation.backendIdentity !== identity ||
+      invocation.caller.agentFrameId !== context.agentFrameId ||
+      invocation.caller.attemptId !== context.attemptId ||
+      invocation.caller.role !== context.role ||
       invocation.completing
     ) {
       this.discard(context.controlInvocationId)
@@ -378,20 +384,30 @@ export class HostViewImageService {
     const ordinal = invocation.nextOrdinal
     invocation.nextOrdinal += 1
     invocation.reserved.add(ordinal)
-    const abortInvocation = (): void => invocation.abortController.abort(context.signal.reason)
-    context.signal.addEventListener('abort', abortInvocation, { once: true })
-    invocation.releaseSignals.push(() =>
-      context.signal.removeEventListener('abort', abortInvocation)
-    )
+    // A disconnected RPC cancels only this reservation. Stop and owner teardown cancel the batch.
+    const signal = AbortSignal.any([context.signal, invocation.abortController.signal])
 
     try {
-      if (!isHostViewImageBackendCertified(backend) && !(await this.canRelay(backend))) {
+      const backend = await this.options.captureBackend(invocation.caller)
+      signal.throwIfAborted()
+      if (!backend || !isHostViewImageRouteCertified(backend)) {
         throw new HostViewImageError(
           'is unavailable for the current route; select a visual model on a certified provider path.'
         )
       }
-      invocation.abortController.signal.throwIfAborted()
-      if (!this.isCurrentInvocation(context.controlInvocationId, invocation)) {
+      const identity = backendIdentity(backend)
+      if (invocation.backendIdentity !== undefined && invocation.backendIdentity !== identity) {
+        this.discard(context.controlInvocationId)
+        throw new HostViewImageError('trusted invocation or model identity changed during staging.')
+      }
+      invocation.backendIdentity = identity
+      if (!isHostViewImageBackendCertified(backend) && !(await this.canRelay(backend))) {
+        throw new HostViewImageError(
+          'requires a Vision model for this text-only model. Configure Vision in Settings > Model and retry.'
+        )
+      }
+      signal.throwIfAborted()
+      if (!(await this.isCurrentInvocation(context.controlInvocationId, invocation))) {
         if (this.invocations.get(context.controlInvocationId) === invocation) {
           this.discard(context.controlInvocationId)
         }
@@ -444,31 +460,26 @@ export class HostViewImageService {
 
       let image: PreparedImageContentData
       try {
-        image = await this.prepareImage(
-          filePath,
-          options,
-          invocation.abortController.signal,
-          expectedCanonicalPath
-        )
+        image = await this.prepareImage(filePath, options, signal, expectedCanonicalPath)
       } finally {
         const lease = managedLease
         managedLease = undefined
         if (lease) await lease.close()
       }
-      invocation.abortController.signal.throwIfAborted()
-      const currentBackend = this.options.captureBackend(context.sessionId)
+      signal.throwIfAborted()
+      const currentBackend = await this.options.captureBackend(context)
       if (
         !currentBackend ||
         (!isHostViewImageBackendCertified(currentBackend) &&
           !(await this.canRelay(currentBackend))) ||
-        !this.isCurrentInvocation(context.controlInvocationId, invocation)
+        !(await this.isCurrentInvocation(context.controlInvocationId, invocation))
       ) {
         if (this.invocations.get(context.controlInvocationId) === invocation) {
           this.discard(context.controlInvocationId)
         }
         throw new HostViewImageError('model changed before the image could be attached.')
       }
-      invocation.abortController.signal.throwIfAborted()
+      signal.throwIfAborted()
       const current = this.invocations.get(context.controlInvocationId)
       if (current !== invocation) {
         throw new HostViewImageError('invocation ended before the image could be attached.')
@@ -521,7 +532,11 @@ export class HostViewImageService {
     if (!invocation || invocation.completing) return []
     invocation.completing = true
     const signal = invocation.abortController.signal
-    const isCurrent = (): boolean => this.isCurrentInvocation(controlInvocationId, invocation)
+    const isCurrent = async (): Promise<boolean> => {
+      const current = await this.isCurrentInvocation(controlInvocationId, invocation)
+      signal.throwIfAborted()
+      return current
+    }
     const discard = (): void => {
       if (this.invocations.get(controlInvocationId) === invocation)
         this.discard(controlInvocationId)
@@ -530,21 +545,22 @@ export class HostViewImageService {
       completionSignal?.throwIfAborted()
       completionSignal?.addEventListener('abort', discard, { once: true })
       signal.throwIfAborted()
-      if (!isCurrent() || invocation.images.size !== invocation.reserved.size) return []
+      if (!(await isCurrent()) || invocation.images.size !== invocation.reserved.size) return []
       const images = Object.freeze(
         [...invocation.images.entries()]
           .sort(([left], [right]) => left - right)
           .map(([, image]) => image)
       )
       if (images.length === 0) return []
-      const backend = this.options.captureBackend(invocation.sessionId)
-      if (!backend) return []
+      const backend = await this.options.captureBackend(invocation.caller)
+      signal.throwIfAborted()
+      if (!backend || backendIdentity(backend) !== invocation.backendIdentity) return []
       if (isHostViewImageBackendCertified(backend)) return images
       if (!(await this.canRelay(backend)) || !this.options.prepareVisionEvidence) {
         throw new HostViewImageError('Vision evidence relay is unavailable for the current model.')
       }
       signal.throwIfAborted()
-      if (!isCurrent()) return []
+      if (!(await isCurrent())) return []
       const evidence = await this.options.prepareVisionEvidence({
         images,
         projectId: invocation.projectId,
@@ -552,7 +568,7 @@ export class HostViewImageService {
         signal
       })
       signal.throwIfAborted()
-      if (!isCurrent()) return []
+      if (!(await isCurrent())) return []
       if (typeof evidence !== 'string' || evidence.trim().length === 0) {
         throw new HostViewImageError('Vision evidence relay returned no image evidence.')
       }
@@ -598,13 +614,14 @@ export class HostViewImageService {
   }
 
   private releaseInvocation(invocation: StagedInvocation): void {
-    for (const releaseSignal of invocation.releaseSignals) releaseSignal()
-    invocation.releaseSignals.length = 0
     invocation.images.clear()
   }
 
-  private isCurrentInvocation(controlInvocationId: string, invocation: StagedInvocation): boolean {
-    const backend = this.options.captureBackend(invocation.sessionId)
+  private async isCurrentInvocation(
+    controlInvocationId: string,
+    invocation: StagedInvocation
+  ): Promise<boolean> {
+    const backend = await this.options.captureBackend(invocation.caller)
     return (
       !this.stopped &&
       this.invocations.get(controlInvocationId) === invocation &&

@@ -1,4 +1,5 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { buildNotebookToolContent, compactNotebookExecutionResult } from './mcp-server'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -3317,70 +3318,85 @@ describe('notebook runtime service', () => {
     }
   )
 
-  it('preserves completed REPL output and reports only safe diagnostics when image evidence fails', async () => {
-    const root = await createStorageRoot()
-    const privateImage = Buffer.from('private staged image').toString('base64')
-    const privateError = `provider failed with ${privateImage} and credential secret-token`
-    const outputs = [{ type: 'stream' as const, name: 'stdout' as const, text: 'computed 42\n' }]
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root),
-      executorFactory: () => ({
-        execute: async (request) => ({
-          status: 'completed',
-          stdout: 'computed 42\n',
-          stderr: 'existing diagnostic',
-          traceback: '',
-          cwdAfter: request.cwd,
-          outputs
-        }),
-        shutdown: async () => ({ reaped: true })
-      })
-    })
-    const discardControlInvocation = vi.fn()
-    service.setMcpRpcConnectionResolver(async () => ({
-      endpoint: 'http://127.0.0.1:1/x',
-      token: 'session-token',
-      completeControlInvocation: async () => {
-        throw new HostViewImageError('could not prepare image evidence.', new Error(privateError))
-      },
-      discardControlInvocation
-    }))
-    const request = { sessionId: 'session-1', workspaceCwd: root, code: 'return 42' }
-
-    const result = await service.executeControl(request)
-
-    expect(result).toMatchObject({
-      status: 'completed',
-      stdout: 'computed 42\n',
-      stderr: 'existing diagnostic\nhost.viewImage could not prepare image evidence.',
-      traceback: '',
-      outputs
-    })
-    expect(result).not.toHaveProperty('viewImages')
-    expect(discardControlInvocation).toHaveBeenCalledOnce()
-    const serializedResult = JSON.stringify(result)
-    for (const secret of [
-      privateImage,
-      privateError,
-      'secret-token',
-      'cause',
-      'HostViewImageError'
-    ]) {
-      expect(serializedResult).not.toContain(secret)
-    }
-    await expect(service.state(request)).resolves.toMatchObject({
-      runs: [
-        expect.objectContaining({
-          status: 'completed',
-          text: expect.objectContaining({ stdout: 'computed 42\n', stderr: 'existing diagnostic' }),
-          outputs
+  it.each([19, 8_000, 30_000])(
+    'preserves completed REPL output and safe MCP diagnostics with %s stderr characters when image evidence fails',
+    async (stderrLength) => {
+      const root = await createStorageRoot()
+      const privateImage = Buffer.from('private staged image').toString('base64')
+      const privateError = `provider failed with ${privateImage} and credential secret-token`
+      const outputs = [{ type: 'stream' as const, name: 'stdout' as const, text: 'computed 42\n' }]
+      const stderr = 'existing diagnostic'.padEnd(stderrLength, '!')
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request) => ({
+            status: 'completed',
+            stdout: 'computed 42\n',
+            stderr,
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs
+          }),
+          shutdown: async () => ({ reaped: true })
         })
-      ]
-    })
-  })
+      })
+      const discardControlInvocation = vi.fn()
+      service.setMcpRpcConnectionResolver(async () => ({
+        endpoint: 'http://127.0.0.1:1/x',
+        token: 'session-token',
+        completeControlInvocation: async () => {
+          throw new HostViewImageError('could not prepare image evidence.', new Error(privateError))
+        },
+        discardControlInvocation
+      }))
+      const request = { sessionId: 'session-1', workspaceCwd: root, code: 'return 42' }
+
+      const result = await service.executeControl(request)
+
+      expect(result).toMatchObject({
+        status: 'completed',
+        stdout: 'computed 42\n',
+        stderr,
+        viewImageError: 'evidence-unavailable',
+        traceback: '',
+        outputs
+      })
+      expect(result).not.toHaveProperty('viewImages')
+      const content = buildNotebookToolContent(result, {
+        includeViewImages: true,
+        mapResult: compactNotebookExecutionResult,
+        resultLimitChars: 24_000
+      })
+      expect(content).toEqual([
+        { type: 'text', text: expect.stringContaining('computed 42') },
+        { type: 'text', text: 'host.viewImage could not prepare image evidence.' }
+      ])
+      expect((content[0] as { text: string }).text).toContain('existing diagnostic')
+      expect(discardControlInvocation).toHaveBeenCalledOnce()
+      const serializedResult = JSON.stringify(result)
+      for (const secret of [
+        privateImage,
+        privateError,
+        'secret-token',
+        'cause',
+        'HostViewImageError'
+      ]) {
+        expect(serializedResult).not.toContain(secret)
+      }
+      await expect(service.state(request)).resolves.toMatchObject({
+        runs: [
+          expect.objectContaining({
+            status: 'completed',
+            text: expect.objectContaining({ stdout: 'computed 42\n', stderr }),
+            outputs
+          })
+        ]
+      })
+    }
+  )
 
   it('returns the canonical foreground REPL result when a submission identity is retried', async () => {
     const root = await createStorageRoot()

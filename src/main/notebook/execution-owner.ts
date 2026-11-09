@@ -80,6 +80,7 @@ type NotebookControlResult = Pick<
 > & {
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
+  viewImageError?: 'evidence-unavailable'
 }
 
 type NotebookControlCompletionInterceptor = {
@@ -1298,9 +1299,7 @@ class NotebookExecutionOwner {
         if (signal?.aborted || !(error instanceof HostViewImageError)) throw error
         return {
           ...result,
-          stderr: [result.stderr, 'host.viewImage could not prepare image evidence.']
-            .filter(Boolean)
-            .join('\n')
+          viewImageError: 'evidence-unavailable'
         }
       }
     } catch (error) {

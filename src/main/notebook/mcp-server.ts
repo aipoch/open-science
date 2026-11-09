@@ -1183,6 +1183,9 @@ const buildNotebookToolContent = (
   ]
   const rawRecord = asRecord(raw)
   if (!definition.includeViewImages || rawRecord?.status !== 'completed') return content
+  if (rawRecord.viewImageError === 'evidence-unavailable') {
+    content.push({ type: 'text', text: 'host.viewImage could not prepare image evidence.' })
+  }
   const viewImages = rawRecord.viewImages
   if (viewImages === undefined) return content
   if (!Array.isArray(viewImages)) {

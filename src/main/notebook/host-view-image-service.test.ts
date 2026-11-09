@@ -63,6 +63,7 @@ afterEach(async () => {
 const harness = (
   options: {
     backend?: HostViewImageBackend
+    captureBackend?: HostViewImageServiceOptions['captureBackend']
     items?: HostArtifactCatalogItem[]
     prepareImage?: PrepareImageMock
     openVersion?: HostViewImageServiceOptions['managedFileVersions']['openVersion']
@@ -99,7 +100,7 @@ const harness = (
   const service = new HostViewImageService({
     catalog: { readHostArtifactCatalog },
     managedFileVersions: { openVersion },
-    captureBackend: () => backend,
+    captureBackend: options.captureBackend ?? (() => backend),
     captureVisionRelay: options.captureVisionRelay,
     prepareVisionEvidence: options.prepareVisionEvidence,
     prepareImage
@@ -152,7 +153,7 @@ describe('HostViewImageService', () => {
     await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(false)
     await expect(
       h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
-    ).rejects.toThrow(/select a visual model/u)
+    ).rejects.toThrow(/Configure Vision in Settings > Model and retry/u)
   })
 
   it.each([
@@ -316,7 +317,7 @@ describe('HostViewImageService', () => {
     await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(false)
     await expect(
       h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
-    ).rejects.toThrow(/unavailable/u)
+    ).rejects.toThrow(/Configure Vision in Settings > Model/u)
     await expect(h.service.complete('run-1')).resolves.toEqual([])
     expect(h.prepareImage).not.toHaveBeenCalled()
   })
@@ -402,7 +403,7 @@ describe('HostViewImageService', () => {
     }
   )
 
-  it.each(['signal', 'completion signal', 'discard', 'session', 'shutdown'] as const)(
+  it.each(['completion signal', 'discard', 'session', 'shutdown'] as const)(
     'cancels in-flight relay analysis on %s and refuses late evidence',
     async (cancellation) => {
       const controller = new AbortController()
@@ -440,8 +441,7 @@ describe('HostViewImageService', () => {
       )
       await started
       const reason = new Error('private cancellation reason cG5n')
-      if (cancellation === 'signal' || cancellation === 'completion signal')
-        controller.abort(reason)
+      if (cancellation === 'completion signal') controller.abort(reason)
       else if (cancellation === 'discard') h.service.discard('run-1')
       else if (cancellation === 'session') h.service.discardSession('calling-session')
       else h.service.shutdown()
@@ -457,6 +457,81 @@ describe('HostViewImageService', () => {
       await expect(h.service.complete('run-1')).resolves.toEqual([])
     }
   )
+
+  it.each([false, true])(
+    'preserves the first image when a second RPC is aborted (native images: %s)',
+    async (native) => {
+      const h = harness({
+        backend: visualBackend({ supportsImageInput: native }),
+        items: [catalogItem('artifact'), catalogItem('upload')],
+        captureVisionRelay: () => true,
+        prepareVisionEvidence: async ({ images }) => `Inspected ${images.length} image`
+      })
+      const firstRpc = new AbortController()
+      await h.service.stage(
+        { versionId: 'artifact-version-1' },
+        {},
+        { ...context(), signal: firstRpc.signal }
+      )
+      // A transport can disconnect after its successful stage response, too.
+      firstRpc.abort()
+      let finishSecond!: () => void
+      let secondStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        secondStarted = resolve
+      })
+      const pending = new Promise<void>((resolve) => {
+        finishSecond = resolve
+      })
+      h.prepareImage.mockImplementationOnce(async (_path, _options, signal) => {
+        secondStarted()
+        await pending
+        signal?.throwIfAborted()
+        throw new Error('An aborted request must not prepare an image')
+      })
+      const secondRpc = new AbortController()
+      const second = h.service.stage(
+        { versionId: 'upload-version-1' },
+        {},
+        { ...context(), signal: secondRpc.signal }
+      )
+      await started
+      secondRpc.abort()
+      finishSecond()
+      await expect(second).rejects.toMatchObject({ name: 'AbortError' })
+      await expect(h.service.complete('run-1')).resolves.toEqual(
+        native ? [{ data: 'cG5n', mimeType: 'image/png' }] : [{ evidence: 'Inspected 1 image' }]
+      )
+      await expect(h.service.complete('run-1')).resolves.toEqual([])
+    }
+  )
+
+  it('points a supported text-only route without a Vision model to its configuration', async () => {
+    const h = harness({
+      backend: visualBackend({ supportsImageInput: false }),
+      captureVisionRelay: () => false,
+      prepareVisionEvidence: vi.fn()
+    })
+    await expect(h.service.isAvailable(context())).resolves.toBe(false)
+    await expect(h.service.stage({ path: 'plot.png' }, {}, context())).rejects.toThrow(
+      'Configure Vision in Settings > Model and retry.'
+    )
+    expect(h.prepareImage).not.toHaveBeenCalled()
+    h.setBackend(visualBackend({ frameworkId: 'unknown' }))
+    await expect(h.service.stage({ path: 'plot.png' }, {}, context())).rejects.toThrow(
+      /select a visual model on a certified provider path/u
+    )
+  })
+
+  it('rejects a native backend generation change during asynchronous completion checks', async () => {
+    const initial = visualBackend({ generationToken: {} })
+    const successor = visualBackend({ generationToken: {} })
+    const captureBackend = vi.fn(() => initial)
+    const h = harness({ items: [catalogItem('artifact')], captureBackend })
+    await h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    captureBackend.mockReturnValueOnce(initial).mockReturnValue(successor)
+    await expect(h.service.complete('run-1')).resolves.toEqual([])
+  })
 
   it.each([false, true])(
     'honors an already stopped completion only when images were staged (%s)',
@@ -499,7 +574,7 @@ describe('HostViewImageService', () => {
     await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(false)
     await expect(
       h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
-    ).rejects.toThrow(/select a visual model/u)
+    ).rejects.toThrow(/Configure Vision in Settings > Model/u)
   })
 
   it('stages images for a visual CodeBuddy backend', async () => {
