@@ -52,6 +52,28 @@ async function linuxOpenInodes(device: bigint): Promise<Set<string>> {
   return inodes
 }
 
+// A hardened same-user process can deny procfs inspection. When system Python is
+// available, ask the kernel for an exclusive lease on each candidate instead.
+const removeWithLinuxLease = `
+import fcntl, os, signal, stat, sys
+
+signal.signal(signal.SIGIO, signal.SIG_IGN)
+directory = os.open(sys.argv[1], os.O_DIRECTORY | os.O_NOFOLLOW)
+for name in sys.argv[2:]:
+    try:
+        fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            opened = os.fstat(fd)
+            if stat.S_ISREG(opened.st_mode):
+                fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_WRLCK)
+                if os.path.samestat(opened, os.stat(name, dir_fd=directory, follow_symlinks=False)):
+                    os.unlink(name, dir_fd=directory)
+        finally:
+            os.close(fd)
+    except OSError:
+        continue
+`
+
 async function macOpenInodes(root: string): Promise<Set<string>> {
   const { stdout, stderr } = await run('/usr/sbin/lsof', ['-nP', '-F0i', '+d', root], {
     timeout: 10000
@@ -102,8 +124,23 @@ export async function pruneBackendStartupLogs(directory: string, current: string
   let openInodes: Set<string>
   try {
     const { ino, dev } = await probe.stat({ bigint: true })
-    openInodes =
-      process.platform === 'linux' ? await linuxOpenInodes(dev) : await macOpenInodes(root)
+    if (process.platform === 'linux') {
+      try {
+        openInodes = await linuxOpenInodes(dev)
+      } catch (error) {
+        if (!['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+        for (let i = 0; i < stale.length; i += 100) {
+          await run(
+            '/usr/bin/python3',
+            ['-I', '-S', '-c', removeWithLinuxLease, root, ...stale.slice(i, i + 100)],
+            { timeout: 10000 }
+          )
+        }
+        return
+      }
+    } else {
+      openInodes = await macOpenInodes(root)
+    }
     if (!openInodes.has('i' + ino)) return
   } finally {
     await probe.close()
