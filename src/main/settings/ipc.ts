@@ -1,4 +1,4 @@
-import { readSourceLinkMetadata } from './source-link-metadata'
+import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
 import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
@@ -368,9 +368,10 @@ const registerSettingsIpcHandlers = ({
     (_event, request: PrivateDestinationRequest) =>
       service.reviewNotebookPrivateDestination(request)
   )
-  ipcMainHandle('settings:get-source-link-metadata', async (_event, url: string) =>
-    readSourceLinkMetadata(url, await service.getNotebookNetwork())
+  ipcMainHandle('settings:get-source-link-metadata', (_event, url: string) =>
+    readSourceLinkMetadata(url)
   )
+  ipcMainHandle('settings:get-source-link-image', (_event, url: string) => readSourceLinkImage(url))
   ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
   ipcMainHandle('settings:get-wsl2-bash-preview-status', () => service.getWsl2BashPreviewStatus())
   ipcMainHandle('settings:get-wsl-setup-status', () => service.getWslSetupStatus())

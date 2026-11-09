@@ -319,6 +319,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.getSkillDetail': 'settings:get-skill-detail',
   'settings.getSkillMarketplaceBatch': 'settings:get-skill-marketplace-batch',
   'settings.getSkillMarketplaceDetail': 'settings:get-skill-marketplace-detail',
+  'settings.getSourceLinkImage': 'settings:get-source-link-image',
   'settings.getSourceLinkMetadata': 'settings:get-source-link-metadata',
   'settings.getWsl2BashPreviewStatus': 'settings:get-wsl2-bash-preview-status',
   'settings.getWslSetupStatus': 'settings:get-wsl-setup-status',
