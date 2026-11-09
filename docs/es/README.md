@@ -162,15 +162,17 @@ Se excluyen las conversaciones Side Chat, los marcadores privados de lectura y l
 
 ## Resultados de benchmarks
 
-AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo, responder preguntas sobre su contenido y ejecutar un plan de investigación. Los resultados siguientes proceden de ejecuciones propias de AIPOCH. Cada puntuación corresponde a una tarea y una configuración de evaluación concretas.
+AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo, responder preguntas sobre su contenido y ejecutar un plan de investigación. Los resultados siguientes proceden de ejecuciones propias de AIPOCH. Cada puntuación corresponde a una tarea y una configuración de evaluación concretas. La evaluación también abarca la reproducción de resultados computacionales y la formulación de hipótesis a partir de datos.
 
-| Tarea                               | Resultado de AIPOCH Open-Science                                                                                                                                                                           |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Encontrar el artículo objetivo      | En **68 de las 75 preguntas de prueba**, el artículo objetivo apareció entre los primeros 30 resultados de LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                     |
-| Responder a partir de la literatura | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
-| Elaborar una síntesis con citas     | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
-| Ejecutar flujos de investigación    | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
-| Analizar datos biomédicos           | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
+| Tarea                                | Resultado de AIPOCH Open-Science                                                                                                                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Encontrar el artículo objetivo       | En **68 de las 75 preguntas de prueba**, el artículo objetivo apareció entre los primeros 30 resultados de LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                     |
+| Responder a partir de la literatura  | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
+| Elaborar una síntesis con citas      | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
+| Ejecutar flujos de investigación     | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
+| Analizar datos biomédicos            | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
+| Reproducir resultados publicados     | CORE-Bench-Hard — 36 de 37 tareas de prueba correctas (97,30 %) en la evaluación local. El recuento incluye repeticiones.                                                                                  |
+| Formular hipótesis a partir de datos | DiscoveryBench — En un subconjunto de 25 tareas de validación, la puntuación media del modelo evaluador local fue de 0,7467/1.                                                                             |
 
 ### AstaBench — Tareas de literatura
 
@@ -204,6 +206,22 @@ El resultado local de ScholarQA-CS2 mide la calidad de respuestas con citas en 1
 ![Comparación ScholarQA-CS2 de AIPOCH Open-Science: puntuación compuesta local de Validation de 0.9289, separada de las referencias oficiales de Test](../images/readme/astabench-scholarqa-cs2.jpg)
 
 La puntuación compuesta se expresa en una escala de 0 a 1; no es el porcentaje de preguntas respondidas de forma completamente correcta.
+
+</details>
+
+### AstaBench — Reproducibilidad y formulación de hipótesis
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+El 6 de noviembre, AIPOCH utilizó DeepSeek Flash con razonamiento Max para reproducir resultados a partir del código, los datos y el README de un estudio. El evaluador programático oficial se ejecutó localmente y asignó un punto solo si todas las respuestas requeridas eran correctas. Se puntuaron las 37 tareas y el recuento incluye repeticiones. [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0,7467/1</strong></summary>
+
+El 9 de noviembre, AIPOCH utilizó deepseek-v4-flash tanto para generar hipótesis como para puntuarlas con una implementación local del procedimiento de evaluación. De las 25 tareas, 18 obtuvieron la puntuación máxima, dos una puntuación parcial y cinco un cero. El conjunto de tareas y el evaluador difieren de los de la prueba oficial completa, por lo que no se pueden comparar posiciones.
 
 </details>
 

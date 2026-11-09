@@ -160,15 +160,17 @@ Side Chats, private Lesezeichen und Anmeldeinformationen sind ausgeschlossen; en
 
 ## Benchmark-Ergebnisse
 
-AIPOCH hat AIPOCH Open-Science bei Aufgaben vom Auffinden einer Publikation über Fragen zu ihrem Inhalt bis zur Ausführung eines Forschungsplans bewertet. Die folgenden Ergebnisse stammen aus eigenen Testläufen von AIPOCH. Jeder Wert bezieht sich auf eine bestimmte Aufgabe und Bewertungskonfiguration.
+AIPOCH hat AIPOCH Open-Science bei Aufgaben vom Auffinden einer Publikation über Fragen zu ihrem Inhalt bis zur Ausführung eines Forschungsplans bewertet. Die folgenden Ergebnisse stammen aus eigenen Testläufen von AIPOCH. Jeder Wert bezieht sich auf eine bestimmte Aufgabe und Bewertungskonfiguration. Die Evaluation umfasst auch die Reproduktion von Rechenergebnissen und die Ableitung von Hypothesen aus Daten.
 
-| Aufgabe                                 | Ergebnis von AIPOCH Open-Science                                                                                                                                                                          |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Zielpublikation finden                  | Bei **68 von 75 Testfragen** erschien die Zielpublikation unter den ersten 30 Ergebnissen von LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                                 |
-| Fragen anhand der Literatur beantworten | In einem separaten LitQA2-FullText-Lauf beantwortete Open-Science **70 von 75 Testfragen richtig** (**93.33% Genauigkeit**, deepseek-flash mit Max-Reasoning).                                            |
-| Eine Antwort mit Quellen zusammenführen | Auf 100 Validierungsfragen von ScholarQA-CS2 erreichte Open-Science mit deepseek-v4-flash einen **zusammengesetzten Qualitätswert von 0.9289/1**. Die offiziellen Testreferenzen verwenden andere Fragen. |
-| Forschungsabläufe ausführen             | In lokalen ASI-Bench-Läufen mit demselben Modell erzielte Open-Science auf B4 **59.46**, Codex **55.45**. Auf B2 waren die Werte nahezu gleich (**56.11** und **56.09**).                                 |
-| Biomedizinische Daten analysieren       | Auf BiomniBench-DA Public 50 bewerteten zwei Bewertungsmodelle die Ergebnisse mit **81.04** und **77.06**. Ihr gleich gewichteter Mittelwert betrug **79.05**.                                            |
+| Aufgabe                                  | Ergebnis von AIPOCH Open-Science                                                                                                                                                                          |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zielpublikation finden                   | Bei **68 von 75 Testfragen** erschien die Zielpublikation unter den ersten 30 Ergebnissen von LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                                 |
+| Fragen anhand der Literatur beantworten  | In einem separaten LitQA2-FullText-Lauf beantwortete Open-Science **70 von 75 Testfragen richtig** (**93.33% Genauigkeit**, deepseek-flash mit Max-Reasoning).                                            |
+| Eine Antwort mit Quellen zusammenführen  | Auf 100 Validierungsfragen von ScholarQA-CS2 erreichte Open-Science mit deepseek-v4-flash einen **zusammengesetzten Qualitätswert von 0.9289/1**. Die offiziellen Testreferenzen verwenden andere Fragen. |
+| Forschungsabläufe ausführen              | In lokalen ASI-Bench-Läufen mit demselben Modell erzielte Open-Science auf B4 **59.46**, Codex **55.45**. Auf B2 waren die Werte nahezu gleich (**56.11** und **56.09**).                                 |
+| Biomedizinische Daten analysieren        | Auf BiomniBench-DA Public 50 bewerteten zwei Bewertungsmodelle die Ergebnisse mit **81.04** und **77.06**. Ihr gleich gewichteter Mittelwert betrug **79.05**.                                            |
+| Veröffentlichte Ergebnisse reproduzieren | CORE-Bench-Hard — Im lokalen Test waren 36 von 37 Aufgaben korrekt (97,30 %). Die Auswertung enthält Wiederholungen.                                                                                      |
+| Hypothesen aus Daten ableiten            | DiscoveryBench — Bei 25 Aufgaben aus dem Validierungssatz vergab ein lokales Bewertungsmodell im Mittel 0,7467/1.                                                                                         |
 
 ### AstaBench — Literaturaufgaben
 
@@ -202,6 +204,22 @@ Das lokale ScholarQA-CS2-Ergebnis misst die Qualität zitierter Antworten auf 10
 ![ScholarQA-CS2-Vergleich von AIPOCH Open-Science: lokaler Validation-Gesamtwert 0.9289, getrennt von offiziellen Testreferenzen](../images/readme/astabench-scholarqa-cs2.jpg)
 
 Der zusammengesetzte Wert liegt auf einer Skala von 0 bis 1; er ist nicht der Prozentsatz vollständig richtig beantworteter Fragen.
+
+</details>
+
+### AstaBench — Reproduzierbarkeit und Hypothesenbildung
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+Am 6. November verwendete AIPOCH DeepSeek Flash mit Max-Reasoning, um Ergebnisse anhand von Code, Daten und README einer Studie zu reproduzieren. Das offizielle Bewertungsprogramm lief lokal und vergab einen Punkt nur bei vollständig richtigen Antworten. Alle 37 Aufgaben wurden bewertet, einschließlich Wiederholungen in der Endauswertung. [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0,7467/1</strong></summary>
+
+Am 9. November verwendete AIPOCH deepseek-v4-flash zur Hypothesenbildung und als Bewertungsmodell in einer lokalen Implementierung des Bewertungsverfahrens. Von 25 Aufgaben erhielten 18 die volle Punktzahl, zwei Teilpunkte und fünf null Punkte. Aufgabensatz und Bewertungsmodell unterscheiden sich vom offiziellen Gesamttest, sodass keine gemeinsame Rangfolge möglich ist.
 
 </details>
 

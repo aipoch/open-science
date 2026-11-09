@@ -162,7 +162,7 @@ Side Chat 对话、私人阅读书签和凭据不随包导出，所含文件取�
 
 ## 基准测试结果
 
-AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回答论文内容相关问题和执行研究计划。以下结果来自 AIPOCH 自行开展的测试，每项成绩对应特定任务与评测配置。
+AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回答论文内容相关问题和执行研究计划。以下结果来自 AIPOCH 自行开展的测试，每项成绩对应特定任务与评测配置。 评测还覆盖计算复现和基于数据的假设发现。
 
 | 任务             | AIPOCH Open-Science 的结果                                                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -171,6 +171,8 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 | 综合带引用的答案 | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
 | 执行研究流程     | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
 | 分析生物医学数据 | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
+| 复现已发表的结果 | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
+| 根据数据提出假设 | DiscoveryBench — 在验证集的 25 项任务上，本地模型评分的均值为 0.7467/1。                                                                    |
 
 ### AstaBench — 文献任务
 
@@ -204,6 +206,22 @@ AIPOCH 运行了 AstaBench v0.5.4 中 LitQA2-FullText 的 75 题 Test 集。图�
 ![AIPOCH Open-Science ScholarQA-CS2 对比：本地 Validation 综合得分 0.9289，与官方 Test 参考结果分开展示](../images/readme/astabench-scholarqa-cs2.jpg)
 
 综合分数的范围为 0–1，并非完全答对题目的百分比。
+
+</details>
+
+### AstaBench — 计算复现与假设发现
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+11 月 6 日，AIPOCH 使用 DeepSeek Flash（Max 推理）复现论文结果，依据所给代码、数据和 README 执行任务。官方程序评分器在本地运行，一项任务的所有必答项均正确才得 1 分。37 项均获评分，含复测。 [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0.7467/1</strong></summary>
+
+11 月 9 日，AIPOCH 使用 deepseek-v4-flash 生成假设，并用同一模型按本地实现的评测流程评分。25 项中，18 项满分、2 项部分得分、5 项零分。题集和评分模型均与官方完整测试不同，分数不能直接排名。
 
 </details>
 
