@@ -26,7 +26,7 @@ import {
   type HarnessConfig
 } from './config'
 import { connectHarnessMcp } from './mcp'
-import { recognizeInput } from '../../shared/failure/recognizers/input'
+import { classifyFailure } from '../../shared/failure/classify'
 
 // Built-in Agent context accounting. The provider's reported input tokens are the authority; this
 // meter only predicts the next request before dispatch:
@@ -261,7 +261,7 @@ const isContextOverflowResponse = async (
   if (response.status !== 400) return false
   const text = await readErrorPrefix(response, signal)
   return (
-    recognizeInput({ origin: 'provider', status: 400, text })?.reason === 'input/context-overflow'
+    classifyFailure({ origin: 'provider', status: 400, text }).reason === 'input/context-overflow'
   )
 }
 
