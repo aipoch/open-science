@@ -25,6 +25,14 @@ static bool identity(const std::string& name) {
   return name == "Open-Science" || name == "Open Science" ||
          name == "Open-Science (DEV)" || name == "Open Science (DEV)";
 }
+// Exit 0 is reserved for a non-empty secret that reached the pipe. Distinct failure codes let the
+// caller report which step failed without reading any secret or OS error text.
+static int write_secret(const void* data, size_t size) {
+  if (size == 0) return 4;
+  std::cout.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+  std::cout.flush();
+  return std::cout.good() ? 0 : 5;
+}
 int main(int argc, char** argv) {
 #ifdef _WIN32
   _setmode(_fileno(stdin), _O_BINARY);
@@ -53,10 +61,8 @@ int main(int argc, char** argv) {
       // A concurrent first launch may have created the same item. Never replace its secret.
       if (status == errSecSuccess || status == errSecDuplicateItem) status = read();
     }
-    if (status == errSecSuccess && password && length > 0 && length <= 1024) {
-      std::cout.write(static_cast<char*>(password), length);
-      result = std::cout.good() ? 0 : 1;
-    }
+    if (status == errSecSuccess && password && length > 0 && length <= 1024)
+      result = write_secret(password, length);
     if (password) { clear(password, length); SecKeychainItemFreeContent(nullptr, password); }
   }
 #elif defined(_WIN32)
@@ -65,9 +71,13 @@ int main(int argc, char** argv) {
     BOOL ok = operation == "protect"
       ? CryptProtectData(&source, L"Open-Science", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)
       : CryptUnprotectData(&source, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output);
-    if (ok && output.pbData && output.cbData <= 65536) {
-      std::cout.write(reinterpret_cast<char*>(output.pbData), output.cbData);
-      result = std::cout.good() ? 0 : 1;
+    if (!ok) {
+      // Only the numeric Windows error leaves the process, and only with the DPAPI failure code.
+      std::cout << GetLastError();
+      std::cout.flush();
+      result = 3;
+    } else if (output.pbData && output.cbData <= 65536) {
+      result = write_secret(output.pbData, output.cbData);
     }
     if (output.pbData) { SecureZeroMemory(output.pbData, output.cbData); LocalFree(output.pbData); }
   }
@@ -80,11 +90,12 @@ int main(int argc, char** argv) {
       value = secret_service_key(argv[2], operation == "create-key", candidate);
     else if ((backend == "kwallet" || backend == "kwallet5" || backend == "kwallet6") && argc == 5)
       value = kwallet_key(backend, argv[4], argv[2], operation == "create-key", candidate);
-    if (!value.empty() && value.size() <= 1024) { std::cout.write(value.data(), value.size()); result = std::cout.good() ? 0 : 1; }
+    if (!value.empty() && value.size() <= 1024) result = write_secret(value.data(), value.size());
     clear(value.data(), value.size()); clear(candidate.data(), candidate.size());
   }
 #else
   (void)identity;
+  (void)write_secret;
   (void)operation;
 #endif
   clear(input.data(), input.size());
