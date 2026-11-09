@@ -20,6 +20,7 @@ import { createMessagesModel } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
   HARNESS_INSTRUCTIONS,
+  HARNESS_TOOL_LESS,
   HARNESS_OWNER,
   harnessOwnerSchema,
   harnessConfigSchema,
@@ -357,6 +358,9 @@ export function createHarnessAcpAgent(directory: string): {
       } else await writeFile(bindingFile, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
       const instructions = params._meta?.[HARNESS_INSTRUCTIONS] ?? ''
       if (typeof instructions !== 'string') throw new Error('Invalid host instructions')
+      const toolLess = params._meta?.[HARNESS_TOOL_LESS] === true
+      if (toolLess && params.mcpServers.length)
+        throw new Error('Tool-less sessions cannot attach MCP servers')
       mcp = await connectHarnessMcp({
         servers: params.mcpServers,
         sessionId: id,
@@ -508,9 +512,12 @@ export function createHarnessAcpAgent(directory: string): {
         model,
         tools: mcp.tools,
         // Original results are already authorized evidence in this exact session; no external access.
-        toolResults: {
-          authorize: async (_args, context) => !context.signal.aborted && context.sessionId === id
-        },
+        toolResults: toolLess
+          ? undefined
+          : {
+              authorize: async (_args, context) =>
+                !context.signal.aborted && context.sessionId === id
+            },
         signal,
         instructions,
         maxSteps: 64,

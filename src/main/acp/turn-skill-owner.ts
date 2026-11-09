@@ -172,7 +172,10 @@ class AcpTurnSkillOwner {
         if (needsReload) this.forced = state
         return Object.freeze({
           reloadDecision: Object.freeze({ kind: needsReload ? 'reload' : 'continue' }),
-          prepareProvider: (providerInput) => this.prepareProvider(state, providerInput),
+          prepareProvider: (providerInput) =>
+            input.role === 'restricted-inference'
+              ? Promise.resolve({ text: providerInput.promptText, codexSkillInputs: [] })
+              : this.prepareProvider(state, providerInput),
           close: (outcome, options) => this.close(state, outcome, options?.reload ?? true)
         })
       }
