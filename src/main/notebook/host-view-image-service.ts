@@ -22,13 +22,15 @@ export type HostViewImageBackend = Readonly<{
   modelRoute?: string
   model?: string
   supportsImageInput: boolean
+  /** Whether a Vision evidence relay can inspect images for a text-only model. */
+  supportsImageRelay?: boolean
   generationToken?: object
 }>
 
 export type HostViewImageContext = Readonly<{
   projectId: string
   sessionId: string
-  executionCwd: string
+  executionCwd?: string
   controlInvocationId: string
   signal: AbortSignal
 }>
@@ -66,6 +68,8 @@ type HostViewImageServiceOptions = Readonly<{
   catalog: HostViewImageCatalog
   managedFileVersions: HostViewImageManagedFileReader
   captureBackend(sessionId: string): HostViewImageBackend | undefined
+  /** Optional app-owned Vision relay capability for text-only active models. */
+  captureVisionRelay?: () => boolean | Promise<boolean>
   prepareImage?: (
     filePath: string,
     options: { crop?: ImageCrop; maxSize?: number },
@@ -251,6 +255,7 @@ const backendIdentity = (backend: HostViewImageBackend): string =>
     backend.modelRoute,
     backend.model,
     backend.supportsImageInput,
+    backend.supportsImageRelay,
     backendGenerationId(backend)
   ])
 
@@ -266,6 +271,14 @@ export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): 
     (backend.frameworkId === 'codebuddy' && backend.modelRoute === 'codebuddy-openai') ||
     (backend.frameworkId === 'pi' && backend.modelRoute === 'pi') ||
     (backend.frameworkId === 'open-science-agent' && backend.modelRoute === 'open-science-agent'))
+
+/**
+ * A model may inspect a Notebook image either natively or through the app-owned Vision relay.
+ * Keep the native route certification separate so callers can distinguish model capability from
+ * the trusted workspace capability needed by `source.path`.
+ */
+export const isHostViewImageBackendCompatible = (backend: HostViewImageBackend): boolean =>
+  isHostViewImageBackendCertified(backend) || backend.supportsImageRelay === true
 
 const frozenResult = (
   sourceKind: HostViewImageResult['sourceKind'],
@@ -292,7 +305,9 @@ export class HostViewImageService {
   async isAvailable(context: { sessionId: string }): Promise<boolean> {
     if (this.stopped) return false
     const backend = this.options.captureBackend(context.sessionId)
-    return backend !== undefined && isHostViewImageBackendCertified(backend)
+    if (!backend) return false
+    if (isHostViewImageBackendCompatible(backend)) return true
+    return (await this.options.captureVisionRelay?.()) === true
   }
 
   async stage(
@@ -303,7 +318,10 @@ export class HostViewImageService {
     if (this.stopped) throw new HostViewImageError('service is shut down.')
     context.signal.throwIfAborted()
     const backend = this.options.captureBackend(context.sessionId)
-    if (!backend || !isHostViewImageBackendCertified(backend)) {
+    const relayAvailable =
+      backend?.supportsImageRelay === true ||
+      (await this.options.captureVisionRelay?.()) === true
+    if (!backend || (!isHostViewImageBackendCertified(backend) && !relayAvailable)) {
       throw new HostViewImageError(
         'is unavailable for the current route; select a visual model on a certified provider path.'
       )
@@ -348,6 +366,11 @@ export class HostViewImageService {
       let managedLease:
         Awaited<ReturnType<HostViewImageManagedFileReader['openVersion']>> | undefined
       if ('path' in source) {
+        if (!context.executionCwd) {
+          throw new HostViewImageError(
+            'source.path requires a trusted execution workspace for the current invocation.'
+          )
+        }
         filePath = await resolveWorkspaceSource(context.executionCwd, source.path)
         expectedCanonicalPath = filePath
         sourceKind = 'workspacePath'
@@ -392,7 +415,14 @@ export class HostViewImageService {
       }
       context.signal.throwIfAborted()
       const currentBackend = this.options.captureBackend(context.sessionId)
-      if (!currentBackend || backendIdentity(currentBackend) !== identity) {
+      const currentRelayAvailable =
+        currentBackend?.supportsImageRelay === true ||
+        (await this.options.captureVisionRelay?.()) === true
+      if (
+        !currentBackend ||
+        (!isHostViewImageBackendCertified(currentBackend) && !currentRelayAvailable) ||
+        backendIdentity(currentBackend) !== identity
+      ) {
         this.discard(context.controlInvocationId)
         throw new HostViewImageError('model changed before the image could be attached.')
       }
@@ -439,10 +469,13 @@ export class HostViewImageService {
     if (!invocation) return []
     this.invocations.delete(controlInvocationId)
     const backend = this.options.captureBackend(invocation.sessionId)
+    const relayAvailable =
+      backend?.supportsImageRelay === true ||
+      (await this.options.captureVisionRelay?.()) === true
     if (
       this.stopped ||
       !backend ||
-      !isHostViewImageBackendCertified(backend) ||
+      (!isHostViewImageBackendCompatible(backend) && !relayAvailable) ||
       backendIdentity(backend) !== invocation.backendIdentity ||
       invocation.images.size !== invocation.reserved.size
     ) {

@@ -2227,7 +2227,8 @@ class NotebookLocalRpcServer {
                 'host.viewImage requires an active trusted control invocation.'
               )
             }
-            if (!sessionBinding.executionCwd) {
+            const source = isRecord(params.source) ? params.source : undefined
+            if (Object.hasOwn(source ?? {}, 'path') && !sessionBinding.executionCwd) {
               throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
             }
             if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
@@ -2934,11 +2935,18 @@ class NotebookLocalRpcServer {
       if (!this.hostViewImage) throw new Error('host.viewImage is not configured.')
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
-      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : ''
+      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : undefined
       const controlInvocationId =
         typeof params.controlInvocationId === 'string' ? params.controlInvocationId : ''
-      if (!projectId || !sessionId || !executionCwd || !controlInvocationId) {
+      if (!projectId || !sessionId || !controlInvocationId) {
         throw new RpcHttpError(403, 'host.viewImage trusted capability identity is incomplete.')
+      }
+      if (
+        isRecord(params.source) &&
+        Object.hasOwn(params.source, 'path') &&
+        !executionCwd
+      ) {
+        throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
       }
       return this.hostViewImage.stage(params.source, params.options, {
         projectId,

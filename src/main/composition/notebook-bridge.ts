@@ -154,6 +154,10 @@ export async function composeNotebookBridge({
     onPublishedSkillsChanged: requestSkillCatalogRefresh
   })
   const hostLlmLog = createLogger('notebook:host-llm')
+  // The Notebook host service is constructed before the ACP image relay owner below. Keep this
+  // indirection app-owned and read it at call time so capability projection reflects the current
+  // Vision configuration without coupling the Notebook service to ACP runtime construction.
+  let imageInputCompatibility!: ImageInputCompatibilityOwner
   const hostModelService = new HostModelService({
     captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
     captureSessionModel: (sessionId) => runtimeRef.current?.captureSessionModel(sessionId),
@@ -188,7 +192,8 @@ export async function composeNotebookBridge({
             generationToken: backend
           }
         : undefined
-    }
+    },
+    captureVisionRelay: async () => (await imageInputCompatibility?.isAvailable()) === true
   })
   const resolveHostReferencedSession = async (
     context: { sessionId: string },
@@ -395,7 +400,7 @@ export async function composeNotebookBridge({
     .catch((error) =>
       hostLlmLog.error('stale Vision model profile cleanup failed', diagnosticErrorFields(error))
     )
-  const imageInputCompatibility = await modules.add(
+  imageInputCompatibility = await modules.add(
     new ImageInputCompatibilityOwner({
       captureTarget: () => settingsService.admitVisionModel(),
       runner: visionInferenceRunner,
