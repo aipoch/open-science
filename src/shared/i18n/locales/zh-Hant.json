@@ -7837,6 +7837,7 @@
     "Internet": "網際網路",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "透過 Pinggy 經網際網路連線。流量會經過第三方伺服器。",
     "Connect your mobile device to the same WiFi as this computer.": "請將行動裝置連接到與這台電腦相同的 WiFi。",
+    "Choose WiFi or Internet to connect a mobile device.": "選擇 WiFi 或網際網路以連接行動裝置。",
     "Local network address": "區域網路位址",
     "Connection unavailable": "無法連線",
     "Establishing secure tunnel…": "正在建立安全通道…",
