@@ -17,7 +17,9 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science arXiv 预印本：2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#基准测试表现">基准测试结果</a>
+  <a href="#基准测试表现">
+    <img alt="AIPOCH Open-Science — 基准测试结果" src="../images/readme/benchmark-comparisons.svg">
+  </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="支持平台 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>
@@ -47,7 +49,19 @@
 
 想了解某个结果是怎么得出的，可以查看已有的输入、代码和执行记录。要与他人分享这项工作，可以选择要包含的对话分支、文件版本、Notebook 记录和验证证据，将它们导出为 `.science` 包。
 
-> 💡 **[AIPOCH Open-Science v1.0.8 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 11 月）_。本次更新将设置重新组织为专注的标签页，支持从 DOI、arXiv 或 PubMed 标识符一次导入最多 100 条参考文献，并为文献库详情视图新增 AI 研究快照。已结束的会话会释放智能体进程，eQTL Catalogue 查询恢复正常，macOS 和 Windows 上的更新也更加顺畅。详情请查看 [v1.0.8 发行说明](../../release-notes/1.0.8/zh-Hans.md)。
+### 💡 AIPOCH Open-Science v1.2.0 更新
+
+_2026 年 11 月 9 日_
+
+- **远程计算**：除 SSH、Slurm 外，可在自行连接的 Kubernetes、Hugging Face Jobs、Modal 或 Ray 目标上运行任务，支持逐任务审批及重启后恢复结果收集。
+- **内置智能体**：独立的 Open-Science Agent 成为新安装的默认智能体；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可选用。
+- **更快的 macOS 更新**：仅下载应用镜像中变化的块，必要时自动回退为完整下载。
+- **步骤讨论**：从导入的 `.science` 研究或回放步骤提问，打开与该步骤关联的子会话；导入记录仍保持只读。
+- **来源预览**：悬停来源链接可查看目标域名；经批准的 HTTPS 来源还可显示标题和描述。
+- **工作区改进**：简化侧边栏，突出“分叉以继续”，从较早轮次发送消息时保持阅读位置。
+- **可靠性修复**：macOS 更新检查验证正在运行的应用；Windows 显示占用文件，并避免任务栏遮住输入区；固定版式 PDF 翻译在单页失败时保留成功页面。
+
+[查看 v1.2.0 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -56,7 +70,6 @@
 ## 目录
 
 - [快速开始](#-快速开始)
-- [产品导览](#产品导览)
 - [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
 - [AIPOCH Open-Science 论文与引用](#aipoch-open-science-论文与引用)
 - [基准测试结果](#基准测试表现)
@@ -121,6 +134,8 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 
 首次设置完成后，可在系统设置中调整外观和通知。在通用设置中可查看应用信息、诊断和命令行工具，也能打开手动安装与更新指南。
 
+原“模型”设置页现更名为**本地能力**，集中管理 PDF 提取、OCR 语言包和研究语音讲解；语音讲解需要本地安装的语音模型。
+
 <table>
   <tr>
     <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="AIPOCH Open-Science 自动执行首次启动环境检查"></td>
@@ -140,44 +155,6 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 
 > 本 README 中的截图用于说明工作流程。标签、目录和其他界面细节可能与所安装版本不同。
 
-## 产品导览
-
-### 从研究请求到可追溯结果
-
-以一个具有代表性的生物信息学任务为例：复现已发表的差异表达分析，将重新生成的结果与论文比较，并交付审阅所需的报告、表格和图像。以下截图来自已记录的 AIPOCH Open-Science 工作流，用于展示各个阶段，并非同一次连续会话。
-
-#### 1. 明确研究任务与证据
-
-说明研究问题、来源论文与数据集、必需的方法或阈值、预期输出和验收标准。上传支持文件，或使用 `@` 引用已有项目产物，让智能体从明确的输入开始，而不是依赖隐藏上下文。
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science 论文复现任务，在同一工作区中显示研究结论、生成产物和来源比较" width="900">
-</p>
-
-#### 2. 使用可检查的科学工具执行
-
-智能体可以在共享 Notebook 中组合科学技能、受权限控制的研究连接器、搜索、文件操作以及 Python 或 R 代码。生成图像可与研究摘要并排审阅，产物记录则提供已捕获的生成代码和执行证据供检查。
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science 生物信息学分析，并排显示研究摘要、生成图像和已捕获的生成代码" width="900">
-</p>
-
-#### 3. 就地审阅报告、表格和图像
-
-最终回答会概述哪些结果成功复现、哪些存在差异，以及需要关注的局限。生成的 Markdown 报告、CSV 表格、图像和其他研究产物会继续附属于会话，并汇集到项目文件库，可在对话旁预览，也可用于后续工作。
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science 复现结果，在智能体说明旁预览差异表达图像和生成文件" width="900">
-</p>
-
-#### 4. 将每个产物追溯到证据
-
-每个生成产物都以不可变且带校验和的版本保存。其 **Provenance** 视图可显示生成代码与执行历史、引用的输入、观测到的环境清单、生成该产物的对话分支，以及限定到该版本的 Reviewer 结果。无法验证的证据会标记为不可用，而不会被推断补全。
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究产物预览，其中包含用于追溯生成结果的 Provenance 入口" width="900">
-</p>
-
 ## AIPOCH Open-Science `.science` 包
 
 将已完成的研究会话导出为可移植的 `.science` 包，用于审阅、交接和归档。选择要纳入的对话分支、文件版本、Notebook 记录和验证证据，然后将包导入其他项目或计算机。
@@ -191,6 +168,8 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 3. 将它导入项目。右侧的 **Research replay** 展示记录过程，左侧对话可针对记录提问并引用固定步骤。
 
 导入记录保持只读；浏览回放不会执行代码、调用模型或恢复凭据。首次提问会创建关联的可写讨论；使用 **Fork to continue** 创建副本后可继续研究。重新运行结果仍需要完整配方、必要输入和可用运行环境。
+
+从导入研究或回放步骤提问会创建关联该步骤的子讨论，不修改导入记录。讨论在归档后保留；删除父会话后会转为普通会话。
 
 Side Chat 对话、私人阅读书签和凭据不随包导出，所含文件取决于导出选择。收到的验证记录描述发送方执行过的检查，不代表接收计算机已重新运行。详见 [`.science` 包指南](https://aipoch.com/docs/guides/research-packages/)。
 
@@ -308,10 +287,10 @@ AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智
 | **科学技能**                   | 提供 **24 个内置技能**，并可从 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安装 **525 个技能**，支持一键安装与更新。可通过对话或已完成的工作创建技能，导入技能包及 GitHub 来源，并保存 GitHub 仓库供后续导入时复用；仅保存仓库不会安装其中的技能。市场投稿经审核后发布，本地导入不会自动上架。                                                                                                                                                                                                                                                 |
 | **连接器**                     | 通过 **48 个内置连接器** 访问科学资源，也可添加自定义本地或远程 MCP 连接器。部分内置数据源默认关闭，需要按数据源明确启用。支持工具级权限管理，以及连接器配置的导入和导出。                                                                                                                                                                                                                                                                                                                                                                                                       |
 | **专家与委派**                 | 从 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安装 **10 个专家**，或创建和定制个人专家，由主智能体委派任务。专家包支持导入和导出；市场投稿经审核后发布，本地导入不会自动上架。                                                                                                                                                                                                                                                                                                                                                       |
-| **模型与智能体后端**           | 连接云端模型、兼容的自定义网关，或使用 Claude、Codex 订阅登录。支持 Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 五种智能体后端，并提供模型连接检查、图片输入和推理强度设置。                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **模型与智能体后端**           | 连接云端模型、兼容的自定义网关，或使用 Claude、Codex 订阅登录。新安装默认使用内置 Open-Science Agent；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可选用，并提供模型连接检查、图片输入和推理强度设置。                                                                                                                                                                                                                                                                                                                                                                       |
 | **项目、会话与 `.science` 包** | 管理项目，支持会话置顶、消息分支、侧边对话和历史恢复。将会话导出为**可移植的 `.science` 包**，并导入其他项目或计算机，携带对话分支、所选文件版本、Notebook 记录和验证证据。导入结果为只读历史，不执行代码或恢复凭据；侧边对话和书签不随包导出，文件范围取决于导出选择。                                                                                                                                                                                                                                                                                                          |
 | **审阅智能体**                 | 按需开启自动审阅，在独立上下文中核对智能体已完成轮次的回复、执行记录及相关文件证据。生成带依据的通过、警告或失败检查项，发现问题后可触发主智能体修正，并在有限轮次内复审。保留审阅日志与问题处理状态，审阅范围限于该轮可用记录。                                                                                                                                                                                                                                                                                                                                                 |
-| **Python、R、Notebook 与 HPC** | 使用托管环境或自配解释器，在本地运行 Python、R、Notebook 和 Shell 任务，支持后台执行与历史记录。也可通过 SSH 连接远程主机或使用 Slurm 提交作业；远程计算需具备下方 FAQ 所述的主机、软件、资源和权限。                                                                                                                                                                                                                                                                                                                                                                            |
+| **Python、R、Notebook 与 HPC** | 使用托管环境或自配解释器，在本地运行 Python、R、Notebook 和 Shell 任务，支持后台执行与历史记录。也可通过 SSH、Slurm、Kubernetes、Hugging Face Jobs、Modal 或 Ray 提交经批准的任务。需自行准备目标账户、软件、资源和权限；云端任务可能在所连接账户上产生费用。                                                                                                                                                                                                                                                                                                                    |
 | **文献库**                     | 导入和管理文献与 PDF，支持合集、标签、项目关联、笔记及重复条目合并。通过 Semantic Scholar 发现论文的参考文献与施引文献，下载和预览补充附件，并拖放导入 PDF 或书目文件。查找开放获取全文，阅读 PDF 并提取图表，在会话中调用库内文献辅助分析。对于 DOI 有效的文献，可手动通过 Crossref 检查已知撤稿或更正；检查会将 DOI 发送给 Crossref，且覆盖范围并不完整，因此没有提示不代表论文未受影响。生成参考文献，将文献导出为 BibTeX 或 RIS，并将 Smart Screening 判定导出为 CSV。 手动设置未读、阅读中或已读状态，支持批量设置所选文献并按状态筛选。 可在现有文献搜索框中搜索个人备注。 |
 | **科学文件与预览**             | 单个上传文件最大 **10 GiB**，支持项目文件管理及科学数据、PDF、Office 文档、图像、代码和分子结构预览。这是上传大小限制，不代表模型可以读取全部内容；模型上下文、附件解析和预览各有限制。大文件通常需要通过代码分块读取或分析。                                                                                                                                                                                                                                                                                                                                                    |
 | **产物与溯源**                 | 保存不可变的产物版本及可用的生成代码、输入、执行历史、环境信息和审阅证据。可从已授权文件夹导入产物；AIPOCH Open-Science 会将每个导入文件复制到受管理的产物存储中。在桌面端，可使用完整执行配方、必要输入和可用运行时重放符合条件的版本，比较输出并导出验证记录。证据缺失可能阻止验证，重放检查不证明科学结论有效。                                                                                                                                                                                                                                                               |
@@ -334,7 +313,7 @@ AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智
 
 桌面端还可将产物溯源导出为 RO-Crate 1.1。与版本绑定的环境包只有在捕获内容完整且兼容目标平台时，才能用于创建托管环境；这不等于完整计算机备份。
 
-从首页或对话工作区进入 Sharing 研究案例市场，按类别筛选、按关键词搜索，并从案例详情下载包。
+在资源中心浏览研究案例，按类别筛选、按关键词搜索，并从案例详情下载包。
 
 ## 模型服务商
 
@@ -376,7 +355,7 @@ AIPOCH Open-Science 将项目数据、设置、产物版本和来源证据存储
 
 ## 开发与打包
 
-AIPOCH Open-Science 由普通 Node 后端和 Electron 桌面客户端组成，使用 React、TypeScript、Prisma/SQLite 及基于 ACP 的智能体运行时。
+AIPOCH Open-Science 由普通 Node 后端和 Electron 桌面客户端组成，使用 React、TypeScript、Prisma/SQLite 及内置 Open-Science Agent 与可选智能体后端。
 
 源代码开发前提条件：
 
@@ -412,9 +391,7 @@ Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`np
 
 ### 移动端远程访问
 
-可以通过 Remote.It 配对，从手机或平板电脑访问同一 localhost Web UI。使用六位 AIPOCH Open-Science 代码配对浏览器，并在桌面端批准一次；无需直接暴露回环服务器，工作区即可保持可访问。浏览器信任可撤销，模式变更或服务关闭会立即使活动远程会话失效。
-
-远程访问要求主机保持开机和联网，持续运行 AIPOCH Open-Science 与 Remote.It 代理，并已将主机添加到登录后的 Remote.It 账户。浏览器授权会到期，也可撤销；详见[远程控制指南](../remote-control.md)。
+扫描二维码，即可通过本地 WiFi 或 Pinggy 隧道，在手机或平板上打开当前工作区。本地 WiFi 配对的通信留在本地网络内；互联网隧道的流量经过 Pinggy 服务器，连接对话框会说明这一中继路径。
 
 ### 无界面 CLI 和 SDK
 
@@ -450,7 +427,9 @@ Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`np
 <details>
 <summary>如何在远程 HPC 集群上运行任务？</summary>
 
-答：**Remote Compute (SSH)** 始终启用，无需在 Settings 中手动启用。先在 **Settings → Compute** 中注册 SSH 计算主机并使其对当前会话可用，然后通过自然语言或 `/remote-compute-ssh` 使用远程计算。你需要可访问的 SSH 主机、有效认证、所需目录的访问权限，以及任务所需的软件、依赖和计算资源。Direct SSH 不要求调度器；Slurm 模式要求可用的 Slurm 环境和作业提交权限。“始终启用”仅指该 Skill，不代表所有已注册主机始终可用。
+答：**Remote Compute (SSH)** 始终启用，无需在 Settings 中手动启用。先在 **Settings → Connections → Compute** 中注册 SSH 计算主机并使其对当前会话可用，然后通过自然语言或 `/remote-compute-ssh` 使用远程计算。你需要可访问的 SSH 主机、有效认证、所需目录的访问权限，以及任务所需的软件、依赖和计算资源。Direct SSH 不要求调度器；Slurm 模式要求可用的 Slurm 环境和作业提交权限。“始终启用”仅指该 Skill，不代表所有已注册主机始终可用。
+
+自行连接的 Kubernetes、Hugging Face Jobs、Modal 和 Ray 目标也受支持。每次外部提交前需批准目标、命令、资源和输出；恢复记录可在重启后继续收集结果，已发布结果可从 Compute Preview 打开。需自行准备账户、软件、资源和权限，云端任务可能产生费用。
 
 </details>
 

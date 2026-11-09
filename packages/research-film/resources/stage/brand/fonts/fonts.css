@@ -1,0 +1,14 @@
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('Inter-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Roboto Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: block;
+  src: url('RobotoMono-latin.woff2') format('woff2');
+}

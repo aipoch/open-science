@@ -311,7 +311,15 @@ const element = z
       .optional(),
     table: table.optional(),
     tableParts: z
-      .array(z.object({ title: z.string().min(1), table }).strict())
+      .array(
+        z
+          .object({
+            title: z.string().min(1),
+            table,
+            regions: z.array(region).min(1).max(8).optional()
+          })
+          .strict()
+      )
       .min(2)
       .max(8)
       .optional(),
@@ -351,6 +359,12 @@ const element = z
   .refine(
     (value) => !value.tableParts || (!value.table && !!value.caption),
     'Grouped tables require a shared caption and separate parts.'
+  )
+  .refine(
+    (value) =>
+      !value.tableParts?.some((part) => part.regions) ||
+      value.tableParts.every((part) => part.regions),
+    'Grouped table boundaries must cover every part or be absent from the legacy group.'
   )
 
 // This is the production contract, independent of the throwaway spike's JSON. Paths and source
@@ -568,8 +582,44 @@ export const parsePdfStructureResult = (
   for (const element of result.elements) {
     const tables =
       element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+    const partRegions = element.tableParts?.flatMap((part) => part.regions ?? []) ?? []
+    for (const [index, part] of partRegions.entries()) {
+      if (
+        !element.regions.some(
+          (parent) =>
+            parent.page === part.page &&
+            part.x >= parent.x - 1e-8 &&
+            part.y >= parent.y - 1e-8 &&
+            part.x + part.width <= parent.x + parent.width + 1e-8 &&
+            part.y + part.height <= parent.y + parent.height + 1e-8
+        ) ||
+        partRegions
+          .slice(0, index)
+          .some(
+            (other) =>
+              part.page === other.page &&
+              Math.min(part.x + part.width, other.x + other.width) - Math.max(part.x, other.x) >
+                1e-8 &&
+              Math.min(part.y + part.height, other.y + other.height) - Math.max(part.y, other.y) >
+                1e-8
+          )
+      )
+        throw new Error('PDF table part boundary escapes its group or overlaps another part.')
+    }
+    for (const part of element.tableParts ?? []) {
+      if (
+        part.regions &&
+        part.table.cells.some((cell) =>
+          cell.regions.some(
+            (region) => !part.regions!.some((boundary) => boundary.page === region.page)
+          )
+        )
+      )
+        throw new Error('PDF table cell does not belong to its part page.')
+    }
     const regions = [
       ...element.regions,
+      ...partRegions,
       ...tables.flatMap((table) => table.cells.flatMap(({ regions }) => regions)),
       ...tables.flatMap((table) => table.unassignedText.flatMap(({ regions }) => regions))
     ]

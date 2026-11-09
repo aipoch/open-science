@@ -287,6 +287,7 @@ export function backendDependencyIncludes(manifest, relativePath) {
     return false
   if (
     ![
+      '@aipoch/agent-harness',
       '@aipoch/compute',
       '@aipoch/connector-builtins',
       '@aipoch/connector-core',

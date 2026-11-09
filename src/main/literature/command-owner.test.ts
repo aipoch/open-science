@@ -121,7 +121,7 @@ describe('Literature command workflows', () => {
   it('forwards study snapshot requests and cancellation without writing to the catalog', async () => {
     const run = vi.fn().mockResolvedValue({ itemId: 'paper' })
     const owner = createLiteratureCommandOwner({
-      literatureStudySnapshot: { run }
+      literatureOverview: { run }
     } as unknown as Services)
     const request = { itemId: 'paper', expectedSourceKey: 'source-key', language: 'en' }
     const signal = new AbortController().signal
@@ -592,3 +592,13 @@ it.each(['new Map([["key",1]])', 'new Set([1])', 'new Date(0)'])(
     ).toBe(false)
   }
 )
+
+it('forwards batch controls and cancellation without constructing storage in the adapter', async () => {
+  const run = vi.fn().mockResolvedValue(null)
+  const owner = createLiteratureCommandOwner({
+    literatureOverviewBatch: { run }
+  } as unknown as Services)
+  const signal = new AbortController().signal
+  await expect(owner.overviewBatch({ action: 'read' }, signal)).resolves.toBeNull()
+  expect(run).toHaveBeenCalledExactlyOnceWith({ action: 'read' }, signal)
+})

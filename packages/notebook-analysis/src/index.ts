@@ -10,6 +10,7 @@ export type {
   NotebookInvalidatedRun,
   NotebookLanguage,
   AnalyzeNotebookScripts,
+  AnalyzeNotebookSource,
   AnalyzedNotebookRun,
   NotebookDependencyInterpreter,
   NotebookDependencyProjection,

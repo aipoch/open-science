@@ -45,6 +45,7 @@ const reference = {
 window.api = {
   platform: 'win32',
   literature: {
+    overviewBatch: async () => null,
     onChanged: () => () => {},
     search: async ({ scope }: { scope: string }) => ({
       entries:
@@ -68,6 +69,10 @@ window.api = {
                 }
               ]
             : []
+    }),
+    studySnapshot: async (request: { expectedSourceKey: string }) => ({
+      sourceKey: request.expectedSourceKey,
+      issue: 'not-generated' as const
     }),
     get: async () => reference,
     sources: async () => [],

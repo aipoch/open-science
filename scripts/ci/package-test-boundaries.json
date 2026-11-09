@@ -101,6 +101,14 @@
     {
       "root": "packages/providers",
       "dependencies": ["packages/diagnostics"]
+    },
+    {
+      "root": "packages/research-film",
+      "dependencies": []
+    },
+    {
+      "root": "packages/agent-harness",
+      "dependencies": []
     }
   ]
 }

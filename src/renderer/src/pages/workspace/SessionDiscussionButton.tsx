@@ -3,9 +3,7 @@ import { LoaderCircle, MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
-import { SessionDiscussionDialog } from './SessionDiscussionDialog'
-import { loadSessionDiscussionContext } from './workspace-session-actions'
-import type { SessionDiscussionCapture } from './replay/replay-context'
+import { loadSessionDiscussionContext, openDiscussionDraft } from './workspace-session-actions'
 
 export const SessionDiscussionButton = ({
   projectId,
@@ -15,7 +13,6 @@ export const SessionDiscussionButton = ({
   sessionId: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const [context, setContext] = useState<SessionDiscussionCapture>()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
   const request = useRef<AbortController | undefined>(undefined)
@@ -30,7 +27,12 @@ export const SessionDiscussionButton = ({
       const selection = await loadSessionDiscussionContext(projectId, sessionId, abort.signal)
       if (abort.signal.aborted) return
       if (!selection) throw new Error(t('No recorded steps are available.'))
-      setContext(selection)
+      if (!openDiscussionDraft(selection))
+        throw new Error(
+          t(
+            'Could not open the discussion. Check that the source project is available and try again.'
+          )
+        )
     } catch (reason) {
       if (!abort.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -59,9 +61,6 @@ export const SessionDiscussionButton = ({
         )}
         {t('Discuss')}
       </Button>
-      {context ? (
-        <SessionDiscussionDialog context={context} onClose={() => setContext(undefined)} />
-      ) : null}
       {error ? (
         <ErrorNotice
           inline

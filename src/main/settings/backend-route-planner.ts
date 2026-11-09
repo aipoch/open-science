@@ -123,6 +123,7 @@ const modelRouteFor = (
   }
   if (frameworkId === 'codebuddy') return 'codebuddy-openai'
   if (frameworkId === 'pi') return 'pi'
+  if (frameworkId === 'open-science-agent') return 'open-science-agent'
   if (target.needsChatResponsesToChatCompletionsBridge) return 'codex-bridge'
   if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
   return 'codex-responses'
@@ -377,6 +378,7 @@ class BackendRoutePlanner {
         targets: this.plannedTargets(candidates, frameworkId, effortIntent)
       })
     }
+    if (frameworkId === 'open-science-agent') return Object.freeze({ kind: 'direct' })
     if (frameworkId === 'pi') {
       const model = active.effectiveModel ?? active.provider.model
       if (!model || !piWireFor(active)) throw new Error('The Pi provider target is incomplete.')

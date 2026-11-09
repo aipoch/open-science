@@ -12,7 +12,7 @@ let snapshot: LocalModelSnapshot
 let ocrSnapshot: LocalModelSnapshot
 const api = {
   getSnapshot: vi.fn(async (capability?: LocalModelCapability) =>
-    capability === 'ocr' ? ocrSnapshot : snapshot
+    capability === 'ocr' || capability === 'research-narration' ? ocrSnapshot : snapshot
   ),
   install: vi.fn(
     async () => (snapshot = { ...snapshot, availability: 'installing', hasFiles: true })
@@ -139,13 +139,16 @@ describe('model settings A tabs', () => {
     expect(container.querySelector('[data-testid="providers"]')).not.toBeNull()
     expect(api.getSnapshot).not.toHaveBeenCalled()
     const tab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
-      (element) => element.textContent === 'Local parsing models'
+      (element) => element.textContent === 'Local capabilities'
     )!
     await act(async () =>
       tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     )
     expect(await api.getSnapshot.mock.results[0]?.value).toEqual(snapshot)
     expect(container.textContent).toContain('PDF figures and tables')
+    expect(container.textContent).toContain('Research narration')
+    expect(container.querySelectorAll('[data-slot="local-model-card"]')).toHaveLength(3)
+    expect(api.getSnapshot).not.toHaveBeenCalledWith('video-export')
   })
   it('installs, cancels and removes retained partial files only after confirmation', async () => {
     await act(async () => root.render(<Harness />))
@@ -154,8 +157,8 @@ describe('model settings A tabs', () => {
     expect(container.textContent).not.toContain('Manual update')
     expect(container.textContent).not.toContain('Update available')
     expect([...container.querySelectorAll('dt')].map((entry) => entry.textContent)).toEqual([
-      'Version',
-      'Download size'
+      'Model source',
+      'Version'
     ])
     await click('Install')
     expect(api.install).toHaveBeenCalledOnce()
@@ -181,8 +184,8 @@ describe('model settings A tabs', () => {
     await act(async () => root.render(<Harness />))
     expect(container.textContent).toContain('Update available')
     expect([...container.querySelectorAll('dt')].map((entry) => entry.textContent)).toEqual([
+      'Model source',
       'Installed version',
-      'Installed size',
       'New version',
       'Download size'
     ])
@@ -201,8 +204,8 @@ describe('model settings A tabs', () => {
     expect(container.textContent).not.toContain('Update available')
     expect(container.textContent).not.toContain('Model updates')
     expect([...container.querySelectorAll('dt')].map((entry) => entry.textContent)).toEqual([
-      'Installed version',
-      'Installed size'
+      'Model source',
+      'Installed version'
     ])
     expect(
       [...container.querySelectorAll('dd')].filter((entry) => entry.textContent === 'v1')

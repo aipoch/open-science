@@ -47,7 +47,10 @@ import { NotebookRunRepository } from '../../src/main/notebook/repository'
 import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
 import type { NotebookRunRecord } from '../../src/shared/notebook'
 import { RendererFailureGate } from './renderer-failure-gate'
-import type { ConversationSkillImportApprovalRequest } from '../../src/shared/settings'
+import type {
+  AgentFrameworkId,
+  ConversationSkillImportApprovalRequest
+} from '../../src/shared/settings'
 import type { UpdateStatus } from '../../src/shared/update'
 import { prepareBrandStorageFixture } from './brand-storage-data'
 import { captureNativeQuitDialog } from './native-quit-dialog'
@@ -375,9 +378,11 @@ type ElectronApp = {
   configureLiveAgent: (
     settingsPath: string,
     model: string,
-    credentialProfile?: string
+    credentialProfile?: string,
+    framework?: AgentFrameworkId
   ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
@@ -403,12 +408,16 @@ type ElectronApp = {
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
   showMainWindow: () => Promise<void>
-  restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
+  restart: (options?: {
+    resourceProfilePhase?: string
+    gracefulTimeoutMs?: number
+  }) => Promise<Page>
   restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   restartWithSessionFixture: (
     session: PersistedChatSession,
-    notebookRuns?: NotebookRunRecord[]
+    notebookRuns?: NotebookRunRecord[],
+    ...additionalSessions: PersistedChatSession[]
   ) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   recordResourceTiming: (name: string, durationMs: number) => void
@@ -577,7 +586,7 @@ const setFixtureServiceReconnectBlocked = (_electron: unknown, blocked: boolean)
 const disconnectFixtureServiceConnection = (
   electron?: Pick<typeof import('electron'), 'BrowserWindow' | 'ipcMain'>,
   timing?: 'during-preflight' | 'after-preflight' | void
-): { url: string; destroyed: boolean } => {
+): { url: string; destroyed: boolean } | Promise<{ url: string; destroyed: boolean }> => {
   type Socket = {
     readable?: boolean
     writable?: boolean
@@ -627,7 +636,15 @@ const disconnectFixtureServiceConnection = (
         send.call(contents, channel, ...args)
       }
     }
-  } else socket.destroy()
+  } else {
+    // Inspector evaluation can interrupt a native Pipe read; destroy on the normal event loop.
+    return new Promise((resolve) => {
+      setImmediate(() => {
+        socket.destroy()
+        resolve({ url: websocket.url!, destroyed: socket.destroyed === true })
+      })
+    })
+  }
   return { url: websocket.url!, destroyed: socket.destroyed === true }
 }
 
@@ -1228,7 +1245,8 @@ class ElectronAppHarness implements ElectronApp {
   async configureLiveAgent(
     settingsPath: string,
     model: string,
-    credentialProfile?: string
+    credentialProfile?: string,
+    framework: AgentFrameworkId = 'opencode'
   ): Promise<Page> {
     const source = JSON.parse(await readFile(settingsPath, 'utf8'))
     const provider = source.providers?.find(
@@ -1253,19 +1271,29 @@ class ElectronAppHarness implements ElectronApp {
     }
     const target = join(this.roots.storageRoot, 'settings.json')
     const settings = JSON.parse(await readFile(target, 'utf8'))
+    if (framework === 'codex' && source.codex?.resolvedPath) {
+      // The host admits only its profile-owned adapter; never patch the user's installed copy.
+      const adapter = join(this.roots.storageRoot, 'codex-managed', 'adapter', 'dist', 'index.js')
+      await mkdir(dirname(adapter), { recursive: true })
+      await copyFile(source.codex.resolvedPath, adapter)
+      await chmod(adapter, 0o755)
+      source.codex = { ...source.codex, resolvedPath: adapter }
+    }
     Object.assign(settings, {
       providers: [provider],
       activeProviderId: provider.id,
       activeModel: model,
       opencodePath: source.opencodePath,
       opencodeVersion: source.opencodeVersion,
-      agentFramework: 'opencode',
+      ...(framework === 'claude-code' && source.claude ? { claude: source.claude } : {}),
+      ...(framework === 'codex' && source.codex ? { codex: source.codex } : {}),
+      agentFramework: framework,
       localePreference: 'en',
       sessionDetailsModel: { mode: 'disabled' }
     })
     await writeFile(target, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     await this.launch()
-    await this.page.evaluate(() => window.api.settings.setAgentFramework({ id: 'opencode' }))
+    await this.page.evaluate((id) => window.api.settings.setAgentFramework({ id }), framework)
     return this.page
   }
 
@@ -1367,6 +1395,21 @@ class ElectronAppHarness implements ElectronApp {
     const path = join(this.testRoot, name)
     await mkdir(path, { recursive: true })
     return path
+  }
+
+  async holdNextFakeSessionCreate(): Promise<{ started: string; release: string; closed: string }> {
+    const directory = await this.createTestDirectory('session-create-gate')
+    const gate = {
+      started: join(directory, 'started'),
+      release: join(directory, 'release'),
+      closed: join(directory, 'closed')
+    }
+    await writeFile(
+      join(this.roots.storageRoot, 'e2e-session-create-gate.json'),
+      JSON.stringify(gate),
+      'utf8'
+    )
+    return gate
   }
 
   async emitSessionPackageProgress(snapshot: PackageOperationSnapshot): Promise<void> {
@@ -1783,8 +1826,10 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async restart(options: { resourceProfilePhase?: string } = {}): Promise<Page> {
-    await this.close()
+  async restart(
+    options: { resourceProfilePhase?: string; gracefulTimeoutMs?: number } = {}
+  ): Promise<Page> {
+    await this.closeForCleanup(true, options.gracefulTimeoutMs)
     if (options.resourceProfilePhase) {
       if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
@@ -1837,21 +1882,27 @@ class ElectronAppHarness implements ElectronApp {
 
   async restartWithSessionFixture(
     session: PersistedChatSession,
-    notebookRuns: NotebookRunRecord[] = []
+    notebookRuns: NotebookRunRecord[] = [],
+    ...additionalSessions: PersistedChatSession[]
   ): Promise<Page> {
-    if (![session.projectId, session.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
-      throw new Error('Invalid E2E Session fixture identity.')
+    const sessions = [session, ...additionalSessions]
+    for (const fixture of sessions) {
+      if (![fixture.projectId, fixture.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+        throw new Error('Invalid E2E Session fixture identity.')
+      }
     }
     const dataRoot = notebookRuns.length
       ? await this.page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)
       : undefined
     await this.close()
-    const directory = join(this.roots.storageRoot, 'sessions', session.projectId)
-    await mkdir(directory, { recursive: true })
-    await writeFile(
-      join(directory, `${session.id}.json`),
-      JSON.stringify(createSessionFile(session))
-    )
+    for (const fixture of sessions) {
+      const directory = join(this.roots.storageRoot, 'sessions', fixture.projectId)
+      await mkdir(directory, { recursive: true })
+      await writeFile(
+        join(directory, `${fixture.id}.json`),
+        JSON.stringify(createSessionFile(fixture))
+      )
+    }
     if (dataRoot && notebookRuns.length) {
       if (session.packageOrigin)
         await mkdir(
@@ -2075,7 +2126,10 @@ class ElectronAppHarness implements ElectronApp {
     await this.closeForCleanup(true)
   }
 
-  private async closeForCleanup(requireGraceful = false): Promise<void> {
+  private async closeForCleanup(
+    requireGraceful = false,
+    gracefulTimeoutMs = CLEANUP_GRACEFUL_TIMEOUT_MS
+  ): Promise<void> {
     if (!this.application) return
 
     const application = this.application
@@ -2112,7 +2166,13 @@ class ElectronAppHarness implements ElectronApp {
                       throw error
                     windowId = await readWindowId()
                   }
-                  await installRestartPersistenceRetry(application, windowId, 5_000)
+                  await installRestartPersistenceRetry(
+                    application,
+                    windowId,
+                    gracefulTimeoutMs === CLEANUP_GRACEFUL_TIMEOUT_MS
+                      ? 5_000
+                      : gracefulTimeoutMs / 2
+                  )
                 }
                 await application.close()
               },
@@ -2123,7 +2183,7 @@ class ElectronAppHarness implements ElectronApp {
               }
             },
             {
-              gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
+              gracefulTimeoutMs,
               forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
               requireGraceful
             }

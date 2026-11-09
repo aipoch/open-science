@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings'
 import { ApplicationCommandError } from '../../../shared/application-command-contract'
 import { projectRendererFailure } from '../renderer-diagnostics'
 import {
@@ -200,7 +201,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   claudeSubscriptionProviderId: undefined,
   activeModel: undefined,
   providers: [],
-  agentFrameworkId: 'claude-code',
+  agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
   agentFrameworks: [],
   opencode: {},
   codex: {},

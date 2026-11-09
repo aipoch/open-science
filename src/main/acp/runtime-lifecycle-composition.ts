@@ -17,6 +17,7 @@ import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import { AcpSessionCleanupAdmission } from './session-cleanup-admission'
 
 const log = createLogger('acp')
 
@@ -45,7 +46,12 @@ type AcpRuntimeLifecycleHost = Readonly<{
 const composeAcpRuntimeLifecycleOwners = (
   options: Pick<
     AcpRuntimeOptions,
-    'appVersion' | 'defaultCwd' | 'hasReplayableImageHistory' | 'runtimeSessions' | 'callbacks'
+    | 'appVersion'
+    | 'defaultCwd'
+    | 'hasReplayableImageHistory'
+    | 'runtimeSessions'
+    | 'callbacks'
+    | 'separateProviderNotices'
   >,
   base: AcpRuntimeBaseOwners,
   session: AcpRuntimeSessionOwners,
@@ -196,6 +202,7 @@ const composeAcpRuntimeLifecycleOwners = (
 
   const connectionLifecycle = new AcpConnectionLifecycleWorkflow({
     appVersion: options.appVersion,
+    separateProviderNotices: options.separateProviderNotices,
     defaultCwd: options.defaultCwd,
     currentConnection,
     currentStatus: () => base.snapshotOwner.status,
@@ -219,7 +226,25 @@ const composeAcpRuntimeLifecycleOwners = (
       host.openAgentConnection(attempt, onFrameworkResolved)
   })
 
-  return Object.freeze({ modelChanges, connectionClose, connectionLifecycle })
+  const sessionCleanup = new AcpSessionCleanupAdmission({
+    activeTransition: () => {
+      const model = modelChanges.applying
+      if (model) return { kind: 'model-application', completion: model }
+      const connection = base.connectionTransitions.inFlight
+      if (connection) return { kind: 'connection-teardown', completion: connection }
+      const resource = base.connectionResources.transition
+      return resource ? { kind: 'connection-resources', completion: resource } : undefined
+    },
+    withActivity: (work) => base.generationActivity.withActivity(work),
+    assertReady: () => {
+      if (!currentConnection() && !base.connectionResources.cleanupConfirmed) {
+        throw new Error('ACP connection cleanup is not confirmed.')
+      }
+    },
+    diagnosticContext
+  })
+
+  return Object.freeze({ modelChanges, connectionClose, connectionLifecycle, sessionCleanup })
 }
 /* eslint-enable @typescript-eslint/explicit-function-return-type */
 

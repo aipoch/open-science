@@ -28,6 +28,7 @@ Function un.loadProgramDataPaths
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-data-paths.ps1" -InstallPath "$INSTDIR" -OutputPath "$PLUGINSDIR\program-data-paths.txt" -MaxLineLength ${NSIS_MAX_STRLEN}'
   Pop $R0
   ${if} $R0 != 0
+    DetailPrint `Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations`
     SetErrorLevel 2
     Abort "Could not resolve the configured data locations."
   ${endif}
@@ -287,6 +288,7 @@ FunctionEnd
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-cleanup.ps1" -StagingPath "$programStagingDirectory"'
   Pop $R0
   ${if} $R0 != 0
+    DetailPrint `Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files`
     DetailPrint `Could not commit program cleanup: $R0`
     Goto programCleanup_rollback
   ${endif}

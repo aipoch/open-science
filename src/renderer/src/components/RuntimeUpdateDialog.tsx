@@ -123,7 +123,7 @@ export const RuntimeUpdateDialog = ({
           ? t('Please wait for the app to close and reopen.')
           : id === 'S01'
             ? t(
-                'Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.'
+                'Updating restarts the app and temporarily disconnects CLI and web clients. Open-Science will save your changes and stop affected tasks after you confirm.'
               )
             : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {

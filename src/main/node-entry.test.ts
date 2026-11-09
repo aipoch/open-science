@@ -1,3 +1,8 @@
+import { Console } from 'node:console'
+import { Writable } from 'node:stream'
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest'
 import { backendStartupStatusSchema } from './backend-startup'
 import { createElectronCallerContext } from './caller-context'
@@ -5,6 +10,10 @@ import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 
 const f = vi.hoisted(() => ({
   initLogs: vi.fn(),
+  resourceInit: vi.fn(),
+  resourceStore: vi.fn(),
+  resourceClose: vi.fn(async () => {}),
+  acquireOwnership: vi.fn(),
   stopIntent: vi.fn(),
   createLifetime: vi.fn(),
   startFirstConnectionTimeout: vi.fn(),
@@ -123,6 +132,26 @@ vi.mock('./local-service-lifetime', () => ({
   }
 }))
 vi.mock('./runtime-stop-confirmation', () => ({ writeRuntimeExit: f.writeExit }))
+vi.mock('./resource-diagnostics/recorder', () => ({
+  ResourceRecorder: class {
+    constructor(options: unknown) {
+      f.resourceInit(options)
+    }
+    close = f.resourceClose
+    settled = async (): Promise<void> => {}
+  },
+  installResourceRecorder: vi.fn()
+}))
+vi.mock('./resource-diagnostics/store', () => ({
+  ResourceLogStore: class {
+    constructor(options: unknown) {
+      f.resourceStore(options)
+    }
+    flush = async (): Promise<void> => {}
+    close = async (): Promise<void> => {}
+    status = { failed: false }
+  }
+}))
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
   spawn: f.spawn
@@ -142,7 +171,7 @@ vi.mock('./update/installation-protection', () => ({
 vi.mock('./runtime-ownership', () => ({
   RuntimeOwnershipConflict: class extends Error {},
   RuntimeDirectoryOwnership: class {
-    acquireSync = vi.fn()
+    acquireSync = f.acquireOwnership
     close = f.closeOwnership
   },
   acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
@@ -291,6 +320,61 @@ afterEach(() => {
   }
 })
 
+it('exports early startup errors captured by the backend without dropping their records', async () => {
+  const logger = await vi.importActual<typeof import('@aipoch/diagnostics/node')>(
+    '@aipoch/diagnostics/node'
+  )
+  const { runSessionDiagnosticWorker } = await import('./session-diagnostics/collector')
+  const root = await mkdtemp(join(tmpdir(), 'startup-diagnostic-export-'))
+  const configRoot = join(root, 'config')
+  const directory = join(root, 'output')
+  const name = 'desktop-backend-42-1700000000000.log'
+  let stderr = ''
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      stderr += chunk.toString()
+      callback()
+    }
+  })
+  const terminal = new Console({ stdout: stream, stderr: stream })
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  vi.spyOn(console, 'error').mockImplementation(terminal.error)
+  f.initLogs.mockImplementation((options) =>
+    logger.initLogger({ ...options, logDir: join(configRoot, 'logs'), mirrorToConsole: true })
+  )
+  f.log.error.mockImplementation(logger.createLogger('node-runtime').error)
+  f.startupFailure = true
+  try {
+    await mkdir(directory, { recursive: true })
+    await import('./node-entry')
+    await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+    await logger.flushLogs()
+    await writeFile(join(configRoot, 'logs', name), stderr)
+    const result = await runSessionDiagnosticWorker({
+      action: 'export',
+      projectId: 'project',
+      sessionId: 'session',
+      configRoot,
+      dataRoot: join(root, 'data'),
+      directory,
+      appVersion: 'test',
+      selectedItems: [`backend-log:${name}`]
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    expect(await readFile(join(directory, 'content/logs/backend', name), 'utf8')).toContain(
+      'isolated startup failure'
+    )
+  } finally {
+    f.initLogs.mockReset()
+    f.log.error.mockReset()
+    if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor)
+    else Reflect.deleteProperty(process.stdout, 'isTTY')
+    await logger.flushLogs()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('logs the startup failure before cleanup can terminate the process', async () => {
   f.startupFailure = true
   await import('./node-entry')
@@ -327,6 +411,7 @@ it.each([1, 75])(
       f.closeNetwork.mock.invocationCallOrder[0]
     )
     expect(f.closeOwnership).toHaveBeenCalledOnce()
+    expect(f.resourceInit).not.toHaveBeenCalled()
     // A real process cannot reach the outer catch after its first exit.
     expect.soft(process.exit).toHaveBeenNthCalledWith(1, code)
     expect
@@ -352,7 +437,11 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(f.closeOwnership).toHaveBeenCalledOnce()
   expect(f.disposeCipher).toHaveBeenCalledOnce()
   expect(process.exitCode).toBe(1)
-  expect(f.initLogs).toHaveBeenCalledWith({ logDir: expect.stringMatching(/config[/\\]logs$/) })
+  expect(f.initLogs).toHaveBeenCalledWith(
+    expect.objectContaining({ logDir: expect.stringMatching(/config[/\\]logs$/) })
+  )
+  expect(f.resourceInit).not.toHaveBeenCalled()
+  expect(f.resourceStore).not.toHaveBeenCalled()
   expect(process.env.OPEN_SCIENCE_STARTUP_ATTEMPT).toBeUndefined()
   const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
   expect(messages).toContainEqual({
@@ -445,6 +534,27 @@ const waitForReady = async (
     ).toBe(true)
   )
 }
+
+it('creates diagnostics only after consent and stops them when the controlling desktop disconnects', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const { resourceRecording } = await import('./resource-diagnostics/recording')
+  expect(f.resourceInit).not.toHaveBeenCalled()
+  expect(f.resourceStore).not.toHaveBeenCalled()
+  expect(resourceRecording.getState()).toBe(process.platform === 'win32' ? 'off' : 'unsupported')
+  if (process.platform === 'win32') {
+    await resourceRecording.start()
+    expect(f.resourceInit).toHaveBeenCalledOnce()
+    expect(f.resourceInit.mock.invocationCallOrder[0]).toBeGreaterThan(
+      f.acquireOwnership.mock.invocationCallOrder[0]
+    )
+    f.startDesktop.mock.calls[0][0].onControllerDisconnect?.()
+    await vi.waitFor(() => expect(resourceRecording.getState()).toBe('off'))
+    expect(f.resourceClose).toHaveBeenCalledWith(true)
+  }
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
 
 it('publishes readiness only after the endpoint opens and drains services once on quit', async () => {
   const endpoint = Promise.withResolvers<{ port: number }>()

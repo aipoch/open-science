@@ -29,6 +29,22 @@ type OperationDiagnostic = {
   message: string
 }
 
+// Failed continuation recovery cannot enter durable history. Keep its disclosure scoped to the
+// saved question across responder remounts; only Main can grant retry permission.
+const useWorkspaceElicitationFailures = create<{
+  failures: Record<string, { requestId: string; error: string }>
+}>(() => ({ failures: {} }))
+
+const reportWorkspaceElicitationFailure = (
+  sessionId: string,
+  requestId: string,
+  error: string
+): void => {
+  useWorkspaceElicitationFailures.setState(({ failures }) => ({
+    failures: { ...failures, [sessionId]: { requestId, error } }
+  }))
+}
+
 // Operation failures belong to the initiating surface, never to the durable Session projection.
 // Keep the Session identity so an asynchronous rejection cannot appear in another conversation.
 const useWorkspaceOperationErrors = create<{
@@ -119,4 +135,10 @@ const clearWorkspaceOperationError = (sessionId: string): void => {
   )
 }
 
-export { useWorkspaceOperationErrors, reportWorkspaceOperationError, clearWorkspaceOperationError }
+export {
+  useWorkspaceOperationErrors,
+  reportWorkspaceOperationError,
+  clearWorkspaceOperationError,
+  useWorkspaceElicitationFailures,
+  reportWorkspaceElicitationFailure
+}

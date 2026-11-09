@@ -1,3 +1,6 @@
+export const ACP_IDLE_RELEASE_DELAY_MS = 60_000
+const MAX_IDLE_CONNECTIONS = 2
+
 export type AcpConnectionTransitionBlockers = Readonly<{
   reconnect: boolean
   retirement: boolean
@@ -21,12 +24,16 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
 // startup. Prompt/Reviewer/startup/activity leases remain with Runtime and are observed as one narrow
 // blocker snapshot; physical resources remain exclusively owned by AcpConnectionResourceOwner.
 export class AcpConnectionTransitionOwner {
+  // Process-wide reuse budget; active and cleanup-owned resources are never cache entries.
+  private static readonly idleConnections = new Map<AcpConnectionTransitionOwner, () => void>()
   private providerIntent = false
   private skillsIntent = false
   private idleReleaseIntent = false
+  private idleReleaseTimer: ReturnType<typeof setTimeout> | undefined
   private retirementIntent = false
   private retirementCompleted = false
   private retirementInFlight: Promise<void> | undefined
+  private readonly activeTeardowns = new Set<Promise<void>>()
   private plannedDisconnect: Promise<void> | undefined
   private barrierPromise: Promise<void> | undefined
   private resolveBarrier: (() => void) | undefined
@@ -34,8 +41,27 @@ export class AcpConnectionTransitionOwner {
 
   constructor(private readonly options: AcpConnectionTransitionOwnerOptions) {}
 
+  diagnosticSnapshot(): Record<string, boolean> {
+    return {
+      idleReleasePending: this.idleReleaseIntent,
+      retirementPending: this.retirementIntent || this.retirementInFlight !== undefined,
+      teardownPending: this.plannedDisconnect !== undefined,
+      providerPending: this.providerIntent,
+      skillsPending: this.skillsIntent
+    }
+  }
+
   get barrier(): Promise<void> | undefined {
     return this.barrierPromise
+  }
+
+  get inFlight(): Promise<unknown> | undefined {
+    // Pending intents deliberately do not count as physical transitions.
+    return (
+      this.plannedDisconnect ??
+      this.retirementInFlight ??
+      (this.activeTeardowns.size ? Promise.all([...this.activeTeardowns]) : undefined)
+    )
   }
 
   get providerReconnectPending(): boolean {
@@ -43,6 +69,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   async requestProviderReconnect(): Promise<void> {
+    this.cancelIdleReleaseTimer()
     if (this.plannedDisconnect) return this.plannedDisconnect
     if (this.options.blockers().reconnect) {
       this.providerIntent = true
@@ -55,6 +82,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   requestSkillsReload(): void {
+    this.cancelIdleReleaseTimer()
     this.skillsIntent = true
     this.activityChanged()
   }
@@ -67,6 +95,7 @@ export class AcpConnectionTransitionOwner {
   async requestRetirement(): Promise<void> {
     if (this.retirementCompleted) return
     if (this.retirementInFlight) return this.retirementInFlight
+    this.cancelIdleReleaseTimer()
     this.retirementIntent = true
     if (this.options.blockers().retirement) return
     await this.startRetirement()
@@ -80,9 +109,35 @@ export class AcpConnectionTransitionOwner {
     }
 
     if (this.plannedDisconnect) return
-    if (this.options.blockers().reconnect) return
+    if (this.options.blockers().reconnect) {
+      this.cancelIdleReleaseTimer()
+      return
+    }
     if (!this.providerIntent && !this.skillsIntent) {
-      if (!this.idleReleaseIntent || this.options.blockers().retirement) return
+      if (!this.idleReleaseIntent || this.options.blockers().retirement) {
+        this.cancelIdleReleaseTimer()
+        return
+      }
+      if (!this.idleReleaseTimer) {
+        const generation = this.options.connectionGeneration()
+        const releaseIdleConnection = (): void => {
+          this.cancelIdleReleaseTimer()
+          if (generation !== this.options.connectionGeneration()) {
+            this.idleReleaseIntent = false
+            return
+          }
+          if (this.options.blockers().retirement || this.options.blockers().reconnect) return
+          this.idleReleaseIntent = false
+          void this.disconnectDeferred()
+        }
+        this.idleReleaseTimer = setTimeout(releaseIdleConnection, ACP_IDLE_RELEASE_DELAY_MS)
+        this.idleReleaseTimer.unref?.()
+        AcpConnectionTransitionOwner.idleConnections.set(this, releaseIdleConnection)
+        while (AcpConnectionTransitionOwner.idleConnections.size > MAX_IDLE_CONNECTIONS) {
+          AcpConnectionTransitionOwner.idleConnections.values().next().value!()
+        }
+      }
+      return
     }
 
     this.providerIntent = false
@@ -92,10 +147,15 @@ export class AcpConnectionTransitionOwner {
   }
 
   async settleTeardown<T>(teardown: () => Promise<T>): Promise<T> {
+    this.cancelIdleReleaseTimer()
     const expectedBarrierGeneration = this.barrierGeneration
+    const completion = Promise.withResolvers<void>()
+    this.activeTeardowns.add(completion.promise)
     try {
       return await teardown()
     } finally {
+      this.activeTeardowns.delete(completion.promise)
+      completion.resolve()
       this.completeReconnect(expectedBarrierGeneration)
     }
   }
@@ -197,6 +257,7 @@ export class AcpConnectionTransitionOwner {
     ) {
       return
     }
+    this.cancelIdleReleaseTimer()
     this.providerIntent = false
     this.skillsIntent = false
     const resolve = this.resolveBarrier
@@ -204,6 +265,12 @@ export class AcpConnectionTransitionOwner {
     this.barrierPromise = undefined
     this.resolveBarrier = undefined
     resolve?.()
+  }
+
+  private cancelIdleReleaseTimer(): void {
+    AcpConnectionTransitionOwner.idleConnections.delete(this)
+    if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer)
+    this.idleReleaseTimer = undefined
   }
 
   private reportFailure(message: string, error: unknown): void {

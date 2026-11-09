@@ -1001,3 +1001,75 @@ it('isolates flat translation assets and receipts from parser model management',
   await owner.close()
 })
 await configureTestElectronHost(await import('electron'))
+
+it('routes narration through its own verified model owner and blocks removal during generation', async () => {
+  const root = await prepare()
+  await seed(root)
+  const narration = createLocalModelOwner({
+    dataRoot: () => root,
+    namespace: 'research-narration',
+    revisions: [revision('voice-v1')],
+    download: installFile
+  })
+  const tables = createLocalModelOwner({ dataRoot: () => root, revisions: [revision('v1')] })
+  const api = createLocalModelApi(tables, tables, undefined, narration)
+  await api.install('research-narration')
+  await waitForIdle(narration)
+  const use = await narration.acquireUse()
+  expect((await api.getSnapshot('research-narration')).availability).toBe('ready')
+  expect((await api.remove('research-narration')).inUse).toBe(true)
+  use.release()
+  expect((await api.remove('research-narration')).availability).toBe('notInstalled')
+  expect((await api.getSnapshot()).availability).toBe('ready')
+  await narration.close()
+  await tables.close()
+})
+
+it('requires the current narration revision without blocking removal or leaking a lease', async () => {
+  const root = await prepare()
+  await seed(root, 'v1')
+  const owner = createLocalModelOwner({
+    dataRoot: () => root,
+    revisions: [revision('v2'), revision('v1')],
+    requireRecommendedRevision: true,
+    download: installFile
+  })
+  expect(await owner.getSnapshot()).toMatchObject({ availability: 'ready', updateAvailable: true })
+  await expect(owner.acquireUse()).rejects.toThrow('Install or update Research narration')
+  expect((await owner.getSnapshot()).inUse).toBe(false)
+  await owner.install()
+  await waitForIdle(owner)
+  const lease = await owner.acquireUse()
+  expect(lease.revision).toBe('v2')
+  lease.release()
+  await owner.remove()
+  expect((await owner.getSnapshot()).availability).toBe('notInstalled')
+  await owner.close()
+})
+
+it('routes the narration bundle through the CDN and reuses the installed bundle', async () => {
+  const root = await prepare()
+  const fixture = revision('narration-v1')
+  vi.mocked(net.fetch).mockImplementation(
+    async () => new Response(content, { headers: { 'Content-Length': String(content.length) } })
+  )
+  const owner = createLocalModelOwner({
+    namespace: 'research-narration',
+    dataRoot: () => root,
+    revisions: [fixture],
+    acquireWriter: () => () => undefined
+  })
+  await owner.install()
+  await waitForIdle(owner)
+  expect((await owner.getSnapshot()).availability).toBe('ready')
+  expect(vi.mocked(net.fetch).mock.calls.map(([url]) => String(url))).toEqual(
+    fixture.assets.map(
+      (asset) =>
+        `https://statics.aipoch.com/open-science/research-narration/${asset.sha256}/${asset.file}`
+    )
+  )
+  await owner.install()
+  await waitForIdle(owner)
+  expect(net.fetch).toHaveBeenCalledTimes(fixture.assets.length)
+  await owner.close()
+})

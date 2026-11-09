@@ -394,11 +394,11 @@ for (const { count, contextLines } of [
         await app.markResourceProfilePhase('seeded-cold')
         const openedAt = performance.now()
         await openProjectSession(page, projectName, session.title)
-        // The cold 1,000-run fixture loads a 26 MB transcript before rendering (22s locally).
+        // The 26 MB long-approval profile took 69 seconds to open on a hosted Mac.
         // Keep this profiling wait separate from ordinary interaction budgets and record the time.
         await expect(
           page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-        ).toBeVisible({ timeout: 60_000 })
+        ).toBeVisible({ timeout: count === 1000 && contextLines > 0 ? 120_000 : 60_000 })
         metrics.firstViewMs = performance.now() - openedAt
         metrics.mountedMessages = await page.locator('[data-message-id]').count()
         expect(metrics.mountedMessages).toBeLessThanOrEqual(160)
@@ -485,7 +485,11 @@ for (const { count, contextLines } of [
         await app.markResourceProfilePhase('four-branch-switches')
         await captureHeap('four-branch-switches')
         const restartAt = performance.now()
-        page = await app.restart({ resourceProfilePhase: 'restart' })
+        // Flushing the 26 MB capacity fixture can take longer than an ordinary restart.
+        page = await app.restart({
+          resourceProfilePhase: 'restart',
+          gracefulTimeoutMs: count === 1000 ? 90_000 : undefined
+        })
         metrics.restartToReadyMs = performance.now() - restartAt
         const restoredAt = performance.now()
         await openProjectSession(page, projectName, session.title)

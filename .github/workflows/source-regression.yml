@@ -207,8 +207,8 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional.json
-        # Leave headroom for slower macOS runners to finish every journey and teardown.
-        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=900000
+        # Both scheduled runs reached 45/53 at 15 minutes. Keep the per-test deadlines.
+        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=1500000
       - name: Run complete Mac workspace journeys
         id: workspace
         if: ${{ matrix.group == 'workspace' }}

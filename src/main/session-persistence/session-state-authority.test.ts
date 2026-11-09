@@ -84,6 +84,45 @@ const historicalState = {
 }
 
 describe('Main Session state authority before and after transcript adoption', () => {
+  it('does not replay recovery preferences over a changed Main-owned Session', async () => {
+    const seed = fixture({ revision: 4, runtimeTranscriptOwner: 'main' })
+    const h = harness(seed)
+    await h.owner.saveSession(
+      { ...seed, title: 'Other window' },
+      { conflictRebaseFields: ['title'] }
+    )
+    await expect(
+      h.owner.saveSession(
+        { ...seed, title: 'Retained local change' },
+        {
+          expectedRevision: 4,
+          conflictRebaseFields: ['title']
+        }
+      )
+    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(h.durable()?.title).toBe('Other window')
+  })
+
+  it('rechecks the recovery revision at the Main-owned mutation boundary', async () => {
+    const seed = fixture({ revision: 4, runtimeTranscriptOwner: 'main' })
+    const concurrent = { ...seed, revision: 5, title: 'Concurrent window' }
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'found', session: seed })
+      .mockResolvedValue({ status: 'found', session: concurrent })
+    const save = vi.fn()
+    const owner = createOwner({ loadSessionWithDiagnostics: load, saveSession: save })
+    await expect(
+      owner.saveSession(
+        { ...seed, title: 'Retained local change' },
+        {
+          expectedRevision: 4,
+          conflictRebaseFields: ['title']
+        }
+      )
+    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(save).not.toHaveBeenCalled()
+  })
   it.each(['running', 'error', 'waiting-permission', 'waiting-plan-approval'] as const)(
     'creates an idle Session when the first renderer save submits %s',
     async (status) => {

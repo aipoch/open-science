@@ -1,0 +1,34 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/assets/provider-icons/huggingface.svg",
+    "src/renderer/src/assets/provider-icons/kubernetes.svg",
+    "src/renderer/src/assets/provider-icons/modal.svg",
+    "src/renderer/src/assets/provider-icons/ray.svg",
+    "src/renderer/src/components/ComputeJobOutputs.tsx",
+    "src/renderer/src/components/StagedResourceCleanupButton.tsx",
+    "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
+    "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
+    "src/renderer/src/pages/settings/RayCredentials.tsx",
+    "src/renderer/src/pages/settings/use-compute-account.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/components/ComputeJobOutputs.tsx",
+    "src/renderer/src/components/StagedResourceCleanupButton.tsx",
+    "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
+    "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
+    "src/renderer/src/pages/settings/RayCredentials.tsx"
+  ],
+  "consumerModules": ["workspace_job_presentation", "settings_credentials_presentation"],
+  "testFiles": {
+    "owner": [],
+    "contract": [
+      "src/renderer/src/components/JobDetailModal.render.test.tsx",
+      "src/renderer/src/pages/settings/ComputePanel.render.test.tsx",
+      "src/renderer/src/pages/settings/CredentialsPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/compute-i18n.render.test.tsx"
+    ],
+    "consumer": []
+  },
+  "capabilityOverlays": ["renderer_state"],
+  "fallbackCapability": "renderer_view"
+}

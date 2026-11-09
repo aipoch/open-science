@@ -26,7 +26,10 @@
     "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
     "src/main/agent-framework/resolved-agent-backend-leases.ts",
     "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
-    "src/main/agent-framework/types.ts"
+    "src/main/agent-framework/types.ts",
+    "src/main/agent-framework/harness.ts",
+    "src/main/agent-framework/harness.test.ts",
+    "src/main/harness-acp/config.ts"
   ],
   "interfacePaths": [
     "src/main/agent-framework/app-mcp-names.ts",
@@ -37,7 +40,9 @@
     "src/main/agent-framework/opencode.ts",
     "src/main/agent-framework/pi-runtime.ts",
     "src/main/agent-framework/pi.ts",
-    "src/main/agent-framework/types.ts"
+    "src/main/agent-framework/types.ts",
+    "src/main/agent-framework/harness.ts",
+    "src/main/harness-acp/config.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -56,7 +61,8 @@
       "src/main/agent-framework/pi-runtime.test.ts",
       "src/main/agent-framework/registry.test.ts",
       "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
-      "src/main/agent-framework/session-mcp-isolation.integration.test.ts"
+      "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
+      "src/main/agent-framework/harness.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

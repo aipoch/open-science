@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createComputeExecution } from './execution'
+import type { ComputeBackendAdapter } from './backend'
 import type { ComputeJob } from './model'
 import type { ComputeHostRepository, ComputeJobRepository } from './ports'
 
@@ -99,5 +100,14 @@ describe('execution scope ownership', () => {
     )
     release()
     await scope.waitForDispatch(['job'])
+  })
+
+  it('keeps adapter lookup scoped to the execution runtime', () => {
+    const adapter = { id: 'test', capabilities: {} } as unknown as ComputeBackendAdapter
+    const first = createComputeExecution({ backendAdapters: [adapter] })
+    const second = createComputeExecution()
+
+    expect(first.backendAdapters.get('test')).toBe(adapter)
+    expect(second.backendAdapters.get('test')).toBeUndefined()
   })
 })

@@ -1,3 +1,4 @@
+import { HARNESS_ACP_ARG } from './harness-acp/config'
 import {
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
@@ -9,6 +10,7 @@ import {
 
 export const isRuntimeHelper = (argv: readonly string[]): boolean =>
   [
+    HARNESS_ACP_ARG,
     ARTIFACT_MCP_SERVER_ARG,
     NOTEBOOK_MCP_SERVER_ARG,
     REVIEWER_MCP_PROXY_ARG,
@@ -18,7 +20,9 @@ export const isRuntimeHelper = (argv: readonly string[]): boolean =>
   ].some((argument) => argv.includes(argument))
 
 export async function runRuntimeHelper(argv: readonly string[]): Promise<boolean> {
-  if (argv.includes(ARTIFACT_MCP_SERVER_ARG))
+  if (argv.includes(HARNESS_ACP_ARG))
+    await (await import('./harness-acp/entry')).runHarnessAcp(argv)
+  else if (argv.includes(ARTIFACT_MCP_SERVER_ARG))
     await (await import('./artifacts/mcp-server')).runArtifactMcpServer()
   else if (argv.includes(NOTEBOOK_MCP_SERVER_ARG))
     await (await import('./notebook/mcp-server')).runNotebookMcpServer()

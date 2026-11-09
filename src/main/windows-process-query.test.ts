@@ -37,6 +37,16 @@ describe('Windows process query (portable native contract)', () => {
     )
   })
 
+  it('uses the native creation handle to distinguish exited processes', async () => {
+    const query = await load()
+    native.getWindowsProcessCreationTime.mockReturnValueOnce('134382374473454458')
+    expect(query.windowsProcessIsAlive(42)).toBe(true)
+    native.getWindowsProcessCreationTime.mockReturnValueOnce(null)
+    expect(query.windowsProcessIsAlive(42)).toBe(false)
+    native.getWindowsProcessCreationTime.mockReturnValueOnce('-1')
+    expect(() => query.windowsProcessIsAlive(42)).toThrow('Invalid Windows process creation time.')
+  })
+
   it('maps missing processes to undefined and propagates other failures', async () => {
     const query = await load()
     native.getWindowsProcessCommandLine

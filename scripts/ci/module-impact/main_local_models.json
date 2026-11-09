@@ -21,7 +21,8 @@
     "owner": [
       "src/main/local-models/download.test.ts",
       "src/main/local-models/ocr-owner.test.ts",
-      "src/main/local-models/owner.test.ts"
+      "src/main/local-models/owner.test.ts",
+      "scripts/narration-publish.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

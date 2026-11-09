@@ -1,3 +1,4 @@
+import { packageResearchFilmsSchema, researchFilmStorageKeys } from './research-films-contract'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
@@ -282,6 +283,8 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
     typeof value.tables !== 'object'
   )
     throw new Error('Unsupported package records.')
+  if ('researchFilms' in value && value.researchFilms !== undefined)
+    packageResearchFilmsSchema.parse(value.researchFilms)
   if ('literature' in value && value.literature !== undefined)
     packageLiteratureSchema.parse(value.literature)
   const tables = value.tables as Record<string, unknown>
@@ -319,6 +322,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
 }
 
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
+  ...researchFilmStorageKeys(records.researchFilms),
   ...new Set(
     Object.values(records.tables).flatMap((rows) =>
       rows.flatMap((row) =>

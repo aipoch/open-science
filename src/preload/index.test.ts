@@ -330,16 +330,24 @@ describe('preload bridge — public surface inventory', () => {
       'cli.getStatus',
       'cli.install',
       'cli.uninstall',
+      'compute.accountStatus',
       'compute.bookmarksGet',
       'compute.bookmarksSet',
+      'compute.cancelAccountConnection',
       'compute.changeAuthentication',
       'compute.concurrencySet',
+      'compute.connectAccount',
       'compute.create',
+      'compute.createHostedTarget',
+      'compute.createKubernetesTarget',
+      'compute.createModalTarget',
       'compute.createPassword',
+      'compute.createRayTarget',
       'compute.delete',
       'compute.deletionStatus',
       'compute.detailsGet',
       'compute.detailsSave',
+      'compute.disconnectAccount',
       'compute.download',
       'compute.enabledHostsGet',
       'compute.enabledHostsSet',
@@ -356,11 +364,18 @@ describe('preload bridge — public surface inventory', () => {
       'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
+      'compute.listHostedTargets',
+      'compute.listKubernetesTargets',
+      'compute.listModalTargets',
+      'compute.listRayTargets',
+      'compute.listRayTokens',
       'compute.onApprovalRequest',
       'compute.onApprovalSettled',
       'compute.onJobUpdated',
       'compute.passwordCapability',
       'compute.probe',
+      'compute.readOutputPreview',
+      'compute.removeRayToken',
       'compute.replayApproval',
       'compute.replayPendingApprovals',
       'compute.resetPassword',
@@ -368,7 +383,11 @@ describe('preload bridge — public surface inventory', () => {
       'compute.revealInFolder',
       'compute.scratchClear',
       'compute.scratchSet',
+      'compute.setRayToken',
       'compute.sshConfigAliases',
+      'compute.updateTarget',
+      'compute.useLocalAccount',
+      'compute.verifyTarget',
       'databaseStartup.getState',
       'databaseStartup.onStateChanged',
       'databaseStartup.quit',
@@ -404,6 +423,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.journals',
       'literature.lookupMetadata',
       'literature.onChanged',
+      'literature.overviewBatch',
       'literature.publicationCheck',
       'literature.related',
       'literature.search',
@@ -533,8 +553,11 @@ describe('preload bridge — public surface inventory', () => {
       'preview.save',
       'previewContextMenu.onRequested',
       'previewResources.acquire',
+      'previewResources.cancelResearchVideoExport',
+      'previewResources.exportResearchVideo',
       'previewResources.readRange',
       'previewResources.release',
+      'previewResources.researchVideoExportProgress',
       'projectFiles.getOverview',
       'projectFiles.listArtifactGroups',
       'projectFiles.listFiles',
@@ -564,10 +587,22 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.getSnapshot',
       'remoteAccess.onChanged',
       'remoteAccess.probe',
+      'remoteAccess.refreshOffer',
       'remoteAccess.reject',
       'remoteAccess.revokeBrowser',
       'remoteAccess.revokeBrowsers',
+      'remoteAccess.selectLanAddress',
       'remoteAccess.setMode',
+      'remoteAccess.setPinggyRegion',
+      'remoteAccess.setPinggyToken',
+      'researchVideo.cancel',
+      'researchVideo.remove',
+      'researchVideo.start',
+      'researchVideo.status',
+      'resourceRecording.getState',
+      'resourceRecording.onChanged',
+      'resourceRecording.start',
+      'resourceRecording.stop',
       'reviewer.abortFixLoop',
       'reviewer.getForSession',
       'reviewer.getReviewLog',
@@ -678,6 +713,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.getSkillDetail',
       'settings.getSkillMarketplaceBatch',
       'settings.getSkillMarketplaceDetail',
+      'settings.getSourceLinkMetadata',
       'settings.getWsl2BashPreviewStatus',
       'settings.getWslSetupStatus',
       'settings.importAgentHomeSkills',
@@ -906,6 +942,7 @@ describe('preload bridge — public surface inventory', () => {
       'window.onInterfaceScaleShortcut',
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
+      'window.openConnectMobile',
       'window.sendCloseConfirmResponse',
       'window.setZoomFactor',
       'window.showTitleBarMenu',
@@ -1011,6 +1048,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'literature',
       'memory',
       'logs',
+      'resource-recording',
       'managed-file-versions',
       'network',
       'notifications',
@@ -1240,6 +1278,22 @@ describe('preload bridge — core renderer contract catalog', () => {
       code: 'session-revision-conflict'
     })
     expect(invokeMock).toHaveBeenCalledWith('sessions:save-session', { id: 'session-1' })
+  })
+
+  it.each([
+    'session-size-limit',
+    'session-revision-conflict',
+    'desktop-runtime-disconnected',
+    'desktop-runtime-not-submitted'
+  ])('keeps %s in a contextBridge-safe Session rejection', async (code) => {
+    const failure = { code, message: 'Reviewed Session failure.' }
+    invokeMock.mockResolvedValueOnce({ ok: false, error: failure })
+    const rejected = await Promise.resolve(api.sessions.saveSession({ id: 'session-1' })).catch(
+      (error: unknown) => error
+    )
+    expect(rejected).not.toBeInstanceOf(Error)
+    expect(rejected).toEqual(failure)
+    expect(JSON.parse(JSON.stringify(rejected))).toEqual(failure)
   })
 
   it('restores a details-conflict rejection from the Session edit IPC outcome', async () => {

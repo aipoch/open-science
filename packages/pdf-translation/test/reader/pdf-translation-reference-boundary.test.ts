@@ -1127,6 +1127,10 @@ describe('complete terminal figure pages after a bibliography', () => {
     'constructor-reuse',
     'snapshot-depth',
     'split-marker',
+    'split-marker-canonical-space',
+    'split-marker-space-width',
+    'split-marker-space-baseline',
+    'split-marker-space-reference',
     'split-marker-baseline',
     'split-marker-font',
     'split-marker-no-space',
@@ -1364,6 +1368,30 @@ describe('complete terminal figure pages after a bibliography', () => {
             const reader = factory(options)
             return {
               observe(input) {
+                if (
+                  [
+                    'split-marker-canonical-space',
+                    'split-marker-space-width',
+                    'split-marker-space-baseline',
+                    'split-marker-space-reference'
+                  ].includes(fault) &&
+                  input.rawPage.page === bookPageNumber + 2
+                ) {
+                  const space = input.rawPage.items.find((item) => item.str === ' ')
+                  expect(space).toBeDefined()
+                  if (fault === 'split-marker-space-width') space!.width += 0.001
+                  if (fault === 'split-marker-space-baseline') space!.transform[5] += 0.001
+                  if (fault === 'split-marker-canonical-space')
+                    for (const item of input.rawPage.items)
+                      if (!item.str.trim())
+                        Object.assign(item, {
+                          str: '',
+                          width: 0,
+                          height: 0,
+                          dir: 'ltr',
+                          transform: [0, 0, 0, 0, 0, 0]
+                        })
+                }
                 if (fault === 'raw-book-edit' && input.rawPage.page === bookPageNumber) {
                   const item = input.rawPage.items.find((item) => item.str.includes('generated'))
                   if (item) item.str = item.str.replace('generated', 'fabricated')
@@ -1401,6 +1429,12 @@ describe('complete terminal figure pages after a bibliography', () => {
                 token.observe(unit, data)
               },
               create(input) {
+                if (fault === 'split-marker-space-reference') {
+                  const items = rawPages.get(bookPageNumber + 2)!.items,
+                    index = items.findIndex((item) => item.str === ' ')
+                  expect(index).toBeGreaterThanOrEqual(0)
+                  items[index] = { ...items[index] }
+                }
                 if (fault === 'post-layout-stale')
                   rawPages.get(bookPageNumber)!.nativeReferenceEvidence = structuredClone(
                     rawPages.get(bookPageNumber)!.nativeReferenceEvidence
@@ -1636,6 +1670,7 @@ describe('complete terminal figure pages after a bibliography', () => {
             fault === 'two-form-boundary' ||
             fault === 'figure-roundtrip' ||
             fault === 'split-marker' ||
+            fault === 'split-marker-canonical-space' ||
             fault === 'pattern' ||
             fault === 'pattern-transparent' ||
             fault === 'pattern-cross'

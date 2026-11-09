@@ -25,7 +25,8 @@ import {
   LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
   LITERATURE_LIBRARY_SAVE_TOOL_NAME,
   LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
-  LITERATURE_LIBRARY_SCOPES
+  LITERATURE_LIBRARY_SCOPES,
+  LITERATURE_LIBRARY_READ_SCOPES
 } from '../literature/library-mcp-server'
 import {
   LITERATURE_MCP_SERVER_NAME,
@@ -68,6 +69,8 @@ const SKILL_IMPORT_TOOLS: ResponsesNamespacedTool[] = [
 ]
 
 const libraryScope = z.enum(LITERATURE_LIBRARY_SCOPES)
+// Abstract and PDF reads reject the search-only "items" scope.
+const libraryReadScope = z.enum(LITERATURE_LIBRARY_READ_SCOPES)
 const itemId = z.string().trim().min(1).max(512)
 // The runtime validator normalizes nested identifiers with Zod transforms, which cannot be
 // represented in the provider JSON Schema. Keep the bridge declaration structural; the MCP
@@ -98,7 +101,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
     z.object({
       itemId: itemId.optional(),
       itemIds: z.array(itemId).min(1).max(5).optional(),
-      scope: libraryScope.optional(),
+      scope: libraryReadScope.optional(),
       collectionId: itemId.optional()
     })
   ),
@@ -110,7 +113,7 @@ const LIBRARY_CORE_TOOLS: ResponsesNamespacedTool[] = [
       itemId,
       attachmentId: itemId.optional(),
       query: z.string().trim().min(1).max(2_000),
-      scope: libraryScope.optional(),
+      scope: libraryReadScope.optional(),
       collectionId: itemId.optional()
     })
   ),
@@ -228,13 +231,13 @@ const literatureTools = (
         tool(
           LITERATURE_MCP_SERVER_NAME,
           'list_pdf_annotations',
-          'Read bounded Notes & Annotations for a PDF linked to this Reading message; follow nextCursor.',
+          'Read bounded Notes & Annotations for a PDF linked to this Reading message. Pass nextCursor back unchanged until it is null.',
           listPdfAnnotationsInput
         ),
         tool(
           LITERATURE_MCP_SERVER_NAME,
           'locate_pdf_annotation_target',
-          'Resolve a target before writing: target.kind document-note, page-note, text (physical pageNumber, exact quote, optional prefix/suffix), or element (elementRef from list_pdf_elements). Read evidence first. Text matches are alternatives; element targets are separate regions. Never guess an ambiguous match. References are current-message-only and expire. No OCR.',
+          'Resolve a target before writing: target.kind document-note, page-note, text (physical pageNumber, exact quote, optional prefix/suffix), or element (elementRef from list_pdf_elements). Read evidence first. Text matches are alternatives; element targets are separate regions. Never guess an ambiguous match. References are valid only for this message, expire after 30 minutes, and only the 256 most recent stay valid. No OCR.',
           locatePdfAnnotationInput
         ),
         tool(
@@ -251,7 +254,7 @@ const ARTIFACT_TOOLS: ResponsesNamespacedTool[] = [
   tool(
     ARTIFACT_MCP_SERVER_NAME,
     'write_artifact_file',
-    'Attach a generated image, chart, report, data export, or archive to the current Open-Science response. The file must already exist before using a localPath source.',
+    'Attach a generated image, chart, report, data export, or archive to the current Open-Science response. Pass source {kind:"localPath", path} for a saved file or {kind:"inline", content} for small text; a localPath file must already exist.',
     z.object(writeArtifactFileToolSchema)
   )
 ]

@@ -48,8 +48,10 @@ it('backfills collection revisions without changing existing values or hierarchy
       '0052_literature_personal_note_search',
       '0053_literature_doi_identity',
       '0054_slurm_job_reliability',
-      '0055_project_optimization_prompt',
-      '0056_project_optimization_prompt_scope'
+      '0055_session_discussion_parent',
+      '0056_compute_kubernetes_workspace',
+'0057_project_optimization_prompt',
+      '0058_project_optimization_prompt_scope'
     ]
   })
   expect(await client.$queryRawUnsafe(sql)).toEqual(before)

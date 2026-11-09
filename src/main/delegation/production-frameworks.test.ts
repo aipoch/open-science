@@ -76,7 +76,8 @@ describe('production delegated framework factory composition', () => {
       'opencode',
       'codex',
       'codebuddy',
-      'pi'
+      'pi',
+      'open-science-agent'
     ])
   })
 
@@ -191,7 +192,13 @@ describe('production delegated framework factory composition', () => {
       }
     })
 
-    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+    for (const frameworkId of [
+      'claude-code',
+      'opencode',
+      'codex',
+      'codebuddy',
+      'open-science-agent'
+    ] as const) {
       const selected = await frameworks.forSession(session(frameworkId))
       await selected.assertAvailable()
       const reservation = await selected.execution.reserve(1)
@@ -209,8 +216,20 @@ describe('production delegated framework factory composition', () => {
       )
     }
 
-    expect(prepared).toEqual(['claude-code', 'opencode', 'codex', 'codebuddy'])
-    expect(runtimes).toEqual(['claude-code', 'opencode', 'codex', 'codebuddy'])
+    expect(prepared).toEqual([
+      'claude-code',
+      'opencode',
+      'codex',
+      'codebuddy',
+      'open-science-agent'
+    ])
+    expect(runtimes).toEqual([
+      'claude-code',
+      'opencode',
+      'codex',
+      'codebuddy',
+      'open-science-agent'
+    ])
   })
 
   it('rejects an unsafe fresh framework audit before workspace preparation or runtime creation', async () => {

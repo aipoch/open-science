@@ -24,6 +24,7 @@ import { startLocalePreferenceSync } from '@/stores/locale-store'
 import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { configureComposerDraftStorage } from '@/pages/workspace/composer-draft-storage'
+import { ConnectMobileWindow } from '@/pages/connect-mobile/ConnectMobileWindow'
 
 const rendererBootMark = 'open-science:renderer-boot-start'
 performance.mark(rendererBootMark)
@@ -56,6 +57,7 @@ window.addEventListener('drop', (event) => event.preventDefault())
 
 // Load only the selected language before mounting, retaining a translated first app paint.
 const initialLocale = resolveInitialLocale()
+const isConnectMobileSurface = new URLSearchParams(window.location.search).has('connect-mobile')
 const startRenderer = (): void => {
   if (isDesktopRenderer()) configureComposerDraftStorage('desktop-profile', 'profile')
   initI18n(initialLocale)
@@ -64,7 +66,7 @@ const startRenderer = (): void => {
 
   // Start connectivity monitoring (online/offline events + the initial reachability probe)
   // before React renders so indicators and the Network panel read a live store from first paint.
-  startNetworkMonitor()
+  if (!isConnectMobileSurface) startNetworkMonitor()
 
   // Install before React renders so Streamdown hooks work on first interaction.
   installStreamdown()
@@ -81,10 +83,14 @@ const startRenderer = (): void => {
     <StrictMode>
       <WindowsTitleBar>
         <ApplicationErrorBoundary>
-          <ApplicationStartup>
-            <App />
-            <DesktopRuntimeRecovery saveDiagnostics={saveRuntimeDiagnostics} />
-          </ApplicationStartup>
+          {isConnectMobileSurface ? (
+            <ConnectMobileWindow />
+          ) : (
+            <ApplicationStartup>
+              <App />
+              <DesktopRuntimeRecovery saveDiagnostics={saveRuntimeDiagnostics} />
+            </ApplicationStartup>
+          )}
         </ApplicationErrorBoundary>
       </WindowsTitleBar>
     </StrictMode>

@@ -1,6 +1,15 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, writeFile, rm, realpath, readFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  rm,
+  realpath,
+  readFile,
+  copyFile,
+  chmod
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
@@ -170,24 +179,25 @@ it.runIf(process.platform === 'win32')(
 )
 
 it.runIf(process.platform === 'darwin')(
-  'ignores processes that only hold ordinary file descriptors on installation files',
+  'ignores a path argument and ordinary descriptor for an installation file',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'installation-handle-'))
     const installation = join(root, 'Science.app')
     await mkdir(installation)
-    const file = join(installation, 'helper.dat')
+    const file = join(await realpath(installation), 'helper.dat')
     await writeFile(file, 'fixture')
     const child = spawn(
       process.execPath,
       [
         '-e',
         `
-    process.once('message', path => {
-      require('node:fs').openSync(path, 'r');
+    process.once('message', () => {
+      require('node:fs').openSync(process.argv[1], 'r');
       process.send('ready');
       setInterval(() => {}, 1000);
     });
-  `
+  `,
+        file
       ],
       { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
     )
@@ -197,7 +207,7 @@ it.runIf(process.platform === 'darwin')(
         child.once('error', reject)
         child.once('exit', () => reject(new Error('Fixture exited before opening file')))
       })
-      child.send(file)
+      child.send('start')
       await ready
       expect(await inspectInstallationProcessesAsync(installation)).not.toContain(child.pid)
     } finally {
@@ -209,37 +219,27 @@ it.runIf(process.platform === 'darwin')(
 )
 
 it.runIf(process.platform === 'darwin')(
-  'detects processes whose command line mentions the installation path',
+  'detects an executable launched from the installation bundle',
   async () => {
-    const root = await mkdtemp(join(tmpdir(), 'installation-argv-'))
-    const installationPath = join(root, 'Science.app')
-    await mkdir(installationPath)
-    const installation = await realpath(installationPath)
-    const child = spawn(
-      process.execPath,
-      [
-        '-e',
-        `process.once('message', () => { process.send('ready'); setInterval(() => {}, 1000); });`,
-        installation
-      ],
-      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
-    )
+    const installation = await mkdtemp(join(tmpdir(), 'Science App-'))
     try {
-      const ready = new Promise<void>((resolve, reject) => {
-        child.once('message', () => resolve())
+      const executable = join(installation, 'sleep')
+      await copyFile('/bin/sleep', executable)
+      await chmod(executable, 0o755)
+      const child = spawn(executable, ['60'])
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve)
         child.once('error', reject)
-        child.once('exit', () => reject(new Error('Fixture exited before ready')))
       })
-      child.send('start')
-      await ready
-      expect(await inspectInstallationProcessesAsync(installation)).toContain(child.pid)
-      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
-      child.kill('SIGTERM')
-      await exited
-      expect(await inspectInstallationProcessesAsync(installation)).not.toContain(child.pid)
+      const exited = new Promise<void>((resolve) => child.once('close', () => resolve()))
+      try {
+        expect(await inspectInstallationProcessesAsync(installation)).toContain(child.pid)
+      } finally {
+        child.kill()
+        await exited
+      }
     } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-      await rm(root, { recursive: true, force: true })
+      await rm(installation, { recursive: true, force: true })
     }
   },
   30000

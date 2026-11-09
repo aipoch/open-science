@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import * as desktopInteraction from './desktop-interaction'
+import { currentDesktopCaller } from './desktop-native-contract'
+import { connectDesktopRuntime } from './desktop-runtime-client'
+import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 
 import {
   createApplicationCommandRouter,
@@ -91,6 +96,67 @@ const registeredCommands = (): Array<{ name: string }> => {
   for (const group of dataContentApplicationCommandGroups) commands.push(...group.commands)
   return commands
 }
+
+it('routes research video export to the connected desktop document save dialog', async () => {
+  const deps = createDependencies()
+  const content = Buffer.from('<meta name="open-science-research-video" content="1">')
+  deps.managedPreview.readRange.mockImplementation(async () => ({
+    begin: 0,
+    end: content.length,
+    total: content.length,
+    data: content
+  }))
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, {
+    ...deps.dependencies,
+    videoExportTools: {
+      available: async () => true,
+      snapshot: vi.fn(),
+      acquire: vi.fn()
+    }
+  })
+  const command = dataContentApplicationCommands.previewResearchVideoExport
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    events: new ApplicationEventHub(),
+    commands: {
+      commandNames: () => [command.name],
+      invoke: (_name, call) =>
+        router.dispatcher.invoke(command, { ...call, args: [{ resourceId: 'resource-1' }] })
+    }
+  })
+  const fileInteraction = vi.spyOn(desktopInteraction, 'desktopFileInteraction').mockReturnValue(
+    desktopInteraction.createRemoteDesktopFileInteraction((request, callerId) => {
+      const caller = currentDesktopCaller()
+      return server.requestNative(request, callerId ?? caller?.clientId, caller?.signal)
+    })
+  )
+  const onNativeRequest = vi.fn(async () => ({ canceled: true }))
+  const client = await connectDesktopRuntime({
+    endpoint: server.endpoint,
+    onNativeRequest,
+    onEvent: () => {},
+    onDisconnect: () => {}
+  })
+  try {
+    const documentId = randomUUID()
+    await expect(
+      client.invoke(documentId, command.name, [{ resourceId: 'resource-1' }])
+    ).resolves.toEqual({ canceled: true })
+    expect(onNativeRequest).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        clientId: documentId,
+        request: expect.objectContaining({ operation: 'save-dialog' })
+      }),
+      expect.any(AbortSignal)
+    )
+  } finally {
+    client.close()
+    await server.close()
+    router.dispose()
+    fileInteraction.mockRestore()
+  }
+})
 
 // The inferred spy surface is intentionally retained so each assertion keeps its exact Vitest type.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -313,6 +379,13 @@ const createDependencies = () => {
 
 type DataContentCommandKey = keyof typeof dataContentApplicationCommands
 const WRAPPED_COMMAND_KEYS = [
+  'previewResearchVideoExport',
+  'previewResearchVideoCancel',
+  'researchVideoPresentationStart',
+  'researchVideoPresentationStatus',
+  'researchVideoPresentationRemove',
+  'researchVideoPresentationCancel',
+  'previewResearchVideoProgress',
   'artifactFinalizeRun',
   'artifactOpenFile',
   'lifecycleClientId',
@@ -474,6 +547,13 @@ describe('Data and content application commands', () => {
         'preview-resources:acquire',
         'preview-resources:read-range',
         'preview-resources:release',
+        'preview-resources:export-research-video',
+        'preview-resources:cancel-research-video-export',
+        'research-video:start',
+        'research-video:status',
+        'research-video:remove',
+        'research-video:cancel',
+        'preview-resources:research-video-progress',
         'project-files:get-overview',
         'project-files:list-artifact-groups',
         'project-files:list-files',
@@ -2398,44 +2478,53 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(request)
   })
 
-  it('routes diagnostics without acquiring business write leases or loading sessions', async () => {
-    const router = createApplicationCommandRouter()
-    const deps = createDependencies()
-    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
-    const request = { projectId: 'project-1', sessionId: 'session-1', operationId: 'diagnostic-1' }
-    deps.withDataRootWrite.mockRejectedValue(new Error('Business storage unavailable'))
-    await expect(
-      router.dispatcher.invoke(
-        dataContentApplicationCommands.sessionInspectDiagnostics,
-        invocation([request], electronCaller)
+  it.each(['session', 'application'] as const)(
+    'routes %s diagnostics without acquiring business write leases or loading sessions',
+    async (scope) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+      const request =
+        scope === 'application'
+          ? { scope, operationId: 'diagnostic-1' }
+          : { projectId: 'project-1', sessionId: 'session-1', operationId: 'diagnostic-1' }
+      deps.withDataRootWrite.mockRejectedValue(new Error('Business storage unavailable'))
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.sessionInspectDiagnostics,
+          invocation([request], electronCaller)
+        )
+      ).resolves.toEqual({ items: [] })
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.sessionExportDiagnostics,
+          invocation([{ ...request, selectedItems: [] }], electronCaller)
+        )
+      ).resolves.toEqual({ status: 'cancelled' })
+      await router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionCancelDiagnostics,
+        invocation([{ operationId: request.operationId }], electronCaller)
       )
-    ).resolves.toEqual({ items: [] })
-    await expect(
-      router.dispatcher.invoke(
-        dataContentApplicationCommands.sessionExportDiagnostics,
-        invocation([{ ...request, selectedItems: [] }], electronCaller)
-      )
-    ).resolves.toEqual({ status: 'cancelled' })
-    await router.dispatcher.invoke(
-      dataContentApplicationCommands.sessionCancelDiagnostics,
-      invocation([{ operationId: request.operationId }], electronCaller)
-    )
-    expect(deps.withDataRootWrite).not.toHaveBeenCalled()
-    expect(deps.sessions.loadOne).not.toHaveBeenCalled()
-    expect(deps.sessions.saveSession).not.toHaveBeenCalled()
-    await expect(
-      router.dispatcher.invoke(
-        dataContentApplicationCommands.sessionInspectDiagnostics,
-        invocation([request])
-      )
-    ).rejects.toThrow('Channel only available from the Electron app')
-    await expect(
-      router.dispatcher.invoke(
-        dataContentApplicationCommands.sessionInspectDiagnostics,
-        invocation([{ ...request, sessionId: '../session' }], electronCaller)
-      )
-    ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
-  })
+      expect(deps.withDataRootWrite).not.toHaveBeenCalled()
+      expect(deps.sessions.loadOne).not.toHaveBeenCalled()
+      expect(deps.sessions.saveSession).not.toHaveBeenCalled()
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.sessionInspectDiagnostics,
+          invocation([request])
+        )
+      ).rejects.toThrow('Channel only available from the Electron app')
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.sessionInspectDiagnostics,
+          invocation(
+            [{ projectId: 'project-1', sessionId: '../session', operationId: request.operationId }],
+            electronCaller
+          )
+        )
+      ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    }
+  )
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {
     const router = createApplicationCommandRouter()

@@ -808,8 +808,7 @@ const runPackagedLocalRpcSmoke = async ({
         arguments: {
           filename: 'windows-rpc-smoke.txt',
           mimeType: 'text/plain',
-          content: RPC_SMOKE_CONTENT,
-          encoding: 'utf8',
+          source: { kind: 'inline', content: RPC_SMOKE_CONTENT, encoding: 'utf8' },
           producerRunId: 'installer-smoke-shell-run'
         }
       },

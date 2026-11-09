@@ -215,7 +215,7 @@ describe('workspace Save as skill owner', () => {
         expect(useWorkspaceOperationErrors.getState().errors[session.id]).toBeUndefined()
         await expectGlobalFailure()
       } finally {
-        // A successful B receipt clears both singleton failure mechanisms before the next case.
+        persistence.resetSessionPersistenceWriteFailuresForTests()
         failUnrelated = false
         await persistence.saveSessionInOrder(unrelated)
         persistence.resetSessionPersistenceWriteFailuresForTests()
@@ -280,6 +280,7 @@ describe('workspace Save as skill owner', () => {
       const current = useSessionStore.getState().sessions[0]
       expect(current.activeRun).toBeUndefined()
       expect(current.messages.some(({ turnIntent }) => turnIntent === 'save-as-skill')).toBe(false)
+      await expect(persistence.flushSessionPersistence()).resolves.toBeUndefined()
     } finally {
       unsubscribe()
       await controlSave

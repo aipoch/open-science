@@ -1264,3 +1264,74 @@ it('rolls back global desktop update preparation only when its controller discon
   controller.close()
   await vi.waitFor(() => expect(onControllerDisconnect).toHaveBeenCalledOnce())
 })
+
+it('accepts activity only from the current controlling desktop and clears it on disconnect', async () => {
+  const generation = randomUUID()
+  const lifetime = {
+    startFirstConnectionTimeout: vi.fn(),
+    preservesService: () => true,
+    snapshot: () => ({
+      version: 1 as const,
+      generation,
+      explicit: false,
+      stopping: false,
+      apps: 2
+    }),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    prepareLeave: vi.fn(),
+    abortLeave: vi.fn(),
+    leave: vi.fn(),
+    start: vi.fn(),
+    retireIfUnused: vi.fn(),
+    stop: vi.fn(),
+    close: vi.fn()
+  }
+  const activity = vi.fn()
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    lifetime,
+    generation,
+    onResourceActivity: activity,
+    commands: { commandNames: () => ['projects:list'], invoke: async () => [] },
+    events: new ApplicationEventHub()
+  })
+  cleanups.push(server.close)
+  const attach = (): ReturnType<typeof connectDesktopRuntime> =>
+    connectDesktopRuntime({
+      endpoint: server.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: () => {},
+      onDisconnect: () => {}
+    })
+  const controller = await attach()
+  const secondary = await attach()
+  cleanups.push(async () => {
+    controller.close()
+    secondary.close()
+  })
+  controller.resourceActivity?.({ foreground: true, suspended: false })
+  await controller.invoke(randomUUID(), 'projects:list', [])
+  expect(activity).toHaveBeenLastCalledWith({ foreground: true, suspended: false })
+  const calls = activity.mock.calls.length
+  secondary.resourceActivity?.({ foreground: false, suspended: true })
+  await secondary.invoke(randomUUID(), 'projects:list', [])
+  expect(activity).toHaveBeenCalledTimes(calls)
+  secondary.close()
+  await vi.waitFor(() => expect(lifetime.disconnect).toHaveBeenCalledOnce())
+  expect(activity).toHaveBeenCalledTimes(calls)
+  controller.resourceActivity?.({ foreground: false, suspended: true })
+  await controller.invoke(randomUUID(), 'projects:list', [])
+  expect(activity).toHaveBeenLastCalledWith({ foreground: false, suspended: true })
+  const replacement = await attach()
+  cleanups.push(async () => replacement.close())
+  replacement.resourceActivity?.({ foreground: true, suspended: false })
+  await replacement.invoke(randomUUID(), 'projects:list', [])
+  controller.close()
+  await vi.waitFor(() =>
+    expect(activity).toHaveBeenLastCalledWith({ foreground: false, suspended: false })
+  )
+  await expect.poll(async () => (await replacement.refreshControl()).control).toBe('granted')
+  await replacement.invoke(randomUUID(), 'projects:list', [])
+  expect(activity).toHaveBeenLastCalledWith({ foreground: true, suspended: false })
+})

@@ -11,7 +11,8 @@
     "src/shared/literature-collector.test.ts",
     "src/shared/literature-link.ts",
     "src/shared/literature-link.test.ts",
-    "src/shared/literature-snapshot.ts"
+    "src/shared/literature-overview.ts",
+    "src/shared/literature-overview-batch.ts"
   ],
   "interfacePaths": [
     "src/shared/literature.ts",
@@ -21,7 +22,8 @@
     "src/shared/journal-attributes.ts",
     "src/shared/literature-collector.ts",
     "src/shared/literature-link.ts",
-    "src/shared/literature-snapshot.ts"
+    "src/shared/literature-overview.ts",
+    "src/shared/literature-overview-batch.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -44,7 +46,8 @@
       "src/shared/application-command-contract.test.ts",
       "src/shared/in-flight-promise.test.ts",
       "src/shared/pdf-text.test.ts",
-      "scripts/build-backend.integration.test.ts"
+      "scripts/build-backend.integration.test.ts",
+      "src/renderer/web/bootstrap.test.ts"
     ]
   },
   "capabilityOverlays": [],

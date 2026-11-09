@@ -69,14 +69,25 @@ describe('ACP Runtime Provider Session composition', () => {
     expect(first.owners.sessionReplacement).not.toBe(second.owners.sessionReplacement)
     expect(first.owners.sessionDeletion).not.toBe(second.owners.sessionDeletion)
 
+    // An unanswered selector can keep queued model intent pending while deletion must finish.
+    const pendingModelChange = Promise.withResolvers<void>()
     const barrier = vi
       .spyOn(first.lifecycle.modelChanges, 'barrier', 'get')
-      .mockReturnValueOnce(Promise.resolve())
-      .mockReturnValue(undefined)
-    const withOperation = vi.spyOn(first.base.generationActivity, 'withOperation')
-    await first.owners.sessionDeletion.delete('detached-session')
-    expect(barrier).toHaveBeenCalledTimes(2)
-    expect(withOperation).toHaveBeenCalledOnce()
+      .mockReturnValue(pendingModelChange.promise)
+    const cleanupAdmission = vi.spyOn(first.lifecycle.sessionCleanup, 'run')
+    const withActivity = vi.spyOn(first.base.generationActivity, 'withActivity')
+    try {
+      await first.owners.sessionDeletion.delete('detached-session')
+      expect(barrier).not.toHaveBeenCalled()
+      expect(cleanupAdmission).toHaveBeenCalledOnce()
+      expect(withActivity).toHaveBeenCalledOnce()
+      expect(first.base.generationActivity.blockers()).toEqual({
+        reconnect: false,
+        retirement: false
+      })
+    } finally {
+      pendingModelChange.resolve()
+    }
   })
 
   it('forwards the project Agent Context resolver into the creator, adopter, and resumer deps', () => {

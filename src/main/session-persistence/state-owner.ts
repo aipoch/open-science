@@ -20,6 +20,7 @@ import {
   sanitizePlanHistoryProjections,
   sanitizeSessionRuntimeContext,
   SessionConfigurationBusyError,
+  SessionRevisionConflictError,
   sessionRevision,
   type DelegationPolicy,
   type PersistedChatMessage,
@@ -560,6 +561,23 @@ class SessionPersistenceStateOwner {
     candidate.revision = current.revision + 1
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
+    if (
+      session.deletedDiscussionSourceId &&
+      runtimeContext.sessionContext?.bindings.some(
+        (binding) =>
+          binding.projectId === projectId && binding.sessionId === session.deletedDiscussionSourceId
+      )
+    )
+      throw new Error('The discussion source was permanently deleted.')
+    if (session.parentSessionId && Object.hasOwn(patch, 'sessionContext')) {
+      const bindings = runtimeContext.sessionContext?.bindings
+      if (
+        bindings?.length !== 1 ||
+        bindings[0].sessionId !== session.parentSessionId ||
+        bindings[0].projectId !== projectId
+      )
+        throw new Error('A child discussion must keep its parent research Session.')
+    }
 
     const archivePlanProjection = command.archivePlanProjection
       ? sanitizePlanHistoryProjections([command.archivePlanProjection])?.[0]
@@ -1466,6 +1484,12 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    const assertRecoveryRevision = (current: PersistedChatSession | undefined): void => {
+      const actualRevision = current ? sessionRevision(current) : 0
+      if (options.expectedRevision !== undefined && options.expectedRevision !== actualRevision)
+        throw new SessionRevisionConflictError(options.expectedRevision, actualRevision)
+    }
+    assertRecoveryRevision(authority)
     if (
       !authority &&
       options.conversationCommands?.some(
@@ -1517,7 +1541,10 @@ class SessionPersistenceStateOwner {
           // The next terminal save retries the command against an authority with no active run.
           // Real branch identity conflicts still reject.
           if (error instanceof SessionConversationCommandDeferredError)
-            return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+            return this.mutateRuntimeSession({ projectId, sessionId }, (current) => {
+              assertRecoveryRevision(current)
+              return candidate
+            })
           throw error
         }
         if (this.options.uploads)
@@ -1525,7 +1552,10 @@ class SessionPersistenceStateOwner {
             mode: 'live-save'
           })
       }
-      return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+      return this.mutateRuntimeSession({ projectId, sessionId }, (current) => {
+        assertRecoveryRevision(current)
+        return candidate
+      })
     }
     session = {
       ...session,
@@ -1626,6 +1656,7 @@ class SessionPersistenceStateOwner {
         : undefined
     const commandProjection = conversationAuthority
       ? {
+          parentSessionId: conversationAuthority.parentSessionId,
           conversationGraph: conversationAuthority.conversationGraph,
           messages: conversationAuthority.messages,
           activities: conversationAuthority.activities,
@@ -1646,6 +1677,13 @@ class SessionPersistenceStateOwner {
       ...commandProjection,
       ...relayProjection,
       ...mainOwnedSessionDetails,
+      ...(authority?.parentSessionId ? { parentSessionId: authority.parentSessionId } : {}),
+      ...(authority?.deletedDiscussionSourceId
+        ? {
+            parentSessionId: undefined,
+            deletedDiscussionSourceId: authority.deletedDiscussionSourceId
+          }
+        : { deletedDiscussionSourceId: undefined }),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(authority?.planHistoryProjections

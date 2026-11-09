@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
+import { Path2D } from '@napi-rs/canvas'
+import { liveType3FontPrograms } from './literature-pdf-figure-native-captioned-form.mjs'
 import { projectPdfTextLines, groupPageLines } from './literature-pdf-caption-group.mjs'
 import { normalizePageLineOrder } from './literature-pdf-reading-order.mjs'
 import {
@@ -33,6 +35,7 @@ import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
 const cropOnlyPaintMode = Symbol('crop-only-native-paint'),
   cropOnlyPaintCertificates = new WeakMap()
+const leadingType3PixelMode = Symbol('leading-type3-forms-pixel')
 const nativeProgramPaintCurrents = new WeakMap()
 const rasterTitlePlans = new WeakMap()
 
@@ -1206,8 +1209,9 @@ function nativeUncoloredSavedPatternStates(o) {
     states.set(i, { kind: 'uncolored-saved-hatch', operationIndex: i })
   }
   if (
-    patterns.length !== 2 ||
-    JSON.stringify(patterns[0].slice(2)) !== JSON.stringify(patterns[1].slice(2))
+    ![2, 3].includes(patterns.length) ||
+    (patterns.length === 2 &&
+      JSON.stringify(patterns[0].slice(2)) !== JSON.stringify(patterns[1].slice(2)))
   )
     return
   return states
@@ -1221,7 +1225,7 @@ export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
       context.pageNumber !== page.pageNumber ||
       !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '') ||
       context.type3GlyphPrograms !== undefined ||
-      context.operators.fnArray.filter((op) => op === OPS.setFillColorN).length !== 2 ||
+      ![2, 3].includes(context.operators.fnArray.filter((op) => op === OPS.setFillColorN).length) ||
       context.operators.fnArray.some((op) =>
         [OPS.paintFormXObjectBegin, OPS.paintFormXObjectEnd, OPS.beginGroup, OPS.endGroup].includes(
           op
@@ -1310,11 +1314,37 @@ export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
       for (const char of compact(g.text)) glyphChars.push({ char, index })
     if (sourceChars.length !== glyphChars.length || sourceChars.length > 200000) return
     const owner = new Map()
+    let literalCertificate
     for (let i = 0; i < sourceChars.length; i++) {
       const s = sourceChars[i],
         g = glyphChars[i]
+      // Only an actual same-page dual-API capture can bridge a differing
+      // literal. Keep both original strings and prove each physical occurrence.
+      if (s.char !== g.char && !literalCertificate) {
+        literalCertificate = verifyNativeDualApiCertificate(page, context, context.dualApiEvidence)
+        if (!literalCertificate) return
+        const packet = nativePagePacketCore(
+          page,
+          tokens,
+          context,
+          true,
+          new Set(literalCertificate.keys()),
+          false,
+          true,
+          undefined,
+          false,
+          false,
+          literalCertificate,
+          undefined,
+          undefined,
+          undefined,
+          uncoloredSavedPixelMode
+        )
+        if (!completeScopedNativeDualApiPacket(packet, literalCertificate)) return
+      }
+      const pair = literalCertificate?.get(s.index)
       if (
-        s.char !== g.char ||
+        (s.char !== g.char && (pair?.normal !== s.char || pair.raw !== g.char)) ||
         glyphs[g.index].fontName !== records[s.index].raw.fontName ||
         (owner.has(g.index) && owner.get(g.index) !== s.index)
       )
@@ -2373,6 +2403,18 @@ export function nativeFractionInkPacket(page, tokens, context, sourceItems) {
 // Explicit closed-program caller. Ordinary isolated groups use the existing
 // complete group observer; all declared owners still require whole advances.
 export function nativeClosedProgramInkPacket(page, tokens, context, sourceItems) {
+  return closedProgramInkPacket(page, tokens, context, sourceItems, false)
+}
+
+// A separate preview purpose may consume the complete dual-API witness. It
+// grants no Source claims and cannot change an already successful strict path.
+export function nativeSavedPaintInkPacket(page, tokens, context, sourceItems) {
+  return (
+    nativeClosedProgramInkPacket(page, tokens, context, sourceItems) ??
+    closedProgramInkPacket(page, tokens, context, sourceItems, true)
+  )
+}
+function closedProgramInkPacket(page, tokens, context, sourceItems, dual) {
   if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 64) return
   const claims = new Set()
   for (const item of sourceItems) {
@@ -2389,7 +2431,9 @@ export function nativeClosedProgramInkPacket(page, tokens, context, sourceItems)
       return
     claims.add(item.index)
   }
-  return nativePagePacketCore(
+  const certificate = dual && verifyNativeDualApiCertificate(page, context, context.dualApiEvidence)
+  if (dual && !certificate) return
+  const packet = nativePagePacketCore(
     page,
     tokens,
     context,
@@ -2399,8 +2443,10 @@ export function nativeClosedProgramInkPacket(page, tokens, context, sourceItems)
     true,
     undefined,
     false,
-    context.operators.fnArray.includes(OPS.beginGroup)
+    context.operators.fnArray.includes(OPS.beginGroup),
+    certificate || undefined
   )
+  return dual ? completeScopedNativeDualApiPacket(packet, certificate) : packet
 }
 
 // Explicit recovery callers alone may supply an internally derived witness.
@@ -2569,7 +2615,7 @@ export function nativeGroupedAxisPacketInventory(
   }
 }
 
-function completeType3PacketPrograms(context) {
+function completeType3PacketPrograms(context, purpose) {
   const finite = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite),
     programs = context?.type3GlyphPrograms,
     ordinary = context?.partialFontGlyphBounds ?? [],
@@ -2633,7 +2679,9 @@ function completeType3PacketPrograms(context) {
         p.operatorListId.length > 256 ||
         ids.has(p.operatorListId) ||
         typeof p.unicode !== 'string' ||
-        [...p.unicode].length !== 1 ||
+        (purpose === leadingType3PixelMode
+          ? !p.unicode.length || p.unicode.length > 32
+          : [...p.unicode].length !== 1) ||
         literals.has(p.unicode) ||
         !Number.isFinite(p.width) ||
         p.width <= 0 ||
@@ -2652,7 +2700,13 @@ function completeType3PacketPrograms(context) {
             !finite(p.clip, 4) ||
             p.bounds[2] <= p.bounds[0] ||
             p.bounds[3] <= p.bounds[1] ||
-            p.clip.some((n, i) => n !== p.bounds[i])
+            p.clip.some((n, i) =>
+              purpose === leadingType3PixelMode
+                ? i < 2
+                  ? n > p.bounds[i]
+                  : n < p.bounds[i]
+                : n !== p.bounds[i]
+            )
       )
         return
       ids.add(p.operatorListId)
@@ -3328,7 +3382,195 @@ export function createNativeFigurePaintCertificate(page, tokens, context) {
     cropOnlyPaintCertificates
   )
 }
-function nativeFigurePaintForPurpose(page, tokens, context, mode, registry) {
+// An independently bounded Type3 path can prove preview ink without making its
+// d1 advance or outer clip into an ordinary font outline. The Source entry above
+// still requires equality. This optional purpose also requires the complete
+// page's exact text/operator bridge and the live charproc control-flow guard.
+export function createNativeLeadingType3PixelCertificate(page, tokens, context, live) {
+  return nativeFigurePaintForPurpose(
+    page,
+    tokens,
+    context,
+    cropOnlyPaintMode,
+    cropOnlyPaintCertificates,
+    live,
+    leadingType3PixelMode
+  )
+}
+function leadingType3PixelPrograms(context, live) {
+  const raw = context.pixelType3Programs,
+    finite = (a, n) =>
+      (Array.isArray(a) || ArrayBuffer.isView(a)) &&
+      a.length === n &&
+      Array.from(a).every(Number.isFinite)
+  if (
+    !Array.isArray(raw) ||
+    !raw.length ||
+    raw.length > 64 ||
+    !live?.nativePage ||
+    context.type3GlyphPrograms !== undefined
+  )
+    return
+  if (raw.some((font) => !Array.isArray(font.glyphs))) return
+  const liveCurrent = liveType3FontPrograms(
+    context,
+    raw.flatMap((font) => font.glyphs.map((glyph) => ({ font: font.fontName, glyph }))),
+    live
+  )
+  if (!liveCurrent || !liveCurrent()) return
+  const programs = [],
+    paths = []
+  let count = 0
+  for (const font of raw) {
+    if (
+      font.missingFile !== false ||
+      font.isInvalidPDFjsFont !== false ||
+      (font.vertical !== undefined && font.vertical !== false) ||
+      !Array.isArray(font.glyphs)
+    )
+      return
+    const entries = []
+    for (const g of font.glyphs) {
+      if (++count > 4096 || !Number.isSafeInteger(g.originalCharCode) || g.originalCharCode < 0)
+        return
+      const p = g.program,
+        index = g.isSpace === true ? 0 : 1,
+        a = p?.argsArray?.[index]
+      if (
+        !Array.isArray(p?.fnArray) ||
+        p.fnArray.length !== index + 1 ||
+        p.length !== index + 1 ||
+        !Array.isArray(p.argsArray) ||
+        p.argsArray.length !== index + 1 ||
+        p.fnArray[index] !== OPS.constructPath ||
+        !Array.isArray(a) ||
+        a.length !== 3 ||
+        ![OPS.fill, OPS.eoFill].includes(a[0]) ||
+        !Array.isArray(a[1]) ||
+        a[1].length !== 1
+      )
+        return
+      const empty = index === 0,
+        d1 = empty ? undefined : p.argsArray[0]
+      if (
+        !empty &&
+        (p.fnArray[0] !== OPS.setCharWidthAndBounds ||
+          !finite(d1, 6) ||
+          d1[0] !== g.width ||
+          d1[1] !== 0)
+      )
+        return
+      const data = a[1][0],
+        path = new Path2D()
+      if (
+        empty
+          ? data !== null || a[2] !== null
+          : !(Array.isArray(data) || ArrayBuffer.isView(data)) ||
+            !data.length ||
+            data.length > 32768
+      )
+        return
+      let open = false
+      for (let i = 0; i < (data?.length ?? 0);) {
+        const op = data[i++],
+          length = [2, 2, 6, 4, 0][op]
+        if (length === undefined || i + length > data.length || (op === 0 ? open : !open)) return
+        const values = Array.from(data.slice(i, i + length))
+        i += length
+        if (!values.every(Number.isFinite)) return
+        if (op === 0) {
+          path.moveTo(...values)
+          open = true
+        } else if (op === 1) path.lineTo(...values)
+        else if (op === 2) path.bezierCurveTo(...values)
+        else if (op === 3) path.quadraticCurveTo(...values)
+        else {
+          path.closePath()
+          open = false
+        }
+      }
+      const bounds = Array.from(path.getBounds()),
+        clip = empty ? null : Array.from(d1).slice(2)
+      // PDF.js caches curve extrema; the canvas control-point box can be larger.
+      // Permit only an exact native tight-box match as an alternative cache
+      // witness. Keep the conservative control box for ink and d1 clip checks.
+      if (open || (!empty && !finite(a[2], 4))) return
+      if (!empty && bounds.some((v, i) => v !== a[2][i])) {
+        const tight = Array.from(path.computeTightBounds())
+        if (
+          !finite(tight, 4) ||
+          tight.some((v, i) => v !== a[2][i] || (i < 2 ? v < bounds[i] : v > bounds[i]))
+        )
+          return
+      }
+      const sourceIndex = context.content.items.findIndex((r) => r.fontName === font.fontName),
+        actualName = live.pageContent.items[sourceIndex]?.fontName,
+        actualFont = live.nativePage.commonObjs.get(actualName),
+        actual = actualFont.charProcOperatorList[g.operatorListId],
+        original = actual?.argsArray?.[index]?.[1]?.[0]
+      if (
+        actualFont.loadedName !== actualName ||
+        actualFont.missingFile !== false ||
+        actualFont.isInvalidPDFjsFont !== false ||
+        !isDeepStrictEqual(Array.from(actualFont.fontMatrix ?? []), font.fontMatrix) ||
+        !isDeepStrictEqual(actual?.fnArray, p.fnArray) ||
+        actual?.length !== p.length ||
+        (!empty && !isDeepStrictEqual(actual.argsArray[0], d1)) ||
+        actual.argsArray[index][0] !== a[0] ||
+        !isDeepStrictEqual(actual.argsArray[index][2], a[2])
+      )
+        return
+      const rawCurrent =
+        original instanceof Path2D ? undefined : retainNativeRecoveryInputs([original])
+      let rendered = original instanceof Path2D ? original : undefined
+      const pathCurrent = () => {
+        const now = actual.argsArray[index][1][0]
+        if (rawCurrent && !rawCurrent()) return false
+        if (now instanceof Path2D) {
+          if (
+            Object.getPrototypeOf(now) !== Path2D.prototype ||
+            Reflect.ownKeys(now).length ||
+            !Path2D.prototype.equals.call(path, now) ||
+            (rendered && rendered !== now)
+          )
+            return false
+          rendered ??= now
+        } else if (
+          rendered ||
+          now !== original ||
+          !rawCurrent ||
+          (empty
+            ? now !== null
+            : !(Array.isArray(now) || ArrayBuffer.isView(now)) ||
+              !isDeepStrictEqual(Array.from(now), Array.from(data)))
+        )
+          return false
+        return (
+          actualFont.missingFile === false &&
+          actualFont.isInvalidPDFjsFont === false &&
+          isDeepStrictEqual(Array.from(actualFont.fontMatrix ?? []), font.fontMatrix)
+        )
+      }
+      if (!pathCurrent()) return
+      paths.push(pathCurrent)
+      entries.push({ ...g, kind: empty ? 'empty-space' : 'filled-path', bounds, clip, paint: a[0] })
+    }
+    programs.push({
+      ...font,
+      glyphs: entries,
+      sourceIndices: context.content.items.flatMap((r, i) =>
+        r.fontName === font.fontName && r.str?.length ? [i] : []
+      )
+    })
+  }
+  const typed = completeType3PacketPrograms(
+      { ...context, type3GlyphPrograms: programs },
+      leadingType3PixelMode
+    ),
+    current = () => !!liveCurrent?.() && paths.every((check) => check())
+  return typed && current() ? { typed, current } : undefined
+}
+function nativeFigurePaintForPurpose(page, tokens, context, mode, registry, live, purpose) {
   try {
     const own = nativeRecoveryOwnValues(context),
       witness =
@@ -3353,23 +3595,45 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry) {
       !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '')
     )
       return
+    const leading =
+      purpose === leadingType3PixelMode ? leadingType3PixelPrograms(context, live) : undefined
+    if (purpose === leadingType3PixelMode && !leading) return
     const typed =
-      context.type3GlyphPrograms === undefined ? undefined : completeType3PacketPrograms(context)
+      leading?.typed ??
+      (context.type3GlyphPrograms === undefined ? undefined : completeType3PacketPrograms(context))
     if (context.type3GlyphPrograms !== undefined && !typed) return
-    const p = nativePageProgramPhase(
-      page,
-      tokens,
-      context,
-      true,
-      undefined,
-      false,
-      typed,
-      false,
-      context.operators.fnArray.includes(OPS.beginGroup),
-      undefined,
-      undefined,
-      mode
-    )
+    const p = leading
+      ? nativePagePacketCore(
+          page,
+          tokens,
+          context,
+          true,
+          undefined,
+          false,
+          false,
+          typed,
+          false,
+          false,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          mode
+        )
+      : nativePageProgramPhase(
+          page,
+          tokens,
+          context,
+          true,
+          undefined,
+          false,
+          typed,
+          false,
+          context.operators.fnArray.includes(OPS.beginGroup),
+          undefined,
+          undefined,
+          mode
+        )
     if (
       !p ||
       p.glyphs.length > 100000 ||
@@ -3430,10 +3694,11 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry) {
       }
     }
     if (stack.length) return
-    for (const g of p.glyphs) {
+    for (const [glyphOrdinal, g] of p.glyphs.entries()) {
       if (g.rendererSkipped || g.textPaint.fillAlpha === 0 || !p.valid(g.ink)) continue
       pieces.push({
         kind: 'glyph',
+        ...(leading ? { glyphOrdinal } : {}),
         operationIndex: g.i,
         rect: g.ink,
         fullInk: g.ink,
@@ -3513,7 +3778,25 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry) {
       })
     }
     if (!pieces.length || !retained()) return
+    const leadingOrdinals = leading && new Map(p.glyphs.map((g, index) => [g, index]))
     const details = {
+      ...(leading
+        ? {
+            leadingMarkerRecords: p.records.map((r) => ({
+              index: r.index,
+              text: r.r.str,
+              fontName: r.r.fontName,
+              height: r.r.height,
+              rect: r.rect,
+              fontRect: nativeFigureLabelBounds(
+                r.r,
+                context.content.styles[r.r.fontName],
+                context.viewport
+              ),
+              glyphOrdinals: r.part.map(({ g }) => leadingOrdinals.get(g))
+            }))
+          }
+        : {}),
       pieces,
       scopes: scopes.map(({ begin, end, op, parent }) => ({ begin, end, op, parent })),
       sourceSha256: context.sourceSha256,
@@ -3529,12 +3812,12 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry) {
     }
     const outputCurrent = retainNativeRecoveryInputs([details]),
       handle = Object.freeze({})
-    if (!outputCurrent) return
+    if (!outputCurrent || (leading && !leading.current())) return
     registry.set(handle, {
       page,
       tokens,
       context,
-      retained,
+      retained: () => retained() && (!leading || leading.current()),
       outputCurrent,
       details
     })

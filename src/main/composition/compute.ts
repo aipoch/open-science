@@ -205,8 +205,9 @@ export async function composeComputeAdmission({
   computeJobActivityRef.current = jobRepository
   const sessionEnabledComputeHostsOwner = new SessionEnabledComputeHostsOwner({
     registry: hostsRegistry,
-    hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
-    listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
+    hostExists: async (providerId) => !!(await hostRepository.getComputeTarget(providerId)),
+    listHostIds: async () =>
+      (await hostRepository.listComputeTargets()).map((host) => host.providerId),
     sessionAuthority: sessionPersistenceCoordinator,
     projectSessionConcurrencyLimit: async (sessionId, limit) => {
       const concurrencyManager = computeIpcModule.handlers.concurrencyManager
@@ -263,7 +264,7 @@ export async function composeComputeAdmission({
     onFinalJobObserved: async (_context, _providerId, snapshot) => {
       const job = await jobRepository.get(snapshot.job_id)
       if (!job) return 'pending'
-      const host = await hostRepository.get(job.provider_id).catch(() => null)
+      const host = await hostRepository.getComputeTarget(job.provider_id).catch(() => null)
       const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
       return computeJobResultDelivery.observeResult({
         ...summary,

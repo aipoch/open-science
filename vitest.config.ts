@@ -60,6 +60,8 @@ const BASE_VITEST_EXCLUDE_PATTERNS = [
   // This native addon owns its node:test runner; Vitest cannot collect those suites.
   'packages/credential-identity-probe-native/test/**',
   'docs/internal/**',
+  '.scratch/**',
+  'test-results/**',
   '**/.claude/**',
   '**/.codex/**',
   '**/.pnpm-store/**',
@@ -95,6 +97,7 @@ function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
 
 // These suites use the same package-owned configuration locally and in the host runner.
 const standalonePackageRoots = [
+  'packages/research-film',
   'packages/resilient-download',
   'packages/durable-files',
   'packages/compute',

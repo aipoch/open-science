@@ -60,7 +60,10 @@ import {
   isRuntimeChatMessageEvent,
   type RuntimeChatMessageEvent
 } from './chat-events'
-import { reportWorkspaceOperationError } from './workspace-operation-error'
+import {
+  reportWorkspaceElicitationFailure,
+  reportWorkspaceOperationError
+} from './workspace-operation-error'
 
 // One seam for per-chunk metrics so the single and batch apply paths cannot drift apart.
 const recordAppliedTextChunk = (
@@ -1097,14 +1100,14 @@ const applyWorkspaceRuntimeEvent = async (
       // the current conversation. Hidden controls also have no transcript notice or Attention.
       const graph = activeSession?.conversationGraph
       const activeFrame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-      const currentQuestionContinuationFailed =
+      const failedQuestion =
         event.title === ACP_APP_CONTINUATION_FAILED_EVENT_TITLE &&
         activeSession &&
         event.promptMessageId &&
         event.promptMessageId === getCurrentPromptMessageId(activeSession) &&
         (!event.agentFrameId || event.agentFrameId === activeFrame?.id) &&
         (!event.messageBranchId || event.messageBranchId === activeFrame?.activeBranchId) &&
-        activeSession.activities?.some(
+        activeSession.activities?.find(
           ({ promptMessageId, elicitation, updatedAt }) =>
             elicitation?.durable?.kind === 'agent-user-choice' &&
             (promptMessageId ?? elicitation.durable.promptMessageId) === event.promptMessageId &&
@@ -1117,10 +1120,21 @@ const applyWorkspaceRuntimeEvent = async (
             )
         )
       if (
-        (currentQuestionContinuationFailed || (prompt && isHiddenControlMessage(prompt))) &&
+        (failedQuestion || (prompt && isHiddenControlMessage(prompt))) &&
         !event.terminalCommitFailure
-      )
-        reportWorkspaceOperationError(event.sessionId, getEventErrorText(event))
+      ) {
+        const error = getEventErrorText(event)
+        reportWorkspaceOperationError(event.sessionId, error)
+        const question = failedQuestion ? failedQuestion.elicitation : undefined
+        if (
+          question?.durable &&
+          question.continuationPending &&
+          !question.continuationRecovery &&
+          (question.state === 'answered' || question.state === 'declined')
+        ) {
+          reportWorkspaceElicitationFailure(event.sessionId, question.durable.requestId, error)
+        }
+      }
       return true
     }
     const isCompacting = activeSession?.compacting

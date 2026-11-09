@@ -385,7 +385,11 @@ jobs:
             if (!packages) {
               const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
               const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
-              const checkoutBase = git('merge-base', process.env.TRUSTED_BASE_SHA, 'HEAD').trim()
+              // A recreated synthetic merge can sit on a newer main than TRUSTED_BASE_SHA.
+              const [, ...parents] = git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ')
+              const checkoutBase = parents.length === 2 && parents[1] === process.env.HEAD_SHA
+                ? parents[0]
+                : git('merge-base', process.env.TRUSTED_BASE_SHA, 'HEAD').trim()
               const paths = [
                 ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
                 ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD').split('\0')

@@ -42,15 +42,27 @@ describe('EnabledComputeHostsRegistry', () => {
     expect(registry.get('session-b')).toEqual(['ssh:gpu-box'])
   })
 
-  it('filters out invalid provider ids (non-ssh: prefix or too short)', () => {
+  it('preserves all enabled backend identities and changes selected targets only for the owning session', () => {
     const registry = new EnabledComputeHostsRegistry()
-
-    registry.set('session-1', ['ssh:valid', 'not-ssh', '', 'ssh:'])
-
-    // 'ssh:' alone has length === 4 and is filtered out.
-    expect(registry.get('session-1')).toEqual(['ssh:valid'])
+    const ids = ['kubernetes', 'hf-jobs', 'ray', 'modal'].map(
+      (prefix) => prefix + ':205e1449-7f3c-46b4-b218-5ed529e9e9ba'
+    )
+    const enabledProviderIds = ['ssh:valid', ...ids]
+    const selectedProviderIds = [ids[0], ids[1]]
+    registry.setAccess('first', {
+      enabledProviderIds: [...enabledProviderIds, 'invalid', 'modal:bad', 'ssh:'],
+      selectedProviderIds
+    })
+    registry.setAccess('second', { enabledProviderIds, selectedProviderIds })
+    registry.setAccess('first', {
+      enabledProviderIds: registry.getEnabled('first'),
+      selectedProviderIds: [ids[2], ids[3]]
+    })
+    expect(registry.getEnabled('first')).toEqual(enabledProviderIds)
+    expect(registry.getEnabled('second')).toEqual(enabledProviderIds)
+    expect(registry.getSelected('first')).toEqual([ids[2], ids[3]])
+    expect(registry.getSelected('second')).toEqual(selectedProviderIds)
   })
-
   it('clears the session when all provider ids are invalid', () => {
     const registry = new EnabledComputeHostsRegistry()
 

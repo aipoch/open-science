@@ -351,7 +351,7 @@ export const LiteratureItemRow = memo(function LiteratureItemRow({
             return null
         }
       })}
-      <td className="sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-transparent bg-inherit group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-3 py-2 text-center align-middle before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 group-data-[overflow-right=true]/journal-scroll:before:opacity-100">
+      <td className="@min-[640px]/literature-results:sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-transparent bg-inherit @min-[640px]/literature-results:group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-3 py-2 text-center align-middle before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 @min-[640px]/literature-results:group-data-[overflow-right=true]/journal-scroll:before:opacity-100">
         {attachmentVersion ? (
           <LiteratureTextTooltip text={attachmentVersion.filename}>
             <Button
@@ -383,7 +383,7 @@ export const LiteratureItemRow = memo(function LiteratureItemRow({
           </button>
         ) : null}
       </td>
-      <td className="sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
+      <td className="@min-[640px]/literature-results:sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
         <div className="flex items-center justify-end">
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>

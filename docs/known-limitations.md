@@ -8,8 +8,8 @@ for suspected vulnerabilities; do not add undisclosed exploit details here.
 
 ## Review baseline
 
-The entries below were reviewed against source and documentation at `975c787f0b` on **2026-10-18**.
-The application package version at that revision is **1.0.0**. Each entry's scope applies to that
+The entries below were reviewed against source and documentation at `830a995ac733` (tag `v1.1.0`)
+on **2026-11-06**. The application package version at that revision is **1.1.0**. Each entry's scope applies to that
 baseline; historical affected ranges and later fixes must be established separately. Independent
 packages retain their own versions. This review does not constitute new runtime testing, a security
 certification, or a claim that every release/platform combination has been exercised.
@@ -31,14 +31,17 @@ in the [release notes](../release-notes/README.md).
 
 ## Isolation depends on platform and execution path
 
-- **Scope / status:** Local Notebook processes, Agent-native tools, and remote compute; documented boundary.
+- **Scope / status:** Local Notebook processes, Agent-native tools, remote compute, and paired
+  Remote Web browsers; documented boundary.
 - **Trigger and impact:** Windows standard mode inherits host-user filesystem access and provides a
   proxy only for compatible software. Agent-native file tools execute outside the Notebook sandbox;
-  remote commands execute with the configured remote account's authority.
+  remote commands execute with the configured remote account's authority, and a paired browser can
+  operate the host workspace with that same authority.
 - **Precautions:** Enable Windows protected mode when relying on its enforced boundary, check the
   selected framework's restrictions, and use dedicated remote accounts. Do not treat approval prompts
   or Notebook protection as a universal sandbox.
-- **Details:** [Execution security model](security.md#code-and-notebook-execution).
+- **Details:** [Execution security model](security.md#code-and-notebook-execution) and
+  [remote control](remote-control.md#security-notes).
 
 ## Public HTTPS reads are not an allowlist-only boundary
 
@@ -56,7 +59,8 @@ in the [release notes](../release-notes/README.md).
 
 ## Local-first storage does not prevent external disclosure
 
-- **Scope / status:** Model/scenario requests, Connectors, MCP servers, remote jobs, and exports;
+- **Scope / status:** Model/scenario requests, Connectors, MCP servers, remote jobs, research-film
+  narration resources, and exports;
   documented boundary.
 - **Trigger and impact:** Requests disclose the content prepared for their recipients. Read-only
   calls still disclose arguments. Cancelling a request or deleting local content cannot retract
@@ -88,7 +92,8 @@ in the [release notes](../release-notes/README.md).
 
 ## Local storage and exports require content-level review
 
-- **Scope / status:** Research files, credentials, diagnostics, and exported research records;
+- **Scope / status:** Research files, credentials, resource-recording diagnostics, research films,
+  and exported research records;
   documented boundary.
 - **Trigger and impact:** Research content remains user-readable local files. Explicit Linux
   headless file credential mode stores reversible base64. OS-vault protection for some credentials
@@ -102,8 +107,8 @@ in the [release notes](../release-notes/README.md).
 
 ## Research assistance and replay do not validate conclusions
 
-- **Scope / status:** Literature screening, PDF extraction/translation, model/reviewer outputs,
-  provenance, and artifact reproduction; documented boundary.
+- **Scope / status:** Literature screening, resumable batch overviews, PDF extraction/translation,
+  research-film narration, model/reviewer outputs, provenance, and artifact reproduction; documented boundary.
 - **Trigger and impact:** Extraction, translation, or classification can omit or distort evidence.
   Matching replay outputs does not establish sound methods or scientific validity. Missing inputs,
   runtime differences, and nondeterminism can limit or prevent reproduction.

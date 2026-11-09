@@ -11,7 +11,17 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, readdir, realpath, rename, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
@@ -245,13 +255,20 @@ const makeJobRepo = (
   updates: { jobId: string; data: unknown }[]
 } => {
   const updates: { jobId: string; data: unknown }[] = []
+  let current = job
   const repo = {
-    update: vi.fn((jobId: string, data: unknown) => {
+    update: vi.fn((jobId: string, data: Parameters<ComputeJobRepository['update']>[1]) => {
       updates.push({ jobId, data })
-      return Promise.resolve({ ...job, ...(data as object) })
+      current = {
+        ...current,
+        ...(data.harvestedAt && { harvested_at: data.harvestedAt.getTime() }),
+        ...(data.harvestError !== undefined && { harvest_error: data.harvestError ?? undefined }),
+        ...(data.fileEvidence && { file_evidence: data.fileEvidence })
+      }
+      return Promise.resolve(current)
     }),
     claimNotification: vi.fn((_jobId: string, notifiedAt: Date) =>
-      Promise.resolve({ ...job, notified_at: notifiedAt.getTime() })
+      Promise.resolve({ ...current, notified_at: notifiedAt.getTime() })
     )
   } as unknown as Pick<ComputeJobRepository, 'update' | 'claimNotification'>
   return { repo, updates }
@@ -291,6 +308,25 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 // Clean harvest: featured + hidden files downloaded, harvestedAt set
 // ---------------------------------------------------------------------------
+
+it('rejects a different backend’s archive transport before touching the job or the filesystem', async () => {
+  const job = makeJob({ provider_id: 'modal:local', execution_mode: 'modal_sandbox' })
+  const { repo, updates } = makeJobRepo(job)
+  const acquire = vi.fn()
+  const hostRepository = makeHostRepo(null)
+  await expect(
+    harvestJob(job, {
+      storageRoot: await mkTmp(),
+      jobRepository: repo,
+      hostRepository,
+      connectionBroker: { acquire },
+      rayOutputs: { sharedRoot: '/shared', runId: job.job_id, dev: '1', ino: '2' }
+    })
+  ).rejects.toThrow('Compute harvest source does not match its job.')
+  expect(acquire).not.toHaveBeenCalled()
+  expect(hostRepository.get).not.toHaveBeenCalled()
+  expect(updates).toHaveLength(0)
+})
 
 describe('harvestJob — clean harvest', () => {
   it('persists sibling scheduler states while actual harvest log I/O remains pending', async () => {
@@ -939,6 +975,64 @@ describe('harvestJob — data-root migration gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — harvest_failed', () => {
+  it('retries Kubernetes evidence publication when the destination is unblocked', async ({
+    onTestFinished
+  }) => {
+    const storageRoot = await mkTmp()
+    onTestFinished(() => rm(storageRoot, { recursive: true, force: true }))
+    const job = makeJob({
+      provider_id: 'kubernetes:cluster',
+      execution_mode: 'kubernetes',
+      output_manifest: JSON.stringify(['result.bin'])
+    })
+    const scope = {
+      storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId: job.job_id
+    }
+    await beginComputeJobFileEvidence({ ...scope, inputs: [] })
+    const evidenceDir = join(
+      storageRoot,
+      'execution-file-evidence',
+      job.project_id,
+      job.session_id,
+      `activity-${job.job_id}`
+    )
+    await mkdir(evidenceDir)
+    const connectionBroker = brokerFromRunners(
+      makeSshRunner(findOutput([{ path: 'result.bin', size_bytes: 10 }])),
+      makeWritingScpRunner()
+    )
+    const { repo, updates } = makeJobRepo(job)
+    const deps = {
+      storageRoot,
+      connectionBroker,
+      workspaceConnection: await connectionBroker.acquire(job.provider_id, {
+        intent: 'job_harvest'
+      }),
+      jobRepository: repo,
+      hostRepository: makeHostRepo(null)
+    }
+
+    await expect(harvestJob(job, deps)).rejects.toThrow(
+      'Compute output evidence publication failed.'
+    )
+    expect(updates).toEqual([
+      {
+        jobId: job.job_id,
+        data: { harvestError: 'harvest pending: Compute output evidence publication failed.' }
+      }
+    ])
+    await rmdir(evidenceDir)
+    await harvestJob(job, deps)
+    expect(updates.at(-1)?.data).toMatchObject({
+      harvestedAt: expect.any(Date),
+      harvestError: null,
+      fileEvidence: { checksum: expect.stringMatching(/^[a-f0-9]{64}$/) }
+    })
+  })
+
   it('cleans unpublished Compute evidence after output snapshot failure', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
@@ -1189,7 +1283,7 @@ describe('harvestJob — harvest_failed', () => {
       expect(updates[0]?.data).not.toHaveProperty('harvestedAt')
       expect(publishJobUpdated).toHaveBeenCalledOnce()
       expect(publishJobUpdated).toHaveBeenCalledWith(
-        expect.objectContaining({ harvestError: 'harvest pending: authentication_failed' })
+        expect.objectContaining({ harvest_error: 'harvest pending: authentication_failed' })
       )
 
       // Simulate the restart scan selecting the still-unharvested row after credentials are repaired.

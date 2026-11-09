@@ -99,6 +99,7 @@ describe.runIf(process.platform === 'win32')('Windows native Shell control pipe'
           process.cwd(),
           `packages/notebook-network-sandbox/vendor/windows/${process.arch}/notebook-appcontainer-host.exe`
         ),
+        ownershipRoot: root,
         gatewayPort: 49700,
         gatewayCredentials: { username: 'unused', password: 'unused' },
         env: process.env,
@@ -332,6 +333,7 @@ describe('Windows AppContainer launch', () => {
       command: 'Write-Output ready',
       cwd: 'C:\\workspace',
       hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
+      ownershipRoot: 'C:\\resources\\notebook-sandbox',
       gatewayPort: 49700,
       gatewayCredentials: { username: 'command', password: 'secret' },
       env: {}
@@ -349,6 +351,11 @@ describe('Windows AppContainer launch', () => {
     }
 
     expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
+    expect(launch.processTreeProof).toMatchObject({
+      path: expect.stringContaining('.open-science-process-tree-terminated-'),
+      token: expect.any(String),
+      requestPath: expect.stringContaining('.request')
+    })
     expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
     expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
     expect(specification).toMatchObject({
@@ -367,6 +374,7 @@ describe('Windows AppContainer launch', () => {
       command: 'unused',
       cwd: root,
       hostPath: join(root, 'host.exe'),
+      ownershipRoot: temporary,
       gatewayPort: 49700,
       gatewayCredentials: { username: 'unused', password: 'unused' },
       env: { TEMP: temporary }
@@ -409,6 +417,7 @@ describe('Windows AppContainer launch', () => {
           command: 'unused',
           cwd: root,
           hostPath: join(root, 'host.exe'),
+          ownershipRoot: root,
           gatewayPort: 49700,
           gatewayCredentials: { username: 'unused', password: 'unused' },
           env: { TEMP: root }
@@ -435,6 +444,7 @@ describe('Windows AppContainer launch', () => {
 
           writeFileSync(spec.terminationProofPath, JSON.stringify(proof))
           await expect(launch.confirmProcessState()).resolves.toBe(terminalState)
+          await launch.releaseProcessTreeProof()
           expect(existsSync(spec.terminationProofPath)).toBe(false)
           await expect(launch.confirmProcessTreeTermination()).resolves.toBe(true)
           await expect(launch.confirmProcessState()).resolves.toBe(terminalState)
@@ -488,6 +498,44 @@ describe('Windows AppContainer launch', () => {
     })
 
     expect(launch.env.LOCALAPPDATA).toBe(localAppData)
+  })
+
+  it('keeps process-tree proof files outside the workload temporary root', () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'windows-proof-root-')))
+    const ownerRoot = join(root, 'ownership')
+    const temporary = join(root, 'command-temp')
+    mkdirSync(ownerRoot)
+    mkdirSync(temporary)
+    try {
+      const launch = windowsLaunch({
+        command: 'node repl_loop.js',
+        executable: process.execPath,
+        args: [],
+        cwd: temporary,
+        gatewayPort: 49700,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: { TEMP: temporary, TMP: temporary },
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [temporary],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        hostPath: join(root, 'host.exe'),
+        installationId: '0123456789abcdef01234567',
+        ownershipRoot: ownerRoot
+      })
+      const specification = JSON.parse(
+        Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+      ) as { terminationProofPath: string; terminationRequestPath: string }
+
+      expect(specification.terminationProofPath.startsWith(ownerRoot)).toBe(true)
+      expect(specification.terminationRequestPath.startsWith(ownerRoot)).toBe(true)
+      expect(specification.terminationProofPath.startsWith(temporary)).toBe(false)
+      expect(specification.terminationRequestPath.startsWith(temporary)).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('passes managed Skill read grants and write denials to the native Windows host', () => {
@@ -698,6 +746,7 @@ describe('Windows AppContainer launch', () => {
           process.cwd(),
           'packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe'
         ),
+        ownershipRoot: root,
         gatewayPort: 49700,
         gatewayCredentials: { username: 'command', password: 'secret' },
         env: process.env

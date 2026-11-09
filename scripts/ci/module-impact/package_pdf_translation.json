@@ -536,10 +536,16 @@
     "packages/pdf-translation/test/reader/pdf-translation-outlier-font-navigation.test.ts",
     "packages/pdf-translation/resources/literal-source-identity.mjs",
     "packages/pdf-translation/src/reader/native-display-packets.ts",
+    "packages/pdf-translation/src/reader/figure-panels.ts",
+    "packages/pdf-translation/src/reader/figure-variable-keys.ts",
+    "packages/pdf-translation/test/reader/pdf-translation-figure-panels.test.ts",
+    "packages/pdf-translation/test/reader/pdf-translation-figure-variable-keys.test.ts",
     "packages/pdf-translation/test/literal-source-identity.test.ts",
     "packages/pdf-translation/test/reader/pdf-translation-scoped-display-packets.test.ts",
     "packages/pdf-translation/resources/native-link-origin.mjs",
-    "packages/pdf-translation/test/native-link-origin.test.ts"
+    "packages/pdf-translation/test/native-link-origin.test.ts",
+    "packages/pdf-translation/src/reader/native-occluded-text.ts",
+    "packages/pdf-translation/test/reader/pdf-translation-occluded-text.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -647,7 +653,10 @@
       "packages/pdf-translation/test/reader/pdf-translation-outlier-font-navigation.test.ts",
       "packages/pdf-translation/test/literal-source-identity.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-scoped-display-packets.test.ts",
-      "packages/pdf-translation/test/native-link-origin.test.ts"
+      "packages/pdf-translation/test/reader/pdf-translation-figure-panels.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-figure-variable-keys.test.ts",
+      "packages/pdf-translation/test/native-link-origin.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-occluded-text.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [

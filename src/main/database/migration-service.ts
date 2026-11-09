@@ -1,5 +1,7 @@
-import { projectOptimizationPromptMigration } from './migrations/0055-project-optimization-prompt'
-import { projectOptimizationPromptScopeMigration } from './migrations/0056-project-optimization-prompt-scope'
+import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
+import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
+import { projectOptimizationPromptMigration } from './migrations/0057-project-optimization-prompt'
+import { projectOptimizationPromptScopeMigration } from './migrations/0058-project-optimization-prompt-scope'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -996,6 +998,27 @@ const MIGRATION_MANIFEST = [
       slurmJobReliabilityMigration.operations
     ),
     foreignKeysDuringApply: 'disabled',
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionDiscussionParentMigration,
+    checksum: checksumMigrationPayload(
+      sessionDiscussionParentMigration.id,
+      sessionDiscussionParentMigration.statements,
+      sessionDiscussionParentMigration.verifiers
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeKubernetesWorkspaceMigration,
+    checksum: checksumMigrationPayload(
+      computeKubernetesWorkspaceMigration.id,
+      computeKubernetesWorkspaceMigration.statements,
+      computeKubernetesWorkspaceMigration.verifiers,
+      computeKubernetesWorkspaceMigration.operations
+    ),
     backupOnApply: 'required',
     backupRetention: 'retain'
   },
@@ -2011,7 +2034,14 @@ const applyManifestMigration = async (
     migration.id !== managedFileVersionFoundationMigration.id &&
     (migration.id < managedFileVersionFoundationMigration.id ||
       migration.id === numericAndNullConstraintsMigration.id ||
-      preservesSlurmColumns) &&
+      preservesSlurmColumns ||
+      (migration.id === slurmJobReliabilityMigration.id &&
+        (
+          await migrationSqlExecutor.query<{ name: string }[]>(
+            client,
+            'PRAGMA table_info("ComputeJob")'
+          )
+        ).some(({ name }) => name === 'kubernetesWorkspace'))) &&
     MIGRATION_MANIFEST.some(
       (candidate) => candidate.id === migration.id && candidate.checksum === migration.checksum
     )

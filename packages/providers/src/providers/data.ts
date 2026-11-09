@@ -164,14 +164,10 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ],
-    // Bundled DeepSeek V4 models serve the native Responses API. Keep the explicit list because the
-    // vendor also exposes non-Responses models through its live model catalog.
-    responsesModels: [
-      'deepseek-flash',
-      'deepseek-v4-pro',
-      'deepseek-v4-flash',
-      'deepseek-v4-flash-vision-exp'
-    ],
+    // DeepSeek's native Responses API accepts the stable `deepseek-flash` id and V4 Pro. The
+    // `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` aliases remain Chat Completions /
+    // Anthropic-compatible models even though they route to the current Flash backend.
+    responsesModels: ['deepseek-flash', 'deepseek-v4-pro'],
     // V4.1 Flash accepts image input; the legacy Flash ids now route to the same model.
     // Keep Pro text-only, and apply these capabilities to ids received through live refresh too.
     multimodal: {

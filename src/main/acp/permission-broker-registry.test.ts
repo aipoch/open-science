@@ -10,12 +10,16 @@ import {
   createPermissionGrantRegistry,
   type PermissionGrantRegistry
 } from '../permission-grants/registry'
-import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
+import {
+  DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  seedDefaultPermissionGrants
+} from '../permission-grants/defaults'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
 import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
 import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
+import { harnessFramework } from '../agent-framework/harness'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import {
   AcpSessionCapabilityOwner,
@@ -1707,6 +1711,7 @@ it('releases queued durable searches without granting other capabilities or conv
 it.each([
   ['claude-code', 'claude-anthropic'],
   ['opencode', 'opencode-openai'],
+  ['open-science-agent', 'open-science-agent'],
   ['codex', 'codex-responses'],
   ['codex', 'codex-bridge']
 ] as const)('uses revocable shared Skill grants for %s / %s', async (frameworkId, modelRoute) => {
@@ -1887,7 +1892,7 @@ it('keeps historical MCP Skill authority on its original loader only', async () 
   ])
 })
 
-it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'open-science-agent'] as const)(
   'rechecks pending mapped %s capabilities when grants change and unsubscribes on disposal',
   async (frameworkId) => {
     storageRoot = await mkdtemp(join(tmpdir(), 'permission-pending-registry-'))
@@ -2013,3 +2018,78 @@ it.each(['revoked', 'lookup_failed'])(
     }
   }
 )
+
+it('routes all default MCP grants through Harness observations without granting other connectors', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'permission-harness-defaults-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  await seedDefaultPermissionGrants(registry, client)
+  const identities = DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.filter(
+    ({ kind }) => kind === 'mcp_tool'
+  ).map(({ key }) => key.slice('mcp:'.length))
+  identities.push('skills/load_skill')
+  const servers = [...new Set(identities.map((id) => id.split('/')[0])), 'external']
+  const emit = vi.fn()
+  const context = new AcpPermissionContext({
+    emitPermissionRequest: emit,
+    permissionGrantRegistry: registry,
+    routing: {
+      resolveAppSessionId: (id) => id,
+      sessionSnapshot: () => ({
+        cwd: storageRoot!,
+        frameworkId: 'open-science-agent',
+        permissionProfile: { selectedProfile: 'ask' }
+      }),
+      hasActivePrimarySession: () => true,
+      capturePrompt: () => undefined,
+      currentInteractionSequence: () => undefined,
+      mcpServerNamesFor: () => servers,
+      reviewerContextFor: () => undefined,
+      resolveReviewerPermission: () => undefined,
+      currentFramework: () => harnessFramework,
+      resolveProjectId: () => 'project-harness'
+    }
+  })
+  const request = (identity: string): Promise<unknown> => {
+    const [server, tool] = identity.split('/')
+    const title = `mcp__${server.replaceAll('-', '_')}__${tool}`
+    const call = {
+      toolCallId: identity,
+      title,
+      kind: 'other' as const,
+      status: 'pending' as const,
+      _meta: { toolName: title },
+      rawInput: {}
+    }
+    context.observeProviderUpdate({
+      sessionId: 'session-1',
+      update: { sessionUpdate: 'tool_call', ...call }
+    })
+    return context.handleProviderRequest({
+      sessionId: 'session-1',
+      toolCall: call,
+      options: [
+        { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    })
+  }
+  try {
+    for (const identity of identities)
+      await expect(request(identity), identity).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'allow' }
+      })
+    expect(emit).not.toHaveBeenCalled()
+    // A tool with the same leaf name on an external server has no default authority.
+    const external = request('external/load_skill')
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+    await context.respondToPermission(
+      { requestId: emit.mock.calls[0][0].requestId, optionId: 'deny' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(external).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+  } finally {
+    context.dispose()
+  }
+})

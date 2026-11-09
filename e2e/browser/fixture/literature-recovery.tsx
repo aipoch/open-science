@@ -140,6 +140,7 @@ window.api = {
     abortTransfer: async () => {}
   },
   literature: {
+    overviewBatch: async () => null,
     lookupMetadata: async (reference: string) => {
       linkReferences.push(reference)
       await new Promise<void>((resolve) => pendingLinkLookups.push(resolve))
@@ -235,6 +236,10 @@ window.api = {
         ]
       }
     },
+    studySnapshot: async (request: { expectedSourceKey: string }) => ({
+      sourceKey: request.expectedSourceKey,
+      issue: 'not-generated' as const
+    }),
     get: async () => fileItem,
     importPdf: async (request: { itemId: string; attachment: { name: string } }) => {
       fileRequests.push(request)

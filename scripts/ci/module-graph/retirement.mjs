@@ -7,6 +7,8 @@ import { dependencyBoundaryViolations } from './boundary-evidence.mjs'
 import { createDependencyReader } from './dependency-reader.mjs'
 import { sourceSnapshot } from './source.mjs'
 
+const GIT_OUTPUT_MAX_BUFFER = 128 * 1024 * 1024
+
 // Exceptions are derived by trusted code from both revisions, never a candidate flag.
 // Only consumer evidence can retire; existing owner/interface/contract protections stay intact.
 export function verifiedConsumerRetirements(
@@ -43,7 +45,7 @@ export function verifiedConsumerRetirements(
         const changed = execFileSync(
           'git',
           ['diff', '--no-renames', '--name-only', '-z', base, head],
-          { cwd, encoding: 'utf8' }
+          { cwd, encoding: 'utf8', maxBuffer: GIT_OUTPUT_MAX_BUFFER }
         )
           .split('\0')
           .filter(Boolean)
@@ -267,7 +269,8 @@ export function dependencyBasedConsumerRetirements(
     // Cleanup must not change the code, contracts, platform routing or policy that authorizes it.
     const changed = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', base, head], {
       cwd,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      maxBuffer: GIT_OUTPUT_MAX_BUFFER
     })
       .split('\0')
       .filter(Boolean)

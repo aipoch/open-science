@@ -153,6 +153,10 @@ export type PersistedChatSession = {
   revision?: number
   // Immutable source Session and selected conversation path at Branch or Fork creation.
   // Historical Sessions omit it and remain unrelated.
+  // Stable sidebar parent for a discussion started from an imported Session.
+  parentSessionId?: string
+  /** Local provenance for retained message references after permanent parent deletion. */
+  deletedDiscussionSourceId?: string
   branchSource?: PersistedSessionBranchSource
   title: string
   description?: string
@@ -270,6 +274,7 @@ export type PersistedChatSession = {
 // SQLite-backed startup projection. It intentionally excludes messages, activities, runtime
 // context, and artifact payloads; those remain in Session JSON and load only when opened.
 export type SessionSummary = Readonly<{
+  parentSessionId?: string
   number: number
   id: string
   projectId: string
@@ -330,6 +335,8 @@ export type SessionConflictRebaseField =
   | 'pinned'
 
 export type SaveSessionOptions = {
+  // Recovery retries must not overwrite an authority that changed after the user's review.
+  expectedRevision?: number
   runtimeWriterToken?: string
   conflictRebaseFields?: SessionConflictRebaseField[]
   conversationCommands?: import('../conversation-command-contract').SessionConversationCommand[]

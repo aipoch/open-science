@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import type { ChildProcess } from 'node:child_process'
 import { build } from 'esbuild'
 import { desktopBackendPaths, startOrAttachDesktopBackend } from './desktop-runtime-launcher'
+import { buildMacosServiceLauncher } from '../../scripts/build-macos-service-launcher.mjs'
 import { resolveElectronProfile } from './storage/electron-profile'
 const children = vi.hoisted(() => [] as ChildProcess[])
 vi.mock('node:child_process', async (original) => {
@@ -66,6 +67,7 @@ describe('ordinary Node desktop launcher', () => {
         resourcesPath: join(root, 'resources'),
         packaged
       })
+      if (paths.serviceLauncher) buildMacosServiceLauncher(paths.serviceLauncher)
       const runtime = dirname(paths.command)
       const npmBin = join(runtime, 'node_modules/npm/bin')
       await mkdir(npmBin, { recursive: true })

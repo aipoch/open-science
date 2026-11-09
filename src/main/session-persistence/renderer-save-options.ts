@@ -23,6 +23,14 @@ export const sanitizeRendererSaveSessionOptions = (
 ): SaveSessionOptions | undefined => {
   if (typeof options !== 'object' || options === null) return undefined
   const fields = Reflect.get(options, 'conflictRebaseFields')
+  const expectedRevision = Reflect.get(options, 'expectedRevision')
+  if (
+    expectedRevision !== undefined &&
+    (typeof expectedRevision !== 'number' ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 0)
+  )
+    throw new Error('Invalid expected Session revision.')
   const candidate = Array.isArray(fields) ? fields : []
   const conversationCommands = sanitizeSessionConversationCommands(
     Reflect.get(options, 'conversationCommands'),
@@ -40,8 +48,11 @@ export const sanitizeRendererSaveSessionOptions = (
       )
     )
   ]
-  return conflictRebaseFields.length > 0 || conversationCommands.length > 0
+  return expectedRevision !== undefined ||
+    conflictRebaseFields.length > 0 ||
+    conversationCommands.length > 0
     ? {
+        ...(expectedRevision !== undefined ? { expectedRevision } : {}),
         ...(conflictRebaseFields.length ? { conflictRebaseFields } : {}),
         ...(conversationCommands.length ? { conversationCommands } : {})
       }

@@ -1,4 +1,5 @@
 import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
+import { observeResourceProcess } from '../resource-diagnostics/recorder'
 import * as acp from '@agentclientprotocol/sdk'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type {
@@ -91,6 +92,8 @@ type AcpAgentConnectionHooks = Readonly<{
 
 type AcpAgentConnectionCandidateInput = Readonly<{
   epoch: number
+  resourceRuntimeId?: string
+  resourceExitExpected?: (child: ChildProcessWithoutNullStreams) => boolean | undefined
   resolveBackend: () => Promise<ResolvedAgentBackend>
   prepareBackend: (backend: ResolvedAgentBackend) => AcpBackendGenerationAttempt
   isCurrent: () => boolean
@@ -199,7 +202,8 @@ class AcpAgentConnectionAdapter {
             }
           },
           input.spawnProcess,
-          retainStoreWriter()
+          retainStoreWriter(),
+          { runtimeId: input.resourceRuntimeId, epoch: input.epoch, framework }
         )
         openCodeService = service
         backend = { ...backend, opencodeUsageApi: service.api }
@@ -214,6 +218,11 @@ class AcpAgentConnectionAdapter {
       const trackWriter = (
         child: ChildProcessWithoutNullStreams
       ): ChildProcessWithoutNullStreams => {
+        observeResourceProcess(
+          child,
+          { runtimeId: input.resourceRuntimeId, epoch: input.epoch, framework, role: 'acp' },
+          () => input.resourceExitExpected?.(child)
+        )
         if (writerReaped) onProcessTreeReaped(child, writerReaped)
         return child
       }

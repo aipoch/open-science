@@ -61,6 +61,7 @@ const computePreflight = ({
     opencode: opencodeReady,
     codex: codexReady,
     codebuddy: codebuddyReady,
+    'open-science-agent': true,
     pi: piReady
   }
   const agentReady = readyByFramework[agentFrameworkId]
@@ -69,6 +70,7 @@ const computePreflight = ({
     opencode: Boolean(settings.opencodePath),
     codex: Boolean(settings.codex?.resolvedPath),
     codebuddy: Boolean(settings.codebuddyPath),
+    'open-science-agent': true,
     pi: Boolean(piRuntimePath)
   }
   const runtimeReadiness = {
@@ -129,6 +131,7 @@ const computePreflight = ({
     opencodeReady,
     codebuddyReady,
     codexReady,
+    openScienceAgentReady: true,
     piReady,
     ...(piRuntimePath ? { piRuntimePath } : {}),
     agentFrameworkId,

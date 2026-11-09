@@ -1,4 +1,5 @@
-import { LiteratureStudySnapshot, LiteratureSnapshotStore } from '../literature/study-snapshot'
+import { LiteratureOverviewBatch } from '../literature/overview-batch'
+import { LiteratureOverviewService, LiteratureOverviewStore } from '../literature/overview'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { runtimeMetadata } from '../runtime-metadata'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -81,7 +82,8 @@ export async function composeResearchCatalog({
   tagService: TagService
   memoryService: MemoryService
   literatureCatalog: LiteratureCatalog
-  literatureStudySnapshot: LiteratureStudySnapshot
+  literatureOverviewBatch: LiteratureOverviewBatch
+  literatureOverview: LiteratureOverviewService
   journalAttributes: JournalAttributes
   literatureCitationFormatter: LiteratureCitationFormatter
   literatureCitationDocument: LiteratureCitationDocument
@@ -161,7 +163,7 @@ export async function composeResearchCatalog({
     smartCollections,
     journalAttributes
   )
-  const snapshotRunner = await modules.add(
+  const overviewRunner = await modules.add(
     new RestrictedInferenceRunner({
       appVersion: runtimeMetadata().version,
       configRoot,
@@ -171,33 +173,37 @@ export async function composeResearchCatalog({
       allowNativeCodexSubscription: true
     }),
     (runner) => ({
-      name: 'literature-study-snapshot-inference',
+      name: 'literature-overview-inference',
       capability: runner,
       dispose: () => runner.shutdown()
     })
   )
-  void snapshotRunner
+  void overviewRunner
     .sweepStaleProfiles()
     .catch((error) =>
-      literatureContextLog.warn('Study snapshot profile cleanup failed', errorLogFields(error))
+      literatureContextLog.warn('Paper overview profile cleanup failed', errorLogFields(error))
     )
-  const literatureStudySnapshot = new LiteratureStudySnapshot({
-    store: new LiteratureSnapshotStore(() =>
+  const literatureOverview = new LiteratureOverviewService({
+    store: new LiteratureOverviewStore(() =>
       join(resolveDataRoot(), 'literature', 'study-snapshots')
     ),
     catalog: literatureCatalog,
     reader: literatureDocumentReader,
     infer: async ({ prompt, systemPrompt, signal }) =>
-      snapshotRunner.run({
+      overviewRunner.run({
         prompt,
         systemPrompt,
         signal,
         target: await settingsService.captureActiveExplicitAgentBackendTarget(),
-        agentName: 'open-science-study-snapshot',
+        agentName: 'open-science-overview',
         description: 'Summarize a single paper without tools.',
         outputLimitBytes: 24_000
       })
   })
+  const literatureOverviewBatch = new LiteratureOverviewBatch(
+    () => join(resolveDataRoot(), 'literature', 'snapshot-batch.json'),
+    literatureOverview
+  )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')
   )
@@ -314,7 +320,8 @@ export async function composeResearchCatalog({
     memoryService,
     journalAttributes,
     literatureCatalog,
-    literatureStudySnapshot,
+    literatureOverview,
+    literatureOverviewBatch,
     literatureCitationFormatter,
     literatureCitationDocument,
     literatureReferenceResolver,

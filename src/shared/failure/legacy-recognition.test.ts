@@ -212,3 +212,12 @@ const isClaudeApiConnectionFailure = (text: string): boolean =>
   classifyFailure({ origin: 'agent-runtime', text }).reason === 'service/connection-failed'
 const isClaudeCliCompatibilityError = (text: string): boolean =>
   classifyFailure({ origin: 'agent-runtime', text }).reason === 'configuration/claude-cli'
+
+it('recognizes an uncertain harness effect through the ACP error envelope', () => {
+  expect(
+    classifyFailure({
+      origin: 'agent-runtime',
+      text: 'Internal error: Built-in Agent tool outcome is unknown: tool (invocation)'
+    })
+  ).toMatchObject({ category: 'session', reason: 'session/tool-outcome-unknown' })
+})

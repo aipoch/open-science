@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { expect, it, onTestFinished, vi } from 'vitest'
+import { beforeEach, expect, it, onTestFinished, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
@@ -13,7 +13,9 @@ import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { createCodexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import { codeBuddyFramework } from '../agent-framework/codebuddy'
-import { AcpRuntime } from './runtime.test-utils'
+import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
+
+beforeEach(shortenIdleReleaseWindow)
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
 import { withApprovedSpecialistBinding } from '../agents/production-completion-handoff'
@@ -471,6 +473,7 @@ it('recovers an approved Specialist handoff through real Claude lazy-session rep
       text: 'ORIGINAL_APPROVED_TASK',
       provenanceContext: { promptMessageId: 'origin' }
     })
+    await vi.waitFor(() => expect(liveRuntime.getSnapshot().sessionIds).toEqual([]))
     let binding: string | undefined
     let persisted: PersistedSessionSpecialistBinding = {}
     const pendingTransitions: boolean[] = []

@@ -619,14 +619,20 @@ SectionEnd
           'locales'
         ].sort()
       )
+    } catch (error) {
+      console.error('NSIS preservation fixture failed before cleanup:', error)
+      throw error
     } finally {
       if (existsSync(restoreAcl)) {
         const restored = spawnSync(
           powershell,
           ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', restoreAcl],
-          { windowsHide: true, timeout: 15_000, env: powershellEnv }
+          { encoding: 'utf8', windowsHide: true, timeout: 15_000, env: powershellEnv }
         )
-        expect(restored.status, 'restore fixture-only ACL before cleanup').toBe(0)
+        expect(
+          restored.status,
+          `restore fixture-only ACL before cleanup: ${restored.error?.message ?? ''}\n${restored.stderr}\n${restored.stdout}`
+        ).toBe(0)
       }
       rmSync(root, { recursive: true, force: true })
     }
@@ -920,6 +926,24 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     ]) {
       expect(include).toContain(`File "\${BUILD_RESOURCES_DIR}\\${script}"`)
       expect(include).toContain(`-File "$PLUGINSDIR\\${script}"`)
+    }
+  })
+
+  it('records the helper phase and exit code when cleanup fails', () => {
+    const cleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.nsh'), 'utf8')
+    expect(cleanup).toContain(
+      'Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations'
+    )
+    expect(cleanup).toContain(
+      'Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files'
+    )
+
+    const dataPaths = readFileSync(join(repoRoot, 'build/windows-program-data-paths.ps1'), 'utf8')
+    const programCleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.ps1'), 'utf8')
+    for (const script of [dataPaths, programCleanup]) {
+      expect(script).toContain('nativeErrorCode=')
+      expect(script).toContain('hresult=0x')
+      expect(script).toMatch(/exit 2/)
     }
   })
 

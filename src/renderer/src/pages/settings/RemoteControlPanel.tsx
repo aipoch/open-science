@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { SettingsIconAction, SettingsSection } from './SettingsLayout'
+import { ConnectMobilePanel } from '@/pages/connect-mobile/ConnectMobileWindow'
 
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
 const REMOTE_ACCESS_FRESH_MS = 60_000
@@ -501,6 +502,18 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   return (
     <TooltipProvider delayDuration={200}>
       <div className="space-y-5 p-5" data-testid="remote-control-panel">
+        {snapshot.canManage ? (
+          <SettingsSection
+            title={t('Connect mobile device')}
+            description={t(
+              'Scan a QR code to open this workspace on a phone or tablet over WiFi or the internet.'
+            )}
+          >
+            <div className="mt-4">
+              <ConnectMobilePanel embedded />
+            </div>
+          </SettingsSection>
+        ) : null}
         <Dialog.Root open={blockingRemoteOperation}>
           <Dialog.Portal>
             <Dialog.Overlay

@@ -1026,3 +1026,20 @@ it('binds the first service identity without losing already admitted startup ord
   expect(acceptAcpRuntimeSnapshotRevision(startup)).toBe(false)
   unmount()
 })
+
+describe('captured runtime API during asynchronous prompt preparation', () => {
+  it('observes retirement before the awaiting sender resumes, without retaining a stale Session', async () => {
+    acpApi.getState.mockResolvedValueOnce(
+      createSnapshot({ sessionIds: ['session-1'], revision: 1 })
+    )
+    const { result } = await mountRuntime()
+    const preparingSend = result.current
+    expect(preparingSend.state.sessionIds).toEqual(['session-1'])
+    await act(async () => {
+      capturedStateListener!(createSnapshot({ sessionIds: [], revision: 2 }))
+      await Promise.resolve()
+      expect(preparingSend.state.sessionIds).toEqual([])
+    })
+    expect(result.current.state.sessionIds).toEqual([])
+  })
+})

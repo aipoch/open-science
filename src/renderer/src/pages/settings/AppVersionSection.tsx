@@ -33,16 +33,14 @@ type AppVersionSectionProps = {
 }
 
 const resourceLinkClassName =
-  'group flex min-h-14 w-full gap-3 rounded-lg px-1 py-3 text-foreground no-underline transition-[color,background-color,transform] duration-150 ease-out motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
+  'group flex min-h-20 w-full min-w-0 items-start gap-3 overflow-hidden rounded-lg border border-border bg-muted/40 p-3 text-foreground no-underline transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 dark:hover:bg-background/40 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
 
 const resourceIconClassName =
-  'size-5 shrink-0 text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
+  'mt-0.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
 
-const resourceTitleClassName =
-  'block whitespace-nowrap text-sm font-medium transition-transform duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)_and_(pointer:fine)]:translate-y-2.5 [@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0 [@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:translate-y-0 [@media(any-pointer:coarse)]:!translate-y-0 group-[.is-hover]:translate-y-0 group-[.is-focus]:translate-y-0'
+const resourceTitleClassName = 'block min-w-0 whitespace-normal break-words text-sm font-medium'
 
-const resourceDescriptionClassName =
-  'mt-0.5 block text-[13px] leading-5 text-muted-foreground transition-opacity duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:opacity-100 [@media(any-pointer:coarse)]:!opacity-100 group-[.is-hover]:opacity-100 group-[.is-focus]:opacity-100'
+const resourceDescriptionClassName = 'mt-0.5 block text-xs text-muted-foreground'
 
 // App identity + update control in Settings→General. Reads the shared update store so it stays in
 // sync with the external capsule; the update button opens the shared dialog (version + notes +
@@ -187,10 +185,11 @@ const AppVersionSection = ({
             </div>
           ) : null}
 
-          <div className="space-y-1 pt-2">
+          <div data-testid="about-resource-grid" className="grid gap-3 pt-2 sm:grid-cols-2">
             <ExternalTextLink
               href={APP.update.downloadPage}
               data-settings-anchor="general.download"
+              data-slot="about-resource-card"
               aria-label={t('Download from website')}
               className={resourceLinkClassName}
             >
@@ -215,6 +214,7 @@ const AppVersionSection = ({
             <ExternalTextLink
               href={getInstallationDocumentationUrl(locale)}
               data-settings-anchor="general.manual-install"
+              data-slot="about-resource-card"
               aria-label={t('Open manual installation and update guidance in your browser')}
               className={resourceLinkClassName}
             >
@@ -241,6 +241,7 @@ const AppVersionSection = ({
             <ExternalTextLink
               href={getDocumentationUrl(locale)}
               data-settings-anchor="general.help-center"
+              data-slot="about-resource-card"
               aria-label={t('Open Help Center in your browser')}
               className={`${resourceLinkClassName} ${helpPreviewClassName}`}
             >
@@ -264,6 +265,7 @@ const AppVersionSection = ({
 
             <ExternalTextLink
               href={APP.links.githubReleases}
+              data-slot="about-resource-card"
               aria-label={t('Open release notes in your browser')}
               className={resourceLinkClassName}
             >
@@ -286,6 +288,7 @@ const AppVersionSection = ({
             </ExternalTextLink>
             <ExternalTextLink
               href={APP.links.license}
+              data-slot="about-resource-card"
               aria-label={t('Open-source license')}
               className={resourceLinkClassName}
             >
@@ -308,6 +311,7 @@ const AppVersionSection = ({
             </ExternalTextLink>
             <ExternalTextLink
               href={APP.links.security}
+              data-slot="about-resource-card"
               aria-label={t('Security')}
               className={resourceLinkClassName}
             >

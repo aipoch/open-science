@@ -192,6 +192,12 @@ const projectSessionMetadataAuthority = (
   const projected = {
     ...current,
     revision: incomingRevision,
+    ...(incoming.deletedDiscussionSourceId
+      ? {
+          parentSessionId: undefined,
+          deletedDiscussionSourceId: incoming.deletedDiscussionSourceId
+        }
+      : {}),
     enabledComputeHosts: incoming.enabledComputeHosts && [...incoming.enabledComputeHosts],
     selectedComputeHosts: incoming.selectedComputeHosts && [...incoming.selectedComputeHosts],
     computeConcurrencyLimit: incoming.computeConcurrencyLimit
@@ -282,6 +288,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    pendingRetryable,
     pendingBindingSessionId,
     firstPromptDraft,
     wslSetup,
@@ -317,6 +324,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void pendingRetryable
   void firstPromptDraft
   void pendingBindingSessionId
   void wslSetup
@@ -421,6 +429,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   number: summary.number,
   id: summary.id,
   projectId: summary.projectId,
+  ...(summary.parentSessionId ? { parentSessionId: summary.parentSessionId } : {}),
   title: summary.title,
   cwd: '',
   status: summary.presentedStatus,
@@ -521,6 +530,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    pendingRetryable: source.pendingRetryable,
     firstPromptDraft: source.firstPromptDraft,
     pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,

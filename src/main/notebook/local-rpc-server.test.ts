@@ -3919,7 +3919,7 @@ describe('notebook local RPC server', () => {
         const legacy = server.issueArtifactRunCapability({ ...binding, allowedMethods: [method] })
         const response = await call(legacy, method)
         expect(response.status).toBe(409)
-        expect(await response.text()).toContain('Restart')
+        expect(await response.text()).toContain('Artifact save protocol changed')
       }
       now = 101
       expect((await call(token, 'artifactSaveVersion')).status).toBe(401)
@@ -5863,4 +5863,30 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
     expect(provisioner.provisionPython).not.toHaveBeenCalled()
     expect(h.emitted).toHaveLength(0)
   })
+})
+
+it('rejects research generation through a conversation Artifact capability', async () => {
+  const root = await createStorageRoot()
+  const runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project-1',
+    repository: new NotebookRunRepository(root)
+  })
+  const server = new NotebookLocalRpcServer(runtime, { transport: 'tcp' })
+  const connection = await server.ensureStarted()
+  const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
+  try {
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'researchVideoGenerate', params: { specPath: 'video.json' } })
+    })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({
+      error: 'Unknown notebook RPC method: researchVideoGenerate'
+    })
+  } finally {
+    await server.close()
+  }
 })

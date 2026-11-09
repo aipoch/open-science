@@ -297,6 +297,55 @@ describe('shared PDF parsing lifecycle', () => {
     expect(await test.owner.readCached(reading, [1])).toBeUndefined()
   })
 
+  it('retries one resource-limited OCR job without OCR and does not loop', async () => {
+    const release = vi.fn()
+    const ocrModels: NonNullable<Parameters<typeof createPdfStructureOwner>[0]['ocrModels']> = {
+      getSnapshot: vi.fn(async () => ({
+        availability: 'ready' as const,
+        recommendedRevision: 'v1',
+        downloadBytes: 0,
+        installedBytes: 0,
+        transferredBytes: 0,
+        hasFiles: true,
+        inUse: false,
+        updateAvailable: false
+      })),
+      acquireUse: vi.fn(async () => ({
+        revision: 'ocr-v1',
+        languages: ['eng'] as const,
+        assets: [
+          { file: 'ocr-engine.mjs', path: join(root, 'ocr-engine.mjs'), sha256: 'engine', size: 1 },
+          {
+            file: 'eng.traineddata.gz',
+            path: join(root, 'eng.traineddata.gz'),
+            sha256: 'eng',
+            size: 1
+          }
+        ],
+        release
+      }))
+    }
+    const test = setup(undefined, ocrModels)
+    const task = test.owner.acquire(reading, [1])
+    const first = await started(test)
+    expect(first.request.ocr).toBeDefined()
+    const resourceLimit = Object.assign(new Error('PDF execution resource limit exceeded.'), {
+      code: 'PDF_RESOURCE_LIMIT'
+    })
+    first.output.reject(resourceLimit)
+    const second = await started(test, 2)
+    expect(second.request.ocr).toBeUndefined()
+    expect(second.request.identity.engineFingerprint).toBe(fingerprint)
+    second.output.resolve(resultFor(second.request.identity))
+    const parsed = await task.result
+    expect(parsed).toMatchObject({ engineFingerprint: fingerprint })
+    expect(await test.owner.readCached(reading, [1])).toEqual(parsed)
+    const cached = test.owner.acquire(reading, [1])
+    await expect(cached.result).resolves.toEqual(parsed)
+    cached.release()
+    expect(test.runs).toHaveLength(2)
+  })
+
   it('reads persisted results without starting inference on either cache hit or miss', async () => {
     const test = setup()
     expect(await test.owner.readCached(reading, [1])).toBeUndefined()
@@ -816,7 +865,7 @@ describe('shared PDF parsing lifecycle', () => {
     run.output.resolve(resultFor(run.request.identity))
     await expect(handle.result).resolves.toMatchObject({ sourceChecksum: checksum })
     expect(test.writers()).toBe(0)
-    expect(test.acquireWriter).toHaveBeenCalledTimes(3) // source, cache lookup, then model use
+    expect(test.acquireWriter).toHaveBeenCalledTimes(4) // source, base-cache probe, cache lookup, then model use
     await expect(test.owner.acquire(reading, [1]).result).rejects.toThrow('Migration is pending')
   })
 

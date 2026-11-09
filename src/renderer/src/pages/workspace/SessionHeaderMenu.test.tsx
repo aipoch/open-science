@@ -192,3 +192,36 @@ describe('SessionHeaderMenu', () => {
     })
   })
 })
+
+it('offers research explanation only when the owner supplies the capability', async () => {
+  const openResearchExplanation = vi.fn()
+  await render({ session, openResearchExplanation })
+  await openMenu()
+  const action = document.querySelector<HTMLElement>('[data-action-id="research-explanation"]')!
+  expect(action.textContent).toBe('Research film')
+  await act(async () => action.click())
+  expect(openResearchExplanation).toHaveBeenCalledTimes(1)
+  expect(trigger().getAttribute('aria-expanded')).toBe('false')
+  await render({ session })
+  await openMenu()
+  expect(document.querySelector('[data-action-id="research-explanation"]')).toBeNull()
+})
+
+it('shows the shared film state and disabled reason in the session menu', async () => {
+  const openResearchExplanation = vi.fn()
+  await render({
+    session,
+    openResearchExplanation,
+    researchVideoTriggerState: {
+      label: 'Generate research film',
+      disabledReason: 'Wait for a completed response before generating.'
+    }
+  })
+  await openMenu()
+  const action = document.querySelector<HTMLElement>('[data-action-id="research-explanation"]')!
+  expect(action.textContent).toBe('Generate research film')
+  expect(action.getAttribute('aria-disabled')).toBe('true')
+  expect(action.title).toBe('Wait for a completed response before generating.')
+  await act(async () => action.click())
+  expect(openResearchExplanation).not.toHaveBeenCalled()
+})

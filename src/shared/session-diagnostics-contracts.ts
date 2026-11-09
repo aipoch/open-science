@@ -2,9 +2,22 @@ import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
-const request = z
-  .object({ projectId: identity, sessionId: identity, operationId: identity })
+const sessionRequest = z
+  .object({
+    projectId: identity,
+    sessionId: identity,
+    operationId: identity,
+    scope: z.literal('session').optional()
+  })
   .strict()
+const applicationRequest = z
+  .object({ scope: z.literal('application'), operationId: identity })
+  .strict()
+const request = z.union([sessionRequest, applicationRequest])
+const exportFields = {
+  selectedItems: z.array(z.string().min(1).max(512)).max(1000),
+  includeExecutionCode: z.boolean().optional()
+}
 const inspection = z
   .object({
     items: z.array(
@@ -15,6 +28,7 @@ const inspection = z
             'session',
             'invalid-session',
             'log',
+            'resource-log',
             'database',
             'notebook',
             'environment',
@@ -48,12 +62,10 @@ export const sessionDiagnosticCommandContracts = {
   export: defineApplicationCommandContract(
     validationCodec(
       z.tuple([
-        request
-          .extend({
-            selectedItems: z.array(z.string().min(1).max(512)).max(1000),
-            includeExecutionCode: z.boolean().optional()
-          })
-          .strict()
+        z.union([
+          sessionRequest.extend(exportFields).strict(),
+          applicationRequest.extend(exportFields).strict()
+        ])
       ])
     ),
     validationCodec(result)

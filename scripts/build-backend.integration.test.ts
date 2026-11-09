@@ -243,3 +243,62 @@ it('rebuilds raw resources, worker edits and newly discovered workers without El
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('inlines the notebook-network-sandbox network-address subpath into backend bundles', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'backend-network-address-'))
+  const put = async (file: string, content: string): Promise<void> => {
+    await mkdir(dirname(join(root, file)), { recursive: true })
+    await writeFile(join(root, file), content)
+  }
+  try {
+    await put(
+      'packages/open-science/installation-startup.cjs',
+      await readFile(
+        new URL('../packages/open-science/installation-startup.cjs', import.meta.url),
+        'utf8'
+      )
+    )
+    // stage-backend never ships this package into backend node_modules, so the bundle must
+    // inline the subpath instead of keeping a runtime require packaged apps cannot resolve.
+    await put(
+      'packages/notebook-network-sandbox/src/network-address.ts',
+      await readFile(
+        new URL('../packages/notebook-network-sandbox/src/network-address.ts', import.meta.url),
+        'utf8'
+      )
+    )
+    await put('package.json', JSON.stringify({ dependencies: {} }))
+    await put(
+      'src/shared/i18n/locales/en.json',
+      JSON.stringify({ common: {}, native: {}, renderer: {} })
+    )
+    await put(
+      'src/main/node-entry.ts',
+      `
+      import { normalizeNetworkHostname } from '@aipoch/notebook-network-sandbox/network-address';
+      console.log(normalizeNetworkHostname(' Example.COM. '));
+    `
+    )
+    const builder = await createBackendBuilder({ root })
+    try {
+      expect(await builder.rebuild()).toBe(0)
+    } finally {
+      await builder.dispose()
+    }
+    expect(await readFile(join(root, 'out/backend/index.cjs'), 'utf8')).not.toContain(
+      'notebook-network-sandbox/network-address'
+    )
+    expect(
+      execFileSync(process.execPath, [join(root, 'out/backend/index.cjs')], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          OPEN_SCIENCE_CONFIG_ROOT: join(root, 'config'),
+          OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'installation-state')
+        }
+      }).trim()
+    ).toBe('example.com')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30_000)

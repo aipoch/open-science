@@ -1,6 +1,10 @@
 import { allowedDuringServiceStop } from './service-command-admission'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
+  resourceRecordingCommandGroup,
+  registerResourceRecordingCommands
+} from './ipc-surfaces/resource-recording'
+import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
   RENDERER_CONTRACT_CATALOG
 } from '../shared/renderer-contract-catalog'
@@ -164,11 +168,21 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'resource-recording:get-state',
+  'resource-recording:start',
+  'resource-recording:stop',
+  'research-video:start',
+  'research-video:status',
+  'research-video:remove',
+  'research-video:cancel',
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',
   'office-preview:attach-frame',
   'office-preview:close',
   'office-preview:report-state',
+  'preview-resources:export-research-video',
+  'preview-resources:cancel-research-video-export',
+  'preview-resources:research-video-progress',
 
   'sessions:open-recovery-folder',
   'specialist:get-handoff-events',
@@ -236,6 +250,10 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:detect',
   'remote-access:disable',
   'remote-access:set-mode',
+  'remote-access:refresh-offer',
+  'remote-access:select-lan-address',
+  'remote-access:set-pinggy-token',
+  'remote-access:set-pinggy-region',
   'sessions:export-conversation',
   'sessions:fork',
   'sessions:inspect-diagnostics',
@@ -394,6 +412,9 @@ const createApplicationCommandModules = (
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)
     ),
+    defineApplicationCommandModule([resourceRecordingCommandGroup], (registrar) =>
+      registerResourceRecordingCommands(registrar)
+    ),
     defineApplicationCommandModule(hostApplicationCommandGroups, (registrar) =>
       registerHostApplicationCommands(registrar, { ...dependencies.host, remoteAccess })
     )
@@ -415,6 +436,10 @@ const createRemoteAccessSlot = (): Readonly<{
     snapshot: (...args) => current().snapshot(...args),
     probe: (...args) => current().probe(...args),
     detect: (...args) => current().detect(...args),
+    refreshOffer: (...args) => current().refreshOffer(...args),
+    selectLanAddress: (...args) => current().selectLanAddress(...args),
+    setPinggyToken: (...args) => current().setPinggyToken(...args),
+    setPinggyRegion: (...args) => current().setPinggyRegion(...args),
     setMode: (...args) => current().setMode(...args),
     disable: (...args) => current().disable(...args),
     approve: (...args) => current().approve(...args),

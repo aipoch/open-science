@@ -82,14 +82,6 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
             ? 'Verify Python background completion delivery.'
             : 'Verify background completion delivery.'
       )
-      if (mode === 'shell') {
-        const review = page.getByRole('group', {
-          name: 'Permission request: Review potentially destructive code',
-          exact: true
-        })
-        await expect(review).toContainText('background-completion-e2e')
-        await review.getByRole('button', { name: 'Allow', exact: true }).click()
-      }
       await expect(page.getByText('Background execution submitted.', { exact: true })).toBeVisible()
       try {
         await expect(

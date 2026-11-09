@@ -174,7 +174,9 @@ vi.mock('../../resources/tray.png?asset', () => ({ default: 'icon' }))
 vi.mock('./windows', () => ({
   createMainWindow: vi.fn(() => ({ once: vi.fn(), show: vi.fn(), isDestroyed: () => false })),
   configureMainWindow: vi.fn(),
-  isMainWindow: vi.fn()
+  isMainWindow: vi.fn(),
+  isConnectMobileWindow: vi.fn(() => false),
+  openConnectMobileWindow: vi.fn()
 }))
 vi.mock('./window-shortcuts', () => ({
   applyInterfaceScaleShortcut: vi.fn(),
@@ -214,6 +216,10 @@ vi.mock('./session-persistence/renderer-flush', () => ({
   rendererSessionPersistenceFlushBlocksShutdown: vi.fn()
 }))
 vi.mock('./system-lifecycle-adapters', () => ({
+  installResourceActivityRelay: () => ({
+    state: () => ({ foreground: false, suspended: false }),
+    dispose: vi.fn()
+  }),
   installSystemLifecycleAdapters: () => ({
     installPowerMonitorListeners: vi.fn(),
     bindWindow: vi.fn()

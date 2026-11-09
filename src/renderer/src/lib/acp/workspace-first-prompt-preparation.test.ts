@@ -15,6 +15,7 @@ import type {
   AcpRuntimeState
 } from '../../../../shared/acp'
 import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
+import { projectSessionActionability } from '../../stores/session-actionability'
 import {
   createInitialSessionState,
   useSessionStore,
@@ -27,11 +28,15 @@ import {
   saveSessionInOrder,
   type SessionPersistenceApi
 } from '../session-persistence/session-persistence'
-import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
+import { deleteWorkspaceSession, sendWorkspaceMessage } from './workspace-runtime-command-owner'
 import { cancelWorkspaceRun } from './workspace-runtime-session-lifecycle-owner'
 import { retryPendingWorkspacePromptRollback } from './workspace-prompt-preparation'
 import { resetWorkspacePromptRollbacksForTests } from './workspace-prompt-preparation'
 import { useWorkspaceOperationErrors } from './workspace-operation-error'
+import {
+  retryWorkspaceSessionCleanup,
+  useWorkspaceSessionCleanups
+} from './workspace-runtime-session-cleanup-owner'
 import {
   configureComposerDraftStorage,
   readComposerDraft,
@@ -147,6 +152,7 @@ beforeEach(() => {
   resetSessionPersistenceWriteFailuresForTests()
   useSessionStore.setState(createInitialSessionState())
   useWorkspaceOperationErrors.setState({ errors: {} })
+  useWorkspaceSessionCleanups.setState({ cleanups: {} })
 })
 afterEach(() => {
   revokeComposerDraftStorage()
@@ -159,6 +165,328 @@ const flush = async (): Promise<void> => {
 const input = { text: 'First message', projectId: 'project', cwd: '/workspace' }
 
 describe('first prompt preparation boundaries', () => {
+  it.each(['cancel', 'create-failure'] as const)(
+    'publishes retryability after %s and admits a follow-up before an old create returns',
+    async (outcome) => {
+      const main = mainBoundary()
+      const creating = gate()
+      const agent = runtime()
+      agent.createSession.mockImplementationOnce(async () => {
+        if (outcome === 'create-failure') throw new Error('Creation failed')
+        await creating.promise
+        return { sessionId: 'old-session', cwd: '/workspace', frameworkId: 'codex' }
+      })
+      const appended = vi.fn()
+      const sending = sendWorkspaceMessage(
+        agent,
+        { ...input, onMessageAppended: appended },
+        { awaitPendingPreparation: true }
+      )
+      await flush()
+      const pendingId = appended.mock.calls[0][0].sessionId
+      try {
+        if (outcome === 'cancel') await cancelWorkspaceRun(agent, pendingId)
+        await sending
+        const pending = useSessionStore.getState().sessions.find(({ id }) => id === pendingId)!
+        expect(pending.pendingRetryable).toBe(true)
+        expect(projectSessionActionability(pending).actions.startTurn.allowed).toBe(true)
+        const retried = await sendWorkspaceMessage(
+          agent,
+          { ...input, sessionId: pendingId, text: 'Follow-up after preparation ended' },
+          { awaitPendingPreparation: true, awaitPromptAdmission: true }
+        )
+        expect(retried?.sessionId).toBe('bound-session')
+        expect(agent.sendPrompt).toHaveBeenCalledOnce()
+        expect(agent.sendPrompt.mock.calls[0][0]).toBe('bound-session')
+        expect(
+          useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')
+        ).not.toHaveProperty('pendingRetryable', true)
+      } finally {
+        creating.resolve()
+        await flush()
+      }
+      if (outcome === 'cancel')
+        expect(main.deleteSession).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: 'old-session' })
+        )
+      expect(main.deleteSession).not.toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'bound-session' })
+      )
+      expect(agent.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps a stopped seed write blocked until it drains, then publishes retryability', async () => {
+    const main = mainBoundary('seed')
+    const agent = runtime()
+    const appended = vi.fn()
+    const sending = sendWorkspaceMessage(
+      agent,
+      { ...input, onMessageAppended: appended },
+      { awaitPendingPreparation: true }
+    )
+    await flush()
+    const pendingId = appended.mock.calls[0][0].sessionId
+    try {
+      await cancelWorkspaceRun(agent, pendingId)
+      await sending
+      const pending = useSessionStore.getState().sessions.find(({ id }) => id === pendingId)!
+      expect(pending.pendingBindingSessionId).toBe('bound-session')
+      expect(projectSessionActionability(pending).actions.startTurn.allowed).toBe(false)
+    } finally {
+      main.waiting.resolve()
+      await flush()
+    }
+    const pending = useSessionStore.getState().sessions.find(({ id }) => id === pendingId)!
+    expect(projectSessionActionability(pending).actions.startTurn.allowed).toBe(true)
+    expect(main.read()).toBeUndefined()
+    expect(agent.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('deletes a stopped unbound session locally and cleans a late create without restoring it', async () => {
+    const main = mainBoundary()
+    const agent = runtime()
+    const creating = gate()
+    agent.createSession.mockImplementationOnce(async () => {
+      await creating.promise
+      return { sessionId: 'late-session', cwd: '/workspace', frameworkId: 'codex' }
+    })
+    const appended = vi.fn()
+    const restored = vi.fn()
+    const sending = sendWorkspaceMessage(
+      agent,
+      { ...input, onMessageAppended: appended, onPreparationCancelled: restored },
+      { awaitPendingPreparation: true }
+    )
+    await flush()
+    const pendingId = appended.mock.calls[0][0].sessionId
+    try {
+      await cancelWorkspaceRun(agent, pendingId)
+      await sending
+      expect(
+        await deleteWorkspaceSession({ projectId: input.projectId, sessionId: pendingId })
+      ).toMatchObject({ status: 'deleted' })
+      expect(useSessionStore.getState().sessions).toEqual([])
+      expect(main.deleteSession).not.toHaveBeenCalled()
+    } finally {
+      creating.resolve()
+      await flush()
+    }
+    expect(main.deleteSession).toHaveBeenCalledExactlyOnceWith({
+      projectId: input.projectId,
+      sessionId: 'late-session'
+    })
+    expect(agent.sendPrompt).not.toHaveBeenCalled()
+    expect(restored).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it.each(['delete', 'retry'] as const)(
+    'retains failed late-create cleanup independently after a placeholder %s',
+    async (action) => {
+      const main = mainBoundary()
+      const agent = runtime()
+      const creating = gate()
+      agent.createSession.mockImplementationOnce(async () => {
+        await creating.promise
+        return { sessionId: 'late-session', cwd: '/workspace', frameworkId: 'codex' }
+      })
+      const appended = vi.fn()
+      const sending = sendWorkspaceMessage(
+        agent,
+        { ...input, onMessageAppended: appended },
+        { awaitPendingPreparation: true }
+      )
+      await flush()
+      const pendingId = appended.mock.calls[0][0].sessionId
+      await cancelWorkspaceRun(agent, pendingId)
+      await sending
+      if (action === 'delete')
+        await deleteWorkspaceSession({ projectId: input.projectId, sessionId: pendingId })
+      await sendWorkspaceMessage(
+        agent,
+        { ...input, sessionId: action === 'retry' ? pendingId : undefined, text: 'New turn' },
+        { awaitPendingPreparation: true, awaitPromptAdmission: true }
+      )
+      const current = useSessionStore.getState().sessions
+      main.deleteSession.mockResolvedValueOnce({
+        status: 'failed',
+        reason: 'runtime',
+        runtimeDetached: false
+      })
+      creating.resolve()
+      await flush()
+      const [cleanup] = Object.values(useWorkspaceSessionCleanups.getState().cleanups)
+      expect(cleanup).toMatchObject({
+        projectId: input.projectId,
+        sessionId: 'late-session',
+        result: { status: 'failed' },
+        retrying: false
+      })
+      expect(useSessionStore.getState().sessions).toEqual(current)
+      expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      await retryWorkspaceSessionCleanup({
+        projectId: 'other-project',
+        sessionId: cleanup.sessionId
+      })
+      expect(main.deleteSession).toHaveBeenCalledOnce()
+      const retrying = gate()
+      main.deleteSession.mockImplementationOnce(async () => {
+        await retrying.promise
+        throw new Error('Cleanup IPC unavailable')
+      })
+      const retry = retryWorkspaceSessionCleanup(cleanup)
+      const duplicate = retryWorkspaceSessionCleanup(cleanup)
+      await flush()
+      expect(main.deleteSession).toHaveBeenCalledTimes(2)
+      expect(Object.values(useWorkspaceSessionCleanups.getState().cleanups)[0].retrying).toBe(true)
+      retrying.resolve()
+      await Promise.all([retry, duplicate])
+      expect(Object.values(useWorkspaceSessionCleanups.getState().cleanups)[0]).toMatchObject({
+        sessionId: 'late-session',
+        error: 'Cleanup IPC unavailable',
+        retrying: false
+      })
+      await retryWorkspaceSessionCleanup(cleanup)
+      expect(main.deleteSession).toHaveBeenLastCalledWith({
+        projectId: input.projectId,
+        sessionId: 'late-session'
+      })
+      expect(useWorkspaceSessionCleanups.getState().cleanups).toEqual({})
+      expect(useSessionStore.getState().sessions).toEqual(current)
+      expect(main.read()).toBeDefined()
+      expect(agent.sendPrompt).toHaveBeenCalledOnce()
+      expect(agent.sendPrompt.mock.calls[0][0]).toBe('bound-session')
+    }
+  )
+
+  it.each(['seed', 'prepare'] as const)(
+    'drains a stopped %s before deleting its durable identity and local placeholder',
+    async (pause) => {
+      const main = mainBoundary(pause)
+      const agent = runtime()
+      const appended = vi.fn()
+      const sending = sendWorkspaceMessage(
+        agent,
+        { ...input, onMessageAppended: appended },
+        { awaitPendingPreparation: true }
+      )
+      await flush()
+      const pendingId = appended.mock.calls[0][0].sessionId
+      let completed = false
+      let deleting!: ReturnType<typeof deleteWorkspaceSession>
+      try {
+        await cancelWorkspaceRun(agent, pendingId)
+        await sending
+        deleting = deleteWorkspaceSession({ projectId: input.projectId, sessionId: pendingId })
+        void deleting.then(() => {
+          completed = true
+        })
+        await flush()
+        expect(completed).toBe(false)
+      } finally {
+        main.waiting.resolve()
+      }
+      expect(await deleting).toMatchObject({ status: 'deleted' })
+      await flush()
+      expect(main.read()).toBeUndefined()
+      expect(useSessionStore.getState().sessions).toEqual([])
+      expect(main.deleteSession).toHaveBeenCalledWith({
+        projectId: input.projectId,
+        sessionId: 'bound-session'
+      })
+      expect(main.deleteSession).not.toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: pendingId })
+      )
+      expect(agent.sendPrompt).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['delete', 'retry cleanup'] as const)(
+    'retains a failed seed identity for %s',
+    async (action) => {
+      const main = mainBoundary('seed')
+      main.deleteSession.mockImplementationOnce(async () => ({
+        status: 'failed',
+        reason: 'persistence',
+        runtimeDetached: true
+      }))
+      const agent = runtime()
+      const appended = vi.fn()
+      const sending = sendWorkspaceMessage(
+        agent,
+        { ...input, onMessageAppended: appended },
+        { awaitPendingPreparation: true }
+      )
+      await flush()
+      const pendingId = appended.mock.calls[0][0].sessionId
+      await cancelWorkspaceRun(agent, pendingId)
+      await sending
+      main.waiting.resolve()
+      await flush()
+      const pending = useSessionStore.getState().sessions.find(({ id }) => id === pendingId)!
+      expect(pending.pendingBindingSessionId).toBe('bound-session')
+      expect(projectSessionActionability(pending).actions.startTurn.allowed).toBe(false)
+      if (action === 'delete') {
+        expect(
+          await deleteWorkspaceSession({ projectId: input.projectId, sessionId: pendingId })
+        ).toMatchObject({ status: 'deleted' })
+        expect(useSessionStore.getState().sessions).toEqual([])
+      } else {
+        await retryWorkspaceSessionCleanup({
+          projectId: input.projectId,
+          sessionId: 'bound-session'
+        })
+        const restored = useSessionStore.getState().sessions.find(({ id }) => id === pendingId)!
+        expect(restored.pendingBindingSessionId).toBeUndefined()
+        expect(projectSessionActionability(restored).actions.startTurn.allowed).toBe(true)
+        expect(useSessionStore.getState().sessions).toEqual([restored])
+      }
+      expect(main.deleteSession).toHaveBeenCalledTimes(2)
+      expect(main.deleteSession).toHaveBeenLastCalledWith({
+        projectId: input.projectId,
+        sessionId: 'bound-session'
+      })
+      expect(main.read()).toBeUndefined()
+      expect(useWorkspaceSessionCleanups.getState().cleanups).toEqual({})
+    }
+  )
+
+  it('preserves partial cleanup results when Delete waits for a stopped seed cleanup', async () => {
+    const main = mainBoundary('seed')
+    main.deleteSession.mockResolvedValueOnce({
+      status: 'deleted',
+      runtimeDetached: true,
+      cleanupPending: true
+    })
+    const agent = runtime()
+    const appended = vi.fn()
+    const sending = sendWorkspaceMessage(
+      agent,
+      { ...input, onMessageAppended: appended },
+      { awaitPendingPreparation: true }
+    )
+    await flush()
+    const pendingId = appended.mock.calls[0][0].sessionId
+    await cancelWorkspaceRun(agent, pendingId)
+    await sending
+    const deleting = deleteWorkspaceSession({ projectId: input.projectId, sessionId: pendingId })
+    main.waiting.resolve()
+    expect(await deleting).toEqual({
+      status: 'deleted',
+      runtimeDetached: true,
+      cleanupPending: true
+    })
+    expect(main.deleteSession).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(Object.values(useWorkspaceSessionCleanups.getState().cleanups)[0]).toMatchObject({
+      sessionId: 'bound-session',
+      result: { status: 'deleted', cleanupPending: true }
+    })
+    await retryWorkspaceSessionCleanup({ projectId: input.projectId, sessionId: 'bound-session' })
+    expect(useWorkspaceSessionCleanups.getState().cleanups).toEqual({})
+  })
+
   it('keeps a silent create pending without any application timeout', async () => {
     vi.useFakeTimers()
     mainBoundary()

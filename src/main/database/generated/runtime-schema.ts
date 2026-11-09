@@ -118,6 +118,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "SessionNumberSequence_identity_check" CHECK ("id" = 'global' AND "nextNumber" >= 1)
 );`,
   `CREATE TABLE IF NOT EXISTS "Session" (
+    "parentSessionId" TEXT,
     "id" TEXT NOT NULL PRIMARY KEY,
     "number" INTEGER NOT NULL,
     "projectId" TEXT NOT NULL,
@@ -879,6 +880,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "harvestConfig" TEXT,
     "timeoutSeconds" INTEGER,
     "remoteWorkdir" TEXT,
+    "kubernetesWorkspace" TEXT,
     "remoteHandle" TEXT,
     "remoteCleanupDisposition" TEXT NOT NULL DEFAULT 'pending',
     "exitCode" INTEGER,

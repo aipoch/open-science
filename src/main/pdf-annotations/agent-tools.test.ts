@@ -235,3 +235,16 @@ it('reads package snapshots and creates fork notes through the managed upload so
   })
   expect(f.create.mock.calls[0]![0].literatureVersionId).toBeUndefined()
 })
+
+it('pages annotations with an opaque string cursor', async () => {
+  const f = fixture()
+  const position = { createdAt: '2026-10-29T00:00:00.000Z', id: 'note-20' }
+  f.list.mockResolvedValueOnce({ items: [], total: 21, nextCursor: position })
+  const { nextCursor } = await f.agent.list(f.context, {})
+  expect(nextCursor).toEqual(expect.any(String))
+  await f.agent.list(f.context, { cursor: nextCursor as string })
+  expect(f.list.mock.calls[1]![0].cursor).toEqual(position)
+  await expect(f.agent.list(f.context, { cursor: 'edited' })).rejects.toThrow(
+    'PDF_ANNOTATION_CURSOR_INVALID'
+  )
+})

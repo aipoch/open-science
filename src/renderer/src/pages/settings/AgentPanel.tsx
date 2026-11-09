@@ -39,7 +39,7 @@ import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 // The agent frameworks the settings page manages, keyed by their short name (used for the
 // uninstall dialog target and the framework card descriptors).
 type FrameworkKey = 'claude' | 'opencode' | 'codex' | 'codebuddy'
-type FrameworkCardKey = FrameworkKey | 'pi'
+type FrameworkCardKey = FrameworkKey | 'pi' | 'open-science-agent'
 
 type AgentPanelProps = {
   variant?: 'settings' | 'onboarding'
@@ -285,9 +285,10 @@ const AgentPanel = ({
       opencode: preflight.opencodeReady,
       codex: codexReady,
       codebuddy: preflight.codebuddyReady,
+      'open-science-agent': false, // Built-in trial remains an explicit choice during onboarding.
       pi: preflight.piReady === true
     }
-    if (readyByFramework[agentFrameworkId]) return
+    if (agentFrameworkId === 'open-science-agent' || readyByFramework[agentFrameworkId]) return
 
     const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
     if (!installedFramework) return
@@ -569,6 +570,32 @@ const AgentPanel = ({
     })
   }
 
+  if (agentFrameworks.some(({ id }) => id === 'open-science-agent')) {
+    frameworkCards.unshift({
+      key: 'open-science-agent',
+      frameworkId: 'open-science-agent',
+      name: 'Open-Science Agent',
+      icon: <AgentFrameworkIcon frameworkId="open-science-agent" size={24} />,
+      description: t('Built-in experimental agent. Uses your API account and managed tools.'),
+      ready: preflight.openScienceAgentReady === true,
+      installed: true,
+      version: '0.1.0',
+      sourceLabel: 'aipoch/open-science',
+      sourceUrl: 'https://github.com/aipoch/open-science',
+      notReadyHint: null,
+      uninstallCommand: '',
+      managed: false,
+      installSources: [],
+      install: {
+        isInstalling: false,
+        installLogs: [],
+        installProgress: null,
+        installError: undefined
+      },
+      onInstall: async () => undefined
+    })
+  }
+
   const installedFrameworks = frameworkCards.filter(
     (card) => card.ready || card.installed || card.updateRequired
   )
@@ -716,7 +743,10 @@ const AgentPanel = ({
       onSelect={() => requestSwitch(card.frameworkId)}
       radioTabIndex={card.ready ? (card.frameworkId === installedRadioId ? 0 : -1) : undefined}
       onRepairRequired={
-        card.key !== 'pi' && cardNeedsRepair(card) && !card.updateRequired
+        card.key !== 'open-science-agent' &&
+        card.key !== 'pi' &&
+        cardNeedsRepair(card) &&
+        !card.updateRequired
           ? () => setPendingRepair(card.key as FrameworkKey)
           : undefined
       }
@@ -732,9 +762,9 @@ const AgentPanel = ({
       isDetecting={isDetectingAnyFramework}
       promptInFlight={promptInFlight}
       onUninstall={() => {
-        setPendingUninstall(card.key)
+        if (card.key !== 'open-science-agent') setPendingUninstall(card.key)
       }}
-      showUninstall={!isOnboarding}
+      showUninstall={!isOnboarding && card.key !== 'open-science-agent'}
       installSources={card.installSources}
       install={card.install}
       installRunning={anyInstalling || (!isOnboarding && isSwitching)}
@@ -874,7 +904,7 @@ const AgentPanel = ({
       {isOnboarding ? null : (
         <>
           <UninstallRuntimeDialog
-            framework={pendingUninstall}
+            framework={pendingUninstall === 'open-science-agent' ? null : pendingUninstall}
             isUninstalling={isUninstalling}
             onCancel={() => setPendingUninstall(null)}
             onConfirm={() => void handleConfirmUninstall()}

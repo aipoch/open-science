@@ -39,6 +39,12 @@ import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
+import { ProviderTransportOwner } from './provider-transport-owner'
+import {
+  HarnessSessionOwner,
+  type HarnessSession,
+  type HarnessSessionRequest
+} from './harness-session-owner'
 
 import {
   createLogger,
@@ -468,6 +474,7 @@ class SettingsService {
   private readonly runtimeManager: AgentRuntimeManager
   private readonly installCoordinator: SettingsInstallCoordinator
   private readonly backendResolver: AgentBackendResolver
+  private readonly harnessSessions: HarnessSessionOwner
   private readonly scenarioModels: ScenarioModelOwner
   private readonly skillSources: SkillSourceRepository
   private readonly configRoot: string
@@ -508,6 +515,10 @@ class SettingsService {
     return this.installCoordinator.holdAdmission()
   }
 
+  quiesceAuthentication(): ReturnType<ProviderAccountsModule['quiesceAuthentication']> {
+    return this.providers.quiesceAuthentication()
+  }
+
   private readonly detachSkillDiagnostics: () => void
 
   async dispose(): Promise<void> {
@@ -515,7 +526,8 @@ class SettingsService {
       this.skillMarketplaceQueue.dispose(),
       this.providers.dispose(),
       this.classification.flushUsage(false),
-      this.runtimeManager.dispose()
+      this.runtimeManager.dispose(),
+      this.harnessSessions.dispose()
     ])
     this.detachSkillDiagnostics()
     for (const outcome of outcomes) {
@@ -635,6 +647,14 @@ class SettingsService {
     const providerHealth = new ProviderRuntimeHealthOwner(
       this.repository,
       options.onProviderHealthChanged
+    )
+    this.harnessSessions = new HarnessSessionOwner(
+      this.repository,
+      new ProviderTransportOwner({
+        onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
+        getXaiOAuthAccessToken: (forceRefresh) =>
+          this.providers.getXaiOAuthAccessToken(forceRefresh)
+      })
     )
     this.backendResolver = new AgentBackendResolver({
       onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
@@ -792,6 +812,20 @@ class SettingsService {
       )
     }
     return settings
+  }
+
+  async allowNotebookNetworkDestination(
+    grant: import('../../shared/network-destination-grants').NetworkDestinationGrant,
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    const result = await this.notebookNetwork.allowDestination(grant, assertCurrent, finalize)
+    try {
+      await this.onNotebookNetworkDomainAllowed?.()
+    } catch (error) {
+      this.log.warn('Network settings publication failed.', diagnosticErrorFields(error))
+    }
+    return result
   }
 
   getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {
@@ -2077,6 +2111,13 @@ class SettingsService {
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
     return this.backendResolver.resolveSelection(selection, context)
+  }
+
+  openHarnessSession(
+    request: HarnessSessionRequest,
+    lifetime: AbortSignal
+  ): Promise<HarnessSession> {
+    return this.harnessSessions.open(request, lifetime)
   }
 }
 

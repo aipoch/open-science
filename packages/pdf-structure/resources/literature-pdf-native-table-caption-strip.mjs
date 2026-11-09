@@ -42,6 +42,12 @@ function captionRecords(c, records) {
   return rows
 }
 export function proveNativeTableCaptionStrip(table, rules, context, options) {
+  const panel = proveIndependentPanelTitle(table, rules, context, options)
+  if (panel) return panel
+  const footer = proveRuledTerminalPixels(table, rules, context, options)
+  if (footer) return footer
+  const diagonal = proveDiagonalHeaderBody(table, rules, context, options)
+  if (diagonal) return diagonal
   const single = proveSingleClosingBody(table, rules, context, options)
   if (single) return single
   const ruled = proveRuledBody(table, rules, context, options)
@@ -502,9 +508,495 @@ export function commitNativeTableCaptionStrip(proof, png) {
   }
 }
 
+// A panel label is only a candidate. Its whole native occurrence, independent
+// three-rule body and complete foreign paint inventory establish the crop.
+// No source, cell or diagnostic is added by this physical-only certificate.
+function proveIndependentPanelTitle(table, rules, context, options) {
+  try {
+    const n = context.nativeGlyphContext,
+      v = context.viewport,
+      { page, nativePage, nativeContent, captions, competingRects, otherFigures } = options,
+      old = table.cropRect?.map((x) => x / v.scale),
+      sourceContent = context.sourceContent
+    assert(
+      n &&
+        valid(old) &&
+        v.scale > 0 &&
+        v.rotation === 0 &&
+        !table.parts &&
+        !table.cropRects &&
+        !table.notes?.length
+    )
+    assert(
+      v.width === n.viewport.width * v.scale &&
+        v.height === n.viewport.height * v.scale &&
+        same(v.transform, [v.scale, 0, 0, -v.scale, 0, v.height]) &&
+        table.sourceViewport?.width === v.width &&
+        table.sourceViewport.height === v.height &&
+        table.sourceViewport.scale === v.scale
+    )
+    assert(Array.isArray(captions) && Array.isArray(competingRects) && Array.isArray(otherFigures))
+    // This narrow admission avoids a whole-page font witness for ordinary tables.
+    assert(n.content.items.some((r) => /^Panel [A-Z]:\s+\S/u.test(r.str)))
+    const witness = capture(table, context, options, 'foreign-raster-footer')
+    assert(witness && !witness.patternOperations.length)
+    const { records, glyphs, e } = witness,
+      paths = [...e.paths.keys()]
+        .filter((i) => ![OPS.endPath, OPS.clip, OPS.eoClip].includes(n.operators.argsArray[i]?.[0]))
+        .map((i) => ruledPath(n, e, i)),
+      horizontal = paths.filter((p) => p.points.length === 2 && p.points[0][1] === p.points[1][1]),
+      families = []
+    for (const p of horizontal) {
+      const group = horizontal
+        .filter(
+          (q) =>
+            Math.abs(q.ink[0] - p.ink[0]) < 1e-6 &&
+            Math.abs(q.ink[2] - p.ink[2]) < 1e-6 &&
+            q.ink[3] >= old[1] &&
+            q.ink[1] <= old[3]
+        )
+        .sort((a, b) => a.ink[1] - b.ink[1])
+      if (
+        group.length === 3 &&
+        !families.some((g) => g[0] === group[0]) &&
+        group.every(
+          (q) =>
+            q.ink[0] >= old[0] && q.ink[2] <= old[2] && q.ink[3] >= old[1] && q.ink[1] <= old[3]
+        )
+      )
+        families.push(group)
+    }
+    assert(families.length === 1)
+    const bars = families[0],
+      frame = [bars[0].ink[0], bars[0].ink[3], bars[0].ink[2], bars[2].ink[1]],
+      body = records.filter((r) => over(r.sourceRect, frame)),
+      titles = records.filter(
+        (r) =>
+          /^Panel [A-Z]:\s+\S/u.test(r.text) &&
+          r.sourceRect[3] < bars[0].ink[1] &&
+          r.sourceRect[0] >= frame[0] &&
+          r.sourceRect[2] <= frame[2] &&
+          bars[0].ink[1] - r.sourceRect[3] <= r.sourceRect[3] - r.sourceRect[1]
+      )
+    assert(titles.length === 1 && body.length > 1)
+    const title = titles[0],
+      owned = [...body, title],
+      byIndex = new Map(body.map((r) => [r.index, r])),
+      claims = new Set()
+    assert(title.sourceRect[1] < old[1] && owned.every((r) => r.horizontalComplete && valid(r.ink)))
+    assert(body.every((r) => inside(frame, r.ink) && inside(old, r.sourceRect)))
+    assert(
+      body.some((r) => r.ink[3] < bars[1].ink[1]) && body.some((r) => r.ink[1] > bars[1].ink[3])
+    )
+    for (const cell of table.cells) {
+      assert(
+        !cell.sourceSegments?.length &&
+          (cell.sourceItems?.length ?? 0) === (cell.sourceRects?.length ?? 0)
+      )
+      for (const [i, s] of (cell.sourceItems ?? []).entries()) {
+        const r = byIndex.get(s.index)
+        assert(
+          r &&
+            s.pageNumber === table.page &&
+            s.text === r.text &&
+            !claims.has(s.index) &&
+            same(tableTextToken(sourceContent.items[s.index], v, 0).rect, cell.sourceRects[i])
+        )
+        claims.add(s.index)
+      }
+    }
+    assert(claims.size === body.length)
+    const ownOps = new Set(owned.flatMap((r) => r.glyphOperations)),
+      ownPaths = new Set(bars.map((b) => b.operationIndex))
+    assert(
+      records
+        .filter((r) => !owned.includes(r))
+        .every((r) => r.glyphOperations.every((i) => !ownOps.has(i)))
+    )
+    const ownGlyphs = glyphs.filter((g) => ownOps.has(g.op)),
+      ownInk = ownGlyphs
+        .map((g) => g.ink)
+        .filter(valid)
+        .concat(bars.map((b) => b.ink)),
+      s = Math.min(MAX_SCALE, MAX_EDGE / Math.max(old[2] - old[0], old[3] - old[1])),
+      expand = (r, pixels = 1, scale = s) =>
+        r.map((x, i) => x + (i < 2 ? -pixels / scale : pixels / scale)),
+      // Em rectangles may overlap a preceding caption's descenders. Preserve
+      // complete painted outlines, rather than claiming their empty em space.
+      complete = union(ownInk.map((r) => expand(r))),
+      offset = complete.map((x, i) =>
+        i < 2 ? Math.min(0, Math.floor((x - old[i]) * s)) : Math.max(0, Math.ceil((x - old[i]) * s))
+      ),
+      nativeCrop = old.map((x, i) => x + offset[i] / s),
+      strictInside = (a, b) => b.every((x, i) => (i < 2 ? x >= a[i] : x <= a[i])),
+      foreign = [
+        ...glyphs.filter((g) => !ownOps.has(g.op)).flatMap((g) => [g.ink, g.advance]),
+        ...paths.filter((p) => !ownPaths.has(p.operationIndex)).map((p) => p.ink),
+        ...e.images.map((i) => i.rect)
+      ],
+      separated = (scale) =>
+        foreign.every((r) => !valid(r) || !over(nativeCrop, expand(r, 3, scale)))
+    assert(
+      offset[1] < 0 &&
+        strictInside([0, 0, n.viewport.width, n.viewport.height], nativeCrop) &&
+        Math.min(
+          MAX_SCALE,
+          MAX_EDGE / Math.max(nativeCrop[2] - nativeCrop[0], nativeCrop[3] - nativeCrop[1])
+        ) === s
+    )
+    assert(ownInk.every((r) => strictInside(nativeCrop, expand(r))) && separated(s))
+    assert(
+      n.operators.fnArray.every(
+        (op, i) =>
+          op !== OPS.setGState ||
+          n.operators.argsArray[i][0].every(
+            ([key, value]) => !['ca', 'CA'].includes(key) || value === 1
+          )
+      )
+    )
+    assert(
+      ownGlyphs.every((g) => !valid(g.ink) || strictInside(e.texts.get(g.op).clip, expand(g.ink)))
+    )
+    assert(bars.every((b) => strictInside(e.paths.get(b.operationIndex).clip, expand(b.ink))))
+    assert(
+      [
+        ...captions.map((c) => c.rect),
+        ...competingRects,
+        ...otherFigures
+          .filter((f) => f.page === table.page && f.region)
+          .map((f) => f.region.map((x, i) => x * (i % 2 ? n.viewport.height : n.viewport.width)))
+      ].every((r) => valid(r) && !over(nativeCrop, r))
+    )
+    const proof = {
+        cropRect: nativeCrop.map((x) => x * v.scale),
+        nativeCrop,
+        oldNativeCrop: old,
+        regions: [nativeCrop],
+        offset,
+        rasterScale: s,
+        pixelWidth: Math.ceil((nativeCrop[2] - nativeCrop[0]) * s),
+        pixelHeight: Math.ceil((nativeCrop[3] - nativeCrop[1]) * s),
+        bounds: { width: n.viewport.width, height: n.viewport.height },
+        ownInk,
+        foreign: []
+      },
+      inputs = retainNativeRecoveryInputs(
+        [
+          table,
+          rules,
+          n,
+          sourceContent,
+          nativeContent,
+          page,
+          captions,
+          competingRects,
+          otherFigures
+        ],
+        v,
+        n.viewport
+      ),
+      output = retainNativeRecoveryInputs([proof]),
+      current = () =>
+        inputs?.() &&
+        output?.() &&
+        witness.current() &&
+        context.nativeGlyphContext === n &&
+        context.sourceContent === sourceContent &&
+        context.viewport === v &&
+        options.page === page &&
+        options.nativePage === nativePage &&
+        options.nativeContent === nativeContent &&
+        options.captions === captions &&
+        options.competingRects === competingRects &&
+        options.otherFigures === otherFigures,
+      rasterCurrent = (png) => {
+        const p = getPdfCropRasterProtectionFromPng(png, nativeCrop, proof.bounds)
+        return (
+          p &&
+          p.scaleLower > 0 &&
+          separated(p.scaleLower) &&
+          ownInk.every((r) => strictInside(nativeCrop, expand(r, 1, p.scaleLower)))
+        )
+      }
+    assert(current())
+    states.set(proof, { table, current, kind: 'ruled-body', rasterCurrent })
+    return proof
+  } catch {
+    return
+  }
+}
+
+// A sparse terminal band has no cell-map authority. Four complete native rules
+// and a fully accounted source/paint inventory can nevertheless close its crop.
+function proveRuledTerminalPixels(table, rules, context, options) {
+  try {
+    assert(table.issues?.length === 1 && table.issues[0] === 'unassigned-source-text')
+    assert(
+      table.unassigned?.length > 0 &&
+        table.clipped?.length === 0 &&
+        !table.parts &&
+        !table.cropRects &&
+        !table.notes?.length
+    )
+    const n = context.nativeGlyphContext,
+      v = context.viewport,
+      { page, nativePage, nativeContent, captions, competingRects, otherFigures } = options,
+      sourceContent = context.sourceContent,
+      old = table.cropRect.map((x) => x / v.scale),
+      caption = table.caption
+    assert(
+      n &&
+        valid(old) &&
+        v.scale > 0 &&
+        v.rotation === 0 &&
+        n.viewport.scale === 1 &&
+        n.viewport.rotation === 0
+    )
+    assert(
+      v.width === n.viewport.width * v.scale &&
+        v.height === n.viewport.height * v.scale &&
+        same(v.transform, [v.scale, 0, 0, -v.scale, 0, v.height])
+    )
+    assert(
+      table.sourceViewport?.scale === v.scale &&
+        table.sourceViewport.width === v.width &&
+        table.sourceViewport.height === v.height
+    )
+    assert(
+      caption?.page === table.page &&
+        valid(caption.rect) &&
+        !caption.regions &&
+        caption.rect[3] < old[1]
+    )
+    assert(Array.isArray(captions) && Array.isArray(competingRects) && Array.isArray(otherFigures))
+    assert(
+      captions.filter(
+        (c) =>
+          c.page === table.page &&
+          same(c.rect, caption.rect) &&
+          compact(c.text ?? c.lines.join(' ')) === compact(caption.text)
+      ).length === 1
+    )
+    const tokens = n.content.items
+        .filter((r) => r.str?.trim())
+        .map((r) => tableTextToken(r, n.viewport, 0)),
+      packet = nativePageTextPacketInventory(page, tokens, n, true),
+      witness = capture(table, context, options, 'foreign-raster-footer')
+    assert(
+      packet &&
+        witness &&
+        packet.records.length <= 4096 &&
+        packet.evidence.paths.size <= 4096 &&
+        !witness.patternOperations.length
+    )
+    const records = packet.records,
+      byIndex = new Map(records.map((r) => [r.index, r])),
+      claims = new Set(),
+      slots = new Set()
+    for (const cell of table.cells) {
+      assert(
+        Number.isSafeInteger(cell.row) &&
+          cell.row >= 0 &&
+          Number.isSafeInteger(cell.column) &&
+          cell.column >= 0 &&
+          cell.rowSpan === 1 &&
+          cell.colSpan === 1 &&
+          !cell.sourceSegments?.length
+      )
+      assert(
+        !slots.has(cell.row + ':' + cell.column) &&
+          table.grid[cell.row]?.[cell.column] === cell.text
+      )
+      slots.add(cell.row + ':' + cell.column)
+      assert(
+        (cell.sourceItems?.length ?? 0) === (cell.sourceRects?.length ?? 0) &&
+          (!cell.text?.trim() || cell.sourceItems?.length)
+      )
+      for (const [i, s] of (cell.sourceItems ?? []).entries()) {
+        const r = byIndex.get(s.index)
+        assert(
+          r &&
+            s.pageNumber === table.page &&
+            s.text === r.r.str &&
+            !claims.has(s.index) &&
+            same(tableTextToken(sourceContent.items[s.index], v, 0).rect, cell.sourceRects[i])
+        )
+        claims.add(s.index)
+      }
+    }
+    assert(claims.size > 0)
+    const paths = [...packet.evidence.paths]
+        .filter(
+          ([i]) => ![OPS.endPath, OPS.clip, OPS.eoClip].includes(n.operators.argsArray[i]?.[0])
+        )
+        .map(([operationIndex, state]) => {
+          const support = nativeFigurePathPaint(packet, operationIndex, state)
+          assert(support && valid(support.rect))
+          return { operationIndex, state, support }
+        }),
+      horizontal = []
+    for (const q of paths) {
+      const a = n.operators.argsArray[q.operationIndex],
+        p = a?.[1]?.[0]
+      if (a?.[0] !== OPS.stroke || p?.length !== 6 || p[0] !== 0 || p[3] !== 1 || p[2] !== p[5])
+        continue
+      const exact = ruledPath(n, packet.evidence, q.operationIndex)
+      if (exact.ink[0] >= old[0] && exact.ink[2] <= old[2] && exact.ink[1] > old[1])
+        horizontal.push({ ...q, ...exact })
+    }
+    const families = []
+    for (const h of horizontal) {
+      const group = horizontal
+        .filter((q) => Math.abs(q.ink[0] - h.ink[0]) < 1e-6 && Math.abs(q.ink[2] - h.ink[2]) < 1e-6)
+        .sort((a, b) => a.ink[1] - b.ink[1])
+      if (
+        group.length === 4 &&
+        group[2].ink[3] < old[3] &&
+        group[3].ink[1] > old[3] &&
+        !families.some((g) => g[0] === group[0])
+      )
+        families.push(group)
+    }
+    assert(families.length === 1)
+    const bars = families[0],
+      frame = [bars[0].ink[0], bars[0].ink[1], bars[0].ink[2], bars[3].ink[3]],
+      body = records.filter((r) => claims.has(r.index)),
+      footer = records.filter((r) => !claims.has(r.index) && over(r.rect, frame)),
+      footerBand = [frame[0], bars[2].ink[3], frame[2], bars[3].ink[1]]
+    // The source advance can overhang a rule by font rounding. Its complete
+    // painted outline must be in the frame, and its advance in the old crop.
+    assert(
+      body.every(
+        (r) =>
+          inside(old, r.rect) &&
+          r.part.every(({ g }) => inside(frame, g.ink) && g.ink[3] < bars[2].ink[1])
+      )
+    )
+    assert(
+      body.some((r) => r.rect[3] < bars[1].ink[1]) && body.some((r) => r.rect[1] > bars[1].ink[3])
+    )
+    assert(
+      footer.length === table.unassigned.length &&
+        claims.size + footer.length === table.selectedTextItems
+    )
+    // Diagnostics are corroboration only. Source identity comes from the whole
+    // occurrence inventory and its native, closed terminal band.
+    assert(same(footer.map((r) => r.r.str).sort(), [...table.unassigned].sort()))
+    assert(
+      footer.every((r) => inside(footerBand, r.rect) && r.rect[1] < old[3] && r.rect[3] > old[3])
+    )
+    const owned = [...body, ...footer],
+      ownGlyphs = new Set(owned.flatMap((r) => r.part.map((z) => z.g))),
+      ownInk = [...ownGlyphs].map((g) => g.ink).concat(bars.map((b) => b.ink)),
+      s = Math.min(MAX_SCALE, MAX_EDGE / Math.max(old[2] - old[0], old[3] - old[1])),
+      expand = (r, pixels = 1, scale = s) =>
+        r.map((x, i) => x + (i < 2 ? -pixels / scale : pixels / scale)),
+      bottom = Math.max(...ownInk.map((r) => r[3])) + 1 / s,
+      offset = [0, 0, 0, Math.ceil((bottom - old[3]) * s)],
+      nativeCrop = [...old.slice(0, 3), old[3] + offset[3] / s],
+      strictInside = (a, b) => b.every((x, i) => (i < 2 ? x >= a[i] : x <= a[i])),
+      ownPaths = new Set(bars.map((b) => b.operationIndex)),
+      foreign = [
+        ...packet.glyphs.filter((g) => !ownGlyphs.has(g)).flatMap((g) => [g.ink, g.advance]),
+        ...paths.filter((q) => !ownPaths.has(q.operationIndex)).map((q) => q.support.rect),
+        ...packet.evidence.images.map((i) => i.rect)
+      ],
+      separated = (scale) =>
+        foreign.every((r) => !valid(r) || !over(nativeCrop, expand(r, 3, scale)))
+    assert(
+      nativeCrop[3] > old[3] &&
+        strictInside([0, 0, n.viewport.width, n.viewport.height], nativeCrop)
+    )
+    assert(
+      Math.min(
+        MAX_SCALE,
+        MAX_EDGE / Math.max(nativeCrop[2] - nativeCrop[0], nativeCrop[3] - nativeCrop[1])
+      ) === s
+    )
+    assert(
+      owned.every((r) => strictInside(nativeCrop, expand(r.rect))) &&
+        ownInk.every((r) => strictInside(nativeCrop, expand(r)))
+    )
+    assert(
+      [...ownGlyphs].every(
+        (g) =>
+          g.textPaint.fillAlpha === 1 &&
+          strictInside(packet.evidence.texts.get(g.i).clip, expand(g.ink))
+      )
+    )
+    assert(bars.every((b) => strictInside(b.state.clip, expand(b.ink))) && separated(s))
+    assert(
+      [
+        ...competingRects,
+        ...otherFigures
+          .filter((f) => f.page === table.page && f.region)
+          .map((f) => f.region.map((x, i) => x * (i % 2 ? n.viewport.height : n.viewport.width)))
+      ].every((r) => valid(r) && !over(r, nativeCrop))
+    )
+    const proof = {
+        cropRect: nativeCrop.map((x) => x * v.scale),
+        nativeCrop,
+        oldNativeCrop: old,
+        regions: [nativeCrop],
+        offset,
+        rasterScale: s,
+        pixelWidth: Math.ceil((nativeCrop[2] - nativeCrop[0]) * s),
+        pixelHeight: Math.ceil((nativeCrop[3] - nativeCrop[1]) * s),
+        bounds: { width: n.viewport.width, height: n.viewport.height },
+        ownInk,
+        foreign: []
+      },
+      inputCurrent = retainNativeRecoveryInputs(
+        [
+          table,
+          rules,
+          n,
+          sourceContent,
+          nativeContent,
+          page,
+          captions,
+          competingRects,
+          otherFigures
+        ],
+        v,
+        n.viewport
+      ),
+      outputCurrent = retainNativeRecoveryInputs([proof]),
+      current = () =>
+        inputCurrent?.() &&
+        outputCurrent?.() &&
+        witness.current() &&
+        context.nativeGlyphContext === n &&
+        context.sourceContent === sourceContent &&
+        context.viewport === v &&
+        options.page === page &&
+        options.nativePage === nativePage &&
+        options.nativeContent === nativeContent &&
+        options.captions === captions &&
+        options.competingRects === competingRects &&
+        options.otherFigures === otherFigures &&
+        !!nativePageTextPacketInventory(page, tokens, n, true),
+      rasterCurrent = (png) => {
+        const p = getPdfCropRasterProtectionFromPng(png, nativeCrop, proof.bounds)
+        return (
+          p &&
+          Number.isFinite(p.scaleLower) &&
+          p.scaleLower > 0 &&
+          separated(p.scaleLower) &&
+          ownInk.every((r) => strictInside(nativeCrop, expand(r, 1, p.scaleLower)))
+        )
+      }
+    assert(current())
+    states.set(proof, { table, current, kind: 'ruled-body', rasterCurrent })
+    return proof
+  } catch {
+    return
+  }
+}
+
 // A complete native ruled body can own a physical preview even when its scalar
 // cells remain unreliable. This branch never changes cells or their diagnostics.
-function ruledPath(n, evidence, operationIndex) {
+function ruledPath(n, evidence, operationIndex, diagonal = false) {
   const a = n.operators.argsArray[operationIndex],
     s = evidence.paths.get(operationIndex)
   assert(s && Array.isArray(a) && a.length === 3)
@@ -529,9 +1021,17 @@ function ruledPath(n, evidence, operationIndex) {
     const w = (s.lineWidth * m[0]) / 2
     assert(w > 0 && w < 1)
     if (box[1] === box[3]) ink = [box[0], box[1] - w, box[2], box[3] + w]
-    else {
+    else if (box[0] === box[2]) {
       assert(box[0] === box[2])
       ink = [box[0] - w, box[1], box[2] + w, box[3]]
+    } else {
+      assert(diagonal && q.length === 6 && q[0] === 0 && q[3] === 1)
+      const dx = points[1][0] - points[0][0],
+        dy = points[1][1] - points[0][1],
+        length = Math.hypot(dx, dy),
+        px = Math.abs(dy / length) * w,
+        py = Math.abs(dx / length) * w
+      ink = [box[0] - px, box[1] - py, box[2] + px, box[3] + py]
     }
   } else {
     assert(
@@ -551,9 +1051,259 @@ function ruledPath(n, evidence, operationIndex) {
   assert(valid(ink) && inside(s.clip, ink))
   return {
     operationIndex,
+    points,
     ink,
     opaqueBackground:
       [OPS.fill, OPS.eoFill].includes(a[0]) && Math.min(ink[2] - ink[0], ink[3] - ink[1]) > 1
+  }
+}
+
+// A diagonal corner, a continuous stub rail extending into the known body and
+// their shared separator establish the physical table. Complete glyph records
+// are selected only after that native path topology, never by matching labels.
+function proveDiagonalHeaderBody(table, rules, context, options) {
+  try {
+    const n = context.nativeGlyphContext,
+      v = context.viewport,
+      scale = v.scale,
+      { page, captions, competingRects, otherFigures, nativePage, nativeContent } = options,
+      old = table.cropRect?.map((x) => x / scale),
+      caption = table.caption
+    assert(n && valid(old) && scale > 0 && v.rotation === 0 && !table.parts && !table.cropRects)
+    assert(
+      n.viewport.scale === 1 &&
+        n.viewport.rotation === 0 &&
+        page.pageNumber === table.page &&
+        v.width === n.viewport.width * scale &&
+        v.height === n.viewport.height * scale &&
+        same(v.transform, [scale, 0, 0, -scale, 0, v.height]) &&
+        table.sourceViewport?.width === v.width &&
+        table.sourceViewport.height === v.height &&
+        table.sourceViewport.scale === scale
+    )
+    assert(
+      caption?.page === table.page &&
+        valid(caption.rect) &&
+        caption.rect[3] < old[1] &&
+        !caption.regions &&
+        Array.isArray(captions) &&
+        Array.isArray(competingRects) &&
+        Array.isArray(otherFigures)
+    )
+    assert(captions.filter((c) => c.page === table.page && same(c.rect, caption.rect)).length === 1)
+    assert(Array.isArray(table.cells) && table.cells.length <= 4096 && !table.notes?.length)
+    assert(table.issues?.includes('text-crosses-crop-boundary'))
+    // Avoid a full font witness on ordinary tables. This is only an admission
+    // hint; the source-bound path and its transformed endpoints are proved below.
+    assert(
+      n.operators.fnArray.some((op, i) => {
+        const a = n.operators.argsArray[i],
+          q = a?.[1]?.[0]
+        return (
+          op === OPS.constructPath &&
+          a[0] === OPS.stroke &&
+          q?.length === 6 &&
+          q[0] === 0 &&
+          q[3] === 1 &&
+          q[1] !== q[4] &&
+          q[2] !== q[5]
+        )
+      })
+    )
+    const witness = capture(table, context, options, 'closed-ruled-body')
+    assert(witness && !witness.patternOperations.length && !witness.e.images.length)
+    const { records, e } = witness,
+      paths = n.graphicsBounds.map((g) => ruledPath(n, e, g.operationIndex, true)),
+      lines = paths.filter(
+        (p) =>
+          p.points.length === 2 &&
+          n.operators.argsArray[p.operationIndex][0] === OPS.stroke &&
+          n.operators.argsArray[p.operationIndex][1][0].length === 6 &&
+          n.operators.argsArray[p.operationIndex][1][0][0] === 0 &&
+          n.operators.argsArray[p.operationIndex][1][0][3] === 1
+      ),
+      vertical = lines.filter((p) => p.points[0][0] === p.points[1][0]),
+      horizontal = lines.filter((p) => p.points[0][1] === p.points[1][1]),
+      diagonals = lines.filter((p) => !vertical.includes(p) && !horizontal.includes(p))
+    assert(diagonals.length === 1)
+    const diagonal = diagonals[0],
+      [left, right] = [...diagonal.points].sort((a, b) => a[0] - b[0]),
+      epsilon = 0.0001,
+      touch = (a, b) =>
+        a[0] <= b[2] + epsilon &&
+        a[2] + epsilon >= b[0] &&
+        a[1] <= b[3] + epsilon &&
+        a[3] + epsilon >= b[1],
+      rails = vertical
+        .filter((p) => p.ink[0] <= diagonal.ink[2] && p.ink[2] >= right[0])
+        .sort((a, b) => a.ink[1] - b.ink[1])
+    assert(left[1] < right[1] && rails.length && rails.length <= 256)
+    const rail = union(rails.map((p) => p.ink)),
+      axis = rails[0].points[0][0]
+    assert(
+      rails.every((p) => Math.abs(p.points[0][0] - axis) < epsilon) &&
+        rails.some((p) => touch(p.ink, diagonal.ink))
+    )
+    for (let i = 1; i < rails.length; i++)
+      assert(
+        touch(rails[i - 1].ink, rails[i].ink) ||
+          horizontal.some((p) => touch(p.ink, rails[i - 1].ink) && touch(p.ink, rails[i].ink))
+      )
+    const separators = horizontal.filter((p) => {
+      const ends = [...p.points].sort((a, b) => a[0] - b[0])
+      return (
+        Math.abs(ends[0][0] - left[0]) < epsilon &&
+        ends[1][0] > rail[2] &&
+        ends[0][1] > right[1] &&
+        ends[0][1] < rail[3] &&
+        touch(p.ink, rail)
+      )
+    })
+    assert(separators.length === 1)
+    const separator = separators[0],
+      ends = [...separator.points].sort((a, b) => a[0] - b[0]),
+      frame = [left[0], rail[1], ends[1][0], rail[3]],
+      divider = ends[0][1]
+    assert(
+      valid(frame) &&
+        caption.rect[3] < frame[1] &&
+        frame[1] < left[1] &&
+        right[1] < old[1] &&
+        old[1] < divider + (separator.ink[3] - separator.ink[1]) &&
+        old[3] > divider &&
+        old[0] < axis &&
+        old[2] > axis
+    )
+    const own = records.filter((r) => inside(frame, r.ink)),
+      ownIds = new Set(own.map((r) => r.index)),
+      claims = new Set()
+    assert(own.length >= 4 && own.every((r) => r.horizontalComplete))
+    for (const cell of table.cells) {
+      if (!cell.text.trim()) {
+        assert(!cell.sourceItems?.length && !cell.sourceRects?.length)
+        continue
+      }
+      assert(cell.sourceItems?.length && cell.sourceItems.length === cell.sourceRects?.length)
+      for (const [i, source] of cell.sourceItems.entries()) {
+        const r = records.find((r) => r.index === source.index)
+        assert(
+          r &&
+            ownIds.has(r.index) &&
+            source.pageNumber === table.page &&
+            source.text === r.text &&
+            !claims.has(r.index) &&
+            r.sourceRect.every((x, j) => Math.abs(x * scale - cell.sourceRects[i][j]) < 1e-6)
+        )
+        claims.add(r.index)
+      }
+    }
+    assert(
+      claims.size >= 4 && claims.size + (table.unassigned?.length ?? 0) === table.selectedTextItems
+    )
+    const body = own.filter((r) => claims.has(r.index) && r.ink[1] > divider)
+    assert(
+      body.some((r) => r.ink[2] < axis) &&
+        body.some((r) => r.ink[0] > axis) &&
+        own.some((r) => r.ink[3] < divider && !claims.has(r.index))
+    )
+    // Native stroke extents may straddle the defining rail by half its width.
+    // Every other path remains a foreign occurrence; nothing is dropped.
+    const edge = Math.max(...lines.map((p) => e.paths.get(p.operationIndex).lineWidth)) + epsilon,
+      pathFrame = frame.map((x, i) => x + (i < 2 ? -edge : edge)),
+      ownPaths = paths.filter((p) => inside(pathFrame, p.ink)),
+      foreignPaths = paths.filter((p) => !ownPaths.includes(p))
+    assert(
+      ownPaths.includes(diagonal) &&
+        ownPaths.includes(separator) &&
+        rails.every((p) => ownPaths.includes(p))
+    )
+    const s = Math.min(MAX_SCALE, MAX_EDGE / Math.max(old[2] - old[0], old[3] - old[1])),
+      aa = 1 / s,
+      expand = (r) => r.map((x, i) => x + (i < 2 ? -aa : aa)),
+      ownInk = [...own.map((r) => r.ink), ...ownPaths.map((p) => p.ink)],
+      mask = expand(union(ownInk)),
+      envelope = expand(union([...ownInk, ...own.flatMap((r) => [r.advance, r.sourceRect])])),
+      offset = envelope.map((x, i) => (i < 2 ? Math.floor : Math.ceil)((x - old[i]) * s)),
+      nativeCrop = old.map((x, i) => x + offset[i] / s),
+      foreign = [
+        ...records.filter((r) => !ownIds.has(r.index)).map((r) => r.ink),
+        ...foreignPaths.map((p) => p.ink)
+      ]
+    assert(
+      valid(nativeCrop) &&
+        inside(nativeCrop, mask) &&
+        inside([0, 0, n.viewport.width, n.viewport.height], nativeCrop) &&
+        Math.min(
+          MAX_SCALE,
+          MAX_EDGE / Math.max(nativeCrop[2] - nativeCrop[0], nativeCrop[3] - nativeCrop[1])
+        ) === s &&
+        nativeCrop[1] < old[1] &&
+        nativeCrop[1] > caption.rect[3]
+    )
+    assert(
+      own.every(
+        (r) => inside(nativeCrop, expand(r.advance)) && inside(nativeCrop, expand(r.sourceRect))
+      ) &&
+        foreign.every((r) => !over(expand(r), mask)) &&
+        ownPaths.every((p) => inside(e.paths.get(p.operationIndex).clip, expand(p.ink)))
+    )
+    for (const r of own)
+      for (const op of r.glyphOperations)
+        assert(e.texts.get(op) && inside(e.texts.get(op).clip, expand(r.ink)))
+    assert(
+      [
+        ...competingRects,
+        ...otherFigures
+          .filter((f) => f.page === table.page && f.region)
+          .map((f) => f.region.map((x, i) => x * (i % 2 ? n.viewport.height : n.viewport.width)))
+      ].every((r) => valid(r) && !over(r, nativeCrop))
+    )
+    const proof = {
+      cropRect: nativeCrop.map((x) => x * scale),
+      nativeCrop,
+      oldNativeCrop: old,
+      regions: [mask],
+      offset,
+      rasterScale: s,
+      pixelWidth: Math.ceil((nativeCrop[2] - nativeCrop[0]) * s),
+      pixelHeight: Math.ceil((nativeCrop[3] - nativeCrop[1]) * s),
+      bounds: { width: n.viewport.width, height: n.viewport.height },
+      ownInk,
+      foreign
+    }
+    const retained = retainNativeRecoveryInputs(
+      [
+        table,
+        rules,
+        n,
+        context.operators,
+        context.sourceContent,
+        page,
+        captions,
+        competingRects,
+        otherFigures,
+        nativeContent,
+        proof,
+        v
+      ],
+      v,
+      n.viewport
+    )
+    assert(retained)
+    const current = () =>
+      witness.current() &&
+      retained() &&
+      options.captions === captions &&
+      options.competingRects === competingRects &&
+      options.otherFigures === otherFigures &&
+      options.page === page &&
+      options.nativePage === nativePage &&
+      options.nativeContent === nativeContent
+    assert(current())
+    states.set(proof, { table, current, kind: 'ruled-body' })
+    return proof
+  } catch {
+    return
   }
 }
 function proveRuledBody(table, rules, context, options) {
@@ -563,15 +1313,8 @@ function proveRuledBody(table, rules, context, options) {
       scale = context.viewport.scale,
       old = table.cropRect?.map((x) => x / scale)
     assert(n && valid(old) && !table.parts && !table.cropRects && Array.isArray(table.issues))
-    assert(
-      table.issues.some((s) =>
-        [
-          'text-crosses-crop-boundary',
-          'unassigned-source-text',
-          'unresolved-spanning-cells'
-        ].includes(s)
-      )
-    )
+    // Scalar completeness does not prove that the model crop contains its rails.
+    // Keep the same physical proof when a separate repair completes the grid.
     assert(
       table.caption?.page === table.page && valid(table.caption.rect) && !table.caption.regions
     )
@@ -592,8 +1335,19 @@ function proveRuledBody(table, rules, context, options) {
           compact(c.text ?? c.lines.join(' ')) === compact(table.caption.text)
       ).length === 1
     )
-    // Unknown compositing state and images decline this optional physical frame.
-    assert(!n.operators.fnArray.includes(OPS.setGState))
+    // Explicit opaque defaults have the same paint semantics as omitted state.
+    // Other compositing changes still decline this optional physical frame.
+    assert(
+      n.operators.fnArray.every(
+        (op, i) =>
+          op !== OPS.setGState ||
+          n.operators.argsArray[i][0].every(
+            ([key, value]) =>
+              (key === 'BM' && value === 'source-over') ||
+              (['ca', 'CA'].includes(key) && value === 1)
+          )
+      )
+    )
     const witness = capture(table, context, options, 'closed-ruled-body')
     assert(witness && witness.patternOperations.length === 0 && witness.e.images.length === 0)
     const { records, e } = witness,
@@ -601,8 +1355,18 @@ function proveRuledBody(table, rules, context, options) {
     assert(title?.length)
     const em = Math.max(...title.map((r) => r.advance[3] - r.advance[1])),
       width = old[2] - old[0]
+    const paths = n.graphicsBounds.map((g) => {
+      assert(g.kind === 'path')
+      return ruledPath(n, e, g.operationIndex)
+    })
+    // Filled rails can have small native rectangular end caps omitted from the
+    // line inventory. Include their proved paint before joining; otherwise a
+    // complete opening rail can be misclassified as foreign and masked away.
+    const paintedRails = paths
+      .filter((p) => p.points.length === 4 && p.ink[3] - p.ink[1] <= 1)
+      .map(({ ink: r }) => [r[0], (r[1] + r[3]) / 2, r[2], (r[1] + r[3]) / 2])
     const bands = joinHorizontalTableRules(
-      rules.map((r) => r.map((x) => x / scale)),
+      [...rules.map((r) => r.map((x) => x / scale)), ...paintedRails],
       0.75
     ).filter(
       (r) =>
@@ -620,10 +1384,6 @@ function proveRuledBody(table, rules, context, options) {
       else families.push([r])
     }
     const candidates = []
-    const paths = n.graphicsBounds.map((g) => {
-      assert(g.kind === 'path')
-      return ruledPath(n, e, g.operationIndex)
-    })
     for (const family of families) {
       family.sort((a, b) => a[1] - b[1])
       if (family.length < 3 || family.length > 64) continue
@@ -778,7 +1538,10 @@ function proveRuledBody(table, rules, context, options) {
             !e.texts.get(i) ||
             !inside(
               e.texts.get(i).clip,
-              expand(union(owned.filter((r) => r.glyphOperations.includes(i)).map((r) => r.ink)))
+              // The original text clip remains active during both renders. Its
+              // AA fringe need not be enlarged; actual glyph ink must fit, and
+              // renderRuledBody verifies the retained pixels before publication.
+              union(owned.filter((r) => r.glyphOperations.includes(i)).map((r) => r.ink))
             )
         )
       )

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { LiteratureIndex, LiteratureReader } from '@aipoch/literature-reading'
 
 import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-bridge-tools'
+import {
+  LITERATURE_LIBRARY_READ_SCOPES,
+  LITERATURE_LIBRARY_SCOPES
+} from '../literature/library-mcp-server'
 
 const identity = (tool: { namespace: string; name: string }): string =>
   `${tool.namespace}/${tool.name}`
@@ -67,6 +71,16 @@ describe('Codex bridge MCP catalogs', () => {
         'mcp__open_science_literature/create_pdf_annotation'
       ])
     )
+  })
+
+  it('advertises the same Library scopes the MCP server accepts', () => {
+    const scopes = (name: string): unknown =>
+      codexBridgeStaticMcpTools().find(
+        (entry) => identity(entry) === `mcp__open_science_library/${name}`
+      )!.parameters.properties.scope.enum
+    expect(scopes('search_library')).toEqual([...LITERATURE_LIBRARY_SCOPES])
+    expect(scopes('read_library_abstract')).toEqual([...LITERATURE_LIBRARY_READ_SCOPES])
+    expect(scopes('read_library_pdf')).toEqual([...LITERATURE_LIBRARY_READ_SCOPES])
   })
 
   it('projects Notebook memory, shell, and WSL setup capabilities', () => {

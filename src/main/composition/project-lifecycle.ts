@@ -1,5 +1,8 @@
 import type { PromptOptimizationService } from '../projects/prompt-optimization'
+import { join } from 'node:path'
+import { HarnessStorageCleanup } from '../harness-acp/storage-cleanup'
 import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
+import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import { createAcpRuntime } from '../acp/runtime-composition'
@@ -44,7 +47,7 @@ import { createSideChatCommandOwner, type SideChatCommandOwner } from '../side-c
 
 import { createMainPromptSideChatRelay } from '../side-chat/main-prompt-relay'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
-import { resolveConfigRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { detectActiveSessions } from '../storage/detect-active'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createUploadCommandOwner } from '../uploads/command-owner'
@@ -74,12 +77,14 @@ export function composeProjectLifecycle({
   getActiveDelegatedSessions,
   getActiveSideChatSessions,
   sessionPersistenceCoordinator,
+  researchFilmLifecycle,
   clearSessionCredentials,
   getNotebookService
 }: {
   promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
+  researchFilmLifecycle: ResearchFilmLifecycle
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   managedFileVersionService: ManagedFileVersionService
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
@@ -308,6 +313,12 @@ export function composeProjectLifecycle({
   const visionEvidenceRepository = new VisionEvidenceRepository(() =>
     getProjectDbClient(configRoot)
   )
+  const harnessStorageCleanup = new HarnessStorageCleanup({
+    sessionDirectory: join(configRoot, 'open-science-agent', 'sessions'),
+    receiptDirectory: () => join(resolveDataRoot(), 'open-science-agent', 'tool-receipts'),
+    isLive: (projectId, sessionId) =>
+      runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
+  })
   bindNotificationInboxDeletionRuntime({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
@@ -317,11 +328,17 @@ export function composeProjectLifecycle({
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),
-        bookmarkRepository.deleteSessions(sessionIds)
+        bookmarkRepository.deleteSessions(sessionIds),
+        researchFilmLifecycle.deleteSessions(sessionIds),
+        harnessStorageCleanup.commit(sessionIds)
       ])
     },
     onSessionsReconciled: async (sessionIds) => {
-      await visionEvidenceRepository.reconcileSessions(sessionIds)
+      await Promise.all([
+        visionEvidenceRepository.reconcileSessions(sessionIds),
+        researchFilmLifecycle.reconcileSessions(sessionIds),
+        harnessStorageCleanup.reconcile(sessionIds)
+      ])
     }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {

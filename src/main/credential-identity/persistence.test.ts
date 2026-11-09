@@ -36,6 +36,12 @@ it.each(['decrypt', 'unavailable', 'availability-error'] as const)(
     })
     await writeFile(join(root, 'settings.json'), settings)
     await writeFile(join(root, 'credentials.json'), credentials)
+    const rayPath = join(root, 'compute-ray-tokens.json')
+    const ray = JSON.stringify({
+      version: 1,
+      entries: [{ endpoint: 'https://ray.test', sealed: 'open-science:protected:v1:b2xk' }]
+    })
+    await writeFile(rayPath, ray)
     const { installCredentialAccess } = await import('./runtime')
     installCredentialAccess({
       identity: { backend: 'mac-keychain', appName: 'Open-Science', exists: true },
@@ -71,6 +77,11 @@ it.each(['decrypt', 'unavailable', 'availability-error'] as const)(
       new SettingsDocumentStore(root).mutate((value) => ({ ...value, providers: [] }))
     ).rejects.toThrow(/recovery/i)
     await expect(new DeviceCredentialStore(root).remove('kept')).rejects.toThrow(/recovery/i)
+    const { RayTokenStore } = await import('../compute/ray-token')
+    await expect(new RayTokenStore(() => root).remove('https://ray.test')).rejects.toThrow(
+      /recovery/i
+    )
+    expect(await readFile(rayPath, 'utf8')).toBe(ray)
     expect(await readFile(join(root, 'settings.json'), 'utf8')).toBe(settings)
     expect(await readFile(join(root, 'credentials.json'), 'utf8')).toBe(credentials)
   }

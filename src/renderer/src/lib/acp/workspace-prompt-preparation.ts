@@ -58,7 +58,7 @@ export const prepareWorkspacePrompt = async (
       mode: 'runtime-transcript-authority'
     })
   return {
-    id,
+    id: authority.promptPreparation?.id ?? id,
     sessionId: session.id,
     promptMessageId,
     authority,

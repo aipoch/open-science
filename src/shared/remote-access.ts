@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
 export type RemoteAccessLifecycle = 'disabled' | 'starting' | 'running' | 'stopping' | 'error'
-export type RemoteAccessMode = 'off' | 'remoteit' | 'remoteit-public'
+export type RemoteAccessMode = 'off' | 'remoteit' | 'remoteit-public' | 'lan' | 'pinggy'
 
 export type RemoteItService = {
   id: string
@@ -42,6 +42,14 @@ export type TrustedRemoteBrowserView = {
   createdAt: number
   lastSeenAt: number
   expiresAt: number
+  route?: Exclude<RemoteAccessMode, 'off'>
+  host?: string
+}
+
+export type RemoteConnectOffer = {
+  url: string
+  expiresAt: number
+  password?: string
 }
 
 export type RemoteAccessSnapshot = {
@@ -61,6 +69,16 @@ export type RemoteAccessSnapshot = {
   remoteIt: RemoteItInstallation
   pendingRequests: RemotePairingRequestView[]
   trustedBrowsers: TrustedRemoteBrowserView[]
+  connectedDevices?: TrustedRemoteBrowserView[]
+  lan?: { addresses: string[]; selectedAddress?: string; port?: number }
+  pinggy?: {
+    sshAvailable: boolean
+    tier: 'free' | 'pro'
+    tunnelUrl?: string
+    reconnecting: boolean
+    expiresAt?: number
+  }
+  offer?: RemoteConnectOffer
 }
 
 export type RemotePairingDecision = 'once' | 'always'
@@ -86,10 +104,16 @@ export type SetRemoteAccessModeRequest = {
   mode: RemoteAccessMode
 }
 
+export type SelectLanAddressRequest = { address: string }
+export type SetPinggyTokenRequest = { token: string | null }
+export type SetPinggyRegionRequest = { region: 'auto' | 'ap' | 'us' | 'eu' }
+
 export const remoteAccessModeSchema: z.ZodType<RemoteAccessMode> = z.enum([
   'off',
   'remoteit',
-  'remoteit-public'
+  'remoteit-public',
+  'lan',
+  'pinggy'
 ])
 export const remotePairingDecisionSchema: z.ZodType<RemotePairingDecision> = z.enum([
   'once',
@@ -161,7 +185,9 @@ const trustedRemoteBrowserViewSchema: z.ZodType<TrustedRemoteBrowserView> = z
     platform: z.string(),
     createdAt: z.number().finite(),
     lastSeenAt: z.number().finite(),
-    expiresAt: z.number().finite()
+    expiresAt: z.number().finite(),
+    route: z.enum(['remoteit', 'remoteit-public', 'lan', 'pinggy']).optional(),
+    host: z.string().optional()
   })
   .strict()
 export const remoteAccessSnapshotSchema: z.ZodType<RemoteAccessSnapshot> = z
@@ -176,7 +202,30 @@ export const remoteAccessSnapshotSchema: z.ZodType<RemoteAccessSnapshot> = z
     error: z.string().optional(),
     remoteIt: remoteItInstallationSchema,
     pendingRequests: z.array(remotePairingRequestViewSchema),
-    trustedBrowsers: z.array(trustedRemoteBrowserViewSchema)
+    trustedBrowsers: z.array(trustedRemoteBrowserViewSchema),
+    connectedDevices: z.array(trustedRemoteBrowserViewSchema).optional(),
+    lan: z
+      .object({
+        addresses: z.array(z.string()),
+        selectedAddress: z.string().optional(),
+        port: z.number().int().optional()
+      })
+      .strict()
+      .optional(),
+    pinggy: z
+      .object({
+        sshAvailable: z.boolean(),
+        tier: z.enum(['free', 'pro']),
+        tunnelUrl: z.string().optional(),
+        reconnecting: z.boolean(),
+        expiresAt: z.number().optional()
+      })
+      .strict()
+      .optional(),
+    offer: z
+      .object({ url: z.string(), expiresAt: z.number(), password: z.string().optional() })
+      .strict()
+      .optional()
   })
   .strict()
 
@@ -213,6 +262,22 @@ export const remoteAccessApplicationCommandContracts = Object.freeze({
   ),
   setMode: defineApplicationCommandContract(
     validationCodec(z.tuple([setRemoteAccessModeRequestSchema])),
+    remoteAccessSnapshotResult
+  ),
+  refreshOffer: defineApplicationCommandContract(
+    validationCodec(z.tuple([])),
+    remoteAccessSnapshotResult
+  ),
+  selectLanAddress: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ address: z.string().min(1) }).strict()])),
+    remoteAccessSnapshotResult
+  ),
+  setPinggyToken: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ token: z.string().min(1).nullable() }).strict()])),
+    remoteAccessSnapshotResult
+  ),
+  setPinggyRegion: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ region: z.enum(['auto', 'ap', 'us', 'eu']) }).strict()])),
     remoteAccessSnapshotResult
   )
 })

@@ -36,7 +36,17 @@ export const readNotebookToolResult = (
   const item = record(value)
   if (!item) return undefined
   if (
-    ['kernelStatus', 'runtimes', 'bound', 'bindingChanged'].some((key) => key in item) ||
+    [
+      'kernelStatus',
+      'runtimes',
+      'bound',
+      'bindingChanged',
+      'status',
+      'packages',
+      'environments',
+      'created',
+      'removed'
+    ].some((key) => key in item) ||
     text(item.error)
   )
     return item
@@ -123,6 +133,8 @@ const statusLabel = (value: unknown, t: TranslateClause): string | undefined => 
       return t('Running')
     case 'restarted':
       return t('Restarted')
+    case 'shutdown':
+      return t('Completed')
     default:
       return text(value)
   }
@@ -134,7 +146,10 @@ export const isNotebookSummaryTool = (identity: string | undefined): boolean =>
     'list_notebook_runtimes',
     'notebook_bind_runtime',
     'notebook_switch_runtime',
-    'notebook_restart'
+    'notebook_restart',
+    'notebook_shutdown',
+    'inspect_packages',
+    'manage_environments'
   ].includes(matchNotebookControlTool(identity) ?? '')
 
 export const buildNotebookToolSummary = (
@@ -164,6 +179,87 @@ export const buildNotebookToolSummary = (
     if (approval) summary.note = t('Clears in-memory variables. Run history is preserved.')
     else if (result?.status === 'restarted' && !summary.error)
       summary.note = t('In-memory variables cleared. Run history preserved.')
+  } else if (tool === 'notebook_shutdown') {
+    summary.title = t('Shutdown notebook')
+    field(t('Status'), statusLabel(result?.status, t))
+    if (result?.status === 'shutdown' && !summary.error) summary.note = t('Notebook shut down.')
+  } else if (tool === 'inspect_packages') {
+    summary.title = t('Inspect packages')
+    field(t('Language'), language(result?.language ?? input.language))
+    field(t('Environment'), result?.environmentName)
+    field(t('Runtime source'), result?.runtimeSource)
+    field(t('Runtime'), result?.runtimeLabel)
+    const inventory = record(result?.inventory)
+    field(t('Captured at'), inventory?.capturedAt)
+    if (Array.isArray(result?.packages)) {
+      summary.rows = result.packages.slice(0, 50).flatMap((entry) => {
+        const pkg = record(entry)
+        if (!pkg) return []
+        return [
+          {
+            title: text(pkg.requested) ?? text(pkg.name) ?? t('Package'),
+            detail: [
+              text(pkg.version),
+              text(pkg.ecosystem),
+              text(pkg.loadedState),
+              text(pkg.versionStatus)
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            status: text(pkg.status)
+          }
+        ]
+      })
+    }
+    if (Array.isArray(result?.warnings) && result.warnings.length)
+      summary.note = result.warnings
+        .filter((warning): warning is string => typeof warning === 'string')
+        .join(' ')
+  } else if (tool === 'manage_environments') {
+    summary.title = t('Manage environments')
+    if (approval) {
+      field(t('Action'), input.action)
+      field(t('Environment'), input.name)
+      field(t('Language'), language(input.language))
+      if (Array.isArray(input.packages)) {
+        const packages = input.packages.filter((pkg): pkg is string => typeof pkg === 'string')
+        if (packages.length) field(t('Packages'), packages.join(', '))
+      }
+    }
+    const created = record(result?.created)
+    const removed = record(result?.removed)
+    if (created) {
+      field(t('Environment'), created.name)
+      field(t('Language'), language(created.language))
+      field(t('Runtime'), created.runtimeId)
+      field(t('Status'), created.runnable === true ? t('Ready') : t('Unavailable'))
+      summary.note = text(created.detail)
+    } else if (removed) {
+      field(t('Environment'), removed.name)
+      summary.note = t('Removed')
+    } else {
+      field(t('Offset'), result?.offset)
+      if (Array.isArray(result?.environments)) {
+        summary.rows = result.environments.slice(0, 40).flatMap((entry) => {
+          const environment = record(entry)
+          if (!environment) return []
+          return [
+            {
+              title: text(environment.name) ?? t('Environment'),
+              detail: [language(environment.language), scalar(environment.sizeBytes)]
+                .filter(Boolean)
+                .join(' · '),
+              status:
+                environment.isDefault === true
+                  ? t('Default')
+                  : environment.ready === true
+                    ? t('Ready')
+                    : t('Unavailable')
+            }
+          ]
+        })
+      }
+    }
   } else if (tool === 'notebook_bind_runtime' || tool === 'notebook_switch_runtime') {
     const bound = record(result?.bound)
     const target = record(result?.target)

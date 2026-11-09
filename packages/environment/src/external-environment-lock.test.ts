@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { captureNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from './index'
+import { EnvironmentLockCaptureOwner } from './environment-lock'
 import type { NotebookEnvironmentLock } from './contracts'
 import type { NotebookEnvironmentManifest } from './contracts'
 import { nativeLockRestoreState } from './index'
@@ -215,5 +216,27 @@ describe('conditional external environment locks', () => {
       state: 'unavailable'
     })
     expect(execute.mock.calls.every(([argv]) => argv[0] === '/user/Rscript')).toBe(true)
+  })
+
+  it('reuses the external installer version until the environment fingerprint changes', async () => {
+    const execute = vi.fn(async (argv: string[]) =>
+      argv.at(-1)?.includes('snapshot') ? content : '1.2.4'
+    )
+    const target = {
+      language: 'r' as const,
+      environmentName: 'external-r',
+      runtimeSource: 'external' as const,
+      command: '/user/Rscript'
+    }
+    const owner = new EnvironmentLockCaptureOwner()
+    for (const environmentFingerprint of ['a', 'a', 'b']) {
+      expect(
+        await owner.capture(target, manifest, { execute, environmentFingerprint })
+      ).toMatchObject({ state: 'captured' })
+    }
+    const versionProbes = execute.mock.calls.filter(([argv]) =>
+      argv.at(-1)?.includes('packageVersion("renv")')
+    )
+    expect(versionProbes).toHaveLength(2)
   })
 })

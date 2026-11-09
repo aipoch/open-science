@@ -587,6 +587,11 @@ export class AgentRuntimeManager {
         agentFrameworkId,
         frameworks: [
           {
+            id: 'open-science-agent',
+            label: 'Open-Science Agent',
+            runtime: { found: true, version: '0.1.0' }
+          },
+          {
             id: 'claude-code',
             label: getAgentFramework('claude-code').displayName,
             runtime: claudeRuntime

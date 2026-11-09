@@ -1,3 +1,4 @@
+import { isComputeProviderId } from '../../shared/compute'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
@@ -73,7 +74,7 @@ class SessionEnabledComputeHostsOwner {
   private async validateProviderIds(providerIds: readonly string[]): Promise<string[]> {
     const normalized = [...new Set(providerIds)]
     for (const providerId of normalized) {
-      if (!providerId.startsWith('ssh:') || providerId.length <= 4) {
+      if (!isComputeProviderId(providerId)) {
         throw new ComputeHostPreferenceValidationError('invalid_provider_id', providerId)
       }
       if (!(await this.options.hostExists(providerId))) {

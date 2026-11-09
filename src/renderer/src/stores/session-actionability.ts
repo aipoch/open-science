@@ -33,7 +33,6 @@ export type SessionActionabilityFacts = Readonly<{
   credentialPending?: boolean
   elicitationPending?: boolean
   planPending?: boolean
-  allowPendingSessionRetry?: boolean
 }>
 
 export type SessionActionabilityProjection = Readonly<{
@@ -71,6 +70,8 @@ type SessionInteractionSource = Readonly<{
   activeRun?: unknown
   agentPromptInFlight?: boolean
   isPending?: boolean
+  pendingRetryable?: boolean
+  pendingBindingSessionId?: string
   pendingHistoryReplay?: unknown
   attention?: SessionAttention
   messages?: PersistedChatSession['messages']
@@ -204,16 +205,15 @@ export const projectSessionActionability = (
           : undefined
   const interactionDisabledReason = disabledReasonForInteraction(blockingInteraction)
   const historyReplayPending = Boolean(session.pendingHistoryReplay)
-  // A failed creation keeps isPending until retry binds the provider. It no longer owns
-  // initialization: allow the user to repair its configuration and submit that retry.
-  const creationPending = Boolean(session.isPending) && session.status !== 'error'
+  const creationPending =
+    Boolean(session.isPending) &&
+    (!session.pendingRetryable || Boolean(session.pendingBindingSessionId))
   const sessionPending = creationPending || historyReplayPending
-  const turnDisabledReason =
-    creationPending && !facts.allowPendingSessionRetry
-      ? 'session-pending'
-      : running
-        ? 'session-running'
-        : interactionDisabledReason
+  const turnDisabledReason = creationPending
+    ? 'session-pending'
+    : running
+      ? 'session-running'
+      : interactionDisabledReason
   const revisionDisabledReason = running ? 'session-running' : interactionDisabledReason
   const attentionDisabledReason =
     interactionDisabledReason ??
@@ -287,3 +287,8 @@ export const projectSessionActionability = (
     }
   }
 }
+
+export const isSessionDeletionAllowed = (session: ChatSession): boolean =>
+  (!session.isPending && !session.firstPromptDraft) ||
+  (session.pendingRetryable === true &&
+    projectSessionActionability(session).activity === 'inactive')

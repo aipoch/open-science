@@ -1066,6 +1066,38 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]).toMatchObject({ label: 'Output', text: '5 rows returned' })
   })
 
+  it.each(['read_tool_result', 'mcp__open_science_notebook__read_tool_result'])(
+    'uses a shared card for result-reader calls: %s',
+    (providerToolName) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName,
+          rawInput: { invocationId: 'invocation-1', offset: 0, limit: 2000 },
+          rawOutput: 'Tool is unavailable'
+        })
+      )
+
+      expect(details?.displayName).toBe('Read tool result')
+      expect(details?.sections).toEqual([
+        expect.objectContaining({ kind: 'code', label: 'Input' }),
+        expect.objectContaining({ kind: 'code', label: 'Output', text: 'Tool is unavailable' })
+      ])
+    }
+  )
+
+  it('keeps unknown MCP calls on the generic expandable card', () => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'mcp__open_science_notebook__future_tool',
+        rawInput: { query: 'value' },
+        rawOutput: { ok: true }
+      })
+    )
+
+    expect(details?.displayName).toBe('mcp__open_science_notebook__future_tool')
+    expect(details?.sections).toHaveLength(2)
+  })
+
   it('renders memory category reads with a friendly name instead of the raw MCP identity', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__list_memory_categories',

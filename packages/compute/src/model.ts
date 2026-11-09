@@ -8,7 +8,8 @@
 // Host topology, inferred by probe in a later issue. Persisted so downstream issues can branch on it;
 // Phase 1 never reads it for behavior.
 export type ComputeHostShape = 'direct_ssh' | 'scheduler_cluster' | 'bridge_runner'
-export type ComputeExecutionMode = 'direct_ssh' | 'slurm'
+export type ComputeExecutionMode =
+  'direct_ssh' | 'slurm' | 'kubernetes' | 'ray_jobs' | 'hugging_face_jobs' | 'modal_sandbox'
 
 // Optional connection overrides layered on top of ~/.ssh/config (never credentials/keys). Stored as a
 // JSON string in the DB column; parsed to this shape at the repository boundary.
@@ -189,6 +190,7 @@ export type SetComputeJobRemoteCleanupRequest = Readonly<{
   projectId: string
   sessionId: string
   disposition: Exclude<ComputeJobRemoteCleanupDisposition, 'pending'>
+  manualStagedCleanup?: true
 }>
 
 // Matches the UI character counter and the compute_details cap (32 KiB) in later issues.

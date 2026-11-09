@@ -485,10 +485,17 @@ describe('ManagedPreviewResources', () => {
     expect(openManagedFileVersion).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps a Notebook input Version lease open for capability reads instead of resolving a path', async () => {
+  it.each([
+    ['notebook-input', 'notebook-input-preview:%5B%22project-1%22%5D', 'openNotebookInput'],
+    [
+      'compute-output',
+      'compute-output:v1:project/session/hpc/job/featured/output.txt',
+      'openComputeOutput'
+    ]
+  ] as const)('keeps the %s lease open for capability reads', async (source, path, acquire) => {
     const trustedBytes = Buffer.from('staged through a live lease')
     const close = vi.fn().mockResolvedValue(undefined)
-    const openNotebookInput = vi.fn().mockResolvedValue({
+    const openLease = vi.fn().mockResolvedValue({
       path: '/managed/source-must-not-escape.txt',
       size: trustedBytes.byteLength,
       versionToken: 84,
@@ -501,14 +508,11 @@ describe('ManagedPreviewResources', () => {
     const resolvePath = vi.fn().mockRejectedValue(new Error('path resolver must not run'))
     const resources = new ManagedPreviewResources({
       resolvePath,
-      openNotebookInput,
-      createId: () => 'notebook-resource'
+      [acquire]: openLease,
+      createId: () => 'scoped-resource'
     } as never)
 
-    const resource = await resources.acquire(17, {
-      source: 'notebook-input',
-      path: 'notebook-input-preview:%5B%22project-1%22%5D'
-    })
+    const resource = await resources.acquire(17, { source, path })
     await expect(
       resources.readRange(17, { resourceId: resource.id, begin: 0, end: trustedBytes.byteLength })
     ).resolves.toEqual({
@@ -517,10 +521,7 @@ describe('ManagedPreviewResources', () => {
       total: trustedBytes.byteLength,
       data: new Uint8Array(trustedBytes)
     })
-    expect(openNotebookInput).toHaveBeenCalledWith({
-      source: 'notebook-input',
-      path: 'notebook-input-preview:%5B%22project-1%22%5D'
-    })
+    expect(openLease).toHaveBeenCalledWith({ source, path })
     expect(resolvePath).not.toHaveBeenCalled()
     await resources.release(17, { resourceId: resource.id })
     expect(close).toHaveBeenCalledOnce()

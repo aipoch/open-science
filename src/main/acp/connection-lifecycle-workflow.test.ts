@@ -6,137 +6,170 @@ import {
   type SetProviderRequest
 } from '@agentclientprotocol/sdk'
 import type { AcpConnectRequest, AcpStateSnapshot } from '../../shared/acp'
+import type { AgentFrameworkId } from '../../shared/settings'
 import type { AcpConnectionResourceOwner } from './connection-resource-owner'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 
 const connection = {} as ClientConnection
 
 describe('AcpConnectionLifecycleWorkflow', () => {
-  it('initializes, authenticates, configures the advertised provider, then publishes connected', async () => {
-    const actions: string[] = []
-    const ready = {
-      epoch: 1,
-      connection,
-      framework: 'claude-code' as const,
-      capabilities: { close: true, delete: false, resume: true, steering: false },
-      assertCurrent: vi.fn()
-    }
-    const attempt = {
-      epoch: 1,
-      assertCurrent: vi.fn(),
-      attach: vi.fn(),
-      publish: vi.fn(() => ready),
-      owns: vi.fn(() => true)
-    }
-    const candidate = {
-      transferTo: vi.fn(() => ({
-        backendAttempt: {
-          consumeInitializeMaterial: () => ({
-            authentication: { methodId: 'api-key' },
-            providerConfiguration: {
-              providerId: 'openai',
-              apiType: 'openai',
-              baseUrl: 'http://127.0.0.1:1234/v1',
-              headers: {}
+  it.each([
+    { framework: 'codex', separateProviderNotices: undefined },
+    { framework: 'codex', separateProviderNotices: false },
+    { framework: 'codex', separateProviderNotices: true },
+    { framework: 'claude-code', separateProviderNotices: undefined },
+    { framework: 'claude-code', separateProviderNotices: false },
+    { framework: 'claude-code', separateProviderNotices: true },
+    { framework: 'pi', separateProviderNotices: true }
+  ] as const)(
+    'initializes $framework with provider notices $separateProviderNotices, authenticates and configures before publishing connected',
+    async ({ framework, separateProviderNotices }) => {
+      const actions: string[] = []
+      const ready = {
+        epoch: 1,
+        connection,
+        framework,
+        capabilities: { close: true, delete: false, resume: true, steering: false },
+        assertCurrent: vi.fn()
+      }
+      const attempt = {
+        epoch: 1,
+        assertCurrent: vi.fn(),
+        attach: vi.fn(),
+        publish: vi.fn(() => ready),
+        owns: vi.fn(() => true)
+      }
+      const candidate = {
+        transferTo: vi.fn(() => ({
+          backendAttempt: {
+            consumeInitializeMaterial: () => ({
+              authentication: { methodId: 'api-key' },
+              providerConfiguration: {
+                providerId: 'openai',
+                apiType: 'openai',
+                baseUrl: 'http://127.0.0.1:1234/v1',
+                headers: {}
+              }
+            }),
+            fail: vi.fn()
+          },
+          initialize: vi.fn(async () => {
+            actions.push('initialize')
+            return {
+              protocolVersion: 1,
+              agentCapabilities: { sessionCapabilities: { close: true, resume: true } }
             }
           }),
-          fail: vi.fn()
-        },
-        initialize: vi.fn(async () => {
-          actions.push('initialize')
-          return {
-            protocolVersion: 1,
-            agentCapabilities: { sessionCapabilities: { close: true, resume: true } }
+          authenticate: async () => {
+            actions.push('authenticate')
+          },
+          listProviders: async () => {
+            actions.push('provider-list')
+            // Real Codex ACP 1.1.4 wire response captured from the reported failing setup.
+            return {
+              providers: [
+                {
+                  providerId: 'custom-gateway',
+                  supported: ['openai' as const],
+                  required: false,
+                  current: null
+                }
+              ]
+            }
+          },
+          setProvider: vi.fn(async (request: SetProviderRequest) => {
+            actions.push('provider-set')
+            if (request.providerId !== 'custom-gateway') {
+              throw RequestError.invalidParams(
+                { providerId: request.providerId },
+                `Unknown providerId "${request.providerId}"; only "custom-gateway" is configurable`
+              )
+            }
+          })
+        })),
+        dispose: vi.fn(async () => undefined)
+      }
+      const snapshot = { status: 'connected' } as AcpStateSnapshot
+      const workflow = new AcpConnectionLifecycleWorkflow({
+        appVersion: 'test',
+        separateProviderNotices,
+        defaultCwd: '/workspace',
+        currentConnection: () => undefined,
+        currentStatus: () => 'closed',
+        currentGeneration: () => 1,
+        currentFramework: () => 'claude-code',
+        reconnectBarrier: () => undefined,
+        getSnapshot: () => snapshot,
+        invalidatePendingSessionStartups: vi.fn(),
+        disconnectCurrent: vi.fn(async () => snapshot),
+        updateCwd: vi.fn(),
+        updateError: vi.fn(),
+        setStatus: (status) => actions.push(status),
+        pushEvent: (event) => actions.push(event.title ?? ''),
+        transitionStatus: vi.fn(),
+        emitState: vi.fn(),
+        diagnosticContext: () => ({ framework: 'claude-code', generation: 1, status: 'closed' }),
+        openCandidate: vi.fn(
+          async (_attempt: unknown, onFrameworkResolved: (resolved: AgentFrameworkId) => void) => {
+            onFrameworkResolved(framework)
+            return candidate
           }
-        }),
-        authenticate: async () => {
-          actions.push('authenticate')
-        },
-        listProviders: async () => {
-          actions.push('provider-list')
-          // Real Codex ACP 1.1.4 wire response captured from the reported failing setup.
-          return {
-            providers: [
-              {
-                providerId: 'custom-gateway',
-                supported: ['openai' as const],
-                required: false,
-                current: null
-              }
-            ]
-          }
-        },
-        setProvider: vi.fn(async (request: SetProviderRequest) => {
-          actions.push('provider-set')
-          if (request.providerId !== 'custom-gateway') {
-            throw RequestError.invalidParams(
-              { providerId: request.providerId },
-              `Unknown providerId "${request.providerId}"; only "custom-gateway" is configurable`
-            )
-          }
-        })
-      })),
-      dispose: vi.fn(async () => undefined)
-    }
-    const snapshot = { status: 'connected' } as AcpStateSnapshot
-    const workflow = new AcpConnectionLifecycleWorkflow({
-      appVersion: 'test',
-      defaultCwd: '/workspace',
-      currentConnection: () => undefined,
-      currentStatus: () => 'closed',
-      currentGeneration: () => 1,
-      currentFramework: () => 'claude-code',
-      reconnectBarrier: () => undefined,
-      getSnapshot: () => snapshot,
-      invalidatePendingSessionStartups: vi.fn(),
-      disconnectCurrent: vi.fn(async () => snapshot),
-      updateCwd: vi.fn(),
-      updateError: vi.fn(),
-      setStatus: (status) => actions.push(status),
-      pushEvent: (event) => actions.push(event.title ?? ''),
-      transitionStatus: vi.fn(),
-      emitState: vi.fn(),
-      diagnosticContext: () => ({ framework: 'claude-code', generation: 1, status: 'closed' }),
-      openCandidate: vi.fn(async () => candidate) as never,
-      connectResources: {
-        connect: async (operation: Parameters<AcpConnectionResourceOwner['connect']>[0]) =>
-          operation(attempt)
-      } as never
-    })
-
-    await expect(workflow.connect({ cwd: '/workspace' } satisfies AcpConnectRequest)).resolves.toBe(
-      snapshot
-    )
-
-    expect(actions).toEqual([
-      'connecting',
-      'initialize',
-      'authenticate',
-      'provider-set',
-      'provider-list',
-      'provider-set',
-      'Agent initialized',
-      'connected'
-    ])
-    expect(candidate.transferTo).toHaveBeenCalledOnce()
-    expect(candidate.transferTo.mock.results[0]?.value.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        clientCapabilities: expect.objectContaining({ elicitation: { form: {} } })
+        ) as never,
+        connectResources: {
+          connect: async (operation: Parameters<AcpConnectionResourceOwner['connect']>[0]) =>
+            operation(attempt)
+        } as never
       })
-    )
-    expect(candidate.transferTo.mock.results[0]?.value.setProvider).toHaveBeenCalledWith({
-      providerId: 'custom-gateway',
-      apiType: 'openai',
-      baseUrl: 'http://127.0.0.1:1234/v1',
-      headers: {}
-    })
-    expect(attempt.publish).toHaveBeenCalledWith({
-      close: true,
-      delete: false,
-      resume: true,
-      steering: false
-    })
-  })
+
+      await expect(
+        workflow.connect({ cwd: '/workspace' } satisfies AcpConnectRequest)
+      ).resolves.toBe(snapshot)
+
+      expect(actions).toEqual([
+        'connecting',
+        'initialize',
+        'authenticate',
+        'provider-set',
+        'provider-list',
+        'provider-set',
+        'Agent initialized',
+        'connected'
+      ])
+      expect(candidate.transferTo).toHaveBeenCalledOnce()
+      expect(candidate.transferTo.mock.results[0]?.value.initialize).toHaveBeenCalledWith({
+        protocolVersion: 1,
+        clientInfo: { name: 'open-science', version: 'test' },
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          session: { configOptions: { boolean: {} } },
+          plan: {},
+          elicitation: { form: {} },
+          ...(separateProviderNotices === true && framework !== 'pi'
+            ? {
+                _meta: {
+                  'open-science/provider-notice': { version: 1 },
+                  ...(framework === 'codex'
+                    ? { jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } } }
+                    : {})
+                }
+              }
+            : {})
+        }
+      })
+      expect(candidate.transferTo.mock.results[0]?.value.setProvider).toHaveBeenCalledWith({
+        providerId: 'custom-gateway',
+        apiType: 'openai',
+        baseUrl: 'http://127.0.0.1:1234/v1',
+        headers: {}
+      })
+      expect(attempt.publish).toHaveBeenCalledWith({
+        close: true,
+        delete: false,
+        resume: true,
+        steering: false
+      })
+    }
+  )
 
   it('retains advertised steering from initialize _meta', async () => {
     const snapshot = { status: 'connected' } as AcpStateSnapshot

@@ -1218,6 +1218,98 @@ describe('extractPdfTranslationSource', () => {
     expect(source.units[1].fragments[0].items.map((item) => item.index)).toEqual([2, 3])
   })
 
+  it.each(['viewport', 'invalid-width'])(
+    'keeps native justified caption boundaries without admitting whitespace as a source: %s',
+    async (variant) => {
+      const item = (
+        str: string,
+        x: number,
+        y: number,
+        width: number,
+        size = 10,
+        fontName = 'body',
+        hasEOL = true
+      ) => ({
+        ...text(str),
+        width,
+        height: size,
+        transform: [size, 0, 0, size, x, y],
+        fontName,
+        hasEOL
+      })
+      const items = [
+        item(
+          'The preceding ordinary explanation establishes the surrounding discussion.',
+          60,
+          400,
+          480
+        ),
+        item('Across these independent conditions', 60, 388, 200, 10, 'body', false),
+        item(' ', 260, 388, 12, 10, 'body', false),
+        item('the discussion continues with', 272, 388, 268),
+        item('Figure 1:', 60, 220, 45, 10, 'body', false),
+        item(
+          'Observed values from the complete independent comparison.',
+          110,
+          220,
+          430,
+          8,
+          'caption'
+        ),
+        item(
+          'an ordinary continuation that remains separate from the completed caption.',
+          60,
+          212,
+          480
+        ),
+        item('The following ordinary sentence preserves the remaining body context.', 60, 200, 480)
+      ]
+      if (variant === 'invalid-width') items[2].width = NaN
+      const original = structuredClone(items),
+        fixture = setup(items)
+      fixture.page.getTextContent.mockResolvedValue({
+        items,
+        styles: {
+          body: { ascent: 0.8, descent: -0.2, vertical: false },
+          caption: { ascent: 0.8, descent: -0.2, vertical: false }
+        }
+      })
+      if (variant === 'viewport')
+        fixture.page.getViewport.mockReturnValue({
+          width: 1200,
+          height: 1600,
+          transform: [2, 0, 0, -2, -20, 1580]
+        })
+      const result = await extractPdfTranslationSource(fixture.context)
+      const indices = (unit: (typeof result.source.units)[number]): number[] =>
+        unit.fragments.flatMap((f) => f.items.map((i) => i.index))
+      const caption = result.source.units.find((u) => indices(u).includes(4))!
+      expect(indices(caption).includes(6)).toBe(variant === 'invalid-width')
+      expect(result.source.units.every((u) => !u.sourceOnly)).toBe(true)
+      expect(result.source.units.flatMap(indices)).toEqual([0, 1, 3, 4, 5, 6, 7])
+      expect(result.coverage).toMatchObject({
+        textItemCount: 7,
+        includedItemCount: 7,
+        excludedItemCount: 0,
+        exclusions: []
+      })
+      expect(items).toEqual(original)
+      const bound = await bindPdfTranslation(
+        result.source,
+        {
+          source: result.source,
+          units: [
+            { id: caption.id, translationSource: caption.source, translation: '完整的图注。' }
+          ]
+        },
+        fixture.context.document,
+        'current',
+        fixture.context.signal
+      )
+      expect(bound?.units.find((u) => u.id === caption.id)?.translation).toBe('完整的图注。')
+    }
+  )
+
   it('creates a bindable immutable snapshot with original item indexes and no cleanup', async () => {
     const fixture = setup([text(''), text('An intact source paragraph.')])
     const result = await extractPdfTranslationSource(fixture.context)

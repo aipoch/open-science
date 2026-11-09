@@ -166,6 +166,11 @@ export const resetSessionConversationIntentsForTests = (): void => {
   authorityRootBranchBySessionId.clear()
 }
 
+// Called only after the user explicitly abandons retained local changes, or deletes the Session.
+export const discardSessionConversationIntents = (sessionId: string): void => {
+  pendingBySession.delete(sessionId)
+}
+
 // A rejected attempt must not be resurrected by a later saver retry. Other queued actions survive.
 export const discardPreparedSessionConversationIntents = (
   sessionId: string,

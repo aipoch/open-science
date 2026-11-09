@@ -616,6 +616,13 @@ describe('desktop-only dependency contents', () => {
     expect(desktop('examples/directory.d.ts', true)).toBe(true)
   })
 
+  it('stages only the harness package public runtime files', () => {
+    const manifest = { name: '@aipoch/agent-harness', files: ['dist', 'README.md', 'LICENSE'] }
+    expect(backendDependencyIncludes(manifest, 'dist/index.js')).toBe(true)
+    expect(backendDependencyIncludes(manifest, 'src/index.ts')).toBe(false)
+    expect(backendDependencyIncludes(manifest, 'vitest.config.ts')).toBe(false)
+  })
+
   it.each([
     ['ajv', '8.20.0', 'lib'],
     ['entities', '6.0.1', 'src']

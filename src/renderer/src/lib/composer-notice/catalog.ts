@@ -102,6 +102,15 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: [],
     feedback: 'none'
   },
+  'session/tool-outcome-unknown': {
+    level: 'warning',
+    titleKey: 'Check the interrupted tool result',
+    descriptionKey:
+      'The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.',
+    primaryAction: 'export-diagnostics',
+    secondaryActions: ['new-session'],
+    feedback: 'none'
+  },
   'configuration/claude-cli': {
     ...noticeCatalog.configuration,
     primaryAction: 'open-agent-settings'

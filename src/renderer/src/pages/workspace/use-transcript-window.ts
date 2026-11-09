@@ -547,18 +547,18 @@ const TranscriptEndSync = ({
 const MessageScrollerFollowIntent = ({
   active,
   onChange,
-  onPauseChange
+  onScrollStateChange
 }: {
   active: boolean
   onChange?: (following: boolean) => void
-  onPauseChange?: (paused: boolean) => void
+  onScrollStateChange?: (paused: boolean, away: boolean) => void
 }): null => {
   const { end, paused = false } = useMessageScrollerScrollable()
   useLayoutEffect(() => {
     // A collapse may clamp onto the bottom without the reader choosing to follow.
-    onPauseChange?.(paused)
+    onScrollStateChange?.(paused, end)
     if (active) onChange?.(!end && !paused)
-  }, [active, end, paused, onChange, onPauseChange])
+  }, [active, end, paused, onChange, onScrollStateChange])
   return null
 }
 

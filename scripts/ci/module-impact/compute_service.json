@@ -555,7 +555,13 @@
       "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/compute/job-output-preview.test.ts",
+      "src/main/compute/kubernetes-workspace.real-cluster.integration.test.ts",
+      "src/main/compute/hosted-job-workflow.integration.test.ts",
+      "src/main/compute/ray-job-workflow.integration.test.ts",
+      "src/main/compute/modal-job-workflow.integration.test.ts",
+      "src/main/compute/ray-token.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

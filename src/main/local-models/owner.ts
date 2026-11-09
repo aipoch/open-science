@@ -18,6 +18,7 @@ type Dependencies = {
   dataRoot?: () => string
   acquireWriter?: () => () => void
   revisions?: readonly LocalModelRevision[]
+  requireRecommendedRevision?: boolean
   download?: typeof resilientDownload
 }
 class IncompatibleReceiptError extends Error {}
@@ -36,7 +37,11 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
   for (const revision of revisions) {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(revision.revision)) throw new Error('Invalid model revision.')
     for (const asset of revision.assets) {
-      if (!/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|wasm|txt|json|traineddata\.gz)$/.test(asset.file))
+      if (
+        !/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|cjs|js|wasm|txt|json|bin|node|dylib|dll|so(?:\.[0-9.]+)?|(?:traineddata|bin)\.gz)$/.test(
+          asset.file
+        )
+      )
         throw new Error('Invalid model asset.')
     }
   }
@@ -227,6 +232,8 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
       }
       if (closed) throw new Error('Local model owner is closed.')
       if (!installed) throw new Error(LOCAL_MODEL_NOT_INSTALLED)
+      if (dependencies.requireRecommendedRevision && installed.revision !== recommended.revision)
+        throw new Error('Install or update Research narration in Settings before generating.')
       use.revision = installed.revision
       return {
         revision: installed.revision,
@@ -318,7 +325,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
               }
             }
             if (download) await download(asset.url, target, options)
-            else await downloadLocalModelAsset(asset, target, options)
+            else await downloadLocalModelAsset(asset, target, { ...options, namespace })
           }
           if (controller.signal.aborted) return
           if (!(await validAsset(target, asset))) throw new DownloadChecksumError()
@@ -454,12 +461,16 @@ export const createLocalModelApi = (
   tables: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
   translation: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
   ocr?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'> &
-    Pick<LocalModelOwner, 'setOcrLanguages'>
+    Pick<LocalModelOwner, 'setOcrLanguages'>,
+  narration?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
+  videoExport?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
 ): LocalModelApi => {
   const owner = (capability?: LocalModelCapability): typeof tables => {
     if (capability === undefined || capability === 'pdf-tables') return tables
     if (capability === 'pdf-translation') return translation
     if (capability === 'ocr' && ocr) return ocr
+    if (capability === 'research-narration' && narration) return narration
+    if (capability === 'video-export' && videoExport) return videoExport
     throw new Error('Unsupported local model capability.')
   }
   return {

@@ -14,6 +14,7 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 
 import { load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
@@ -123,7 +124,8 @@ it('rejects macOS feeds from different release versions', () => {
   const dir = temporaryDirectory()
   writeFeed(dir, 'arm64', '0.27.0')
   writeFeed(dir, 'x64', '0.26.0')
-  expect(merge(dir).status).not.toBe(0)
+  writeFileSync(join(dir, 'aipoch-open-science-0.27.0-mac-arm64.zip.blockmap'), 'fixture')
+  expect(String(merge(dir).stderr)).toContain('Invalid update feed for release 0.27.0')
 })
 
 it('does not successfully publish a macOS feed with only one architecture', () => {
@@ -395,14 +397,30 @@ it('rejects duplicate checksums and zero-byte installers', () => {
   expect(() => manifest(dir)).toThrow(/Empty/)
 })
 
-it('merges matching native macOS ZIPs and refuses tampered feed bytes', () => {
+it('merges both stapled ZIPs with regenerated blockmaps and rejects incomplete artifacts', () => {
   const dir = temporaryDirectory()
-  writeFeed(dir, 'arm64', '0.27.0')
-  writeFeed(dir, 'x64', '0.27.0')
+  for (const arch of ['arm64', 'x64']) {
+    const name = `aipoch-open-science-0.27.0-mac-${arch}.zip`
+    const zip = join(dir, name)
+    const bytes = Buffer.from(`final stapled ZIP for ${arch}`)
+    writeFileSync(zip, bytes)
+    writeFileSync(`${zip}.blockmap`, 'stale pre-stapling map')
+    const result = spawnSync(process.execPath, [
+      join(repo, 'scripts/regenerate-mac-feed.mjs'),
+      dir,
+      arch
+    ])
+    expect(result.status, String(result.stderr)).toBe(0)
+    expect(readFileSync(zip)).toEqual(bytes)
+    const map = JSON.parse(gunzipSync(readFileSync(`${zip}.blockmap`)).toString())
+    expect(map.files[0].sizes).toEqual([bytes.length])
+  }
   const result = merge(dir)
   expect(result.status, String(result.stderr)).toBe(0)
   const feed = load(readFileSync(join(dir, 'latest-mac.yml'), 'utf8')) as { files: unknown[] }
   expect(feed.files).toHaveLength(2)
+  unlinkSync(join(dir, 'aipoch-open-science-0.27.0-mac-x64.zip.blockmap'))
+  expect(String(merge(dir).stderr)).toContain('mac-x64.zip.blockmap')
   writeFileSync(join(dir, 'aipoch-open-science-0.27.0-mac-x64.zip'), 'tampered bytes')
   const tampered = merge(dir)
   expect(tampered.status).not.toBe(0)
@@ -691,6 +709,7 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       `aipoch-open-science-${version}-mac-arm64.zip`,
       `aipoch-open-science-${version}-mac-x64.zip`
     ]
+    for (const name of macZips) writeFileSync(join(dir, `${name}.blockmap`), `map for ${name}`)
     const cliPackages = [
       `open-science-cli_${version}_amd64.deb`,
       `open-science-cli_${version}_arm64.deb`,
@@ -794,6 +813,11 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
     )
     expect(manifest.version).toBe(version)
     const uploaded = readdirSync(join(channel, 'releases', version))
+    for (const name of macZips) {
+      expect(readFileSync(join(channel, 'releases', version, `${name}.blockmap`), 'utf8')).toBe(
+        `map for ${name}`
+      )
+    }
     for (const name of cliPackages) expect(uploaded, name).not.toContain(name)
   }
 )

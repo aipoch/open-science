@@ -1,10 +1,30 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { computeProviderId, validateHostConnectionProfile } from '@aipoch/compute'
 import { createComputeExecution, classifyFiles, resolveSshTarget } from '@aipoch/compute/node'
+
+// Loading the compiled worker in the pruned tarball exercises the SDK and its Node dependencies.
+const archiveRoot = await mkdtemp(join(tmpdir(), 'hf-packed-'))
+try {
+  const { archiveHuggingFaceOutputs } = await import('@aipoch/compute/node')
+  await assert.rejects(
+    archiveHuggingFaceOutputs({
+      bucket: 'lab/private',
+      runId: 'offline',
+      token: '',
+      files: [{ path: 'x' }],
+      maxBytes: 1,
+      stagingDirectory: archiveRoot
+    }),
+    /Invalid Hugging Face Bucket identity/
+  )
+  assert.deepEqual(await readdir(archiveRoot), [])
+} finally {
+  await rm(archiveRoot, { recursive: true, force: true })
+}
 
 const require = createRequire(import.meta.url)
 assert.equal(require('@aipoch/compute').computeProviderId('cluster'), computeProviderId('cluster'))

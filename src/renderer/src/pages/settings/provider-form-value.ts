@@ -196,6 +196,7 @@ export const defaultProviderKindKey = (
     case 'codex':
       return 'official:openai'
     case 'opencode':
+    case 'open-science-agent':
     case 'pi':
       return 'official:deepseek'
     case 'codebuddy':

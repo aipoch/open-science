@@ -142,3 +142,14 @@ describe('composer notice boundaries', () => {
     ).toBe(noticeCatalog.service)
   })
 })
+
+it('offers diagnostics and a fresh conversation for unknown effects, never a blind retry', () => {
+  const presentation = noticePresentation({
+    category: 'session',
+    reason: 'session/tool-outcome-unknown',
+    diagnostics: {}
+  })
+  expect(presentation.primaryAction).toBe('export-diagnostics')
+  expect(presentation.secondaryActions).toEqual(['new-session'])
+  expect(presentation.descriptionKey).toContain('verified state')
+})

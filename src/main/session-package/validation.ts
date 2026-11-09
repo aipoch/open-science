@@ -1,3 +1,4 @@
+import { validateResearchFilms } from './research-films'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,6 +63,7 @@ export const validatePackageRecords = async (
 ): Promise<void> => {
   if (Boolean(records.literature) !== Boolean(manifest.requiredFeatures?.includes('literature')))
     throw new Error('Literature package capability declaration is invalid.')
+  validateResearchFilms(records, manifest)
   validatePackageLiterature(records)
   for (const file of manifest.excludedFiles) assertPortablePackageStorageKey(file.storageKey)
   const excluded = validateExcludedFiles(records, manifest.excludedFiles)

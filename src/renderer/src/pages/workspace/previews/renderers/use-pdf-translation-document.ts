@@ -833,7 +833,7 @@ export function usePdfTranslationDocument(
     originalPages?: {
       original: PDFDocumentProxy
       source: PdfTranslationResults['source']
-      pageNumbers: readonly number[]
+      reasons: ReadonlyMap<number, Pick<PdfTranslationLayoutFailure, 'code' | 'phase'>>
     }
   }>({})
   const generationClock = useRef(0)
@@ -945,10 +945,10 @@ export function usePdfTranslationDocument(
     const runResults = selected
     if (!runResults || !snapshot) return
     const sourceUnits = runResults.source.units.filter((unit) => !unit.sourceOnly)
-    const originalPages = new Set(
+    const originalPages = new Map(
       request.originalPages?.original === original &&
         request.originalPages.source === runResults.source
-        ? request.originalPages.pageNumbers
+        ? request.originalPages.reasons
         : []
     )
     // Preserve joined paragraphs as a whole, including their other pages.
@@ -956,10 +956,11 @@ export function usePdfTranslationDocument(
     do {
       expanded = false
       for (const unit of sourceUnits) {
-        if (!unit.fragments.some((fragment) => originalPages.has(fragment.pageNumber))) continue
+        const retained = unit.fragments.find((fragment) => originalPages.has(fragment.pageNumber))
+        if (!retained) continue
         for (const fragment of unit.fragments)
           if (!originalPages.has(fragment.pageNumber)) {
-            originalPages.add(fragment.pageNumber)
+            originalPages.set(fragment.pageNumber, originalPages.get(retained.pageNumber)!)
             expanded = true
           }
       }
@@ -1163,8 +1164,7 @@ export function usePdfTranslationDocument(
           for (const { unit } of generatedUnits)
             if (preservedIds.has(unit.id))
               nativeFailures[unit.id] = {
-                code: 'validation-failed',
-                phase: 'verification',
+                ...originalPages.get(unit.fragments[0].pageNumber)!,
                 pageNumbers: [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))],
                 fragmentCount: unit.fragments.length
               }
@@ -3659,13 +3659,18 @@ export function usePdfTranslationDocument(
         // the original source, then run the same independent verification again.
         // Each page can enter this fallback only once for this source; errors in
         // already-preserved content remain explicit instead of looping forever.
+        const generationFailure = pdfGenerationFailure(error)
+        const failedPage = validating
+          ? validationPage
+          : generationFailure.pageLocal
+            ? generationFailure.pageNumber
+            : undefined
         if (
-          validating &&
           !useArtifact &&
-          validationPage !== undefined &&
-          validationPage >= 1 &&
-          validationPage <= original.numPages &&
-          !originalPages.has(validationPage)
+          failedPage !== undefined &&
+          failedPage >= 1 &&
+          failedPage <= original.numPages &&
+          !originalPages.has(failedPage)
         ) {
           setRequest({
             ...request,
@@ -3673,7 +3678,15 @@ export function usePdfTranslationDocument(
             originalPages: {
               original,
               source: runResults.source,
-              pageNumbers: [...originalPages, validationPage]
+              reasons: new Map(originalPages).set(
+                failedPage,
+                validating
+                  ? { code: 'validation-failed', phase: 'verification' }
+                  : {
+                      code: generationFailure.code as PdfTranslationLayoutFailure['code'],
+                      phase: 'generation'
+                    }
+              )
             }
           })
           return
@@ -3746,12 +3759,17 @@ export function usePdfTranslationDocument(
     }
   }, [admitted, original, artifact, beforeReady, request, useArtifact, selected, snapshot])
   // Batch at page boundaries, never cancel a running generation for incoming paragraphs.
-  // Keep errors explicit so a failed rebuild cannot turn into an automatic retry loop.
+  // A failed early snapshot may be superseded once translation stops. Only
+  // different ready-page content can retry automatically; unchanged errors stay explicit.
   const latestSnapshot = useMemo(
     () => (results ? partialPdfSnapshot(results) : undefined),
     [results]
   )
   useEffect(() => {
+    const recoverNewResults =
+      state.status === 'error' &&
+      !translating &&
+      ['timeout', 'worker-failed'].includes(state.failure.code)
     if (
       !admitted ||
       artifact ||
@@ -3759,8 +3777,7 @@ export function usePdfTranslationDocument(
       !selected ||
       !snapshot ||
       !latestSnapshot ||
-      state.status !== 'ready' ||
-      !canDisplay
+      (!(state.status === 'ready' && canDisplay) && !recoverNewResults)
     )
       return
     const readyPages = new Set(latestSnapshot.readyPages)
@@ -3787,7 +3804,8 @@ export function usePdfTranslationDocument(
     selected,
     snapshot,
     latestSnapshot,
-    state.status,
+    state,
+    translating,
     canDisplay,
     displayed
   ])

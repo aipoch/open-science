@@ -23,6 +23,20 @@ import {
   type ConnectorSettingsWorkflowEffects
 } from '../../../src/main/settings/workflows/connectors'
 
+import {
+  configureMainAgentProcessOwnership,
+  spawnMainAgentProcess,
+  closeMainAgentProcessOwnership
+} from '../../../src/main/acp/main-agent-process-ownership'
+import { spawnClaudeAgentAcp } from '../../../src/main/acp/agent-process'
+import { AcpAgentConnectionAdapter } from '../../../src/main/acp/agent-connection-adapter'
+import { AcpConnectionResourceOwner } from '../../../src/main/acp/connection-resource-owner'
+import { AcpBackendGenerationOwner } from '../../../src/main/acp/backend-generation-owner'
+import { startOpenCodeService } from '../../../src/main/acp/opencode-service'
+import { claudeCodeFramework } from '../../../src/main/agent-framework/claude-code'
+import { opencodeFramework } from '../../../src/main/agent-framework/opencode'
+import { codexFramework } from '../../../src/main/agent-framework/codex'
+
 // The dedicated configuration discovers this suite; the runner supplies Python and validates
 // all scenario evidence. Accidental direct execution must fail instead of reporting skipped tests.
 if (process.env.RUN_PROCESS_LIFECYCLE !== '1' || !process.env.LIFECYCLE_RUN_ID) {
@@ -171,6 +185,177 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
           // Diagnostic completion promises cleanup; a grace period here would hide the pending
           // stdio close race. The manager must join pending connection and transport cleanup.
           await observer.checkpoint('diagnostic-returned', { timeoutMs: 0 })
+        }),
+      30000
+    )
+  }
+
+  for (const mode of [
+    'dispose',
+    'open-failure',
+    'shutdown',
+    'codex-responses',
+    'codex-bridge'
+  ] as const) {
+    const name = `acp-${mode}`
+    it(
+      name,
+      () =>
+        scenario(name, async ({ root, observer }) => {
+          await configureMainAgentProcessOwnership(new DelegatedProcessOwnership(root))
+          try {
+            const descendant = await fixture(root, 'setInterval(() => {}, 1000)', 'descendant')
+            const target = await fixture(
+              root,
+              `require('node:child_process').spawn(process.execPath, [${JSON.stringify(descendant.entry)}], { stdio: 'ignore' }); setInterval(() => {}, 1000)`
+            )
+            const framework = mode.startsWith('codex-') ? codexFramework : claudeCodeFramework
+            const child = await spawnMainAgentProcess(framework.id, (ownedSpawn) =>
+              framework.id === 'codex'
+                ? framework.spawn({
+                    executablePath: target.entry,
+                    args: [],
+                    env: {},
+                    spawnProcess: ownedSpawn
+                  })
+                : spawnClaudeAgentAcp({
+                    executablePath: process.execPath,
+                    envOverrides: { CLAUDE_CONFIG_DIR: root },
+                    // Substitute the external CLI workload, retaining production spawn preparation/ownership.
+                    spawnProcess: (command, _args, options) =>
+                      ownedSpawn!(command, [target.entry], options)
+                  })
+            )
+            await target.observe(observer, child.pid)
+            await target.release()
+            await descendant.observe(observer, child.pid, 2)
+            await descendant.release()
+            if (mode === 'shutdown') {
+              await closeMainAgentProcessOwnership()
+            } else {
+              const resources = new AcpConnectionResourceOwner()
+              const backends = new AcpBackendGenerationOwner(framework)
+              const cleanupFailure = vi.fn()
+              const releaseTransport = vi.fn(async () => {})
+              const releaseResponses = vi.fn(async () => {})
+              const pending = new AcpAgentConnectionAdapter().open(
+                {
+                  epoch: 1,
+                  resolveBackend: async () => ({
+                    framework,
+                    executablePath: process.execPath,
+                    env: {},
+                    ...(mode === 'codex-bridge'
+                      ? {
+                          responsesTransportLease: {
+                            selectSkills: async () => [],
+                            registerReviewerSession: () => {},
+                            unregisterReviewerSession: () => true,
+                            release: releaseResponses
+                          },
+                          providerTransportLease: {
+                            setTarget: () => true,
+                            release: releaseTransport
+                          }
+                        }
+                      : {})
+                  }),
+                  prepareBackend: (backend) =>
+                    backends.prepare({ epoch: 1, assertCurrent: () => {} }, backend),
+                  isCurrent: () => true,
+                  isShuttingDown: () => false,
+                  cleanupUnattached: (resource, onFailure) =>
+                    resources.cleanupUnattached(resource, onFailure),
+                  spawnAgent: () => child
+                },
+                {
+                  createElicitation: async () => ({ action: 'decline' }),
+                  requestPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
+                  observeSessionUpdate: () => {},
+                  observeClaudeSdkMessage: () => {},
+                  filesystem: { resolveSessionCwd: () => root, protectedReadRoots: () => [] },
+                  onBackendResolved: () => {},
+                  onProcessSpawned: () => {
+                    if (mode === 'open-failure') throw new Error('fixture post-spawn failure')
+                  },
+                  onBackendPublished: () => {},
+                  onProcessTreeReaped: () => {},
+                  markProcessExitExpected: () => {},
+                  onProcessStderr: () => {},
+                  onProcessError: () => {},
+                  onProcessExit: () => {},
+                  onConnectionClosed: () => {},
+                  reportCleanupFailure: cleanupFailure
+                }
+              )
+              if (mode === 'open-failure')
+                await expect(pending).rejects.toThrow('fixture post-spawn failure')
+              else {
+                const candidate = await pending
+                await candidate.dispose()
+                await candidate.dispose()
+              }
+              expect(cleanupFailure).not.toHaveBeenCalled()
+              expect(releaseTransport).toHaveBeenCalledTimes(mode === 'codex-bridge' ? 1 : 0)
+              expect(releaseResponses).toHaveBeenCalledTimes(mode === 'codex-bridge' ? 1 : 0)
+            }
+            // Check before fallback owner cleanup, so recovery cannot hide an adapter leak.
+            await observer.checkpoint('acp-tree-stopped')
+          } finally {
+            await closeMainAgentProcessOwnership()
+          }
+        }),
+      30000
+    )
+  }
+
+  for (const failure of [false, true]) {
+    const name = failure ? 'acp-opencode-start-failure' : 'acp-opencode-release'
+    it(
+      name,
+      () =>
+        scenario(name, async ({ root, observer }) => {
+          const target = await fixture(
+            root,
+            `process.stdout.write(JSON.stringify({url:${JSON.stringify(failure ? 'https://invalid.example:443' : 'http://127.0.0.1:42876')}})+'\\n'); setInterval(() => {}, 1000)`
+          )
+          const ownership = new DelegatedProcessOwnership(root)
+          const unexpectedExit = vi.fn()
+          const pending = startOpenCodeService(
+            { framework: opencodeFramework, executablePath: process.execPath, env: {} },
+            unexpectedExit,
+            (command, _args, options) =>
+              ownership.spawn(
+                {
+                  projectId: 'project',
+                  sessionId: 'session',
+                  frameId: 'frame',
+                  attemptId: 'attempt',
+                  frameworkId: 'opencode'
+                },
+                command,
+                [target.entry],
+                options
+              )
+          ).then(
+            (service) => ({ service }),
+            (error: unknown) => ({ error })
+          )
+          await target.observe(observer)
+          await target.release()
+          const result = await pending
+          if (failure) {
+            expect(result).toHaveProperty('error')
+            expect(String('error' in result ? result.error : '')).toContain(
+              'expected loopback address'
+            )
+          } else {
+            if (!('service' in result)) throw result.error
+            expect(await result.service.release()).toMatchObject({ reaped: true })
+            expect(await result.service.release()).toMatchObject({ reaped: true })
+            expect(unexpectedExit).not.toHaveBeenCalled()
+          }
+          await observer.checkpoint('acp-service-stopped')
         }),
       30000
     )

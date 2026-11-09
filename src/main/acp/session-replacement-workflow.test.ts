@@ -160,6 +160,8 @@ describe('AcpSessionReplacementWorkflow', () => {
   it.each([
     ['claude-code', 'attached'],
     ['claude-code', 'connection-detached'],
+    ['open-science-agent', 'attached'],
+    ['open-science-agent', 'connection-detached'],
     ['codex', 'connection-detached']
   ] as const)(
     'replaces a %s %s provider Session in its original Project',

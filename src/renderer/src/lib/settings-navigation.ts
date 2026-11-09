@@ -1,3 +1,4 @@
+import type { ComputeAccountProvider } from '../../../shared/compute-accounts'
 import type {
   EnvironmentCheckId,
   EnvironmentCheckItem,
@@ -7,7 +8,28 @@ import type { CreateSpecialistInput } from '@aipoch/specialists'
 
 export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: string }
 
+export const computeTargetAddLabels = {
+  hosted: 'Add Hugging Face Jobs target',
+  modal: 'Add Modal Sandbox target',
+  kubernetes: 'Add Kubernetes target',
+  ray: 'Add Ray Jobs target'
+} as const
+export type ComputeTargetBackend = keyof typeof computeTargetAddLabels
+export function computeAccountProviderForBackend(
+  backend: ComputeTargetBackend
+): ComputeAccountProvider | undefined {
+  if (backend === 'hosted') return 'hugging-face'
+  if (backend === 'modal') return 'modal'
+  return undefined
+}
+export type ComputeTargetEditorView = {
+  kind: 'target-editor'
+  backend: ComputeTargetBackend
+  providerId?: string
+}
+
 export type ComputeView =
+  | ComputeTargetEditorView
   | { kind: 'list' }
   | { kind: 'add' }
   | {
@@ -18,7 +40,14 @@ export type ComputeView =
     }
 
 export type CredentialsServiceId =
-  'github' | 'literature' | 'openalex' | 'unpaywall' | 'semantic-scholar'
+  | 'github'
+  | 'literature'
+  | 'openalex'
+  | 'unpaywall'
+  | 'semantic-scholar'
+  | 'hugging-face'
+  | 'modal'
+  | 'ray'
 
 export type CredentialsView =
   | { kind: 'list' }

@@ -1,4 +1,5 @@
 import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
+import { createResearchFilmLifecycle } from '../research-video/lifecycle'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   LIFECYCLE_CHANNELS,
@@ -77,6 +78,7 @@ export async function composeSessionAuthority({
   }
   composition: DiagnosticOperation
 }): Promise<{
+  researchFilmLifecycle: ReturnType<typeof createResearchFilmLifecycle>
   artifactHandlersRef: { current: ArtifactHandlers | undefined }
   reviewerCommandOwnerRef: { current: ReviewerCommandOwner | undefined }
   reviewerProjectRuntime: ReviewerProjectRuntimeOwner
@@ -282,6 +284,7 @@ export async function composeSessionAuthority({
       .map((chat) => ({ projectId: chat.projectId, sessionId: chat.parentSessionId }))
 
   const managedWorkspaceRecoveryCutoff = Date.now()
+  const researchFilmLifecycle = createResearchFilmLifecycle({ dataRoot: resolveDataRoot })
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -333,10 +336,12 @@ export async function composeSessionAuthority({
       markRetained: markManagedWorkspaceRetained,
       restoreActive: restoreManagedWorkspaceActive
     },
-    (session) => sessionPackageService.prepareSessionDeletion(session)
+    (session) => sessionPackageService.prepareSessionDeletion(session),
+    researchFilmLifecycle
   )
   packagePublicationOwner.current = sessionPersistenceCoordinator
   return {
+    researchFilmLifecycle,
     artifactHandlersRef,
     reviewerCommandOwnerRef,
     reviewerProjectRuntime,

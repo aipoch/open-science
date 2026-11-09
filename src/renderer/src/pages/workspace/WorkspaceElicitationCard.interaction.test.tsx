@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { i18next } from '../../i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -154,6 +154,169 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it.each(['answered', 'declined'] as const)(
+    'shows progress for a saved %s decision while its continuation is pending',
+    async (state) => {
+      const durableRequest = {
+        ...request,
+        durable: { kind: 'agent-user-choice' as const, requestId: request.requestId }
+      }
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            elicitation={{
+              ...activity.elicitation!,
+              state,
+              durable: durableRequest.durable,
+              continuationPending: true
+            }}
+            request={durableRequest}
+            onRespond={vi.fn()}
+            embedded
+          />
+        )
+      )
+      expect(
+        container.querySelector('[data-testid="elicitation-continuation-progress"]')
+      ).not.toBeNull()
+      expect(container.textContent).toContain('Resuming session')
+      expect(container.querySelector('form')).toBeNull()
+      expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+      expect(container.querySelector('button')).toBeNull()
+    }
+  )
+
+  it('keeps the transcript answer visible while its continuation is pending', async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            ...activity.elicitation!,
+            state: 'answered',
+            answers: [{ fieldId: 'question_0', value: 'clinical' }],
+            continuationPending: true
+          }}
+          request={request}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Clinical statistics')
+    expect(container.querySelector('[data-testid="elicitation-continuation-progress"]')).toBeNull()
+  })
+
+  it('uses the whole pending count as an entry and keeps read-only records complete', async () => {
+    const onReveal = vi.fn()
+    const elicitation = {
+      ...activity.elicitation!,
+      fields: multiQuestionFields
+    }
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={elicitation}
+          request={multiQuestionRequest}
+          variant="pending-placeholder"
+          onReveal={onReveal}
+        />
+      )
+    })
+    const entry = container.querySelector<HTMLButtonElement>('button')!
+    expect(entry.textContent).toBe('2 questions awaiting your answer')
+    expect(container.querySelector('h3')).toBeNull()
+    expect(container.querySelector('form')).toBeNull()
+    await act(async () => entry.click())
+    expect(onReveal).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={elicitation}
+          variant="pending-placeholder"
+          readOnly
+        />
+      )
+    })
+    expect(container.textContent).toContain('No submitted answer recorded.')
+    expect(container.textContent).toContain('Which language should the skill use?')
+  })
+
+  it('preserves the current question and unsubmitted input through collapse and inline reveal', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const Harness = (): React.JSX.Element => {
+      const [collapsed, setCollapsed] = useState(false)
+      const [focusRequestId, setFocusRequestId] = useState(0)
+      return (
+        <>
+          <button
+            onClick={() => {
+              setCollapsed(false)
+              setFocusRequestId((current) => current + 1)
+            }}
+          >
+            Reveal
+          </button>
+          <WorkspaceElicitationCard
+            elicitation={{ ...activity.elicitation!, fields: multiQuestionFields }}
+            request={multiQuestionRequest}
+            embedded
+            collapsed={collapsed}
+            onCollapsedChange={setCollapsed}
+            focusRequestId={focusRequestId}
+            onRespond={onRespond}
+          />
+        </>
+      )
+    }
+    await act(async () => root.render(<Harness />))
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')!
+        .click()
+    })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Next question"]')!.click()
+    })
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await act(async () => setTextControlValue(textarea, 'Use English and include examples'))
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Collapse question panel"]')!.click()
+    })
+    expect(container.querySelector('form')?.hidden).toBe(true)
+    expect(
+      container.querySelector('[data-testid="elicitation-question-title"]')?.getAttribute('hidden')
+    ).toBe('')
+    expect(
+      container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
+    ).toBe('2 of 2')
+    expect(onRespond).not.toHaveBeenCalled()
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Reveal')!
+        .click()
+    })
+    expect(container.querySelector('form')?.hidden).toBe(false)
+    expect(container.querySelector('textarea')).toBe(textarea)
+    expect(textarea.value).toBe('Use English and include examples')
+    expect(document.activeElement).toBe(textarea)
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Finish')!
+        .click()
+    })
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: 'clinical' },
+        {
+          fieldId: 'question_1_custom',
+          status: 'answered',
+          value: 'Use English and include examples'
+        }
+      ]
+    })
+  })
+
   it('keeps an uncommitted durable answer editable after validation rejects it', async () => {
     const durableRequest = {
       ...request,
@@ -911,7 +1074,7 @@ describe('WorkspaceElicitationCard choice question', () => {
       Array.from(
         container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
       ).map((segment) => segment.getAttribute('data-state'))
-    ).toEqual(['upcoming', 'current'])
+    ).toEqual(['done', 'current'])
     expect(container.textContent).not.toContain('Finish')
 
     await act(async () => {
@@ -992,7 +1155,7 @@ describe('WorkspaceElicitationCard choice question', () => {
       container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
     )
     expect(segments).toHaveLength(8)
-    expect(segments[0]?.parentElement?.classList.contains('w-16')).toBe(true)
+    expect(segments[0]?.parentElement?.classList.contains('sm:w-16')).toBe(true)
     expect(segments.every((segment) => segment.classList.contains('flex-1'))).toBe(true)
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent

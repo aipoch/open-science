@@ -4,7 +4,7 @@ import type { RemoteAccessMode } from '../../shared/remote-access'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 
 const REMOTE_ACCESS_FILE = 'remote-access.json'
-const REMOTE_ACCESS_VERSION = 5 as const
+const REMOTE_ACCESS_VERSION = 6 as const
 const TRUSTED_BROWSER_TTL_MS = 180 * 24 * 60 * 60 * 1_000
 
 export type StoredTrustedBrowser = {
@@ -15,14 +15,19 @@ export type StoredTrustedBrowser = {
   createdAt: number
   lastSeenAt: number
   expiresAt: number
+  route?: 'remoteit' | 'remoteit-public' | 'lan' | 'pinggy'
+  host?: string
 }
 
 export type StoredRemoteAccess = {
-  version: typeof REMOTE_ACCESS_VERSION
+  version: number
   mode: RemoteAccessMode
   remoteItAppServiceId?: string
   remoteItBrowserServiceId?: string
   remoteItPublicUrl?: string
+  lanAddress?: string
+  pinggyRegion?: 'auto' | 'ap' | 'us' | 'eu'
+  pinggyDisclosureAccepted?: boolean
   trustedBrowsers: StoredTrustedBrowser[]
 }
 
@@ -45,14 +50,28 @@ const parseBrowser = (value: unknown, storedVersion: number): StoredTrustedBrows
   if (!id || !browser || !platform || !tokenHash) return undefined
   const createdAt = typeof input.createdAt === 'number' ? input.createdAt : Date.now()
   const lastSeenAt = typeof input.lastSeenAt === 'number' ? input.lastSeenAt : createdAt
+  // Version 5 introduced stored expirations; only older records derive the original TTL.
   const expiresAt =
     typeof input.expiresAt === 'number'
       ? input.expiresAt
-      : storedVersion < REMOTE_ACCESS_VERSION
+      : storedVersion < 5
         ? createdAt + TRUSTED_BROWSER_TTL_MS
         : undefined
   if (expiresAt === undefined) return undefined
-  return { id, browser, platform, tokenHash, createdAt, lastSeenAt, expiresAt }
+  const route = ['remoteit', 'remoteit-public', 'lan', 'pinggy'].includes(String(input.route))
+    ? (input.route as StoredTrustedBrowser['route'])
+    : undefined
+  return {
+    id,
+    browser,
+    platform,
+    tokenHash,
+    createdAt,
+    lastSeenAt,
+    expiresAt,
+    route,
+    host: optionalString(input.host)
+  }
 }
 
 const parseStored = (value: unknown): StoredRemoteAccess => {
@@ -70,7 +89,11 @@ const parseStored = (value: unknown): StoredRemoteAccess => {
     )
   }
   const mode: RemoteAccessMode =
-    input.mode === 'remoteit' || input.mode === 'remoteit-public' || input.mode === 'off'
+    input.mode === 'remoteit' ||
+    input.mode === 'remoteit-public' ||
+    input.mode === 'lan' ||
+    input.mode === 'pinggy' ||
+    input.mode === 'off'
       ? input.mode
       : 'off'
   const legacyServiceId = optionalString(input.remoteItServiceId)
@@ -85,6 +108,11 @@ const parseStored = (value: unknown): StoredRemoteAccess => {
       optionalString(input.remoteItBrowserServiceId) !== undefined
         ? optionalString(input.remoteItPublicUrl)
         : undefined,
+    lanAddress: optionalString(input.lanAddress),
+    pinggyRegion: ['auto', 'ap', 'us', 'eu'].includes(String(input.pinggyRegion))
+      ? (input.pinggyRegion as StoredRemoteAccess['pinggyRegion'])
+      : 'auto',
+    pinggyDisclosureAccepted: input.pinggyDisclosureAccepted === true,
     trustedBrowsers: Array.isArray(input.trustedBrowsers)
       ? input.trustedBrowsers.flatMap((entry) => {
           const parsed = parseBrowser(entry, storedVersion)

@@ -1,5 +1,8 @@
 {
   "ownerPaths": [
+    "build/macos-service-launcher.c",
+    "scripts/build-macos-service-launcher.mjs",
+    "scripts/build-macos-service-launcher.d.mts",
     "scripts/electron-host-dependencies.mjs",
     "scripts/electron-host-dependencies.d.mts",
     "src/main/composition/agent-activation.ts",
@@ -121,6 +124,8 @@
     "src/main/credential-identity/persistence.test.ts",
     "src/main/credential-identity/recovery.test.ts",
     "src/main/credential-identity/recovery.ts",
+    "src/main/credential-identity/recovery-inventory.test.ts",
+    "src/main/credential-identity/recovery-inventory.ts",
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
     "src/main/windows-titlebar.ts",
@@ -238,7 +243,9 @@
     "src/main/service-process-recovery.integration.test.ts",
     "src/main/local-service-stop-intent.integration.test.ts",
     "scripts/ocr/build.mjs",
-    "scripts/ocr/worker.mjs"
+    "scripts/ocr/worker.mjs",
+    "src/main/composition/research-film.ts",
+    "src/main/composition/research-film.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -266,6 +273,7 @@
     "src/main/window-close-confirm.ts",
     "src/main/window-ipc.ts",
     "src/main/credential-identity/bootstrap.ts",
+    "src/main/credential-identity/recovery-inventory.ts",
     "src/main/credential-identity/runtime.ts",
     "src/main/credential-identity/selection.ts",
     "src/main/core-runtime.ts",
@@ -374,6 +382,7 @@
       "src/main/credential-identity/persistence.test.ts",
       "src/main/credential-identity/probe.test.ts",
       "src/main/credential-identity/recovery.test.ts",
+      "src/main/credential-identity/recovery-inventory.test.ts",
       "src/main/credential-identity/selection.test.ts",
       "src/main/credential-identity/sqlite-snapshot.test.ts",
       "src/main/credential-identity/windows-profile-key.test.ts",
@@ -428,7 +437,8 @@
       "scripts/local-service-cleanup.test.ts",
       "src/main/service-process-recovery.test.ts",
       "src/main/service-process-recovery.integration.test.ts",
-      "src/main/local-service-stop-intent.integration.test.ts"
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/composition/research-film.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -49,6 +49,67 @@ export type AgentComputeHostSummary = ComputeHostSummary & {
   role: 'selected' | 'available'
 }
 
+export type KubernetesTargetConfig = Readonly<{
+  displayName: string
+  context: string
+  namespace: string
+  image: string
+  transferImage: string
+  sizeMiB: number
+}>
+export type KubernetesTarget = KubernetesTargetConfig & Readonly<{ id: string; providerId: string }>
+
+export type HostedTargetConfig = Readonly<{
+  displayName: string
+  namespace: string
+  image: string
+  flavor: string
+  bucket: string
+  timeoutSeconds: number
+}>
+export type HostedTarget = HostedTargetConfig & Readonly<{ id: string; providerId: string }>
+
+export type RayTargetConfig = Readonly<{
+  displayName: string
+  endpoint: string
+  sharedRoot: string
+  remoteRoot: string
+  cpus: number
+  gpus: number
+}>
+export type RayTarget = RayTargetConfig & Readonly<{ id: string; providerId: string }>
+
+export type ModalTargetConfig = Readonly<{
+  displayName: string
+  environmentName: string
+  appName: string
+  image: string
+  cpus: number
+  memoryMiB: number
+  gpu?: string
+}>
+export type ModalTarget = ModalTargetConfig & Readonly<{ id: string; providerId: string }>
+export type ExternalComputeTarget = KubernetesTarget | HostedTarget | RayTarget | ModalTarget
+export type ExternalComputeTargetConfig =
+  KubernetesTargetConfig | HostedTargetConfig | RayTargetConfig | ModalTargetConfig
+
+export type ExternalComputeMode = Exclude<ComputeExecutionMode, 'direct_ssh' | 'slurm'>
+
+export const externalComputeMode = (providerId: string): ExternalComputeMode | undefined => {
+  if (providerId.startsWith('kubernetes:')) return 'kubernetes'
+  if (providerId.startsWith('hf-jobs:')) return 'hugging_face_jobs'
+  if (providerId.startsWith('ray:')) return 'ray_jobs'
+  if (providerId.startsWith('modal:')) return 'modal_sandbox'
+  return undefined
+}
+
+export const isComputeProviderId = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  ((value.startsWith('ssh:') && value.length > 4) ||
+    /^(?:kubernetes|hf-jobs|ray|modal):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      value
+    ))
+
 // Add-form payload. displayName defaults to the alias; detailsDoc seeds the notes (author = user).
 export type CreateComputeHostRequest = {
   sshAlias: string
@@ -106,7 +167,13 @@ export type DeleteComputeHostRequest = {
   providerId: string
 }
 
+export type ManualStagedCleanup =
+  | Readonly<{ kind: 'hugging_face_jobs'; bucket: string; prefix: string }>
+  | Readonly<{ kind: 'modal_sandbox'; environmentName: string; volumeId: string }>
+
 export type ComputeHostDeletionBlocker = Readonly<{
+  manualStagedCleanup?: ManualStagedCleanup
+  modalCreationUnconfirmed?: true
   jobId: string
   projectId: string
   sessionId: string
@@ -187,6 +254,51 @@ export type ComputeApprovalRequestInfo = ComputeApprovalRequestBase &
         operation: 'submit_job'
         command_preview: string
         command_full: string
+        kubernetes?: {
+          context: string
+          namespace: string
+          endpoint: string
+          image: string
+          transferImage: string
+          sizeMiB: number
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
+        hosted?: {
+          namespace: string
+          image: string
+          flavor: string
+          bucket: string
+          runId: string
+          rateMicroUsdPerMinute: number
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
+        ray?: {
+          endpoint: string
+          sessionName: string
+          cpus: number
+          gpus: number
+          sharedRoot: string
+          remoteRoot: string
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
+        modal?: {
+          environmentName: string
+          appName: string
+          appId: string
+          image: string
+          cpus: number
+          memoryMiB: number
+          gpu?: string
+          inputFiles: { source: string; destination: string; sizeBytes: number; sha256: string }[]
+          outputManifest?: string
+          harvestConfig?: string
+        }
         execution_mode?: ComputeExecutionMode
         environment?: string
         inputs_summary?: string
@@ -259,6 +371,7 @@ export type JobResult = {
 // Phase 3b: notification payload fields (spec §11.3) are embedded here so the renderer can
 // display the done card and decide whether to trigger an analysis turn (issue 05/07).
 export type JobSummary = {
+  manualStagedCleanup?: ManualStagedCleanup
   // Read-side scheduling diagnostics; never persisted as a Job status.
   queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
@@ -267,6 +380,7 @@ export type JobSummary = {
   // Human-readable host name, denormalized from ComputeHost.displayName at query time.
   display_name: string
   shape: string
+  execution_mode?: ComputeExecutionMode
   // Session the job was submitted in — needed for the renderer store to filter by active session.
   session_id: string
   project_id?: string
@@ -296,6 +410,7 @@ export type JobSummary = {
   analysis_updated_at?: number
   // Phase 3b: compute_done payload fields (spec §11.3). Present when notified_at is set.
   featured_files?: string[]
+  hidden_files?: string[]
   featured_file_count?: number
   left_on_remote_count?: number
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
@@ -316,3 +431,51 @@ export type ComputeJobsListFilter =
   | Readonly<{ projectId: string; since: number }>
 
 export type ComputeJobsPendingNotificationFilter = string | Readonly<{ allSessions: true }>
+
+type ComputeOutputLocator = { projectId: string; sessionId: string; jobId: string; path: string }
+const computeOutputPrefix = 'compute-output:v1:'
+// Archive paths cross desktop platforms and must never address a device, stream or aliased directory.
+const reservedWindowsSegment = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i
+// eslint-disable-next-line no-control-regex
+const unsafeOutputCharacters = /[/\\:\x00-\x1f\x7f]/u
+const safeOutputSegment = (part: string): boolean =>
+  !!part &&
+  !/[. ]$/.test(part) &&
+  !reservedWindowsSegment.test(part) &&
+  !unsafeOutputCharacters.test(part)
+
+export function createComputeOutputPreviewKey(locator: ComputeOutputLocator): string {
+  const { projectId, sessionId, jobId, path } = locator
+  if (
+    ![projectId, sessionId, jobId].every(
+      (part) =>
+        typeof part === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) &&
+        safeOutputSegment(part)
+    ) ||
+    typeof path !== 'string'
+  )
+    throw new Error('Invalid compute output reference.')
+  const parts = path.split('/')
+  if (
+    parts.length < 4 ||
+    parts[0] !== 'hpc' ||
+    parts[1] !== jobId ||
+    !['featured', 'hidden'].includes(parts[2]) ||
+    !parts.every(safeOutputSegment)
+  )
+    throw new Error('Invalid compute output path.')
+  return computeOutputPrefix + [projectId, sessionId, ...parts].map(encodeURIComponent).join('/')
+}
+export function parseComputeOutputPreviewKey(key: string): ComputeOutputLocator {
+  if (typeof key !== 'string' || !key.startsWith(computeOutputPrefix) || key.length > 32768)
+    throw new Error('Invalid compute output reference.')
+  const [projectId, sessionId, ...parts] = key
+    .slice(computeOutputPrefix.length)
+    .split('/')
+    .map(decodeURIComponent)
+  const locator = { projectId, sessionId, jobId: parts[1], path: parts.join('/') }
+  if (createComputeOutputPreviewKey(locator) !== key)
+    throw new Error('Noncanonical compute output reference.')
+  return locator
+}

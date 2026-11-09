@@ -1,4 +1,32 @@
 export {
+  assertComputeBackendCanSubmit,
+  assertComputeBackendCapabilities,
+  classifyComputeBackendObservation,
+  ComputeBackendAdapterRegistry,
+  ComputeBackendCatalog,
+  LEGACY_COMPUTE_BACKENDS,
+  ComputeBackendCapabilityError,
+  requiredComputeBackendCapabilities,
+  type ComputeBackendAdapter,
+  type ComputeBackendCapabilities,
+  type ComputeBackendCapability,
+  type ComputeBackendCancellation,
+  type ComputeBackendCleanup,
+  type ComputeBackendContact,
+  type ComputeBackendDescriptor,
+  type ComputeBackendHandle,
+  type ComputeBackendHarvest,
+  type ComputeBackendId,
+  type ComputeBackendLogChunk,
+  type ComputeBackendObservation,
+  type ComputeBackendObservationDisposition,
+  type ComputeBackendPhase,
+  type ComputeBackendSubmissionRequest,
+  type ComputeBackendTarget,
+  type ComputeBackendValidation
+} from './backend'
+
+export {
   COMPUTE_HOST_UNAVAILABLE_ERROR_CODE,
   ComputeHostUnavailableError,
   DETAILS_DOC_MAX_LENGTH,

@@ -2,17 +2,20 @@ import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
+import { createCanvas } from '@napi-rs/canvas'
 import * as fontkit from 'fontkit'
-import { PDFDocument, PDFDict, PDFName } from 'pdf-lib'
+import { PDFDocument, PDFDict, PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import {
   createAuxiliaryNativeInkReader,
-  createAuxiliaryNativeCaptionInkReader
+  createAuxiliaryNativeCaptionInkReader,
+  createNativeInkReader
 } from '../../src/reader/auxiliary-native-ink.js'
 import type { AuxiliaryNativeInkReader } from '../../src/reader/auxiliary-native-ink.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
 import { nativeAlgorithmInkRegions } from '../../src/reader/native-source-geometry.js'
+import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 
 type Request = Parameters<AuxiliaryNativeInkReader['read']>[0]
 type Fixture = {
@@ -26,7 +29,7 @@ let task: ReturnType<typeof getDocument>,
   request: Request,
   identity: { sourceChecksum: string; sourceSizeBytes: number }
 
-async function anonymousDocument(width = 400): Promise<Fixture> {
+async function anonymousDocument(width = 400, zeroWidth = false): Promise<Fixture> {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
   const font = await pdf.embedFont(
@@ -41,19 +44,35 @@ async function anonymousDocument(width = 400): Promise<Fixture> {
     }
   )
   const page = pdf.addPage([width, 500])
-  page.drawText('Anonymous.', {
+  const literal = zeroWidth ? '∑' : 'Anonymous.'
+  page.drawText(literal, {
     x: 40,
     y: 440,
     size: 12,
     font
   })
   // Emit only the native text operators supported by the existing narrow core.
-  const encoded = font.encodeText('Anonymous.').toString(),
+  const encoded = font.encodeText(literal).toString(),
     fontKey = page.node.Resources()!.lookup(PDFName.of('Font'), PDFDict).keys()[0].toString()
   page.node.set(
     PDFName.of('Contents'),
     pdf.context.register(pdf.context.flateStream(`BT ${fontKey} 12 Tf 40 440 Td ${encoded} Tj ET`))
   )
+  if (zeroWidth) {
+    await font.embed()
+    const dictionary = pdf.context.lookup(font.ref, PDFDict),
+      cmap = dictionary.lookup(PDFName.of('ToUnicode'), PDFRawStream)
+    dictionary.set(
+      PDFName.of('ToUnicode'),
+      pdf.context.register(
+        pdf.context.flateStream(
+          new TextDecoder()
+            .decode(decodePDFRawStream(cmap).decode())
+            .replace('<2211>', '<2211FE01>')
+        )
+      )
+    )
+  }
   const data = await pdf.save()
   const identity = {
     sourceChecksum: createHash('sha256').update(data).digest('hex'),
@@ -320,5 +339,105 @@ it('does not allocate caption proof rendering without a complete native plot sco
   } finally {
     await reader.dispose()
     vi.unstubAllGlobals()
+  }
+})
+
+async function mutateInk(page: Request['page'], outline: boolean): Promise<() => void> {
+  const content = await page.getTextContent(),
+    operators = await page.getOperatorList(),
+    item = content.items.find((item) => 'str' in item && item.str.trim())!
+  if (!('str' in item)) throw Error('Missing controlled native item')
+  const font = page.commonObjs.get(item.fontName)
+  if (!outline)
+    return () => {
+      font.data[0] ^= 1
+    }
+  const glyph = operators.argsArray
+      .flatMap((args) => (Array.isArray(args?.[0]) ? args[0] : []))
+      .find((glyph) => glyph?.unicode === 'A'),
+    owner = page.commonObjs.get(font.loadedName + '_path_' + glyph.fontChar)
+  return () => {
+    owner.path[1] += 0.25
+  }
+}
+
+it.each(['unchanged', 'render-font', 'render-outline', 'read-font', 'dispose-outline'])(
+  'checks auxiliary font and outline identity through %s',
+  async (fault) => {
+    const primary = withoutOutlineCache(document, request),
+      factory = vi.fn((options: Parameters<typeof getDocument>[0]) => {
+        const loading = getDocument(options)
+        if (fault.startsWith('render-'))
+          void loading.promise.then((auxiliary) => {
+            const getPage = auxiliary.getPage.bind(auxiliary)
+            auxiliary.getPage = async (number) => {
+              const page = await getPage(number),
+                render = page.render.bind(page)
+              page.render = (options) => {
+                const running = render(options)
+                return {
+                  promise: running.promise.then(async () =>
+                    (await mutateInk(page, fault.endsWith('outline')))()
+                  ),
+                  cancel: () => running.cancel()
+                } as ReturnType<typeof render>
+              }
+              return page
+            }
+          })
+        if (fault === 'dispose-outline') {
+          const destroy = loading.destroy.bind(loading)
+          loading.destroy = async () => {
+            const mutate = await mutateInk(await (await loading.promise).getPage(1), true)
+            await destroy()
+            mutate()
+          }
+        }
+        return loading
+      })
+    vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) })
+    const reader = createNativeInkReader(
+      { document: primary.document, nativeDocumentFactory: factory, sourceIdentity: identity },
+      async (...args) => {
+        const ink = await nativeAlgorithmInkRegions(...args)
+        if (fault === 'read-font' && ink) (await mutateInk(args[0], false))()
+        return ink
+      }
+    )
+    try {
+      const result = await reader.read(primary.request)
+      expect(factory).toHaveBeenCalledTimes(1)
+      if (fault === 'unchanged' || fault === 'dispose-outline')
+        expect(result?.size).toBe(request.selected.size)
+      else expect(result).toBeUndefined()
+      if (fault === 'dispose-outline') await expect(reader.dispose()).rejects.toThrow()
+      else await reader.dispose()
+    } finally {
+      await reader.dispose().catch(() => undefined)
+      vi.unstubAllGlobals()
+    }
+  }
+)
+
+it('keeps a zero-width native summation explicit instead of publishing an isolated visual', async () => {
+  const fixture = await anonymousDocument(400, true)
+  try {
+    const item = fixture.request.content.items.find((item) => 'str' in item && item.str.trim())!
+    expect(item).toMatchObject({ str: '∑︁', width: 0 })
+    const extraction = await extractPdfTranslationSource({
+      document: fixture.document,
+      resourceRequestKey: 'atomic-ink-is-not-formula-layout',
+      signal: new AbortController().signal,
+      nativeDocumentFactory: getDocument,
+      sourceIdentity: fixture.identity
+    })
+    expect(extraction.source.units).toHaveLength(0)
+    expect(extraction.coverage.excludedItemCount).toBe(1)
+    expect(extraction.coverage.exclusions[0]).toMatchObject({
+      reason: 'invalid-geometry',
+      items: [{ text: '∑︁' }]
+    })
+  } finally {
+    await fixture.task.destroy()
   }
 })

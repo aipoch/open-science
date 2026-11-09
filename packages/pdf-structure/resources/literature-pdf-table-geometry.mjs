@@ -398,26 +398,50 @@ function recoverClosedTableSides(crop, table, rules, items, rulePaintBounds, pag
   }
   const native = [...source],
     extra = []
-  // An already included, uniquely native title may be unassigned without
-  // invalidating the closed outer frame. Never use unassigned text to grow it.
+  // An already included initial line may be unassigned without invalidating
+  // the closed outer frame. PDF text items can split that line at a symbol;
+  // every constituent still needs exact whole-font proof below. This never
+  // adopts the line into cells or uses it to grow the top/bottom boundary.
   if (table.unassigned.length) {
-    if (table.unassigned.length !== 1 || !Array.isArray(fonts)) return
-    const title = items.filter((i) => i.text === table.unassigned[0])
+    if (!Array.isArray(fonts)) return
     if (
-      title.length !== 1 ||
-      source.has(title[0]) ||
-      !title[0].horizontal ||
-      !(title[0].height > 0) ||
-      !Number.isFinite(title[0].baseline) ||
-      !Array.isArray(title[0].rect) ||
-      title[0].rect.length !== 4 ||
-      title[0].rect.some((x, n) => !Number.isFinite(x) || (n < 2 ? x < crop[n] : x > crop[n])) ||
-      title[0].rect[3] >= Math.min(...rects.map((r) => r[1]))
+      table.unassigned.length === 1 &&
+      items.filter((item) => item.text === table.unassigned[0]).length !== 1
     )
       return
-    extra.push(title[0])
-    source.add(title[0])
-    rects.push(title[0].rect)
+    const title = items
+        .filter((i) => !source.has(i) && table.unassigned.includes(i.text))
+        .sort((a, b) => a.rect[0] - b.rect[0]),
+      expected = [...table.unassigned].sort(),
+      actual = title.map((i) => i.text).sort()
+    if (
+      !title.length ||
+      title.length !== table.unassigned.length ||
+      expected.some((text, n) => text !== actual[n]) ||
+      title.some(
+        (item, n) =>
+          !item.horizontal ||
+          !(item.height > 0) ||
+          !Number.isFinite(item.baseline) ||
+          item.height !== title[0].height ||
+          Math.abs(item.baseline - title[0].baseline) > 1e-6 ||
+          !Array.isArray(item.rect) ||
+          item.rect.length !== 4 ||
+          item.rect.some((x, k) => !Number.isFinite(x) || (k < 2 ? x < crop[k] : x > crop[k])) ||
+          item.rect[3] >= Math.min(...rects.map((r) => r[1])) ||
+          (n > 0 &&
+            (item.rect[0] < title[n - 1].rect[2] ||
+              item.rect[0] - title[n - 1].rect[2] > item.height ||
+              !Number.isSafeInteger(item.sourceItem?.index) ||
+              item.sourceItem.index <= title[n - 1].sourceItem?.index))
+      )
+    )
+      return
+    extra.push(...title)
+    for (const item of title) {
+      source.add(item)
+      rects.push(item.rect)
+    }
   }
   const allNative = [...native, ...extra],
     height = native.map((i) => i.height).sort((a, b) => a - b)[native.length >> 1],

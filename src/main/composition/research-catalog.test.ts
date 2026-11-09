@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { literatureSnapshotSource } from '../../shared/literature-snapshot'
+import { literatureOverviewSource } from '../../shared/literature-overview'
 import { composeApplicationRuntime, type ApplicationRuntime } from '../application-runtime'
 
 const mocks = vi.hoisted(() => {
@@ -233,7 +233,7 @@ afterEach(async () => {
 })
 
 describe('research catalog composition', () => {
-  it('runs the real snapshot with the shared catalog/reader, current model and data root', async () => {
+  it('runs the real overview with the shared catalog/reader, current model and data root', async () => {
     const { dependencies: d, compose } = fixture()
     const runtime = await compose()
     try {
@@ -256,11 +256,11 @@ describe('research catalog composition', () => {
       roots.push(mocks.dataRoot)
       const request = {
         itemId: 'paper',
-        expectedSourceKey: literatureSnapshotSource(paper()).key,
+        expectedSourceKey: literatureOverviewSource(paper()).key,
         language: 'en',
         mode: 'generate' as const
       }
-      expect(await runtime.interfaces.literatureStudySnapshot.run(request)).toMatchObject({
+      expect(await runtime.interfaces.literatureOverview.run(request)).toMatchObject({
         coverage: 'passages',
         attachmentVersionId: 'pdf-v1',
         sections
@@ -274,7 +274,7 @@ describe('research catalog composition', () => {
         systemPrompt: expect.stringContaining('Do not use tools'),
         signal: expect.any(AbortSignal),
         target,
-        agentName: 'open-science-study-snapshot',
+        agentName: 'open-science-overview',
         description: 'Summarize a single paper without tools.',
         outputLimitBytes: 24_000
       })
@@ -283,10 +283,10 @@ describe('research catalog composition', () => {
       d.settingsService.captureActiveExplicitAgentBackendTarget.mockResolvedValueOnce({
         id: 'next-model'
       })
-      await runtime.interfaces.literatureStudySnapshot.run(request)
+      await runtime.interfaces.literatureOverview.run(request)
       expect(mocks.run.mock.lastCall?.[0].target).toEqual({ id: 'next-model' })
       expect(
-        await runtime.interfaces.literatureStudySnapshot.run({ ...request, mode: 'read' })
+        await runtime.interfaces.literatureOverview.run({ ...request, mode: 'read' })
       ).toMatchObject({ model: 'captured-model', sections })
       expect(mocks.run).toHaveBeenCalledTimes(2)
       expect(mocks.sweep).toHaveBeenCalledOnce()
@@ -299,21 +299,21 @@ describe('research catalog composition', () => {
     expect(mocks.disposeScreening).toHaveBeenCalledOnce()
   })
 
-  it('logs stale-profile cleanup failures without blocking snapshots and propagates inference failure', async () => {
+  it('logs stale-profile cleanup failures without blocking overviews and propagates inference failure', async () => {
     const failure = new Error('cannot remove stale profile')
     mocks.sweep.mockRejectedValueOnce(failure)
     const { dependencies: d, compose } = fixture()
     const runtime = await compose()
     try {
       expect(d.literatureContextLog.warn).toHaveBeenCalledWith(
-        'Study snapshot profile cleanup failed',
+        'Paper overview profile cleanup failed',
         expect.any(Object)
       )
       mocks.run.mockRejectedValueOnce(new Error('model unavailable'))
       await expect(
-        runtime.interfaces.literatureStudySnapshot.run({
+        runtime.interfaces.literatureOverview.run({
           itemId: 'paper',
-          expectedSourceKey: literatureSnapshotSource(paper()).key,
+          expectedSourceKey: literatureOverviewSource(paper()).key,
           language: 'en'
         })
       ).rejects.toThrow('model unavailable')

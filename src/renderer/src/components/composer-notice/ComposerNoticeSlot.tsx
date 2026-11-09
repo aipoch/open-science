@@ -9,7 +9,7 @@ import {
   Check,
   LoaderCircle
 } from 'lucide-react'
-import { Notice, NoticeDiagnostics } from '@/components/notice'
+import { Notice, NoticeDiagnostics, type NoticeProps } from '@/components/notice'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -67,7 +67,7 @@ const TruncatedText = ({
   )
 }
 
-export const ComposerNoticeSlot = ({
+const ComposerFailureNoticeSlot = ({
   notices,
   handlers,
   onDismiss
@@ -418,3 +418,18 @@ export const ComposerNoticeSlot = ({
     </TooltipProvider>
   )
 }
+
+export const ComposerNoticeSlot = ({
+  draftConflict,
+  persistence,
+  ...props
+}: Parameters<typeof ComposerFailureNoticeSlot>[0] & {
+  draftConflict?: Pick<NoticeProps, 'description' | 'dismissButton'>
+  persistence?: Pick<NoticeProps, 'role' | 'level' | 'title' | 'description' | 'primaryButton'>
+}): React.JSX.Element => (
+  <>
+    {draftConflict ? <Notice {...draftConflict} inline level="info" /> : null}
+    {persistence ? <Notice {...persistence} inline className="mb-2" /> : null}
+    <ComposerFailureNoticeSlot {...props} />
+  </>
+)

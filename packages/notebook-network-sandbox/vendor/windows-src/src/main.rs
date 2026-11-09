@@ -1977,6 +1977,27 @@ mod windows_host {
         leases: Vec<AclLeaseRecord>,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AclLeaseInspectionReceipt {
+        path: String,
+        lease_id: String,
+        owner_process_id: u32,
+        owner_process_running: bool,
+        capability_name: String,
+        capability_sid: String,
+        grants: Vec<AclLeaseGrant>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AclLeaseInspection {
+        installation_id: String,
+        ownership_root: String,
+        acl_state_present: bool,
+        receipts: Vec<AclLeaseInspectionReceipt>,
+    }
+
     struct AclLease {
         installation_id: String,
         ownership_root: PathBuf,
@@ -2099,6 +2120,72 @@ mod windows_host {
         };
         validate_acl_state(&state, installation_id)?;
         Ok(Some(state))
+    }
+
+    fn read_acl_lease_receipts(
+        installation_id: &str,
+        ownership_root: &Path,
+    ) -> Result<BTreeMap<String, (PathBuf, AclLeaseRecord)>> {
+        let directory = acl_directory(ownership_root);
+        let mut receipts = BTreeMap::new();
+        match fs::read_dir(&directory) {
+            Ok(entries) => {
+                for entry in entries {
+                    let path = entry?.path();
+                    if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                        continue;
+                    }
+                    let record: AclLeaseRecord =
+                        serde_json::from_slice(&fs::read(&path).context("read ACL lease")?)
+                            .context("parse ACL lease")?;
+                    validate_acl_record(&path, &record, installation_id)?;
+                    receipts.insert(record.lease_id.clone(), (path, record));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("read ACL lease directory"),
+        }
+        Ok(receipts)
+    }
+
+    fn inspect_acl_leases_data(
+        installation_id: &str,
+        requested_root: &str,
+    ) -> Result<AclLeaseInspection> {
+        let _lock = OperationLock::acquire(installation_id)?;
+        let ownership_root = ownership_directory(installation_id, requested_root)?;
+        // Read-only inspection deliberately validates a present state file but does not create a
+        // replacement when it is missing. The receipt remains the only evidence of the lease.
+        let acl_state_present = match read_acl_state(installation_id, &ownership_root)? {
+            Some(_) => true,
+            None => false,
+        };
+        let receipts = read_acl_lease_receipts(installation_id, &ownership_root)?
+            .into_values()
+            .map(|(path, record)| AclLeaseInspectionReceipt {
+                path: path.to_string_lossy().into_owned(),
+                lease_id: record.lease_id,
+                owner_process_id: record.owner_process_id,
+                owner_process_running: process_is_running(record.owner_process_id),
+                capability_name: record.capability_name,
+                capability_sid: record.capability_sid,
+                grants: record.grants,
+            })
+            .collect();
+        Ok(AclLeaseInspection {
+            installation_id: installation_id.to_owned(),
+            ownership_root: ownership_root.to_string_lossy().into_owned(),
+            acl_state_present,
+            receipts,
+        })
+    }
+
+    pub fn inspect_acl_leases(installation_id: &str, requested_root: &str) -> Result<()> {
+        println!(
+            "{}",
+            serde_json::to_string(&inspect_acl_leases_data(installation_id, requested_root)?)?
+        );
+        Ok(())
     }
 
     fn write_acl_state(ownership_root: &Path, state: &AclState) -> Result<()> {
@@ -3287,25 +3374,7 @@ mod windows_host {
         ownership_root: &Path,
         include_running: bool,
     ) -> Result<()> {
-        let directory = acl_directory(ownership_root);
-        let mut receipts = BTreeMap::new();
-        match fs::read_dir(&directory) {
-            Ok(entries) => {
-                for entry in entries {
-                    let path = entry?.path();
-                    if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                        continue;
-                    }
-                    let record: AclLeaseRecord =
-                        serde_json::from_slice(&fs::read(&path).context("read ACL lease")?)
-                            .context("parse ACL lease")?;
-                    validate_acl_record(&path, &record, installation_id)?;
-                    receipts.insert(record.lease_id.clone(), (path, record));
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).context("read ACL lease directory"),
-        }
+        let receipts = read_acl_lease_receipts(installation_id, ownership_root)?;
 
         let Some(mut state) = read_acl_state(installation_id, ownership_root)? else {
             if receipts.is_empty() {
@@ -4900,6 +4969,45 @@ mod windows_host {
         }
 
         #[test]
+        fn inspect_acl_leases_reports_orphan_receipts_without_state() {
+            let installation_id = "abab1212abab1212abab1218";
+            let parent = unique_test_root("inspect-missing-acl-state-orphan");
+            let root = parent.join(installation_id);
+            let id = new_lease_id().unwrap();
+            let name = command_capability_name(installation_id, &id);
+            let capability = CommandCapability::new(name.clone()).unwrap();
+            let grant_path = parent.join("workspace");
+            fs::create_dir_all(&grant_path).unwrap();
+            let receipt = AclLeaseRecord {
+                schema_version: ACL_LEASE_SCHEMA,
+                installation_id: installation_id.into(),
+                lease_id: id.clone(),
+                owner_process_id: u32::MAX,
+                capability_name: name,
+                capability_sid: sid_text(capability.sid()).unwrap(),
+                grants: vec![AclLeaseGrant {
+                    path: grant_path.to_string_lossy().into_owned(),
+                    access: AclGrant::ReadOnlyTree,
+                    protected_boundary: false,
+                }],
+            };
+            let receipt_path = acl_directory(&root).join(format!("{id}.json"));
+            write_acl_record(&receipt_path, &receipt).unwrap();
+
+            let report = inspect_acl_leases_data(installation_id, &root.to_string_lossy()).unwrap();
+
+            assert!(!report.acl_state_present);
+            assert_eq!(report.receipts.len(), 1);
+            assert_eq!(report.receipts[0].lease_id, id);
+            assert!(!report.receipts[0].owner_process_running);
+            assert_eq!(report.receipts[0].capability_sid, receipt.capability_sid);
+            assert_eq!(report.receipts[0].grants, receipt.grants);
+            assert!(receipt_path.is_file());
+            assert!(!acl_state_path(&root).exists());
+            fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
         fn empty_command_lease_does_not_rebuild_a_live_filesystem_lease() {
             let installation_id = "abab1212abab1212abab1213";
             let parent = unique_test_root("empty-command-lease");
@@ -6243,6 +6351,15 @@ fn run() -> Result<i32> {
                 bail!("unexpected configured argument");
             }
             println!("{}", windows_host::configured(&installation_id, &ownership_root)?);
+            Ok(0)
+        }
+        Some("inspect-acl-leases") => {
+            let installation_id = args.next().context("missing installation identity")?;
+            let ownership_root = args.next().context("missing ownership root")?;
+            if args.next().is_some() {
+                bail!("unexpected inspect-acl-leases argument");
+            }
+            windows_host::inspect_acl_leases(&installation_id, &ownership_root)?;
             Ok(0)
         }
         Some("status") => {

@@ -1,3 +1,4 @@
+import { researchVideoProgressSchema } from '@aipoch/research-film/contracts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
@@ -186,6 +187,15 @@ export const desktopNativeOperationSchema = z.discriminatedUnion('operation', [
     })
     .strict(),
   z.object({ operation: z.literal('notification-activate'), sessionId: text.optional() }).strict(),
+  z
+    .object({
+      operation: z.literal('research-video-mp4'),
+      htmlPath: path,
+      encoderPath: path,
+      probePath: path
+    })
+    .strict(),
+  z.object({ operation: z.literal('research-video-progress'), htmlPath: path }).strict(),
   z.object({ operation: z.literal('open-dialog'), options: desktopOpenOptionsSchema }).strict(),
   z.object({ operation: z.literal('save-dialog'), options: desktopSaveOptionsSchema }).strict(),
   z.object({ operation: z.literal('message-box'), options: desktopMessageOptionsSchema }).strict(),
@@ -302,6 +312,10 @@ export function parseDesktopNativeResult(
         })
         .strict()
         .parse(result)
+    case 'research-video-progress':
+      return researchVideoProgressSchema.nullable().parse(result)
+    case 'research-video-mp4':
+      return z.literal(`${request.htmlPath}.mp4`).parse(result)
     case 'conversation-pdf':
       return z.literal(`${request.htmlPath}.pdf`).parse(result)
   }

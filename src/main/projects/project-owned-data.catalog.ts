@@ -1,7 +1,8 @@
 // Test-only architecture metadata. Runtime deletion must continue to flow through
 // ProjectDeletionCoordinator and the subsystem owners named below; this catalog never executes it.
 
-type ProjectOwnerFieldName = 'projectId' | 'sessionId' | 'sourceProjectId' | 'sourceSessionId'
+type ProjectOwnerFieldName =
+  'parentSessionId' | 'projectId' | 'sessionId' | 'sourceProjectId' | 'sourceSessionId'
 
 type ProjectOwnerField = Readonly<{
   name: ProjectOwnerFieldName
@@ -335,7 +336,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     prismaModels: [
       {
         name: 'Session',
-        ownerFields: [requiredOwner('projectId')],
+        ownerFields: [requiredOwner('projectId'), optionalOwner('parentSessionId')],
         relationContracts: [
           {
             field: 'project',

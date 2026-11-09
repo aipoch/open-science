@@ -11,6 +11,8 @@ import { toErrorMessage } from '../error-message'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { resolveConfigRoot } from '../storage-root'
 import { DEFAULT_WEB_PORT, type WebServiceController } from '../web-service'
+import { lanAddresses } from './lan'
+import { PinggyTunnel, type PinggyRegion } from './pinggy'
 import type { ExternalWebAccess } from '../web-service/external-access-contract'
 import { RemoteSessionPairingManager } from './pairing'
 import {
@@ -83,6 +85,14 @@ export class RemoteAccessService {
   private activeMode: RemoteAccessMode = 'off'
   private accessUrl: string | undefined
   private remoteHost: string | undefined
+  private lanPort: number | undefined
+  private selectedLanAddress: string | undefined
+  private pinggyTunnel: PinggyTunnel | undefined
+  private pinggyToken: string | undefined
+  private pinggyRegion: PinggyRegion = 'auto'
+  private pinggyReconnecting = false
+  private offer: RemoteAccessSnapshot['offer']
+  private offerTimer: ReturnType<typeof setTimeout> | undefined
   private remoteItAppServiceId: string | undefined
   private remoteItBrowserServiceId: string | undefined
   private error: string | undefined
@@ -112,6 +122,8 @@ export class RemoteAccessService {
   ) {
     this.remoteItAppServiceId = pairing.preferences.remoteItAppServiceId
     this.remoteItBrowserServiceId = pairing.preferences.remoteItBrowserServiceId
+    this.selectedLanAddress = pairing.preferences.lanAddress
+    this.pinggyRegion = pairing.preferences.pinggyRegion ?? 'auto'
     if (configurationError) {
       this.lifecycle = 'error'
       this.error = configurationError.message
@@ -127,6 +139,16 @@ export class RemoteAccessService {
       isEnabled: () => context.service?.runtimeEnabled === true,
       authorizationGeneration: () => context.service?.authorizationGeneration ?? 0,
       onChanged: () => context.service?.notifyChanged(),
+      route: () => ({
+        mode: context.service?.activeMode ?? 'off',
+        origin:
+          context.service?.activeMode === 'lan' || context.service?.activeMode === 'pinggy'
+            ? context.service.accessUrl
+            : undefined,
+        allowRemember:
+          context.service?.activeMode === 'lan' ||
+          (context.service?.activeMode === 'pinggy' && Boolean(context.service.pinggyToken))
+      }),
       onAuthorizationExpired: (principalId) =>
         context.service?.webController?.closeExternalConnections(principalId)
     }
@@ -193,7 +215,20 @@ export class RemoteAccessService {
       remoteIt: this.remoteIt,
       pendingRequests:
         canManagePairing && this.showsPairingManagement() ? this.pairing.pendingViews() : [],
-      trustedBrowsers: canManagePairing ? this.pairing.trustedViews() : []
+      trustedBrowsers: canManagePairing ? this.pairing.trustedViews() : [],
+      connectedDevices: canManagePairing ? this.pairing.connectedViews() : [],
+      lan: {
+        addresses: lanAddresses(),
+        selectedAddress: this.selectedLanAddress,
+        port: this.lanPort
+      },
+      pinggy: {
+        sshAvailable: true,
+        tier: this.pinggyToken ? 'pro' : 'free',
+        tunnelUrl: this.activeMode === 'pinggy' ? this.accessUrl : undefined,
+        reconnecting: this.pinggyReconnecting
+      },
+      offer: canManage ? this.offer : undefined
     }
   }
 
@@ -224,6 +259,11 @@ export class RemoteAccessService {
 
   private async detectSerialized(): Promise<RemoteAccessSnapshot> {
     if (this.shutdownStarted || this.configurationError) return this.snapshot(true)
+    if (this.activeMode === 'lan' || this.activeMode === 'pinggy') {
+      return this.runtimeEnabled
+        ? this.snapshot(true)
+        : this.setModeSerialized(this.activeMode, { forceReconcile: true })
+    }
     try {
       await this.refreshInstallation()
       if (this.shutdownStarted) return this.snapshot(true)
@@ -311,6 +351,22 @@ export class RemoteAccessService {
 
     try {
       await invalidation
+      await this.stopManagedRoute()
+      if (mode === 'lan' || mode === 'pinggy') {
+        let web: Awaited<ReturnType<WebServiceController['ensureStarted']>>
+        try {
+          web = await this.webController.ensureStarted(DEFAULT_WEB_PORT, { attached: true })
+        } catch (error) {
+          if (!isAddressInUseError(error)) throw error
+          web = await this.webController.ensureStarted(0, { attached: true })
+        }
+        this.activeMode = mode
+        if (mode === 'lan') await this.startLanRoute()
+        else await this.startPinggyRoute(web.port)
+        if (options.persistPreference !== false) await this.pairing.setModePreference(mode)
+        this.notifyChanged()
+        return this.snapshot(true)
+      }
       await this.refreshInstallation()
       if (this.shutdownStarted) return this.snapshot(true)
       this.assertProviderReady()
@@ -485,6 +541,9 @@ export class RemoteAccessService {
   }
 
   private invalidateExternalAccess(closeConnections = true): Promise<void> {
+    if (this.offerTimer) clearTimeout(this.offerTimer)
+    this.offerTimer = undefined
+    this.offer = undefined
     this.authorizationGeneration += 1
     this.runtimeEnabled = false
     this.remoteHost = undefined
@@ -501,6 +560,7 @@ export class RemoteAccessService {
     let failure: unknown
     try {
       await invalidation
+      await this.stopManagedRoute()
     } catch (error) {
       failure = error
     }
@@ -578,6 +638,134 @@ export class RemoteAccessService {
       return hostname !== publicBrowserHost && isRemoteItAppHost(hostname)
     }
     return Boolean(this.remoteHost && hostname === this.remoteHost)
+  }
+
+  private async stopManagedRoute(): Promise<void> {
+    this.pinggyTunnel?.stop()
+    this.pinggyTunnel = undefined
+    this.pinggyReconnecting = false
+    await this.webController?.stopExternal?.()
+    this.lanPort = undefined
+  }
+
+  private issueOffer(): void {
+    if (this.offerTimer) clearTimeout(this.offerTimer)
+    if (!this.accessUrl || (this.activeMode !== 'lan' && this.activeMode !== 'pinggy')) return
+    const ttl = this.activeMode === 'lan' ? 300_000 : 60_000
+    const issued = this.pairing.issueOffer(this.activeMode, ttl)
+    this.offer = {
+      url: `${this.accessUrl}/pair?token=${encodeURIComponent(issued.token)}`,
+      expiresAt: issued.expiresAt,
+      password: issued.password
+    }
+    this.offerTimer = setTimeout(() => {
+      this.issueOffer()
+      this.notifyChanged()
+    }, ttl)
+    this.notifyChanged()
+  }
+
+  refreshOffer(): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      if (!this.runtimeEnabled && (this.activeMode === 'lan' || this.activeMode === 'pinggy')) {
+        const recovered = await this.setModeSerialized(this.activeMode, { forceReconcile: true })
+        if (!recovered.enabled) return recovered
+      }
+      if (!this.runtimeEnabled) throw new Error('Remote access is not ready.')
+      this.issueOffer()
+      return this.snapshot(true)
+    })
+  }
+
+  selectLanAddress(address: string): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      if (!lanAddresses().includes(address)) throw new Error('LAN address is unavailable.')
+      this.selectedLanAddress = address
+      await this.pairing.setLanAddress(address)
+      if (this.activeMode === 'lan') return this.setModeSerialized('lan', { forceReconcile: true })
+      return this.snapshot(true)
+    })
+  }
+
+  setPinggyRegion(region: PinggyRegion): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      this.pinggyRegion = region
+      await this.pairing.setPinggyRegion(region)
+      if (this.activeMode === 'pinggy')
+        return this.setModeSerialized('pinggy', { forceReconcile: true })
+      return this.snapshot(true)
+    })
+  }
+
+  setPinggyToken(token: string | null): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      this.pinggyToken = token ?? undefined
+      if (this.activeMode === 'pinggy')
+        return this.setModeSerialized('pinggy', { forceReconcile: true })
+      return this.snapshot(true)
+    })
+  }
+
+  private async startLanRoute(): Promise<void> {
+    const addresses = lanAddresses()
+    const address =
+      this.selectedLanAddress && addresses.includes(this.selectedLanAddress)
+        ? this.selectedLanAddress
+        : addresses[0]
+    if (!address) throw new Error('No LAN connection is available.')
+    if (!this.webController?.listenExternal) throw new Error('LAN listener is unavailable.')
+    let port: number
+    try {
+      port = await this.webController.listenExternal(address, 43127)
+    } catch (error) {
+      if (!isAddressInUseError(error)) throw error
+      port = await this.webController.listenExternal(address, 0)
+    }
+    this.selectedLanAddress = address
+    this.lanPort = port
+    this.remoteHost = address
+    this.accessUrl = `http://${address}:${port}`
+    this.runtimeEnabled = true
+    this.lifecycle = 'running'
+    this.issueOffer()
+  }
+
+  private async startPinggyRoute(port: number): Promise<void> {
+    const tunnel = new PinggyTunnel(
+      resolveConfigRoot(),
+      port,
+      this.pinggyRegion,
+      this.pinggyToken,
+      (url) => {
+        if (this.pinggyTunnel !== tunnel || this.shutdownStarted) return
+        this.authorizationGeneration += 1
+        this.webController?.closeExternalConnections()
+        this.accessUrl = url
+        this.remoteHost = new URL(url).hostname
+        this.runtimeEnabled = true
+        this.pinggyReconnecting = false
+        this.lifecycle = 'running'
+        this.error = undefined
+        this.issueOffer()
+      },
+      (retrying, error) => {
+        if (this.pinggyTunnel !== tunnel || this.shutdownStarted) return
+        this.authorizationGeneration += 1
+        this.webController?.closeExternalConnections()
+        this.pairing.clearOffer()
+        this.offer = undefined
+        this.runtimeEnabled = false
+        this.accessUrl = undefined
+        this.remoteHost = undefined
+        this.pinggyReconnecting = retrying
+        this.lifecycle = retrying ? 'starting' : 'error'
+        this.error = error
+        this.notifyChanged()
+      }
+    )
+    this.pinggyTunnel = tunnel
+    this.pinggyReconnecting = true
+    await tunnel.start()
   }
 
   private showsPairingManagement(): boolean {

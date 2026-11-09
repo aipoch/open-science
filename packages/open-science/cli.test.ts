@@ -82,6 +82,9 @@ describe('CLI help', () => {
       expect(help).not.toContain('start/update')
       expect(help).toContain('project update')
       expect(help).toContain('session config update')
+      expect(help).toMatch(
+        /--framework <id>\s+open-science-agent, claude-code, opencode, codex, codebuddy, or pi/
+      )
       expect(help).toContain('connector add | update')
       expect(help).toContain('credential list | add | update')
     } finally {
@@ -100,7 +103,8 @@ describe('CLI help', () => {
     'session',
     'settings',
     'plan',
-    'artifacts'
+    'artifacts',
+    'literature'
   ])(
     'recognizes help flags for the %s group without consuming them as subcommands',
     async (command) => {
@@ -755,6 +759,24 @@ describe('task CLI', () => {
     )
   })
 
+  it.each(['open-science-agent', 'claude-code', 'opencode', 'codex', 'codebuddy', 'pi'])(
+    'dispatches the supported framework %s without changing its identity',
+    async (framework) => {
+      const client = { updateAgentRouting: vi.fn().mockResolvedValue({ configured: {} }) }
+      await runTaskCommand(
+        parseCliArgs(['settings', 'agent-routing', 'update', '--framework', framework]),
+        { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+      )
+      expect(client.updateAgentRouting).toHaveBeenCalledWith({ framework })
+    }
+  )
+
+  it('rejects unknown framework identities', () => {
+    expect(() =>
+      parseCliArgs(['settings', 'agent-routing', 'update', '--framework', 'unknown-agent'])
+    ).toThrow('Invalid framework: unknown-agent')
+  })
+
   it('dispatches atomic configuration updates with their concurrency tokens', async () => {
     const client = {
       listProjects: vi.fn(listProjects),
@@ -1167,6 +1189,91 @@ describe('task CLI', () => {
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
+  })
+
+  it('routes read-only literature commands and scopes their options', async () => {
+    const client = {
+      listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'First review' }]),
+      searchLiterature: vi.fn().mockResolvedValue({
+        entries: [{ id: 'item-1', item: { title: 'Atlas' } }],
+        nextOffset: 20
+      }),
+      formatReferences: vi.fn().mockResolvedValue({
+        references: [{ itemId: 'item-1', reference: 'Doe (2020). Atlas.', inText: '(Doe, 2020)' }],
+        exports: { bibtex: '@article{}', ris: 'TY  - JOUR' }
+      })
+    }
+    const log = vi.fn()
+    const deps = { connect: vi.fn().mockResolvedValue(client), log }
+
+    await runTaskCommand(
+      parseCliArgs(['literature', 'search', 'cell', 'atlas', '--project', 'First review']),
+      deps
+    )
+    await runTaskCommand(
+      parseCliArgs(['literature', 'format', 'item-1', 'item-2', '--style', 'apa']),
+      deps
+    )
+
+    expect(client.searchLiterature).toHaveBeenCalledWith({
+      query: 'cell atlas',
+      projectId: 'project-1'
+    })
+    expect(client.formatReferences).toHaveBeenCalledWith({
+      itemIds: ['item-1', 'item-2'],
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      'item-1\tAtlas',
+      'More results: --offset 20',
+      'Doe (2020). Atlas.'
+    ])
+    expect(() => parseCliArgs(['literature', 'search', '--limit', '101'])).toThrow('Invalid limit')
+    expect(() => parseCliArgs(['literature', 'show', 'item-1', '--style', 'apa'])).toThrow(
+      '--style and --locale require literature format.'
+    )
+    expect(() => parseCliArgs(['project', 'list', '--offset', '1'])).toThrow(
+      '--limit and --offset require literature search.'
+    )
+  })
+
+  it('previews literature imports unless committed and maps trash to the lifecycle state', async () => {
+    const client = {
+      importLiterature: vi.fn().mockResolvedValue({
+        entries: [{ index: 0, status: 'ready', title: 'Atlas' }],
+        errors: [],
+        truncated: false
+      }),
+      setLiteratureLifecycle: vi.fn().mockResolvedValue({ itemIds: ['i1'], state: 'deleted' })
+    }
+    const log = vi.fn()
+    const deps = {
+      connect: vi.fn().mockResolvedValue(client),
+      log,
+      readStdin: vi.fn().mockResolvedValue('@article{a}')
+    }
+
+    await runTaskCommand(parseCliArgs(['literature', 'import', '-']), deps)
+    await runTaskCommand(parseCliArgs(['literature', 'trash', 'i1', '--json']), deps)
+
+    expect(client.importLiterature).toHaveBeenCalledWith({
+      mode: 'preview',
+      content: '@article{a}'
+    })
+    expect(log).toHaveBeenCalledWith(
+      'Preview only; nothing was saved. Re-run with --commit to import.'
+    )
+    expect(client.setLiteratureLifecycle).toHaveBeenCalledWith(['i1'], 'deleted')
+    expect(() => parseCliArgs(['literature', 'import', 'refs.bib', '--project', 'p1'])).toThrow(
+      '--project requires literature import --commit.'
+    )
+    expect(() =>
+      parseCliArgs(['literature', 'import', 'refs.bib', '--duplicates', 'reuse'])
+    ).toThrow('--duplicates and --collection require literature import --commit.')
+    expect(() => parseCliArgs(['literature', 'search', '--commit'])).toThrow(
+      '--commit requires literature import.'
+    )
   })
 
   it('preserves an existing artifact output when the download stream fails', async () => {
@@ -2506,34 +2613,37 @@ describe('local service CLI status', () => {
     }
   )
 
-  it('waits for the accepted owner rather than reporting stopped from a stale discovery PID', async () => {
-    let clock = 0
-    const oldState = { pid: 11111, port: 12345, configRoot: '/private-fixture' }
-    const generation = 'd1ed69cd-9883-452a-9ddd-e67c4a530a1e'
-    const serviceGeneration = '042a3798-beda-4e60-9d8a-179223668d45'
-    const service = {
-      pid: 22222,
-      generation,
-      lifetime: {
-        version: 1,
-        generation: serviceGeneration,
-        stopping: true,
-        explicit: false,
-        apps: 0
-      },
-      identity: {
-        configRoot: oldState.configRoot,
+  it.each([undefined, 25_000])(
+    'observes the accepted owner through the auth-aware stop window: %s',
+    async (exitAfter) => {
+      let clock = 0
+      const oldState = { pid: 11111, port: 12345, configRoot: '/private-fixture' }
+      const generation = 'd1ed69cd-9883-452a-9ddd-e67c4a530a1e'
+      const serviceGeneration = '042a3798-beda-4e60-9d8a-179223668d45'
+      const service = {
         pid: 22222,
         generation,
-        serviceGeneration,
-        birthToken: 'birth-B',
-        version: '9.2.1'
+        lifetime: {
+          version: 1,
+          generation: serviceGeneration,
+          stopping: true,
+          explicit: false,
+          apps: 0
+        },
+        identity: {
+          configRoot: oldState.configRoot,
+          pid: 22222,
+          generation,
+          serviceGeneration,
+          birthToken: 'birth-B',
+          version: '9.2.1'
+        }
       }
-    }
-    const isAlive = vi.fn((pid) => pid === service.pid)
-    const log = vi.fn()
-    await expect(
-      stopCommand(
+      const isAlive = vi.fn(
+        (pid) => pid === service.pid && (exitAfter === undefined || clock < exitAfter)
+      )
+      const log = vi.fn()
+      const stopping = stopCommand(
         { json: true },
         {
           findServiceState: async () => oldState,
@@ -2549,11 +2659,19 @@ describe('local service CLI status', () => {
             JSON.stringify({ generation, pid: service.pid, birthToken: 'birth-B' })
         }
       )
-    ).rejects.toMatchObject({ code: 'service_stop_unconfirmed' })
-    expect(isAlive).toHaveBeenCalledWith(service.pid)
-    expect(log).not.toHaveBeenCalled()
-    expect(clock).toBe(22_000)
-  })
+      if (exitAfter === undefined)
+        await expect(stopping).rejects.toMatchObject({ code: 'service_stop_unconfirmed' })
+      else await expect(stopping).resolves.toBeUndefined()
+      expect(isAlive).toHaveBeenCalledWith(service.pid)
+      if (exitAfter === undefined) expect(log).not.toHaveBeenCalled()
+      else
+        expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+          result: 'stopped',
+          pid: service.pid
+        })
+      expect(clock).toBe(exitAfter ?? 42_000)
+    }
+  )
 
   it('reports a live but unreachable service as unknown rather than stopped', async () => {
     const state = { pid: 12345, port: 12345, configRoot: '/private-fixture' }

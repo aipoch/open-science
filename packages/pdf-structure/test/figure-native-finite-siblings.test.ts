@@ -26,7 +26,8 @@ const {
   nativeCaptionedRasterFrameBands,
   nativeCaptionedRepeatedRasterRows,
   nativeCaptionedRasterCompositeGrid,
-  nativeCaptionedPairedRasterGrid
+  nativeCaptionedPairedRasterGrid,
+  nativeRepeatedRasterPaletteTail
 } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
 )
@@ -35,6 +36,307 @@ const { nativeFigureRunningHead } = await import(
 )
 const input = (index: number): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/native-finite-figure-siblings.jsonl'))[index]
+
+function scriptedVectorSubcaptions(fault = ''): ReturnType<typeof JSON.parse> {
+  const bodyDirection = fault.startsWith('body-direction')
+  const operators = { fnArray: [], argsArray: [] } as ReturnType<typeof JSON.parse>,
+    items: ReturnType<typeof JSON.parse>[] = [],
+    tokens: ReturnType<typeof JSON.parse>[] = [],
+    graphicsBounds: ReturnType<typeof JSON.parse>[] = [],
+    glyphs = new Map(),
+    skippedSpaceGlyphs: ReturnType<typeof JSON.parse>[] = [],
+    lines: ReturnType<typeof JSON.parse>[] = []
+  const add = (op: number, args: unknown): number => {
+    operators.fnArray.push(op)
+    operators.argsArray.push(args)
+    return operators.fnArray.length - 1
+  }
+  const text = (str: string, x: number, y: number, h: number): ReturnType<typeof JSON.parse> => {
+    add(OPS.beginText, null)
+    add(OPS.setFont, ['F', h])
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, 400 - y]])
+    const chars = [...str].map((c) => {
+        glyphs.set(c, { fontChar: c, bounds: [0, -0.1, 0.5, 0.7] })
+        return { unicode: c, fontChar: c, width: 500, isSpace: c === ' ', isInFont: c !== ' ' }
+      }),
+      i = add(OPS.showText, [chars])
+    chars.forEach((g, n) => {
+      if (g.isSpace)
+        skippedSpaceGlyphs.push({
+          operationIndex: i,
+          glyphIndex: n,
+          fontName: 'F',
+          fontChar: ' ',
+          width: 500
+        })
+    })
+    add(OPS.endText, null)
+    const sourceItem = { pageNumber: 1, index: items.length, text: str },
+      rect = [x, y - h, x + str.length * h * 0.5, y]
+    items.push({
+      str,
+      dir: 'ltr',
+      width: rect[2] - x,
+      height: h,
+      transform: [h, 0, 0, h, x, 400 - y],
+      fontName: 'F',
+      sourceItem
+    })
+    const t = {
+      text: str,
+      rect,
+      height: h,
+      baseline: y,
+      horizontal: true,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      sourceItem
+    }
+    tokens.push(t)
+    return t
+  }
+  add(OPS.setLineWidth, [0.4])
+  add(OPS.setStrokeRGBColor, ['#000000'])
+  add(OPS.setFillRGBColor, ['#000000'])
+  if (fault === 'body-direction-page-number' || fault === 'body-direction-header') {
+    const header = text(
+      fault === 'body-direction-page-number' ? '1' : 'Independent header',
+      20,
+      20,
+      10
+    )
+    lines.push({
+      text: header.text,
+      x: 20,
+      y: 10,
+      width: header.rect[2] - 20,
+      height: 10,
+      fontSize: 10
+    })
+  }
+  if (fault === 'body-direction-before-paint') text('Q', 200, 55, 10)
+  for (const left of bodyDirection ? [55, 205] : [55, 285])
+    for (let n = 0; n < 3; n++) {
+      if (fault === 'missing-panel' && left === 285) continue
+      const x = left + n * 50,
+        y = bodyDirection ? 65 + (n % 2) * 60 : 110 + (n % 2) * 10,
+        r = x + 50,
+        b = bodyDirection ? 125 - (n % 2) * 60 : 120 - (n % 2) * 10,
+        i = add(OPS.constructPath, [
+          OPS.stroke,
+          [new Float32Array([0, x, 400 - y, 1, r, 400 - b])],
+          new Float32Array([x, 400 - Math.max(y, b), r, 400 - Math.min(y, b)])
+        ])
+      const pad = bodyDirection ? 2 : 0.2
+      graphicsBounds.push({
+        kind: 'path',
+        operationIndex: i,
+        normalizedRect: [x - pad, Math.min(y, b) - pad, r + pad, Math.max(y, b) + pad].map(
+          (v, j) => v / (j % 2 ? 400 : 500)
+        )
+      })
+    }
+  text('x', 100, 118, 10)
+  text('y', bodyDirection ? 280 : 330, 118, 10)
+  if (fault === 'body-direction-top-label') text('Q', 200, 55, 10)
+  if (fault === 'body-direction-neighbor')
+    text('Independent ordinary text belongs to another column.', 10, 80, 10)
+  for (const [key, left] of [
+    ['a', 80],
+    ['b', bodyDirection ? 230 : 310]
+  ] as const) {
+    const a = text(`(${key}) Native stage`, left, 155, 10),
+      b = text('x', a.rect[2], 155, 10),
+      c = text('2', b.rect[2], 157, 7),
+      d = text('.', c.rect[2], 155, 10),
+      rs = [a, b, c, d]
+    lines.push({
+      text: rs.map((t) => t.text).join(''),
+      x: left,
+      y: 145,
+      width: d.rect[2] - left,
+      height: 12,
+      fontSize: 10
+    })
+  }
+  if (fault === 'foreign-text') text('unowned', 235, 151, 6)
+  if (fault === 'foreign-path') {
+    const i = add(OPS.constructPath, [
+      OPS.fill,
+      [new Float32Array([0, 230, 250, 1, 240, 250, 1, 240, 260, 1, 230, 260, 4])],
+      new Float32Array([230, 250, 240, 260])
+    ])
+    graphicsBounds.push({
+      kind: 'path',
+      operationIndex: i,
+      normalizedRect: [230 / 500, 140 / 400, 240 / 500, 150 / 400]
+    })
+  }
+  if (fault === 'missing-script') glyphs.delete('2')
+  if (fault === 'reused-glyph') text('2', tokens[4].rect[0], 157, 7)
+  const captionText =
+      fault === 'missing-caption-keys' || bodyDirection
+        ? 'Figure 1. Independent components.'
+        : 'Figure 1. Components (a) and (b).',
+    ct = text(captionText, bodyDirection ? 155 : 50, 180, 10),
+    caption = { page: 1, lines: [captionText], rect: ct.rect }
+  lines.push({
+    text: captionText,
+    x: ct.rect[0],
+    y: 170,
+    width: ct.rect[2] - ct.rect[0],
+    height: 10,
+    fontSize: 10
+  })
+  if (bodyDirection) {
+    const prose = (str: string, y: number): void => {
+      const t = text(str, 45, y, 10)
+      lines.push({ text: str, x: 45, y: y - 10, width: t.rect[2] - 45, height: 10, fontSize: 10 })
+    }
+    prose(
+      fault === 'body-direction-label'
+        ? '(c) Third phase'
+        : 'Ordinary discussion begins with these relations.',
+      208
+    )
+    for (const [x, y, r, b] of [
+      [210, 235, 180, 262],
+      [210, 235, 240, 262]
+    ]) {
+      const i = add(OPS.constructPath, [
+        OPS.stroke,
+        [new Float32Array([0, x, 400 - y, 1, r, 400 - b])],
+        new Float32Array([Math.min(x, r), 400 - b, Math.max(x, r), 400 - y])
+      ])
+      graphicsBounds.push({
+        kind: 'path',
+        operationIndex: i,
+        normalizedRect: [Math.min(x, r) - 0.2, y - 0.2, Math.max(x, r) + 0.2, b + 0.2].map(
+          (v, j) => v / (j % 2 ? 400 : 500)
+        )
+      })
+    }
+    text('z', 205, 234, 10)
+    text('u', 177, 274, 10)
+    text('v', 237, 274, 10)
+    if (fault === 'body-direction-foreign-paint' || fault === 'body-direction-unlisted-paint') {
+      const i = add(OPS.constructPath, [
+        OPS.stroke,
+        [new Float32Array([0, 210, 211, 1, 216, 207])],
+        new Float32Array([210, 207, 216, 211])
+      ])
+      if (fault === 'body-direction-foreign-paint')
+        graphicsBounds.push({
+          kind: 'path',
+          operationIndex: i,
+          normalizedRect: [209.8 / 500, 188.8 / 400, 216.2 / 500, 193.2 / 400]
+        })
+    }
+    if (fault !== 'body-direction-no-tail') {
+      prose('These independent relations continue the ordinary discussion below.', 288)
+      prose('The next complete line explains their separate role in this paragraph.', 302)
+    }
+    if (fault === 'body-direction-missing-glyph') glyphs.delete('z')
+    if (fault === 'body-direction-source-drift') items.at(-1).sourceItem.text = 'changed'
+  }
+  if (fault === 'duplicate-source') tokens.push({ ...tokens[2] })
+  if (fault === 'changed-source') items[2].sourceItem = { ...items[2].sourceItem, text: 'changed' }
+  const viewport = {
+      width: 500,
+      height: 400,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 400],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 400 - y]
+    },
+    page = {
+      pageNumber: 1,
+      width: 500,
+      height: 400,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds
+    },
+    context = {
+      operators,
+      viewport,
+      graphicsBounds,
+      glyphBounds:
+        fault === 'missing-font' ? [] : [{ fontName: 'F', glyphs: [...glyphs.values()] }],
+      skippedSpaceGlyphs,
+      content: { items, styles: { F: { ascent: 0.8, descent: -0.2, vertical: false } } }
+    }
+  return { page, caption, tokens, context, rect: [50, 100, 450, 130] }
+}
+it.each([
+  'body-direction',
+  'body-direction-top-label',
+  'body-direction-before-paint',
+  'body-direction-page-number',
+  'body-direction-header',
+  'body-direction-neighbor',
+  'body-direction-extra-caption',
+  'body-direction-foreign-paint',
+  'body-direction-unlisted-paint',
+  'body-direction-label',
+  'body-direction-no-tail',
+  'body-direction-missing-glyph',
+  'body-direction-source-drift'
+])(
+  'keeps a complete native figure apart from an independently bracketed body diagram: %s',
+  (fault) => {
+    const f = scriptedVectorSubcaptions(fault)
+    const captions =
+      fault === 'body-direction-extra-caption'
+        ? [f.caption, { page: 1, lines: ['Figure 2. Another graphic.'], rect: [40, 360, 210, 370] }]
+        : [f.caption]
+    const figures = associateFigures(f.page, captions, [], [], [], f.tokens, f.context)
+    const result = figures.find((figure: { caption: unknown }) => figure.caption === f.caption)
+    if (!['body-direction', 'body-direction-top-label'].includes(fault))
+      expect(result?.rect).toBeUndefined()
+    else {
+      expect(result?.rect).toBeDefined()
+      expect(result.rect[0]).toBeLessThanOrEqual(54.8)
+      expect(result.rect[2]).toBeGreaterThanOrEqual(355.2)
+      expect(result.rect[3]).toBeGreaterThanOrEqual(157)
+      expect(result.rect[3]).toBeLessThan(f.caption.rect[1])
+      if (fault === 'body-direction-top-label') expect(result.rect[1]).toBeLessThanOrEqual(45)
+      expect(result.sourceItems).toBeUndefined()
+    }
+  }
+)
+it.each([
+  'complete',
+  'foreign-text',
+  'foreign-path',
+  'missing-script',
+  'reused-glyph',
+  'missing-panel',
+  'missing-caption-keys',
+  'duplicate-source',
+  'changed-source',
+  'missing-font'
+])('completes scripted subcaptions only for two independently owned vector panels: %s', (fault) => {
+  const f = scriptedVectorSubcaptions(fault),
+    before = structuredClone({ page: f.page, caption: f.caption, tokens: f.tokens }),
+    labels = nativeOwnedFigureBottomLabels(
+      f.page,
+      f.caption,
+      [f.caption],
+      [],
+      f.rect,
+      [],
+      f.tokens,
+      () => false,
+      f.context
+    )
+  if (fault === 'complete') {
+    expect(labels).toHaveLength(2)
+    expect(labels.every((r: number[]) => r[3] >= 158.4 && r[3] < 170)).toBe(true)
+  } else expect(labels).toEqual([])
+  expect({ page: f.page, caption: f.caption, tokens: f.tokens }).toEqual(before)
+})
 
 const completeRasterTitleRows = (): ReturnType<typeof JSON.parse> => {
   const page = {
@@ -131,7 +433,10 @@ const completeRasterTitleRows = (): ReturnType<typeof JSON.parse> => {
   }
 }
 
-const completeRasterPaletteTitle = (): ReturnType<typeof JSON.parse> => {
+const completeRasterPaletteTitle = (
+  horizontal = false,
+  underlay = false
+): ReturnType<typeof JSON.parse> => {
   const width = 500,
     height = 400,
     operators = { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] },
@@ -194,12 +499,34 @@ const completeRasterPaletteTitle = (): ReturnType<typeof JSON.parse> => {
       sourceItem
     })
   }
-  add(OPS.paintFormXObjectBegin, [null, [60, 130, 300, 330]])
-  text('Measured regions', 150, 86, 8)
-  for (const r of [
-    [80, 100, 240, 260],
-    [260, 100, 268, 260]
-  ]) {
+  add(OPS.paintFormXObjectBegin, [null, [60, horizontal ? 120 : 130, 300, 330]])
+  if (underlay) {
+    const r = [76, 95, 278, 269]
+    const i = add(OPS.constructPath, [
+      OPS.fill,
+      [[0, 76, 305, 1, 278, 305, 1, 278, 131, 1, 76, 131, 4]],
+      [76, 131, 278, 305]
+    ])
+    graphicsBounds.push({
+      kind: 'path',
+      operationIndex: i,
+      normalizedRect: r.map((v, n) => v / (n % 2 ? height : width))
+    })
+  } else if (!horizontal) text('Measured regions', 150, 86, 8)
+  const images = horizontal
+    ? [
+        ...Array.from({ length: 12 }, (_, n) => {
+          const x = 80 + (n % 4) * 50,
+            y = 100 + Math.floor(n / 4) * 50
+          return [x, y, x + 45, y + 45]
+        }),
+        [120, 246, 240, 249]
+      ]
+    : [
+        [80, 100, 240, 260],
+        [260, 100, 268, 260]
+      ]
+  for (const r of images) {
     add(OPS.save, null)
     add(OPS.transform, [r[2] - r[0], 0, 0, r[3] - r[1], r[0], height - r[3]])
     const i = add(OPS.paintImageXObject, ['image', 160, 160])
@@ -231,7 +558,12 @@ const completeRasterPaletteTitle = (): ReturnType<typeof JSON.parse> => {
       normalizedRect: r.map((v, n) => v / (n % 2 ? height : width))
     })
   }
-  for (let n = 0; n < 4; n++) text(String(n), 275, 255 - n * 40, 6)
+  if (horizontal) {
+    text('-2', 117, 257, 6)
+    text('0', 178.5, 257, 6)
+    text('2', 238.5, 257, 6)
+    text('Response score', 159, 265, 6)
+  } else for (let n = 0; n < 4; n++) text(String(n), 275, 255 - n * 40, 6)
   add(OPS.paintFormXObjectEnd, [])
   text('Figure 1: Measured regions and a legend.', 80, 290, 10)
   const caption = { page: 1, rect: tokens.at(-1).rect, lines: [tokens.at(-1).text] }
@@ -3946,4 +4278,54 @@ it.each([
       f.context
     ).rect
   ).toEqual(f.figure.rect)
+})
+
+it.each([
+  'complete',
+  'underlay',
+  'missing-glyph',
+  'duplicate-source',
+  'foreign-text',
+  'foreign-paint',
+  'foreign-left',
+  'table'
+])('keeps only the independently proved horizontal palette ticks and title: %s', (mode) => {
+  const f = completeRasterPaletteTitle(true, mode !== 'complete')
+  const plate = nativeCaptionedRepeatedRasterRows(f.page, f.captions[0], f.captions, [])
+  expect(plate).toBeDefined()
+  if (mode === 'complete')
+    expect(
+      associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)[0]?.rect[3]
+    ).toBeGreaterThanOrEqual(265.6)
+  const before = [...plate.rect]
+  const tables = mode === 'table' ? [[150, 263, 220, 274]] : []
+  if (mode === 'missing-glyph') f.context.glyphBounds = []
+  if (mode === 'duplicate-source') f.tokens[1].sourceItem = f.tokens[0].sourceItem
+  if (mode === 'foreign-left')
+    f.page.lines.push({ text: 'x', x: 76, y: 180, width: 2, height: 6, fontSize: 6 })
+  if (mode === 'foreign-text')
+    f.page.lines.push({ text: 'Foreign prose', x: 80, y: 265, width: 65, height: 6, fontSize: 6 })
+  if (mode === 'foreign-paint')
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: 99999,
+      normalizedRect: [80 / 500, 265 / 400, 100 / 500, 268 / 400]
+    })
+  const result = nativeRepeatedRasterPaletteTail(
+    f.page,
+    plate,
+    f.captions,
+    tables,
+    f.tokens,
+    f.context
+  )
+  if (mode === 'complete' || mode === 'underlay') {
+    expect(result?.rect[3]).toBeGreaterThanOrEqual(265.6)
+    if (mode === 'underlay') expect(result?.rect).toEqual([76, 95, 278, 269])
+    else expect(result?.rect.slice(0, 3)).toEqual(before.slice(0, 3))
+    expect(result?.rect[3]).toBeGreaterThan(before[3])
+    expect(
+      associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)[0]?.rect[3]
+    ).toBeGreaterThanOrEqual(265.6)
+  } else expect(result).toBeUndefined()
 })

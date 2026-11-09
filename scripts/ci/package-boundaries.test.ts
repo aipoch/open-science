@@ -379,28 +379,31 @@ it.each(hostBoundaryCases)(
   }
 )
 
-it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  const { modules } = loadModuleImpactManifest()
-  const violations: string[] = []
-  for (const [id, module] of Object.entries(modules) as [string, { ownerPaths: string[] }][]) {
-    if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) continue
-    const source = module.ownerPaths.find(
-      (path) => path.startsWith('src/') && !path.includes('.test.')
-    )
-    if (!source) continue
-    // Integrity retains historical registration evidence. Package boundaries apply to the
-    // executable plan, including stale graph suggestions, rather than to raw evidence records.
+it.each(
+  (Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][]).flatMap(
+    ([id, module]) => {
+      if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) return []
+      const source = module.ownerPaths.find(
+        (path) => path.startsWith('src/') && !path.includes('.test.')
+      )
+      return source ? [{ id, source }] : []
+    }
+  )
+)(
+  '$id host source edits never select unchanged upstream PDF package implementation tests',
+  async ({ source }) => {
+    const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+    // Integrity retains historical registration evidence. Check the executable plan, including
+    // stale graph suggestions, with one timeout per module as the ownership manifest grows.
     const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
       status: 'not-used',
       testFiles: []
     })
-    for (const test of plan.testFiles)
-      if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
+    expect(
+      plan.testFiles.filter((test) => /^packages\/pdf-(translation|structure)\//.test(test))
+    ).toEqual([])
   }
-  expect(violations).toEqual([])
-})
+)
 
 it('Compute host edits never register or select upstream Compute units', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
@@ -470,25 +473,20 @@ it('Compute host edits never register or select upstream Compute units', async (
   }
 })
 
-it('every module plan excludes unrelated upstream package tests', async () => {
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
-  const manifest = loadModuleImpactManifest()
-  const violations: string[] = []
-  // Validate executed coverage while the trusted retirement policy permits cleanup of
-  // historical redundant registrations. Full-validation owners retain their fallback.
-  for (const [id, module] of Object.entries(manifest.modules) as [
-    string,
-    { ownerPaths: string[] }
-  ][]) {
-    const plan = createModuleTestPlan(id, manifest)
-    if (plan.mode === 'full') continue
+it.each(Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][])(
+  '%s module plan excludes unrelated upstream package tests',
+  async (id, module) => {
+    const { createModuleTestPlan } = await import('./module-test-impact.mjs')
+    // Validate executed coverage while the trusted retirement policy permits cleanup of
+    // historical redundant registrations. Full-validation owners retain their fallback.
+    const plan = createModuleTestPlan(id, hostBoundaryManifest)
+    if (plan.mode === 'full') return
     const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
-    for (const test of plan.testFiles)
-      if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
+    expect(
+      plan.testFiles.filter((test) => excluded.some((root) => test.startsWith(root + '/')))
+    ).toEqual([])
   }
-  expect(violations).toEqual([])
-})
+)
 
 it('selects durable file consumers downstream without testing unchanged prerequisites', async () => {
   const { createAffectedTestPlan, createModuleTestPlan, executeModuleTestPlan } =

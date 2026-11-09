@@ -72,6 +72,12 @@
     },
     {
       "path": "./packages/providers/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/research-film/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/agent-harness/tsconfig.dev.json"
     }
   ]
 }

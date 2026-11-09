@@ -56,6 +56,41 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('publishes only committed provider changes and isolates observers', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const first = vi.fn(() => {
+      throw new Error('observer failed')
+    })
+    const second = vi.fn()
+    const detachFirst = repository.subscribeProviders(first)
+    const detachSecond = repository.subscribeProviders(second)
+    await repository.upsertProvider(provider())
+    expect(second).toHaveBeenCalledWith([
+      { id: 'p1', current: expect.objectContaining({ id: 'p1' }) }
+    ])
+    await repository.upsertProvider(provider())
+    await repository.markPathsNormalized(1)
+    expect(second).toHaveBeenCalledTimes(1)
+    await expect(repository.upsertProvider(provider(), 'deleted')).rejects.toThrow()
+    expect(second).toHaveBeenCalledTimes(1)
+    await repository.deleteProvider('p1')
+    expect(second).toHaveBeenLastCalledWith([{ id: 'p1', current: undefined }])
+    detachFirst()
+    detachSecond()
+    await repository.upsertProvider(provider())
+    expect(second).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not notify provider observers when durable publication fails', async () => {
+    const store = new SettingsDocumentStore(await createStorageRoot())
+    const repository = new SettingsRepository(store)
+    const listener = vi.fn()
+    repository.subscribeProviders(listener)
+    vi.spyOn(store, 'mutate').mockRejectedValueOnce(new Error('write failed'))
+    await expect(repository.upsertProvider(provider())).rejects.toThrow('write failed')
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   it('does not rewrite a concurrently saved legacy data-root pointer', async () => {
     const dir = await createStorageRoot()
     const legacyRoot = join(dir, 'OpenScience')

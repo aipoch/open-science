@@ -29,7 +29,8 @@ describe('delegated-work framework certification', () => {
       { id: 'opencode', supportsDelegatedWork: true },
       { id: 'codex', supportsDelegatedWork: true },
       { id: 'codebuddy', supportsDelegatedWork: true },
-      { id: 'pi', supportsDelegatedWork: true }
+      { id: 'pi', supportsDelegatedWork: true },
+      { id: 'open-science-agent', supportsDelegatedWork: true }
     ])
   })
 

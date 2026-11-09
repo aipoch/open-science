@@ -7,13 +7,21 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
-import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
-const autoReviewResumeCounts = new Map()
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
   let message
@@ -136,8 +144,17 @@ const DELEGATED_RELIABLE_FAILURE_NAME = 'Post-fence reliable question'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_A = 'Queue reliable fairness question A.'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_B = 'Queue reliable fairness question B.'
 const RELIABLE_CHILD_DIRECTIVE = 'Use the renderer-visible reliable evidence.'
+const DELEGATION_SETTLEMENT_PROMPT =
+  'Delegated work settlement update (application-owned context, not a user message).'
 const RELIABLE_CONTROL_MARKERS = [
+  DELEGATION_SETTLEMENT_PROMPT,
+  DELEGATION_TERMINAL_PROMPT,
+  DELEGATION_BOUNDED_COLLECT_PROMPT,
+  DELEGATION_BOUNDED_RECOLLECT_PROMPT,
+  DELEGATION_PERMISSION_PROMPT,
+  DELEGATION_STOP_PROMPT,
   RELIABLE_CHILD_DIRECTIVE,
+  DELEGATION_INHERITED_SPECIALIST_PROMPT,
   'Child reliable question reached Main',
   'Main answered the reliable child question',
   'Parked reliable child question',
@@ -156,7 +173,6 @@ const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
-const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -171,6 +187,24 @@ const waitForReleaseFile = async (releaseFile, timeout = 30_000) => {
       await delay(50)
     }
   }
+}
+
+// Claim the one-shot gate across provider processes; a follow-up create must remain unblocked.
+const holdFirstSessionCreateWhenRequested = async (sessionId) => {
+  const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
+  if (!storageRoot) return undefined
+  const control = join(storageRoot, 'e2e-session-create-gate.json')
+  const claimed = `${control}.claimed`
+  try {
+    await rename(control, claimed)
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  }
+  const gate = JSON.parse(await readFile(claimed, 'utf8'))
+  await writeFile(gate.started, sessionId, 'utf8')
+  await waitForReleaseFile(gate.release)
+  return gate.closed
 }
 
 const suspendSessionWrites = async () => {
@@ -190,12 +224,12 @@ const stringEnvironment = (overrides = []) => {
   return environment
 }
 
-const toolResult = (name, result) => {
+const toolResult = (name, result, { allowToolError = false } = {}) => {
   const text = result.content
     .filter((item) => item.type === 'text')
     .map((item) => item.text)
     .join('\n')
-  if (result.isError) throw new Error(`${name} failed: ${text}`)
+  if (result.isError && !allowToolError) throw new Error(`${name} failed: ${text}`)
   return JSON.parse(text)
 }
 
@@ -1333,10 +1367,13 @@ const createProvenanceArtifact = async (sessionId, markdown = false, withoutExec
         arguments: {
           filename: markdown ? 'publication-policy.md' : 'provenance-evidence.txt',
           mimeType: markdown ? 'text/markdown' : 'text/plain',
-          content: markdown
-            ? '# Publication report\n\nOriginal result.\n'
-            : 'artifact provenance e2e',
-          encoding: 'utf8',
+          source: {
+            kind: 'inline',
+            content: markdown
+              ? '# Publication report\n\nOriginal result.\n'
+              : 'artifact provenance e2e',
+            encoding: 'utf8'
+          },
           producerRunId
         }
       })
@@ -1360,9 +1397,12 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.html',
           mimeType: 'text/html',
-          content:
-            '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
-          encoding: 'utf8'
+          source: {
+            kind: 'inline',
+            content:
+              '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
+            encoding: 'utf8'
+          }
         }
       })
     )
@@ -1373,8 +1413,7 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.docx',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          content: PREVIEW_CONTEXT_MENU_DOCX_BASE64,
-          encoding: 'base64'
+          source: { kind: 'inline', content: PREVIEW_CONTEXT_MENU_DOCX_BASE64, encoding: 'base64' }
         }
       })
     )
@@ -1385,8 +1424,11 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.xlsx',
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          content: await createPreviewContextMenuXlsxBase64(),
-          encoding: 'base64'
+          source: {
+            kind: 'inline',
+            content: await createPreviewContextMenuXlsxBase64(),
+            encoding: 'base64'
+          }
         }
       })
     )
@@ -1446,8 +1488,7 @@ const createSpreadsheetSearchArtifacts = async (sessionId) => {
             arguments: {
               filename: file.filename,
               mimeType: file.mimeType,
-              content,
-              encoding: 'base64'
+              source: { kind: 'inline', content, encoding: 'base64' }
             }
           })
         )
@@ -1526,9 +1567,11 @@ if (process.argv.includes('--version')) {
     .onRequest(acp.methods.agent.session.new, async (context) => {
       await failResumeAttachmentWhenRequested(context.params.cwd)
       const sessionId = `e2e-session-${fixtureInstanceId}${nextSessionId++}`
+      const createGateClosedFile = await holdFirstSessionCreateWhenRequested(sessionId)
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
         cwd: context.params.cwd,
+        createGateClosedFile,
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
@@ -1558,7 +1601,16 @@ if (process.argv.includes('--version')) {
       const controlStart = Math.max(
         ...RELIABLE_CONTROL_MARKERS.map((marker) => rawPrompt.lastIndexOf(marker))
       )
-      const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
+      const specialistCheck = rawPrompt.lastIndexOf(
+        'Verify specialist switch runtime remains usable.'
+      )
+      const prompt =
+        specialistCheck >= 0 &&
+        specialistCheck > rawPrompt.lastIndexOf('Continue the original user task as ')
+          ? rawPrompt.slice(specialistCheck)
+          : controlStart >= 0
+            ? rawPrompt.slice(controlStart)
+            : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
@@ -1578,7 +1630,9 @@ if (process.argv.includes('--version')) {
       }
       if (
         !prompt.includes('Generate Session metadata only from the following JSON data:') &&
-        (prompt.includes(PLAN_DISMISS_PROMPT) || prompt.includes(PLAN_RECOVERY_PROMPT))
+        (prompt.includes(PLAN_DISMISS_PROMPT) ||
+          prompt.includes(PLAN_RECOVERY_PROMPT) ||
+          prompt.includes(PLAN_RECOVERY_FEEDBACK))
       ) {
         planRecoveryScenarios.add(context.params.sessionId)
       }
@@ -1635,11 +1689,11 @@ if (process.argv.includes('--version')) {
               'return await host.delegate({ task: "Delegation resume held child task.", name: "Interrupted child" }, { wait: false })'
             )
           )
-          globalThis.delegationResumeChild = created.children[0]
+          if (!created.children?.[0]) throw new Error('Delegation resume child was not created.')
         }
         if (shouldDelegate) {
           const code = continuation
-            ? `const before = await host.children(); const receipt = await host.sendFrameMessage(${JSON.stringify(globalThis.delegationResumeChild?.frameId)}, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };`
+            ? 'const before = await host.children(); const child = before.find(child => child.name === "Interrupted child"); if (!child) throw new Error("missing original child"); const receipt = await host.sendFrameMessage(child.frameId, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };'
             : 'const value = await host.delegate({ task: "Return a short confirmation for the resume audit.", name: "Resume audit child" }, { wait: false }); return { outcome: "admitted", value };'
           const result = await executeControlCode(
             context.params.sessionId,
@@ -1677,10 +1731,17 @@ if (process.argv.includes('--version')) {
       if (reproScenario) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
         const correction = prompt.includes('[Auditor] A fresh-context reviewer')
-        const resumeCount = resumed
-          ? (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) + 1
-          : 0
-        if (resumed) autoReviewResumeCounts.set(context.params.sessionId, resumeCount)
+        // Provider replacement changes both process globals and provider Session IDs.
+        const counterPath = join(
+          sessionRoutes.get(context.params.sessionId).cwd,
+          '.e2e-review-resumes'
+        )
+        const previousResumes = await readFile(counterPath, 'utf8').then(Number, (error) => {
+          if (error.code === 'ENOENT') return 0
+          throw error
+        })
+        const resumeCount = previousResumes + (resumed ? 1 : 0)
+        if (resumed) await writeFile(counterPath, String(resumeCount))
         const repeatedStop =
           resumed && prompt.includes('AUTO_REVIEW_REPRO_REPEAT_STOP') && resumeCount === 1
         const waitForStop =
@@ -1689,10 +1750,7 @@ if (process.argv.includes('--version')) {
             (prompt.includes('Run auto review ordinary stop scenario.') ||
               (correction &&
                 /AUTO_REVIEW_REPRO_(?:REPEAT_|DISABLED_|REFLAG_)?STOP/u.test(prompt) &&
-                !(
-                  prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') &&
-                  (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) > 0
-                ))))
+                !(prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') && resumeCount > 0))))
         const text = resumed
           ? repeatedStop
             ? 'Recovered correction is running; ready for Stop.'
@@ -1957,8 +2015,11 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'workspace-paired.pdf',
                     mimeType: 'application/pdf',
-                    content,
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content,
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2176,6 +2237,53 @@ if (process.argv.includes('--version')) {
             if (!run.runId) throw new Error('WSL background admission has no runId')
           })
           reply = 'WSL background task submitted for cancellation.'
+        } else if (/Verify network destination approval port (\d+)/u.test(prompt)) {
+          const port = /Verify network destination approval port (\d+)/u.exec(prompt)[1]
+          const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`
+          let retried = false
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const run = async (options) =>
+              toolResult(
+                'bash_execute',
+                await client.callTool({ name: 'bash_execute', arguments: { command } }),
+                options
+              )
+            // A blocked curl exits nonzero. Its structured stderr carries the trusted record.
+            const first = await run({ allowToolError: true })
+            if (first.exitCode === 0) return
+            const recordId = /OPEN_SCIENCE_NETWORK_BLOCK_RECORD: ([^\s]+)/u.exec(
+              first.stderr ?? ''
+            )?.[1]
+            if (!recordId) throw new Error(`No trusted block record: ${JSON.stringify(first)}`)
+            const decision = toolResult(
+              'request_network_access',
+              await client.callTool({
+                name: 'request_network_access',
+                arguments: {
+                  recordId,
+                  reason: 'Send the requested test payload to the local fixture.'
+                }
+              })
+            )
+            if (
+              decision.status !== 'allowed' &&
+              decision.status !== 'allowedOnce' &&
+              decision.status !== 'alreadyAllowed' &&
+              decision.status !== 'projectAllowed' &&
+              decision.status !== 'alwaysAllowed'
+            ) {
+              throw new Error(`Destination was not approved: ${JSON.stringify(decision)}`)
+            }
+            // The test server confirmed no payload was received before consent. The Agent now
+            // explicitly retries this known fixture command; the application never replays it.
+            const retry = await run()
+            if (retry.exitCode !== 0)
+              throw new Error(`Explicit retry failed: ${JSON.stringify(retry)}`)
+            retried = true
+          })
+          reply = retried
+            ? 'Network destination explicit retry verified.'
+            : 'Network destination saved access verified.'
         } else if (prompt.includes('Verify real WSL Bash execution.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             const execution = toolResult(
@@ -2510,10 +2618,13 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'sanitized-performance.png',
                     mimeType: 'image/png',
-                    content: (
-                      await readFile(new URL('./sanitized-performance.png', import.meta.url))
-                    ).toString('base64'),
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content: (
+                        await readFile(new URL('./sanitized-performance.png', import.meta.url))
+                      ).toString('base64'),
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2735,7 +2846,10 @@ if (process.argv.includes('--version')) {
                 await client.callTool({
                   name: 'bash_execute',
                   arguments: {
-                    command: `node -e "setTimeout(() => console.log('background-completion-e2e'), 3000)"`,
+                    command:
+                      process.platform === 'win32'
+                        ? "Start-Sleep -Seconds 3; Write-Output 'background-completion-e2e'"
+                        : "sleep 3; printf 'background-completion-e2e\\n'",
                     background: true
                   }
                 })
@@ -2829,9 +2943,12 @@ if (process.argv.includes('--version')) {
                       // Fixed 160 × 112 chart makes manual full-preview acceptance visible.
                       filename: 'resumed-figure.png',
                       mimeType: 'image/png',
-                      content:
-                        'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
-                      encoding: 'base64'
+                      source: {
+                        kind: 'inline',
+                        content:
+                          'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
+                        encoding: 'base64'
+                      }
                     }
                   })
                 )
@@ -2874,6 +2991,8 @@ if (process.argv.includes('--version')) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
           reply = await createSpreadsheetSearchArtifacts(context.params.sessionId)
+        } else if (prompt.includes(DELEGATION_SETTLEMENT_PROMPT)) {
+          reply = 'Delegated settlement received.'
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,
@@ -2893,7 +3012,7 @@ if (process.argv.includes('--version')) {
           const dispatched = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: "Complete the bounded fixture after a delay." }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
             )
           )
           if (
@@ -2926,7 +3045,7 @@ if (process.argv.includes('--version')) {
           const terminal = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
+              `const slow = (await host.children()).find((child) => child.name === "Complete the bounded fixture after a delay."); return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (terminal.length !== 1 || terminal[0].status !== 'completed') {
@@ -3016,7 +3135,6 @@ if (process.argv.includes('--version')) {
           if (!child?.frameId || !child?.attemptId) {
             throw new Error(`Reliable child admission failed: ${JSON.stringify(dispatched)}`)
           }
-          reliableMessagingChildren.set(context.params.sessionId, child.frameId)
           const downward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
@@ -3109,15 +3227,12 @@ if (process.argv.includes('--version')) {
           if (delegated.kind !== 'results' || child?.status !== 'completed') {
             throw new Error(`Subagent model initial Attempt failed: ${JSON.stringify(delegated)}`)
           }
-          globalThis.subagentModelContinuationFrameId = child.frameId
           reply = 'Subagent model initial Attempt completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_CONTINUATION_FINISH_PROMPT)) {
-          const frameId = globalThis.subagentModelContinuationFrameId
-          if (!frameId) throw new Error('Subagent model continuation Frame was not captured.')
           const continued = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const receipt = await host.sendFrameMessage(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
+              `const children = await host.children(); const child = children.find(child => child.name === ${JSON.stringify(DELEGATED_MODEL_CONTINUATION_NAME)}); if (!child) throw new Error("missing original model continuation child"); const receipt = await host.sendFrameMessage(child.frameId, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (continued.length !== 1 || continued[0].status !== 'completed') {
@@ -3218,8 +3333,13 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_CHILD_DIRECTIVE)) {
           reply = 'Child received the reliable Main directive.'
         } else if (prompt.includes('Child reliable question reached Main')) {
-          const childFrameId = reliableMessagingChildren.get(context.params.sessionId)
-          if (!childFrameId) throw new Error('Reliable messaging child Frame was not retained.')
+          const { frameId: childFrameId } = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              'const child = (await host.children()).find((child) => child.name === "Send a reliable question to Main."); return { frameId: child?.frameId }'
+            )
+          )
+          if (!childFrameId) throw new Error('Reliable messaging child Frame was not found.')
           const answered = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
@@ -3470,7 +3590,11 @@ if (process.argv.includes('--version')) {
       sessionCancellationResolvers.delete(context.params.sessionId)
       resolve?.()
     })
-    .onRequest(acp.methods.agent.session.close, () => ({}))
+    .onRequest(acp.methods.agent.session.close, async (context) => {
+      const closed = sessionRoutes.get(context.params.sessionId)?.createGateClosedFile
+      if (closed) await writeFile(closed, context.params.sessionId, 'utf8')
+      return {}
+    })
 
   // OpenCode 1.x exposes native message metadata alongside ACP. Register each emitted
   // reply before delivery so the application's compaction guard can classify it.

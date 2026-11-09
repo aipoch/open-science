@@ -90,6 +90,13 @@ Unmatched source regions then retain their original PDF content, while verified 
 the same page continue. The writer protects retained regions from neighboring replacements and
 reports their layout failures. Strict callers still reject unmatched sources. Renderer verification
 must confirm that retained text and placement survived before displaying or caching the PDF.
+If a worker times out or stops unexpectedly, mixed-output callers can recover independent page
+groups within one additional 60-second budget. Cross-page paragraphs stay together; failed groups
+retain their original content and report the existing generation failure. Each attempt rebuilds changed pages from
+the immutable source with the successful groups accumulated so far, including in Content first mode.
+Incremental recovery preserves untouched baseline pages and their existing verification.
+Cancellation and the writer's concurrency limit cover the entire recovery; strict callers still reject.
+The reader verifies the recovered candidate before display or cache publication.
 The fixed-layout reader also rebuilds a page with original text if post-generation verification fails;
 that fallback is checked again, is never published as the translated cache, and runs at most once
 per affected page in an automatic recovery sequence.
@@ -133,8 +140,9 @@ source page; comparison and navigation also handle two source pages sharing one 
 Legacy source IDs and checkpoint indices are preserved.
 The reader pins a generation snapshot during translation and keeps the last verified preview
 visible. New paragraphs mark the preview as out of date; completion, cancellation or explicit
-refresh selects the latest results. A failed refresh leaves the previous preview readable, and
-export waits for a preview matching the latest accepted translations.
+refresh selects the latest results. A failed refresh leaves the previous preview readable. When an early generation times out or
+its worker stops, newer completed pages get one automatic attempt after translation stops; the same
+failed snapshot never retries itself. Export waits for a preview matching the latest accepted translations.
 Output includes source-page mappings and paragraph placements; the reader verifies complete
 translated text at those placements, uses them for navigation/highlights, and exports the same PDF.
 Reflow candidates bypass the fixed-layout cache. This local step reuses saved text and makes no

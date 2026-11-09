@@ -82,6 +82,25 @@ describe('AppVersionSection', () => {
     expect(container.querySelector('[data-settings-anchor="general.download"]')).not.toBeNull()
   })
 
+  it('uses a compact two-column grid for external resources', () => {
+    act(() => root.render(<AppVersionSection />))
+
+    const grid = container.querySelector('[data-testid="about-resource-grid"]')
+    const cards = Array.from(
+      grid?.querySelectorAll<HTMLAnchorElement>('[data-slot="about-resource-card"]') ?? []
+    )
+
+    expect(grid).not.toBeNull()
+    expect(grid?.classList.contains('grid')).toBe(true)
+    expect(grid?.classList.contains('sm:grid-cols-2')).toBe(true)
+    expect(cards).toHaveLength(6)
+    expect(cards.every((card) => card.classList.contains('min-h-20'))).toBe(true)
+    expect(cards.every((card) => card.classList.contains('bg-muted/40'))).toBe(true)
+    expect(cards.every((card) => card.classList.contains('border-border'))).toBe(true)
+    expect(cards.every((card) => card.classList.contains('dark:hover:bg-background/40'))).toBe(true)
+    expect(cards.every((card) => card.classList.contains('rounded-lg'))).toBe(true)
+  })
+
   it('links manual installation guidance to the localized AIPOCH docs page', async () => {
     await act(async () => {
       root.render(<AppVersionSection />)
@@ -155,7 +174,7 @@ describe('AppVersionSection', () => {
     expect(link.href).toBe('https://www.aipoch.com/docs/')
   })
 
-  it('reveals resource details and primary-colored icons on pointer hover or keyboard focus', () => {
+  it('keeps resource details visible and highlights icons on pointer hover or keyboard focus', () => {
     act(() => {
       root.render(<AppVersionSection />)
     })
@@ -178,37 +197,12 @@ describe('AppVersionSection', () => {
       )
     ).toBe(true)
     expect(titles).toHaveLength(6)
-    expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
-    expect(
-      titles.every(
-        (title) =>
-          title.classList.contains('[@media(hover:hover)_and_(pointer:fine)]:translate-y-2.5') &&
-          title.classList.contains(
-            '[@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0'
-          ) &&
-          title.classList.contains(
-            '[@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:translate-y-0'
-          ) &&
-          title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
-      )
-    ).toBe(true)
+    expect(titles.every((title) => !title.className.includes('translate-y'))).toBe(true)
+    expect(titles.every((title) => title.classList.contains('whitespace-normal'))).toBe(true)
     expect(descriptions).toHaveLength(6)
-    expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
+    expect(descriptions.every((description) => !description.className.includes('opacity-'))).toBe(
       true
     )
-    expect(
-      descriptions.every(
-        (description) =>
-          description.classList.contains('[@media(hover:hover)_and_(pointer:fine)]:opacity-0') &&
-          description.classList.contains(
-            '[@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100'
-          ) &&
-          description.classList.contains(
-            '[@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:opacity-100'
-          ) &&
-          description.classList.contains('[@media(any-pointer:coarse)]:!opacity-100')
-      )
-    ).toBe(true)
   })
 
   it('switches the About logo with an explicit app Theme', () => {

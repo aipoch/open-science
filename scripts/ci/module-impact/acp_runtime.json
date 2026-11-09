@@ -124,6 +124,8 @@
     "src/main/acp/provider-prompt-executor.ts",
     "src/main/acp/provider-prompt-facts.ts",
     "src/main/acp/provider-prompt-serialization-owner.ts",
+    "src/main/acp/provider-session-notice.test.ts",
+    "src/main/acp/provider-session-notice.ts",
     "src/main/acp/provider-session-adopter.test.ts",
     "src/main/acp/provider-session-adopter.ts",
     "src/main/acp/provider-session-creator.test.ts",
@@ -182,6 +184,8 @@
     "src/main/acp/session-capability-handover.integration.test.ts",
     "src/main/acp/session-capability-owner.test.ts",
     "src/main/acp/session-capability-owner.ts",
+    "src/main/acp/session-cleanup-admission.test.ts",
+    "src/main/acp/session-cleanup-admission.ts",
     "src/main/acp/session-config.test.ts",
     "src/main/acp/session-config.ts",
     "src/main/acp/session-configurator.test.ts",
@@ -241,7 +245,9 @@
     "src/main/acp/opencode-service.test.ts",
     "src/main/acp/opencode-store.ts",
     "src/main/acp/opencode-store.test.ts",
-    "src/main/acp/opencode-v2.integration.test.ts"
+    "src/main/acp/opencode-v2.integration.test.ts",
+    "src/main/acp/harness-turn-adapter.ts",
+    "src/main/acp/harness-turn-adapter.test.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -358,6 +364,7 @@
       "src/main/acp/prompt-turn-workflow.test.ts",
       "src/main/acp/provider-prompt-executor.test.ts",
       "src/main/acp/pi-turn-adapter.test.ts",
+      "src/main/acp/provider-session-notice.test.ts",
       "src/main/acp/provider-session-adopter.test.ts",
       "src/main/acp/provider-session-creator.test.ts",
       "src/main/acp/provider-session-resumer.test.ts",
@@ -387,6 +394,7 @@
       "src/main/acp/session-aggregate.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
+      "src/main/acp/session-cleanup-admission.test.ts",
       "src/main/acp/session-config.test.ts",
       "src/main/acp/session-configurator.test.ts",
       "src/main/acp/session-deletion-workflow.test.ts",
@@ -420,7 +428,8 @@
       "src/main/acp/opencode-compaction-stream.test.ts",
       "src/main/acp/opencode-service.test.ts",
       "src/main/acp/opencode-store.test.ts",
-      "src/main/acp/opencode-v2.integration.test.ts"
+      "src/main/acp/opencode-v2.integration.test.ts",
+      "src/main/acp/harness-turn-adapter.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

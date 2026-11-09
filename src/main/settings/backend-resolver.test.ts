@@ -2380,3 +2380,35 @@ it.each([undefined, 'unsupported', 'none-high'] as const)(
     expectRuntimeNotStarted(harness.runtime)
   }
 )
+
+describe('independent built-in harness route', () => {
+  it('acquires a host bridge without launching or configuring another framework', async () => {
+    const h = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'open-science-agent' }),
+      targetOverride: () => ({ configRevision: 1 })
+    })
+    const backend = await h.resolver.resolveActiveBackend()
+    expect(backend.framework.id).toBe('open-science-agent')
+    expect(backend.modelRoute).toBe('open-science-agent')
+    expect(backend.authentication?._meta?.['open-science-agent']).toMatchObject({
+      model: 'model-a',
+      modelIdentity: JSON.stringify(['open-science-agent', 'provider-a', 1, 'model-a'])
+    })
+    expect(JSON.stringify(backend.env)).not.toContain('plain:')
+    expect(backend.providerTransportLease?.setTarget('other')).toBe(false)
+    expect(h.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
+      h.getSettings(),
+      join('/storage', 'open-science-agent', 'skill-runtime'),
+      new Set(),
+      undefined
+    )
+    expect(backend.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]).toMatchObject({
+      root: join('/storage', 'open-science-agent', 'skill-runtime'),
+      skillsDirectory: join('/storage', 'open-science-agent', 'skill-runtime', 'skills')
+    })
+    vi.mocked(h.runtime.prepareAgentSkillDiscovery).mockClear()
+    expectRuntimeNotStarted(h.runtime)
+    await backend.providerTransportLease?.release()
+    expect(h.protocolForwardingBridges[0].close).toHaveBeenCalledOnce()
+  })
+})

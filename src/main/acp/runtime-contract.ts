@@ -88,6 +88,8 @@ export type AcpRuntimeOptions = {
   // Disposable framework homes must retain the same read protection as app-owned config roots.
   additionalProtectedReadRoots?: readonly string[]
   callbacks?: AcpRuntimeCallbacks
+  // Restricted inference classifies operational notices; ordinary chat keeps its presentation.
+  separateProviderNotices?: boolean
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
     record: (
@@ -139,6 +141,11 @@ export type AcpRuntimeOptions = {
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
     networkApprovalOwner?: import('./sandbox-network-approval-owner').SandboxNetworkApprovalOwner
+    allowNetworkDestination?: (
+      grant: import('../../shared/network-destination-grants').NetworkDestinationGrant,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => Promise<unknown>
     allowNetworkDomain?: (
       hostname: string,
       assertCurrent?: () => Promise<void>,
@@ -400,6 +407,11 @@ export type AcpRuntimeNotebookOptions = {
     materializeOnly?: boolean
   }) => Promise<readonly NotebookPromptInput[] | void>
   peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+  isReplNamespaceUnavailable?: (
+    projectId: string,
+    sessionId: string,
+    rootFrameId?: string
+  ) => boolean
 }
 
 export type AcpRuntimeSkillImportOptions = {

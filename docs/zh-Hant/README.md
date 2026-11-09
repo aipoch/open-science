@@ -17,7 +17,9 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science arXiv 預印本：2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#基準測試表現">基準測試結果</a>
+  <a href="#基準測試表現">
+    <img alt="AIPOCH Open-Science — 基準測試結果" src="../images/readme/benchmark-comparisons.svg">
+  </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="支援平台 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>
@@ -47,7 +49,19 @@
 
 想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
 
-> 💡 **[AIPOCH Open-Science v1.0.8 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這次更新將設定重新整理為專屬分頁，支援從 DOI、arXiv 或 PubMed 識別碼一次匯入最多 100 筆參考文獻，並為文獻資料庫詳細檢視新增 AI 研究快照。已結束的工作階段會釋放智慧代理行程，eQTL Catalogue 查詢恢復正常，macOS 和 Windows 上的更新也更加順暢。詳情請參閱 [v1.0.8 發行說明](../../release-notes/1.0.8/zh-Hant.md)。
+### 💡 AIPOCH Open-Science v1.2.0 更新
+
+_2026 年 11 月 9 日_
+
+- **遠端運算**：除 SSH、Slurm 外，可在自行連接的 Kubernetes、Hugging Face Jobs、Modal 或 Ray 目標執行任務，支援逐項核准與重新啟動後恢復結果收集。
+- **內建智能體**：獨立的 Open-Science Agent 成為新安裝的預設智能體；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可選用。
+- **更快的 macOS 更新**：只下載應用程式映像中變更的區塊，必要時自動改用完整下載。
+- **步驟討論**：從匯入的 `.science` 研究或重播步驟提問，開啟連結至該步驟的子會話；匯入記錄仍保持唯讀。
+- **來源預覽**：將游標停在來源連結上可查看目標網域；經核准的 HTTPS 來源還可顯示標題和描述。
+- **工作區改進**：簡化側邊欄，突出「分叉以繼續」，從較早回合傳送訊息時維持閱讀位置。
+- **可靠性修正**：macOS 更新檢查驗證執行中的應用程式；Windows 顯示佔用檔案，並避免工作列遮住輸入區；固定版面 PDF 翻譯在單頁失敗時保留成功頁面。
+
+[查看 v1.2.0 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -56,7 +70,6 @@
 ## 目錄
 
 - [快速開始](#-快速開始)
-- [產品導覽](#產品導覽)
 - [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
 - [AIPOCH Open-Science 論文與引用](#aipoch-open-science-論文與引用)
 - [基準測試結果](#基準測試表現)
@@ -121,6 +134,8 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 
 完成首次設定後，可在系統設定中調整外觀與通知。一般設定提供應用程式資訊、診斷、命令列工具，以及手動安裝與更新指南的連結。
 
+原「模型」設定頁現更名為**本機功能**，集中管理 PDF 擷取、OCR 語言套件與研究語音旁白；旁白需要本機安裝的語音模型。
+
 <table>
   <tr>
     <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="AIPOCH Open-Science 自動進行首次啟動環境檢查"></td>
@@ -140,44 +155,6 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 
 > 本 README 中的螢幕擷取畫面用於說明工作流程。標籤、目錄及其他介面細節可能與你安裝的版本不同。
 
-## 產品導覽
-
-### 從研究請求到可追溯結果
-
-以一項具代表性的生物資訊學任務為例：重現已發表的差異表達分析、將重新生成的結果與論文比較，並交付審閱所需的報告、表格與圖像。以下截圖來自已有記錄的 AIPOCH Open-Science 工作流程，用於展示各個階段，並非同一次連續會話。
-
-#### 1. 明確研究任務與證據
-
-說明研究問題、來源論文與資料集、必要的方法或閾值、預期輸出及驗收標準。上傳支援檔案，或使用 `@` 引用現有專案產物，讓智能體從明確輸入開始，而不是依賴隱藏的上下文。
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science 論文重現任務，在同一工作區顯示研究結論、生成產物與來源比較" width="900">
-</p>
-
-#### 2. 使用可檢查的科學工具執行
-
-智能體可在共享 Notebook 中組合科學技能、受權限控制的研究連接器、搜尋、檔案操作，以及 Python 或 R 程式碼。生成圖像可與研究摘要並排審閱，產物記錄則提供已擷取的生成程式碼及執行證據供檢查。
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science 生物資訊學分析，並排顯示研究摘要、生成圖像與已擷取的生成程式碼" width="900">
-</p>
-
-#### 3. 就地審閱報告、表格與圖像
-
-最終回答會概述哪些結果成功重現、哪些存在差異，以及需要注意的限制。生成的 Markdown 報告、CSV 表格、圖像與其他研究產物會繼續附屬於會話，並彙整到專案檔案庫，可在對話旁預覽，也可於後續工作中重複使用。
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science 重現結果，在智能體說明旁預覽差異表達圖像與生成檔案" width="900">
-</p>
-
-#### 4. 將每個產物追溯至證據
-
-每個生成產物都以不可變且含總和檢查碼的版本儲存。其 **Provenance** 檢視可顯示生成程式碼與執行歷史、引用的輸入、觀測到的環境清單、產生該產物的對話分支，以及限定於該版本的 Reviewer 結果。無法驗證的證據會標記為無法使用，而不會被推論補全。
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究產物預覽，其中包含用於追溯生成結果的 Provenance 入口" width="900">
-</p>
-
 ## AIPOCH Open-Science `.science` 包
 
 將已完成的研究會話匯出為可攜式 `.science` 包，用於審閱、交接與封存。選擇要納入的對話分支、檔案版本、Notebook 記錄與驗證證據，然後將包匯入其他專案或電腦。
@@ -191,6 +168,8 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 3. 將它匯入專案。右側的 **Research replay** 顯示記錄過程，左側對話可針對記錄提問並引用固定步驟。
 
 匯入記錄保持唯讀；瀏覽回放不會執行程式碼、呼叫模型或還原憑證。首次提問會建立關聯的可寫討論；使用 **Fork to continue** 建立副本後可繼續研究。重新執行結果仍需要完整配方、必要輸入與可用執行環境。
+
+從匯入研究或重播步驟提問會建立連結至該步驟的子討論，不修改匯入記錄。討論在封存後保留；刪除父會話後會轉為一般會話。
 
 Side Chat 對話、私人閱讀書籤與憑證不隨包匯出，所含檔案取決於匯出選擇。收到的驗證記錄描述傳送方執行過的檢查，不代表接收電腦已重新執行。詳見 [`.science` 包指南](https://aipoch.com/docs/guides/research-packages/)。
 
@@ -308,10 +287,10 @@ AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智
 | **科學技能**                   | 提供 **24 個內建技能**，並可從 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安裝 **525 個技能**，支援一鍵安裝與更新。可透過對話或已完成的工作建立技能，匯入技能套件及 GitHub 來源，並將 GitHub 儲存庫存為匯入來源供後續重複使用；此操作不會安裝其中的技能。市集投稿經審核後發布，本機匯入不會自動上架。                                                                                                                                                                                                                                         |
 | **連接器**                     | 透過 **48 個內建連接器** 存取科學資源，也可新增自訂本機或遠端 MCP 連接器。部分內建資料來源預設關閉，需要按資料來源明確啟用。支援工具層級權限管理，以及連接器設定的匯入與匯出。                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **專家與委派**                 | 從 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安裝 **10 個專家**，或建立和自訂個人專家，由主智能體委派工作。專家套件支援匯入與匯出；市集投稿經審核後發布，本機匯入不會自動上架。                                                                                                                                                                                                                                                                                                                                                     |
-| **模型與智能體後端**           | 連接雲端模型、相容的自訂閘道，或使用 Claude、Codex 訂閱登入。支援 Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 五種智能體後端，並提供模型連線檢查、圖片輸入及推理強度設定。                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **模型與智能體後端**           | 連接雲端模型、相容的自訂閘道，或使用 Claude、Codex 訂閱登入。新安裝預設使用內建 Open-Science Agent；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可選用，並提供模型連線檢查、圖片輸入及推理強度設定。                                                                                                                                                                                                                                                                                                                                                                         |
 | **專案、會話與 `.science` 包** | 管理專案，支援會話置頂、訊息分支、側邊對話及歷史復原。將會話匯出為**可攜式 `.science` 包**，並匯入其他專案或電腦，攜帶對話分支、所選檔案版本、Notebook 記錄與驗證證據。匯入結果為唯讀歷史，不執行程式碼或還原憑證；側邊對話與書籤不隨包匯出，檔案範圍取決於匯出選擇。                                                                                                                                                                                                                                                                                                            |
 | **審閱智能體**                 | 按需開啟自動審閱，在獨立脈絡中核對智能體已完成回合的回覆、執行紀錄及相關檔案證據。產生附有依據的通過、警告或失敗檢查項目，發現問題後可觸發主智能體修正，並在有限回合內複審。保留審閱日誌與問題處理狀態，審閱範圍限於該回合可用紀錄。                                                                                                                                                                                                                                                                                                                                             |
-| **Python、R、Notebook 與 HPC** | 使用受管理環境或自訂直譯器，在本機執行 Python、R、Notebook 和 Shell 工作，支援背景執行與歷史記錄。也可透過 SSH 連接遠端主機或使用 Slurm 提交工作；遠端運算需具備下方 FAQ 所述的主機、軟體、資源與權限。                                                                                                                                                                                                                                                                                                                                                                          |
+| **Python、R、Notebook 與 HPC** | 使用受管理環境或自訂直譯器，在本機執行 Python、R、Notebook 和 Shell 工作，支援背景執行與歷史記錄。也可透過 SSH、Slurm、Kubernetes、Hugging Face Jobs、Modal 或 Ray 提交經核准的任務。需自行準備目標帳戶、軟體、資源及權限；雲端任務可能在連接的帳戶產生費用。                                                                                                                                                                                                                                                                                                                    |
 | **文獻庫**                     | 匯入與管理文獻及 PDF，支援合集、標籤、專案關聯、筆記及重複條目合併。透過 Semantic Scholar 探索論文的參考文獻與引用文獻，下載和預覽補充附件，並拖放匯入 PDF 或書目檔案。尋找開放取用全文，閱讀 PDF 並擷取圖表，在會話中使用庫內文獻輔助分析。對於 DOI 有效的文獻，可手動透過 Crossref 檢查已知撤稿或更正；檢查會將 DOI 傳送給 Crossref，且涵蓋範圍並不完整，因此沒有提示不代表論文未受影響。產生參考文獻，將文獻匯出為 BibTeX 或 RIS，並將 Smart Screening 判定匯出為 CSV。 手動設定未讀、閱讀中或已讀狀態，支援批次設定所選文獻並依狀態篩選。 可在現有文獻搜尋框中搜尋個人備註。 |
 | **科學檔案與預覽**             | 單一上傳檔案最大 **10 GiB**，支援專案檔案管理及科學資料、PDF、Office 文件、圖片、程式碼和分子結構預覽。這是上傳大小限制，不代表模型可讀取全部內容；模型上下文、附件解析和預覽各有限制。大型檔案通常需要透過程式碼分塊讀取或分析。                                                                                                                                                                                                                                                                                                                                                |
 | **產物與溯源**                 | 保留不可變的產物版本及可用的產生程式碼、輸入、執行歷史、環境資訊與審閱證據。可從已授權資料夾匯入產物；AIPOCH Open-Science 會將每個匯入檔案複製到受管理的產物儲存空間。在桌面端，可使用完整執行配方、必要輸入及可用執行環境重播符合條件的版本，比較輸出並匯出驗證記錄。證據缺失可能阻止驗證，重播檢查不證明科學結論有效。                                                                                                                                                                                                                                                         |
@@ -334,7 +313,7 @@ AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智
 
 桌面端也可將產物溯源匯出為 RO-Crate 1.1。與版本綁定的環境包只有在擷取內容完整且相容於目標平台時，才能用於建立受管理環境；這不等於完整電腦備份。
 
-從首頁或對話工作區進入 Sharing 研究案例市集，依類別篩選、依關鍵字搜尋，並從案例詳情下載套件。
+在資源中心瀏覽研究案例，依類別篩選、依關鍵字搜尋，並從案例詳情下載套件。
 
 ## 模型服務商
 
@@ -376,7 +355,7 @@ AIPOCH Open-Science 將專案資料、設定、產物版本及溯源證據儲存
 
 ## 開發與封裝
 
-AIPOCH Open-Science 由普通 Node 後端與 Electron 桌面用戶端組成，使用 React、TypeScript、Prisma/SQLite 及基於 ACP 的智能體執行環境。
+AIPOCH Open-Science 由普通 Node 後端與 Electron 桌面用戶端組成，使用 React、TypeScript、Prisma/SQLite 及內建 Open-Science Agent 與選用智能體後端。
 
 原始碼開發前置需求：
 
@@ -412,9 +391,7 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 ### 行動裝置遠端存取
 
-可透過 Remote.It 配對，從手機或平板電腦存取同一 localhost Web UI。使用六位數 AIPOCH Open-Science 代碼配對瀏覽器，並在桌面端核准一次；不必直接公開回送伺服器，工作區即可保持可存取。瀏覽器信任可撤銷，模式變更或服務關閉會立即讓作用中遠端會話失效。
-
-遠端存取需要主機保持開機與連網，持續執行 AIPOCH Open-Science 和 Remote.It 代理，並已將主機加入登入後的 Remote.It 帳戶。瀏覽器授權會到期，也可撤銷；詳見[遠端控制指南](../remote-control.md)。
+掃描 QR 圖碼，即可透過本機 WiFi 或 Pinggy 通道，在手機或平板開啟目前工作區。本機 WiFi 配對的通訊留在區域網路內；網際網路通道的流量經過 Pinggy 伺服器，連線對話方塊會說明此中繼路徑。
 
 ### 無介面 CLI 與 SDK
 
@@ -450,7 +427,9 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 <details>
 <summary>如何在遠端 HPC 叢集執行工作？</summary>
 
-答：**Remote Compute (SSH)** 一律保持啟用，無須在 Settings 中手動啟用。先在 **Settings → Compute** 中註冊 SSH 運算主機並讓目前會話可用，然後透過自然語言或 `/remote-compute-ssh` 使用遠端運算。你需要可連線的 SSH 主機、有效驗證、所需目錄的存取權，以及工作所需的軟體、相依項目和運算資源。Direct SSH 不要求排程器；Slurm 模式需要可用的 Slurm 環境及工作提交權限。「一律保持啟用」僅指此 Skill，不代表所有已註冊主機隨時可用。
+答：**Remote Compute (SSH)** 一律保持啟用，無須在 Settings 中手動啟用。先在 **Settings → Connections → Compute** 中註冊 SSH 運算主機並讓目前會話可用，然後透過自然語言或 `/remote-compute-ssh` 使用遠端運算。你需要可連線的 SSH 主機、有效驗證、所需目錄的存取權，以及工作所需的軟體、相依項目和運算資源。Direct SSH 不要求排程器；Slurm 模式需要可用的 Slurm 環境及工作提交權限。「一律保持啟用」僅指此 Skill，不代表所有已註冊主機隨時可用。
+
+自行連接的 Kubernetes、Hugging Face Jobs、Modal 和 Ray 目標也受支援。每次外部提交前須核准目標、指令、資源及輸出；復原記錄可在重新啟動後繼續收集結果，已發布結果可從 Compute Preview 開啟。需自行準備帳戶、軟體、資源與權限，雲端任務可能產生費用。
 
 </details>
 

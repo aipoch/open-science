@@ -101,9 +101,11 @@
     "src/main/database/migrations/0053-literature-doi-identity.ts",
     "src/main/database/literature-doi-identity-migration.test.ts",
     "src/main/database/migrations/0054-slurm-job-reliability.ts",
+    "src/main/database/migrations/0055-session-discussion-parent.ts",
     "src/main/database/slurm-job-reliability-migration.test.ts",
-    "src/main/database/migrations/0055-project-optimization-prompt.ts",
-    "src/main/database/migrations/0056-project-optimization-prompt-scope.ts"
+    "src/main/database/migrations/0056-compute-kubernetes-workspace.ts",
+    "src/main/database/migrations/0057-project-optimization-prompt.ts",
+    "src/main/database/migrations/0058-project-optimization-prompt-scope.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",

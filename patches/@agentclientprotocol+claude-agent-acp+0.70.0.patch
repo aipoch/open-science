@@ -11,10 +11,10 @@ index 243386d..f0a16da 100644
      inputTokens: number;
      outputTokens: number;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-index f11169b..81bd49b 100644
+index f11169b..32b933c 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -2,6 +2,7 @@ import { agent as acpAgent, methods, ndJsonStream, RequestError, } from "@agentc
+@@ -2,6 +2,7 @@
  import { deleteSession, getSessionInfo, getSessionMessages, listSessions, query, } from "@anthropic-ai/claude-agent-sdk";
  import { GOAL_ACTIONS, GOAL_CONTROL_METHOD, GOAL_EXTENSION_VERSION, goalUpdateFromPrompt, parseGoalRequest, toGoalSnapshot, } from "./goal-extension.js";
  import { execFile } from "node:child_process";
@@ -22,10 +22,11 @@ index f11169b..81bd49b 100644
  import { randomUUID } from "node:crypto";
  import { existsSync } from "node:fs";
  import * as fs from "node:fs/promises";
-@@ -570,6 +571,70 @@ class ClientConnection {
+@@ -569,6 +570,70 @@
+     extNotification(method, params) {
          return this.ctx.notify(method, params);
      }
- }
++}
 +// Claude snapshots the available tool set when a model request starts. Wait for every MCP server
 +// supplied by the ACP client before returning session/new so the first prompt cannot race startup.
 +const MCP_STARTUP_TIMEOUT_MS = 10000;
@@ -89,11 +90,10 @@ index f11169b..81bd49b 100644
 +        return denial.reason.trim().slice(0, 2048);
 +    }
 +    return fallback;
-+}
+ }
  export class ClaudeAcpAgent {
      sessions;
-     client;
-@@ -1972,6 +2037,7 @@ export class ClaudeAcpAgent {
+@@ -1972,6 +2037,7 @@
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: "Compacting..." },
@@ -101,7 +101,7 @@ index f11169b..81bd49b 100644
                                          },
                                      });
                                  }
-@@ -1985,6 +2051,7 @@ export class ClaudeAcpAgent {
+@@ -1985,6 +2051,7 @@
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: "\n\nCompacting completed." },
@@ -109,7 +109,7 @@ index f11169b..81bd49b 100644
                                          },
                                      });
                                  }
-@@ -1996,6 +2063,7 @@ export class ClaudeAcpAgent {
+@@ -1996,6 +2063,7 @@
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: `\n\nCompacting failed${reason}` },
@@ -117,7 +117,35 @@ index f11169b..81bd49b 100644
                                          },
                                      });
                                  }
-@@ -2972,7 +3040,7 @@ export class ClaudeAcpAgent {
+@@ -2295,6 +2363,15 @@
+                                     sessionId: message.session_id,
+                                     update: {
+                                         sessionUpdate: "agent_message_chunk",
++                                        // Stop-hook feedback is a control outcome, not a nonterminal notice.
++                                        ...(this.clientCapabilities?._meta?.["open-science/provider-notice"]?.version === 1 && message.prevent_continuation !== true ? {
++                                            _meta: {
++                                                "open-science/provider-notice": {
++                                                    version: 1,
++                                                    level: message.level === "warning" ? "warning" : "info",
++                                                },
++                                            },
++                                        } : {}),
+                                         content: { type: "text", text },
+                                     },
+                                 });
+@@ -2446,6 +2523,11 @@
+                                         sessionId: message.session_id,
+                                         update: {
+                                             sessionUpdate: "agent_message_chunk",
++                                            ...(this.clientCapabilities?._meta?.["open-science/provider-notice"]?.version === 1 ? {
++                                                _meta: {
++                                                    "open-science/provider-notice": { version: 1, level: "warning" },
++                                                },
++                                            } : {}),
+                                             content: {
+                                                 type: "text",
+                                                 text: `**Model fallback:** ${fallbackNotice}`,
+@@ -2972,7 +3054,7 @@
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -126,7 +154,7 @@ index f11169b..81bd49b 100644
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -3110,7 +3178,7 @@ export class ClaudeAcpAgent {
+@@ -3110,7 +3192,7 @@
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
@@ -135,7 +163,7 @@ index f11169b..81bd49b 100644
                              lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
                              if (message.error || lastAssistantWasUsageLimit) {
                                  lastAssistantFailureTitle = assistantMessageText(message.message);
-@@ -3718,7 +3786,16 @@ export class ClaudeAcpAgent {
+@@ -3718,7 +3800,16 @@
          if (this.sessions[params.sessionId]) {
              await this.teardownSession(params.sessionId);
          }
@@ -153,7 +181,7 @@ index f11169b..81bd49b 100644
          return {};
      }
      async setSessionMode(params) {
-@@ -4190,7 +4267,7 @@ export class ClaudeAcpAgent {
+@@ -4190,7 +4281,7 @@
                  else {
                      return {
                          behavior: "deny",
@@ -162,7 +190,7 @@ index f11169b..81bd49b 100644
                      };
                  }
              }
-@@ -4263,7 +4340,7 @@ export class ClaudeAcpAgent {
+@@ -4263,7 +4354,7 @@
              else {
                  return {
                      behavior: "deny",
@@ -171,7 +199,19 @@ index f11169b..81bd49b 100644
                  };
              }
          };
-@@ -4715,6 +4792,7 @@ export class ClaudeAcpAgent {
+@@ -4627,6 +4718,11 @@
+                 sessionId,
+                 update: {
+                     sessionUpdate: "agent_message_chunk",
++                    ...(this.clientCapabilities?._meta?.["open-science/provider-notice"]?.version === 1 ? {
++                        _meta: {
++                            "open-science/provider-notice": { version: 1, level: "warning" },
++                        },
++                    } : {}),
+                     content: {
+                         type: "text",
+                         text: `**Fast mode turned off:** ${FAST_MODE_UNAVAILABLE_EXPLANATIONS[nextReason]}.`,
+@@ -4715,6 +4811,7 @@
          const input = new Pushable();
          const settingsManager = new SettingsManager(params.cwd, {
              logger: this.logger,
@@ -179,7 +219,7 @@ index f11169b..81bd49b 100644
          });
          await settingsManager.initialize();
          const mcpServers = {};
-@@ -4761,7 +4839,7 @@ export class ClaudeAcpAgent {
+@@ -4761,7 +4858,7 @@
                  };
              }
          }
@@ -188,7 +228,7 @@ index f11169b..81bd49b 100644
          // Extract options from _meta if provided
          const sessionMeta = params._meta;
          const userProvidedOptions = sessionMeta?.claudeCode?.options;
-@@ -4988,6 +5066,11 @@ export class ClaudeAcpAgent {
+@@ -4988,6 +5085,11 @@
          if (abortController?.signal.aborted) {
              throw new Error("Cancelled");
          }
@@ -200,7 +240,7 @@ index f11169b..81bd49b 100644
          const q = query({
              prompt: input,
              options,
-@@ -4995,8 +5078,11 @@ export class ClaudeAcpAgent {
+@@ -4995,8 +5097,11 @@
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -212,7 +252,7 @@ index f11169b..81bd49b 100644
              if (creationOpts.resume &&
                  error instanceof Error &&
                  (error.message === "Query closed before response received" ||
-@@ -5259,15 +5345,10 @@ function sessionUsage(session) {
+@@ -5259,15 +5364,10 @@
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -232,7 +272,7 @@ index f11169b..81bd49b 100644
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -5284,7 +5365,7 @@ function errorKindData(errorKind) {
+@@ -5284,7 +5384,7 @@
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`

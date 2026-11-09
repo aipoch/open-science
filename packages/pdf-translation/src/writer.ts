@@ -48,7 +48,7 @@ import {
 
 type PdfTranslationPdfRequest = Omit<CachedPdfRequest, 'cache'>
 
-// One bounded worker per request. Input/output are memory-only; no cache or source-file writes.
+// One live worker per request, including bounded recovery. Input/output remain memory-only.
 export class PdfTranslationWriter {
   private readonly active = new Map<
     string,
@@ -70,7 +70,6 @@ export class PdfTranslationWriter {
     input: PdfTranslationPdfRequest,
     caller: ApplicationCallerLease
   ): Promise<PdfTranslationPdfResult | null> {
-    const startedAt = performance.now()
     caller.signal.throwIfAborted()
     if (!caller.isCurrent() || !this.valid(input)) {
       this.diagnostics.warn('PDF generation admission rejected', {
@@ -87,6 +86,130 @@ export class PdfTranslationWriter {
       })
       throw new PdfGenerationError({ code: 'busy' })
     }
+    const controller = new AbortController()
+    const lease: ApplicationCallerLease = {
+      ...caller,
+      signal: AbortSignal.any([caller.signal, controller.signal]),
+      isCurrent: () => caller.isCurrent() && !controller.signal.aborted
+    }
+    this.active.set(input.id, { caller, cancel: () => controller.abort() })
+    try {
+      try {
+        return await this.runWorker(input, lease, 60000)
+      } catch (error) {
+        if (lease.signal.aborted || !lease.isCurrent()) return null
+        if (
+          !(error instanceof PdfGenerationError) ||
+          (!input.preserveUnsupported && input.layout !== 'reflow') ||
+          !['timeout', 'worker-failed'].includes(error.failure.code)
+        )
+          throw error
+        return await this.recoverPages(input, lease, error)
+      }
+    } finally {
+      this.active.delete(input.id)
+    }
+  }
+
+  private async recoverPages(
+    input: PdfTranslationPdfRequest,
+    caller: ApplicationCallerLease,
+    originalError: PdfGenerationError
+  ): Promise<PdfTranslationPdfResult | null> {
+    // All fragments of a paragraph share one recovery decision, including chains
+    // of paragraphs spanning neighboring pages. Never split their ownership.
+    const parents = input.pages.map((_, index) => index)
+    const root = (page: number): number => {
+      while (parents[page] !== page) {
+        parents[page] = parents[parents[page]]
+        page = parents[page]
+      }
+      return page
+    }
+    for (const unit of input.units)
+      for (const fragment of unit.fragments)
+        parents[root(fragment.pageNumber - 1)] = root(unit.fragments[0].pageNumber - 1)
+    const changedPages = input.incremental ? new Set(input.incremental.pageNumbers) : undefined
+    const groups = new Map<number, number[]>()
+    input.units.forEach((unit, index) => {
+      if (
+        unit.translation === unit.source ||
+        (changedPages && !unit.fragments.some((fragment) => changedPages.has(fragment.pageNumber)))
+      )
+        return
+      const page = root(unit.fragments[0].pageNumber - 1)
+      const group = groups.get(page) ?? []
+      group.push(index)
+      groups.set(page, group)
+    })
+    // Retrying the identical document cannot isolate a failure.
+    if (groups.size < 2) throw originalError
+    const accepted = new Set<number>()
+    const failures = new Map<number, PdfGenerationFailure>()
+    let output: PdfTranslationPdfResult | undefined
+    // Recovery has one additional document budget. Divide its remaining time
+    // among remaining groups so one hung page cannot starve every later page.
+    const deadline = performance.now() + 60000
+    let remaining = groups.size
+    for (const group of groups.values()) {
+      if (caller.signal.aborted || !caller.isCurrent()) return null
+      const timeout = Math.floor((deadline - performance.now()) / remaining--)
+      const candidate = new Set([...accepted, ...group])
+      const request: PdfTranslationPdfRequest = {
+        ...input,
+        // Preserve the original dirty-page set and baseline. The reader reuses
+        // validation outside that set; every dirty page is rebuilt from source,
+        // so a failed group cannot silently keep an older baseline translation.
+        units: input.units.map((unit, index) =>
+          candidate.has(index) ||
+          (changedPages && !unit.fragments.some((f) => changedPages.has(f.pageNumber)))
+            ? unit
+            : { ...unit, translation: unit.source }
+        )
+      }
+      let failure: PdfGenerationFailure = { code: 'timeout' }
+      if (!this.valid(request)) throw originalError
+      if (timeout > 0) {
+        try {
+          const result = await this.runWorker(request, caller, timeout)
+          if (!result) return null
+          output = result
+          for (const index of group) accepted.add(index)
+          continue
+        } catch (error) {
+          if (caller.signal.aborted || !caller.isCurrent()) return null
+          if (
+            !(error instanceof PdfGenerationError) ||
+            !['timeout', 'worker-failed'].includes(error.failure.code)
+          )
+            throw error
+          failure = error.failure
+        }
+      }
+      for (const index of group) failures.set(index, failure)
+    }
+    if (!output) throw originalError
+    return {
+      ...output,
+      layoutFailures: [
+        ...output.layoutFailures.filter(({ unitIndex }) => !failures.has(unitIndex)),
+        ...[...failures].map(([unitIndex, failure]) => ({
+          unitIndex,
+          code: failure.code as 'timeout' | 'worker-failed',
+          phase: 'generation' as const,
+          pageNumbers: [...new Set(input.units[unitIndex].fragments.map((f) => f.pageNumber))],
+          fragmentCount: input.units[unitIndex].fragments.length
+        }))
+      ]
+    }
+  }
+
+  private async runWorker(
+    input: PdfTranslationPdfRequest,
+    caller: ApplicationCallerLease,
+    timeout: number
+  ): Promise<PdfTranslationPdfResult | null> {
+    const startedAt = performance.now()
     let worker: Worker
     try {
       worker = new Worker(this.entry(), {
@@ -132,7 +255,6 @@ export class PdfTranslationWriter {
           .terminate()
           .catch(() => undefined)
           .finally(() => {
-            this.active.delete(input.id)
             if (failure && caller.isCurrent()) reject(new PdfGenerationError(failure))
             else
               resolve(
@@ -143,8 +265,7 @@ export class PdfTranslationWriter {
           })
       }
       const cancel = (): void => finish(null)
-      const timer = setTimeout(() => finish(null, { code: 'timeout' }), 60000)
-      this.active.set(input.id, { caller, cancel })
+      const timer = setTimeout(() => finish(null, { code: 'timeout' }), timeout)
       caller.signal.addEventListener('abort', cancel, { once: true })
       worker.once('message', (value) => {
         if (input.layout === 'reflow' && value?.data) {

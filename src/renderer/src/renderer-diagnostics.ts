@@ -1,9 +1,12 @@
-import type {
-  RendererErrorCategory,
-  RendererFailureContext,
-  RendererFailureReport,
-  RendererFailureSource,
-  RendererFailureSurface
+import {
+  SESSION_WRITE_FAILURE_CODES,
+  isRendererSessionWriteDiagnostics,
+  type RendererSessionWriteDiagnostics,
+  type RendererErrorCategory,
+  type RendererFailureContext,
+  type RendererFailureReport,
+  type RendererFailureSource,
+  type RendererFailureSurface
 } from '../../shared/diagnostics'
 
 const errorCategoryFor = (value: unknown): RendererErrorCategory => {
@@ -58,6 +61,19 @@ const normalizedStackSignature = (value: unknown): string => {
   }
 }
 
+export const sessionWriteFailureCode = (
+  value: unknown
+): RendererSessionWriteDiagnostics['code'] => {
+  try {
+    const code = value && typeof value === 'object' && 'code' in value ? value.code : undefined
+    return SESSION_WRITE_FAILURE_CODES.includes(code as RendererSessionWriteDiagnostics['code'])
+      ? (code as RendererSessionWriteDiagnostics['code'])
+      : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 const fingerprint = (value: string): string => {
   let hash = 0x811c9dc5
   for (let index = 0; index < value.length; index += 1) {
@@ -71,13 +87,15 @@ export const projectRendererFailure = (
   source: RendererFailureSource,
   value: unknown,
   surface: RendererFailureSurface,
-  context?: RendererFailureContext
+  context?: RendererFailureContext,
+  sessionWrite?: RendererSessionWriteDiagnostics
 ): RendererFailureReport => ({
   source,
   surface,
   errorCategory: errorCategoryFor(value),
   ...(context ? { context } : {}),
-  fingerprint: fingerprint(normalizedStackSignature(value))
+  fingerprint: fingerprint(`${sessionWriteFailureCode(value)}:${normalizedStackSignature(value)}`),
+  ...(sessionWrite && isRendererSessionWriteDiagnostics(sessionWrite) ? { sessionWrite } : {})
 })
 
 type RendererFailureEventTarget = {

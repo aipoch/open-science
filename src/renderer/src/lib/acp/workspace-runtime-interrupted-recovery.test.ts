@@ -23,6 +23,7 @@ import { resetWorkspacePromptRollbacksForTests } from './workspace-prompt-prepar
 import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
+import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
 
 // Exercise the renderer intent boundary and Main admission against the same durable authority.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -187,6 +188,7 @@ const harness = (contextReset = false, withRoutedMessages = false) => {
 
 describe('interrupted workspace recovery across renderer and Main authority', () => {
   beforeEach(() => {
+    resetSessionPersistenceWriteFailuresForTests()
     resetWorkspacePromptRollbacksForTests()
     resetSessionConversationIntentsForTests()
     useWorkspaceOperationErrors.setState({ errors: {} })
@@ -400,6 +402,7 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     useSessionStore.setState({ sessions: [structuredClone(h.durable()) as ChatSession] })
     await h.resume()
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
     expect(h.providerDispatch).toHaveBeenCalledOnce()
     expect(h.durable().activeRun!.startedAt).toBeGreaterThan(1)
     expect(h.durable().conversationGraph!.runtimeSegments.at(-1)!.startedAt).toBeGreaterThan(1)
@@ -441,6 +444,7 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     expect(useSessionStore.getState().sessions[0].resumeRecovery?.promptMessageId).toBe('prompt-1')
     await h.resume()
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
     expect(h.providerDispatch).toHaveBeenCalledOnce()
     expect(pendingSessionConversationCommands('session-1')).toEqual([])
   })

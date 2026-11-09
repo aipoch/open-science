@@ -340,19 +340,33 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(39)
+    expect(compute).toHaveLength(58)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
         .map(({ publicPath }) => publicPath)
     ).toEqual([
+      'compute.accountStatus',
+      'compute.cancelAccountConnection',
       'compute.changeAuthentication',
+      'compute.connectAccount',
+      'compute.createHostedTarget',
+      'compute.createKubernetesTarget',
+      'compute.createModalTarget',
       'compute.createPassword',
+      'compute.createRayTarget',
+      'compute.disconnectAccount',
       'compute.download',
       'compute.jobsSetRemoteCleanup',
+      'compute.listRayTokens',
       'compute.passwordCapability',
+      'compute.removeRayToken',
       'compute.resetPassword',
-      'compute.revealInFolder'
+      'compute.revealInFolder',
+      'compute.setRayToken',
+      'compute.updateTarget',
+      'compute.useLocalAccount',
+      'compute.verifyTarget'
     ])
   })
 
@@ -534,6 +548,7 @@ describe('renderer contract catalog', () => {
       'literature.jobs',
       'literature.journals',
       'literature.lookupMetadata',
+      'literature.overviewBatch',
       'literature.publicationCheck',
       'literature.related',
       'literature.search',
@@ -575,6 +590,9 @@ describe('renderer contract catalog', () => {
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
+      'resourceRecording.getState',
+      'resourceRecording.start',
+      'resourceRecording.stop',
       'sessionReplay.get',
       'sessionReplay.getSelectionSnapshot',
       'sessionReplay.list',
@@ -637,6 +655,7 @@ describe('renderer contract catalog', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:overview-batch',
       'literature:publication-check',
       'literature:related',
       'literature:search',
@@ -678,6 +697,9 @@ describe('renderer contract catalog', () => {
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'resource-recording:get-state',
+      'resource-recording:start',
+      'resource-recording:stop',
       'session-replay:get',
       'session-replay:get-selection-snapshot',
       'session-replay:list',

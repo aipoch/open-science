@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AgentFrameworkId } from '../../shared/settings'
 
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
-  framework?: 'claude-code' | 'codex' | 'opencode' | 'codebuddy'
+  framework?: AgentFrameworkId
   model?: string
   appSessionId?: string
   eventId: string
@@ -24,6 +25,7 @@ type TestProjector = Readonly<{
   beginGeneration: (root?: string) => void
   clearGeneration: () => void
   clearSession: (sessionId: string) => void
+  finishAssistantOutput: (sessionId: string) => readonly RecordedEffect[]
   dispose: () => void
   route: (notification: SessionNotification, routing: TestRouting) => readonly RecordedEffect[]
 }>
@@ -41,7 +43,8 @@ const createProjector = (
     notification: SessionNotification,
     context: Readonly<{ sessionId: string }>,
     providerToolCallId: string
-  ) => string = (_notification, _context, providerToolCallId) => providerToolCallId
+  ) => string = (_notification, _context, providerToolCallId) => providerToolCallId,
+  separateProviderNotices?: boolean
 ): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
@@ -55,6 +58,7 @@ const createProjector = (
     effects.push(Object.freeze(effect))
   }
   const owner = new AcpSessionUpdateProjector({
+    separateProviderNotices,
     registry: {
       lookup: (sessionId) =>
         ({
@@ -114,6 +118,11 @@ const createProjector = (
     beginGeneration: (root?: string) => owner.beginGeneration(root),
     clearGeneration: () => owner.clearGeneration(),
     clearSession: (sessionId: string) => owner.clearSession(sessionId),
+    finishAssistantOutput: (sessionId: string) => {
+      effects = []
+      owner.finishAssistantOutput(sessionId)
+      return Object.freeze([...effects])
+    },
     dispose: () => owner.dispose(),
     route: (notification: SessionNotification, nextRouting: TestRouting) => {
       routing = nextRouting
@@ -128,6 +137,107 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it.each([undefined, false])(
+    'keeps normal chat hook notices visible before and after terminal flushing (opt-in: %s)',
+    (separateProviderNotices) => {
+      const projector = createProjector(undefined, true, undefined, separateProviderNotices)
+      const routing: TestRouting = {
+        framework: 'claude-code',
+        eventId: 'hook-notice',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+      const hookNotice = (text: string): SessionNotification => ({
+        sessionId: 'session-chat',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text },
+          _meta: { 'open-science/provider-notice': { version: 1, level: 'info' } }
+        }
+      })
+      const before = projector.route(hookNotice('Hook blocked continuation'), routing)
+      expect(before.filter((effect) => effect.kind === 'visible-event')).toMatchObject([
+        { event: { kind: 'message', role: 'assistant', text: 'Hook blocked continuation' } }
+      ])
+      // The prompt composition invokes this same flush for stop/error events.
+      expect(projector.finishAssistantOutput('session-chat')).toEqual([])
+      const after = projector.route(hookNotice('Hook detail after end_turn'), {
+        ...routing,
+        eventId: 'late-hook-notice'
+      })
+      expect(after.filter((effect) => effect.kind === 'visible-event')).toMatchObject([
+        { event: { kind: 'message', role: 'assistant', text: 'Hook detail after end_turn' } }
+      ])
+      projector.clearSession('session-chat')
+      const next = projector.route(hookNotice('Hook detail in next turn'), {
+        ...routing,
+        eventId: 'next-hook-notice'
+      })
+      expect(next.filter((effect) => effect.kind === 'visible-event')).toMatchObject([
+        { event: { kind: 'message', role: 'assistant', text: 'Hook detail in next turn' } }
+      ])
+    }
+  )
+
+  it.each(['codex', 'claude-code'] as const)(
+    'publishes %s provider notices without observing them as assistant context when opted in',
+    (framework) => {
+      const projector = createProjector(undefined, true, undefined, true)
+      const routing: TestRouting = {
+        framework,
+        eventId: 'notice-event',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+      const notice: SessionNotification = {
+        sessionId: 'session-notice',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text:
+              framework === 'codex'
+                ? 'Warning: Falling back from WebSockets to HTTPS transport. request timed out\n\n'
+                : 'Adapter information'
+          },
+          ...(framework === 'claude-code'
+            ? { _meta: { 'open-science/provider-notice': { version: 1, level: 'warning' } } }
+            : {})
+        }
+      }
+
+      const effects = projector.route(notice, routing)
+
+      expect(effects.some((effect) => effect.kind === 'context-observation')).toBe(false)
+      const published = effects.filter((effect) => effect.kind === 'visible-event')
+      expect(published).toHaveLength(1)
+      expect(published[0]?.event).toMatchObject({
+        kind: 'system',
+        level: 'warning',
+        status: 'provider-notice'
+      })
+      expect(published[0]?.event).not.toHaveProperty('role')
+      expect(published[0]?.event).not.toHaveProperty('raw')
+      const model = projector.route(
+        {
+          sessionId: 'session-notice',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '{"question":null}' }
+          }
+        },
+        { ...routing, eventId: 'model-event' }
+      )
+      expect(model).toMatchObject([
+        { kind: 'context-observation' },
+        { kind: 'context-refresh' },
+        { kind: 'visible-event', event: { kind: 'message', text: '{"question":null}' } }
+      ])
+    }
+  )
+
   it.each(['opencode', 'codebuddy'] as const)(
     'publishes pending %s text before hiding an app-owned user-choice tool',
     (framework) => {
@@ -887,49 +997,52 @@ describe('AcpSessionUpdateProjector', () => {
     expect(effects.at(-1)).not.toHaveProperty('event.text')
   })
 
-  it('confirms a structured Codex compaction lifecycle before publishing completion', () => {
-    const projector = createProjector()
-    const notification: SessionNotification = {
-      sessionId: 'session-1',
-      update: {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: 'provider-compaction',
-        status: 'completed',
-        _meta: { contextCompaction: true }
-      }
-    }
-    const effects = projector.route(notification, {
-      framework: 'codex',
-      eventId: 'event-compaction',
-      visible: true,
-      reconnectPending: false,
-      mcpServerNames: []
-    })
-
-    expect(effects).toMatchObject([
-      { kind: 'context-observation' },
-      { kind: 'provider-compaction-completed', sessionId: 'session-1' },
-      { kind: 'context-refresh' },
-      {
-        kind: 'visible-event',
-        event: {
-          kind: 'compaction',
+  it.each(['codex', 'open-science-agent'] as const)(
+    'confirms a structured %s compaction lifecycle before publishing completion',
+    (framework) => {
+      const projector = createProjector()
+      const notification: SessionNotification = {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'provider-compaction',
           status: 'completed',
-          toolCallId: 'provider-compaction'
+          _meta: { contextCompaction: true }
         }
       }
-    ])
-
-    expect(
-      projector.route(notification, {
-        framework: 'codex',
-        eventId: 'event-replayed-compaction',
+      const effects = projector.route(notification, {
+        framework,
+        eventId: 'event-compaction',
         visible: true,
-        reconnectPending: true,
+        reconnectPending: false,
         mcpServerNames: []
       })
-    ).not.toContainEqual(expect.objectContaining({ kind: 'provider-compaction-completed' }))
-  })
+
+      expect(effects).toMatchObject([
+        { kind: 'context-observation' },
+        { kind: 'provider-compaction-completed', sessionId: 'session-1' },
+        { kind: 'context-refresh' },
+        {
+          kind: 'visible-event',
+          event: {
+            kind: 'compaction',
+            status: 'completed',
+            toolCallId: 'provider-compaction'
+          }
+        }
+      ])
+
+      expect(
+        projector.route(notification, {
+          framework,
+          eventId: 'event-replayed-compaction',
+          visible: true,
+          reconnectPending: true,
+          mcpServerNames: []
+        })
+      ).not.toContainEqual(expect.objectContaining({ kind: 'provider-compaction-completed' }))
+    }
+  )
 
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {
     const projector = createProjector()

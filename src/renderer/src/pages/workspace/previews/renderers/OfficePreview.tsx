@@ -176,6 +176,7 @@ const RemoteOfficePreviewContent = ({
   const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
   const hasSourceIdentity =
+    source === 'compute-output' ||
     source === 'notebook-input' ||
     source === 'literature' ||
     Boolean(item.projectId && item.managedFileId)
@@ -200,7 +201,7 @@ const RemoteOfficePreviewContent = ({
   useEffect(() => {
     if (!ownsLease || !hasSourceIdentity) return
     const sourceIdentity =
-      source === 'notebook-input' || source === 'literature'
+      source === 'compute-output' || source === 'notebook-input' || source === 'literature'
         ? { source, path: item.path }
         : {
             source,

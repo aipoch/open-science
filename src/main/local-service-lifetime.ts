@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { z } from 'zod'
+import { AUTHENTICATION_QUIT_BUDGET_MS } from './lifecycle-shutdown'
 
-export const LOCAL_SERVICE_STOP_BUDGET_MS = 20_000
+export const LOCAL_SERVICE_STOP_BUDGET_MS = AUTHENTICATION_QUIT_BUDGET_MS + 20_000
 export const LOCAL_SERVICE_STOP_ESCALATION_MS = 3_500
 export const LOCAL_SERVICE_DISCONNECT_GRACE_MS = 20_000
 export const LOCAL_SERVICE_FIRST_CONNECTION_MS = 60_000

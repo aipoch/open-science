@@ -149,6 +149,9 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     AcpRuntimeOptions['notebook']
   >['canOwnRuntimeBindingDecision']
   peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+  isReplNamespaceUnavailable?: NonNullable<
+    AcpRuntimeOptions['notebook']
+  >['isReplNamespaceUnavailable']
   authorizeSkillImportReferencedUploads: (
     projectId: string,
     sessionId: string,
@@ -272,6 +275,7 @@ const createAcpRuntime = ({
   getShellRuntimeBinding,
   canOwnRuntimeBindingDecision,
   peekNotebookHandoffContext,
+  isReplNamespaceUnavailable,
   authorizeSkillImportReferencedUploads,
   settingsService,
   grantedRootsRepository,
@@ -492,7 +496,9 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
-        mcpHttpHost: new AgentMcpHttpHost(),
+        mcpHttpHost: new AgentMcpHttpHost({
+          receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
+        }),
         wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
@@ -683,7 +689,7 @@ const createAcpRuntime = ({
                   if (!item || !isLiteratureItemInScope(item, request)) return undefined
                   if (!literatureReader) {
                     throw new Error(
-                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable.'
+                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable in this session. Do not retry; use read_library_abstract or tell the user full text cannot be read.'
                     )
                   }
                   const selected = item.attachments
@@ -698,7 +704,7 @@ const createAcpRuntime = ({
                     )[0]
                   if (!selected) {
                     throw new Error(
-                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment.'
+                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment. Omit attachmentId to read the first PDF; if hasPdf is false, use read_library_abstract or acquire_pdf instead.'
                     )
                   }
                   const evidence = await literatureReader.searchAttachment({
@@ -846,7 +852,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
-                peekHandoffContext: peekNotebookHandoffContext
+                peekHandoffContext: peekNotebookHandoffContext,
+                isReplNamespaceUnavailable
               })
         },
         ...(delegatedNotebookConnection
@@ -871,6 +878,8 @@ const createAcpRuntime = ({
           ? {
               permissionWait: {
                 networkApprovalOwner: sandboxNetworkApprovalOwner,
+                allowNetworkDestination:
+                  settingsService.allowNotebookNetworkDestination?.bind(settingsService),
                 allowNetworkDomain:
                   settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,

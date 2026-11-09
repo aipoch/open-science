@@ -229,6 +229,49 @@ const importedFixture = async (
   return { source, target, service, identity, sessions, coordinator, content, archive }
 }
 
+it('repairs legacy children only when a package deletion journal and committed tombstone agree', async () => {
+  const { service, identity, sessions, target } = await importedFixture(false)
+  const parent = (await sessions.loadSession(identity.projectId, identity.sessionId))!
+  await sessions.ensureSessionProjection(() => sessions.loadAll())
+  const child = await sessions.saveSession({
+    id: 'legacy-child',
+    projectId: identity.projectId,
+    parentSessionId: parent.id,
+    title: 'Child',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  await rm(
+    join(
+      target.storageRoot,
+      'artifacts',
+      identity.projectId,
+      parent.id,
+      '.session-package',
+      'receipt.json'
+    )
+  )
+  await service.prepareSessionDeletion(parent)
+  // Simulate an old release that deleted only the parent, leaving its child JSON and index.
+  await rm(join(target.storageRoot, 'sessions', identity.projectId, parent.id + '.json'))
+  await service.recover({ collectDeletedPackages: true })
+  expect((await sessions.loadSession(identity.projectId, child.id))?.parentSessionId).toBe(
+    parent.id
+  )
+  const index = new SessionProjectionRepository(async () => target.client)
+  await index.markPending(identity.projectId, parent.id, 'delete')
+  await index.commitDelete(identity.projectId, parent.id)
+  await service.recover({ collectDeletedPackages: true })
+  const detached = await sessions.loadSession(identity.projectId, child.id)
+  expect(detached?.parentSessionId).toBeUndefined()
+  expect(detached?.deletedDiscussionSourceId).toBe(parent.id)
+  expect((await index.list()).find((row) => row.id === child.id)?.parentSessionId).toBeUndefined()
+  await service.close()
+})
+
 it.each(['receipt', 'manifest', 'missing-receipt'] as const)(
   'deletes the conversation but retains unverifiable package evidence (%s)',
   async (fault) => {
@@ -574,6 +617,7 @@ it('recognizes the navigation manifest while retaining a live external reference
   const sessionId = `import-${randomUUID()}`
   const service = new SessionPackageService({ storageRoot: root, getClient: async () => client })
   try {
+    vi.spyOn(client.session, 'findFirst').mockResolvedValue(null)
     vi.spyOn(client.fileOriginSession, 'findUnique').mockResolvedValue({
       projectId: 'target',
       sessionId,

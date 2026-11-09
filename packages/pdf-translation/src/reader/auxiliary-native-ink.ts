@@ -217,6 +217,16 @@ export function nativeInkPageCurrent(
   operators: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
   outlineKeys: readonly string[]
 ): (() => boolean) | undefined {
+  return nativeInkPageWitness(page, content, viewport, operators, outlineKeys)?.current
+}
+
+function nativeInkPageWitness(
+  page: PDFPageProxy,
+  content: Content,
+  viewport: Viewport,
+  operators: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
+  outlineKeys: readonly string[]
+): { current: () => boolean; released: () => boolean } | undefined {
   try {
     const common = page.commonObjs,
       get = common.get,
@@ -305,12 +315,12 @@ export function nativeInkPageCurrent(
     }
     if (!fonts.length) return
     let outlineBytes = 0
-    const outlines: (() => boolean)[] = []
+    const outlines: ((released: boolean) => boolean)[] = []
     for (const key of new Set(outlineKeys)) {
       if (outlines.length >= 10000) return
       const present = common.has(key)
       if (!present) {
-        outlines.push(() => !common.has(key))
+        outlines.push((released) => released || !common.has(key))
         continue
       }
       const owner = common.get(key),
@@ -324,11 +334,10 @@ export function nativeInkPageCurrent(
       )
         return
       const pathKey = JSON.stringify(normalized(path))
-      outlines.push(() => {
+      outlines.push((released) => {
         const now = owner.path
         return (
-          common.has(key) &&
-          common.get(key) === owner &&
+          (released || (common.has(key) && common.get(key) === owner)) &&
           currentSlot() &&
           ArrayBuffer.isView(now) &&
           now.buffer === path.buffer &&
@@ -351,7 +360,7 @@ export function nativeInkPageCurrent(
           fonts.map(({ font }) => fontProperties.map((key) => font[key]))
         ]),
       snapshot = JSON.stringify(values())
-    return (): boolean => {
+    const check = (released: boolean): boolean => {
       try {
         if (
           page.commonObjs !== common ||
@@ -371,7 +380,7 @@ export function nativeInkPageCurrent(
         for (const entry of fonts) {
           const data = entry.font.data
           if (
-            common.get(entry.id) !== entry.font ||
+            (!released && common.get(entry.id) !== entry.font) ||
             entry.font.loadedName !== entry.id ||
             !entry.slots.every((current) => current()) ||
             !(data instanceof Uint8Array) ||
@@ -382,11 +391,12 @@ export function nativeInkPageCurrent(
             return false
           for (let i = 0; i < entry.bytes.length; i++) if (data[i] !== entry.bytes[i]) return false
         }
-        return outlines.every((current) => current())
+        return outlines.every((current) => current(released))
       } catch {
         return false
       }
     }
+    return { current: () => check(false), released: () => check(true) }
   } catch {
     return
   }
@@ -508,7 +518,7 @@ export function createAuxiliaryNativeCaptionInkReader(options: Options): Auxilia
   return createNativeInkReader(options, nativeIsolatedPlotCaptionInk)
 }
 
-function createNativeInkReader(
+export function createNativeInkReader(
   { document: primary, nativeDocumentFactory, sourceIdentity, signal }: Options,
   readInk: typeof nativeTextFreeClipInkRegions,
   carryInk?: (from: Ink, to: Ink) => void
@@ -518,7 +528,9 @@ function createNativeInkReader(
     render: ReturnType<PDFPageProxy['render']> | undefined,
     disposed = false,
     closing: ReturnType<typeof getDocument> | undefined,
-    cleanup: Promise<void> | undefined
+    cleanup: Promise<void> | undefined,
+    cleanupCheckSource: Promise<void> | undefined,
+    checkedCleanup: Promise<void> | undefined
   const records = new Map<
     number,
     {
@@ -530,6 +542,7 @@ function createNativeInkReader(
       result: Promise<Ink | undefined>
     }
   >()
+  const proofChecks: NonNullable<ReturnType<typeof nativeInkPageWitness>>[] = []
   const live = (): void => {
     signal?.throwIfAborted()
     requireEvidence(!disposed)
@@ -559,10 +572,19 @@ function createNativeInkReader(
       render?.cancel()
       records.clear()
     }
-    return closeOwnedTask()
+    const closing = closeOwnedTask()
+    if (closing !== cleanupCheckSource) {
+      cleanupCheckSource = closing
+      checkedCleanup = closing.then(() => {
+        // Destroy may release the object registry, but the exact font bytes,
+        // glyph outline owners and their slots used by a published proof stay bound.
+        requireEvidence(proofChecks.every((proof) => proof.released()))
+      })
+    }
+    return checkedCleanup!
   }
   const onAbort = (): void => {
-    void dispose()
+    void dispose().catch(() => undefined)
   }
   signal?.addEventListener('abort', onAbort, { once: true })
   const initialize = async (): Promise<PDFDocumentProxy> => {
@@ -623,10 +645,31 @@ function createNativeInkReader(
       page = await auxiliary.getPage(input.pageNumber),
       content = await getPdfTranslationTextContent(page)
     live()
-    const operatorSnapshot = await sameNativePage(input, page, content)
     const viewport = page.getViewport({ scale: 1 }),
       width = Math.ceil(viewport.width),
       height = Math.ceil(viewport.height)
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      operators = await page.getOperatorList(),
+      outlineKeys = new Set<string>(),
+      stack: string[] = []
+    let font = ''
+    for (const [index, op] of operators.fnArray.entries()) {
+      const args = operators.argsArray[index]
+      if (op === OPS.setFont) font = args[0]
+      else if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) stack.push(font)
+      else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op))
+        font = stack.pop() ?? ''
+      else if (op === OPS.showText)
+        for (const glyph of args[0])
+          if (typeof glyph?.fontChar === 'string') outlineKeys.add(font + '_path_' + glyph.fontChar)
+    }
+    // disableFontFace materializes these paths with the operator list. Do not
+    // certify outlines first observed after an unbound asynchronous render.
+    requireEvidence([...outlineKeys].every((key) => page.commonObjs.has(key)))
+    const proof = nativeInkPageWitness(page, content, viewport, operators, [...outlineKeys])
+    requireEvidence(proof)
+    const operatorSnapshot = await sameNativePage(input, page, content)
+    requireEvidence(proof.current())
     requireEvidence(
       Number.isSafeInteger(width) &&
         Number.isSafeInteger(height) &&
@@ -645,6 +688,7 @@ function createNativeInkReader(
       await render.promise
       render = undefined
       live()
+      requireEvidence(proof.current())
     } finally {
       canvas.width = canvas.height = 0
     }
@@ -663,6 +707,8 @@ function createNativeInkReader(
       ink && ink.size === nonempty.length && nonempty.every((index): boolean => ink.has(index))
     )
     live()
+    requireEvidence(proof.current())
+    proofChecks.push(proof)
     return ink
   }
   const copy = (ink: Ink | undefined): Ink | undefined => {
@@ -719,6 +765,7 @@ function createNativeInkReader(
           )
           const ink = await previous.result
           live()
+          requireEvidence(proofChecks.every((proof) => proof.current()))
           requireEvidence(
             previous.content === JSON.stringify(normalized(input.content)) &&
               same(previous.viewport, viewportKey(input.viewport)) &&
@@ -734,7 +781,7 @@ function createNativeInkReader(
           prove(input),
           new Promise<never>((_, reject): void => {
             timer = setTimeout((): void => {
-              void dispose()
+              void dispose().catch(() => undefined)
               reject(new Error('Auxiliary evidence timed out.'))
             }, 20000)
           })
@@ -754,6 +801,7 @@ function createNativeInkReader(
         })
         const ink = await result
         live()
+        requireEvidence(proofChecks.every((proof) => proof.current()))
         requireEvidence(
           content === JSON.stringify(normalized(input.content)) &&
             same(viewport, viewportKey(input.viewport)) &&

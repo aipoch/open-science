@@ -2,6 +2,7 @@ import { createCanvas, GlobalFonts } from '@napi-rs/canvas'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { resolve } from './paths.js'
 import {
   PDFArray,
@@ -4661,6 +4662,153 @@ describe('translated PDF writer', () => {
       caller.release()
     }
   })
+
+  it.each([
+    { layout: undefined, joined: false, incremental: false },
+    { layout: undefined, joined: false, incremental: true },
+    { layout: undefined, joined: true, incremental: false },
+    { layout: 'reflow' as const, joined: false, incremental: false },
+    { layout: 'reflow' as const, joined: true, incremental: false }
+  ])(
+    'keeps healthy pages after a worker failure ($layout, joined=$joined, incremental=$incremental)',
+    async ({ layout, joined, incremental }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'pdf-partial-')),
+        caller = lease()
+      let task: ReturnType<typeof getDocument> | undefined
+      try {
+        const path = join(directory, 'worker.mjs')
+        await writeFile(
+          path,
+          `import { parentPort, workerData } from 'node:worker_threads';
+          if (workerData.units.some(u => u.translation === '失败段落。' ||
+            (${incremental} && !workerData.incremental && u.translation !== u.source &&
+             u.fragments.some(f => f.pageNumber === 1)))) {
+            parentPort.postMessage({ failure: { code: 'timeout' } });
+          } else await import(${JSON.stringify(pathToFileURL(entry()).href)});`
+        )
+        const pdf = await PDFDocument.create(),
+          font = await pdf.embedFont(StandardFonts.Helvetica)
+        for (let i = 0; i < (joined ? 4 : 3); i++)
+          pdf.addPage([400, 300]).drawText('Cell growth is measured.', {
+            font,
+            size: 12,
+            x: 30,
+            y: 250
+          })
+        const input: PdfTranslationPdfRequest = {
+          id: 'partial',
+          layout,
+          data: await pdf.save(),
+          pages: Array.from({ length: joined ? 4 : 3 }, () => ({ width: 400, height: 300 })),
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [1, 2, 3].map((number) => ({
+            source:
+              joined && number === 2
+                ? 'Cell growth is measured. Cell growth is measured.'
+                : 'Cell growth is measured.',
+            translation: number === 2 ? '失败段落。' : '测量细胞生长。',
+            fragments: (joined && number === 2
+              ? [2, 3]
+              : [joined && number === 3 ? 4 : number]
+            ).map((pageNumber) => ({
+              pageNumber,
+              rect: { x: 0.05, y: 0.1, width: 0.9, height: 0.2 }
+            }))
+          }))
+        }
+        const baseline = incremental
+          ? await new PdfTranslationWriter(entry).generateDetailed(
+              {
+                ...input,
+                units: input.units.map((unit, index) =>
+                  index === 1 ? { ...unit, translation: unit.source } : unit
+                )
+              },
+              caller.lease
+            )
+          : undefined
+        const output = await new PdfTranslationWriter(() => path).generateDetailed(
+          {
+            ...input,
+            ...(baseline ? { incremental: { data: baseline.data, pageNumbers: [2, 3] } } : {})
+          },
+          caller.lease
+        )
+        expect(output?.layoutFailures).toEqual([
+          {
+            unitIndex: 1,
+            code: 'timeout',
+            phase: 'generation',
+            pageNumbers: joined ? [2, 3] : [2],
+            fragmentCount: joined ? 2 : 1
+          }
+        ])
+        task = getDocument({ data: output!.data.slice() })
+        const document = await task.promise
+        const texts: string[] = []
+        for (let number = 1; number <= document.numPages; number++) {
+          const page = await document.getPage(number)
+          texts.push(
+            (await page.getTextContent()).items
+              .flatMap((item) => ('str' in item ? [item.str] : []))
+              .join('')
+          )
+        }
+        expect(texts.join('')).toContain('Cell growth is measured.')
+        expect(texts.join('').match(/测量细胞生长。/gu)).toHaveLength(2)
+        expect(texts.join('')).not.toContain('失败段落。')
+        if (layout) expect(output?.reflow?.originalPageNumbers).toContain(2)
+      } finally {
+        await task?.destroy()
+        caller.release()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['cancel', 'timeout'] as const)(
+    'holds the worker slot throughout bounded recovery until %s',
+    async (ending) => {
+      const directory = await mkdtemp(join(tmpdir(), 'pdf-recovery-')),
+        caller = lease(),
+        input = { ...(await fixture()), preserveUnsupported: true },
+        starts = vi.fn()
+      const path = join(directory, 'waiting.mjs')
+      await writeFile(path, 'setInterval(() => {}, 1000)')
+      const writer = new PdfTranslationWriter(() => {
+        starts()
+        return path
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+      try {
+        const result = writer.generateDetailed(input, caller.lease).catch(pdfGenerationFailure)
+        await vi.advanceTimersByTimeAsync(60000)
+        await vi.waitFor(() => expect(starts).toHaveBeenCalledTimes(2))
+        await expect(writer.generateDetailed(input, caller.lease)).rejects.toMatchObject({
+          failure: { code: 'busy' }
+        })
+        if (ending === 'cancel') {
+          writer.cancel(input.id, caller.lease)
+          expect(await result).toBeNull()
+          expect(starts).toHaveBeenCalledTimes(2)
+        } else {
+          await vi.advanceTimersByTimeAsync(30000)
+          await vi.waitFor(() => expect(starts).toHaveBeenCalledTimes(3))
+          await vi.advanceTimersByTimeAsync(30000)
+          expect(await result).toEqual({ code: 'timeout' })
+          expect(starts).toHaveBeenCalledTimes(3)
+        }
+        const retry = writer.generateDetailed(input, caller.lease)
+        writer.cancel(input.id, caller.lease)
+        expect(await retry).toBeNull()
+      } finally {
+        caller.release()
+        vi.useRealTimers()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('distinguishes capacity and timeout, reaping workers before allowing a retry', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-generation-'))

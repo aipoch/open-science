@@ -532,3 +532,37 @@ it('accepts historical settings version 1 without migration or rewriting', () =>
   expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toEqual(['legacy'])
   expect(readFileSync(path, 'utf8')).toBe(contents)
 })
+
+it('inventories managed compute accounts and Ray tokens and preserves interrupted credential updates for recovery', () => {
+  const paths = fixture()
+  const name = 'compute-hugging-face-account.json'
+  const ciphertext = Buffer.from('compute-account')
+  writeFileSync(
+    join(paths.configRoot, name),
+    JSON.stringify({
+      version: 1,
+      source: 'managed',
+      sealed: 'open-science:protected:v1:' + ciphertext.toString('base64')
+    })
+  )
+  const rayFile = 'compute-ray-tokens.json'
+  const ray = Buffer.from('ray-test')
+  writeFileSync(
+    join(paths.configRoot, rayFile),
+    JSON.stringify({
+      version: 1,
+      entries: [
+        {
+          endpoint: 'https://ray.test',
+          sealed: 'open-science:protected:v1:' + ray.toString('base64')
+        }
+      ]
+    })
+  )
+  expect(readCredentialCiphertexts(paths)).toEqual([ciphertext, ray])
+  writeFileSync(join(paths.configRoot, rayFile + '.pending.tmp'), '{}')
+  expect(() => readCredentialCiphertexts(paths)).toThrow()
+  rmSync(join(paths.configRoot, rayFile + '.pending.tmp'))
+  writeFileSync(join(paths.configRoot, name + '.pending.tmp'), '{}')
+  expect(() => readCredentialCiphertexts(paths)).toThrow()
+})

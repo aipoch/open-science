@@ -1,3 +1,4 @@
+import { openComputeOutputPreview } from '../compute/job-output-preview'
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
@@ -157,6 +158,7 @@ export function composeManagedFiles({
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
     resolvePath: resolveManagedFilePath,
+    openComputeOutput: openComputeOutputPreview,
     openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
     openLatestManagedFile: (source, request) =>
       managedFileVersionService.openLatest({ source, ...request }),

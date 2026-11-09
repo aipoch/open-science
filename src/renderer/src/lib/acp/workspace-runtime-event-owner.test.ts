@@ -787,7 +787,7 @@ describe('persistence snapshot recovery boundary', () => {
     const replacement = createSnapshot({ revision: 5 })
     expect(acceptAcpRuntimeSnapshotRevision(replacement)).toBe(true)
     complete(createSnapshot({ revision: 99, agentPromptInFlightSessionIds: ['session-1'] }))
-    await expect(draining).rejects.toThrow('Desktop connection changed')
+    await expect(draining).rejects.toMatchObject({ code: 'desktop-runtime-not-submitted' })
     expect(reconcile).not.toHaveBeenCalled()
     expect(acceptAcpRuntimeSnapshotRevision(replacement)).toBe(true)
   })

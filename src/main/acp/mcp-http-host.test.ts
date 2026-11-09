@@ -1,4 +1,7 @@
-import { rm } from 'node:fs/promises'
+import { rm, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-server'
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
@@ -10,12 +13,79 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { ArtifactRepository } from '../artifacts/repository'
 import { AgentMcpHttpHost } from './mcp-http-host'
+import {
+  HARNESS_INVOCATION,
+  HARNESS_RECEIPT_METHOD,
+  HARNESS_RECEIPTS,
+  receiptResponseSchema,
+  HarnessToolReceipts
+} from '../harness-acp/tool-receipts'
 
 describe('AgentMcpHttpHost', () => {
   let saveFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined
   let host: AgentMcpHttpHost | undefined
   let rpcServer: Server | undefined
   let root: string | undefined
+
+  it('serves only the owned Skill allowlist and revokes each HTTP projection independently', async () => {
+    root = await mkdtemp(join(tmpdir(), 'harness-skill-http-'))
+    for (const name of ['allowed', 'hidden']) {
+      await mkdir(join(root, '.claude', 'skills', name), { recursive: true })
+      await writeFile(
+        join(root, '.claude', 'skills', name, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: Fixture\n---\n${name} body`
+      )
+    }
+    host = new AgentMcpHttpHost()
+    await host.ensureStarted()
+    const owned = createSkillRuntimeAcpServerConfig({
+      command: process.execPath,
+      entryPath: join(root, 'entry.js'),
+      root,
+      allowedNames: ['allowed']
+    })
+    expect(() => host!.registerSkillRuntime({ ...owned })).toThrow('host-owned')
+    const first = host.registerSkillRuntime(owned)
+    const second = host.registerSkillRuntime(owned)
+    if (!('url' in first.server) || !('url' in second.server))
+      throw new Error('Expected HTTP servers')
+    const client = new Client({ name: 'skill-http-test', version: '1' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(second.server.url), {
+        requestInit: {
+          headers: Object.fromEntries(second.server.headers.map(({ name, value }) => [name, value]))
+        }
+      })
+    )
+    try {
+      const tools = JSON.stringify(await client.listTools())
+      expect(tools).toContain('allowed')
+      expect(tools).not.toContain('hidden')
+      expect(
+        JSON.stringify(
+          await client.callTool({ name: 'load_skill', arguments: { skill: 'allowed' } })
+        )
+      ).toContain('allowed body')
+      expect(
+        await client.callTool({ name: 'load_skill', arguments: { skill: 'hidden' } })
+      ).toMatchObject({ isError: true })
+      first.release()
+      expect(
+        (
+          await fetch(first.server.url, {
+            headers: Object.fromEntries(
+              first.server.headers.map(({ name, value }) => [name, value])
+            )
+          })
+        ).status
+      ).toBe(404)
+      expect((await client.listTools()).tools).toHaveLength(1)
+      second.release()
+      await expect(client.listTools()).rejects.toThrow()
+    } finally {
+      await client.close()
+    }
+  })
 
   afterEach(async () => {
     await host?.close()
@@ -35,6 +105,221 @@ describe('AgentMcpHttpHost', () => {
       root = undefined
     }
   })
+
+  it.each([
+    'artifact',
+    'plan',
+    'skills',
+    'skill-import',
+    'host-message',
+    'library',
+    'literature'
+  ] as const)(
+    'persists %s receipts without exposing recovery as a model tool or replaying effects',
+    async (kind) => {
+      saveFixture = await createArtifactSaveFixture()
+      root = saveFixture.storageRoot
+      host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+      const { token } = await host.ensureStarted()
+      let route = 'receipt-route'
+      const scope = JSON.stringify(['project', 'stable-session', kind])
+      if (kind !== 'skills') host.registerReceiptScope(route, scope, kind)
+      let name: string
+      let args: Record<string, unknown>
+      if (kind === 'artifact') {
+        host.registerArtifact(
+          route,
+          await saveFixture.environment(
+            { allowedImportRoots: [root], workspaceCwd: root },
+            { projectId: 'default-project' }
+          )
+        )
+        name = 'write_artifact_file'
+        args = {
+          filename: 'receipt.txt',
+          source: { kind: 'inline', content: 'persisted', encoding: 'utf8' }
+        }
+      } else if (kind === 'plan' || kind === 'skill-import') {
+        rpcServer = createServer((request, response) => {
+          request.resume()
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              result:
+                kind === 'plan'
+                  ? {
+                      changed: true,
+                      projection: {
+                        artifactVersionId: 'version-1',
+                        lifecycle: 'approved',
+                        approval: 'approved',
+                        revision: 1
+                      }
+                    }
+                  : { status: 'cancelled', skills: [] }
+            })
+          )
+        })
+        await new Promise<void>((resolve) => rpcServer!.listen(0, '127.0.0.1', resolve))
+        const address = rpcServer.address()
+        if (!address || typeof address === 'string') throw new Error('No RPC listener')
+        const environment = {
+          endpoint: `http://127.0.0.1:${address.port}/rpc`,
+          token: 'fixture',
+          sessionId: route,
+          projectId: 'default-project'
+        }
+        if (kind === 'plan') host.registerPlan(route, environment)
+        else host.registerSkillImport(route, environment)
+        name = kind === 'plan' ? 'generate_plan' : 'request_skill_import'
+        args =
+          kind === 'plan'
+            ? { approve: true }
+            : { github_url: 'https://github.com/acme/skills/tree/main/fixture' }
+      } else if (kind === 'skills') {
+        await mkdir(join(root, '.claude', 'skills', 'fixture'), { recursive: true })
+        await writeFile(
+          join(root, '.claude', 'skills', 'fixture', 'SKILL.md'),
+          '---\nname: fixture\ndescription: Test\n---\nSkill evidence'
+        )
+        route = host.registerSkillRuntime(
+          createSkillRuntimeAcpServerConfig({
+            command: process.execPath,
+            entryPath: join(root, 'entry.js'),
+            root,
+            allowedNames: ['fixture']
+          })
+        ).routingId
+        name = 'load_skill'
+        args = { skill: 'fixture' }
+      } else if (kind === 'host-message') {
+        host.registerHostMessage(route, {
+          sendMessage: async () => ({
+            status: 'queued',
+            messageId: 'message',
+            targetState: 'idle',
+            delivery: 'next-user-turn',
+            persisted: true,
+            systemHint: 'queued'
+          })
+        })
+        name = 'send_message'
+        args = { target: 'main', text: 'Advisory fixture' }
+      } else if (kind === 'library') {
+        host.registerLiteratureLibrary(route, {
+          searchLibrary: async () => ({ items: [], totalCount: 0, hasMore: false }),
+          readAbstract: async () => undefined,
+          readPdf: async () => undefined,
+          saveToInbox: async () => ({ results: [] })
+        })
+        name = 'search_library'
+        args = { query: 'fixture' }
+      } else {
+        host.registerLiterature(route, {
+          readDocument: async () => ({ content: 'fixture page', nextCursor: null })
+        })
+        name = 'read_document'
+        args = {}
+      }
+      if (kind === 'skills') host.registerReceiptScope(route, scope, kind)
+      const client = new Client({ name: 'receipt-client', version: '1' })
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(host.urlFor(kind, route)), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } }
+        })
+      )
+      try {
+        expect(client.getServerCapabilities()?.experimental?.[HARNESS_RECEIPTS]).toBeDefined()
+        expect((await client.listTools()).tools.some((tool) => tool.name.includes('receipt'))).toBe(
+          false
+        )
+        const query = { invocationId: 'stable-invocation', name, arguments: args }
+        const request = {
+          name,
+          arguments: args,
+          _meta: { [HARNESS_INVOCATION]: query.invocationId }
+        }
+        const result = await client.callTool(request)
+        expect(result.isError, JSON.stringify(result)).not.toBe(true)
+        await expect(client.callTool(request)).rejects.toThrow()
+        const recovered = await client.request(
+          { method: HARNESS_RECEIPT_METHOD, params: query },
+          receiptResponseSchema
+        )
+        expect(recovered).toEqual({ status: 'completed', result })
+        expect(await new HarnessToolReceipts(join(root, 'receipts')).read(scope, query)).toEqual(
+          recovered
+        )
+        host.registerReceiptScope(route, 'other-session', kind)
+        expect(
+          await client.request(
+            { method: HARNESS_RECEIPT_METHOD, params: query },
+            receiptResponseSchema
+          )
+        ).toEqual({ status: 'unknown' })
+        host.unregister(route)
+        await expect(
+          client.request({ method: HARNESS_RECEIPT_METHOD, params: query }, receiptResponseSchema)
+        ).rejects.toThrow()
+      } finally {
+        await client.close()
+      }
+    }
+  )
+
+  it.each(['revoke', 'replace'] as const)(
+    'rejects a receipt read when its service authority changes during %s',
+    async (operation) => {
+      root = await mkdtemp(join(tmpdir(), 'receipt-revoke-'))
+      host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+      const { token } = await host.ensureStarted()
+      const handler = { readDocument: async () => ({ content: 'old evidence', nextCursor: null }) }
+      const revoke = host.registerLiterature('shared-route', handler)
+      host.registerReceiptScope('shared-route', 'literature-scope', 'literature')
+      host.registerHostMessage('shared-route', {
+        sendMessage: async () => {
+          throw new Error('Unused sibling route')
+        }
+      })
+      const client = new Client({ name: 'revocation-test', version: '1' })
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(host.urlFor('literature', 'shared-route')), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } }
+        })
+      )
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const original = HarnessToolReceipts.prototype.read
+      const spy = vi
+        .spyOn(HarnessToolReceipts.prototype, 'read')
+        .mockImplementation(async function (this: HarnessToolReceipts, scope, query) {
+          await gate
+          return original.call(this, scope, query)
+        })
+      try {
+        const query = { invocationId: 'invocation', name: 'read_document', arguments: {} }
+        await client.callTool({
+          name: query.name,
+          arguments: query.arguments,
+          _meta: { [HARNESS_INVOCATION]: query.invocationId }
+        })
+        const reading = client
+          .request({ method: HARNESS_RECEIPT_METHOD, params: query }, receiptResponseSchema)
+          .catch((error) => error)
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce())
+        if (operation === 'revoke') revoke()
+        else host.registerLiterature('shared-route', handler)
+        release()
+        expect(await reading).toBeInstanceOf(Error)
+      } finally {
+        release()
+        spy.mockRestore()
+        await client.close()
+      }
+    }
+  )
 
   it('serves the artifact MCP tools over http and writes a file for the active run', async () => {
     saveFixture = await createArtifactSaveFixture()
@@ -303,7 +588,15 @@ describe('AgentMcpHttpHost', () => {
           JSON.stringify({
             result:
               body.params?.operation === 'approve'
-                ? { projection: { artifactVersionId: 'version-1', lifecycle: 'approved' } }
+                ? {
+                    changed: true,
+                    projection: {
+                      artifactVersionId: 'version-1',
+                      lifecycle: 'approved',
+                      approval: 'approved',
+                      revision: 1
+                    }
+                  }
                 : { projection: { artifactVersionId: 'version-1', lifecycle: 'completed' } }
           })
         )
@@ -338,9 +631,16 @@ describe('AgentMcpHttpHost', () => {
       body: '{}'
     })
     expect(missingRouteToken.status).toBe(404)
+    const responseTypes: string[] = []
     const client = new Client({ name: 'plan-http-test', version: '1.0.0' })
     await client.connect(
       new StreamableHTTPClientTransport(new URL(planUrl), {
+        fetch: async (url, init) => {
+          const response = await fetch(url, init)
+          if (init?.method === 'POST' && response.status === 200)
+            responseTypes.push(response.headers.get('content-type') ?? '')
+          return response
+        },
         requestInit: { headers: { authorization: `Bearer ${token}` } }
       })
     )
@@ -354,6 +654,8 @@ describe('AgentMcpHttpHost', () => {
       name: 'update_step_status',
       arguments: { title: 'Analyze the data', status: 'completed' }
     })
+    expect(responseTypes.length).toBeGreaterThanOrEqual(3)
+    expect(responseTypes.every((type) => type.includes('text/event-stream'))).toBe(true)
     expect(rpcBodies).toEqual([
       {
         method: 'planCall',
@@ -396,7 +698,15 @@ describe('AgentMcpHttpHost', () => {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
         JSON.stringify({
-          result: { projection: { artifactVersionId: 'version-1', lifecycle: 'approved' } }
+          result: {
+            changed: true,
+            projection: {
+              artifactVersionId: 'version-1',
+              lifecycle: 'approved',
+              approval: 'approved',
+              revision: 1
+            }
+          }
         })
       )
     })

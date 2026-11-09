@@ -1,3 +1,4 @@
+import type { PackageResearchFilms } from './research-films-contract'
 import { PackageHistory } from './history-schema'
 import { PackageLiterature } from './literature-contract'
 import type { PackagePdfNotes } from './pdf-notes-contract'
@@ -37,6 +38,7 @@ export type NativeRow = Record<string, string | number | boolean | null>
 export type PackageRecords = {
   schemaVersion: 1
   tables: Record<NativeTable, NativeRow[]>
+  researchFilms?: PackageResearchFilms
   pdfNotes?: PackagePdfNotes
   literature?: PackageLiterature
   history?: PackageHistory

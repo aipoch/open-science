@@ -40,19 +40,19 @@ Layer details: [current architecture](PRD.md#8-current-architecture-what-is-actu
 
 ## Capability Map
 
-| Area                   | Capabilities                                                                                                                                          | Boundary                                                                               |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Projects and sessions  | Projects, conversation branches, writable forks, side chats, queued messages, review-gated plans, bookmarks, notifications, global search             | Side chats stay out of research packages and forks                                     |
-| Agents and models      | Five agent frameworks, built-in and custom providers, subscription sign-in, scenario-specific model policies, project memory, compaction, token usage | Protocol support follows the selected framework; no backend-independent gateway        |
-| Specialists and skills | Specialists, subagent delegation, file-based skills, signed marketplace, packages and GitHub imports                                                  | No user-facing version pinning                                                         |
-| Scientific connectors  | Built-in life-science resources, custom MCP servers, shared credentials, per-agent access and tool permissions                                        | Coverage depends on each upstream service                                              |
-| Literature             | Library, collections, duplicate merge, full-text lookup, smart screening, PDF extraction, persistent annotations, citations                           | Full text depends on the source; screening is triage, not a systematic-review protocol |
-| Files and previews     | Streaming uploads, versioned text editing, previews for tables, sequences, PDFs, Office, images, code, HTML, molecules                                | The 10 GiB upload limit is separate from parsing, preview and model-context limits     |
-| Compute                | Persistent Python/R kernels, shell, managed environments, background jobs, SSH and Slurm, `.ipynb` export                                             | Hosts need user-provisioned software and permissions; no managed cloud GPU             |
-| Provenance and replay  | Immutable artifact versions, lineage, optional reviewer, artifact replay checks, environment bundles                                                  | Missing evidence is reported, not reconstructed; no whole-session replay               |
-| Research exchange      | `.science` packages, read-only import, writable fork, Markdown/PDF export, RO-Crate export                                                            | Imports run no code and restore no credentials                                         |
-| Permissions and data   | Scoped grants, approved folders, network controls, central credentials, storage relocation, diagnostic export                                         | Protection varies by execution path and platform                                       |
-| Access and delivery    | macOS, Windows and Linux installers, auto-update, localhost Web, headless CLI/Task SDK, paired mobile, interface translations                         | Web and CLI do not imply desktop parity or a hosted multi-tenant service               |
+| Area                   | Capabilities                                                                                                                                                                  | Boundary                                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Projects and sessions  | Projects, conversation branches, writable forks, side chats, queued messages, review-gated plans, bookmarks, notifications, global search                                     | Side chats stay out of research packages and forks                                                                       |
+| Agents and models      | Five agent frameworks, built-in agent runtime, built-in and custom providers, subscription sign-in, scenario-specific model policies, project memory, compaction, token usage | Protocol support follows the selected framework; no backend-independent gateway                                          |
+| Specialists and skills | Specialists, subagent delegation, file-based skills, signed marketplace, packages and GitHub imports                                                                          | No user-facing version pinning                                                                                           |
+| Scientific connectors  | Built-in life-science resources, custom MCP servers, shared credentials, per-agent access and tool permissions                                                                | Coverage depends on each upstream service                                                                                |
+| Literature             | Library, collections, duplicate merge, full-text lookup, smart screening, PDF extraction, persistent annotations, citations                                                   | Full text depends on the source; screening is triage, not a systematic-review protocol                                   |
+| Files and previews     | Streaming uploads, versioned text editing, previews for tables, sequences, PDFs, Office, images, code, HTML, molecules                                                        | The 10 GiB upload limit is separate from parsing, preview and model-context limits                                       |
+| Compute                | Persistent Python/R kernels, shell, managed environments, background jobs, SSH and Slurm, Kubernetes, Hugging Face Jobs, Modal and Ray job submission, `.ipynb` export        | Remote targets need user-provisioned accounts, software, and permissions; jobs run under the approved target's authority |
+| Provenance and replay  | Immutable artifact versions, lineage, optional reviewer, artifact replay checks, environment bundles                                                                          | Missing evidence is reported, not reconstructed; no whole-session replay                                                 |
+| Research exchange      | `.science` packages, read-only import, writable fork, Markdown/PDF export, RO-Crate export                                                                                    | Imports run no code and restore no credentials                                                                           |
+| Permissions and data   | Scoped grants, approved folders, network controls, central credentials, storage relocation, diagnostic export                                                                 | Protection varies by execution path and platform                                                                         |
+| Access and delivery    | macOS, Windows and Linux installers, auto-update, localhost Web, headless CLI/Task SDK, paired mobile, interface translations                                                 | Web and CLI do not imply desktop parity or a hosted multi-tenant service                                                 |
 
 Per-release detail lives in the [release notes](#releases). Surface and platform differences are in [usage scope](usage-scope.md) and [known limitations](known-limitations.md).
 
@@ -82,11 +82,11 @@ Phases are ordered by dependency, not by date. A later phase may start before an
 
 ### Phase 3: Infrastructure and ecosystem
 
-| Item                     | Outcome                                                                                    |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| Cloud compute            | Managed GPU and cloud job submission with a cost and approval model                        |
-| Open research commons    | Shared workflows, datasets, protocols and agents with provenance, fork lineage, governance |
-| Institutional deployment | Policy administration and audit for labs, keeping local-first use                          |
+| Item                     | Outcome                                                                                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloud compute            | Managed GPU and cloud job submission with a cost and approval model — job submission on user-connected Kubernetes, Hugging Face Jobs, Modal and Ray targets ships with per-job approval |
+| Open research commons    | Shared workflows, datasets, protocols and agents with provenance, fork lineage, governance                                                                                              |
+| Institutional deployment | Policy administration and audit for labs, keeping local-first use                                                                                                                       |
 
 ## Vision
 

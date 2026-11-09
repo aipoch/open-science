@@ -1,6 +1,12 @@
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
+import { ResourceRecorder, installResourceRecorder } from '../resource-diagnostics/recorder'
+import { ResourceLogStore } from '../resource-diagnostics/store'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
+import {
+  RuntimeSessionOwner,
+  TERMINAL_ADMISSION_WAIT_BUDGET_MS,
+  TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+} from '../session-persistence/runtime-session-owner'
 import { SessionSpecialistReconfiguration } from '../specialist/session-reconfiguration'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
@@ -31,11 +37,11 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
-import { AcpRuntime } from './runtime.test-utils'
+import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
@@ -1244,6 +1250,8 @@ afterEach(async () => {
     temporaryRoot = undefined
   }
 })
+
+beforeEach(shortenIdleReleaseWindow)
 
 describe('completed coordinator process release', () => {
   it.each(['disconnect', 'quit', 'update'] as const)(
@@ -2669,6 +2677,7 @@ describe('host-owned Shell destination approval contract', () => {
               executionId: 'run-fixture',
               commandFingerprint: 'a'.repeat(64),
               hostname: 'service.example.test',
+              protocol: 'http',
               port: 443,
               runtime: 'bash'
             }
@@ -6878,13 +6887,20 @@ describe('ACP runtime session management', () => {
       const resumedProcess = new FakeAgentProcess()
       const oldPromptGate = createDeferred()
       const resumedPromptGate = createDeferred()
+      const resumedPromptStarted = createDeferred()
+      // Durable resume performs real disk I/O between provider reattachment and continuation.
+      // Keep the production idle window for that handoff instead of the suite's 10 ms shortcut.
+      vi.mocked(globalThis.setTimeout).mockRestore()
       const oldAgent = startFakeAgent(oldProcess, ['durable-disconnect-session'], {
         supportsResume: true,
         onPrompt: () => oldPromptGate.promise
       })
       const resumedAgent = startFakeAgent(resumedProcess, [], {
         supportsResume: true,
-        onPrompt: () => resumedPromptGate.promise
+        onPrompt: () => {
+          resumedPromptStarted.resolve()
+          return resumedPromptGate.promise
+        }
       })
       let runtime!: AcpRuntime
       const repository = new SessionRepository(root, {
@@ -7026,8 +7042,9 @@ describe('ACP runtime session management', () => {
           },
           { projectId: 'project-1', sessionId: session.sessionId, promptMessageId }
         )
-        void continuation.catch(() => undefined)
-        await vi.waitFor(() => expect(resumedAgent.prompts).toHaveLength(1))
+        void continuation.catch(resumedPromptStarted.reject)
+        await resumedPromptStarted.promise
+        expect(resumedAgent.prompts).toHaveLength(1)
         const resumed = await sessions.loadSessionForContinuation('project-1', session.sessionId)
         const resumedExecutionId = resumed!.runtimeSessionAdmissions!.at(-1)!.executionId
         expect(resumedExecutionId).not.toBe(oldExecutionId)
@@ -7257,6 +7274,98 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'session-a', cwd: '/workspace' })
 
     expect(runtime.getSnapshot().sessionIds).toEqual(['session-b', 'session-a'])
+  })
+
+  it('correlates process, session, branch and prompt events through real runtime owners', async () => {
+    const root = await createTemporaryRoot()
+    const directory = join(root, 'resources')
+    const store = new ResourceLogStore({ directory })
+    const recorder = new ResourceRecorder({
+      runId: 'correlation-test',
+      store,
+      timers: false,
+      native: {
+        readWindowsResourceBirth: () => '134382258633725281',
+        sampleWindowsResources: async () => ({
+          supported: true,
+          complete: true,
+          startedAt: 1,
+          endedAt: 2,
+          processes: []
+        })
+      }
+    })
+    installResourceRecorder(recorder)
+    const process = new FakeAgentProcess()
+    process.pid = 4242
+    startFakeAgent(process, ['session-resource'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'PRIVATE PROMPT',
+        provenanceContext: {
+          promptMessageId: 'message-resource',
+          agentFrameId: 'frame-resource',
+          messageBranchId: 'branch-resource'
+        }
+      })
+      expect(runtime.resourceDiagnosticSnapshot()).toMatchObject({
+        activePrompts: false,
+        sessions: [expect.objectContaining({ sessionId: 'session-resource' })]
+      })
+      await runtime.disconnect()
+      await recorder.close(true)
+      const names = await readdir(directory)
+      expect(names.some((name) => name.startsWith('incident-'))).toBe(false)
+      const text = (
+        await Promise.all(
+          names
+            .filter((name) => name.endsWith('.jsonl'))
+            .map((name) => readFile(join(directory, name), 'utf8'))
+        )
+      ).join('')
+      const records = text
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      const born = records.find((record) => record.event === 'process-born').data
+      expect(born).toMatchObject({
+        pid: 4242,
+        birth: '134382258633725281',
+        framework: 'claude-code',
+        role: 'acp'
+      })
+      expect(records.find((record) => record.event === 'session-attached').data).toMatchObject({
+        runtimeId: born.runtimeId,
+        epoch: born.epoch,
+        sessionId: 'session-resource'
+      })
+      expect(records.find((record) => record.event === 'prompt-started').data).toMatchObject({
+        runtimeId: born.runtimeId,
+        frameId: 'frame-resource',
+        activeBranchId: 'branch-resource'
+      })
+      expect(records.find((record) => record.event === 'process-exited').data.expected).toBe(true)
+      expect(records.some((record) => record.event === 'prompt-ended')).toBe(true)
+      expect(records.some((record) => record.event === 'session-detached')).toBe(true)
+      const detached = records.find((record) => record.event === 'session-detached').data
+      expect(detached.generation).toBe(
+        records.find((record) => record.event === 'session-attached').data.generation
+      )
+      expect(detached.epoch).toBeUndefined()
+      expect(text).not.toContain('PRIVATE PROMPT')
+      expect(text).not.toContain('/workspace')
+    } finally {
+      installResourceRecorder(undefined)
+      await runtime.disconnect()
+      await recorder.close(false)
+    }
   })
 
   it('moves a context-reset session to its new attachment order', async () => {
@@ -7952,7 +8061,7 @@ describe('ACP runtime session management', () => {
       [
         {
           type: 'text',
-          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.\n\nsummarize without context'
+          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules. Pure in-memory computation needs no directory query.\n\nsummarize without context'
         }
       ]
     ])
@@ -9430,6 +9539,204 @@ describe('ACP runtime session management', () => {
     }
   )
 
+  it.each(['release', 'cancel', 'disconnect', 'storage-failure', 'timeout'] as const)(
+    'waits for the previous terminal write before continuing a saved answer (%s)',
+    async (outcome) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+        _scope,
+        mutate
+      ) => {
+        persisted = mutate(structuredClone(persisted))
+        return structuredClone(persisted)
+      }
+      const writeEntered = createDeferred()
+      const writeRelease = createDeferred()
+      let delayTerminal = false
+      let storageFailed = false
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(persisted),
+        mutateSession: async (scope, mutate) => {
+          if (delayTerminal) {
+            writeEntered.resolve()
+            await writeRelease.promise
+          }
+          if (storageFailed) throw new Error('Terminal storage unavailable')
+          return mutateRuntimeSession(scope, mutate)
+        },
+        finalizeArtifacts: async () => [],
+        scheduleFlush: () => () => undefined
+      })
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        framework: opencodeFramework,
+        spawnAgent: () => asAgentProcess(process),
+        runtimeSessions,
+        callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(async () => ({ version: 1 as const, revision: 0 })),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            sessionProjectId: async () => 'project-1',
+            loadSessionForContinuation: async () => structuredClone(persisted),
+            mutateRuntimeSession
+          }
+        }
+      })
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      const provenance = getActiveConversationContext(
+        persisted.conversationGraph!,
+        'prompt-restored-1'
+      )!
+      await runtimeSessions.begin({
+        ...provenance,
+        projectId: persisted.projectId,
+        sessionId: persisted.id,
+        executionId: 'previous-execution'
+      })
+      persisted = addPendingRestoredChoice(persisted)
+      persisted.runtimeTranscriptLastRun = persisted.activeRun
+      vi.useFakeTimers()
+      delayTerminal = true
+      const terminal = runtimeSessions.commitTerminal(
+        {
+          ...provenance,
+          id: 'previous-terminal',
+          sessionId: persisted.id,
+          promptExecutionId: 'previous-execution',
+          kind: 'stop',
+          level: 'info',
+          text: 'end_turn',
+          timestamp: Date.now()
+        },
+        () => undefined
+      )
+      await writeEntered.promise
+      try {
+        await vi.advanceTimersByTimeAsync(500)
+        await terminal
+        runtimeSessions.retryTerminalCommits(persisted.id)
+        const projection = persisted.activities![0].elicitation!
+        const request = {
+          sessionId: persisted.id,
+          toolCallId: persisted.activities![0].id,
+          requestId: projection.durable!.requestId,
+          message: projection.message,
+          fields: projection.fields,
+          durable: projection.durable
+        }
+        await runtime.respondToElicitation({
+          requestId: projection.durable!.requestId,
+          action: 'accept',
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+          request
+        })
+        await vi.advanceTimersByTimeAsync(12_000)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities![0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+          continuationPending: true
+        })
+        expect(persisted.activities![0].elicitation?.continuationRecovery).toBeUndefined()
+        expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(persisted.id)
+        expect(runtime.getSnapshot().events).not.toContainEqual(
+          expect.objectContaining({ title: 'Could not continue the Agent task' })
+        )
+        const endWait = runtime
+          .respondToElicitation({ requestId: request.requestId, action: 'cancel', request })
+          .then(
+            () => ({ status: 'ended' }),
+            (error: unknown) => ({ status: 'rejected', error })
+          )
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await Promise.race([endWait, Promise.resolve('pending')])).toMatchObject({
+          status: 'rejected',
+          error: { message: 'Wait for the current Agent run to finish before ending this wait.' }
+        })
+        if (outcome === 'cancel') {
+          await runtime.cancelPrompt({ sessionId: persisted.id })
+          await vi.advanceTimersByTimeAsync(TERMINAL_ADMISSION_WAIT_BUDGET_MS)
+          expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+        }
+        if (outcome === 'disconnect') await runtime.disconnect()
+        if (outcome === 'timeout') {
+          await vi.advanceTimersByTimeAsync(
+            TERMINAL_CONTINUATION_WAIT_BUDGET_MS - 12_000 + TERMINAL_ADMISSION_WAIT_BUDGET_MS
+          )
+          expect(runtime.getSnapshot().events).toContainEqual(
+            expect.objectContaining({
+              title: 'Could not continue the Agent task',
+              text: 'Main runtime completion has not committed yet.'
+            })
+          )
+          expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+          expect(warnLogSpy).toHaveBeenCalledWith(
+            'Runtime terminal write wait timed out',
+            expect.objectContaining({
+              sessionId: persisted.id,
+              elapsedMs: TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+            })
+          )
+          expect(warnLogSpy).toHaveBeenCalledWith(
+            'App continuation recovery failed',
+            expect.objectContaining({ sessionId: persisted.id, phase: 'preflight' })
+          )
+          expect(persisted.activities![0].elicitation?.answers).toEqual([
+            { fieldId: 'question_0', value: 'Expanded' }
+          ])
+        }
+        storageFailed = outcome === 'storage-failure'
+        delayTerminal = false
+        writeRelease.resolve()
+        await runtimeSessions.flush(persisted.id, 'prompt-restored-1').catch(() => undefined)
+        await vi.advanceTimersByTimeAsync(0)
+        if (outcome === 'release') {
+          expect(runtime.getSnapshot().events.filter((event) => event.kind === 'error')).toEqual([])
+          await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+          await vi.waitFor(() =>
+            expect(persisted.activities![0].elicitation?.continuationPending).toBeUndefined()
+          )
+          expect(fakeAgent.prompts[0].text).toContain('Expanded')
+          expect(persisted.runtimeSessionAdmissions).toHaveLength(2)
+        } else {
+          await vi.waitFor(() =>
+            expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+          )
+          expect(fakeAgent.prompts).toHaveLength(0)
+          expect(persisted.runtimeSessionAdmissions).toHaveLength(1)
+          if (outcome === 'storage-failure') {
+            expect(runtime.getSnapshot().events).toContainEqual(
+              expect.objectContaining({
+                title: 'Could not continue the Agent task',
+                text: 'Terminal storage unavailable'
+              })
+            )
+          }
+        }
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(fakeAgent.prompts).toHaveLength(outcome === 'release' ? 1 : 0)
+      } finally {
+        storageFailed = false
+        delayTerminal = false
+        writeRelease.resolve()
+        await runtimeSessions.flush(persisted.id, 'prompt-restored-1')
+        vi.useRealTimers()
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it.each(
     RESTORED_CONTINUATION_FRAMEWORKS.flatMap((route) =>
       [
@@ -9440,6 +9747,9 @@ describe('ACP runtime session management', () => {
         'unknown',
         'post-dispatch',
         'prepared',
+        'prepared-attachment-failed-write',
+        'prepared-continuation-failed-write',
+        'prepared-read-retry',
         'prepared-restart',
         'prepared-end',
         'prepared-rotation'
@@ -9475,14 +9785,25 @@ describe('ACP runtime session management', () => {
         )
       )
       persisted.runtimeTranscriptOwner = 'main'
+      let responseMutations = 0
+      let continuationReads = 0
       const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
         _scope,
         mutate
       ) => {
+        responseMutations += 1
+        if (
+          (scenario === 'prepared-attachment-failed-write' ||
+            scenario === 'prepared-continuation-failed-write') &&
+          responseMutations === 2
+        ) {
+          throw new Error('Recovery persistence failed')
+        }
         persisted = mutate(structuredClone(persisted))
         return structuredClone(persisted)
       }
       let failRead = scenario !== 'post-dispatch' && !scenario.startsWith('prepared')
+      const continuationPublications: PersistedChatSession[] = []
       const admission = Promise.withResolvers<void>()
       let admissionEntered = false
       const runtimeSessions = new RuntimeSessionOwner({
@@ -9534,12 +9855,21 @@ describe('ACP runtime session management', () => {
             }
           },
           permissionWait: {
+            onContinuationSessionUpdated: (session) => {
+              continuationPublications.push(structuredClone(session))
+            },
             sessions: {
               readSessionRuntimeContext: vi.fn(),
               patchSessionRuntimeContext: vi.fn(),
               containsMessageOnActiveBranch: vi.fn(),
               sessionProjectId: async () => 'project-1',
-              loadSessionForContinuation: async () => structuredClone(persisted),
+              loadSessionForContinuation: async () => {
+                continuationReads += 1
+                if (scenario === 'prepared-read-retry' && continuationReads === 2) {
+                  throw new Error('Temporary authority read failure')
+                }
+                return structuredClone(persisted)
+              },
               mutateRuntimeSession
             }
           }
@@ -9590,13 +9920,45 @@ describe('ACP runtime session management', () => {
       if (scenario.startsWith('prepared')) {
         await coordinator.respondToElicitation({ ...response, prepareContinuation: true })
         expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        // Saving a cold decision is preparation, not a failed continuation.
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(runtime.getSnapshot().events.filter(({ kind }) => kind === 'error')).toEqual([])
+        expect(persisted.activities?.[0].elicitation).toMatchObject({
+          state: 'answered',
+          continuationPending: true
+        })
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        expect(continuationPublications).toEqual([persisted])
+      }
+      if (scenario === 'prepared-attachment-failed-write') {
+        await expect(
+          coordinator.respondToElicitation({
+            ...response,
+            continuationFailure: 'The bound specialist is unavailable.'
+          })
+        ).rejects.toThrow('Recovery persistence failed')
+        expect(continuationPublications.at(-1)?.activities?.[0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: response.answers,
+          continuationRecovery: { error: 'The bound specialist is unavailable.' }
+        })
         expect(
-          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+          continuationPublications.at(-1)?.activities?.[0].elicitation?.continuationRecovery
+            ?.retryable
         ).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        await coordinator.respondToElicitation({ ...response, action: 'cancel' })
+        expect(persisted.status).toBe('idle')
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return
       }
       if (scenario === 'prepared-rotation') await coordinator.requestSkillsReload()
       if (scenario === 'prepared-restart') {
         persisted = normalizeSessionFile(JSON.parse(JSON.stringify(persisted)))!
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toEqual({
+          error: 'The task could not continue. Your response is saved.'
+        })
         coordinator = new AcpRuntimeCoordinator(createRuntime)
       }
       if (scenario === 'prepared-end')
@@ -9612,12 +9974,42 @@ describe('ACP runtime session management', () => {
         expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
         return
       }
+      if (scenario === 'prepared-continuation-failed-write') {
+        await expect(coordinator.respondToElicitation(response)).rejects.toThrow(
+          'Recovery persistence failed'
+        )
+        expect(continuationPublications.at(-1)?.activities?.[0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: response.answers,
+          continuationRecovery: { error: 'Recovery persistence failed' }
+        })
+        expect(
+          continuationPublications.at(-1)?.activities?.[0].elicitation?.continuationRecovery
+            ?.retryable
+        ).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        await coordinator.respondToElicitation({ ...response, action: 'cancel' })
+        expect(persisted.status).toBe('idle')
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return
+      }
       await coordinator.respondToElicitation(response)
-      if (scenario === 'prepared' || scenario === 'prepared-rotation') {
+      if (
+        scenario === 'prepared' ||
+        scenario === 'prepared-rotation' ||
+        scenario === 'prepared-read-retry'
+      ) {
         await vi.waitFor(() => expect(process.killed).toBe(true))
         if (scenario === 'prepared-rotation') expect(generations).toBe(2)
         await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
         expect(fakeAgent.prompts[0].text).toContain('Expanded')
+        if (scenario === 'prepared-read-retry') expect(continuationReads).toBeGreaterThanOrEqual(3)
+        await vi.waitFor(() => {
+          expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+          expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        })
+        expect(runtime.getSnapshot().events.filter(({ kind }) => kind === 'error')).toEqual([])
         if (mixedSkip) {
           expect(fakeAgent.prompts[0].text).toContain(
             'Approach\nStatus: answered\nAnswer: Expanded'
@@ -32409,3 +32801,196 @@ it('protects disposable OpenCode homes at the ACP read boundary while allowing w
 })
 
 configureTestRuntimeMetadata()
+
+describe('Session deletion with an unanswered native selector', () => {
+  it.each([
+    { sibling: false, coordinated: false },
+    { sibling: true, coordinated: false },
+    { sibling: false, coordinated: true },
+    { sibling: true, coordinated: true }
+  ])(
+    'deletes through pending reconnect: sibling=$sibling coordinated=$coordinated',
+    async ({ sibling, coordinated }) => {
+      const process = new FakeAgentProcess()
+      let closeStarted = false
+      const releaseClose = createDeferred()
+      const fakeAgent = startFakeAgent(process, ['selector-asked', 'selector-idle'], {
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'selector-delete',
+          message: 'Choose a dataset',
+          requestedSchema: {
+            type: 'object',
+            properties: { question_0: { type: 'string', enum: ['Alpha', 'Beta'] } },
+            required: ['question_0']
+          }
+        }),
+        onClose: async () => {
+          closeStarted = true
+          await releaseClose.promise
+        }
+      })
+      const runtime = coordinated
+        ? new AcpRuntimeCoordinator(
+            (callbacks) =>
+              new AcpRuntime({
+                appVersion: '0.1.0',
+                defaultCwd: '/workspace',
+                callbacks,
+                spawnAgent: () => asAgentProcess(process)
+              })
+          )
+        : new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            spawnAgent: () => asAgentProcess(process)
+          })
+      let prompt: Promise<unknown> | undefined
+      let deleting: Promise<unknown> | undefined
+      try {
+        const asked = await runtime.createSession({ cwd: '/workspace' })
+        const idle = await runtime.createSession({ cwd: '/workspace' })
+        prompt = runtime
+          .sendPrompt({ sessionId: asked.sessionId, text: 'Ask first' })
+          .catch(() => undefined)
+        await vi.waitFor(() => expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1))
+        await runtime.requestProviderReconnect()
+
+        const target = sibling ? idle : asked
+        deleting = runtime.deleteSession({ sessionId: target.sessionId })
+        await vi.waitFor(() => expect(closeStarted).toBe(true))
+        // Cancelling the target question must not let reconnect reap the provider during close.
+        expect(process.killed).toBe(false)
+        if (sibling) {
+          expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1)
+          expect(fakeAgent.elicitationResponses).toEqual([])
+          expect(fakeAgent.cancelledSessions).toEqual([])
+        }
+        releaseClose.resolve()
+        await deleting
+        expect(fakeAgent.closedSessions).toEqual([target.sessionId])
+        expect(infoLogSpy).toHaveBeenCalledWith(
+          'session deletion phase',
+          expect.objectContaining({
+            sessionId: target.sessionId,
+            phase: 'completed',
+            operationId: expect.any(String)
+          })
+        )
+        expect(runtime.getSnapshot().sessionIds).not.toContain(target.sessionId)
+
+        if (sibling) {
+          expect(process.killed).toBe(false)
+          const question = runtime.getSnapshot().pendingElicitations?.[0]
+          expect(question).toBeDefined()
+          runtime.respondToElicitation({
+            requestId: question!.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'Alpha' }]
+          })
+          await prompt
+          expect(fakeAgent.elicitationResponses).toEqual([
+            { action: 'accept', content: { question_0: 'Alpha' } }
+          ])
+        } else {
+          await prompt
+          expect(fakeAgent.elicitationResponses).toEqual([{ action: 'cancel' }])
+        }
+        await vi.waitFor(() => expect(process.killed).toBe(true))
+      } finally {
+        releaseClose.resolve()
+        await (
+          runtime instanceof AcpRuntimeCoordinator
+            ? runtime.shutdownForQuit()
+            : runtime.disconnect()
+        ).catch(() => undefined)
+        await prompt?.catch(() => undefined)
+        await deleting?.catch(() => undefined)
+      }
+    }
+  )
+})
+
+it('connects the optional built-in harness through the host runtime and releases its generation', async () => {
+  const { createServer } = await import('node:http')
+  const { createHarnessAcpAgent } = await import('../harness-acp/agent')
+  const { harnessFramework } = await import('../agent-framework/harness')
+  const root = await mkdtemp(join(tmpdir(), 'harness-host-runtime-'))
+  const requests: { messages: { role: string; content: unknown }[] }[] = []
+  const http = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end(
+      'data: ' +
+        JSON.stringify({
+          choices: [{ index: 0, delta: { content: 'done' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 10 }
+        }) +
+        '\n\ndata: [DONE]\n\n'
+    )
+  })
+  const process = new FakeAgentProcess()
+  const owner = createHarnessAcpAgent(join(root, 'sessions'))
+  owner.app.connect(
+    acp.ndJsonStream(
+      Writable.toWeb(process.stdout),
+      Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+    )
+  )
+  const release = vi.fn(async () => undefined)
+  let runtime: AcpRuntime | undefined
+  try {
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve))
+    const address = http.address() as import('node:net').AddressInfo
+    const config = harnessFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        model: 'fixture-model',
+        agentProviderId: 'host-fixture',
+        contextWindow: 32768
+      },
+      {
+        storageRoot: root,
+        executablePath: join(root, 'main.cjs'),
+        responsesConnection: { baseUrl: `http://127.0.0.1:${address.port}`, token: 'local-fixture' }
+      }
+    )
+    runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: root,
+      resolveBackend: () => ({
+        framework: { ...harnessFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'open-science-agent:fixture',
+        modelRoute: 'open-science-agent',
+        providerId: 'fixture',
+        executablePath: join(root, 'main.cjs'),
+        env: {},
+        ...config,
+        systemPromptAppends: ['Stable host context'],
+        providerTransportLease: { setTarget: () => false, release }
+      })
+    })
+    const session = await runtime.createSession({ cwd: root })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'first fact' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+    expect(requests).toHaveLength(2)
+    expect(requests[1].messages.filter((m) => m.role === 'user')).toHaveLength(2)
+    expect(requests[0].messages[0]).toEqual(requests[1].messages[0])
+    expect(JSON.stringify(requests[0].messages)).toContain('Stable host context')
+    await runtime.requestProviderReconnect()
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    expect(process.killed).toBe(true)
+  } finally {
+    await runtime?.shutdownForQuit()
+    await owner.dispose()
+    process.stdin.destroy()
+    process.stdout.destroy()
+    process.stderr.destroy()
+    http.closeAllConnections()
+    await new Promise<void>((resolve) => http.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
+})

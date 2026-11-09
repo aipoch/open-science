@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { LOCAL_SERVICE_STOP_BUDGET_MS } from './local-service-lifetime'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ const recoveryMocks = vi.hoisted(() => ({ connect: vi.fn() }))
 vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: recoveryMocks.connect }))
 const directories: string[] = []
 afterEach(async () => {
+  vi.useRealTimers()
   recoveryMocks.connect.mockReset()
   vi.unstubAllGlobals()
   for (const directory of directories.splice(0))
@@ -65,30 +67,46 @@ async function fixture() {
   return { root, owner, fetcher }
 }
 describe('desktop backend discovery', () => {
-  it('silently retires a verified old desktop service while borrowed CLI work is active', async () => {
-    const { root } = await fixture()
-    const release = vi.fn()
-    const stopRuntime = vi.fn(async () => ({ release }))
-    const lifecycle = vi.fn(async () => ({
-      sessions: [{ id: 'borrowed-cli-work' }],
-      fingerprint: 'work',
-      migrationActive: false,
-      packageTransferActive: false
-    }))
-    recoveryMocks.connect.mockResolvedValue({
-      runtimeInfo: () => ({
-        startupOptions: { configRoot: root },
-        entryPath: '/fixture/backend.cjs',
-        launch: 'desktop',
-        control: 'granted'
-      }),
-      lifecycle,
-      refreshControl: vi.fn(),
-      stopRuntime,
-      close: vi.fn()
-    })
-    await expect(
-      discoverDesktopBackend(
+  it.each([false, true])(
+    'retires an old desktop service and preserves modern authentication grace: %s',
+    async (modern) => {
+      const { root, owner, fetcher } = await fixture()
+      if (modern) {
+        fetcher.mockImplementation(async () =>
+          Response.json({
+            ...proof(root, owner),
+            launch: 'desktop',
+            lifetime: { explicit: false, apps: 0 }
+          })
+        )
+        vi.useFakeTimers()
+      }
+      const release = vi.fn()
+      const stopRuntime = vi.fn(async () => ({ release }))
+      const lifecycle = vi.fn(async (request: { operation: string }) => {
+        if (modern && request.operation === 'prepare')
+          await new Promise((resolve) => setTimeout(resolve, 14_000))
+        return {
+          sessions: [{ id: 'borrowed-cli-work' }],
+          fingerprint: 'work',
+          migrationActive: false,
+          packageTransferActive: false
+        }
+      })
+      recoveryMocks.connect.mockResolvedValue({
+        runtimeInfo: () => ({
+          startupOptions: { configRoot: root },
+          entryPath: '/fixture/backend.cjs',
+          launch: 'desktop',
+          control: 'granted',
+          ...(modern ? { lifetime: { explicit: false, apps: 1 } } : {})
+        }),
+        lifecycle,
+        refreshControl: vi.fn(),
+        stopRuntime,
+        close: vi.fn()
+      })
+      const discovering = discoverDesktopBackend(
         root,
         'new',
         {
@@ -100,17 +118,33 @@ describe('desktop backend discovery', () => {
         },
         '/fixture/backend.cjs'
       )
-    ).resolves.toBeUndefined()
-    expect(stopRuntime).toHaveBeenCalledWith('restart', { requireCleanExit: false })
-    expect(lifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: 'prepare',
-        fingerprint: 'work',
-        deadlineAt: expect.any(Number)
+      if (modern) {
+        await vi.waitFor(() =>
+          expect(lifecycle).toHaveBeenCalledWith(expect.objectContaining({ operation: 'prepare' }))
+        )
+        await vi.advanceTimersByTimeAsync(14_000)
+      }
+      await expect(discovering).resolves.toBeUndefined()
+      expect(stopRuntime).toHaveBeenCalledWith('restart', {
+        requireCleanExit: false,
+        ...(modern ? { deadlineAt: expect.any(Number) } : {})
       })
-    )
-    expect(release).toHaveBeenCalledOnce()
-  })
+      if (modern) {
+        const deadline = (
+          stopRuntime.mock.calls[0] as unknown as [string, { deadlineAt: number }]
+        )[1].deadlineAt
+        expect(deadline - Date.now()).toBeGreaterThan(LOCAL_SERVICE_STOP_BUDGET_MS - 15_000)
+      }
+      expect(lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: 'prepare',
+          fingerprint: 'work',
+          deadlineAt: expect.any(Number)
+        })
+      )
+      expect(release).toHaveBeenCalledOnce()
+    }
+  )
 
   it.each(['cli', 'held', 'unknown'])(
     'requires consent for old service with %s origin or control',

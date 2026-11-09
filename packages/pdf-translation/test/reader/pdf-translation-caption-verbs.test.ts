@@ -21,6 +21,10 @@ it.each([
   ['Figure 1 on the upper left comparisons of assays', true],
   ['Fig. 1. On the upper left, compare the controls.', true],
   ['Figure 1 Results on the left', true],
+  ['Extended Data Fig. 1 shows the assay.', false],
+  ['Extended Data Figure 2 on the upper left compares the traces.', false],
+  ['Extended Data Fig. 1. Tests of the method.', true],
+  ['Extended Data Figure 1: Results on the left.', true],
   ['Table 1 tests the method.', true]
 ])('keeps finite figure references in body prose: %s', (text, caption) => {
   expect(isPdfTranslationCaption(text)).toBe(caption)

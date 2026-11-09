@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError
+} from './desktop-runtime-recovery'
 
 import {
   ApplicationCommandError,
@@ -7,6 +11,18 @@ import {
 } from './application-command-contract'
 
 describe('application command contract', () => {
+  it.each([new DesktopRuntimeDisconnectedError(), new DesktopRuntimeWriteNotSubmittedError()])(
+    'preserves the reviewed connection failure category $code',
+    (error) => {
+      const envelope = toApplicationCommandErrorEnvelope(error)
+      expect(envelope).toEqual({ code: error.code, message: error.message })
+      expect(() => unwrapApplicationCommandOutcome({ ok: false, error: envelope })).toThrow(
+        expect.objectContaining({ code: error.code })
+      )
+      expect(envelope).not.toHaveProperty('cause')
+    }
+  )
+
   it('preserves only public application command error codes', () => {
     expect(
       toApplicationCommandErrorEnvelope(

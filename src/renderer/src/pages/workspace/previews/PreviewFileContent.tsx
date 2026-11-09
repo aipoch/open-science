@@ -33,7 +33,7 @@ export const PreviewFileContent = ({
   const content = renderPreviewFile({
     item,
     presentation,
-    readOnly,
+    readOnly: item.source === 'compute-output' || readOnly,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,

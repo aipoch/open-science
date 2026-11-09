@@ -175,7 +175,7 @@ describe('fixture service connection evidence', () => {
     expect(Socket.prototype.connect).toBe(original)
   })
 
-  it('disconnects only the unique ws-owned Desktop service pipe', () => {
+  it('defers disconnecting the unique ws-owned Desktop pipe beyond inspector evaluation', async () => {
     const unrelated = {
       readable: true,
       writable: true,
@@ -191,9 +191,11 @@ describe('fixture service connection evidence', () => {
     })
     const target = process as NodeJS.Process & { _getActiveHandles(): unknown[] }
     const handles = vi.spyOn(target, '_getActiveHandles').mockReturnValue([unrelated, socket])
-    let result: ReturnType<typeof disconnectFixtureServiceConnection>
+    let result: Awaited<ReturnType<typeof disconnectFixtureServiceConnection>>
     try {
-      result = disconnectFixtureServiceConnection()
+      const pending = disconnectFixtureServiceConnection()
+      expect(socket.destroy).not.toHaveBeenCalled()
+      result = await pending
     } finally {
       handles.mockRestore()
     }

@@ -1,3 +1,4 @@
+import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,17 +21,177 @@ import { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { AcpRuntimeOptions } from './runtime'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'
+import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 import {
   RestrictedInferenceError,
   RestrictedInferenceRunner,
   type RestrictedInferenceRuntime
 } from './restricted-inference-runner'
 
+const providerNoticeLog = vi.hoisted(() => vi.fn())
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
+  return {
+    ...actual,
+    createLogger: (scope: string) => {
+      const logger = actual.createLogger(scope)
+      return scope === 'restricted-inference'
+        ? { ...logger, info: providerNoticeLog, warn: providerNoticeLog, error: providerNoticeLog }
+        : logger
+    }
+  }
+})
+
+// Frozen from the 127 assistant-message events in the native Codex capture (2026-11-04).
+// Only public-paper response chunks are retained; runtime IDs and timestamps are replaced on replay.
+// Keep the original chunk boundaries: the 77-byte banner precedes 126 chunks of 690-byte JSON.
+const capturedCodexChunks = Object.freeze([
+  'Warning: Falling back from WebSockets to HTTPS transport. request timed out\n\n',
+  '{"',
+  'question',
+  '":"',
+  'Can',
+  ' an',
+  ' attention',
+  '-only',
+  ' architecture',
+  ' improve',
+  ' sequence',
+  ' trans',
+  'duction',
+  ' quality',
+  ' and',
+  ' training',
+  ' efficiency',
+  '?',
+  '","',
+  'population',
+  '":"',
+  'W',
+  'MT',
+  ' ',
+  '201',
+  '4',
+  ' English',
+  '-to',
+  '-G',
+  'erman',
+  ' and',
+  ' English',
+  '-to',
+  '-F',
+  'rench',
+  ' translation',
+  ' tasks',
+  ';',
+  ' English',
+  ' constituency',
+  ' parsing',
+  ' was',
+  ' also',
+  ' tested',
+  '.","',
+  'methods',
+  '":"',
+  'The',
+  ' abstract',
+  ' describes',
+  ' a',
+  ' Transformer',
+  ' architecture',
+  ' without',
+  ' recurrence',
+  ' or',
+  ' convol',
+  'utions',
+  ',',
+  ' evaluated',
+  ' on',
+  ' two',
+  ' translation',
+  ' tasks',
+  ' and',
+  ' English',
+  ' constituency',
+  ' parsing',
+  '.","',
+  'results',
+  '":"',
+  'The',
+  ' abstract',
+  ' reports',
+  ' ',
+  '28',
+  '.',
+  '4',
+  ' BLE',
+  'U',
+  ' for',
+  ' English',
+  '-to',
+  '-G',
+  'erman',
+  ' and',
+  ' ',
+  '41',
+  '.',
+  '8',
+  ' BLE',
+  'U',
+  ' for',
+  ' English',
+  '-to',
+  '-F',
+  'rench',
+  ',',
+  ' along',
+  ' with',
+  ' greater',
+  ' parallel',
+  'iz',
+  'ability',
+  ' and',
+  ' shorter',
+  ' training',
+  ' time',
+  ' than',
+  ' the',
+  ' compared',
+  ' models',
+  '.',
+  ' It',
+  ' also',
+  ' reports',
+  ' successful',
+  ' application',
+  ' to',
+  ' English',
+  ' constituency',
+  ' parsing',
+  '.","',
+  'limitations',
+  '":',
+  'null',
+  '}'
+])
+
+const capturedCodexNotifications = (): SessionNotification[] =>
+  capturedCodexChunks.map((text, index) => ({
+    sessionId: 'provider-session-1',
+    update: {
+      sessionUpdate: 'agent_message_chunk',
+      ...(index === 0 ? {} : { messageId: 'capture-response' }),
+      content: { type: 'text', text }
+    }
+  }))
+
 let temporaryRoot: string | undefined
 
 afterEach(async () => {
   if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true })
   temporaryRoot = undefined
+  providerNoticeLog.mockClear()
 })
 
 const target = (
@@ -67,10 +228,14 @@ const codexToolLessBridgeLease = (): NonNullable<
 })
 
 type RuntimeHarnessOptions = Readonly<{
-  response?: { stopReason: 'end_turn' | 'cancelled' | 'max_tokens' | 'refusal' }
+  response?: {
+    stopReason: 'end_turn' | 'cancelled' | 'max_tokens' | 'refusal'
+    _meta?: Record<string, unknown>
+  }
   events?: AcpRuntimeEvent[]
+  notifications?: SessionNotification[]
   permissionRequest?: true
-  onRuntime?: () => void
+  onRuntime?: (options: AcpRuntimeOptions) => void
   onCreateSession?: (backend: ResolvedAgentBackend) => Promise<void>
   onPrompt?: () => Promise<void>
 }>
@@ -87,6 +252,18 @@ const runtimeHarness = (
       return { sessionId: 'provider-session-1' } as never
     }),
     sendPrompt: vi.fn(async () => {
+      if (input.notifications?.length) {
+        // Use the real production owner composition and projector, without starting a provider.
+        const projectionOptions = { ...options, framework: resolvedBackend?.framework }
+        const owners = composeAcpRuntimeSessionOwners(
+          projectionOptions,
+          composeAcpRuntimeBaseOwners(projectionOptions)
+        )
+        for (const notification of input.notifications)
+          owners.sessionUpdateProjector.route(notification)
+        owners.sessionUpdateProjector.finishAssistantOutput('provider-session-1')
+        owners.sessionUpdateProjector.dispose()
+      }
       for (const event of input.events ?? []) options.callbacks?.onEvent?.(event)
       if (input.permissionRequest) {
         options.callbacks?.onPermissionRequest?.({
@@ -135,7 +312,7 @@ const makeRunner = async (
     resolveTarget,
     allowNativeCodexSubscription: true,
     createRuntime: (options) => {
-      runtime.onRuntime?.()
+      runtime.onRuntime?.(options)
       const created = runtimeHarness(options, runtime)
       runtimes.push(created)
       return created
@@ -156,6 +333,26 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it('keeps OpenCode structured inference out of the forced-summary step', async () => {
+    const { runner } = await makeRunner(backend(opencodeFramework), {
+      events: [event({ role: 'assistant', text: '{"title":"Research"}' })],
+      onCreateSession: async (prepared) => {
+        const config = JSON.parse(prepared.env.OPENCODE_CONFIG_CONTENT!)
+        const agent = config.agent['open-science-test-inference']
+        // OpenCode injects its MAX_STEPS summary instruction when step >= agent.steps,
+        // including the very first model request when steps is 1.
+        expect(agent.steps).toBeUndefined()
+        expect(agent.permission).toEqual({ '*': 'deny' })
+        expect(config.permission).toEqual({ '*': 'deny' })
+      }
+    })
+
+    await expect(runner.run(runInput({ target: target('opencode') }))).resolves.toMatchObject({
+      text: '{"title":"Research"}',
+      stopReason: 'end_turn'
+    })
+  })
+
   it('builds a disposable tool-less profile from app-owned Codex subscription auth', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codex-subscription-'))
     const sourceHome = join(temporaryRoot, 'subscription-home')
@@ -350,6 +547,308 @@ describe('RestrictedInferenceRunner', () => {
       systemPromptAppends: [],
       includeSkillAndConnectorContext: false
     })
+  })
+
+  it.each([claudeCodeFramework, opencodeFramework, codeBuddyFramework, codexFramework])(
+    'separates provider notices from model output by default: $id',
+    async (framework) => {
+      const notice = 'Provider diagnostic\n'
+      const body = '{"question":null}'
+      const { runner } = await makeRunner(backend(framework), {
+        notifications: [
+          {
+            sessionId: 'provider-session-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: notice },
+              _meta: { 'open-science/provider-notice': { version: 1, level: 'warning' } }
+            }
+          },
+          {
+            sessionId: 'provider-session-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: 'model-message',
+              content: { type: 'text', text: body }
+            }
+          }
+        ],
+        onRuntime: (options) => expect(options.separateProviderNotices).toBe(true)
+      })
+      const result = await runner.run(
+        runInput({ target: target(framework.id, CODEX_SHARED_PROVIDER_ID) })
+      )
+      expect(result.text).toBe(body)
+      expect(providerNoticeLog).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  // Codex ACP 1.6.2 AIR records. The terminal response, not session-wide notices,
+  // attributes a failure to the prompt being collected.
+  const airFailureMeta = (severity: string, version = 1): Record<string, unknown> => ({
+    jetbrains: {
+      air: {
+        version,
+        sessionFailure: {
+          id: 'incident-1',
+          revision: 1,
+          category: severity === 'error' ? 'service' : 'unknown',
+          severity,
+          title: 'Provider diagnostic that must not enter the answer',
+          actions: []
+        }
+      }
+    }
+  })
+
+  const identifiedAnswer = (text: string): SessionNotification => ({
+    sessionId: 'provider-session-1',
+    update: {
+      sessionUpdate: 'agent_message_chunk',
+      messageId: 'model-message',
+      content: { type: 'text', text }
+    }
+  })
+
+  it('collects AIR warnings and legacy compaction without changing the model answer or byte budget', async () => {
+    const body = '{"question":null}'
+    const { runner, runtimes } = await makeRunner(backend(codexFramework), {
+      notifications: [
+        {
+          sessionId: 'provider-session-1',
+          update: { sessionUpdate: 'session_info_update', _meta: airFailureMeta('warning') }
+        },
+        {
+          sessionId: 'provider-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: "*Context compacted to fit the model's context window.*\n\n"
+            }
+          }
+        },
+        identifiedAnswer(body)
+      ],
+      response: { stopReason: 'end_turn', _meta: airFailureMeta('warning') }
+    })
+    const result = await runner.run(
+      runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID), outputLimitBytes: body.length })
+    )
+    expect(result.text).toBe(body)
+    expect(runtimes[0]?.cancelPrompt).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['terminal error', airFailureMeta('error'), 'failed inference'],
+    ['unknown AIR version', airFailureMeta('error', 2), 'unsupported inference outcome'],
+    ['unknown severity', airFailureMeta('fatal'), 'unsupported inference outcome']
+  ] as const)('rejects %s even after valid JSON was streamed', async (_name, meta, message) => {
+    const { runner } = await makeRunner(backend(codexFramework), {
+      notifications: [identifiedAnswer('{"question":null}')],
+      response: { stopReason: 'end_turn', _meta: meta }
+    })
+    await expect(
+      runner.run(runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID) }))
+    ).rejects.toThrow(message)
+  })
+
+  it('does not fail the current prompt from a late session-wide AIR error', async () => {
+    const { runner } = await makeRunner(backend(codexFramework), {
+      notifications: [
+        {
+          sessionId: 'provider-session-1',
+          update: { sessionUpdate: 'session_info_update', _meta: airFailureMeta('error') }
+        },
+        identifiedAnswer('{"question":null}')
+      ],
+      response: { stopReason: 'end_turn' }
+    })
+    await expect(
+      runner.run(runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID) }))
+    ).resolves.toMatchObject({ text: '{"question":null}' })
+  })
+
+  it('replays the native Codex transport warning capture without changing the JSON answer', async () => {
+    const notifications = capturedCodexNotifications()
+    expect(notifications).toHaveLength(127)
+    expect(Buffer.byteLength(capturedCodexChunks[0]!, 'utf8')).toBe(77)
+    expect(
+      new Set(
+        notifications
+          .slice(1)
+          .map((entry) => ('messageId' in entry.update ? entry.update.messageId : undefined))
+      )
+    ).toEqual(new Set(['capture-response']))
+    const expectedBody = capturedCodexChunks.slice(1).join('')
+    expect(Buffer.byteLength(expectedBody, 'utf8')).toBe(690)
+    const { runner, runtimes } = await makeRunner(backend(codexFramework), {
+      notifications,
+      onRuntime: (options) => expect(options.separateProviderNotices).toBe(true)
+    })
+
+    const result = await runner.run(
+      runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID), outputLimitBytes: 690 })
+    )
+
+    expect(result.text).toBe(expectedBody)
+    const sections = JSON.parse(result.text)
+    expect(sections.question).toBe(
+      'Can an attention-only architecture improve sequence transduction quality and training efficiency?'
+    )
+    expect(sections.results).toContain('28.4 BLEU')
+    expect(sections.limitations).toBeNull()
+    expect(runtimes[0]?.cancelPrompt).not.toHaveBeenCalled()
+    // Exact structured arguments prove neither the raw warning nor model response is logged.
+    expect(providerNoticeLog.mock.calls).toEqual([
+      ['Restricted inference provider notice', { code: 'provider-notice', level: 'warning' }]
+    ])
+  })
+
+  it.each([
+    ['malformed JSON', '{"question":'],
+    ['unvalidated JSON structure', '{"question":null}']
+  ] as const)('retains %s after removing the transport warning', async (_name, text) => {
+    const { runner } = await makeRunner(backend(codexFramework), {
+      notifications: [
+        capturedCodexNotifications()[0]!,
+        {
+          sessionId: 'provider-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: 'model-message',
+            content: { type: 'text', text }
+          }
+        }
+      ]
+    })
+    const result = await runner.run(runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID) }))
+
+    expect(result.text).toBe(text)
+  })
+
+  it('still rejects and cancels when the captured JSON body exceeds its byte limit', async () => {
+    const { runner, runtimes } = await makeRunner(backend(codexFramework), {
+      notifications: capturedCodexNotifications()
+    })
+
+    await expect(
+      runner.run(
+        runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID), outputLimitBytes: 689 })
+      )
+    ).rejects.toMatchObject({ code: 'output-limit' })
+    expect(runtimes[0]?.cancelPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps canonical informational levels out of unscoped model JSON', async () => {
+    const chunks = capturedCodexChunks.slice(1)
+    const notifications: SessionNotification[] = chunks.map((text) => ({
+      sessionId: 'provider-session-1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+    }))
+    for (const [index, level] of (['info', 'warning', 'error'] as const).entries()) {
+      notifications.splice(index * 3, 0, {
+        sessionId: 'provider-session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: `Provider-only ${level} diagnostic` },
+          _meta: { 'open-science/provider-notice': { version: 1, level } }
+        }
+      })
+    }
+    const { runner } = await makeRunner(backend(claudeCodeFramework), { notifications })
+
+    const result = await runner.run(runInput({ outputLimitBytes: 690 }))
+
+    expect(result.text).toBe(chunks.join(''))
+    expect(JSON.parse(result.text).limitations).toBeNull()
+    expect(providerNoticeLog.mock.calls).toEqual(
+      (['info', 'warning', 'error'] as const).map((level) => [
+        'Restricted inference provider notice',
+        { code: 'provider-notice', level }
+      ])
+    )
+  })
+
+  it('keeps malformed informational metadata in the body so strict JSON still fails', async () => {
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      notifications: [
+        {
+          sessionId: 'provider-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Warning: unproven source' },
+            _meta: { 'open-science/provider-notice': { version: 1, level: 'fatal' } }
+          }
+        },
+        ...capturedCodexNotifications().slice(1)
+      ]
+    })
+
+    const result = await runner.run(runInput())
+
+    expect(result.text.startsWith('Warning: unproven source')).toBe(true)
+    expect(() => JSON.parse(result.text)).toThrow(SyntaxError)
+    expect(providerNoticeLog).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'separates captured CodeBuddy hook notices without masking a final failure (%s)',
+    async (fails) => {
+      const failure = new Error('Provider failed after partial output')
+      const body = '{"question":"What works?"}'
+      const { runner } = await makeRunner(backend(codeBuddyFramework), {
+        notifications: [
+          {
+            sessionId: 'provider-session-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: 'hook-message',
+              content: { type: 'text', text: 'Hook diagnostic' },
+              _meta: {
+                'codebuddy.ai/messageId': 'hook-message',
+                'codebuddy.ai/hook': { event: 'UserPromptSubmit', status: 'warning', exitCode: 1 }
+              }
+            }
+          },
+          {
+            sessionId: 'provider-session-1',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: 'model-message',
+              content: { type: 'text', text: body }
+            }
+          }
+        ],
+        onPrompt: async () => {
+          if (fails) throw failure
+        }
+      })
+      const result = runner.run(runInput({ outputLimitBytes: Buffer.byteLength(body) }))
+      if (fails) await expect(result).rejects.toBe(failure)
+      else await expect(result).resolves.toMatchObject({ text: body })
+    }
+  )
+
+  it('preserves a fatal prompt rejection after a nonterminal provider error notice', async () => {
+    const failure = new Error('Provider connection failed')
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      notifications: [
+        {
+          sessionId: 'provider-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Nonterminal provider error detail' },
+            _meta: { 'open-science/provider-notice': { version: 1, level: 'error' } }
+          }
+        }
+      ],
+      onPrompt: async () => {
+        throw failure
+      }
+    })
+
+    await expect(runner.run(runInput())).rejects.toBe(failure)
   })
 
   it('excludes normalized thought events from restricted inference output', async () => {

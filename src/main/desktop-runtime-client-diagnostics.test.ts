@@ -1,3 +1,7 @@
+import {
+  LOCAL_SERVICE_STOP_BUDGET_MS,
+  LOCAL_SERVICE_STOP_ESCALATION_MS
+} from './local-service-lifetime'
 import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../shared/web-rpc-contract'
 import { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
@@ -391,9 +395,14 @@ it('reserves escalation, exit confirmation and process recovery inside the nativ
     })
     const stopped = client.waitForStopped()
     expect(waitForRuntimeStopped).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 16_500, requireCleanExit: false })
+      expect.objectContaining({
+        timeoutMs: LOCAL_SERVICE_STOP_BUDGET_MS - LOCAL_SERVICE_STOP_ESCALATION_MS,
+        requireCleanExit: false
+      })
     )
-    await vi.advanceTimersByTimeAsync(16_499)
+    await vi.advanceTimersByTimeAsync(
+      LOCAL_SERVICE_STOP_BUDGET_MS - LOCAL_SERVICE_STOP_ESCALATION_MS - 1
+    )
     expect(mocks.terminate).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(mocks.terminate).toHaveBeenCalledExactlyOnceWith({
@@ -401,7 +410,7 @@ it('reserves escalation, exit confirmation and process recovery inside the nativ
       generation: streamId,
       pid: 42,
       birthToken: 'verified-birth',
-      deadlineAt: started + 20_000,
+      deadlineAt: started + LOCAL_SERVICE_STOP_BUDGET_MS,
       signal: undefined
     })
     await vi.advanceTimersByTimeAsync(500)
@@ -413,11 +422,11 @@ it('reserves escalation, exit confirmation and process recovery inside the nativ
       configRoot: process.cwd(),
       dataRoot: process.cwd(),
       lease,
-      deadlineAt: started + 20_000
+      deadlineAt: started + LOCAL_SERVICE_STOP_BUDGET_MS
     })
     await vi.advanceTimersByTimeAsync(2000)
     await expect(stopped).resolves.toBe(lease)
-    expect(Date.now() - started).toBe(20_000)
+    expect(Date.now() - started).toBe(LOCAL_SERVICE_STOP_BUDGET_MS)
     expect(lease.release).not.toHaveBeenCalled()
   } finally {
     client.close()

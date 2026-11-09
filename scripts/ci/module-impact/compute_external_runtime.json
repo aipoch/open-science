@@ -1,0 +1,70 @@
+{
+  "ownerPaths": [
+    "resources/compute-modal.py",
+    "src/main/compute/external-job-submission.ts",
+    "src/main/compute/harvest-output-volume.ts",
+    "src/main/compute/hosted-job-workflow.integration.test.ts",
+    "src/main/compute/hosted-target-catalog.ts",
+    "src/main/compute/hugging-face-job-access.test.ts",
+    "src/main/compute/hugging-face-job-access.ts",
+    "src/main/compute/hugging-face-job-journal.ts",
+    "src/main/compute/hugging-face-job-runtime.ts",
+    "src/main/compute/job-archive-receipt.ts",
+    "src/main/compute/job-output-preview.test.ts",
+    "src/main/compute/job-output-preview.ts",
+    "src/main/compute/kubernetes-job-files.ts",
+    "src/main/compute/kubernetes-job-runtime.ts",
+    "src/main/compute/kubernetes-job-workspace.ts",
+    "src/main/compute/kubernetes-kubeconfig.ts",
+    "src/main/compute/kubernetes-target-catalog.ts",
+    "src/main/compute/kubernetes-workspace.real-cluster.integration.test.ts",
+    "src/main/compute/manual-staged-cleanup.ts",
+    "src/main/compute/modal-job-journal.ts",
+    "src/main/compute/modal-job-runtime.ts",
+    "src/main/compute/modal-job-workflow.integration.test.ts",
+    "src/main/compute/modal-sdk.ts",
+    "src/main/compute/modal-target-catalog.ts",
+    "src/main/compute/ray-job-journal.ts",
+    "src/main/compute/ray-job-runtime.ts",
+    "src/main/compute/ray-job-workflow.integration.test.ts",
+    "src/main/compute/ray-shared-outputs.test.ts",
+    "src/main/compute/ray-shared-outputs.ts",
+    "src/main/compute/ray-target-catalog.ts"
+  ],
+  "interfacePaths": [
+    "src/main/compute/manual-staged-cleanup.ts",
+    "src/main/compute/external-job-submission.ts",
+    "src/main/compute/hosted-target-catalog.ts",
+    "src/main/compute/hugging-face-job-runtime.ts",
+    "src/main/compute/job-archive-receipt.ts",
+    "src/main/compute/job-output-preview.ts",
+    "src/main/compute/kubernetes-job-runtime.ts",
+    "src/main/compute/kubernetes-target-catalog.ts",
+    "src/main/compute/modal-job-runtime.ts",
+    "src/main/compute/modal-target-catalog.ts",
+    "src/main/compute/ray-job-runtime.ts",
+    "src/main/compute/ray-target-catalog.ts"
+  ],
+  "consumerModules": ["compute_service"],
+  "testFiles": {
+    "owner": [
+      "src/main/compute/hosted-job-workflow.integration.test.ts",
+      "src/main/compute/hugging-face-job-access.test.ts",
+      "src/main/compute/job-output-preview.test.ts",
+      "src/main/compute/kubernetes-workspace.real-cluster.integration.test.ts",
+      "src/main/compute/modal-job-workflow.integration.test.ts",
+      "src/main/compute/ray-job-workflow.integration.test.ts",
+      "src/main/compute/ray-shared-outputs.test.ts"
+    ],
+    "contract": [
+      "src/main/compute/compute-service.architecture.test.ts",
+      "src/main/compute/harvest-engine.test.ts",
+      "src/main/compute/ipc.test.ts",
+      "src/main/compute/job-repository.test.ts",
+      "src/main/notebook/file-evidence-publication.integration.test.ts"
+    ],
+    "consumer": []
+  },
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime"
+}

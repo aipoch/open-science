@@ -142,7 +142,7 @@ describe('navigation store', () => {
     expect(useNavigationStore.getState().marketplaceListContext).toBeUndefined()
   })
 
-  it('opens the sharing marketplace as a guarded top-level destination', () => {
+  it('opens the marketplace as a guarded top-level destination', () => {
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
     usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
     const guard = vi.fn(() => false)
