@@ -10,7 +10,6 @@
     "src/renderer/src/lib/replay/source-uploads.test.ts",
     "src/renderer/src/lib/replay/source.ts",
     "src/renderer/src/lib/replay/timeline.ts",
-    "src/renderer/src/pages/workspace/SessionDiscussionDialog.tsx",
     "src/renderer/src/pages/workspace/ReplayReferenceText.test.tsx",
     "src/renderer/src/pages/workspace/ReplayReferenceText.tsx",
     "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
@@ -272,5 +271,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Direct Ask replaces the conversation picker and changes the reviewed replay boundary. Run full validation until its draft, navigation and session persistence contracts are reviewed."
 }

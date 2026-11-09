@@ -686,21 +686,11 @@ test('resolves a bare Artifact version_id into a delegated read-only input', asy
   expect(evidence?.artifactVersions[0]).toMatch(/^[0-9a-f-]{36}$/)
 })
 
-test('projects real production-composed delegation, permission, and Stop lifecycle', async ({
-  app
-}) => {
+test('collects a bounded delegation across two Main turns', async ({ app }) => {
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await createProject(page, 'Production delegation release gate')
-
-  await sendPrompt(
-    page,
-    TERMINAL_PROMPT,
-    'Production delegation reached a terminal result.',
-    120_000
-  )
-  await expectDurableChildStatus(page, TERMINAL_CHILD, 'completed')
+  await createProject(page, 'Bounded delegation release gate')
 
   const releaseFile = join(await app.createTestDirectory('bounded-delegation'), 'release')
   await sendPrompt(
@@ -719,7 +709,24 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
     120_000
   )
   await expectDurableChildStatus(page, 'Complete the bounded fixture after a delay.', 'completed')
-  await expectRenderedChildStatus(page, TERMINAL_CHILD, 'completed')
+  await expectRenderedChildStatus(page, 'Complete the bounded fixture after a delay.', 'completed')
+})
+
+test('projects real production-composed delegation, permission, and Stop lifecycle', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page, 'Production delegation release gate')
+
+  await sendPrompt(
+    page,
+    TERMINAL_PROMPT,
+    'Production delegation reached a terminal result.',
+    120_000
+  )
+  await expectDurableChildStatus(page, TERMINAL_CHILD, 'completed')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
   await composer.fill(PERMISSION_PROMPT)
@@ -741,6 +748,7 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
   })
   await expectDurableChildStatus(page, PERMISSION_CHILD, 'completed')
   await expectRenderedChildStatus(page, PERMISSION_CHILD, 'completed')
+  await expectRenderedChildStatus(page, TERMINAL_CHILD, 'completed')
 
   await composer.fill(STOP_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()

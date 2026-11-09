@@ -599,74 +599,21 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await page.mouse.move(5, 5)
   await sourceLink.hover()
   const hoverTitle = hoverCard.locator('[data-source-preview-hover-title]')
-  await expect(hoverTitle).toHaveText('Fixture study')
-  await expect(hoverTitle).toHaveClass(/text-text-000/)
-  await expect(hoverCard.locator('[data-source-preview-hover-hostname]')).toHaveText(
-    'citation.example'
-  )
-  const hoverSummary = hoverCard.locator('[data-source-preview-hover-summary]')
-  const hoverActions = hoverCard.locator('[data-source-preview-hover-actions]')
+  await expect(hoverTitle).toHaveCount(0)
   const hoverUrl = hoverCard.locator('[data-source-preview-hover-url]')
-  await expect(hoverUrl).toHaveText('https://citation.example/paper')
-  await expect(hoverUrl).toHaveClass(/text-text-000/)
-  const externalButton = hoverCard.locator('[data-source-preview-hover-external]')
-  await expect(externalButton).toHaveAttribute('aria-label', 'Open source in browser')
-  await expect(hoverSummary).toContainText('Fixture study')
-  await expect(hoverActions.locator('[data-source-preview-hover-url]')).toBeVisible()
-  await expect(hoverActions.locator('[data-source-preview-hover-external]')).toBeVisible()
-  const hoverLayout = await hoverCard.evaluate((card) => {
-    const summary = card.querySelector<HTMLElement>('[data-source-preview-hover-summary]')
-    const actions = card.querySelector<HTMLElement>('[data-source-preview-hover-actions]')
-    const title = card.querySelector<HTMLElement>('[data-source-preview-hover-title]')
-    const hostname = card.querySelector<HTMLElement>('[data-source-preview-hover-hostname]')
-    const url = card.querySelector<HTMLElement>('[data-source-preview-hover-url]')
-    const external = card.querySelector<HTMLElement>('[data-source-preview-hover-external]')
-    const iconColumn = card.querySelector<HTMLElement>('[data-source-preview-hover-icon-column]')
-    const contentColumn = card.querySelector<HTMLElement>(
-      '[data-source-preview-hover-content-column]'
-    )
-    if (
-      !summary ||
-      !actions ||
-      !title ||
-      !hostname ||
-      !url ||
-      !external ||
-      !iconColumn ||
-      !contentColumn
-    ) {
-      throw new Error('Source hover layout is incomplete')
-    }
-    const cardRect = card.getBoundingClientRect()
-    const titleRect = title.getBoundingClientRect()
-    const hostnameRect = hostname.getBoundingClientRect()
-    const actionsRect = actions.getBoundingClientRect()
-    const urlRect = url.getBoundingClientRect()
-    const externalRect = external.getBoundingClientRect()
-    const iconColumnRect = iconColumn.getBoundingClientRect()
-    const contentColumnRect = contentColumn.getBoundingClientRect()
-    const contentStarts = [titleRect.left, hostnameRect.left, urlRect.left]
-    return {
-      width: cardRect.width,
-      titleColor: getComputedStyle(title).color,
-      descriptionColor: getComputedStyle(hostname).color,
-      actionGap: actionsRect.top - hostnameRect.bottom,
-      contentStartDelta: Math.max(...contentStarts) - Math.min(...contentStarts),
-      iconColumnPrecedesContent: iconColumnRect.right <= contentColumnRect.left,
-      iconColumnHeightDelta: Math.abs(iconColumnRect.height - contentColumnRect.height),
-      actionCenterDelta: Math.abs(
-        urlRect.top + urlRect.height / 2 - (externalRect.top + externalRect.height / 2)
-      )
-    }
+  await expect(hoverUrl).toHaveText('citation.example')
+  await expect(hoverUrl).toHaveAttribute('href', 'https://citation.example/paper')
+  const externalButton = hoverCard.getByRole('button', { name: 'Open source in browser' })
+  await expect(externalButton).toBeVisible()
+  const linkColor = await hoverCard.evaluate((card) => {
+    const swatch = document.createElement('span')
+    swatch.style.color = 'var(--primary)'
+    card.append(swatch)
+    const color = getComputedStyle(swatch).color
+    swatch.remove()
+    return color
   })
-  expect(hoverLayout.width).toBeLessThan(320)
-  expect(hoverLayout.titleColor).not.toBe(hoverLayout.descriptionColor)
-  expect(hoverLayout.actionGap).toBeGreaterThanOrEqual(8)
-  expect(hoverLayout.contentStartDelta).toBeLessThanOrEqual(1)
-  expect(hoverLayout.iconColumnPrecedesContent).toBe(true)
-  expect(hoverLayout.iconColumnHeightDelta).toBeLessThanOrEqual(1)
-  expect(hoverLayout.actionCenterDelta).toBeLessThanOrEqual(1)
-  await expect(hoverCard.locator('[data-session-link-favicon-skeleton]')).toHaveCount(0)
+  await expect(sourceLink).toHaveCSS('color', linkColor)
   expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
   const hoverAccessibility = (await hoverCard.evaluate(async (element) => {

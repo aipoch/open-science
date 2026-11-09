@@ -35,7 +35,7 @@ const REGISTRY_LABELS: Record<ManagedClaudeRegistry, string> = {
 }
 
 // The npm package path probed per framework to gauge registry reachability for its managed install.
-const REGISTRY_PROBE_PATHS: Record<AgentFrameworkId, string> = {
+const REGISTRY_PROBE_PATHS: Partial<Record<AgentFrameworkId, string>> = {
   'claude-code': '/@anthropic-ai%2fclaude-code/latest',
   opencode: '/opencode-ai/latest',
   codebuddy: '/@tencent-ai%2fcodebuddy-code/2.138.0',
@@ -304,8 +304,8 @@ const runEnvironmentCheck = async ({
     }
   } else {
     const registryResults = await Promise.all([
-      inspectRegistry('npmjs', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId]),
-      inspectRegistry('npmmirror', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId])
+      inspectRegistry('npmjs', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId] ?? ''),
+      inspectRegistry('npmmirror', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId] ?? '')
     ])
     const reachable = registryResults
       .filter(

@@ -11369,6 +11369,135 @@ ${source}`
         ).toEqual([])
       }
     })
+    it('treats scalar replacement expressions as data while retaining operand effects', async () => {
+      const primitives =
+        'const prefix = "prefix", suffix = "suffix", left = 1, right = 2, value = 3; let counter = 0;'
+      for (const replacement of [
+        'prefix + "suffix"',
+        '(prefix + suffix) + "text"',
+        'left * right',
+        'left === right',
+        'left | right',
+        'typeof value',
+        'void value',
+        '!value',
+        'counter++',
+        '--counter'
+      ]) {
+        expect(
+          await analyzeNotebookCodeRisk(
+            'repl',
+            `${primitives} text.${method}(pattern, ${replacement})`
+          )
+        ).toEqual([])
+        expect(
+          await analyzeNotebookCodeRisk('repl', `text.${method}(pattern, saved)`, undefined, [
+            primitives,
+            `const replacement = ${replacement}; const saved = replacement`
+          ])
+        ).toEqual([])
+      }
+      for (const [replacement, operation] of [
+        ['fs.unlinkSync("target.txt") + "text"', 'fs.unlinkSync'],
+        ['void fs.unlinkSync("target.txt")', 'fs.unlinkSync'],
+        ...['&&', '||', '??'].map((operator) => [
+          `flag ${operator} fs.unlinkSync`,
+          'dynamic callback target'
+        ]),
+        ['flag ? fs.unlinkSync : String', 'dynamic callback target']
+      ]) {
+        expect(
+          (
+            await analyzeNotebookCodeRisk(
+              'repl',
+              `const fs = require("fs"); text.${method}(pattern, ${replacement})`
+            )
+          ).some((risk) => risk.operation === operation)
+        ).toBe(true)
+      }
+    })
+    it('retains review for scalar operands that can invoke Proxy traps', async () => {
+      for (const replacement of [
+        'void proxy.missing',
+        'proxy["missing"] + "suffix"',
+        'proxy.count++',
+        'proxy.value = 1',
+        'proxy + "suffix"',
+        '+proxy',
+        'proxy++'
+      ]) {
+        for (const trailing of ['', ', proxy = 1']) {
+          expect(
+            await analyzeNotebookCodeRisk(
+              'repl',
+              `const fs = require("fs");
+let proxy = new Proxy({}, { get() { fs.unlinkSync("target.txt"); return 1 } });
+text.${method}(pattern, (${replacement})${trailing})`
+            )
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ operation: 'dynamic callback target' })
+            ])
+          )
+        }
+      }
+    })
+    it('requires primitive provenance across updates and history', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          'let prefix = "prefix"; for (const item of items) { prefix += `suffix` }' +
+            `text.${method}(pattern, prefix + "suffix")`
+        )
+      ).toEqual([])
+      const object = '({ valueOf() { require("fs").unlinkSync("target.txt"); return 1 } })'
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `const holder = { value: 0 }; function change() { holder.value = ${object} }; change();
+const value = holder.value; text.${method}(pattern, value + "suffix")`
+        )
+      ).not.toEqual([])
+      for (const mutation of [
+        `value = ${object}`,
+        `if (flag) value = ${object}`,
+        `value ||= ${object}`,
+        'value += `interpolation ${' + object + '} `',
+        `function change() { value = ${object} }; change()`,
+        `function change(unused = (value = ${object})) {}; change()`
+      ]) {
+        const history = `let value = 0; ${mutation}`
+        for (const incomplete of [false, true]) {
+          expect(
+            await analyzeNotebookCodeRisk(
+              'repl',
+              `text.${method}(pattern, value + "suffix")`,
+              undefined,
+              [{ script: history, incomplete }]
+            )
+          ).not.toEqual([])
+        }
+      }
+    })
+    it('invalidates captured callable writes without exporting function-local writes', async () => {
+      const prelude = 'const fs = require("fs"); let callback = String;'
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          prelude +
+            `function change() { callback = fs.unlinkSync }; change(); text.${method}(pattern, callback)`
+        )
+      ).not.toEqual([])
+      for (const declaration of ['let', 'const', 'var']) {
+        expect(
+          await analyzeNotebookCodeRisk(
+            'repl',
+            prelude +
+              `function local() { ${declaration} callback = fs.unlinkSync }; local(); text.${method}(pattern, callback)`
+          )
+        ).toEqual([])
+      }
+    })
     it('does not invoke replacement text or unrelated data', async () => {
       for (const replacement of [
         '"unlink"',

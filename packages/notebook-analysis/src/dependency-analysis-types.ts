@@ -332,6 +332,16 @@ type AnalyzeNotebookScripts = (
   sources: readonly string[]
 ) => Promise<NotebookRunDependencyFacts[]>
 
+/** Analyzes one Run source; hosts may move the work off their event loop. */
+type AnalyzeNotebookSource = (
+  language: 'python' | 'r' | 'repl',
+  source: string,
+  context: NotebookSourceFileAccessContext
+) => Promise<{
+  facts: NotebookRunDependencyFacts
+  fileAccess?: NotebookSourceFileAccessExtraction
+}>
+
 type NotebookSourceFileWriteScope = {
   kind: 'directory' | 'shapefile' | 'geotiff' | 'timestamped-log'
   path: string
@@ -363,6 +373,7 @@ type NotebookSourceFileAccessAnalysis = {
 
 export type {
   AnalyzeNotebookScripts,
+  AnalyzeNotebookSource,
   AnalyzedNotebookRun,
   NotebookDependencyAlias,
   NotebookDependencyAnalysisSidecar,

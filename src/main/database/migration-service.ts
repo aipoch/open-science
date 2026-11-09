@@ -1,3 +1,5 @@
+import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
+import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -996,6 +998,27 @@ const MIGRATION_MANIFEST = [
     foreignKeysDuringApply: 'disabled',
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...sessionDiscussionParentMigration,
+    checksum: checksumMigrationPayload(
+      sessionDiscussionParentMigration.id,
+      sessionDiscussionParentMigration.statements,
+      sessionDiscussionParentMigration.verifiers
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeKubernetesWorkspaceMigration,
+    checksum: checksumMigrationPayload(
+      computeKubernetesWorkspaceMigration.id,
+      computeKubernetesWorkspaceMigration.statements,
+      computeKubernetesWorkspaceMigration.verifiers,
+      computeKubernetesWorkspaceMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1989,7 +2012,14 @@ const applyManifestMigration = async (
     migration.id !== managedFileVersionFoundationMigration.id &&
     (migration.id < managedFileVersionFoundationMigration.id ||
       migration.id === numericAndNullConstraintsMigration.id ||
-      preservesSlurmColumns) &&
+      preservesSlurmColumns ||
+      (migration.id === slurmJobReliabilityMigration.id &&
+        (
+          await migrationSqlExecutor.query<{ name: string }[]>(
+            client,
+            'PRAGMA table_info("ComputeJob")'
+          )
+        ).some(({ name }) => name === 'kubernetesWorkspace'))) &&
     MIGRATION_MANIFEST.some(
       (candidate) => candidate.id === migration.id && candidate.checksum === migration.checksum
     )

@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 describe('Compute Job operation migration', () => {
-  it('replays an unledgered operation suffix with only the later Slurm schema additions', async () => {
+  it('replays an unledgered operation suffix with the later Compute schema additions', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-operation-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -41,6 +41,7 @@ describe('Compute Job operation migration', () => {
     )
     expect(
       computeJobSqlAfter
+        .replace(/,\s*"kubernetesWorkspace" TEXT/u, '')
         .replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
         .replace(/,\s*"errorMessage" TEXT/u, '')
         .replace(", 'job_cancelled', 'job_status_unavailable'", '')
@@ -51,8 +52,8 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
     ).resolves.toEqual([
-      { id: '0054_slurm_job_reliability' },
-      { id: '0053_literature_doi_identity' }
+      { id: '0056_compute_kubernetes_workspace' },
+      { id: '0055_session_discussion_parent' }
     ])
   })
 

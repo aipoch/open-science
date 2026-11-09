@@ -1366,6 +1366,18 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     }
   }
 
+  @keyframes scroll-indicator-wave {
+    0%,
+    60%,
+    100% {
+      transform: translateY(0);
+    }
+
+    30% {
+      transform: translateY(-3px);
+    }
+  }
+
   .open-science-thinking-indicator {
     position: relative;
     width: 18px;

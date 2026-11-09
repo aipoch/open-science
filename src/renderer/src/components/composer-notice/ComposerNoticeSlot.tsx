@@ -419,12 +419,15 @@ const ComposerFailureNoticeSlot = ({
 }
 
 export const ComposerNoticeSlot = ({
+  draftConflict,
   persistence,
   ...props
 }: Parameters<typeof ComposerFailureNoticeSlot>[0] & {
+  draftConflict?: Pick<NoticeProps, 'description' | 'dismissButton'>
   persistence?: Pick<NoticeProps, 'role' | 'level' | 'title' | 'description' | 'primaryButton'>
 }): React.JSX.Element => (
   <>
+    {draftConflict ? <Notice {...draftConflict} inline level="info" /> : null}
     {persistence ? <Notice {...persistence} inline className="mb-2" /> : null}
     <ComposerFailureNoticeSlot {...props} />
   </>

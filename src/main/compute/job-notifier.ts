@@ -1,3 +1,4 @@
+import { getManualStagedCleanup } from './manual-staged-cleanup'
 import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/compute/node'
 /**
  * job-notifier.ts — emits compute_done notifications for finished jobs.
@@ -23,13 +24,10 @@ import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/comput
  * Paths are workspace-relative (hpc/<jobId>/featured/...) per design §4.
  */
 
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
-
-import type { ComputeJob, JobSummary } from '../../shared/compute'
+import { externalComputeMode, type ComputeJob, type JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
+import { listArchivedJobFiles } from './workspace-path'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,7 +35,8 @@ import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 
 export type JobNotifierDeps = {
   jobRepository: Pick<ComputeJobRepository, 'claimNotification'>
-  hostRepository: Pick<ComputeHostRepository, 'get'>
+  hostRepository: Pick<ComputeHostRepository, 'get'> &
+    Partial<Pick<ComputeHostRepository, 'getComputeTarget'>>
   storageRoot: string
   // Injectable broadcast function; defaults to the production broadcastJobUpdated.
   // Injected in tests to capture the emitted summary without touching Electron IPC.
@@ -47,6 +46,7 @@ export type JobNotifierDeps = {
 // The compute_done payload fields embedded into the JobSummary broadcast (spec §11.3).
 export type ComputeDonePayload = {
   featured_files: string[]
+  hidden_files: string[]
   featured_file_count: number
   left_on_remote_count: number
   left_on_remote: Array<{ uri: string; size_mb: number; reason: string }>
@@ -68,61 +68,78 @@ export const buildComputeDonePayload = async (
   job: ComputeJob,
   storageRoot: string
 ): Promise<ComputeDonePayload> => {
-  const harvestDir = getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id)
-  const featuredDir = join(harvestDir, 'featured')
-
-  // Workspace root for computing relative paths (everything under <workspaceCwd>).
-  // getJobHarvestDir returns <workspaceCwd>/hpc/<jobId>, so two levels up is workspaceCwd.
-  const workspaceCwd = join(harvestDir, '..', '..')
-
-  // Scan featured dir — may not exist for error jobs or if harvest failed before creating it.
-  let featuredFiles: string[] = []
-  if (!job.harvest_error) {
-    try {
-      const entries = await readdirRecursive(featuredDir)
-      featuredFiles = entries.map((abs) => workspaceRelativePath(workspaceCwd, abs))
-    } catch {
-      // Directory does not exist or is unreadable — emit an empty list.
-    }
-  }
-
+  const files = await listArchivedJobFiles(job, storageRoot)
   // Parse left_on_remote from the job DB column (JSON array).
   let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
   if (job.left_on_remote) {
     try {
-      leftOnRemote = JSON.parse(job.left_on_remote) as typeof leftOnRemote
+      const parsed = JSON.parse(job.left_on_remote)
+      if (Array.isArray(parsed)) leftOnRemote = parsed
     } catch {
       // Malformed — treat as empty.
     }
   }
 
   return {
-    featured_files: featuredFiles,
-    featured_file_count: featuredFiles.length,
+    ...files,
+    featured_file_count: files.featured_files.length,
     left_on_remote_count: leftOnRemote.length,
     left_on_remote: leftOnRemote
   }
 }
 
 // ---------------------------------------------------------------------------
-// Recursive readdir helper (returns absolute paths of all files)
-// ---------------------------------------------------------------------------
-
-const readdirRecursive = async (dir: string): Promise<string[]> => {
-  const entries = await readdir(dir, { withFileTypes: true })
-  const results: string[] = []
-  for (const entry of entries) {
-    const full = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      results.push(...(await readdirRecursive(full)))
-    } else {
-      results.push(full)
-    }
+export const toJobSummary = async (
+  job: ComputeJob,
+  displayName: string,
+  storageRoot: string
+): Promise<JobSummary> => {
+  const payload = await buildComputeDonePayload(job, storageRoot)
+  const schedulerId = parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir)
+  return {
+    manualStagedCleanup: getManualStagedCleanup(job),
+    job_id: job.job_id,
+    provider_id: job.provider_id,
+    display_name: displayName,
+    shape: job.shape,
+    execution_mode:
+      job.execution_mode ??
+      externalComputeMode(job.provider_id) ??
+      (job.provider_id.startsWith('ssh:') && schedulerId ? 'slurm' : undefined),
+    session_id: job.session_id,
+    project_id: job.project_id,
+    status: job.status,
+    raw_status: job.raw_status,
+    integrity_issues: job.integrity_issues,
+    needs_attention: job.needs_attention,
+    cancellation_status: job.cancellation_status,
+    cancellation_error: job.cancellation_error,
+    cancellation_revision: job.cancellation_revision,
+    scheduler_job_id: schedulerId,
+    intent: job.intent,
+    created_at: job.created_at,
+    started_at: job.started_at,
+    finished_at: job.finished_at,
+    exit_code: job.exit_code,
+    error_code: job.error_code,
+    error_message: job.error_message,
+    last_poll_error: job.last_poll_error,
+    remote_workdir: job.remote_workdir,
+    stdout_tail: job.stdout_tail,
+    stderr_tail: job.stderr_tail,
+    // Phase 3b notification inbox timestamps (issue 06).
+    notified_at: job.notified_at,
+    notification_consumed_at: job.notification_consumed_at,
+    analysis_state: job.analysis_state,
+    analysis_message_id: job.analysis_message_id,
+    analysis_updated_at: job.analysis_updated_at,
+    // Phase 3b compute_done payload fields (spec §11.3).
+    ...payload,
+    harvest_error: job.harvest_error ?? undefined,
+    harvested_at: job.harvested_at
   }
-  return results
 }
 
-// ---------------------------------------------------------------------------
 // Main emitter
 // ---------------------------------------------------------------------------
 
@@ -157,51 +174,15 @@ export const emitJobNotification = async (
   // Look up the host to get its displayName (fix: was using raw provider_id causing card flip).
   let displayName = updatedJob.provider_id
   try {
-    const host = await hostRepository.get(updatedJob.provider_id)
+    const host = hostRepository.getComputeTarget
+      ? await hostRepository.getComputeTarget(updatedJob.provider_id)
+      : await hostRepository.get(updatedJob.provider_id)
     if (host) displayName = host.displayName
   } catch {
     // Transient lookup failure — fall back to provider_id so the broadcast always happens.
   }
 
-  // Build the payload (scan harvest dir + parse leftOnRemote column).
-  const payload = await buildComputeDonePayload(updatedJob, storageRoot)
-
-  // Broadcast the summary with notification payload fields embedded.
-  // Reuses COMPUTE_JOB_UPDATED_CHANNEL via the injected broadcast fn (no new IPC channel).
-  const summary: JobSummary = {
-    job_id: updatedJob.job_id,
-    provider_id: updatedJob.provider_id,
-    project_id: updatedJob.project_id,
-    display_name: displayName,
-    shape: updatedJob.shape,
-    session_id: updatedJob.session_id,
-    status: updatedJob.status,
-    cancellation_status: updatedJob.cancellation_status,
-    cancellation_error: updatedJob.cancellation_error,
-    cancellation_revision: updatedJob.cancellation_revision,
-    scheduler_job_id: parseSlurmSchedulerJobId(updatedJob.remote_handle, updatedJob.remote_workdir),
-    intent: updatedJob.intent,
-    created_at: updatedJob.created_at,
-    started_at: updatedJob.started_at,
-    finished_at: updatedJob.finished_at,
-    exit_code: updatedJob.exit_code,
-    error_code: updatedJob.error_code,
-    error_message: updatedJob.error_message,
-    last_poll_error: updatedJob.last_poll_error,
-    remote_workdir: updatedJob.remote_workdir,
-    stdout_tail: updatedJob.stdout_tail,
-    stderr_tail: updatedJob.stderr_tail,
-    notified_at: updatedJob.notified_at,
-    notification_consumed_at: updatedJob.notification_consumed_at,
-    // Payload fields (spec §11.3).
-    featured_files: payload.featured_files,
-    featured_file_count: payload.featured_file_count,
-    left_on_remote_count: payload.left_on_remote_count,
-    left_on_remote: payload.left_on_remote,
-    harvest_error: updatedJob.harvest_error
-  }
-
-  broadcast(summary)
+  broadcast(await toJobSummary(updatedJob, displayName, storageRoot))
 }
 
 /** Attach the host's durable notification claim, file projection and renderer delivery. */

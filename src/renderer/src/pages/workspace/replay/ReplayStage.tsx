@@ -87,6 +87,8 @@ export type ReplayStageProps = {
   onCloseFiles?: () => void
   onCloseMaterials?: () => void
   onSeek?: (positionMs: number) => void
+  onAskHistorical?: (step: ReplayStep, run?: { id: string; title: string }) => void
+  revealedRun?: string
   notebookRuns?: ReplayRunIndex[]
   fileResources?: ReplayResource[]
   notebookHistoryControl?: React.ReactNode
@@ -350,8 +352,10 @@ const StepConversation = memo(function StepConversation({
   artifactResources,
   resources,
   visibleResourceIds,
-  onSelectResource
+  onSelectResource,
+  onAskHistorical
 }: {
+  onAskHistorical?: ReplayStageProps['onAskHistorical']
   resources: ReplayResourceMap
   visibleResourceIds: readonly string[]
   artifactResources: ReplayResource[]
@@ -529,6 +533,11 @@ const StepConversation = memo(function StepConversation({
             (step.runs.length ? t('Saved Notebook execution') : t('Recorded file version'))}
         </p>
       ) : null}
+      {!active && onAskHistorical && (
+        <Button size="sm" variant="ghost" onClick={() => onAskHistorical(step)}>
+          {t('Ask')}
+        </Button>
+      )}
     </article>
   )
 })
@@ -596,6 +605,8 @@ const ReplayStageContent = ({
   onCloseFiles,
   onCloseMaterials,
   onSeek,
+  onAskHistorical,
+  revealedRun,
   notebookRuns,
   fileResources,
   notebookHistoryControl,
@@ -802,6 +813,14 @@ const ReplayStageContent = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preparationKey, resourcesSettled, runsSettled, readinessTimeoutMs])
 
+  useLayoutEffect(() => {
+    if (!revealedRun || !materialsOpen) return
+    const row = Array.from(
+      notebookViewport.current?.querySelectorAll<HTMLElement>('[data-replay-run-item]') ?? []
+    ).find((node) => node.dataset.replayRunItem === revealedRun)
+    row?.focus({ preventScroll: true })
+    row?.scrollIntoView({ block: 'start' })
+  }, [revealedRun, conversationFocusRequest, materialsOpen, runsSettled])
   useLayoutEffect(() => {
     // Absolute target scroll positions make direct seeks and sequential playback identical.
     const element = captureTranscript.current
@@ -1066,6 +1085,7 @@ const ReplayStageContent = ({
             {transcriptSteps.map((step) => (
               <StepConversation
                 interactive={fitContainer}
+                onAskHistorical={onAskHistorical}
                 artifactResources={replayDocument.resources}
                 resources={resources}
                 visibleResourceIds={scene.visibleResourceIds}
@@ -1235,8 +1255,28 @@ const ReplayStageContent = ({
                     </p>
                   )
                 return fitContainer ? (
-                  <div key={index.runId} data-replay-run-item={index.runId}>
+                  <div key={index.runId} data-replay-run-item={index.runId} tabIndex={-1}>
                     {content}
+                    {onAskHistorical && detail?.status === 'ready' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          const step = scene.visibleSteps.find((item) =>
+                            item.runs.some((run) => run.runId === index.runId)
+                          )
+                          if (step)
+                            onAskHistorical(step, {
+                              id: index.runId,
+                              title: t('Notebook run {{number}}', {
+                                number: notebookIndices.get(index.runId) ?? runOffset
+                              })
+                            })
+                        }}
+                      >
+                        {t('Ask')}
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   content

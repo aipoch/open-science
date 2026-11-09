@@ -1,4 +1,5 @@
 import { recordMainAgentContext } from './main-agent-process-ownership'
+import { HARNESS_OWNER } from '../harness-acp/config'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import type {
@@ -116,7 +117,10 @@ export class AcpProviderSessionCreator {
         .buildSession({
           cwd,
           mcpServers: sessionCapabilities.mcpServers,
-          ...setup.metaArg
+          ...setup.metaArg,
+          ...(startupBackend.framework.id === 'open-science-agent'
+            ? { _meta: { ...setup.metaArg._meta, [HARNESS_OWNER]: { projectId } } }
+            : {})
         })
         .start()
       provisionalSession = session

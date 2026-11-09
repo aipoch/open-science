@@ -1,3 +1,4 @@
+import { openComputeOutputPreview } from '../compute/job-output-preview'
 import { registerCliInstallIpcHandlers, type CliCommandOwner } from '../cli-install/ipc'
 import { registerFileSaveHandlers, type RegisterFileSaveHandlersOptions } from '../file-save'
 import { registerGithubIpcHandlers, type GithubCommandOwner } from '../github-ipc'
@@ -42,6 +43,7 @@ export const createDesktopUtilitiesElectronSurface = ({
             { source, projectId: request.projectId, fileId: request.fileId },
             request.versionId
           ),
+        openComputeOutput: openComputeOutputPreview,
         openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
         translate
       },

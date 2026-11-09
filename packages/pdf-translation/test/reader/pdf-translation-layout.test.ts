@@ -10,6 +10,527 @@ import {
   type PdfLayoutTextItem
 } from '../../src/reader/layout.js'
 
+function interveningBulletPage(scale = 1): PdfLayoutPage {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    hasEOL = true
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width: width * scale,
+    height: 10 * scale,
+    transform: [10 * scale, 0, 0, 10 * scale, x * scale, y * scale],
+    fontName,
+    fontAscent: 0,
+    fontDescent: 0,
+    fontVertical: false,
+    hasEOL
+  })
+  const items = [
+    item('−', 50, 300, 8, 'Marker', false),
+    item(
+      'Please keep the preceding instruction with its final word on the following printed line before reading the next instruction',
+      61.5,
+      300,
+      500
+    ),
+    item('ending.', 53.5, 291.2, 39, 'Body', false),
+    item('−', 50, 281.6, 8, 'Marker', false),
+    item(
+      'This independent instruction must stay after the preceding instruction and its terminal word.',
+      61.5,
+      281.6,
+      435
+    )
+  ]
+  return { page: 1, width: 700 * scale, height: 800 * scale, rotation: 0, items }
+}
+
+test.each([0.5, 1, 2])(
+  'a complete native terminal row remains in its ordinary bullet sentence: %s',
+  (scale) => {
+    const page = interveningBulletPage(scale),
+      before = structuredClone(page),
+      result = extractDocument({ pages: [page] })
+    expect(result.units.map((unit) => unit.items)).toEqual([
+      ['1:0', '1:1', '1:2'],
+      ['1:3', '1:4']
+    ])
+    expect(result.units.every((unit) => !unit.sourceOnly && !unit.preserve)).toBe(true)
+    expect(result.units[0].risks).not.toContain('possible-continuation')
+    expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+      page.items.map((item) => item.str)
+    )
+    expect(page).toEqual(before)
+  }
+)
+
+test.each([
+  'missing peer',
+  'different peer marker',
+  'foreign tail font',
+  'foreign native row',
+  'unequal pitch'
+])('requires a complete repeated native bullet packet: %s', (fault) => {
+  const page = interveningBulletPage()
+  if (fault === 'missing peer') page.items.splice(3)
+  if (fault === 'different peer marker') page.items[3].str = '•'
+  if (fault === 'foreign tail font') page.items[2].fontName = 'Foreign'
+  if (fault === 'foreign native row')
+    page.items.splice(3, 0, {
+      ...page.items[2],
+      str: 'Independent row.',
+      transform: [10, 0, 0, 10, 600, 286],
+      width: 80
+    })
+  if (fault === 'unequal pitch') for (const n of [3, 4]) page.items[n].transform[5] -= 4
+  const result = extractDocument({ pages: [page] }),
+    owner = result.units.find((u) => u.items.includes('1:0'))!
+  expect(owner.items).not.toContain('1:2')
+  const keys = result.units.flatMap((u) => u.items)
+  expect(new Set(keys).size).toBe(keys.length)
+  expect(keys.toSorted()).toEqual(page.items.map((_, n) => `1:${n}`).toSorted())
+})
+
+function protectedHangingPage(scale = 1): PdfLayoutPage {
+  const part = (str: string, x: number, y: number, width: number, font = 10) => ({
+    str,
+    dir: 'ltr',
+    width: width * scale,
+    height: font * scale,
+    transform: [font * scale, 0, 0, font * scale, x * scale, y * scale],
+    fontName: font === 10 ? 'Body' : 'Heading',
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL: true
+  })
+  return {
+    page: 1,
+    width: 700 * scale,
+    height: 800 * scale,
+    rotation: 0,
+    items: [
+      part('References', 50, 340, 70, 14),
+      part(
+        'Alpha, A. The first complete study describes several useful measurements.',
+        50,
+        300,
+        400
+      ),
+      part('Journal of Independent Results, pages one through seven.', 86, 288, 280),
+      part(
+        'Beta, B. The second complete study explains a different set of measurements.',
+        50,
+        276,
+        400
+      ),
+      part('Proceedings of Example Research, volume two.', 86, 264, 260),
+      part(
+        'Gamma, C. A third complete record has independent text and measurement descriptions.',
+        50,
+        252,
+        400
+      ),
+      part('Independent published results with complete concluding metadata.', 86, 240, 280)
+    ]
+  }
+}
+
+test.each([0.5, 1, 2])(
+  'already protected native references retain complete hanging record order: %s',
+  (scale) => {
+    const page = protectedHangingPage(scale),
+      before = structuredClone(page),
+      result = extractDocument({ pages: [page] })
+    expect(result.units.every((unit) => unit.sourceOnly && unit.preserve === 'reference')).toBe(
+      true
+    )
+    expect(result.units.flatMap((unit) => unit.items)).toEqual(page.items.map((_, i) => `1:${i}`))
+    for (const n of [1, 3, 5])
+      expect(result.units.find((unit) => unit.items.includes(`1:${n}`))?.items).toEqual([
+        `1:${n}`,
+        `1:${n + 1}`
+      ])
+    expect(page).toEqual(before)
+  }
+)
+
+function continuedHangingPages(): PdfLayoutPage[] {
+  const first = protectedHangingPage(),
+    second = protectedHangingPage()
+  second.page = 2
+  second.items.shift()
+  const prefix = {
+    ...second.items[1],
+    str: 'remaining-resource (accessed 1.1.26).',
+    width: 180,
+    transform: [10, 0, 0, 10, 86, 312]
+  }
+  second.items.unshift(
+    {
+      ...prefix,
+      str: 'https://example.org/complete-native-reference/',
+      width: 440,
+      transform: [10, 0, 0, 10, 86, 324]
+    },
+    prefix
+  )
+  return [first, second]
+}
+
+test('extends a complete protected reference packet while preserving its leading owner', () => {
+  const pages = continuedHangingPages(),
+    saved = structuredClone(pages),
+    result = extractDocument({ pages })
+  expect(result.units.find((u) => u.items.includes('2:0'))?.items).toEqual(['2:0', '2:1'])
+  for (const n of [2, 4, 6])
+    expect(result.units.find((u) => u.items.includes('2:' + n))?.items).toEqual([
+      '2:' + n,
+      '2:' + (n + 1)
+    ])
+  expect(result.units.every((u) => u.sourceOnly && u.preserve === 'reference')).toBe(true)
+  expect(result.units.flatMap((u) => u.items)).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => p.page + ':' + i))
+  )
+  expect(pages).toEqual(saved)
+})
+
+test('a previously ordered reference page still certifies its adjacent continuation', () => {
+  const pages = continuedHangingPages(),
+    first = pages[0],
+    added: PdfLayoutTextItem[] = [first.items[0]]
+  for (let n = 0; n < 3; n++) {
+    const head = structuredClone(first.items[1 + n * 2]),
+      tail = structuredClone(first.items[2 + n * 2])
+    head.transform[5] = 300 - n * 36
+    tail.transform[5] = 288 - n * 36
+    added.push(head, tail, {
+      ...tail,
+      str: 'Complete independent terminal metadata.',
+      transform: [10, 0, 0, 10, 86, 276 - n * 36],
+      width: 160
+    })
+  }
+  first.items = added
+  const result = extractDocument({ pages })
+  expect(
+    result.units
+      .filter((u) => u.items.some((k) => k.startsWith('1:')))
+      .every((u) => !u.id.includes('-native-'))
+  ).toBe(true)
+  for (const n of [2, 4, 6])
+    expect(result.units.find((u) => u.items.includes('2:' + n))?.items).toEqual([
+      '2:' + n,
+      '2:' + (n + 1)
+    ])
+})
+
+test.each([
+  'previous missing proof',
+  'changed font',
+  'changed anchor',
+  'mixed prefix owner',
+  'nonreference tail'
+])('rejects an incomplete continued reference packet: %s', (fault) => {
+  const pages = continuedHangingPages()
+  if (fault === 'previous missing proof') pages[0].items[4].transform[4] = 92
+  if (fault === 'changed font') for (const item of pages[1].items) item.fontName = 'Other'
+  if (fault === 'changed anchor') for (const item of pages[1].items) item.transform[4] += 1
+  if (fault === 'mixed prefix owner') {
+    pages[1].items[0].width = 280
+    pages[1].items[1].width = 280
+  }
+  if (fault === 'nonreference tail')
+    pages[1].items.push({
+      ...pages[1].items[2],
+      str: 'Appendix',
+      height: 14,
+      fontName: 'Heading',
+      transform: [14, 0, 0, 14, 50, 200],
+      width: 70
+    })
+  const saved = structuredClone(pages),
+    result = extractDocument({ pages })
+  expect(result.units.find((u) => u.items.includes('2:2'))?.items).not.toContain('2:3')
+  expect(
+    result.units
+      .filter((u) => u.items.some((k) => k.startsWith('2:')))
+      .every((u) => !u.id.includes('-native-'))
+  ).toBe(true)
+  expect(pages).toEqual(saved)
+  const keys = result.units.flatMap((u) => u.items)
+  expect(new Set(keys).size).toBe(keys.length)
+})
+
+function continuedPagesWithOutsideOwner(): PdfLayoutPage[] {
+  const pages = continuedHangingPages()
+  for (const page of pages)
+    page.items.unshift({
+      ...page.items[1],
+      str: 'Unchanged outer note',
+      width: 100,
+      transform: [10, 0, 0, 10, 280, 40]
+    })
+  return pages
+}
+
+test('retains an exact earlier-painted outside owner across the reference continuation', () => {
+  const pages = continuedPagesWithOutsideOwner(),
+    saved = structuredClone(pages),
+    result = extractDocument({ pages })
+  for (const n of [3, 5, 7])
+    expect(result.units.find((u) => u.items.includes('2:' + n))?.items).toEqual([
+      '2:' + n,
+      '2:' + (n + 1)
+    ])
+  expect(result.units.find((u) => u.items.includes('2:0'))?.items).toEqual(['2:0'])
+  expect(result.units.find((u) => u.items.includes('2:1'))?.items).toEqual(['2:1', '2:2'])
+  expect(result.units.every((u) => u.sourceOnly && u.preserve === 'reference')).toBe(true)
+  expect(pages).toEqual(saved)
+})
+
+test.each(['font', 'overlap', 'mixed owner', 'late paint'])(
+  'requires complete disjoint inherited outside-owner evidence: %s',
+  (fault) => {
+    const pages = continuedPagesWithOutsideOwner(),
+      item = pages[1].items[0]
+    if (fault === 'font') item.fontName = 'Other'
+    if (fault === 'overlap')
+      for (const page of pages) page.items[0].transform = [10, 0, 0, 10, 86, 288]
+    if (fault === 'mixed owner')
+      pages[1].items.push({
+        ...item,
+        str: 'Further outside text',
+        transform: [10, 0, 0, 10, 280, 28]
+      })
+    if (fault === 'late paint') pages[1].items.push(pages[1].items.shift()!)
+    const result = extractDocument({ pages })
+    expect(
+      result.units
+        .filter((u) => u.items.some((k) => k.startsWith('2:')))
+        .every((u) => !u.id.includes('-native-'))
+    ).toBe(true)
+    const keys = result.units.flatMap((u) => u.items)
+    expect(new Set(keys).size).toBe(keys.length)
+    expect(keys.toSorted()).toEqual(
+      pages.flatMap((p) => p.items.map((_, n) => p.page + ':' + n)).toSorted()
+    )
+  }
+)
+
+test.each([
+  'https://example.org/reference?language=en&part=2',
+  'Published title | independent complete reference metadata.'
+])('keeps literal URL parameters and textual separators in protected records: %s', (text) => {
+  const pages = continuedPagesWithOutsideOwner()
+  pages[1].items[4].str = text
+  const result = extractDocument({ pages })
+  expect(result.units.find((u) => u.items.includes('2:3'))?.items).toEqual(['2:3', '2:4'])
+  expect(result.units.find((u) => u.items.includes('2:4'))?.originalStrings).toContain(text)
+  expect(result.units.every((u) => u.sourceOnly && u.preserve === 'reference')).toBe(true)
+})
+test.each(['https://?language=en', 'https://example.org/x?language=en x = y', 'x|y'])(
+  'rejects unresolved symbolic reference rows even beside URLs: %s',
+  (text) => {
+    const pages = continuedPagesWithOutsideOwner()
+    pages[1].items[4].str = text
+    const result = extractDocument({ pages })
+    expect(
+      result.units
+        .filter((u) => u.items.some((k) => k.startsWith('2:')))
+        .every((u) => !u.id.includes('-native-'))
+    ).toBe(true)
+  }
+)
+
+test('protected hanging references retain complete numeric terminal metadata', () => {
+  const page = protectedHangingPage()
+  page.items[2].str = '46(6/7), 550–559.'
+  const result = extractDocument({ pages: [page] })
+  expect(result.units.find((u) => u.items.includes('1:1'))?.items).toEqual(['1:1', '1:2'])
+  expect(result.units.every((u) => u.sourceOnly && u.preserve === 'reference')).toBe(true)
+})
+
+test.each([
+  'unprotected prose',
+  'third indent',
+  'unknown font',
+  'rotated row',
+  'duplicate ink',
+  'native row inversion',
+  'foreign before heading',
+  'no repeated packet'
+])('keeps an unproved reference packet unchanged: %s', (fault) => {
+  const page = protectedHangingPage()
+  if (fault === 'unprotected prose') page.items[0].str = 'Sources'
+  if (fault === 'third indent') page.items[4].transform[4] = 92
+  if (fault === 'unknown font') delete page.items[2].fontName
+  if (fault === 'rotated row') page.items[2].transform[1] = 1
+  if (fault === 'duplicate ink') page.items.splice(3, 0, structuredClone(page.items[2]))
+  if (fault === 'native row inversion')
+    [page.items[2], page.items[3]] = [page.items[3], page.items[2]]
+  if (fault === 'foreign before heading')
+    page.items.unshift({
+      ...page.items[2],
+      str: 'Independent native note.',
+      transform: [10, 0, 0, 10, 60, 270],
+      width: 130
+    })
+  if (fault === 'no repeated packet') page.items.splice(5)
+  const first = page.items.findIndex((i) => i.str.startsWith('Alpha,')),
+    tail = page.items.findIndex((i) => i.str.startsWith('Journal of')),
+    before = structuredClone(page),
+    result = extractDocument({ pages: [page] })
+  expect(result.units.find((u) => u.items.includes(`1:${first}`))?.items).not.toContain(`1:${tail}`)
+  expect(page).toEqual(before)
+  const keys = result.units.flatMap((u) => u.items)
+  expect(new Set(keys).size).toBe(keys.length)
+})
+
+test.each(['foreign font', 'unknown font', 'other column', 'native interruption'])(
+  'does not infer a prose boundary from an unproved intervening row: %s',
+  (fault) => {
+    const page = interveningBulletPage()
+    if (fault === 'foreign font') page.items[2].fontName = 'Independent'
+    if (fault === 'unknown font') delete page.items[2].fontName
+    if (fault === 'other column') {
+      page.items[2].transform[4] = 600
+      page.items[2].width = 50
+    }
+    if (fault === 'native interruption')
+      page.items.splice(3, 0, {
+        ...page.items[2],
+        str: 'An independent native record outside the local row.',
+        transform: [10, 0, 0, 10, 50, 600]
+      })
+    const before = structuredClone(page),
+      result = extractDocument({ pages: [page] }),
+      owner = result.units.find((unit) => unit.items.includes('1:0'))
+    expect(owner?.items).toContain(fault === 'native interruption' ? '1:4' : '1:3')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      page.items.map((_, index) => `1:${index}`).sort()
+    )
+    expect(page).toEqual(before)
+  }
+)
+
+function pairedHeadingPage(): PdfLayoutPage {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    size = 10,
+    hasEOL = true
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: size,
+    transform: [size, 0, 0, size, x, y],
+    fontName,
+    fontAscent: 0.7,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  return {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      item('Procedure One: Initial Survey', 50, 600, 180, 'Heading', 10, false),
+      item('ALPHA', 500, 600, 30, 'Label'),
+      item(
+        'The first procedure contains ordinary explanatory prose across the complete text area.',
+        50,
+        580,
+        420,
+        'Body',
+        9.5
+      ),
+      item('Procedure Two: Final Survey', 50, 480, 180, 'Heading', 10, false),
+      item('BETA', 505, 480, 25, 'Label'),
+      item(
+        'The second procedure also contains independent explanatory prose in the same text area.',
+        50,
+        460,
+        420,
+        'Body',
+        9.5
+      )
+    ]
+  }
+}
+
+test.each([0.5, 1, 2])(
+  'keeps complete native paired heading labels ahead of their body: %s',
+  (scale) => {
+    const page = pairedHeadingPage()
+    page.width *= scale
+    page.height *= scale
+    for (const item of page.items) {
+      item.width *= scale
+      item.height *= scale
+      item.transform = item.transform.map((value) => value * scale)
+    }
+    const before = structuredClone(page),
+      result = extractDocument({ pages: [page] })
+    expect(result.units.flatMap((unit) => unit.items)).toEqual(
+      page.items.map((_, index) => `1:${index}`)
+    )
+    expect(result.units.every((unit) => !unit.sourceOnly)).toBe(true)
+    expect(result.units).toHaveLength(6)
+    expect(page).toEqual(before)
+  }
+)
+
+test.each(['baseline drift', 'foreign font', 'small label', 'extra native item', 'right body'])(
+  'keeps independent column order without complete paired heading evidence: %s',
+  (fault) => {
+    const page = pairedHeadingPage()
+    if (fault === 'baseline drift') page.items[1].transform[5] += 2
+    if (fault === 'foreign font') page.items[4].fontName = 'Independent'
+    if (fault === 'small label') {
+      page.items[1].height = 7
+      page.items[1].transform[0] = page.items[1].transform[3] = 7
+    }
+    if (fault === 'extra native item')
+      page.items.splice(1, 0, {
+        ...page.items[0],
+        str: 'Unowned',
+        width: 40,
+        transform: [10, 0, 0, 10, 300, 600]
+      })
+    if (fault === 'right body')
+      page.items.splice(2, 0, {
+        ...page.items[2],
+        str: 'Independent right column body.',
+        width: 70,
+        transform: [9.5, 0, 0, 9.5, 500, 580]
+      })
+    const before = structuredClone(page),
+      result = extractDocument({ pages: [page] }),
+      ordered = result.units.flatMap((unit) => unit.originalStrings)
+    expect(ordered.indexOf('ALPHA')).toBeGreaterThan(
+      ordered.indexOf(
+        'The first procedure contains ordinary explanatory prose across the complete text area.'
+      )
+    )
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      page.items.map((_, index) => `1:${index}`).sort()
+    )
+    expect(page).toEqual(before)
+  }
+)
+
 function extensibleFunctionPage(fault: string): PdfLayoutPage {
   const native = (
     str: string,
@@ -17356,5 +17877,330 @@ test.each([
     result.units
       .filter((u) => u.items.includes('1:0') || u.items.includes('1:1'))
       .every((u) => u.sourceOnly)
+  )
+})
+
+function interruptedCaptionBodyPage(): PdfLayoutPage {
+  const text = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    size = 10,
+    font = 'Body',
+    hasEOL = true
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: size,
+    transform: [size, 0, 0, size, x, y],
+    fontName: font,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  return {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      text(
+        'The preceding ordinary explanation establishes the surrounding discussion.',
+        60,
+        400,
+        480
+      ),
+      text('Across these independent conditions the discussion continues with', 60, 388, 480),
+      text('Figure 1:', 60, 220, 45, 10, 'Body', false),
+      text(
+        'Observed values from the complete independent comparison.',
+        110,
+        220,
+        430,
+        8,
+        'Caption'
+      ),
+      text(
+        'an ordinary continuation that remains separate from the completed caption.',
+        60,
+        212,
+        480
+      ),
+      text('The following ordinary sentence preserves the remaining body context.', 60, 200, 480)
+    ]
+  }
+}
+
+test('separates a complete smaller-description caption from resumed ordinary body prose', () => {
+  const page = interruptedCaptionBodyPage(),
+    before = structuredClone(page),
+    result = extractDocument({ pages: [page] })
+  const caption = result.units.find((u) => u.items.includes('1:2'))!,
+    body = result.units.find((u) => u.items.includes('1:4'))!
+  assert.deepEqual(caption.items, ['1:2', '1:3'])
+  assert.deepEqual(body.items, ['1:4', '1:5'])
+  assert.equal(caption.sourceOnly, undefined)
+  assert.equal(body.sourceOnly, undefined)
+  assert.deepEqual(
+    result.units.flatMap((u) => u.items),
+    ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5']
+  )
+  assert.deepEqual(page, before)
+})
+
+test.each(['closed', 'missing-space', 'cross-column', 'label'])(
+  'requires native whitespace closure for justified caption context: %s',
+  (variant) => {
+    const page = interruptedCaptionBodyPage(),
+      original = page.items[1]
+    const left = {
+      ...original,
+      str: 'Across these independent conditions',
+      width: 200,
+      hasEOL: false
+    }
+    const space = {
+      ...original,
+      str: ' ',
+      width: 12,
+      hasEOL: false,
+      transform: [...original.transform]
+    }
+    space.transform[4] = 260
+    const right = {
+      ...original,
+      str: 'the discussion continues with',
+      width: 268,
+      transform: [...original.transform]
+    }
+    right.transform[4] = 272
+    if (variant === 'missing-space') space.str = ''
+    if (variant === 'cross-column') {
+      space.width = 180
+      right.transform[4] = 440
+      right.width = 100
+    }
+    if (variant === 'label') {
+      left.hasEOL = true
+      right.str = 'Independent label'
+    }
+    page.items.splice(1, 1, left, space, right)
+    const before = structuredClone(page),
+      result = extractDocument({ pages: [page] })
+    const caption = result.units.find((u) => u.items.includes('1:4'))!
+    assert.equal(caption.items.includes('1:6'), variant !== 'closed')
+    assert.ok(result.units.every((u) => !u.sourceOnly))
+    const keys = result.units.flatMap((u) => u.items)
+    assert.deepEqual(
+      keys,
+      page.items.flatMap((item, i) => (item.str.trim() ? ['1:' + i] : []))
+    )
+    assert.equal(new Set(keys).size, keys.length)
+    assert.deepEqual(page, before)
+  }
+)
+
+test.each([
+  'closed-prior-paragraph',
+  'unfinished-caption',
+  'description-font-continuation',
+  'ordinary-caption-leading',
+  'nearby-ordinary-context',
+  'different-prior-column'
+])(
+  'retains a potentially legitimate mixed-font caption without independent resumed-body evidence: %s',
+  (variant) => {
+    const page = interruptedCaptionBodyPage()
+    if (variant === 'closed-prior-paragraph') page.items[1].str += '.'
+    if (variant === 'unfinished-caption')
+      page.items[3].str = 'Observed values across the following conditions including'
+    if (variant === 'description-font-continuation')
+      for (const item of page.items.slice(4)) item.fontName = 'Caption'
+    if (variant === 'ordinary-caption-leading')
+      for (const item of page.items.slice(4)) item.transform[5] -= 4
+    if (variant === 'nearby-ordinary-context') {
+      page.items[0].transform[5] = 244
+      page.items[1].transform[5] = 232
+    }
+    if (variant === 'different-prior-column')
+      for (const item of page.items.slice(0, 2)) item.transform[4] += 20
+    const before = structuredClone(page),
+      result = extractDocument({ pages: [page] })
+    const caption = result.units.find((u) => u.items.includes('1:2'))!
+    assert.ok(caption.items.includes('1:4'))
+    assert.ok(caption.items.includes('1:5'))
+    assert.equal(caption.sourceOnly, undefined)
+    const keys = result.units.flatMap((u) => u.items)
+    assert.deepEqual(
+      keys,
+      page.items.flatMap((item, index) => (item.str.trim() ? ['1:' + index] : []))
+    )
+    assert.equal(new Set(keys).size, keys.length)
+    assert.deepEqual(page, before)
+  }
+)
+
+function bracketedRecordPage(fault = ''): PdfLayoutPage {
+  const item = (str: string, x: number, y: number, width: number): PdfLayoutTextItem => ({
+    str,
+    width,
+    height: 10,
+    dir: 'ltr',
+    transform: [10, 0, 0, 10, x, y],
+    hasEOL: true,
+    fontName: 'Body',
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false
+  })
+  const items = [
+    item(
+      '[Ab21] Alpha Author, The first independent publication has a long introductory title',
+      72,
+      700,
+      460
+    ),
+    item('with its final words and journal information, 2021.', 120, 686, 310),
+    item(
+      '[Cd22] Another Author, The second independent publication has its own complete title, 2022.',
+      72,
+      672,
+      460
+    )
+  ]
+  if (fault === 'headings')
+    items.forEach((i) => {
+      i.str = i.str.replace(/, 202[12]\./u, '.')
+    })
+  if (fault === 'columns') {
+    items[1].transform[4] = 350
+    items[1].width = 180
+  }
+  if (fault === 'native order') [items[1], items[2]] = [items[2], items[1]]
+  if (fault === 'overlap') items[1].transform[5] = 699
+  if (fault === 'rotation') items[1].transform[1] = 1
+  if (fault === 'foreign')
+    items.splice(2, 0, item('Independent material outside this record.', 310, 680, 220))
+  return { page: 1, width: 600, height: 800, rotation: 0, items }
+}
+
+test('keeps a complete native record continuation before the next bracketed record', () => {
+  const page = bracketedRecordPage(),
+    layout = extractDocument({ pages: [page] })
+  expect(layout.units.map((u) => u.items)).toEqual([['1:0', '1:1'], ['1:2']])
+  expect(layout.units.map((u) => u.source)).toEqual([
+    page.items[0].str + ' ' + page.items[1].str,
+    page.items[2].str
+  ])
+  expect(layout.units.every((u) => !u.sourceOnly && !u.preserve)).toBe(true)
+  expect(layout.units.flatMap((u) => u.originalStrings)).toEqual(page.items.map((i) => i.str))
+})
+
+test.each(['headings', 'columns', 'native order', 'overlap', 'rotation', 'foreign'])(
+  'retains bracketed rows without complete independent record proof: %s',
+  (fault) => {
+    const page = bracketedRecordPage(fault),
+      saved = structuredClone(page),
+      layout = extractDocument({ pages: [page] })
+    expect(layout.units.every((u) => !u.id.includes('-native-record-'))).toBe(true)
+    expect(layout.units.flatMap((u) => u.items).sort()).toEqual(
+      page.items.map((_, n) => `1:${n}`).sort()
+    )
+    expect(page).toEqual(saved)
+  }
+)
+
+test('keeps ordinary two-column prose independent of bracket-record repair', () => {
+  const page = bracketedRecordPage()
+  page.items = [
+    {
+      ...page.items[0],
+      str: 'The first ordinary column explains the independent experiment and its measurements.',
+      width: 210
+    },
+    {
+      ...page.items[1],
+      str: 'The ordinary explanation continues on its next physical row.',
+      width: 210,
+      transform: [10, 0, 0, 10, 72, 686]
+    },
+    {
+      ...page.items[2],
+      str: 'The second ordinary column describes separate controls and their complete results.',
+      width: 210,
+      transform: [10, 0, 0, 10, 320, 700]
+    }
+  ]
+  const layout = extractDocument({ pages: [page] })
+  expect(layout.units.every((u) => !u.id.includes('-native-record-'))).toBe(true)
+  expect(layout.units.flatMap((u) => u.items)).toEqual(['1:0', '1:1', '1:2'])
+})
+
+function bracketedRecordSequence(count: number): PdfLayoutPage {
+  const page = bracketedRecordPage(),
+    first = page.items[0],
+    tail = page.items[1]
+  page.items = Array.from({ length: count }, (_, n) => {
+    const year = 2020 + n,
+      y = 700 - n * 28,
+      head = {
+        ...first,
+        str: `[Ab${year}] Author Name, The independently published study describes complete native records${n === count - 1 ? `, ${year}.` : ''}`,
+        transform: [10, 0, 0, 10, 72, y]
+      }
+    return n === count - 1
+      ? [head]
+      : [
+          head,
+          {
+            ...tail,
+            str: `with a complete journal continuation and publication year, ${year}.`,
+            transform: [10, 0, 0, 10, 120, y - 14]
+          }
+        ]
+  }).flat()
+  return page
+}
+
+test('partitions a complete native sequence of four bracketed records', () => {
+  const count = 4,
+    page = bracketedRecordSequence(count),
+    before = structuredClone(page),
+    layout = extractDocument({ pages: [page] })
+  expect(layout.units.map((u) => u.items)).toEqual(
+    Array.from({ length: count }, (_, n) =>
+      n === count - 1 ? [`1:${n * 2}`] : [`1:${n * 2}`, `1:${n * 2 + 1}`]
+    )
+  )
+  expect(layout.units.every((u) => !u.sourceOnly && !u.preserve && u.risks.length === 0)).toBe(true)
+  expect(layout.units.flatMap((u) => u.originalStrings)).toEqual(page.items.map((i) => i.str))
+  expect(page).toEqual(before)
+})
+
+test.each([
+  'unfinished middle record',
+  'undated middle record',
+  'shifted middle marker',
+  'foreign same row'
+])('keeps the entire bracketed sequence unchanged without every record proof: %s', (fault) => {
+  const page = bracketedRecordSequence(4)
+  if (fault === 'unfinished middle record') page.items[3].str = page.items[3].str.slice(0, -1)
+  if (fault === 'undated middle record')
+    page.items[3].str = page.items[3].str.replace('2021', 'recent')
+  if (fault === 'shifted middle marker') page.items[4].transform[4] += 10
+  if (fault === 'foreign same row')
+    page.items.push({
+      ...page.items[3],
+      str: 'Independent other column.',
+      width: 80,
+      transform: [10, 0, 0, 10, 500, page.items[3].transform[5]]
+    })
+  const layout = extractDocument({ pages: [page] })
+  expect(layout.units.every((u) => !u.id.includes('-native-record-'))).toBe(true)
+  expect(layout.units.flatMap((u) => u.items).sort()).toEqual(
+    page.items.map((_, n) => `1:${n}`).sort()
   )
 })

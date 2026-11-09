@@ -3919,7 +3919,7 @@ describe('notebook local RPC server', () => {
         const legacy = server.issueArtifactRunCapability({ ...binding, allowedMethods: [method] })
         const response = await call(legacy, method)
         expect(response.status).toBe(409)
-        expect(await response.text()).toContain('Restart')
+        expect(await response.text()).toContain('Artifact save protocol changed')
       }
       now = 101
       expect((await call(token, 'artifactSaveVersion')).status).toBe(401)

@@ -1,3 +1,4 @@
+import { openComputeOutputPreview } from '../compute/job-output-preview'
 import { createFileSaveCommands } from '../file-save'
 import { hasDesktopInteraction } from '../desktop-interaction'
 import { createDesktopUtilitiesElectronSurface } from '../desktop-surface-declarations'
@@ -43,6 +44,7 @@ export async function composeDesktopUtilities({
         { source, projectId: request.projectId, fileId: request.fileId },
         request.versionId
       ),
+    openComputeOutput: openComputeOutputPreview,
     openNotebookInput: (request) =>
       sessionAuthority.notebookInputRegistry.openPreviewKey(request.path),
     translate

@@ -485,17 +485,23 @@ it('waits for resource acquisition during close and leaves no listener or source
 
 it('releases an expired receipt after import and admits another transfer without restarting', async () => {
   const f = await setup({ idleMs: 40 })
-  await f.bridge.begin(launch(f.port))
-  await f.chunk('hello')
-  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
-  await vi.waitFor(async () => {
-    await expect(f.request('/ready')).rejects.toThrow()
-  })
-  expect(await readFile(f.received[0], 'utf8')).toBe('hello')
-  f.releases[0]()
-  await vi.waitFor(async () => expect(await readdir(f.root)).toEqual([]))
-  await f.bridge.begin(launch(f.port))
-  expect((await f.chunk('hello')).status).toBe(200)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    await f.bridge.begin(launch(f.port))
+    await f.chunk('hello')
+    expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+    await vi.advanceTimersByTimeAsync(40)
+    await vi.waitFor(async () => {
+      await expect(f.request('/ready')).rejects.toThrow()
+    })
+    expect(await readFile(f.received[0], 'utf8')).toBe('hello')
+    f.releases[0]()
+    await vi.waitFor(async () => expect(await readdir(f.root)).toEqual([]))
+    await f.bridge.begin(launch(f.port))
+    expect((await f.chunk('hello')).status).toBe(200)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('retains the receipt for retry after the source has already been consumed', async () => {

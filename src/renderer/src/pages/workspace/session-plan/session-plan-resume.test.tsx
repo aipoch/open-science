@@ -129,6 +129,18 @@ describe('Session Plan feedback recovery', () => {
     })
   })
 
+  it('gives global Retry the matching execution while its transcript overlay is loading', () => {
+    const session = hydrateSession(graphOnlyRecoveryFixture('connection-lost'))
+    const admission = session.runtimeSessionAdmissions!.find(
+      ({ promptMessageId }) => promptMessageId === 'feedback'
+    )!
+    const failure = { ...admission, projectId: session.projectId, startedAt: 1 }
+    expect(resolveSessionRecoveryPresentation(session, [failure])).toBeUndefined()
+    expect(
+      resolveSessionRecoveryPresentation(session, [{ ...failure, messageBranchId: 'other-branch' }])
+    ).toEqual(resolveSessionRecoveryPresentation(session))
+  })
+
   it.each(['connection-lost', 'app-restart'] as const)(
     'retains %s recovery and its diagnostic when the selected branch hides the target',
     (cause) => {

@@ -947,7 +947,8 @@ class AcpPermissionContext {
       framework !== 'codex' &&
       framework !== 'opencode' &&
       framework !== 'claude-code' &&
-      framework !== 'codebuddy'
+      framework !== 'codebuddy' &&
+      framework !== 'open-science-agent'
     ) {
       return
     }
@@ -1024,7 +1025,11 @@ class AcpPermissionContext {
       return
     }
 
-    if (framework === 'claude-code' || framework === 'codebuddy') {
+    if (
+      framework === 'claude-code' ||
+      framework === 'codebuddy' ||
+      framework === 'open-science-agent'
+    ) {
       const inputs = this.claudeCodeMcpToolInputs.get(sessionId) ?? new Map()
       const previous = inputs.get(event.toolCallId)
       const title = event.title ?? previous?.title
@@ -1176,7 +1181,7 @@ class AcpPermissionContext {
           `${framework}/${webCall.tool === 'WebSearch' ? 'websearch' : 'webfetch'}`
         )
     }
-    if (framework === 'claude-code') {
+    if (framework === 'claude-code' || framework === 'open-science-agent') {
       return this.restoreClaudeCodeMcpToolInput(params, sessionId, mcpServerNames)
     }
     if (framework === 'codebuddy') {

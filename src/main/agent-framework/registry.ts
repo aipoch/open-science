@@ -1,3 +1,4 @@
+import { harnessFramework } from './harness'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { claudeCodeFramework } from './claude-code'
 import { codeBuddyFramework } from './codebuddy'
@@ -25,11 +26,11 @@ const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
       sessionOptionKey: OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
       createServer: createSkillRuntimeAcpServerConfig
     }
-  })
+  }),
+  'open-science-agent': harnessFramework
 }
 
-// Fallback for settings documents created before framework selection was persisted.
-export const DEFAULT_AGENT_FRAMEWORK_ID: AgentFrameworkId = 'claude-code'
+export { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/settings'
 
 // Resolves a framework by id for the runtime/settings; ids come from a fixed union so this is total.
 export const getAgentFramework = (id: AgentFrameworkId): AgentFramework => FRAMEWORKS[id]

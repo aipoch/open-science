@@ -115,6 +115,25 @@ if (params.has('long')) {
   )
 }
 
+const history = params.has('history')
+if (history) {
+  session.messages = Array.from({ length: 12 }, (_, index) => {
+    const promptId = `history-${index}`
+    return [
+      message(promptId, 'user', `Compare dataset ${index + 1} with the baseline.`, index * 2),
+      {
+        ...message(
+          `reply-${index}`,
+          'agent',
+          'The two groups have comparable means and sample sizes.',
+          index * 2 + 1
+        ),
+        responseToMessageId: promptId
+      }
+    ]
+  }).flat()
+}
+
 export function Fixture(): React.JSX.Element {
   const [input, setInput] = useState(session)
   return (
@@ -122,10 +141,52 @@ export function Fixture(): React.JSX.Element {
       <header className="flex items-center justify-between border-b border-border-200 px-8 py-4 text-sm">
         <span>Open-Science · {locale === 'zh-Hans' ? '数据分析' : 'Data analysis'}</span>
         <button
-          onClick={() => setInput({ ...session, status: 'running', agentPromptInFlight: true })}
+          onClick={() =>
+            setInput({
+              ...session,
+              status: 'running',
+              agentPromptInFlight: true,
+              awaitingFirstAgentOutput: true,
+              messages: history
+                ? [
+                    ...session.messages,
+                    message('new-prompt', 'user', 'Compare the next dataset.', 30)
+                  ]
+                : session.messages
+            })
+          }
         >
-          Running
+          {history ? 'Send' : 'Running'}
         </button>
+        {history && (
+          <button
+            onClick={() =>
+              setInput({
+                ...input,
+                status: 'idle',
+                agentPromptInFlight: false,
+                awaitingFirstAgentOutput: false,
+                messages: [
+                  ...input.messages,
+                  {
+                    ...message(
+                      'new-answer',
+                      'agent',
+                      Array.from(
+                        { length: 24 },
+                        (_, i) => `Dataset ${i + 1} has comparable variance.`
+                      ).join('\n\n'),
+                      31
+                    ),
+                    responseToMessageId: 'new-prompt'
+                  }
+                ]
+              })
+            }
+          >
+            Finish
+          </button>
+        )}
         <button
           onClick={() =>
             useSearchMessageFocusStore.getState().request({

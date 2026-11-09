@@ -1,12 +1,17 @@
+import { normalizeNetworkDestinationGrants } from './network-destination-grants'
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import {
   OPEN_SCIENCE_DOMAIN_GROUP_IDS,
+  formatNetworkHostname,
+  requiresNetworkException,
+  normalizeNetworkHostname,
   type OpenScienceDomainGroupId,
   type OpenScienceDomainGroup,
   type TrustedPrivateDestination,
   type NotebookNetworkSettings,
   type NotebookNetworkPolicy
 } from './notebook-network-settings'
+export { formatNetworkHostname, normalizeNetworkHostname } from './notebook-network-settings'
 export { OPEN_SCIENCE_DOMAIN_GROUP_IDS } from './notebook-network-settings'
 export type {
   OpenScienceDomainGroupId,
@@ -218,7 +223,7 @@ export const notebookNetworkSettingsAllowDomain = (
   hostname: string
 ): boolean => {
   const normalized = hostname.toLowerCase().replace(/\.$/, '')
-  const policy = buildNotebookNetworkPolicy(settings)
+  const policy = buildLinkPreviewDomainPolicy(settings)
   return (
     policy.allowedDomains.includes(normalized) ||
     (!policy.askDomains.some((pattern) => domainPatternMatches(pattern, normalized)) &&
@@ -332,6 +337,13 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
     : []
 
   return {
+    ...(Array.isArray(record.destinationGrants)
+      ? {
+          destinationGrants: normalizeNetworkDestinationGrants(record.destinationGrants).filter(
+            (entry) => requiresNetworkException(entry.hostname, entry.protocol)
+          )
+        }
+      : {}),
     ...(Array.isArray(record.trustedPrivateDestinations)
       ? {
           trustedPrivateDestinations: normalizeTrustedPrivateDestinations(
@@ -345,9 +357,7 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
   }
 }
 
-export const buildNotebookNetworkPolicy = (
-  settings: NotebookNetworkSettings
-): NotebookNetworkPolicy => {
+const buildLinkPreviewDomainPolicy = (settings: NotebookNetworkSettings): NotebookNetworkPolicy => {
   const disabledGroups = new Set(settings.disabledOpenScienceDomainGroups)
   const disabledDomains = new Set(settings.disabledOpenScienceDomains)
   const askDomains = uniqueSorted(
@@ -381,9 +391,22 @@ export const buildNotebookNetworkPolicy = (
     deniedDomainReasons: {}
   }
 }
+// Notebook HTTPS admission is independent from link-preview and icon consent.
+export const buildNotebookNetworkPolicy = (
+  settings: NotebookNetworkSettings
+): NotebookNetworkPolicy => ({
+  ...(settings.trustedPrivateDestinations?.length
+    ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
+    : {}),
+  allowedDomains: [],
+  askDomains: [],
+  deniedDomains: [],
+  deniedDomainReasons: {}
+})
 import { AUTOMATIC_PACKAGE_MIRROR_DOMAINS } from './mirror'
 
-// Shape validation only: the main/runtime owner classifies addresses and rechecks DNS.
+// Shape validation only. Trusted entries are explicit protocol/host exceptions;
+// runtime access does not depend on a DNS address snapshot.
 export const normalizeTrustedPrivateDestinations = (
   value: unknown
 ): TrustedPrivateDestination[] => {
@@ -391,25 +414,33 @@ export const normalizeTrustedPrivateDestinations = (
   const entries = new Map<string, TrustedPrivateDestination>()
   for (const item of value) {
     if (!item || typeof item !== 'object') continue
-    const { hostname, port, approvedAddresses } = item
-    const host = typeof hostname === 'string' ? validateCustomAllowedDomain(hostname) : undefined
+    const { hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
+    const hostValue = typeof hostname === 'string' ? normalizeNetworkHostname(hostname) : undefined
+    const host = hostValue ? { ok: true as const, hostname: hostValue } : undefined
+    const hasManagedId = typeof managedGrantId === 'string' && managedGrantId.length > 0
+    const hasManagedSource = source === 'global-destination-grant'
     if (
       !host?.ok ||
+      (protocol !== undefined && protocol !== 'http' && protocol !== 'https') ||
       !Number.isInteger(port) ||
       port < 1 ||
       port > 65535 ||
       !Array.isArray(approvedAddresses) ||
-      !approvedAddresses.length ||
-      !approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45)
+      !approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45) ||
+      hasManagedId !== hasManagedSource ||
+      (managedGrantId !== undefined && !hasManagedId)
     )
       continue
-    const key = `${host.hostname}:${port}`
+    if (!requiresNetworkException(host.hostname, protocol)) continue
+    const key = `${protocol ?? 'https'}://${formatNetworkHostname(host.hostname)}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
     if (entries.has(key)) return []
     entries.set(key, {
       hostname: host.hostname,
       port,
-      approvedAddresses: uniqueSorted(approvedAddresses)
+      ...(protocol !== undefined ? { protocol } : {}),
+      approvedAddresses: uniqueSorted(approvedAddresses),
+      ...(hasManagedId ? { managedGrantId, source: 'global-destination-grant' as const } : {})
     })
   }
   return [...entries.values()].sort(

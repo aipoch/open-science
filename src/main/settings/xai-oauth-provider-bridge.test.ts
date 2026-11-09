@@ -21,6 +21,56 @@ const responsesPayload = {
 }
 
 describe('xAI OAuth provider bridge', () => {
+  it.each(['disconnect', 'close'])(
+    'does not dispatch after %s while another session waits for the shared credential',
+    async (action) => {
+      let finish!: (token: string) => void
+      const credential = new Promise<string>((resolve) => {
+        finish = resolve
+      })
+      const getAccessToken = vi.fn(() => credential)
+      const upstream = vi.fn<typeof fetch>(async () => Response.json(responsesPayload))
+      const sessions = Array.from({ length: 2 }, () =>
+        createXaiOAuthProviderBridge(
+          [{ id: 'active', model: 'grok-4.6' }],
+          'active',
+          'chat-completions',
+          getAccessToken,
+          upstream
+        )
+      )
+      bridges.push(...sessions)
+      const connections = await Promise.all(sessions.map((bridge) => bridge.start()))
+      const abort = new AbortController()
+      const requests = connections.map((connection, index) =>
+        fetch(`${connection.baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ messages: [{ role: 'user', content: `session-${index}` }] }),
+          ...(index === 0 ? { signal: abort.signal } : {})
+        })
+      )
+      const cancelled = expect(requests[0]).rejects.toBeDefined()
+      await vi.waitFor(() => expect(getAccessToken).toHaveBeenCalledTimes(2))
+      if (action === 'disconnect') abort.abort()
+      else await sessions[0]!.close()
+      await cancelled
+      // Closing the first listener settles server-side cancellation before releasing the token.
+      await sessions[0]!.close()
+      finish('shared-rotated-token')
+      const response = await requests[1]!
+      expect(response.status).toBe(200)
+      await response.text()
+      expect(upstream).toHaveBeenCalledOnce()
+      expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({
+        input: [{ role: 'user', content: 'session-1' }]
+      })
+    }
+  )
+
   it('rejects an oversized successful response before reading its body', async () => {
     let cancelBody: ReturnType<typeof vi.spyOn> | undefined
     const upstream = vi.fn<typeof fetch>(async () => {
@@ -227,4 +277,53 @@ describe('xAI OAuth provider bridge', () => {
       input: [{ role: 'user', content: 'Adapted input' }]
     })
   })
+})
+
+it('passes native Responses SSE through before completion, with one refresh on 401', async () => {
+  const encoder = new TextEncoder()
+  let controller!: ReadableStreamDefaultController<Uint8Array>
+  const old = Response.json({ error: 'expired' }, { status: 401 })
+  const cancelled = vi.spyOn(old.body!, 'cancel')
+  const upstream = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(old)
+    .mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(value) {
+            controller = value
+          }
+        }),
+        { headers: { 'content-type': 'text/event-stream' } }
+      )
+    )
+  const token = vi.fn(async (force?: boolean) => (force ? 'new' : 'old'))
+  const bridge = createXaiOAuthProviderBridge(
+    [{ id: 'active', model: 'grok' }],
+    'active',
+    'responses',
+    token,
+    upstream
+  )
+  bridges.push(bridge)
+  const connection = await bridge.start()
+  const pending = fetch(`${connection.baseUrl}/v1/responses`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'override', input: [], stream: true })
+  })
+  controller.enqueue(encoder.encode('data: {"type":"response.created"}\n\n'))
+  const response = await pending
+  const reader = response.body!.getReader()
+  expect(new TextDecoder().decode((await reader.read()).value)).toContain('response.created')
+  expect(cancelled).toHaveBeenCalledOnce()
+  expect(token.mock.calls).toEqual([[false], [true]])
+  expect(JSON.parse(String(upstream.mock.calls[1][1]?.body))).toEqual({
+    model: 'grok',
+    input: [],
+    stream: true
+  })
+  expect(new Headers(upstream.mock.calls[1][1]?.headers).get('authorization')).toBe('Bearer new')
+  controller.close()
+  expect((await reader.read()).done).toBe(true)
 })

@@ -216,7 +216,8 @@ export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type AgentFramework = 'claude-code' | 'opencode' | 'codex' | 'codebuddy' | 'pi'
+export type AgentFramework =
+  'open-science-agent' | 'claude-code' | 'opencode' | 'codex' | 'codebuddy' | 'pi'
 export type ReadinessStatus = 'ready' | 'missing' | 'not_ready'
 export type ProviderReadinessReason =
   | 'credential_invalid'

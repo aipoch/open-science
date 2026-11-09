@@ -686,7 +686,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping native Responses', () => {
+  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping Flash aliases on Chat Completions', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
       id: 'deepseek',
@@ -695,7 +695,19 @@ describe('ProviderRuntimeProjectionOwner', () => {
       name: 'DeepSeek'
     }
 
-    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'deepseek-flash' },
+        getAgentFramework('codex')
+      )
+    ).toMatchObject({
+      apiEndpoints: ['messages', 'chat-completions', 'responses'],
+      needsNativeResponsesCompatibility: true,
+      provider: { supportsImageInput: true, model: 'deepseek-flash' }
+    })
+
+    for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
       expect(
         owner.resolveRuntimeTarget(
           provider,
@@ -703,8 +715,8 @@ describe('ProviderRuntimeProjectionOwner', () => {
           getAgentFramework('codex')
         )
       ).toMatchObject({
-        apiEndpoints: ['messages', 'chat-completions', 'responses'],
-        needsNativeResponsesCompatibility: true,
+        apiEndpoints: ['messages', 'chat-completions'],
+        needsNativeResponsesCompatibility: false,
         provider: { supportsImageInput: true, model }
       })
     }

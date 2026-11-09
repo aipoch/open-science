@@ -300,8 +300,6 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })`'
     )
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/validation errors.*correct once/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/never repeat.*identical.*failed arguments/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
@@ -315,19 +313,22 @@ describe('notebook MCP server config', () => {
   })
 
   it('directs agents to concise Host SDK help without prefetching every topic', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Main/root agents')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain("await host.help('delegate')")
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('role-aware catalog')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('field descriptions')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call forms in `repl_execute`')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('role-aware catalog')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.sendFrameMessage(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
 
-    expect(REPL_EXECUTE_DOC).toContain("await host.help('delegate')")
+    expect(REPL_EXECUTE_DOC).toContain("host.help('delegate')")
     expect(REPL_EXECUTE_DOC).toMatch(/do not prefetch.*topics/i)
+    expect(REPL_EXECUTE_DOC).toContain("return JSON.stringify(await host.help('topic'))")
+    expect(REPL_EXECUTE_DOC).toContain('catalog visibility does not grant access')
+    expect(REPL_EXECUTE_DOC).toContain('Restored conversation history does not restore variables')
+    expect(REPL_EXECUTE_DOC).toContain(
+      'never probe old variable names or replay side-effecting calls'
+    )
+    expect(REPL_EXECUTE_DOC).toContain('host.viewImage({ path: "plot.png" })')
+    expect(REPL_EXECUTE_DOC).toContain('Omit profile to inherit the parent')
   })
 
   it('does not inject a 4000-character output instruction into agent guidance', () => {
@@ -392,15 +393,18 @@ describe('notebook MCP server config', () => {
     ])
   })
 
-  it('allows explicit network approval before a connection while preserving scoped grants', () => {
-    const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
-
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('A failed connection is not required')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
-    expect(tool?.description).toContain(
-      'before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
-    )
-    expect(tool?.description).toContain('Execute or retry only when the result is allowed')
+  it('requires a trusted block record and an access purpose', () => {
+    const tool = NOTEBOOK_RPC_TOOLS.find(
+      (candidate) => candidate.name === 'request_network_access'
+    )!
+    expect(
+      z.object(tool.inputSchema).safeParse({ hostname: 'example.org', reason: 'Download data' })
+        .success
+    ).toBe(false)
+    expect(
+      z.object(tool.inputSchema).safeParse({ recordId: 'trusted-record', reason: 'Download data' })
+        .success
+    ).toBe(true)
   })
 
   it.each(['aborted', 'user-decision', 'approval-surface-unavailable'])(
@@ -437,9 +441,8 @@ describe('notebook MCP server config', () => {
         const delivered = await client.callTool({
           name: 'request_network_access',
           arguments: {
-            hostname: 'data.example.org',
-            reason: 'Download the dataset.',
-            runtime: 'python'
+            recordId: 'trusted-record',
+            reason: 'Download the dataset.'
           }
         })
         expect(delivered.content).toEqual([{ type: 'text', text: JSON.stringify(result, null, 2) }])
@@ -494,8 +497,7 @@ describe('notebook MCP server config', () => {
               toolName === 'bash_execute'
                 ? { command: 'sample-client request' }
                 : {
-                    hostname: 'service.example.test',
-                    runtime: 'python',
+                    recordId: 'trusted-record',
                     reason: 'Read the fixture.'
                   }
           },
@@ -745,10 +747,10 @@ describe('notebook MCP server config', () => {
     const toolNames = NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)
     expect(toolNames).toContain('manage_environments')
 
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('manage_environments')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('./handoff/')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND.toLowerCase()).toContain('separate')
+    const environment = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'manage_environments')
+    expect(environment?.description).toContain('separate')
+    expect(REPL_EXECUTE_DOC).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(REPL_EXECUTE_DOC).not.toContain('./handoff/')
   })
 })
 
@@ -979,6 +981,79 @@ describe('notebook_execute tool', () => {
         method: 'execute',
         params: { code: 'print(42)' }
       })
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['Notebook execution turn ended before request admission.', 'Do not retry in this turn'],
+    ['WSL_SETUP_DIAGNOSTICS_STALE', 'then retry once'],
+    ['Notebook Runtime binding does not match its pending host admission.', 'Do not retry']
+  ])('chooses the 409 next step from the conflict: %s', async (error, nextStep) => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'conflict-repro', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ error }), { status: 409 }))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'print(42)' }
+      })
+      const text = (result.content as { text: string }[])[0]!.text
+      expect(text).toContain(`${error}\n`)
+      expect(text).toContain(nextStep)
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('reports failed foreground cells and failed background Runs as tool errors', async () => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'run-failure', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const results = [
+      { runId: 'run-1', kernelKind: 'python', status: 'failed', text: { traceback: 'boom' } },
+      { receipt: {}, run: { runId: 'run-2', kernelKind: 'python', status: 'failed' } },
+      {
+        receipt: {},
+        run: { runId: 'run-3', kernelKind: 'bash', status: 'completed', exitCode: 2 }
+      },
+      { runId: 'run-4', kernelKind: 'python', status: 'completed' }
+    ]
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(JSON.stringify({ result: results.shift() })))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const call = (name: string, args: Record<string, unknown>): Promise<unknown> =>
+        client.callTool({ name, arguments: args }).then((result) => result.isError)
+
+      expect(await call('notebook_execute', { code: 'raise' })).toBe(true)
+      expect(await call('background_run', { action: 'query', runId: 'run-2' })).toBe(true)
+      expect(await call('background_run', { action: 'query', runId: 'run-3' })).toBe(true)
+      expect(await call('notebook_execute', { code: 'ok' })).not.toBe(true)
     } finally {
       fetchRpc.mockRestore()
       await client.close()
@@ -1287,14 +1362,14 @@ describe('background_run tool', () => {
       runId: 'run-1'
     })
     expect(() => schema.parse({ action: 'retry', runId: 'run-1' })).toThrow()
-    expect(tool?.description).toMatch(/query a saved runId.*non-blocking/i)
+    expect(tool?.description).toMatch(/query or cancel the saved runId/i)
     expect(tool?.description).toMatch(/non-blocking snapshot/i)
     expect(tool?.description).toMatch(/never scan Run history/i)
     expect(tool?.description).not.toMatch(/once|never.*poll|do not poll/i)
     expect(tool?.description).toContain('followUpDelivery:"suppressed"')
     expect(tool?.description).toContain('"committed"')
     expect(tool?.description).toContain('follow-up Turn')
-    expect(tool?.description).toMatch(/submissionIdentity.*recovers only a missing receipt/i)
+    expect(tool?.description).toMatch(/submissionIdentity only recovers a missing receipt/i)
   })
 
   it('preserves the durable receipt internally and flattens compact query output', () => {
@@ -1497,11 +1572,13 @@ describe('repl_execute tool', () => {
     // The control-plane repl takes no language/cellId — it is distinct from notebook_execute.
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['code', 'background', 'timeoutMs'])
     expect(tool?.description).toMatch(/background:true/u)
-    expect(tool?.description).toMatch(/background-safe/iu)
     expect(tool?.description).toMatch(
-      /host\.mcp.*host\.compute.*host\.llm.*host\.delegate.*host\.viewImage/u
+      /background:true supports host\.mcp, host\.compute, host\.llm, host\.delegate/u
     )
-    expect(tool?.description).toMatch(/host\.agents\.switch.*unsafe/u)
+    expect(tool?.description).toMatch(
+      /Foreground.*host\.viewImage, host\.agents\.switch and user input/u
+    )
+    expect(tool?.description).toContain('BACKGROUND_HOST_METHOD_UNSAFE requires foreground')
   })
 
   it('maps background REPL execution to the shared compact receipt', () => {
@@ -1613,7 +1690,7 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('role-aware catalog')
     expect(tool?.description).toContain('field descriptions')
     expect(tool?.description).toMatch(/do not prefetch.*topics/i)
-    expect(tool?.description).toContain('Delegate agents should use the same catalog')
+    expect(tool?.description).toContain('Delegate agents cannot delegate')
     expect(tool?.description).not.toContain('host.sendFrameMessage(')
     expect(tool?.description).not.toContain('host.send_message(')
   })

@@ -73,7 +73,7 @@ describe('Compute Job harvest retry migration', () => {
 
     await migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
     expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJob" ORDER BY id')).toEqual(
-      jobsBefore.map((row) => ({ ...row, errorMessage: null }))
+      jobsBefore.map((row) => ({ ...row, errorMessage: null, kubernetesWorkspace: null }))
     )
     expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJobOperation"')).toEqual(
       operationsBefore.map((row) => ({ ...row, errorCode: null, errorMessage: null }))

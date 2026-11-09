@@ -37,6 +37,7 @@ const KNOWN_ERROR_CODES = new Set([
 const TERMINAL_STATUSES = new Set<ComputeJobStatus>(['success', 'failed', 'timeout', 'error'])
 
 type IntegrityRow = Readonly<{
+  executionMode?: string
   id: string
   sessionId: string
   projectId: string
@@ -99,6 +100,9 @@ export const classifyComputeJobIntegrity = (
     knownStatus &&
     (row.status === 'submitted' || row.status === 'running') &&
     !sensitiveProjection.unavailable &&
+    (row.executionMode == null ||
+      row.executionMode === 'direct_ssh' ||
+      row.executionMode === 'slurm') &&
     !parseRemoteJobHandle(
       sensitiveProjection.remoteHandle ?? undefined,
       sensitiveProjection.remoteWorkdir ?? undefined

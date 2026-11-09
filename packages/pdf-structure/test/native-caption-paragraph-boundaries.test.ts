@@ -4,9 +4,222 @@ import { pathToFileURL } from 'node:url'
 import { readPdfFixture } from './read-fixture'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
-const { captionKind, findCaptionCandidates, recoverStyledMathCaption } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
-)
+const { captionKind, findCaptionCandidates, recoverStyledMathCaption, applyRuledCaptionRecovery } =
+  await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
+
+function closedMixedCaptionBoundaryFixture(): ReturnType<typeof JSON.parse> {
+  const rows = [
+    ['Earlier ordinary body text continues across this column', 50, 70, 400, 10, 'body'],
+    ['with the final ordinary body line before its graphic', 50, 82, 400, 10, 'body'],
+    ['Figure 1:', 50, 200, 40, 10, 'body'],
+    ['A complete description of the independent measurements.', 95, 202, 355, 8, 'caption'],
+    ['continuation. A separate body discussion follows here', 50, 208, 400, 10, 'body'],
+    ['and closes its ordinary body paragraph.', 50, 220, 300, 10, 'body']
+  ] as const
+  const items = rows.map(([str, x, y, width, height, fontName], index) => ({
+    str,
+    width,
+    height,
+    fontName,
+    dir: 'ltr',
+    transform: [height, 0, 0, height, x, 800 - y - height],
+    sourceItem: { pageNumber: 1, index, text: str }
+  }))
+  const fonts = items.map((r) => ({
+    text: r.str,
+    sourceItem: { ...r.sourceItem },
+    horizontal: true,
+    height: r.height,
+    baseline: 800 - r.transform[5],
+    rect: [
+      r.transform[4],
+      800 - r.transform[5] - r.height,
+      r.transform[4] + r.width,
+      800 - r.transform[5]
+    ]
+  }))
+  const lines = rows.map(([text, x, y, width, fontSize]) => ({
+    text,
+    x,
+    y,
+    width,
+    height: fontSize,
+    fontSize
+  }))
+  lines.splice(2, 2, { ...lines[2], text: rows[2][0] + ' ' + rows[3][0], width: 400 })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    renderRotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [
+      {
+        kind: 'image',
+        operationIndex: 1,
+        normalizedRect: [50 / 600, 100 / 800, 450 / 600, 195 / 800]
+      }
+    ],
+    lines
+  }
+  const context = {
+    pageNumber: 1,
+    sourceSha256: 'a'.repeat(64),
+    viewport: {
+      width: 600,
+      height: 800,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 800],
+      convertToViewportPoint: (x: number, y: number) => [x, 800 - y]
+    },
+    content: {
+      items,
+      styles: {
+        body: { ascent: 0.8, descent: -0.2, vertical: false },
+        caption: { ascent: 0.8, descent: -0.2, vertical: false }
+      }
+    },
+    operators: {
+      fnArray: items.flatMap(() => [
+        OPS.beginText,
+        OPS.setFont,
+        OPS.setTextMatrix,
+        OPS.showText,
+        OPS.endText
+      ]),
+      argsArray: items.flatMap((r) => [
+        [],
+        [r.fontName, r.height],
+        [1, 0, 0, 1, r.transform[4], r.transform[5]],
+        [
+          [...r.str].map((unicode) => ({
+            unicode,
+            fontChar: unicode,
+            width: (r.width / r.str.length / r.height) * 1000,
+            originalCharCode: unicode.charCodeAt(0),
+            isInFont: true,
+            isSpace: unicode === ' ',
+            accent: null
+          }))
+        ],
+        []
+      ])
+    }
+  }
+  return { page, fonts, context }
+}
+
+it('withdraws a body continuation only after complete native mixed caption and body baselines agree', () => {
+  const f = closedMixedCaptionBoundaryFixture()
+  const captions = findCaptionCandidates([f.page])
+  expect(captions[0].lines).toHaveLength(3)
+  applyRuledCaptionRecovery(captions, structuredClone(captions), f.page, [], f.fonts, f.context)
+  expect(captions[0].lines).toEqual([f.page.lines[2].text])
+  expect(captions[0].rect).toEqual([50, 200, 450, 210])
+})
+
+it('binds the exact 1.5 extraction projection before comparing caption baselines', () => {
+  const f = closedMixedCaptionBoundaryFixture(),
+    dy = 0.123
+  for (const [i, raw] of f.context.content.items.entries()) {
+    raw.transform[5] -= dy
+    f.context.operators.argsArray[i * 5 + 2][5] = raw.transform[5]
+    const x = raw.transform[4] * 1.5,
+      baseline = 800 * 1.5 - raw.transform[5] * 1.5
+    f.fonts[i].rect = [x, baseline - raw.height * 1.5, x + raw.width * 1.5, baseline].map(
+      (v) => v / 1.5
+    )
+    f.fonts[i].baseline = baseline / 1.5
+  }
+  for (const row of f.page.lines) row.y += dy
+  f.page.graphicsBounds[0].normalizedRect[1] += dy / 800
+  f.page.graphicsBounds[0].normalizedRect[3] += dy / 800
+  const captions = findCaptionCandidates([f.page])
+  expect(captions[0].lines).toHaveLength(3)
+  applyRuledCaptionRecovery(captions, structuredClone(captions), f.page, [], f.fonts, f.context)
+  expect(captions[0].lines).toHaveLength(1)
+})
+
+it.each([
+  'normal-leading',
+  'same-caption-font',
+  'label-font-only',
+  'inline-raised-font',
+  'closed-upper-paragraph',
+  'missing-raster',
+  'duplicate-raster',
+  'unknown-paint',
+  'source-alias',
+  'source-index',
+  'token-rectangle',
+  'glyph-unicode',
+  'glyph-baseline',
+  'glyph-size',
+  'font-state-underflow',
+  'body-leading',
+  'source-drift'
+])('preserves an uncertain mixed-caption boundary: %s', (fault) => {
+  const f = closedMixedCaptionBoundaryFixture(),
+    { page, fonts, context } = f
+  const candidate = findCaptionCandidates([page])[0]
+  expect(candidate.lines).toHaveLength(3)
+  const shift = (index: number, dy: number): void => {
+    const raw = context.content.items[index]
+    raw.transform[5] -= dy
+    context.operators.argsArray[index * 5 + 2][5] = raw.transform[5]
+    fonts[index].baseline += dy
+    fonts[index].rect[1] += dy
+    fonts[index].rect[3] += dy
+  }
+  if (fault === 'normal-leading') {
+    for (const i of [4, 5]) shift(i, 4)
+    page.lines[3].y += 4
+    page.lines[4].y += 4
+    candidate.rect[3] += 4
+  }
+  if (fault === 'same-caption-font') {
+    for (const i of [4, 5]) {
+      context.content.items[i].fontName = 'caption'
+      context.operators.argsArray[i * 5 + 1][0] = 'caption'
+    }
+  }
+  if (fault === 'label-font-only') {
+    context.content.items[3].fontName = 'body'
+    context.operators.argsArray[16][0] = 'body'
+  }
+  if (fault === 'inline-raised-font') page.lines[2].fontSize = 14
+  if (fault === 'closed-upper-paragraph') page.lines[1].text += '.'
+  if (fault === 'missing-raster') page.graphicsBounds = []
+  if (fault === 'duplicate-raster') page.graphicsBounds.push({ ...page.graphicsBounds[0] })
+  if (fault === 'unknown-paint') page.invalidGraphicsBounds = 1
+  if (fault === 'source-alias')
+    Object.assign(context.content, { extra: { ...context.content.items[2].sourceItem } })
+  if (fault === 'source-index') context.content.items[2].sourceItem.index = 40
+  if (fault === 'token-rectangle') fonts[2].rect[0] += 1
+  const glyph = context.operators.argsArray[18][0][0]
+  if (fault === 'glyph-unicode') glyph.unicode = 'X'
+  if (fault === 'glyph-baseline') context.operators.argsArray[17][5] += 2
+  if (fault === 'glyph-size') context.operators.argsArray[16][1] = 10
+  if (fault === 'font-state-underflow') {
+    context.operators.fnArray.unshift(OPS.restore)
+    context.operators.argsArray.unshift([])
+  }
+  if (fault === 'body-leading') {
+    shift(5, 2)
+    page.lines[4].y += 2
+    candidate.rect[3] += 2
+  }
+  if (fault === 'source-drift') {
+    const convert = context.viewport.convertToViewportPoint
+    context.viewport.convertToViewportPoint = (x: number, y: number): number[] => {
+      context.content.items[0].sourceItem.text = 'changed'
+      return convert(x, y)
+    }
+  }
+  const before = structuredClone(candidate)
+  applyRuledCaptionRecovery([candidate], [structuredClone(candidate)], page, [], fonts, context)
+  expect(candidate).toEqual(before)
+})
 const fixture = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/native-caption-paragraph-boundaries.jsonl'))
 

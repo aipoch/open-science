@@ -511,6 +511,107 @@ it('partitions a measured descriptor while preserving a complete existing shared
   expect(f.tokens).toEqual(before.tokens)
 })
 
+function assignedMeasuredContributions(): ReturnType<typeof assignedMeasuredLeaves> {
+  const f = assignedMeasuredLeaves(),
+    prefix = {
+      text: '3',
+      rect: [0, 10, 8, 20],
+      horizontal: true,
+      height: 10,
+      baseline: 20,
+      sourceItem: { pageNumber: 1, index: 3, text: '3' }
+    },
+    suffix = {
+      text: 'u',
+      rect: [112, 10, 118, 20],
+      horizontal: true,
+      height: 10,
+      baseline: 20,
+      sourceItem: { pageNumber: 1, index: 8, text: 'u' }
+    }
+  f.tokens.push(prefix, suffix)
+  const [left, right] = f.table.cells
+  left.rect[0] = 0
+  left.sourceItems!.unshift(prefix.sourceItem)
+  left.sourceRects.unshift(prefix.rect)
+  left.sourceTokens.unshift({ text: prefix.text, rect: prefix.rect })
+  left.text = '3 Beta field'
+  right.sourceItems!.push(suffix.sourceItem)
+  right.sourceRects.push(suffix.rect)
+  right.sourceTokens.push({ text: suffix.text, rect: suffix.rect })
+  right.text = 'Beta field u'
+  f.table.grid[0] = [left.text, right.text]
+  return f
+}
+
+it('partitions a measured parent contribution without dropping other whole sources in either cell', () => {
+  const f = assignedMeasuredContributions(),
+    prefix = f.tokens[1],
+    suffix = f.tokens[2]
+  const before = structuredClone(f)
+  refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+  expect(f.table.cells.map((c) => c.sourceSegments)).toEqual([
+    [
+      { ...prefix.sourceItem, start: 0, end: 1, rect: prefix.rect },
+      { ...f.tokens[0].sourceItem, start: 0, end: 10, rect: [10, 10, 55, 20] }
+    ],
+    [
+      { ...f.tokens[0].sourceItem, start: 11, end: 21, rect: [65, 10, 110, 20] },
+      { ...suffix.sourceItem, start: 0, end: 1, rect: suffix.rect }
+    ]
+  ])
+  expect(f.table.cells.every((c) => c.sourceItems === undefined)).toBe(true)
+  expect(f.table.grid).toEqual(before.table.grid)
+  expect(f.table.cells.map((c) => [c.sourceRects, c.sourceTokens])).toEqual(
+    before.table.cells.map((c) => [c.sourceRects, c.sourceTokens])
+  )
+  expect(f.tokens).toEqual(before.tokens)
+})
+
+it.each([
+  'duplicate-other-source',
+  'other-source-owned-elsewhere',
+  'other-geometry-owner',
+  'wrong-contribution-rect',
+  'wrong-other-rect',
+  'inside-ligature-gap',
+  'wrong-other-literal',
+  'wrong-cell-order',
+  'overlapping-other-segment'
+])('does not replace an unproved mixed-cell source declaration: %s', (variant) => {
+  const f = assignedMeasuredContributions(),
+    left = f.table.cells[0]
+  if (variant === 'duplicate-other-source') f.tokens.push(structuredClone(f.tokens[1]))
+  if (variant === 'other-source-owned-elsewhere') {
+    f.table.cells.push({ ...structuredClone(left), row: 8, rect: [200, 200, 250, 220] })
+  }
+  if (variant === 'other-geometry-owner') {
+    f.table.cells.push({
+      ...structuredClone(left),
+      row: 8,
+      text: 'foreign',
+      rect: [0, 5, 9, 25],
+      sourceItems: [{ pageNumber: 1, index: 99, text: 'foreign' }],
+      sourceRects: [[0, 10, 8, 20]],
+      sourceTokens: [{ text: 'foreign', rect: [0, 10, 8, 20] }]
+    })
+  }
+  if (variant === 'wrong-contribution-rect') left.sourceRects[1][0] += 0.1
+  if (variant === 'wrong-other-rect') left.sourceTokens[0].rect = [0, 10, 9, 20]
+  if (variant === 'inside-ligature-gap')
+    f.observations[0].literalGlyphs = ['BetafieldB', ...Array.from('etafield')]
+  if (variant === 'wrong-other-literal') f.tokens[1].sourceItem!.text = 'other'
+  if (variant === 'wrong-cell-order') left.sourceTokens.reverse()
+  if (variant === 'overlapping-other-segment') {
+    f.table.cells[1].sourceSegments = [
+      { ...f.tokens[1].sourceItem!, start: 0, end: 1, rect: [112, 10, 118, 20] }
+    ]
+  }
+  const before = structuredClone(f)
+  refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+  expect(f).toEqual(before)
+})
+
 it('uses exact native peer baselines when model row edges cross font ascenders', () => {
   const f = assignedSharedDescriptor()
   f.table.cells[2].rect[1] = 32

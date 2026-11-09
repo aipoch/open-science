@@ -29,6 +29,9 @@ export function spawnWindowsOwnedProcess(
   verbatimArguments: boolean
 ): { handle: object; pid: number; fds: [number, number, number] }
 export function windowsOwnedProcessExitCode(handle: object): number | null
+export function windowsOwnedProcessExitCodeAsync(handle: object): Promise<number>
+export function windowsOwnedProcessExitCodeRef(handle: object): void
+export function windowsOwnedProcessExitCodeUnref(handle: object): void
 export function windowsOwnedJobProcessIds(handle: object): number[]
 export function windowsCurrentProcessDescendants(): number[]
 export function reapWindowsOwnedJob(jobName: string): boolean

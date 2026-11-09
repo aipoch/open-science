@@ -1,0 +1,14 @@
+{
+  "name": "agent-harness-acceptance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

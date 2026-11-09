@@ -749,14 +749,14 @@ test.describe('Workspace dividers', () => {
       }
     })
 
-    test(`${side} workspace divider shows a full-height line on hover`, async ({
+    test(`${side} workspace divider shows its grip at the pointer on hover`, async ({
       app
     }, testInfo) => {
       const page = app.page
       const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
       await expect(handle).toBeVisible()
       const box = (await handle.boundingBox())!
-      // Hover away from the old central tick: the divider itself should be discoverable.
+      // Hover off-center to exercise pointer tracking.
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 4)
       await page.screenshot({ path: testInfo.outputPath(`${side}-hover.png`) })
       await expect
@@ -765,11 +765,12 @@ test.describe('Workspace dividers', () => {
             const line = getComputedStyle(el, '::before')
             return {
               visible: Number(line.opacity) >= 0.9,
-              fullHeight: parseFloat(line.height) >= el.getBoundingClientRect().height * 0.9
+              atPointer:
+                Math.abs(new DOMMatrixReadOnly(line.transform).m42 + el.clientHeight / 4) <= 1
             }
           })
         )
-        .toEqual({ visible: true, fullHeight: true })
+        .toEqual({ visible: true, atPointer: true })
 
       await page.mouse.move(box.x + 40, box.y + box.height / 4)
       await expect

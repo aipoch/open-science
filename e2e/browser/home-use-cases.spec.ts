@@ -1677,3 +1677,136 @@ test('keeps workspace panels inside the viewport through wide content and tab sw
     }
   }
 })
+
+test('workspace resize grips follow nearby pointers and preserve drag and keyboard resizing', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/home-use-cases.html?panel&resizable&iframe')
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  for (const side of ['left', 'right']) {
+    const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+    await expect(handle).toBeVisible()
+    const grip = (): Promise<{ opacity: string; top: number; height: number; color: string }> =>
+      handle.evaluate((element) => {
+        const style = getComputedStyle(element, '::before')
+        return {
+          opacity: style.opacity,
+          top: parseFloat(style.top) + new DOMMatrixReadOnly(style.transform).m42,
+          height: parseFloat(style.height),
+          color: style.backgroundColor
+        }
+      })
+    await page.mouse.move(1000, 590)
+    await expect.poll(async () => (await grip()).opacity).toBe('0')
+    await expect(handle.locator('span')).toHaveCSS('opacity', '0')
+    const box = (await handle.boundingBox())!
+    for (const offset of [-8, 8]) {
+      await page.mouse.move(box.x + offset, box.y + 100)
+      await expect.poll(async () => (await grip()).opacity).toBe('1')
+      await expect.poll(async () => (await grip()).top).toBeCloseTo(100, 0)
+      await expect(handle).toHaveCSS('cursor', 'grab')
+      await expect(handle.locator('span')).toHaveCSS('opacity', '1')
+      await expect(handle.locator('span')).toHaveCSS('height', `${box.height}px`)
+    }
+    await page.mouse.move(box.x, box.y + 200)
+    await expect.poll(async () => (await grip()).top).toBeCloseTo(200, 0)
+    const primary = await handle.evaluate((element) => {
+      const probe = document.createElement('span')
+      probe.style.backgroundColor = 'var(--primary)'
+      element.append(probe)
+      const color = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return color
+    })
+    expect((await grip()).color).toBe(primary)
+    await page.mouse.move(box.x, box.y + 2)
+    expect((await grip()).top).toBeGreaterThanOrEqual((await grip()).height / 2)
+    await page.mouse.move(box.x, box.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 60, box.y + 230, { steps: 10 })
+    await expect(handle).toHaveAttribute('data-separator', 'active')
+    await expect(handle).toHaveCSS('cursor', 'grabbing')
+    await expect.poll(async () => (await handle.boundingBox())!.x).toBeGreaterThan(box.x + 40)
+    await expect.poll(async () => (await grip()).top).toBeCloseTo(230, 0)
+    await page.mouse.up()
+    await page.mouse.move(1000, 590)
+    await expect.poll(async () => (await grip()).opacity).toBe('0')
+    await expect(handle.locator('span')).toHaveCSS('opacity', '0')
+    await handle.focus()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(handle).toBeFocused()
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(async () => (await grip()).opacity).toBe('1')
+    await expect.poll(async () => (await handle.boundingBox())!.x).toBeLessThan(box.x + 55)
+    await page.getByRole('textbox', { name: 'Conversation draft' }).focus()
+  }
+})
+
+test('workspace grip tracking does not lay out unchanged panels during dragging', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/home-use-cases.html?panel&resizable&iframe')
+  const handle = page.getByRole('separator', { name: 'Resize left panel' })
+  await expect(handle).toBeVisible()
+  const box = (await handle.boundingBox())!
+  await page.mouse.move(box.x, box.y + 100)
+  await page.mouse.down()
+  await expect(handle).toHaveAttribute('data-separator', 'active')
+  const settle = (): Promise<void> =>
+    page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())))
+  await settle()
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Performance.enable')
+  const layoutCount = async (): Promise<number> => {
+    const { metrics } = await cdp.send('Performance.getMetrics')
+    return metrics.find(({ name }) => name === 'LayoutCount')!.value
+  }
+  const before = await layoutCount()
+  // Keep the width fixed: pointer-following decoration must not force document layout.
+  for (let step = 1; step <= 15; step++) {
+    await page.mouse.move(box.x, box.y + 100 + step * 5)
+  }
+  await settle()
+  const layouts = (await layoutCount()) - before
+  await page.mouse.up()
+  expect(layouts).toBe(0)
+})
+
+test('workspace drag cursor crosses iframe previews and restores on release', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/home-use-cases.html?panel&resizable&iframe')
+  const handle = page.getByRole('separator', { name: 'Resize left panel' })
+  await expect(handle).toBeVisible()
+  const frame = page.getByTitle('Resize cursor preview')
+  await expect(frame).toBeVisible()
+  const box = (await handle.boundingBox())!
+  const frameBox = (await frame.boundingBox())!
+  const y = frameBox.y + 100
+  await page.mouse.move(box.x, y)
+  await page.mouse.down()
+  // Move beyond the sidebar's maximum so the pointer is over the embedded preview.
+  await page.mouse.move(1050, y, { steps: 15 })
+  await expect(handle).toHaveAttribute('data-separator', 'active')
+  await expect.poll(async () => (await handle.boundingBox())!.x).toBeGreaterThan(box.x + 100)
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ x, y }) => {
+          const hit = document.elementFromPoint(x, y)!
+          return getComputedStyle(hit).cursor
+        },
+        { x: 1050, y }
+      )
+    )
+    .toBe('grabbing')
+  await page.mouse.up()
+  await frame.hover()
+  await expect(handle).not.toHaveAttribute('data-separator', 'active')
+  await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
+  await expect(
+    page.frameLocator('iframe[title="Resize cursor preview"]').locator('body')
+  ).toHaveCSS('cursor', 'crosshair')
+})

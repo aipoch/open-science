@@ -126,27 +126,28 @@ afterEach(() => {
 })
 
 describe('ComputePanel i18n', () => {
-  it('translates the banner, the list header and the add action', () => {
+  it('translates the target sections and the add action', () => {
     act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
 
-    expect(container.textContent).toContain('Connect where heavy compute runs')
-    expect(container.textContent).toContain('SSH hosts')
-    expect(container.textContent).toContain('Add SSH host')
-    expect(container.textContent).toContain('No SSH hosts yet')
+    const add = (name: string): string | undefined =>
+      container
+        .querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)
+        ?.textContent?.trim()
+
+    expect(container.textContent).toContain('Modal Sandboxes')
+    expect(add('Add SSH host')).toBe('Add')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('通过 SSH 连接你自己的服务器，为繁重任务提供算力')
+    expect(container.textContent).toContain('Modal 沙箱')
     expect(container.textContent).toContain('SSH 主机')
-    expect(container.textContent).toContain('添加 SSH 主机')
-    expect(container.textContent).toContain('还没有 SSH 主机')
-    expect(container.textContent).not.toContain('Connect where heavy compute runs')
-    expect(container.textContent).not.toContain('No SSH hosts yet')
+    expect(container.textContent).toContain('未配置')
+    expect(add('添加 SSH 主机')).toBe('添加')
 
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('連接執行重型計算的地方')
+    expect(container.textContent).toContain('Modal 沙箱')
     expect(container.textContent).toContain('SSH 主機')
-    expect(container.textContent).toContain('新增 SSH 主機')
-    expect(container.textContent).toContain('還沒有 SSH 主機')
+    expect(container.textContent).toContain('未設定')
+    expect(add('新增 SSH 主機')).toBe('加入')
     expect(container.textContent).not.toContain('{{')
   })
 

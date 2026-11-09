@@ -257,6 +257,22 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('starts on an insecure LAN origin without crypto.randomUUID', async () => {
+    sessionStorage.removeItem('open-science-web-client')
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.set(Array.from({ length: bytes.length }, (_, index) => index))
+      return bytes
+    })
+    vi.stubGlobal('crypto', { getRandomValues })
+
+    await loadBootstrap()
+
+    expect(getRandomValues).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem('open-science-web-client')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+  })
+
   it('uses the desktop particle loader before React startup and releases it when replaced', async () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       arc: vi.fn(),

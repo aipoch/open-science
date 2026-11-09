@@ -965,12 +965,17 @@ describe('module test impact commands', () => {
     {
       name: 'deleted sources',
       diff: 'D\0src/renderer/src/stores/session-store-persistence-merge.ts\0',
-      include: '__no_changed_sources__'
+      include: undefined
     },
     {
       name: 'renamed sources',
       diff: 'R100\0src/renderer/src/stores/session-store-persistence-merge.ts\0src/renderer/src/stores/renamed.ts\0',
       include: 'src/renderer/src/stores/renamed.ts'
+    },
+    {
+      name: 'c8-excluded sources',
+      diff: 'M\0src/main/notebook/fixtures/windows-interrupted-shell-launch.ts\0',
+      include: undefined
     }
   ])('scopes coverage for $name', async ({ diff, include }) => {
     const { spawn, invocation } = captureNpmInvocation()
@@ -989,7 +994,8 @@ describe('module test impact commands', () => {
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
-      expect(invocation.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
+      if (include) expect(invocation.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
+      else expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage')
       expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
     } finally {
       write.mockRestore()

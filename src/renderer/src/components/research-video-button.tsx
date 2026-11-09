@@ -65,6 +65,7 @@ export function ResearchVideoButton({
   }, [confirmDeletion])
   const confirmationDescriptionId = useId()
   const [status, setStatus] = useState<ResearchVideoPresentationStatus>({})
+  const [statusLoadedScope, setStatusLoadedScope] = useState<string>()
   const [model, setModel] = useState<LocalModelSnapshot>()
   const [pending, setPending] = useState(false)
   const [installing, setInstalling] = useState(false)
@@ -79,6 +80,7 @@ export function ResearchVideoButton({
   const statusVersion = useRef(0)
   const live = useRef(true)
   const startAfterInstall = useRef(false)
+  const statusLoaded = statusLoadedScope === deletionScope
   const busy =
     status.progress && !['completed', 'failed', 'cancelled'].includes(status.progress.phase)
   const duration = Math.max(0, Math.round(status.result?.duration ?? 0))
@@ -116,14 +118,16 @@ export function ResearchVideoButton({
     ? blockMessages[status.generationBlock]
     : status.preflightError && (preflightMessages[status.preflightError] ?? status.preflightError)
   const triggerState: ResearchVideoTriggerState = {
-    label:
-      busy || installing || pending
+    label: !statusLoaded
+      ? t('Loading…')
+      : busy || installing || pending
         ? t('View generation progress')
         : status.result
           ? t('View research film')
           : t('Generate research film'),
-    disabledReason:
-      !status.result && !busy && !installing && !pending && status.generationBlock
+    disabledReason: !statusLoaded
+      ? t('Loading…')
+      : !status.result && !busy && !installing && !pending && status.generationBlock
         ? blocked
         : undefined
   }
@@ -137,7 +141,10 @@ export function ResearchVideoButton({
       const finishingInstallation = startAfterInstall.current
       try {
         const next = await window.api.researchVideo.status({ projectId, sessionId, branchId })
-        if (live.current && version === statusVersion.current) setStatus(next)
+        if (live.current && version === statusVersion.current) {
+          setStatus(next)
+          setStatusLoadedScope(deletionScope)
+        }
         if (startAfterInstall.current) {
           const snapshot = await window.api.localModels.getSnapshot('research-narration')
           if (!live.current) return
@@ -168,7 +175,7 @@ export function ResearchVideoButton({
       startAfterInstall.current = false
       clearTimeout(timer)
     }
-  }, [projectId, sessionId, branchId, desktop, t])
+  }, [projectId, sessionId, branchId, deletionScope, desktop, t])
   const generate = async (regenerate = false): Promise<void> => {
     if (pending || busy || installing) {
       setOpen(true)
@@ -285,7 +292,7 @@ export function ResearchVideoButton({
             title={triggerState.disabledReason}
             onClick={() => void generate()}
           >
-            {busy || installing ? (
+            {!statusLoaded || busy || installing ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <Video className="size-4" aria-hidden="true" />

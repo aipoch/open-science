@@ -3,7 +3,7 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { useSessionStore } from '@/stores/session-store'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import type { AnnotationValidationError } from '../../../../shared/annotations'
@@ -12,17 +12,19 @@ import {
   subscribeAnnotationRevealPreparation
 } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { removeComposerDrafts } from './composer-draft-storage'
 import { requestComposerFocus } from './composer-focus-events'
 import type { ComposerDoc } from './composer/composer-doc'
-import { requestReplaySeek } from './replay/replay-context'
+import { persistedDiscussionCapture, requestReplaySeek } from './replay/replay-context'
 import {
   createSessionDiscussionAnnotation,
   replayAnnotationTarget
 } from './session-discussion-annotation'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 
 type DiscussionComposer = {
   view: { doc: ComposerDoc; annotations: Annotation[] }
+  lifecycle: { discussionDraftConflict(projectId: string, sourceId: string): boolean }
   actions: {
     changeDoc(doc: ComposerDoc): void
     addAnnotation(annotation: Annotation): AnnotationValidationError | undefined
@@ -38,13 +40,51 @@ export const useWorkspaceSessionDiscussion = ({
   composer: DiscussionComposer
   draftKey: string
   editable: boolean
-}): void => {
+}): boolean => {
   const { t } = useTranslation()
   const pending = useSessionReplayStore((state) => state.pendingDiscussion)
   const destination = useSessionReplayStore((state) => state.discussionDestination)
   const targetSession = useSessionStore((state) =>
     state.sessions.find((row) => row.id === destination?.sessionId)
   )
+  // A restored draft may have missed the deletion event while this client was offline.
+  const draftSource = draftKey.startsWith('new:')
+    ? composer.view.annotations
+        .map(replayAnnotationTarget)
+        .find((target) => target?.sourceSessionId.startsWith('import-'))
+    : undefined
+  const projectId = draftSource?.projectId
+  const sourceId = draftSource?.sourceSessionId
+  const sourcePresent = useSessionStore((state) =>
+    Boolean(
+      sourceId &&
+      state.sessions.some((session) => session.projectId === projectId && session.id === sourceId)
+    )
+  )
+  const lookup =
+    typeof window.api?.sessionReplay?.get === 'function' && projectId && sourceId && !sourcePresent
+      ? JSON.stringify([projectId, sourceId])
+      : undefined
+  const [checked, setChecked] = useState<string>()
+  useEffect(() => {
+    if (!lookup || !projectId || !sourceId) return
+    let current = true
+    void window.api.sessionReplay
+      .get({ projectId, sourceSessionId: sourceId })
+      .then((snapshot) => {
+        if (current && snapshot.sourceStatus === 'deleted')
+          removeComposerDrafts(projectId, sourceId)
+      })
+      .catch(() => {
+        /* An unavailable source does not prove permanent deletion. */
+      })
+      .finally(() => {
+        if (current) setChecked(lookup)
+      })
+    return () => {
+      current = false
+    }
+  }, [lookup, projectId, sourceId])
   const mounted = useRef(true)
   useLayoutEffect(() => {
     mounted.current = true
@@ -93,13 +133,26 @@ export const useWorkspaceSessionDiscussion = ({
         destination.sessionId !== pending.sourceSessionId &&
         Boolean(project && project.archivedAt === undefined) &&
         (!destination.sessionId ||
-          Boolean(session && !session.packageOrigin && session.archivedAt === undefined)) &&
+          Boolean(
+            session &&
+            !session.isPending &&
+            !session.packageOrigin &&
+            session.archivedAt === undefined
+          )) &&
         selectedFrame() === frameAtStart &&
         (!destination.frameId ||
           frameAtStart === JSON.stringify([destination.frameId, destination.branchId]))
       )
     }
     if (!destinationCurrent()) {
+      useSessionReplayStore.getState().ask(undefined)
+      return
+    }
+    if (
+      !destination.sessionId &&
+      composer.lifecycle.discussionDraftConflict(pending.projectId, pending.sourceSessionId)
+    ) {
+      composer.actions.setError(DISCUSSION_DRAFT_CONFLICT)
       useSessionReplayStore.getState().ask(undefined)
       return
     }
@@ -112,7 +165,7 @@ export const useWorkspaceSessionDiscussion = ({
       .saveSelectionSnapshot({
         projectId: pending.projectId,
         sourceSessionId: pending.sourceSessionId,
-        context: { ...structuredClone(pending), id }
+        context: { ...persistedDiscussionCapture(pending), id }
       })
       .then(() => {
         const current = latest.current
@@ -134,6 +187,7 @@ export const useWorkspaceSessionDiscussion = ({
           const error = current.composer.actions.addAnnotation(annotation)
           if (error) {
             current.composer.actions.setError(annotationValidationMessage(error, t))
+            useSessionReplayStore.getState().ask(undefined)
             return
           }
           current.composer.actions.changeDoc(doc)
@@ -153,10 +207,13 @@ export const useWorkspaceSessionDiscussion = ({
           latest.current.composer.actions.setError(
             reason instanceof Error ? reason.message : String(reason)
           )
+        if (useSessionReplayStore.getState().pendingDiscussion === pending)
+          useSessionReplayStore.getState().ask(undefined)
         if (handled.current === pending) handled.current = undefined
       })
   }, [
     composer.actions,
+    composer.lifecycle,
     composer.view.doc,
     draftKey,
     editable,
@@ -187,14 +244,14 @@ export const useWorkspaceSessionDiscussion = ({
           current.explicitNavigationRevision === revision
         )
       }
-      const revealTarget = (position: typeof target): void => {
+      const revealTarget = (position: typeof target, title = t('Research replay')): void => {
         usePreviewWorkbenchStore
           .getState()
           .upsertAndActivateItem(
             createSessionReplayItem(
               position.projectId,
               position.sourceSessionId,
-              t('Research replay'),
+              title,
               navigation.activeProjectId
             )
           )
@@ -221,7 +278,10 @@ export const useWorkspaceSessionDiscussion = ({
             )
             return
           }
-          revealTarget({ ...snapshot, stepOffsetMs: snapshot.stepOffsetMs ?? 0 })
+          revealTarget(
+            { ...snapshot, stepOffsetMs: snapshot.stepOffsetMs ?? 0 },
+            snapshot.sourceTitle
+          )
         })
         .catch(() => {
           if (stillCurrent())
@@ -242,4 +302,10 @@ export const useWorkspaceSessionDiscussion = ({
       reveal()
     }
   }, [t])
+  return Boolean(
+    (lookup && checked !== lookup) ||
+    (pending &&
+      destination &&
+      (destination.sessionId ?? `new:${destination.projectId}`) === draftKey)
+  )
 }

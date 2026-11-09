@@ -7,7 +7,8 @@ const {
   nativeCaptionedRepeatedRasterRows,
   nativeCaptionedRasterAnswerPlate,
   nativeCaptionedKeyedHeatmapStack,
-  nativeCaptionedRasterTaskTimeline
+  nativeCaptionedRasterTaskTimeline,
+  nativeKeyedPhotoTimelineCropPlan
 } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
 )
@@ -18,6 +19,294 @@ const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve(`test/fixtures/source-grids/${name}.jsonl`))
 const comparison = (): ReturnType<typeof JSON.parse> => fixture('repeated-raster-comparison-bands')
 const answers = (): ReturnType<typeof JSON.parse> => fixture('stacked-raster-answer-plates')
+
+function keyedPhotoTimeline(): ReturnType<typeof JSON.parse> {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Top: recorded examples. Bottom: episodes on the same time axis.'],
+    rect: [50, 310, 550, 320]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [] as ReturnType<typeof JSON.parse>[],
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const tokens: ReturnType<typeof JSON.parse>[] = []
+  const text = (value: string, x: number, y: number, width: number, size: number): void => {
+    page.lines.push({ text: value, x, y, width, height: size, fontSize: size })
+    tokens.push({
+      text: value,
+      rect: [x, y, x + width, y + size],
+      nativeLabelRect: [x, y, x + width, y + size + 1],
+      horizontal: true,
+      baseline: y + size,
+      height: size,
+      fontDescent: -0.2,
+      sourceItem: { pageNumber: 1, index: tokens.length, text: value }
+    })
+  }
+  const graphic = (kind: string, rect: number[]): void => {
+    page.graphicsBounds.push({
+      kind,
+      operationIndex: page.graphicsBounds.length,
+      normalizedRect: rect.map((v, n) => v / (n % 2 ? 800 : 600))
+    })
+  }
+  const keys = ['ALPHA', 'BETA', 'GAMMA', 'DELTA', 'EPSILON', 'ZETA']
+  for (const [index, key] of keys.entries()) {
+    const x = 50 + index * 84
+    graphic('image', [x, 100, x + 80, 155])
+    text(key, x + 22, 158, 36, 7)
+  }
+  for (const [index, key] of ['ALPHA', 'BETA', 'GAMMA', 'DELTA, EPSILON', 'ZETA'].entries()) {
+    const y = 190 + index * 25
+    text(key, 65, y, 65, 8)
+    graphic('path', [140, y, 280 + index * 35, y + 10])
+    text('phase', 170, y, 25, 8)
+    text(`${100 + index} frames`, 290 + index * 35, y, 45, 8)
+  }
+  text(caption.lines[0], 50, 310, 500, 10)
+  return { page, caption, tokens }
+}
+
+it.each(['whole keys', 'small-cap fragments'])(
+  'keeps a complete keyed photo strip together with its matching timeline rows: %s',
+  (mode) => {
+    const { page, caption, tokens } = keyedPhotoTimeline()
+    if (mode === 'small-cap fragments') {
+      const split = tokens.flatMap((t: ReturnType<typeof JSON.parse>) => {
+        if (!/^[A-Z, ]+$/u.test(t.text)) return [t]
+        const boundary = t.rect[0] + 5
+        return [
+          {
+            ...t,
+            text: t.text[0],
+            rect: [t.rect[0], t.rect[1], boundary, t.rect[3]],
+            nativeLabelRect: [t.rect[0], t.rect[1], boundary, t.rect[3] + 1]
+          },
+          {
+            ...t,
+            text: t.text.slice(1),
+            height: t.height * 0.8,
+            rect: [boundary, t.baseline - t.height * 0.8, t.rect[2], t.rect[3]],
+            nativeLabelRect: [boundary, t.baseline - t.height * 0.8, t.rect[2], t.rect[3] + 1]
+          }
+        ]
+      })
+      tokens.splice(
+        0,
+        tokens.length,
+        ...split.map((t: ReturnType<typeof JSON.parse>, index: number) => ({
+          ...t,
+          sourceItem: { pageNumber: 1, index, text: t.text }
+        }))
+      )
+    }
+    expect(
+      nativeCaptionedRasterTaskTimeline(
+        page,
+        { caption, rect: [140, 240, 500, 300] },
+        [caption],
+        [],
+        tokens
+      )?.rect
+    ).toEqual([50, 100, 550, 300])
+    const result = associateFigures(page, [caption], [], [], [], tokens)[0]
+    expect(result.rect).toEqual([50, 100, 550, 300])
+  }
+)
+
+it.each([
+  'different-timeline-key',
+  'missing-foreign-token',
+  'foreign-paint',
+  'separate-caption',
+  'table'
+])(
+  'does not join a photo strip and timeline without the complete native key partition: %s',
+  (failure) => {
+    const { page, caption, tokens } = keyedPhotoTimeline(),
+      captions = [caption],
+      tables: number[][] = []
+    if (failure === 'different-timeline-key') {
+      const t = tokens.find(
+        (t: ReturnType<typeof JSON.parse>) => t.text === 'ZETA' && t.rect[1] > 180
+      )
+      t.text = 'OTHER'
+      t.sourceItem.text = 'OTHER'
+    }
+    if (failure === 'missing-foreign-token')
+      page.lines.push({
+        text: 'Unrelated prose',
+        x: 70,
+        y: 173,
+        width: 60,
+        height: 10,
+        fontSize: 10
+      })
+    if (failure === 'foreign-paint')
+      page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: 99,
+        normalizedRect: [55 / 600, 173 / 800, 120 / 600, 183 / 800]
+      })
+    if (failure === 'separate-caption')
+      captions.push({
+        page: 1,
+        lines: ['Figure 2: Independent object.'],
+        rect: [50, 170, 550, 180]
+      })
+    if (failure === 'table') tables.push([55, 170, 130, 185])
+    expect(
+      nativeCaptionedRasterTaskTimeline(
+        page,
+        { caption, rect: [140, 240, 500, 300] },
+        captions,
+        tables,
+        tokens
+      )
+    ).toBeUndefined()
+  }
+)
+
+function certifiedPhotoTimeline(): ReturnType<typeof JSON.parse> {
+  const f = keyedPhotoTimeline(),
+    captions = [f.caption],
+    tables: number[][] = []
+  const context = {
+    pageNumber: 1,
+    sourceSha256: 'a'.repeat(64),
+    viewport: { width: 600, height: 800, scale: 1, rotation: 0 },
+    content: { items: f.tokens.map((t: ReturnType<typeof JSON.parse>) => ({ str: t.text })) },
+    graphicsBounds: f.page.graphicsBounds
+  }
+  const figure = nativeCaptionedRasterTaskTimeline(
+    f.page,
+    { caption: f.caption, rect: [140, 240, 500, 300] },
+    captions,
+    tables,
+    f.tokens,
+    context
+  )
+  return { ...f, captions, tables, context, figure }
+}
+
+it('carries the complete native plate through final PNG validation without accepting a cropped substitute', async () => {
+  const f = certifiedPhotoTimeline(),
+    plan = nativeKeyedPhotoTimelineCropPlan(f.page, f.figure, f.context)
+  expect(plan?.rect).toEqual([50, 100, 550, 300])
+  const { createCanvas } = await import('@napi-rs/canvas')
+  const png = createCanvas(500, 200).toBuffer('image/png')
+  expect(plan.validatePng(png, plan.rect)).toBe(true)
+  expect(plan.validatePng(png, [140, 240, 500, 300])).toBe(false)
+  expect(
+    nativeKeyedPhotoTimelineCropPlan(
+      f.page,
+      { ...f.figure, keyedPhotoTimelineRaster: {} },
+      f.context
+    )
+  ).toBeUndefined()
+  expect(
+    nativeKeyedPhotoTimelineCropPlan(f.page, { ...f.figure, rect: [140, 240, 500, 300] }, f.context)
+  ).toBeUndefined()
+})
+
+it.each(['caption', 'graphics', 'native-source'])(
+  'withdraws a complete photo/timeline raster plan after %s changes',
+  (change) => {
+    const f = certifiedPhotoTimeline(),
+      plan = nativeKeyedPhotoTimelineCropPlan(f.page, f.figure, f.context)
+    expect(plan?.current()).toBe(true)
+    if (change === 'caption') f.caption.lines[0] += ' Changed'
+    if (change === 'graphics') f.page.graphicsBounds[0].normalizedRect[0] += 0.001
+    if (change === 'native-source') f.context.content.items[0].str = 'Changed'
+    expect(plan.current()).toBe(false)
+    expect(nativeKeyedPhotoTimelineCropPlan(f.page, f.figure, f.context)).toBeUndefined()
+  }
+)
+
+function wideRepeatedRasterRows(): ReturnType<typeof JSON.parse> {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Anonymous comparison.'],
+    rect: [150, 330, 450, 340]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 150, y: 330, width: 300, height: 10, fontSize: 10 }],
+    graphicsBounds: Array.from({ length: 21 }, (_, index) => {
+      const x = 70 + (index % 7) * 65,
+        y = 100 + Math.floor(index / 7) * 80
+      return { kind: 'image', normalizedRect: [x / 600, y / 800, (x + 60) / 600, (y + 60) / 800] }
+    })
+  }
+  return { page, caption }
+}
+
+it('keeps every repeated raster column beyond a centered caption without mutating evidence', () => {
+  const { page, caption } = wideRepeatedRasterRows(),
+    before = structuredClone(page)
+  const result = nativeCaptionedRepeatedRasterRows(page, caption, [caption], [])
+  expect(result).toMatchObject({ rect: [70, 100, 520, 320], graphicsCount: 21 })
+  expect(associateFigures(page, [caption])[0].rect).toEqual(result.rect)
+  expect(page).toEqual(before)
+})
+
+it.each(['foreign-image', 'body-paragraph', 'table'])(
+  'rejects widened repeated raster rows with %s in the outer band',
+  (failure) => {
+    const { page, caption } = wideRepeatedRasterRows(),
+      tables: number[][] = []
+    if (failure === 'foreign-image')
+      page.graphicsBounds.push({
+        kind: 'image',
+        normalizedRect: [5 / 600, 100 / 800, 65 / 600, 160 / 800]
+      })
+    if (failure === 'body-paragraph')
+      for (const y of [162, 174])
+        page.lines.push({
+          text: 'Independent ordinary prose in the outer margin continues here.',
+          x: 70,
+          y,
+          width: 60,
+          height: 10,
+          fontSize: 10
+        })
+    if (failure === 'table') tables.push([70, 160, 130, 180])
+    expect(nativeCaptionedRepeatedRasterRows(page, caption, [caption], tables)).toBeUndefined()
+  }
+)
+
+it.each(['complete', 'duplicate-source', 'foreign-prose'])(
+  'requires native whole-word evidence for abbreviated raster row labels: %s',
+  (mode) => {
+    const { page, caption } = wideRepeatedRasterRows()
+    const tokens = ['Scene', 'Label', 'Pred.'].map((text, index) => {
+      const y = 125 + index * 80
+      page.lines.push({ text, x: 35, y, width: 20, height: 6, fontSize: 6 })
+      return {
+        text,
+        horizontal: true,
+        rect: [35, y, 55, y + 6],
+        nativeLabelRect: [35, y, 55, y + 7],
+        height: 6,
+        baseline: y + 6,
+        sourceItem: { pageNumber: 1, index, text }
+      }
+    })
+    if (mode === 'duplicate-source') tokens[2].sourceItem.index = tokens[0].sourceItem.index
+    if (mode === 'foreign-prose')
+      page.lines.push({ text: 'Other prose', x: 35, y: 165, width: 30, height: 6, fontSize: 6 })
+    const rect = associateFigures(page, [caption], [], [], [], tokens)[0].rect
+    expect(rect[0]).toBe(mode === 'complete' ? 35 : 70)
+  }
+)
 
 it('keeps all ten raster rows and their column headings without mutating source evidence', () => {
   const input = comparison()

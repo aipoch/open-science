@@ -28,7 +28,9 @@ type Job = {
   permissions?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
-  strategy?: { matrix?: { shard?: number[] } }
+  strategy?: {
+    matrix?: { shard?: number[]; include?: { scope: string; shard: number; total: number }[] }
+  }
   'timeout-minutes'?: number | string
   uses?: string
   with?: Record<string, unknown>
@@ -1131,20 +1133,26 @@ describe('build verification throughput', () => {
     }
   })
 
-  it('runs Ubuntu static checks independently from six complete portable shards', () => {
+  it('runs Ubuntu static checks independently from complete host and package shards', () => {
     const { verify, verify_tests: tests, verify_macos: macos } = workflow('build.yml').jobs
     expect(verify['runs-on']).toBe('ubuntu-latest')
     expect(verify.needs).toBeUndefined()
     expect(tests.needs).toBeUndefined()
     expect(tests['runs-on']).toBe('ubuntu-latest')
-    expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3, 4, 5, 6])
+    expect(tests.strategy?.matrix?.include).toEqual([
+      ...[1, 2, 3, 4].map((shard) => ({ scope: 'host', shard, total: 4 })),
+      ...[1, 2].map((shard) => ({ scope: 'packages', shard, total: 2 }))
+    ])
     expect(tests['timeout-minutes']).toBe(60)
     expect(step(tests, 'Test complete suite shard').run).toContain('--testTimeout=60000')
     expect(tests.env).toEqual({
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
-      VITEST_PORTABLE_CI: '1'
+      VITEST_PORTABLE_CI: '1',
+      OPEN_SCIENCE_CI_PORTABLE_SCOPE: '${{ matrix.scope }}'
     })
-    expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/6')
+    expect(step(tests, 'Test complete suite shard').run).toContain(
+      '--shard=${{ matrix.shard }}/${{ matrix.total }}'
+    )
     expect(step(tests, 'Test complete suite shard').run).toContain('--coverage')
     expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=blob')
     expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=github-actions')
@@ -1193,8 +1201,6 @@ describe('build verification throughput', () => {
     const guard = step(job, 'Require complete successful shards')
     expect(guard.env).toEqual({ SHARDS_RESULT: '${{ needs.verify_tests.result }}' })
     expect(guard.run).toContain('test "$SHARDS_RESULT" = success')
-    expect(guard.run).toContain('for shard in 1 2 3 4 5 6; do')
-    expect(guard.run).toContain('test -s "vitest-reports/blob-$shard.json"')
     expect(step(job, 'Merge test reports and enforce coverage').run).toBe(
       'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     )
@@ -1204,42 +1210,32 @@ describe('build verification throughput', () => {
     })
   })
 
-  it.each([
-    'complete',
-    'missing-4',
-    'empty-4',
-    'missing-5',
-    'empty-5',
-    'missing-6',
-    'empty-6',
-    'failed-shard'
-  ])('checks actual shard artifacts before coverage: %s', (scenario) => {
+  it('requires a non-empty artifact for every successful matrix entry', () => {
+    const jobs = workflow('build.yml').jobs
+    const guard = step(jobs.verify_coverage, 'Require complete successful shards')
     const cwd = mkdtempSync(join(tmpdir(), 'build-coverage-guard-'))
+    const files = jobs.verify_tests.strategy!.matrix!.include!.map(({ scope, shard }) =>
+      join(cwd, 'vitest-reports', `blob-${scope}-${shard}.json`)
+    )
+    const run = (result = 'success'): void => {
+      execFileSync('bash', ['-e', '-c', guard.run!], {
+        cwd,
+        env: { ...process.env, SHARDS_RESULT: result },
+        stdio: 'pipe'
+      })
+    }
     try {
       mkdirSync(join(cwd, 'vitest-reports'))
-      for (const shard of [1, 2, 3, 4, 5, 6]) {
-        if (scenario === `missing-${shard}`) continue
-        writeFileSync(
-          join(cwd, `vitest-reports/blob-${shard}.json`),
-          scenario === `empty-${shard}` ? '' : '{}'
-        )
+      for (const file of files) writeFileSync(file, '{}')
+      run()
+      expect(() => run('failure')).toThrow()
+      for (const file of files) {
+        rmSync(file)
+        expect(() => run()).toThrow()
+        writeFileSync(file, '')
+        expect(() => run()).toThrow()
+        writeFileSync(file, '{}')
       }
-      const guard = step(
-        workflow('build.yml').jobs.verify_coverage,
-        'Require complete successful shards'
-      )
-      const run = (): void => {
-        execFileSync('bash', ['-e', '-c', guard.run!], {
-          cwd,
-          env: {
-            ...process.env,
-            SHARDS_RESULT: scenario === 'failed-shard' ? 'failure' : 'success'
-          },
-          stdio: 'pipe'
-        })
-      }
-      if (scenario === 'complete') expect(run).not.toThrow()
-      else expect(run).toThrow()
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

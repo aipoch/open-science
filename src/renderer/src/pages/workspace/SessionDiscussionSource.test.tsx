@@ -11,7 +11,10 @@ vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: { getState: () => ({ activeProjectId: 'project' }) }
 }))
 vi.mock('@/stores/session-store', () => ({
-  useSessionStore: { getState: () => ({ selectedSessionId: 'receiving' }) }
+  useSessionStore: Object.assign(
+    (select: (state: { sessions: [] }) => unknown) => select({ sessions: [] }),
+    { getState: () => ({ selectedSessionId: 'receiving' }) }
+  )
 }))
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: { getState: () => ({ upsertAndActivateItem: mocks.open }) }
@@ -116,8 +119,7 @@ it('opens each selected step rather than silently returning to the latest one', 
       }
     ])
   )
-  await act(async () => button('Discuss').click())
-  expect(document.body.textContent).toContain('Selected steps')
+  expect(document.querySelector('[aria-haspopup="dialog"]')).toBeNull()
   await act(async () => button('Python chart').click())
   expect(mocks.read).toHaveBeenCalledWith({ projectId: 'project', id: 'first' })
   expect(mocks.seek).toHaveBeenCalledWith({ stepId: 'first', stepOffsetMs: 0 })
@@ -135,16 +137,17 @@ it('shows only the latest source from older multi-Session state', async () => {
   expect(container.textContent).not.toContain('Second')
   expect(container.textContent).not.toContain('Analysis')
   expect(container.querySelectorAll('[data-session-discussion-source]')).toHaveLength(1)
-  expect(container.textContent).toContain('Discuss')
+  expect(button('Third').getAttribute('aria-label')).toContain('View replay')
 })
 
-it('keeps the whole-research scope in the menu instead of the source chip', async () => {
+it('opens the whole research directly from the source chip', async () => {
   const value = context()
   value.sessionContext!.bindings[0].scope = 'session'
   await render(value)
   expect(button('Analysis').textContent).not.toContain('Entire research')
   expect(button('Analysis').textContent).not.toContain('steps')
-  await act(async () => button('Discuss').click())
-  expect(document.body.textContent).toContain('Entire research')
-  expect(document.body.textContent).not.toContain('Selected steps')
+  expect(button('Analysis').getAttribute('aria-label')).toContain('Entire research')
+  mocks.read.mockResolvedValueOnce({ stepId: 'original' })
+  await act(async () => button('Analysis').click())
+  expect(mocks.seek).toHaveBeenCalledWith({ stepId: 'original', stepOffsetMs: 0 })
 })

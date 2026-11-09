@@ -1,3 +1,4 @@
+import { discussionParentForFirstMessage } from '../../../shared/replay-reference'
 import type { StoreApi } from 'zustand'
 import {
   activateConversationBranch,
@@ -466,6 +467,9 @@ export const createSessionMessageGraphOwner = <
       const newSession: ChatSession = {
         id: sessionId,
         projectId: projectId ?? '',
+        parentSessionId: isPending
+          ? discussionParentForFirstMessage(projectId, annotations)
+          : undefined,
         isPending: isPending ? true : undefined,
         firstPromptDraft: isPending ? true : undefined,
         delegationPolicyAuthorityPending:

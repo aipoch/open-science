@@ -291,6 +291,7 @@ describe('notebook runtime service', () => {
       service.requestNetworkAccess({
         sessionId: 'session-1',
         workspaceCwd: root,
+        recordId: 'record-1',
         hostname: 'data.example.org',
         reason: 'Download data.'
       })
@@ -1412,6 +1413,81 @@ describe('notebook runtime service', () => {
 
     await service.shutdownSession('session-1')
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
+  it('peeks REPL continuity without loading history and isolates project, session and child ownership', async () => {
+    const root = await createStorageRoot()
+    const { service, lifecycles } = lifecycleCallbackHarness(root)
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1'
+    }
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(true)
+    expect(lifecycles).toHaveLength(0)
+    expect(existsSync(join(root, 'notebooks'))).toBe(false)
+
+    await service.executeControl({
+      ...request,
+      provenanceContext: {
+        rootFrameId: 'custom-root',
+        agentFrameId: 'child-frame',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(true)
+    await service.executeControl(request)
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(false)
+    expect(service.isReplNamespaceUnavailable('other-project', request.sessionId)).toBe(true)
+    expect(service.isReplNamespaceUnavailable(request.projectId, 'other-session')).toBe(true)
+
+    const restored = lifecycleCallbackHarness(root)
+    expect(restored.service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(
+      true
+    )
+    expect(restored.lifecycles).toHaveLength(0)
+    await restored.service.dispose()
+    await lifecycles[1].onTerminated('repl', '')
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(true)
+    await service.dispose()
+  })
+
+  it('shares provisional root aliases and retires continuity on restart and shutdown', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const provenanceContext = {
+      rootFrameId: 'custom-root',
+      agentFrameId: 'custom-root',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'segment-1',
+      promptMessageId: 'prompt-1'
+    }
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1',
+      provenanceContext
+    }
+    const unavailable = (): boolean =>
+      service.isReplNamespaceUnavailable(
+        request.projectId,
+        request.sessionId,
+        provenanceContext.rootFrameId
+      )
+    await service.executeControl(request)
+    expect(unavailable()).toBe(false)
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(false)
+    await service.restart({ ...request, kernel: 'repl' })
+    expect(unavailable()).toBe(true)
+    await service.executeControl(request)
+    expect(unavailable()).toBe(false)
+    await service.shutdownSession(request.sessionId)
+    expect(unavailable()).toBe(true)
+    await service.dispose()
   })
 
   it('scopes explicit write cancellation and isolates later writes from stale producers', async () => {
@@ -2795,6 +2871,65 @@ describe('notebook runtime service', () => {
     ).resolves.toMatchObject({ status: 'completed', script: 'after-failed-shutdown' })
   })
 
+  it.each(['lane', 'session', 'project'] as const)(
+    'releases Shell admission and preserves deletion intent when scoped cleanup rejects (%s)',
+    async (scope) => {
+      const root = await createStorageRoot()
+      const cleanupError = new Error('shell teardown failed')
+      const shutdownExecutor = vi.fn(async () => ({ reaped: true }))
+      const shutdownShell = vi
+        .fn(async () => ({ reaped: true }))
+        .mockRejectedValueOnce(cleanupError)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: shutdownExecutor
+        }),
+        shellProcess: {
+          execute: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+          shutdown: shutdownShell
+        }
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+
+      try {
+        await service.state(request)
+        const shutdown =
+          scope === 'lane'
+            ? service.shutdown(request)
+            : scope === 'session'
+              ? service.shutdownSession(request.sessionId)
+              : service.shutdownProject('default-project')
+        await expect(shutdown).rejects.toBe(cleanupError)
+        expect(shutdownExecutor).not.toHaveBeenCalled()
+
+        if (scope === 'project') {
+          await expect(service.state(request)).rejects.toThrow('Project is being deleted.')
+          service.releaseProjectDeletion('default-project')
+        }
+        await expect(service.state(request)).resolves.toMatchObject({
+          sessionId: request.sessionId
+        })
+        await expect(
+          service.executeShell({ ...request, command: 'after-failed-shutdown' })
+        ).resolves.toMatchObject({ exitCode: 0 })
+      } finally {
+        await service.dispose()
+      }
+    }
+  )
+
   it('does not thread the mcp RPC connection into the data-cell execute request', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -4023,11 +4158,18 @@ describe('notebook runtime service', () => {
           node: 'C:\\fixture-runtime\\node\\node.exe',
           powershell: 'C:\\fixture-runtime\\powershell\\pwsh.exe'
         })
+      const resolveNode = vi
+        .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookNodeRuntime')
+        .mockReturnValue({
+          root: 'C:\\fixture-runtime\\node',
+          node: 'C:\\fixture-runtime\\node\\node.exe'
+        })
       const environment = vi
         .spyOn(windowsNotebookRuntime, 'windowsNotebookRuntimeEnvironment')
         .mockImplementation((environment) => ({ ...environment }))
       restoreWindowsRuntimeMocks.push(() => {
         environment.mockRestore()
+        resolveNode.mockRestore()
         resolve.mockRestore()
       })
     }
@@ -4480,6 +4622,7 @@ describe('notebook runtime service', () => {
     })
 
     it('rejects an idempotent Shell retry that changes its captured runtime', async () => {
+      mockWindowsShellRuntime()
       const root = await createStorageRoot()
       const execute = vi
         .fn<NotebookShellProcess['execute']>()

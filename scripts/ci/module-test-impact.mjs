@@ -18,13 +18,14 @@ import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
-
 import {
   derivedConsumersPath,
   loadDerivedConsumers,
   withDerivedConsumers,
   usesReviewedBoundary
 } from './module-graph/policy.mjs'
+
+const GIT_OUTPUT_MAX_BUFFER = 128 * 1024 * 1024
 
 // When the committed index is absent (runtime-generated), generate it lazily so preflight
 // (git-archived code without node_modules) never imports the typescript dependency.
@@ -39,7 +40,8 @@ async function loadOrGenerateDerivedConsumers(
     revision &&
     execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
       cwd,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      maxBuffer: GIT_OUTPUT_MAX_BUFFER
     }).trim() === derivedConsumersPath
   if (!revision || committedAtRevision) {
     const loaded = loadDerivedConsumers()
@@ -363,6 +365,14 @@ function isPortableVitestFile(path) {
   )
 }
 
+function hasC8FileIgnore(path, cwd = process.cwd()) {
+  try {
+    return /^\s*\/\*\s*c8 ignore file\s*\*\//u.test(readFileSync(resolve(cwd, path), 'utf8'))
+  } catch {
+    return false
+  }
+}
+
 // PR and queue full plans defer the complete portable suite to scheduled acceptance. They still
 // run the declared closure of each owned change, so a full marker or a global input cannot remove
 // its owner, contract and consumer tests before merge. Deleted paths and paths that only resolve
@@ -455,8 +465,15 @@ export function collectCodeGraphTests(
 }
 
 function changesFromGit(base, head, { cwd = process.cwd(), execute = execFileSync } = {}) {
-  const mergeBase = execute('git', ['merge-base', base, head], { cwd, encoding: 'utf8' }).trim()
-  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], { cwd })
+  const mergeBase = execute('git', ['merge-base', base, head], {
+    cwd,
+    encoding: 'utf8',
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  }).trim()
+  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], {
+    cwd,
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  })
   return parseNameStatus(diff.toString('utf8'))
 }
 
@@ -606,13 +623,19 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     : []
   const coveragePaths = sorted(
     coverageChanges
-      .filter(({ path, status }) => status !== 'deleted' && /^src\/.*\.tsx?$/.test(path))
+      .filter(
+        ({ path, status }) =>
+          status !== 'deleted' &&
+          /^src\/.*\.tsx?$/.test(path) &&
+          !hasC8FileIgnore(path, options.cwd ?? process.cwd())
+      )
       .map(({ path }) => path)
   )
+  const collectChangedCoverage = coverageChanged && coveragePaths.length > 0
   return executeModuleTestPlan(plan, {
     ...options,
-    environment,
-    testArguments: coverageChanged
+    environment: collectChangedCoverage ? environment : options.environment,
+    testArguments: collectChangedCoverage
       ? [
           '--coverage',
           ...(coveragePaths.length > 0 ? coveragePaths : ['__no_changed_sources__']).map(

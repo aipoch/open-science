@@ -1,3 +1,5 @@
+import type { SessionReadingContext } from '../../../../shared/session-reading'
+import type { PersistedConversationGraph } from '../../../../shared/conversation-graph'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type {
@@ -7,6 +9,7 @@ import type {
 import type {
   MessagePdfContextSnapshot,
   PdfReadingPosition,
+  SessionPdfContext,
   SessionPdfContextSource
 } from '../../../../shared/session-pdf-contract'
 import type { MessageAttribution } from '../../../../shared/session-message-contract'
@@ -15,7 +18,26 @@ import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ChatSession } from '../../stores/session-store-contract'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import type { ComposerDoc } from './composer/composer-doc'
-import type { SessionDiscussionCapture } from './replay/replay-context'
+
+export type ComposerSessionContext = {
+  id: string
+  projectId: string
+  parentSessionId?: string
+  deletedDiscussionSourceId?: string
+  isPending?: boolean
+  conversationGraph?: PersistedConversationGraph
+  messages?: readonly {
+    id: string
+    role?: string
+    annotations?: Annotation[]
+    pdfContext?: MessagePdfContextSnapshot
+  }[]
+  runtimeContext?: {
+    revision: number
+    pdfContext?: SessionPdfContext
+    sessionContext?: SessionReadingContext
+  }
+}
 
 export type ComposerPdfProseReadingRestore = {
   // Process-local: park with the draft, never persist preview authority across a reload.
@@ -45,7 +67,6 @@ export type ComposerSendSnapshot = {
   version: number
   doc: ComposerDoc
   annotations: Annotation[]
-  discussionFocus?: SessionDiscussionCapture
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot

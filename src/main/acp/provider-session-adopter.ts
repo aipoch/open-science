@@ -1,5 +1,6 @@
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
 import { recordMainAgentContext } from './main-agent-process-ownership'
+import { HARNESS_OWNER } from '../harness-acp/config'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import {
@@ -149,7 +150,15 @@ export class AcpProviderSessionAdopter {
         .buildSession({
           cwd: request.cwd,
           mcpServers: sessionCapabilities.mcpServers,
-          ...setup.metaArg
+          ...setup.metaArg,
+          ...(startupBackend.framework.id === 'open-science-agent'
+            ? {
+                _meta: {
+                  ...setup.metaArg._meta,
+                  [HARNESS_OWNER]: { projectId: request.projectId, sessionId: stableAppSessionId }
+                }
+              }
+            : {})
         })
         .start()
       adoptedProviderSessionId = provisionalSession.sessionId

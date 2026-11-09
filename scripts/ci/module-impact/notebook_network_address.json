@@ -1,0 +1,15 @@
+{
+  "ownerPaths": [
+    "packages/notebook-network-sandbox/src/network-address.ts",
+    "packages/notebook-network-sandbox/src/network-address.test.ts"
+  ],
+  "interfacePaths": ["packages/notebook-network-sandbox/src/network-address.ts"],
+  "consumerModules": ["notebook_network_sandbox", "shared_notebook_contracts"],
+  "testFiles": {
+    "owner": ["packages/notebook-network-sandbox/src/network-address.test.ts"],
+    "contract": [],
+    "consumer": []
+  },
+  "fallbackCapability": "notebook_network_sandbox",
+  "capabilityOverlays": []
+}

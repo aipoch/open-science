@@ -131,6 +131,22 @@ it('rejects uncaptioned author-year reference columns without requiring clipped 
   expect(hasTableEvidence(x.table, undefined, x.tokens)).toBe(true)
 })
 
+it('rejects a short uncaptioned DOI citation tail with a page ordinal', () => {
+  const table = {
+    grid: [
+      ['nal of Cheminformatics', '(2025). url: https :'],
+      ['//doi.org/10.1186/s13321-025-01039-8', '.']
+    ],
+    cropRect: [129, 1022, 500, 1135],
+    unassigned: ['15'],
+    issues: ['unassigned-source-text'],
+    cells: [],
+    clipped: []
+  }
+  expect(hasTableEvidence(table, undefined, [])).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Study summaries.'] }, [])).toBe(true)
+})
+
 it('retains a median/interquartile definition and its wrapped treatment glossary', () => {
   const x = fixture('median-interquartile-definition-note')
   const notes = associateTableNotes(x.page, x.tables, x.rules)[0]

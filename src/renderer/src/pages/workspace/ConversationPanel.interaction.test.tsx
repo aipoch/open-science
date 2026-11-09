@@ -10013,7 +10013,10 @@ it('shows the branch source chat number and opens that source session', () => {
 
 it.each(['question', 'delegated question', 'plan', 'permission', 'delegated permission'] as const)(
   'does not reactivate an imported historical %s',
-  (kind) => {
+  async (kind) => {
+    window.api.researchVideo = {
+      status: vi.fn().mockResolvedValue({})
+    } as unknown as typeof window.api.researchVideo
     const activeSession: ChatSession = {
       ...delegatedQuestionSession(),
       packageOrigin: {
@@ -10068,6 +10071,9 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
             ]
           : []
       }
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
     })
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
     const importedHistory = container.querySelector('[aria-label="Imported research history"]')

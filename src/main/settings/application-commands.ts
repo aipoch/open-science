@@ -1,3 +1,5 @@
+import { readSourceLinkMetadata } from './source-link-metadata'
+import type { SourceLinkMetadata } from '../../shared/source-preview'
 import type {
   SavedSkillSource,
   AddSkillSourceRequest,
@@ -98,6 +100,7 @@ type CoreSettingsCommandStore = Pick<
   | 'getConnectorDetail'
   | 'getPackageMirror'
   | 'reviewNotebookPrivateDestination'
+  | 'getNotebookNetwork'
   | 'getNotebookNetworkStatus'
   | 'getLocalShellRuntimePreference'
   | 'getWsl2BashPreviewStatus'
@@ -273,6 +276,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: PrivateDestinationRequest],
     StoreResult<'reviewNotebookPrivateDestination'>
   >('settings:review-notebook-private-destination'),
+  getSourceLinkMetadata: defineApplicationCommand<
+    'settings:get-source-link-metadata',
+    readonly [url: string],
+    SourceLinkMetadata
+  >('settings:get-source-link-metadata'),
   getNotebookNetworkStatus: defineApplicationCommand<
     'settings:get-notebook-network-status',
     readonly [],
@@ -578,6 +586,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
   settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
+  settingsCoreApplicationCommands.getSourceLinkMetadata,
   settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getLocalShellRuntimePreference,
   settingsCoreApplicationCommands.getWsl2BashPreviewStatus,
@@ -720,6 +729,8 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:review-notebook-private-destination')
         return dependencies.service.reviewNotebookPrivateDestination(args[0])
       },
+      'settings:get-source-link-metadata': async ({ args }) =>
+        readSourceLinkMetadata(args[0], await dependencies.service.getNotebookNetwork()),
       'settings:get-notebook-network-status': () => dependencies.service.getNotebookNetworkStatus(),
       'settings:get-local-shell-runtime-preference': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-local-shell-runtime-preference')

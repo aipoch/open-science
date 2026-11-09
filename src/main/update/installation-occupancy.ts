@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
@@ -106,6 +106,37 @@ function isLinuxInstallationMappingUser(pid: number, root: string): boolean {
   return false
 }
 
+// On macOS only the executable path is evidence. A shell or file picker may mention
+// the bundle in its arguments without loading anything from it.
+function installationPsArgs(): string[] {
+  return ['-axo', process.platform === 'darwin' ? 'pid=,comm=' : 'pid=,command=']
+}
+
+function installationPsOccupants(
+  stdout: string,
+  installationRoot: string,
+  signal?: AbortSignal
+): Set<number> {
+  const pids = new Set<number>()
+  for (const line of stdout.split('\n')) {
+    signal?.throwIfAborted()
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+    if (!match) continue
+    const [, pid, command] = match
+    if (process.platform === 'darwin') {
+      if (command === installationRoot || command.startsWith(installationRoot + '/'))
+        pids.add(Number(pid))
+    } else if (
+      command.includes(installationRoot) ||
+      (process.platform === 'linux' &&
+        (isLinuxInstallationExecutable(Number(pid), installationRoot) ||
+          isLinuxInstallationMappingUser(Number(pid), installationRoot)))
+    )
+      pids.add(Number(pid))
+  }
+  return pids
+}
+
 // Detect pre-registration runtimes as well as current protocol participants. Process-list failure is
 // unknown occupancy, never an empty list. The caller excludes only its own Desktop and exact Runtime.
 export function inspectInstallationProcesses(installationRoot: string): number[] {
@@ -120,7 +151,7 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
     throw windowsInspectionFailure(
       new Error('Windows installation occupancy requires the bounded asynchronous scanner.')
     )
-  const result = spawnSync('/bin/ps', ['-axo', 'pid=,command='], {
+  const result = spawnSync('/bin/ps', installationPsArgs(), {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024
   })
@@ -129,18 +160,7 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
       'installation-busy',
       'Installation process occupancy could not be inspected.'
     )
-  const pids = new Set<number>()
-  for (const line of result.stdout.split('\n')) {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-    if (
-      match &&
-      (match[2].includes(installationRoot) ||
-        (process.platform === 'linux' &&
-          (isLinuxInstallationExecutable(Number(match[1]), installationRoot) ||
-            isLinuxInstallationMappingUser(Number(match[1]), installationRoot))))
-    )
-      pids.add(Number(match[1]))
-  }
+  const pids = installationPsOccupants(result.stdout, installationRoot)
   if (process.platform === 'darwin') {
     // Inspect executable and mapped files (dylib, asar mmap), not ordinary open descriptors.
     // Only `txt` mappings can block a rename replacement or survive it.
@@ -249,20 +269,8 @@ export async function inspectInstallationProcessesAsync(
   } catch {
     /* The installation may already have moved. */
   }
-  const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
-  const pids = new Set<number>()
-  for (const line of stdout.split('\n')) {
-    signal?.throwIfAborted()
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-    if (
-      match &&
-      (match[2].includes(installationRoot) ||
-        (process.platform === 'linux' &&
-          (isLinuxInstallationExecutable(Number(match[1]), installationRoot) ||
-            isLinuxInstallationMappingUser(Number(match[1]), installationRoot))))
-    )
-      pids.add(Number(match[1]))
-  }
+  const { stdout } = await run('/bin/ps', installationPsArgs())
+  const pids = installationPsOccupants(stdout, installationRoot, signal)
   if (process.platform === 'darwin') {
     const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'])
     for (const pid of parseDarwinLsofMappings(maps.stdout, installationRoot)) pids.add(pid)
@@ -281,19 +289,24 @@ export function parseDarwinProcessNames(psOutput: string): Map<number, string> {
   return names
 }
 
-/** Best-effort process name lookup for diagnostics only; never used for occupancy determination. */
+/** Synchronous process name lookup for diagnostics only; macOS uses the async variant. */
 export function inspectProcessNames(pids: number[]): Map<number, string> {
   const names = new Map<number, string>()
   if (pids.length === 0) return names
-  if (process.platform === 'darwin') {
-    const result = spawnSync('/bin/ps', ['-o', 'pid=,comm=', '-p', pids.join(',')], {
-      encoding: 'utf8',
-      timeout: 5_000,
-      maxBuffer: 1024 * 1024
-    })
-    if (result.status === 0)
-      for (const [pid, name] of parseDarwinProcessNames(result.stdout)) names.set(pid, name)
-  } else if (process.platform === 'linux') {
+  if (process.platform === 'win32') {
+    try {
+      const wanted = new Set(pids)
+      for (const row of listWindowsProcesses()) {
+        if (!wanted.has(row.pid) || !row.executablePath) continue
+        const name = win32.basename(row.executablePath)
+        if (name) names.set(row.pid, name)
+      }
+    } catch {
+      // Process names are diagnostic only; an unavailable snapshot must not change occupancy.
+    }
+    return names
+  }
+  if (process.platform === 'linux') {
     for (const pid of pids) {
       try {
         const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
@@ -302,6 +315,28 @@ export function inspectProcessNames(pids: number[]): Map<number, string> {
         // Process exited or inaccessible; diagnostic only, no occupancy impact.
       }
     }
+  }
+  return names
+}
+
+/** Best-effort asynchronous process name lookup for update diagnostics. */
+export async function inspectProcessNamesAsync(
+  pids: number[],
+  signal?: AbortSignal
+): Promise<Map<number, string>> {
+  const names = new Map<number, string>()
+  if (pids.length === 0) return names
+  if (process.platform !== 'darwin') return inspectProcessNames(pids)
+  try {
+    const { runVerificationProcess } = await import('./verification-process')
+    const { stdout } = await runVerificationProcess(
+      '/bin/ps',
+      ['-o', 'pid=,comm=', '-p', pids.join(',')],
+      { signal, timeoutMs: 5_000, maxBytes: 1024 * 1024 }
+    )
+    for (const [pid, name] of parseDarwinProcessNames(stdout)) names.set(pid, name)
+  } catch {
+    signal?.throwIfAborted()
   }
   return names
 }

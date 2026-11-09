@@ -60,7 +60,8 @@ const annotationSourceLabel = (annotation: Annotation, t: TFunction): string => 
 
 const sentAnnotationViews = (
   annotations: readonly Annotation[],
-  t: TFunction
+  t: TFunction,
+  deletedDiscussionSourceId?: string
 ): readonly SentAnnotationCardView[] => {
   const imagePoints = new Map(
     prepareImagePointAnnotations(annotations).points.map((point) => [point.annotationId, point])
@@ -77,6 +78,9 @@ const sentAnnotationViews = (
       return {
         id: annotation.id,
         kind: 'replay',
+        sourceDeleted: Boolean(
+          deletedDiscussionSourceId && target?.sourceSessionId === deletedDiscussionSourceId
+        ),
         content: replayTitle,
         scopeLabel:
           target?.scope === 'session'
@@ -161,11 +165,13 @@ const DraggableAnnotationCard = ({
 
 const AnnotationDraftCards = ({
   annotations,
+  fixedParent,
   disabled,
   onUpdateNote,
   onRemove,
   onReveal
 }: {
+  fixedParent?: boolean
   annotations: readonly Annotation[]
   disabled: boolean
   onUpdateNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -223,6 +229,9 @@ const AnnotationDraftCards = ({
                 return {
                   id: annotation.id,
                   title: step ? step[2] : selection,
+                  showTitle:
+                    annotation.source.kind === 'session-item' &&
+                    annotation.source.itemType === 'notebook-run',
                   stepNumber: step ? Number(step[1]) : undefined
                 }
               })}
@@ -231,8 +240,11 @@ const AnnotationDraftCards = ({
                 const annotation = selectedSteps.find((step) => step.id === id)
                 if (annotation) onReveal?.(annotation)
               }}
-              onRemove={() => replayAnnotations.forEach((annotation) => onRemove(annotation.id))}
-              removeLabel={t('Remove annotation')}
+              onCancelDraft={
+                fixedParent
+                  ? undefined
+                  : () => replayAnnotations.forEach((annotation) => onRemove(annotation.id))
+              }
             />
           </div>
         ) : null}
@@ -432,16 +444,18 @@ const AnnotationDraftCards = ({
 }
 
 const AnnotationMessageCards = ({
+  deletedDiscussionSourceId,
   annotations,
   onReveal
 }: {
+  deletedDiscussionSourceId?: string
   annotations: readonly Annotation[]
   onReveal?: (annotation: Annotation) => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   return (
     <SentAnnotationCards
-      cards={sentAnnotationViews(annotations, t)}
+      cards={sentAnnotationViews(annotations, t, deletedDiscussionSourceId)}
       placement="message"
       onActivate={
         onReveal

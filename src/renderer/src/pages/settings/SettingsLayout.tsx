@@ -12,6 +12,7 @@ export type SettingsEditorLeaveState = { dirty: boolean; busy: boolean }
 
 type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
   title: ReactNode
+  titleAccessory?: ReactNode
   titleId?: string
   headingAs?: 'h2' | 'h3'
   // Optional decorative glyph rendered just before the title (e.g. a language logo).
@@ -27,6 +28,7 @@ type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
 // Keeps first-level settings groups aligned without turning every group into a card.
 const SettingsSection = ({
   title,
+  titleAccessory,
   titleId,
   headingAs: Heading = 'h3',
   icon,
@@ -39,41 +41,53 @@ const SettingsSection = ({
   className,
   children,
   ...props
-}: SettingsSectionProps): React.JSX.Element => (
-  <section
-    data-slot="settings-section"
-    className={cn(separated && 'border-t border-border pt-5', className)}
-    {...props}
-  >
-    <div
-      className={cn('flex flex-wrap items-start justify-between gap-3 sm:gap-4', headerClassName)}
+}: SettingsSectionProps): React.JSX.Element => {
+  const heading = (
+    <Heading
+      id={titleId}
+      className="flex min-w-0 items-center gap-2 break-words text-[17px] leading-6 font-medium text-foreground"
     >
-      <div className="min-w-0 flex-1">
-        <Heading
-          id={titleId}
-          className="flex min-w-0 items-center gap-2 break-words text-[17px] leading-6 font-medium text-foreground"
+      {icon ? (
+        <span
+          className="inline-flex size-5 shrink-0 items-center justify-center"
+          aria-hidden="true"
         >
-          {icon ? (
-            <span
-              className="inline-flex size-5 shrink-0 items-center justify-center"
-              aria-hidden="true"
-            >
-              {icon}
-            </span>
+          {icon}
+        </span>
+      ) : null}
+      {title}
+    </Heading>
+  )
+  return (
+    <section
+      data-slot="settings-section"
+      className={cn(separated && 'border-t border-border pt-5', className)}
+      {...props}
+    >
+      <div
+        className={cn('flex flex-wrap items-start justify-between gap-3 sm:gap-4', headerClassName)}
+      >
+        <div className="min-w-0 flex-1">
+          {titleAccessory ? (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {heading}
+              {titleAccessory}
+            </div>
+          ) : (
+            heading
+          )}
+          {description ? (
+            <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-muted-foreground">
+              {description}
+            </p>
           ) : null}
-          {title}
-        </Heading>
-        {description ? (
-          <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-muted-foreground">
-            {description}
-          </p>
-        ) : null}
+        </div>
+        {action ? <div className={cn('shrink-0', actionClassName)}>{action}</div> : null}
       </div>
-      {action ? <div className={cn('shrink-0', actionClassName)}>{action}</div> : null}
-    </div>
-    <div className={cn('mt-3 min-w-0', contentClassName)}>{children}</div>
-  </section>
-)
+      <div className={cn('mt-3 min-w-0', contentClassName)}>{children}</div>
+    </section>
+  )
+}
 
 // Shared provider-list affordance; keeps the add action next to the resources it creates.
 const SettingsListAddAction = ({

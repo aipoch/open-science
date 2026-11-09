@@ -17,6 +17,15 @@ const iconProps = ({ size = 20, ...props }: BrandIconProps): SVGProps<SVGSVGElem
   ...props
 })
 
+// Official navigation mark from https://aipoch.com/; inherit the surrounding theme color.
+export const AipochMono = (props: BrandIconProps): React.JSX.Element => (
+  <svg {...iconProps(props)} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+    <title>AIPOCH</title>
+    <circle cx="16" cy="16" r="15" stroke="currentColor" strokeOpacity="0.4" strokeWidth="1" />
+    <circle cx="16" cy="16" r="2" fill="currentColor" />
+  </svg>
+)
+
 export const ClaudeColor = (props: BrandIconProps): React.JSX.Element => (
   <svg {...iconProps(props)}>
     <title>Claude</title>

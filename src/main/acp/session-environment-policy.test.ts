@@ -112,7 +112,7 @@ describe('ACP Session environment policy', () => {
           framework: opencodeFramework,
           executablePath: '/bin/opencode',
           env: {},
-          systemPromptAppends: ['Backend guidance.']
+          systemPromptAppends: ['Application guidance.', 'Plan guidance.', 'Backend guidance.']
         }
       )
       .publish()

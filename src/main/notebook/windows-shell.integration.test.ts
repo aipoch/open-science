@@ -64,7 +64,8 @@ const fixtureSandbox = (
             'packages/notebook-network-sandbox/vendor/windows',
             process.arch,
             'notebook-appcontainer-host.exe'
-          )
+          ),
+          ownershipRoot: root
         })
       : { argv: [process.execPath, '-e', code], env: invocation.env }
     return {
@@ -740,8 +741,12 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
 
   it('allows updating after the application exits during shell identity capture', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-interrupted-owner-'))
+    const controller = join(
+      process.cwd(),
+      'src/main/notebook',
+      `.windows-interrupted-shell-${randomUUID()}.cjs`
+    )
     try {
-      const controller = join(root, 'controller.cjs')
       await build({
         entryPoints: [join(__dirname, 'fixtures/windows-interrupted-shell-launch.ts')],
         outfile: controller,
@@ -788,6 +793,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         await restarted.dispose()
       }
     } finally {
+      await rm(controller, { force: true })
       await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }, 30_000)

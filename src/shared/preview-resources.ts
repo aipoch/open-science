@@ -1,6 +1,7 @@
 // 'local' streams a file from an arbitrary absolute filesystem path (the "This computer" browser).
 // Unlike artifact/upload it is not confined to a storage root; the resolver validates + realpaths it.
-export type ManagedPreviewSource = 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
+export type ManagedPreviewSource =
+  'artifact' | 'upload' | 'compute-output' | 'notebook-input' | 'literature' | 'local'
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 
@@ -21,7 +22,12 @@ type AcquirePathPreviewRequest = ManagedPreviewPresentation & {
   path: string
   projectId?: string
   sessionId?: string
-} & ({ source: 'notebook-input' } | { source: 'literature' } | { source: 'local' })
+} & (
+    | { source: 'compute-output' }
+    | { source: 'notebook-input' }
+    | { source: 'literature' }
+    | { source: 'local' }
+  )
 
 export type AcquireManagedPreviewRequest =
   AcquireManagedVersionPreviewRequest | AcquirePathPreviewRequest

@@ -603,6 +603,8 @@ it('reconfirms the last App when two App-only exits precede both socket disconne
 it('starts the first-App deadline only after discovery is published, without extending it twice', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   const { lifetime, stop } = await fixture(false, true)
+  const stopped = Promise.withResolvers<void>()
+  stop.mockImplementation(() => stopped.resolve())
   await vi.advanceTimersByTimeAsync(65_000)
   expect(lifetime.snapshot().stopping).toBe(false)
   expect(stop).not.toHaveBeenCalled()
@@ -611,7 +613,8 @@ it('starts the first-App deadline only after discovery is published, without ext
   lifetime.startFirstConnectionTimeout()
   await vi.advanceTimersByTimeAsync(10)
   expect(lifetime.snapshot().stopping).toBe(true)
-  await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce())
+  await stopped.promise
+  expect(stop).toHaveBeenCalledOnce()
 })
 
 it.each(['before-publication', 'after-publication'] as const)(
@@ -619,6 +622,8 @@ it.each(['before-publication', 'after-publication'] as const)(
   async (when) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     const { lifetime, stop } = await fixture(false, true)
+    const stopped = Promise.withResolvers<void>()
+    stop.mockImplementation(() => stopped.resolve())
     if (when === 'after-publication') lifetime.startFirstConnectionTimeout()
     lifetime.connect('app', 'socket')
     lifetime.startFirstConnectionTimeout()
@@ -629,7 +634,8 @@ it.each(['before-publication', 'after-publication'] as const)(
     lifetime.startFirstConnectionTimeout()
     await vi.advanceTimersByTimeAsync(10)
     expect(lifetime.snapshot().stopping).toBe(true)
-    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce())
+    await stopped.promise
+    expect(stop).toHaveBeenCalledOnce()
   }
 )
 

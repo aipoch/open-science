@@ -5,13 +5,16 @@
     "src/shared/local-fs.test.ts",
     "src/shared/local-fs.ts",
     "src/shared/network-proxy.ts",
-    "src/shared/web-caller-location.ts"
+    "src/shared/web-caller-location.ts",
+    "src/shared/tool-error-recovery.test.ts",
+    "src/shared/tool-error-recovery.ts"
   ],
   "interfacePaths": [
     "src/shared/activity-groups.ts",
     "src/shared/local-fs.ts",
     "src/shared/network-proxy.ts",
-    "src/shared/web-caller-location.ts"
+    "src/shared/web-caller-location.ts",
+    "src/shared/tool-error-recovery.ts"
   ],
   "consumerModules": [
     "desktop_composition",
@@ -20,7 +23,11 @@
     "web_renderer_bridge"
   ],
   "testFiles": {
-    "owner": ["src/shared/activity-groups.test.ts", "src/shared/local-fs.test.ts"],
+    "owner": [
+      "src/shared/activity-groups.test.ts",
+      "src/shared/local-fs.test.ts",
+      "src/shared/tool-error-recovery.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "scripts/build-backend.integration.test.ts",

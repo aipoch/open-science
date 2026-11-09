@@ -237,6 +237,7 @@ it
         hostPath: resolve(
           `packages/notebook-network-sandbox/vendor/windows/${process.arch}/notebook-appcontainer-host.exe`
         ),
+        ownershipRoot: root,
         gatewayPort: 61200,
         gatewayCredentials: { username: 'unused', password: 'unused' }
       })

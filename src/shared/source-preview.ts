@@ -55,3 +55,5 @@ export type {
   SourcePreviewContextMenuRequest,
   SourcePreviewNavigationBlocked
 }
+
+export type SourceLinkMetadata = { title?: string; description?: string; image?: string }

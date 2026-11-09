@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import type { Annotation } from '../../../../shared/annotation-contract'
+import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { sanitizeAnnotations } from '../../../../shared/annotations'
 import type { ComposerDraft } from './composer-contract'
 import { docToText } from './composer/composer-doc'
@@ -9,7 +11,7 @@ const storedDraftSchema = z.object({
   projectId: z.string(),
   key: z.string(),
   text: z.string(),
-  annotations: z.array(z.unknown()),
+  annotations: z.array(z.unknown()).transform(sanitizeAnnotations),
   files: z.array(
     z.object({ name: z.string(), size: z.number().nonnegative(), receipt: z.string().optional() })
   ),
@@ -37,7 +39,24 @@ export const observeComposerDrafts = (
   }
 }
 const deletedProjects = new Set<string>()
-const deletedSessions = new Set<string>()
+const deletedSessions = new Map<string, string>()
+const deletionListeners = new Set<() => void>()
+
+export const subscribeDraftSourceDeletion = (listener: () => void): (() => void) => {
+  deletionListeners.add(listener)
+  return () => {
+    deletionListeners.delete(listener)
+  }
+}
+
+export const availableDraftAnnotations = (annotations: Annotation[]): Annotation[] => {
+  if (!deletedSessions.size) return annotations
+  const retained = annotations.filter((annotation) => {
+    const target = replayAnnotationTarget(annotation)
+    return !target || deletedSessions.get(target.sourceSessionId) !== target.projectId
+  })
+  return retained.length === annotations.length ? annotations : retained
+}
 
 const save = (): void => {
   if (!enabled) return
@@ -130,7 +149,7 @@ export const readComposerDraft = (
   if (!saved) return undefined
   return {
     doc: { nodes: saved.text ? [{ type: 'text', text: saved.text }] : [] },
-    annotations: sanitizeAnnotations(saved.annotations),
+    annotations: saved.annotations,
     attachments: [],
     attachmentTransfers: saved.files.map((file) => ({
       transferId: `recovered-${crypto.randomUUID()}`,
@@ -146,8 +165,10 @@ export const readComposerDraft = (
 }
 
 export const writeComposerDraft = (projectId: string, key: string, draft: ComposerDraft): void => {
-  for (const observer of draftObservers) observer(projectId, key, draft)
-  if (!enabled || deletedProjects.has(projectId) || deletedSessions.has(key)) return
+  const annotations = availableDraftAnnotations(draft.annotations)
+  for (const observer of draftObservers)
+    observer(projectId, key, annotations === draft.annotations ? draft : { ...draft, annotations })
+  if (!enabled || deletedProjects.has(projectId) || deletedSessions.get(key) === projectId) return
   // Old chips are restored as editable labels; a restored draft never silently reattaches stale
   // context or queue intents. Long-paste anchors retain their complete source text.
   const text = draft.doc.nodes
@@ -171,12 +192,12 @@ export const writeComposerDraft = (projectId: string, key: string, draft: Compos
       .map((file) => ({ name: file.name, size: file.totalBytes, receipt: file.recoveryReceipt }))
   ]
   drafts = drafts.filter((saved) => saved.projectId !== projectId || saved.key !== key)
-  if (text || draft.annotations.length || files.length)
+  if (text || annotations.length || files.length)
     drafts.push({
       projectId,
       key,
       text,
-      annotations: draft.annotations,
+      annotations,
       files,
       automaticReadingEnabled: draft.automaticReadingEnabled
     })
@@ -184,12 +205,34 @@ export const writeComposerDraft = (projectId: string, key: string, draft: Compos
 }
 
 export const removeComposerDrafts = (projectId: string, key?: string): void => {
-  if (key) deletedSessions.add(key)
+  if (key) deletedSessions.set(key, projectId)
   else deletedProjects.add(projectId)
-  drafts = drafts.filter(
-    (draft) => draft.projectId !== projectId || (key !== undefined && draft.key !== key)
-  )
+  const removeDeleted = (saved: StoredDraft[]): StoredDraft[] =>
+    saved.flatMap((draft) => {
+      if (draft.projectId === projectId && (!key || draft.key === key)) return []
+      const annotations = availableDraftAnnotations(draft.annotations)
+      if (annotations === draft.annotations) return [draft]
+      return draft.text || annotations.length || draft.files.length
+        ? [{ ...draft, annotations }]
+        : []
+    })
+  drafts = removeDeleted(drafts)
   save()
+  // Recovery takes precedence on restart, even if its copy predates deletion.
+  if (enabled && scope) {
+    try {
+      const raw = storage().getItem(RECOVERY_STORAGE_KEY)
+      const recovery = raw && envelopeSchema.safeParse(JSON.parse(raw))
+      if (recovery && recovery.success && recovery.data.scope === scope)
+        storage().setItem(
+          RECOVERY_STORAGE_KEY,
+          JSON.stringify({ ...recovery.data, drafts: removeDeleted(recovery.data.drafts) })
+        )
+    } catch {
+      failed = true
+    }
+  }
+  if (key) for (const listener of deletionListeners) listener()
 }
 
 export const composerDraftStorageFailed = (): boolean => failed

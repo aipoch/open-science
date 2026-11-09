@@ -96,7 +96,12 @@ const rawSchema = z.object({
         candidate.extend({ captionIssue: z.string().optional(), ...rawTableData.shape }),
         candidate.extend({
           parts: z
-            .array(rawTableData.extend({ title: z.string().min(1) }))
+            .array(
+              rawTableData.extend({
+                title: z.string().min(1),
+                cropRects: z.array(rect).min(1).max(8).optional()
+              })
+            )
             .min(2)
             .max(8),
           notes: z.array(rawNote).optional()
@@ -335,6 +340,23 @@ export const readWorkerResult = async (
       if ('parts' in item) {
         element.tableParts = item.parts.map((part) => ({
           title: part.title,
+          ...(part.cropRects
+            ? {
+                regions: part.cropRects.map((box) => {
+                  const { width, height } = part.sourceViewport
+                  if (
+                    box[0] < 0 ||
+                    box[1] < 0 ||
+                    box[2] > width ||
+                    box[3] > height ||
+                    box[2] <= box[0] ||
+                    box[3] <= box[1]
+                  )
+                    throw new Error('Invalid PDF worker table part boundary.')
+                  return region(item.page, box, width, height)
+                })
+              }
+            : {}),
           table: convertTable(part)
         }))
         element.tableNotes = item.notes?.map(convertNote)

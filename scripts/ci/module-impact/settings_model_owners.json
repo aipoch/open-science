@@ -29,7 +29,8 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/shared/web-rpc-contract.test.ts",
-      "src/main/host-layer-dependencies.architecture.test.ts"
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/stores/session-store-compaction-gate.test.ts"
     ],
     "consumer": [
       "src/main/composition/project-lifecycle.test.ts",

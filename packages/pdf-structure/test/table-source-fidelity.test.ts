@@ -15,6 +15,176 @@ function reconstruct(name: string): string[][] {
 const { populateTableCellText } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
 )
+const { refineMeasuredAssignedNumericSegments } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-source-segments.mjs')).href
+)
+
+it.each([
+  'valid',
+  'valid-astral',
+  'missing-gaps',
+  'missing-glyphs',
+  'short-rect',
+  'nonfinite-rect',
+  'wrong-glyph',
+  'inside-ligature-gap',
+  'duplicate-run',
+  'duplicate-origin',
+  'cross-cell-glyph',
+  'overlapping-text',
+  'overlapping-baseline',
+  'separated-small-script',
+  'separated-rotated-text',
+  'nan-peer-height',
+  'infinite-peer-height',
+  'nan-peer-baseline',
+  'infinite-peer-baseline',
+  'nonboolean-peer-horizontal',
+  'separate-normal-line'
+])(
+  'uses only complete measured body evidence and retains mixed-cell source ranges: %s',
+  (variant) => {
+    const token = (
+      text: string,
+      index: number,
+      left: number,
+      right: number
+    ): {
+      text: string
+      rect: number[]
+      baseline: number
+      height: number
+      horizontal: boolean
+      sourceItem: { pageNumber: number; index: number; text: string }
+    } => ({
+      text,
+      rect: [left, 20, right, 30],
+      baseline: 30,
+      height: 10,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index, text }
+    })
+    const prefix = token('3', 1, 30, 35),
+      parent = token(variant === 'valid-astral' ? '𝒰  2 m' : 'Q 2 m', 2, 35, 65),
+      suffix = token('u', 3, 65, 70),
+      pageItems = [prefix, parent, suffix],
+      measuredRuns = [
+        {
+          text: parent.text,
+          rect: [...parent.rect],
+          baseline: 30,
+          height: 10,
+          gaps: [
+            { left: 41, right: 51, index: 1 },
+            { left: 56, right: 59, index: 2 }
+          ],
+          glyphRuns: [2, 2, 2],
+          literalGlyphs: [variant === 'valid-astral' ? '𝒰' : 'Q', '2', 'm']
+        }
+      ],
+      cells = [0, 1].map((column) => ({
+        row: 0,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [column ? 47 : 0, 10, column ? 100 : 47, 40],
+        items: [],
+        text: ''
+      }))
+    const repairs: string[] = []
+    if (variant === 'missing-gaps') Reflect.deleteProperty(measuredRuns[0], 'gaps')
+    if (variant === 'missing-glyphs') Reflect.deleteProperty(measuredRuns[0], 'literalGlyphs')
+    if (variant === 'short-rect') measuredRuns[0].rect.pop()
+    if (variant === 'nonfinite-rect') measuredRuns[0].rect[0] = NaN
+    if (variant === 'wrong-glyph') measuredRuns[0].literalGlyphs[0] = 'X'
+    if (variant === 'inside-ligature-gap') measuredRuns[0].literalGlyphs = ['Q2', 'm']
+    if (variant === 'duplicate-run') measuredRuns.push(structuredClone(measuredRuns[0]))
+    if (variant === 'duplicate-origin') pageItems.push({ ...parent, rect: [200, 20, 230, 30] })
+    if (variant === 'cross-cell-glyph') measuredRuns[0].gaps[0].left = 48
+    if (variant === 'overlapping-text') pageItems.push(token('foreign', 9, 36, 40))
+    if (
+      [
+        'overlapping-baseline',
+        'separated-small-script',
+        'separated-rotated-text',
+        'nan-peer-height',
+        'infinite-peer-height',
+        'nan-peer-baseline',
+        'infinite-peer-baseline',
+        'nonboolean-peer-horizontal',
+        'separate-normal-line'
+      ].includes(variant)
+    ) {
+      const other = token('R', 9, 80, 85)
+      other.rect = variant === 'overlapping-baseline' ? [80, 22, 85, 32] : [80, 30, 85, 40]
+      other.baseline = other.rect[3]
+      if (variant === 'separated-small-script') {
+        other.height = 7.5
+        other.rect[1] = other.baseline - other.height
+      }
+      if (variant === 'separated-rotated-text') other.horizontal = false
+      if (variant === 'nan-peer-height') other.height = NaN
+      if (variant === 'infinite-peer-height') other.height = Infinity
+      if (variant === 'nan-peer-baseline') other.baseline = NaN
+      if (variant === 'infinite-peer-baseline') other.baseline = Infinity
+      if (variant === 'nonboolean-peer-horizontal') Reflect.set(other, 'horizontal', 1)
+      pageItems.push(other)
+    }
+    expect(() =>
+      populateTableCellText({
+        cells,
+        items: pageItems.slice(),
+        pageItems,
+        rows: [{ rect: [0, 10, 100, 40] }],
+        columnRects: cells.map((c) => c.rect),
+        headerRows: [],
+        rules: [],
+        bottom: 40,
+        measuredRuns,
+        issues: new Set(),
+        repairs
+      })
+    ).not.toThrow()
+    if (variant === 'separate-normal-line') {
+      expect(repairs).toContain('native-measured-body-run-split')
+      expect(cells[1].text).toContain('R')
+      return
+    }
+    if (variant !== 'valid' && variant !== 'valid-astral') {
+      expect(repairs).not.toContain('native-measured-body-run-split')
+      return
+    }
+    expect(cells.map((c) => c.text)).toEqual([variant === 'valid-astral' ? '3𝒰' : '3Q', '2 mu'])
+    const table = { cells, grid: [cells.map((c) => c.text)] }
+    refineMeasuredAssignedNumericSegments(table, pageItems, measuredRuns)
+    expect(cells).toMatchObject([
+      {
+        sourceSegments: [
+          { ...prefix.sourceItem, start: 0, end: 1, rect: prefix.rect },
+          {
+            ...parent.sourceItem,
+            start: 0,
+            end: variant === 'valid-astral' ? 2 : 1,
+            rect: [35, 20, 41, 30]
+          }
+        ]
+      },
+      {
+        sourceSegments: [
+          {
+            ...parent.sourceItem,
+            start: variant === 'valid-astral' ? 4 : 2,
+            end: variant === 'valid-astral' ? 7 : 5,
+            rect: [51, 20, 65, 30]
+          },
+          { ...suffix.sourceItem, start: 0, end: 1, rect: suffix.rect }
+        ]
+      }
+    ])
+    expect(cells.every((c) => !('sourceItems' in c))).toBe(true)
+    expect(pageItems).toEqual([prefix, parent, suffix])
+  }
+)
 
 it.each(['complete', 'missing', 'conflicting'])(
   'retains exact item identities only for completely mapped cells (%s)',

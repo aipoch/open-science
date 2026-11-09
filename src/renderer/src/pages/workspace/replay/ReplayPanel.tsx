@@ -1,5 +1,4 @@
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
 import {
   Select,
   SelectContent,
@@ -47,6 +46,7 @@ import { createReplayPresentation } from './replay-presentation'
 import { ReplayStage } from './ReplayStage'
 import { ReplayControls } from './ReplayControls'
 import { ReplaySourceDetails } from './ReplaySourceDetails'
+import { replayStepExcerpt } from './replay-navigation'
 import {
   captureDiscussionStep,
   captureDiscussionSession,
@@ -68,7 +68,7 @@ export type ReplayPanelProps = {
   expanded?: boolean
   onToggleExpanded?: () => void
   onViewChange?: (state: ReplayViewState) => void
-  onAskStep: (context: SessionDiscussionCapture) => void
+  onAskStep?: (context: SessionDiscussionCapture) => void
   onOpenEvidence: (resource: ReplayResource | undefined, step: ReplayStep) => void
   readResource?: ReplayResourceReader
   readNotebookRun?: ReplayNotebookRunReader
@@ -111,6 +111,7 @@ const restoredPosition = (
 
 const buttonClass = 'h-auto min-h-8 max-w-full px-3 py-1.5 text-xs'
 const DRAWER_PAGE_SIZE = 40
+const ASK_STEP_PROMPT_DELAY_MS = 800
 const EMPTY_STEPS: readonly ReplayStep[] = []
 
 const defaultNotebookReader: ReplayNotebookRunReader = (source, index, options) =>
@@ -158,6 +159,8 @@ const ReplayPanelContent = ({
   const [positionMs, setPositionMs] = useState(initial.positionMs)
   const [speed, setSpeed] = useState<ReplaySpeed>(initial.speed)
   const [playing, setPlaying] = useState(false)
+  const [showAskPrompt, setShowAskPrompt] = useState(false)
+  const askPromptTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [ready, setReady] = useState(false)
   const [wide, setWide] = useState(false)
   const [materialsOverride, setMaterialsOverride] = useState<boolean>()
@@ -178,6 +181,7 @@ const ReplayPanelContent = ({
   const materialsId = useId()
   const materialsTrigger = useRef<HTMLButtonElement>(null)
   const [notebookLimit, setNotebookLimit] = useState<number>()
+  const [revealedRun, setRevealedRun] = useState<string>()
   const [notebookFollowing, setNotebookFollowing] = useState(true)
   const [conversationFocusRequest, setConversationFocusRequest] = useState(0)
   const [filePage, setFilePage] = useState(0)
@@ -196,7 +200,23 @@ const ReplayPanelContent = ({
     () => projectReplayScene(replayDocument, branchId, positionMs),
     [replayDocument, branchId, positionMs]
   )
+  const cancelAskPrompt = useCallback(() => {
+    if (askPromptTimer.current !== undefined) {
+      clearTimeout(askPromptTimer.current)
+      askPromptTimer.current = undefined
+    }
+    setShowAskPrompt(false)
+  }, [])
+  const scheduleAskPrompt = useCallback(() => {
+    cancelAskPrompt()
+    askPromptTimer.current = setTimeout(() => {
+      askPromptTimer.current = undefined
+      setShowAskPrompt(true)
+    }, ASK_STEP_PROMPT_DELAY_MS)
+  }, [cancelAskPrompt])
+  useEffect(() => cancelAskPrompt, [cancelAskPrompt])
   const branch = replayDocument.branches.find((item) => item.id === scene.branchId)
+  const currentStepLabel = scene.step ? replayStepExcerpt(scene.step) : undefined
   const materialCatalog = useMemo(() => {
     const steps = branch?.steps.slice(0, scene.stepIndex + 1) ?? []
     const runs = new Map<string, ReplayRunIndex>()
@@ -222,6 +242,11 @@ const ReplayPanelContent = ({
     : scene.visibleSteps
         .flatMap((step) => step.runs.slice(0, REPLAY_MATERIAL_RUN_LIMIT))
         .slice(-REPLAY_MATERIAL_RUN_LIMIT)
+  // Reveal one out-of-page cell without fetching every intervening Notebook run.
+  if (materialsOpen && revealedRun && !pageRuns.some((run) => run.runId === revealedRun)) {
+    const target = scene.step?.runs.find((run) => run.runId === revealedRun)
+    if (target) pageRuns.unshift(target)
+  }
   const pageFiles = materialCatalog.files.slice(
     currentFilePage * DRAWER_PAGE_SIZE,
     (currentFilePage + 1) * DRAWER_PAGE_SIZE
@@ -409,7 +434,10 @@ const ReplayPanelContent = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runKey, runCache])
 
-  const pause = useCallback(() => setPlaying(false), [setPlaying])
+  const pause = useCallback(() => {
+    setPlaying(false)
+    scheduleAskPrompt()
+  }, [scheduleAskPrompt, setPlaying])
   const selectResource = useCallback(
     (id?: string): void => {
       if (id && !materialCatalog.files.some((resource) => resource.id === id)) return
@@ -440,16 +468,17 @@ const ReplayPanelContent = ({
   )
   const seek = useCallback(
     (position: number) => {
-      setPlaying(false)
+      pause()
       setSelectedResourceId(undefined)
       setPositionMs(position)
       setConversationFocusRequest((request) => request + 1)
+      setRevealedRun(undefined)
       setNotebookFollowing(true)
 
       setNotebookLimit(undefined)
       setFilePage(0)
     },
-    [setPlaying, setPositionMs, setSelectedResourceId]
+    [pause, setPositionMs, setSelectedResourceId]
   )
   useEffect(() => {
     const receive = (target: ReplaySeekTarget): void => {
@@ -466,10 +495,19 @@ const ReplayPanelContent = ({
         setSeekMissing(true)
         return
       }
+      if (target.runId && !step.runs.some((run) => run.runId === target.runId)) {
+        setSeekMissing(true)
+        return
+      }
       setSeekMissing(false)
       setBranchId(targetBranch!.id)
       const offset = Number.isFinite(target.stepOffsetMs) ? target.stepOffsetMs! : 0
       seek(step.startMs + Math.max(0, Math.min(step.durationMs, offset)))
+      if (target.runId) {
+        setMaterialsOverride(true)
+        setNotebookFollowing(false)
+        setRevealedRun(target.runId)
+      }
     }
     const unsubscribe = subscribeReplaySeek(receive)
     const pending = consumeReplaySeek(
@@ -480,48 +518,44 @@ const ReplayPanelContent = ({
     return unsubscribe
   }, [replayDocument, seek])
 
-  // Keep an accessor to the visible frame; capture evidence only when a message is sent.
-  const captureCurrent = useRef(() =>
-    captureDiscussionStep(replayDocument, scene, runDetails, resources)
-  )
-  useLayoutEffect(() => {
-    captureCurrent.current = () =>
-      captureDiscussionStep(replayDocument, scene, runDetails, resources)
-  })
-  const hasStep = !!scene.step
-  useEffect(() => {
-    if (!active || !hasStep) return
-    const playhead = {
-      projectId: replayDocument.source.projectId,
-      sourceSessionId: replayDocument.source.sessionId,
-      capture: () => captureCurrent.current()
-    }
-    useSessionReplayStore.setState({ playhead })
-    return () => {
-      if (useSessionReplayStore.getState().playhead === playhead)
-        useSessionReplayStore.setState({ playhead: undefined })
-    }
-  }, [active, hasStep, replayDocument])
-
   const ask = (): void => {
-    pause()
-    if (scene.step) onAskStep(captureDiscussionStep(replayDocument, scene, runDetails, resources))
+    cancelAskPrompt()
+    setPlaying(false)
+    if (scene.step) onAskStep?.(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
+  const askHistorical = useCallback(
+    (step: ReplayStep, run?: { id: string; title: string }): void => {
+      const view = viewRef.current
+      if (!view || view.branchId !== step.branchId) return
+      cancelAskPrompt()
+      setPlaying(false)
+      // A completed card shows its final frame. endMs itself belongs to the next step.
+      const time = view.stepId === step.id ? view.timeMs : step.endMs - 1
+      const selected = projectReplayScene(replayDocument, view.branchId, time)
+      onAskStep?.(captureDiscussionStep(replayDocument, selected, runDetails, resources, run))
+    },
+    [cancelAskPrompt, replayDocument, onAskStep, runDetails, resources]
+  )
   const askSession = (): void => {
-    pause()
+    cancelAskPrompt()
+    setPlaying(false)
     const context = captureDiscussionSession(replayDocument)
-    if (context) onAskStep({ ...context, stepTitle: t('Entire research') })
+    if (context) onAskStep?.({ ...context, stepTitle: t('Entire research') })
   }
   const toggle = (): void => {
     if (!branch?.steps.length) return
     setSelectedResourceId(undefined)
     setConversationFocusRequest((request) => request + 1)
+    setRevealedRun(undefined)
     setNotebookFollowing(true)
 
     setNotebookLimit(undefined)
     setFilePage(0)
     if (scene.ended) setPositionMs(0)
-    setPlaying((value) => !value)
+    const nextPlaying = !playing
+    setPlaying(nextPlaying)
+    if (nextPlaying) cancelAskPrompt()
+    else scheduleAskPrompt()
   }
 
   const renderMaterialPagination = (
@@ -562,7 +596,7 @@ const ReplayPanelContent = ({
   return (
     <div
       ref={panel}
-      className="flex h-full min-h-0 min-w-0 flex-col bg-bg-10"
+      className="relative flex h-full min-h-0 min-w-0 flex-col bg-bg-10"
       data-testid="replay-panel"
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return
@@ -604,7 +638,20 @@ const ReplayPanelContent = ({
                   title: replayDocument.source.title
                 })}
               >
-                <span className="truncate">{replayDocument.source.title}</span>
+                <span className="min-w-0 truncate">{replayDocument.source.title}</span>
+                {scene.step && branch ? (
+                  <span
+                    aria-live="polite"
+                    className="shrink-0 border-s border-border-200 ps-1.5 text-xs font-normal text-muted-foreground"
+                    data-testid="replay-current-step"
+                    title={currentStepLabel}
+                  >
+                    {t('Step {{current}} of {{total}}', {
+                      current: scene.stepIndex + 1,
+                      total: branch.steps.length
+                    })}
+                  </span>
+                ) : null}
                 <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
               </Button>
             </PopoverTrigger>
@@ -636,24 +683,26 @@ const ReplayPanelContent = ({
             </PopoverContent>
           </Popover>
         </div>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={askSession}
-                disabled={!replayDocument.branches.some((item) => item.steps.length)}
-                aria-label={t('Ask about this research')}
-              >
-                <MessageSquare size={16} aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="end" collisionBoundary={tooltipBoundary}>
-              {t('Ask about this research')}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {onAskStep && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={askSession}
+                  disabled={!replayDocument.branches.some((item) => item.steps.length)}
+                  aria-label={t('Ask about this research')}
+                >
+                  <MessageSquare size={16} aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" collisionBoundary={tooltipBoundary}>
+                {t('Ask about this research')}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
         {replayDocument.branches.length > 1 ? (
           <Select
             value={scene.branchId}
@@ -674,6 +723,7 @@ const ReplayPanelContent = ({
                   : undefined
               setBranchId(value)
               setPositionMs(restored?.positionMs ?? 0)
+              setRevealedRun(undefined)
               setNotebookFollowing(true)
 
               setNotebookLimit(undefined)
@@ -907,6 +957,8 @@ const ReplayPanelContent = ({
             materialsTrigger.current?.focus()
           }}
           onSeek={seek}
+          onAskHistorical={onAskStep ? askHistorical : undefined}
+          revealedRun={revealedRun}
           notebookRuns={pageRuns}
           fileResources={pageFiles}
           notebookHistoryControl={
@@ -972,30 +1024,33 @@ const ReplayPanelContent = ({
           ) : null}
         </div>
       ) : null}
-      <ReplayControls
-        key={scene.branchId}
-        playing={playing}
-        ready={ready}
-        positionMs={scene.positionMs}
-        durationMs={scene.durationMs}
-        stepIndex={scene.stepIndex}
-        steps={branch?.steps ?? EMPTY_STEPS}
-        resources={replayDocument.resources}
-        onPause={pause}
-        onOpenEvidence={(step) => onOpenEvidence(undefined, step)}
-        speed={speed}
-        onToggle={toggle}
-        onPrevious={() => seek(branch?.steps[Math.max(0, scene.stepIndex - 1)]?.startMs ?? 0)}
-        onNext={() =>
-          seek(
-            branch?.steps[Math.min((branch?.steps.length ?? 1) - 1, scene.stepIndex + 1)]
-              ?.startMs ?? 0
-          )
-        }
-        onSeek={seek}
-        onSpeed={setSpeed}
-        onAsk={ask}
-      />
+      <div className="shrink-0">
+        <ReplayControls
+          key={scene.branchId}
+          playing={playing}
+          ready={ready}
+          positionMs={scene.positionMs}
+          durationMs={scene.durationMs}
+          stepIndex={scene.stepIndex}
+          steps={branch?.steps ?? EMPTY_STEPS}
+          resources={replayDocument.resources}
+          onPause={pause}
+          onOpenEvidence={(step) => onOpenEvidence(undefined, step)}
+          speed={speed}
+          onToggle={toggle}
+          onPrevious={() => seek(branch?.steps[Math.max(0, scene.stepIndex - 1)]?.startMs ?? 0)}
+          onNext={() =>
+            seek(
+              branch?.steps[Math.min((branch?.steps.length ?? 1) - 1, scene.stepIndex + 1)]
+                ?.startMs ?? 0
+            )
+          }
+          onSeek={seek}
+          onSpeed={setSpeed}
+          onAsk={onAskStep ? ask : undefined}
+          askPromptVisible={onAskStep && showAskPrompt && !playing && scene.step ? true : undefined}
+        />
+      </div>
     </div>
   )
 }

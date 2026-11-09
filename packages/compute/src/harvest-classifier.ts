@@ -134,6 +134,15 @@ export function validateHarvestConfig(config: unknown): asserts config is Harves
 // classifyFiles
 // ---------------------------------------------------------------------------
 
+// A dedicated output volume contains only driver outputs.
+export function hasAllDeclaredOutputs(files: FileEntry[], outputs: OutputDeclaration[]): boolean {
+  return outputs.every((output) =>
+    files.some((file) =>
+      micromatch.isMatch(file.path, typeof output === 'string' ? output : output.glob)
+    )
+  )
+}
+
 /**
  * Classifies every file in the remote file listing according to the output
  * declarations, harvest config, and staged input set.
@@ -158,7 +167,8 @@ export const classifyFiles = (
   files: FileEntry[],
   outputs: OutputDeclaration[],
   config: HarvestConfig,
-  stagedInputs: ReadonlySet<string>
+  stagedInputs: ReadonlySet<string>,
+  source: 'workdir' | 'outputs-volume' = 'workdir'
 ): ClassifyResult => {
   const normalizedConfig = normalizeHarvestConfig(config)
   const maxFileMb = normalizedConfig.max_file_mb ?? HARVEST_MAX_FILE_MB
@@ -187,14 +197,14 @@ export const classifyFiles = (
     const size_mb = size_bytes / (1024 * 1024)
 
     // Rule 1: control files always excluded.
-    if (CONTROL_FILES.has(path)) {
+    if (source === 'workdir' && CONTROL_FILES.has(path)) {
       excluded.push(path)
       continue
     }
-    const isLog = LOG_FILES.has(path)
+    const isLog = source === 'workdir' && LOG_FILES.has(path)
 
     // Rule 2: staged inputs always excluded.
-    if (stagedInputs.has(path)) {
+    if (source === 'workdir' && stagedInputs.has(path)) {
       excluded.push(path)
       continue
     }
@@ -210,7 +220,7 @@ export const classifyFiles = (
       ? 'log'
       : 'unmatched'
 
-    if (!isLog && outputs.length === 0) {
+    if (!isLog && outputs.length === 0 && source === 'workdir') {
       // Rule 6: no outputs declaration — default hidden.
       disposition = 'hidden'
     } else if (!isLog) {

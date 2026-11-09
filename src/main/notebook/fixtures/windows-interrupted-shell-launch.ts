@@ -1,3 +1,5 @@
+/* c8 ignore file */
+// Windows-only crash fixture; portable CI cannot execute it.
 // Run in a disposable Windows process: the harmless workload deliberately ends its owning application.
 import { join } from 'node:path'
 import { NotebookShellProcessAdapter } from '../shell-process'
@@ -28,7 +30,8 @@ const adapter = new NotebookShellProcessAdapter(
         env: { ...invocation.env, TEMP: root, ELECTRON_RUN_AS_NODE: '1' },
         gatewayPort: 1,
         gatewayCredentials: { username: 'unused', password: 'unused' },
-        hostPath
+        hostPath,
+        ownershipRoot: root
       })
       return {
         executable: launch.argv[0],

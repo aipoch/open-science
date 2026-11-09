@@ -82,6 +82,9 @@ describe('CLI help', () => {
       expect(help).not.toContain('start/update')
       expect(help).toContain('project update')
       expect(help).toContain('session config update')
+      expect(help).toMatch(
+        /--framework <id>\s+open-science-agent, claude-code, opencode, codex, codebuddy, or pi/
+      )
       expect(help).toContain('connector add | update')
       expect(help).toContain('credential list | add | update')
     } finally {
@@ -754,6 +757,24 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--session', 'session-1', '--clear-compute-hosts'])).toThrow(
       '--clear-compute-hosts cannot update an existing Session; use session config update.'
     )
+  })
+
+  it.each(['open-science-agent', 'claude-code', 'opencode', 'codex', 'codebuddy', 'pi'])(
+    'dispatches the supported framework %s without changing its identity',
+    async (framework) => {
+      const client = { updateAgentRouting: vi.fn().mockResolvedValue({ configured: {} }) }
+      await runTaskCommand(
+        parseCliArgs(['settings', 'agent-routing', 'update', '--framework', framework]),
+        { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+      )
+      expect(client.updateAgentRouting).toHaveBeenCalledWith({ framework })
+    }
+  )
+
+  it('rejects unknown framework identities', () => {
+    expect(() =>
+      parseCliArgs(['settings', 'agent-routing', 'update', '--framework', 'unknown-agent'])
+    ).toThrow('Invalid framework: unknown-agent')
   })
 
   it('dispatches atomic configuration updates with their concurrency tokens', async () => {
@@ -2592,34 +2613,37 @@ describe('local service CLI status', () => {
     }
   )
 
-  it('waits for the accepted owner rather than reporting stopped from a stale discovery PID', async () => {
-    let clock = 0
-    const oldState = { pid: 11111, port: 12345, configRoot: '/private-fixture' }
-    const generation = 'd1ed69cd-9883-452a-9ddd-e67c4a530a1e'
-    const serviceGeneration = '042a3798-beda-4e60-9d8a-179223668d45'
-    const service = {
-      pid: 22222,
-      generation,
-      lifetime: {
-        version: 1,
-        generation: serviceGeneration,
-        stopping: true,
-        explicit: false,
-        apps: 0
-      },
-      identity: {
-        configRoot: oldState.configRoot,
+  it.each([undefined, 25_000])(
+    'observes the accepted owner through the auth-aware stop window: %s',
+    async (exitAfter) => {
+      let clock = 0
+      const oldState = { pid: 11111, port: 12345, configRoot: '/private-fixture' }
+      const generation = 'd1ed69cd-9883-452a-9ddd-e67c4a530a1e'
+      const serviceGeneration = '042a3798-beda-4e60-9d8a-179223668d45'
+      const service = {
         pid: 22222,
         generation,
-        serviceGeneration,
-        birthToken: 'birth-B',
-        version: '9.2.1'
+        lifetime: {
+          version: 1,
+          generation: serviceGeneration,
+          stopping: true,
+          explicit: false,
+          apps: 0
+        },
+        identity: {
+          configRoot: oldState.configRoot,
+          pid: 22222,
+          generation,
+          serviceGeneration,
+          birthToken: 'birth-B',
+          version: '9.2.1'
+        }
       }
-    }
-    const isAlive = vi.fn((pid) => pid === service.pid)
-    const log = vi.fn()
-    await expect(
-      stopCommand(
+      const isAlive = vi.fn(
+        (pid) => pid === service.pid && (exitAfter === undefined || clock < exitAfter)
+      )
+      const log = vi.fn()
+      const stopping = stopCommand(
         { json: true },
         {
           findServiceState: async () => oldState,
@@ -2635,11 +2659,19 @@ describe('local service CLI status', () => {
             JSON.stringify({ generation, pid: service.pid, birthToken: 'birth-B' })
         }
       )
-    ).rejects.toMatchObject({ code: 'service_stop_unconfirmed' })
-    expect(isAlive).toHaveBeenCalledWith(service.pid)
-    expect(log).not.toHaveBeenCalled()
-    expect(clock).toBe(22_000)
-  })
+      if (exitAfter === undefined)
+        await expect(stopping).rejects.toMatchObject({ code: 'service_stop_unconfirmed' })
+      else await expect(stopping).resolves.toBeUndefined()
+      expect(isAlive).toHaveBeenCalledWith(service.pid)
+      if (exitAfter === undefined) expect(log).not.toHaveBeenCalled()
+      else
+        expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+          result: 'stopped',
+          pid: service.pid
+        })
+      expect(clock).toBe(exitAfter ?? 42_000)
+    }
+  )
 
   it('reports a live but unreachable service as unknown rather than stopped', async () => {
     const state = { pid: 12345, port: 12345, configRoot: '/private-fixture' }

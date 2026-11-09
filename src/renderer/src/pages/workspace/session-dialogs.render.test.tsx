@@ -26,6 +26,11 @@ vi.mock('@/components/ui/textarea', () => ({
 
 // These structure tests call the components as pure functions; lifecycle behavior is covered by the
 // retained-value tests, so keep this test focused on callback and chrome wiring.
+vi.mock('@/stores/session-store', () => ({
+  useSessionStore: <T,>(select: (state: { sessions: ChatSession[] }) => T): T =>
+    select({ sessions: [] })
+}))
+
 vi.mock('@/components/ui/use-retained-dialog-value', () => ({
   useRetainedDialogValue: <T,>(value: T | null | undefined): T | undefined => value ?? undefined
 }))

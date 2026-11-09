@@ -87,7 +87,7 @@ test('asks immediately after seeking recorded artifact and upload steps without 
   expect(artifact.versionId).toBeTruthy()
   expect(upload.versionId).toBeTruthy()
   // Retain the native file/Version storage while restoring an imported, read-only source.
-  // A separate writable conversation receives its snapshots through the existing chooser.
+  // Asking opens the project draft and preserves the parked writable conversation.
   const source: PersistedChatSession = {
     ...recorded,
     title: 'Imported recorded file evidence',
@@ -100,8 +100,7 @@ test('asks immediately after seeking recorded artifact and upload steps without 
     packageOrigin: undefined,
     messages: []
   }
-  await app.restartWithSessionFixture(target)
-  page = await app.restartWithSessionFixture(source)
+  page = await app.restartWithSessionFixture(source, [], target)
   await page
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: projectName, exact: true })
@@ -143,9 +142,6 @@ test('asks immediately after seeking recorded artifact and upload steps without 
     // Seek lands at offset zero and pauses. Asking immediately must use the recorded Version,
     // without playing through a fabricated input/activity phase to make that evidence available.
     await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-    const chooser = page.getByRole('dialog', { name: 'Ask in a conversation', exact: true })
-    await chooser.getByRole('combobox').fill(target.title)
-    await chooser.getByRole('option').filter({ hasText: target.title }).click()
     await expect
       .poll(async () =>
         (await snapshots()).filter((snapshot) => !previousIds.includes(snapshot.id))
@@ -168,6 +164,7 @@ test('asks immediately after seeking recorded artifact and upload steps without 
         })
       ]
     })
+    if (!captured.length) await editor.fill(draft)
     captured.push(snapshot)
     await expect(editor).toContainText(draft)
     await expect(editor).toBeFocused()
@@ -214,14 +211,17 @@ test('asks immediately after seeking recorded artifact and upload steps without 
   expect(await snapshots()).toEqual(expect.arrayContaining(captured))
 })
 
-test('replaces the discussion Session without replacing the draft or changing source records', async ({
+test('protects the other study’s unsent draft before starting a child discussion', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   const projectName = 'Research navigation'
   const projectId = await createProject(page, projectName)
-  const sourceA = sourceFixture(projectId, 'a')
+  const sourceA = {
+    ...sourceFixture(projectId, 'a'),
+    title: 'Navigation research A — comparing long-term results across three study groups'
+  }
   const sourceB = sourceFixture(projectId, 'b')
   const target: PersistedChatSession = {
     ...sourceA,
@@ -231,9 +231,7 @@ test('replaces the discussion Session without replacing the draft or changing so
     messages: [],
     updatedAt: 2
   }
-  await app.restartWithSessionFixture(target)
-  await app.restartWithSessionFixture(sourceA)
-  page = await app.restartWithSessionFixture(sourceB)
+  page = await app.restartWithSessionFixture(sourceB, [], sourceA, target)
   await page
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: projectName, exact: true })
@@ -271,88 +269,73 @@ test('replaces the discussion Session without replacing the draft or changing so
       .getByRole('button', { name: 'View replay', exact: true })
       .click()
     await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-    const chooser = page.getByRole('dialog', { name: 'Ask in a conversation' })
-    if (source.id === sourceA.id) {
-      await expect(chooser.getByRole('combobox')).toBeFocused()
-      await expect(chooser.locator('kbd')).toHaveCount(0)
-      for (const width of [320, 375, 414, 512]) {
-        await chooser.evaluate((node, width) => {
-          ;(node as HTMLElement).style.width = `${width}px`
-        }, width)
-        const heading = chooser.getByRole('heading', { name: 'Ask in a conversation' })
-        const description = chooser.getByText('Add to a draft. Send when ready.')
-        expect(
-          await heading.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))
-        ).toBeGreaterThan(
-          await description.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))
-        )
-        expect(await chooser.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
-        const footer = await chooser.evaluate((node) => {
-          const buttons = Array.from(node.querySelectorAll('button'))
-          const cancel = buttons
-            .find((button) => button.textContent === 'Cancel')!
-            .getBoundingClientRect()
-          const create = buttons
-            .find((button) => button.textContent === 'New conversation')!
-            .getBoundingClientRect()
-          return {
-            cancelY: cancel.y + cancel.height / 2,
-            createY: create.y + create.height / 2,
-            belowList:
-              create.y > node.querySelector('[role="listbox"]')!.getBoundingClientRect().bottom
-          }
-        })
-        expect(Math.abs(footer.cancelY - footer.createY)).toBeLessThan(1)
-        expect(footer.belowList).toBe(true)
-        if (width === 375 || width === 512)
-          await chooser.screenshot({
-            path: testInfo.outputPath(`replay-conversation-dialog-${width}.png`)
-          })
-      }
+    if (source.id === sourceB.id) {
+      await expect(
+        page.getByText('Send or clear your current draft before starting a discussion.')
+      ).toBeVisible()
+      await expect(page.getByTestId('session-discussion-draft')).toContainText(sourceA.title)
+      await expect(page.getByText('An unexpected application error occurred')).toHaveCount(0)
+      await expect(editor).toContainText('Keep A')
+      await page.screenshot({ path: testInfo.outputPath('discussion-draft-conflict.png') })
+      const draftSource = page.getByTestId('session-discussion-draft')
+      const sourceTab = replayTab(page, sourceA.id)
+      const progress = replay.getByRole('slider', { name: 'Replay progress', exact: true })
+      await draftSource.getByText(sourceA.title, { exact: true }).click()
+      await expect(sourceTab).toHaveAttribute('aria-selected', 'true')
+      await expect(sourceTab).toContainText(sourceA.title)
+      await expect(progress).toHaveAttribute('aria-valuenow', '0')
+      await progress.focus()
+      await page.keyboard.press('End')
+      await expect(progress).not.toHaveAttribute('aria-valuenow', '0')
+      await expect(draftSource).toContainText('Step 1')
+      await replayTab(page, sourceB.id).click()
+      await draftSource.getByText('Step 1', { exact: true }).click()
+      await expect(sourceTab).toHaveAttribute('aria-selected', 'true')
+      await expect(progress).toHaveAttribute('aria-valuenow', '0')
+      await expect(editor).toContainText('Keep A')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await page.screenshot({ path: testInfo.outputPath('discussion-direct-reveal.png') })
+      await replayTab(page, sourceB.id).click()
+      await page
+        .getByRole('button', { name: 'Cancel discussion and keep draft', exact: true })
+        .click()
+      await expect(editor).toContainText('Keep A')
+      await expect(page.getByTestId('session-discussion-draft')).toHaveCount(0)
+      await editor.fill('')
+      await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
     }
-    await expect(chooser.getByRole('option').filter({ hasText: sourceA.title })).toHaveCount(0)
-    await expect(chooser.getByRole('option').filter({ hasText: sourceB.title })).toHaveCount(0)
-    await chooser.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(chooser).not.toBeVisible()
-    await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-    await chooser.getByRole('combobox').press('Escape')
-    await expect(chooser).not.toBeVisible()
-    await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-    await chooser.getByRole('combobox').fill(target.title)
-    await chooser.getByRole('option').filter({ hasText: target.title }).click()
-    await expect(sessionRow(page, target.title)).toHaveAttribute('aria-current', 'page')
-    await expect(editor).toContainText('Preserve this existing draft.')
-    await expect(editor).not.toContainText(source.title)
+    await expect(editor).toBeEmpty()
     const stepChip = page.locator('[data-session-discussion-source]').last()
     await expect(stepChip).toContainText(source.title)
     await expect(stepChip.locator('.lucide-messages-square')).toBeVisible()
     await expect(page.locator('[data-session-discussion-source]')).toHaveCount(1)
-    await expect(page.getByRole('button', { name: 'Discuss', exact: true })).toBeVisible()
+    await expect(stepChip.getByRole('button', { name: /View replay:/ })).toBeVisible()
     await expect(stepChip).not.toContainText('Discuss')
     const discussion = page.getByTestId('session-discussion-draft')
     for (const width of [240, 320, 480]) {
       await discussion.evaluate((node, width) => {
         ;(node as HTMLElement).style.width = `${width}px`
       }, width)
+      if (source.id === sourceA.id) {
+        const title = stepChip.getByText(source.title, { exact: true })
+        await expect(title).toHaveCSS('text-overflow', 'ellipsis')
+        expect(await title.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true)
+        const step = stepChip.getByText('Step 1', { exact: true })
+        expect(await step.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+      }
       const actionBox = await discussion
-        .getByRole('button', { name: 'Discuss', exact: true })
+        .getByRole('button', { name: 'Cancel discussion and keep draft', exact: true })
         .boundingBox()
       const sourceBox = await stepChip.boundingBox()
-      expect(sourceBox!.x).toBeGreaterThan(actionBox!.x + actionBox!.width)
+      expect(actionBox!.x).toBeGreaterThanOrEqual(sourceBox!.x + sourceBox!.width)
       expect(await discussion.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
-      const remove = stepChip.getByRole('button', { name: 'Remove annotation', exact: true })
-      await expect(remove).toBeVisible()
-      const removeBox = (await remove.boundingBox())!
-      const discussionBox = (await discussion.boundingBox())!
-      expect(removeBox.x + removeBox.width).toBeLessThanOrEqual(
-        discussionBox.x + discussionBox.width + 1
-      )
-      await remove.click({ trial: true })
+      await expect(
+        stepChip.getByRole('button', { name: 'Remove annotation', exact: true })
+      ).toHaveCount(0)
       await discussion.screenshot({
         path: testInfo.outputPath(`discuss-source-${source.id}-${width}.png`)
       })
     }
-    // Leave the hit-tested remove control before restoring geometry beneath the pointer.
     await editor.hover()
     await discussion.evaluate((node) => {
       ;(node as HTMLElement).style.width = ''
@@ -365,7 +348,8 @@ test('replaces the discussion Session without replacing the draft or changing so
     await stepChip.getByRole('button').first().hover()
     const tip = page.locator('[data-session-discussion-tooltip]')
     await expect(tip).toContainText(`View replay: ${source.title}`)
-    expect((await tip.boundingBox())!.height).toBeLessThan(72)
+    expect(await tip.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    await editor.fill(source.id === sourceA.id ? 'Keep A' : 'Explain B')
     await page.screenshot({ path: testInfo.outputPath(`replay-reference-${source.id}.png`) })
     await editor.hover()
   }
@@ -374,10 +358,15 @@ test('replaces the discussion Session without replacing the draft or changing so
   await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toContainText(
     'Deterministic reply:'
   )
-  const saved = await page.evaluate((request) => window.api.sessions.loadOne(request), {
-    projectId,
-    sessionId: target.id
-  })
+  const saved = await page.evaluate(
+    async ({ projectId, parent }) =>
+      (await window.api.sessions.loadAll()).sessions.find(
+        (s) => s.projectId === projectId && s.parentSessionId === parent
+      ),
+    { projectId, parent: sourceB.id }
+  )
+  await sessionRow(page, target.title).click()
+  await expect(editor).toContainText('Preserve this existing draft.')
   const user = saved!.messages.find((message) => message.role === 'user')!
   expect(user.parts?.some((part) => part.type === 'session')).toBe(false)
   expect(user.annotations).toHaveLength(1)
@@ -402,4 +391,65 @@ test('replaces the discussion Session without replacing the draft or changing so
   await page.screenshot({
     path: testInfo.outputPath('discussion-session-replaced.png')
   })
+})
+
+test('keeps the unsent question when its imported source is deleted before the first send', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  const projectName = 'Draft source deletion'
+  const projectId = await createProject(page, projectName)
+  const source = sourceFixture(projectId, 'a')
+  source.id = `import-${source.packageOrigin!.importId}`
+  page = await app.restartWithSessionFixture(source, [])
+  const openProject = (): Promise<void> =>
+    page
+      .getByRole('region', { name: 'Projects', exact: true })
+      .getByRole('button', { name: projectName, exact: true })
+      .click()
+  const editor = (): Locator => page.getByRole('textbox', { name: 'Ask anything', exact: true })
+  await openProject()
+  await sessionRow(page, source.title).click()
+  await page
+    .getByRole('region', { name: 'Imported research history' })
+    .getByRole('button', { name: 'View replay', exact: true })
+    .click()
+  await page
+    .getByTestId('replay-panel')
+    .getByRole('button', { name: 'Ask about this step' })
+    .click()
+  await expect(page.getByTestId('session-discussion-draft')).toContainText(source.title)
+  const question = 'Keep this question after deleting its source.'
+  await editor().fill(question)
+  await page.getByRole('button', { name: `Open actions for ${source.title}` }).click()
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(sessionRow(page, source.title)).toHaveCount(0)
+  await expect(page.getByTestId('session-discussion-draft')).toHaveCount(0)
+  await expect(editor()).toHaveText(question)
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+
+  page = await app.restart()
+  await openProject()
+  await expect(editor()).toHaveText(question)
+  await expect(page.getByTestId('session-discussion-draft')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toContainText(
+    'Deterministic reply:'
+  )
+  const agentPrompt = (await app.readFakeAgentPrompts()).find(
+    ({ prompt }) => prompt.includes(question) && !prompt.includes('Generate Session metadata')
+  )
+  expect(agentPrompt).toBeDefined()
+  expect(agentPrompt!.prompt).not.toContain('Current discussion focus for this turn')
+  const saved = await page.evaluate(async (projectId) => {
+    const summary = (await window.api.sessions.loadAll()).sessions.find(
+      (session) => session.projectId === projectId
+    )!
+    return window.api.sessions.loadOne({ projectId, sessionId: summary.id })
+  }, projectId)
+  expect(saved).toBeTruthy()
+  expect(saved?.parentSessionId).toBeUndefined()
+  expect(saved?.runtimeContext?.sessionContext).toBeUndefined()
 })

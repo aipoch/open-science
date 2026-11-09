@@ -1,6 +1,12 @@
+import { ComputeAddButton } from './ComputeTargetGroup'
+import { SettingsSection } from './SettingsLayout'
+import { KubernetesTargets } from './KubernetesTargets'
+import { HostedTargets } from './HostedTargets'
+import { RayTargets } from './RayTargets'
+import { ModalTargets } from './ModalTargets'
 import type { ComputeView } from '../../lib/settings-navigation'
 import { ErrorNotice } from '@/components/error-notice'
-import { Folder, Info, Plus, Server } from 'lucide-react'
+import { Folder, Server, Terminal } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,7 +23,7 @@ import { ComputeHostRemovalDialog } from './ComputeHostRemovalDialog'
 import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
-// are separate components owned by SettingsPage; this panel renders the list + header banner only.
+// are separate components owned by SettingsPage; this panel renders the target lists.
 export type { ComputeView } from '../../lib/settings-navigation'
 
 type ComputePanelProps = {
@@ -47,10 +53,7 @@ const HostCard = ({
   const probedAgo = probedLabel(host)
 
   return (
-    <div
-      data-slot="compute-host-card"
-      className="relative flex items-center gap-3 rounded-xl border border-border px-3 py-3 transition-colors hover:border-ring/60"
-    >
+    <div data-slot="compute-host-card" className="relative flex items-center gap-3 py-2.5">
       <div
         className={cn(
           'flex size-9 shrink-0 items-center justify-center rounded-lg',
@@ -156,64 +159,54 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
   }, [removedName])
 
   return (
-    <div className="p-5">
-      <div className="mb-5 flex items-start gap-2 rounded-xl bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
-        <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        <span>{t('Connect where heavy compute runs — your own servers over SSH.')}</span>
-      </div>
-
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h3 className="text-base font-medium text-foreground">{t('SSH hosts')}</h3>
-          <p className="mt-0.5 max-w-2xl text-sm leading-5 text-muted-foreground">
-            {t('Servers, clusters or job submission nodes from your SSH host lists')}
+    <div className="space-y-5 p-5">
+      <SettingsSection
+        title={t('SSH hosts')}
+        icon={<Terminal className="size-5 text-muted-foreground" />}
+        action={
+          <ComputeAddButton
+            label={t('Add SSH host')}
+            anchor="compute.add-host"
+            onClick={() => onNavigate({ kind: 'add' })}
+          />
+        }
+      >
+        {removedName ? (
+          <p
+            role="status"
+            aria-live="polite"
+            className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
+          >
+            {t('Removed {{name}}.', { name: removedName })}
           </p>
+        ) : null}
+
+        <div className="flex flex-col divide-y divide-border">
+          {loadError ? (
+            <ErrorNotice role="alert" description={t("Couldn't load hosts.")}>
+              <DiagnosticDetails detail={loadError} />
+            </ErrorNotice>
+          ) : !isLoaded ? (
+            <p className="py-1 text-sm text-muted-foreground">{t('Loading hosts…')}</p>
+          ) : hosts.length === 0 ? (
+            <p className="py-1 text-sm text-muted-foreground">{t('Not configured')}</p>
+          ) : (
+            hosts.map((host) => (
+              <HostCard
+                key={host.providerId}
+                host={host}
+                onOpen={() => onNavigate({ kind: 'detail', providerId: host.providerId })}
+                onRemoved={() => setRemovedName(host.displayName)}
+                onBrowse={() => setBrowserProviderId(host.providerId)}
+              />
+            ))
+          )}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="shrink-0"
-          data-settings-anchor="compute.add-host"
-          onClick={() => onNavigate({ kind: 'add' })}
-        >
-          <Plus className="size-4" aria-hidden="true" />
-          {t('Add SSH host')}
-        </Button>
-      </div>
-
-      {removedName ? (
-        <p
-          role="status"
-          aria-live="polite"
-          className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
-        >
-          {t('Removed {{name}}.', { name: removedName })}
-        </p>
-      ) : null}
-
-      <div className="mt-4 flex flex-col gap-2.5">
-        {loadError ? (
-          <ErrorNotice role="alert" description={t("Couldn't load hosts.")}>
-            <DiagnosticDetails detail={loadError} />
-          </ErrorNotice>
-        ) : !isLoaded ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{t('Loading hosts…')}</p>
-        ) : hosts.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            {t('No SSH hosts yet. Add one to let Open-Science run compute on your servers.')}
-          </p>
-        ) : (
-          hosts.map((host) => (
-            <HostCard
-              key={host.providerId}
-              host={host}
-              onOpen={() => onNavigate({ kind: 'detail', providerId: host.providerId })}
-              onRemoved={() => setRemovedName(host.displayName)}
-              onBrowse={() => setBrowserProviderId(host.providerId)}
-            />
-          ))
-        )}
-      </div>
+      </SettingsSection>
+      <HostedTargets onNavigate={onNavigate} />
+      <ModalTargets onNavigate={onNavigate} />
+      <KubernetesTargets onNavigate={onNavigate} />
+      <RayTargets onNavigate={onNavigate} />
 
       {/* File browser modal — opened when a host folder button is clicked */}
       <FileBrowserModal

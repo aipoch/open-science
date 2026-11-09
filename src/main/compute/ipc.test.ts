@@ -21,6 +21,11 @@ import { SshConfigComputeConnectionBroker } from './connection-broker'
 
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
+import { AccountAuthError } from './compute-account-adapter'
+import { computeAccounts } from './compute-account-service'
+import { ComputeAccounts } from './compute-accounts'
+import { HostedTargetCatalog } from './hosted-target-catalog'
+import { ModalTargetCatalog } from './modal-target-catalog'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import type { CredentialVault } from './credential-vault'
 import { COMPUTE_IPC_CHANNELS } from './electron-ipc-adapter'
@@ -37,7 +42,7 @@ import {
   toJobSummary
 } from './ipc'
 import type { ComputeJobRepository } from './job-repository'
-import type { ComputeHostRepository } from './repository'
+import { ComputeHostRepository } from './repository'
 
 // ---------------------------------------------------------------------------
 // electron mock — captures ipcMain.handle registrations and stubs BrowserWindow
@@ -103,6 +108,59 @@ const approvalBrokerFrom = (service: ComputeService): ComputeApprovalBroker =>
   ).remoteOperations.approvalBroker
 
 describe('compute handlers', () => {
+  it('rechecks account access before adding hosted configurations and keeps saved ones editable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'compute-account-gate-'))
+    const configRoot = (): string => root
+    const adapter = { probe: vi.fn(async () => 'test-user'), authorize: vi.fn() }
+    const accounts = new ComputeAccounts({
+      configRoot,
+      adapters: { 'hugging-face': adapter, modal: adapter },
+      openExternal: vi.fn()
+    })
+    const gate = vi
+      .spyOn(computeAccounts, 'withConnectedAccount')
+      .mockImplementation(accounts.withConnectedAccount.bind(accounts))
+    try {
+      const hostedTargets = new HostedTargetCatalog(configRoot)
+      const modalTargets = new ModalTargetCatalog(configRoot)
+      const api = createComputeHandlers(mockRepository({ hostedTargets, modalTargets }))
+      const hf = {
+        displayName: 'HF',
+        namespace: 'lab',
+        bucket: 'lab/jobs',
+        image: 'python',
+        flavor: 'cpu-basic',
+        timeoutSeconds: 60
+      }
+      const modal = {
+        displayName: 'Modal',
+        environmentName: 'main',
+        appName: 'lab',
+        image: 'python',
+        cpus: 1,
+        memoryMiB: 512
+      }
+      const savedHf = await api.createHostedTarget(hf)
+      const savedModal = await api.createModalTarget(modal)
+      adapter.probe.mockRejectedValue(new AccountAuthError('network'))
+      const message = 'Connect the account before adding this configuration.'
+      await expect(api.createHostedTarget(hf)).rejects.toThrow(message)
+      await expect(api.createModalTarget(modal)).rejects.toThrow(message)
+      for (const provider of ['hugging-face', 'modal'] as const) {
+        expect(await accounts.status(provider)).toMatchObject({
+          state: 'unavailable',
+          reason: 'network'
+        })
+      }
+      await api.updateTarget(savedHf.providerId, { ...hf, displayName: 'Updated' })
+      expect(await hostedTargets.list()).toEqual([{ ...savedHf, displayName: 'Updated' }])
+      expect(await modalTargets.list()).toEqual([savedModal])
+    } finally {
+      gate.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('round-trips host instructions separately from probed resources through renderer handlers', async () => {
     const host = sampleHost({
       probeResult: {
@@ -1205,6 +1263,63 @@ describe('host delete guard', () => {
     expect(settleRemoteCleanup).toHaveBeenCalledWith(request)
   })
 
+  it('requires a scoped per-job confirmation before releasing a retained staging volume', async () => {
+    const providerId = 'modal:1589d23b-2d88-4223-a35a-005ec18f0f8b'
+    const job: ComputeJob = {
+      ...blockingJob,
+      provider_id: providerId,
+      execution_mode: 'modal_sandbox',
+      status: 'timeout',
+      error_code: 'timeout',
+      harvested_at: 100,
+      remote_cleanup_disposition: 'pending',
+      remote_handle: JSON.stringify({
+        version: 1,
+        providerId,
+        jobId: blockingJob.job_id,
+        target: {
+          environmentName: 'dev',
+          appName: 'lab',
+          appId: 'ap-lab',
+          image: 'python',
+          cpus: 1,
+          memoryMiB: 512
+        },
+        nonce: '7b01acb0-176b-46a3-9488-8382d357ef52',
+        volume: { id: 'vo-staged' }
+      })
+    }
+    const cleanStagedJob = vi.fn(async () => undefined)
+    const reconcileExternalJobs = vi.fn(async () => undefined)
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ cleanStagedJob, reconcileExternalJobs }),
+      undefined,
+      undefined,
+      mockJobRepo({ get: async () => job })
+    )
+    const request = {
+      jobId: job.job_id,
+      providerId,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      disposition: 'cleaned' as const
+    }
+    await expect(handlers.jobsSetRemoteCleanup(request)).rejects.toThrow('Confirm cleanup')
+    await expect(
+      handlers.jobsSetRemoteCleanup({
+        ...request,
+        manualStagedCleanup: true,
+        sessionId: 'another-session'
+      })
+    ).rejects.toThrow('scope')
+    expect(cleanStagedJob).not.toHaveBeenCalled()
+    await handlers.jobsSetRemoteCleanup({ ...request, manualStagedCleanup: true })
+    expect(cleanStagedJob).toHaveBeenCalledWith('modal_sandbox', job)
+    expect(reconcileExternalJobs).not.toHaveBeenCalled()
+  })
+
   it('rejects password Credential deletion when the application caller is not local', async () => {
     const del = vi.fn(async () => undefined)
     const passwordHost = sampleHost({
@@ -1793,7 +1908,7 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     submitted_at: undefined,
     started_at: undefined,
     finished_at: undefined,
-    harvested_at: undefined,
+    harvested_at: 100,
     ...overrides
   })
 
@@ -1803,7 +1918,14 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
     await writeFile(join(featuredDir, 'result.csv'), 'a,b\n1,2\n')
     await writeFile(join(featuredDir, 'sub', 'nested.txt'), 'nested')
 
+    const hiddenDir = join(featuredDir, '..', 'hidden')
+    await mkdir(hiddenDir, { recursive: true })
+    await writeFile(join(hiddenDir, 'log.txt'), 'output')
     const summary = await toJobSummary(sampleJob(), 'Biowulf HPC', storageRoot)
+    expect(summary.hidden_files).toEqual(['hpc/job-harvest/hidden/log.txt'])
+    expect(
+      await toJobSummary(sampleJob({ harvested_at: undefined }), 'Biowulf HPC', storageRoot)
+    ).toMatchObject({ featured_files: [], hidden_files: [] })
 
     // Relative to <storageRoot>/notebooks/proj-1/sess-1 (workspaceCwd = harvestDir/../..).
     // IPC paths are logical workspace paths and must stay POSIX-shaped on Windows.
@@ -2001,6 +2123,35 @@ describe('createJobUpdatedBroadcaster', () => {
     expect(summary.provider_id).toBe('ssh:biowulf')
     expect(summary.display_name).toBe('Biowulf HPC')
     expect(summary.job_id).toBe('job-bcast')
+  })
+
+  it('broadcasts the configured name of an external compute target', async () => {
+    const modalTargets = new ModalTargetCatalog(() => storageRoot)
+    const target = await modalTargets.create({
+      displayName: 'Research GPU',
+      appName: 'lab',
+      environmentName: 'main',
+      image: 'python',
+      cpus: 1,
+      memoryMiB: 512
+    })
+    const hosts = new ComputeHostRepository(
+      async () => {
+        throw new Error('Unexpected SSH host lookup')
+      },
+      { modalTargets }
+    )
+    const job = sampleJob({
+      provider_id: target.providerId,
+      execution_mode: 'modal_sandbox',
+      shape: 'bridge_runner'
+    })
+    const captured = captureNextBroadcast()
+    createJobUpdatedBroadcaster(hosts, storageRoot, { get: async () => job })(job)
+    expect((await captured).payload).toMatchObject({
+      provider_id: target.providerId,
+      display_name: 'Research GPU'
+    })
   })
 
   it('falls back to the provider_id as display_name when hostRepository.get rejects', async () => {
@@ -2657,8 +2808,27 @@ describe('installComputeIpcHandlers', () => {
 
     const expected = [
       'compute:list',
+      'compute:list-kubernetes-targets',
+      'compute:list-hosted-targets',
+      'compute:list-ray-targets',
+      'compute:list-modal-targets',
+      'compute:read-output-preview',
       'compute:get',
       'compute:create',
+      'compute:create-kubernetes-target',
+      'compute:account-status',
+      'compute:connect-account',
+      'compute:use-local-account',
+      'compute:cancel-account-connection',
+      'compute:disconnect-account',
+      'compute:list-ray-tokens',
+      'compute:set-ray-token',
+      'compute:remove-ray-token',
+      'compute:verify-target',
+      'compute:update-target',
+      'compute:create-hosted-target',
+      'compute:create-ray-target',
+      'compute:create-modal-target',
       'compute:create-password',
       'compute:reset-password',
       'compute:change-authentication',
@@ -2766,6 +2936,22 @@ describe('installComputeIpcHandlers', () => {
 
     expect(handlers.has('compute:list')).toBe(true)
     expect(module.computeService).toBeDefined()
+  })
+
+  it('preserves the manual cleanup confirmation at the Electron boundary', async () => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    const owner = vi.spyOn(module.handlers, 'jobsSetRemoteCleanup').mockResolvedValue(undefined)
+    installComputeModule(module)
+    const request = {
+      jobId: 'job-1',
+      providerId: 'modal:lab',
+      projectId: 'p',
+      sessionId: 's',
+      disposition: 'cleaned',
+      manualStagedCleanup: true
+    }
+    await invokeHandler('compute:jobs:set-remote-cleanup', request)
+    expect(owner).toHaveBeenCalledWith(request)
   })
 
   it('accepts a project overview jobs list request at the Electron boundary', async () => {

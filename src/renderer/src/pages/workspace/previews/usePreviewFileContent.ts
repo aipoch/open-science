@@ -258,7 +258,9 @@ export const usePreviewFileContent = ({
         offset,
         signal: abortController.signal
       },
-      source === 'artifact' || source === 'upload' ? resourceOwnerRef.current : undefined
+      source === 'artifact' || source === 'upload' || source === 'compute-output'
+        ? resourceOwnerRef.current
+        : undefined
     )
       .then((preview) => {
         if (!canceled) setState({ status: 'ready', preview, requestKey })

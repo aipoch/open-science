@@ -7,6 +7,7 @@ import {
   nativeNormalRasterPairPixelCurrent,
   nativeNormalRasterPairPixelPngSafe,
   createNativeFigurePaintCertificate,
+  createNativeLeadingType3PixelCertificate,
   nativeFigurePaintCertificateData,
   createNativeSavedUncoloredPixelEvidence,
   nativeSavedUncoloredPixelEvidenceData
@@ -45,7 +46,7 @@ import {
   MAX_EDGE,
   MAX_SCALE
 } from './literature-pdf-crop.mjs'
-import { findCaptionCandidates } from './literature-pdf-caption-group.mjs'
+import { findCaptionCandidates, groupPageLines } from './literature-pdf-caption-group.mjs'
 import {
   nativeClosedProgramFigureCrop,
   nativeClosedProgramPngSafe
@@ -874,7 +875,8 @@ function savePixelContextBinding(context) {
         'graphicsBounds',
         'skippedSpaceGlyphs',
         'pageNumber',
-        'sourceSha256'
+        'sourceSha256',
+        'dualApiEvidence'
       ]
         .filter((k) => Object.hasOwn(values, k))
         .map((k) => [k, values[k]])
@@ -4036,6 +4038,149 @@ function pictureProofTailBox(data, items, context, packet, form, em, baseline, r
   return paths
 }
 
+// A proof concludes with a wrapped reference to a preceding equation label.
+// All complete source runs in the two-line conclusion and the four
+// original QED strokes must be outside the independently saved drawing.
+function pictureExteriorWrappedProof(data, items, picked, figure, page, tokens, context, oldRect) {
+  const sources = context.content?.items
+  if (
+    !Array.isArray(sources) ||
+    !['Hence', 'proves', 'Proof.'].every((text) => sources.some((r) => r.str === text)) ||
+    !sources.some((r) => /^\([1-9]\d*\.[1-9]\d*\)\.$/u.test(r.str ?? ''))
+  )
+    return
+  const saves = data.scopes.filter(
+    (s) =>
+      s.op === OPS.save &&
+      pictureScopePieces(s, items).length === picked.own.length &&
+      pictureScopePieces(s, items).every((p) => picked.own.includes(p))
+  )
+  if (!saves.length || context.operators.fnArray.includes(OPS.beginGroup)) return
+  const scope = saves.slice().sort((a, b) => a.begin - b.begin)[0],
+    ordinal = finitePatternSourceRecords(data, tokens, context),
+    bySerial = new Map(items.map((p) => [p.serial, p])),
+    original = new Map(data.pieces.map((p, i) => [p, bySerial.get(i)]))
+  if (!ordinal) return
+  const records = ordinal.map((r) => ({ ...r, pieces: r.pieces.map((p) => original.get(p)) }))
+  if (records.some((r) => r.pieces.some((p) => !p))) return
+  const packet = picturePackets(items)
+    .filter((p) => p.end < scope.begin)
+    .sort((a, b) => b.end - a.end)[0]
+  if (!packet || context.operators.fnArray[packet.end] !== OPS.endText) return
+  const last = records
+      .filter((r) =>
+        r.pieces.every((p) => p.packetBegin === packet.begin && p.packetEnd === packet.end)
+      )
+      .at(-1),
+    label = /^\(([1-9]\d*\.[1-9]\d*)\)\.$/u.exec(last?.r.str ?? ''),
+    starts = records.filter(
+      (r) =>
+        r.r.str === 'Hence' &&
+        r.pieces.every((p) => p.packetBegin === packet.begin && p.packetEnd === packet.end)
+    )
+  if (!label || starts.length !== 1) return
+  const first = starts[0],
+    body = records.filter((r) => r.index >= first.index && r.index <= last.index),
+    em = first.r.height,
+    font = first.r.fontName,
+    base = first.r.transform[5],
+    endBase = last.r.transform[5],
+    preceding = body.at(-2),
+    equations = records.filter((r) => r.index < first.index && r.r.str === `(${label[1]})`),
+    proofs = records.filter((r) => r.index < first.index && r.r.str === 'Proof.')
+  if (
+    equations.length !== 1 ||
+    proofs.length !== 1 ||
+    equations[0].index >= proofs[0].index ||
+    proofs[0].index >= first.index ||
+    preceding?.r.str !== 'proves' ||
+    !Number.isFinite(em) ||
+    em <= 0 ||
+    last.r.height !== em ||
+    last.r.fontName !== font ||
+    preceding.r.fontName !== font ||
+    preceding.r.height !== em ||
+    base - endBase < em ||
+    base - endBase > em * 1.7 ||
+    Math.abs(first.rect[0] - last.rect[0]) > 0.02 ||
+    preceding.r.transform[5] !== base ||
+    preceding.rect[2] - first.rect[0] < page.width * 0.65 ||
+    (body
+      .map((r) => r.r.str)
+      .join(' ')
+      .match(/\p{L}{2,}/gu)?.length ?? 0) < 5 ||
+    body.some(
+      (r) =>
+        r.pieces.some((p) => p.packetBegin !== packet.begin || p.packetEnd !== packet.end) ||
+        r.r.dir !== 'ltr' ||
+        r.r.height < em / 2 ||
+        r.r.height > em ||
+        !r.r.transform.every(Number.isFinite) ||
+        r.r.transform[0] <= 0 ||
+        r.r.transform[3] !== r.r.height ||
+        r.r.transform[1] !== 0 ||
+        r.r.transform[2] !== 0 ||
+        (r !== last && Math.abs(r.r.transform[5] - base) > em * 0.75) ||
+        r.pieces.some(
+          (p) =>
+            p.fillAlpha !== 1 || p.fillColor !== '#000000' || !pictureInside(p.paintClip, p.fullInk)
+        )
+    )
+  )
+    return
+  const equationLabel = equations[0],
+    proofAnchor = proofs[0]
+  if (
+    !pictureValid(equationLabel.rect) ||
+    !pictureValid(proofAnchor.rect) ||
+    equationLabel.rect[3] >= proofAnchor.rect[1] ||
+    proofAnchor.rect[3] >= first.rect[1] ||
+    Math.abs(equationLabel.rect[2] - preceding.rect[2]) > em / 4 ||
+    Math.abs(proofAnchor.rect[0] - first.rect[0]) > em / 4
+  )
+    return
+  const claimed = [equationLabel, proofAnchor, ...body].map((r) => r.r.sourceItem)
+  if (claimed.length > 64) return
+  const native = nativeClosedProgramInkPacket(page, tokens, context, claimed)
+  if (
+    !native ||
+    claimed.some((s) => !native.records.find((r) => r.index === s.index)?.advanceComplete)
+  )
+    return
+  // Complete source boundaries, including advance-only spaces, remain native.
+  for (let i = first.index; i <= last.index; i++)
+    if (context.content.items[i]?.str?.trim() && !body.some((r) => r.index === i)) return
+  const box = pictureProofTailBox(
+    data,
+    items,
+    context,
+    packet,
+    scope,
+    em,
+    last.rect[3],
+    preceding.rect[2] - em
+  )
+  if (
+    !box ||
+    Math.abs(
+      Math.max(...box.flatMap((p) => p.visiblePaintPoints.map((q) => q[0]))) - preceding.rect[2]
+    ) >
+      em / 10
+  )
+    return
+  const excluded = [...body.flatMap((r) => r.pieces), ...box],
+    members = new Set(excluded),
+    own = new Set(picked.own)
+  if (
+    excluded.some((p) => own.has(p)) ||
+    items.some(
+      (p) => !own.has(p) && pictureHit(oldRect, pictureBounds(p, Infinity)) && !members.has(p)
+    )
+  )
+    return
+  return excluded
+}
+
 // Reuse the complete ordinary crop-paint certificate and its original glyph
 // ordinal inventory. Source/advance disagreements remain foreign facts, never
 // a relaxed HeaderInk packet or a Source claim.
@@ -4196,6 +4341,193 @@ function pictureExteriorProofTail(data, items, picked, figure, page, tokens, con
   )
     return
   return excluded
+}
+
+// A repeated publisher header consists of one complete native source, one
+// separate path-only logo Form and a straight separator. Its complete prefix
+// must match the same document's earlier parity page, including font outlines.
+// This establishes only the excluded header: the sole remaining complete Form
+// still passes the unchanged full-paint, foreign-owner and encoded-PNG guards.
+function pictureRepeatedPaintHeader(data, items, figure, page, context) {
+  const w = context.runningHeadWitness,
+    proof = w?.paintPrefix,
+    o = context.operators,
+    other = proof?.operators,
+    content = context.content,
+    v = context.viewport,
+    wv = w?.witnessViewport
+  if (
+    !proof ||
+    !other ||
+    !content ||
+    !v ||
+    !wv ||
+    w.sourceSha256 !== context.sourceSha256 ||
+    w.currentPageNumber !== page.pageNumber ||
+    w.witnessPageNumber !== page.pageNumber - 2 ||
+    ![v, wv].every(
+      (x) =>
+        x.scale === 1 &&
+        x.rotation === 0 &&
+        x.width === page.width &&
+        x.height === page.height &&
+        Array.isArray(x.transform) &&
+        x.transform.length === 6 &&
+        x.transform.every(Number.isFinite)
+    ) ||
+    v.transform.some((n, i) => n !== wv.transform[i]) ||
+    !Array.isArray(o?.fnArray) ||
+    !Array.isArray(o.argsArray) ||
+    !Array.isArray(other.fnArray) ||
+    !Array.isArray(other.argsArray)
+  )
+    return
+  const forms = data.scopes.filter(
+    (s) =>
+      s.op === OPS.paintFormXObjectBegin &&
+      !data.scopes.some(
+        (t) => t.op === OPS.paintFormXObjectBegin && t.begin < s.begin && t.end > s.end
+      )
+  )
+  if (forms.length !== 2) return
+  const [logo, drawing] = forms.slice().sort((a, b) => a.begin - b.begin),
+    header = items.filter((p) => p.operationIndex < drawing.begin),
+    own = pictureScopePieces(drawing, items),
+    logoPaint = pictureScopePieces(logo, items),
+    glyphs = header.filter((p) => p.kind === 'glyph'),
+    exterior = header.filter((p) => p.kind !== 'glyph' && !logoPaint.includes(p))
+  if (
+    !header.length ||
+    !logoPaint.length ||
+    !glyphs.length ||
+    exterior.length !== 1 ||
+    logoPaint.some((p) => p.kind !== 'path') ||
+    exterior[0].kind !== 'path' ||
+    !own.some((p) => p.kind === 'glyph') ||
+    own.filter((p) => p.kind === 'path').length < 3 ||
+    header.some((p) => !pictureValid(p.rect) || p.rect[1] < 0 || p.rect[3] > page.height * 0.07) ||
+    own.some(
+      (p) =>
+        p.bound[1] <= Math.max(...header.map((h) => h.bound[3])) ||
+        p.bound[3] >= figure.caption.rect[1]
+    )
+  )
+    return
+  const raw = content.items[0],
+    witnessRaw = w.witnessContent?.items?.[0],
+    text = glyphs.map((p) => p.text).join(''),
+    lb = union(logoPaint.map((p) => p.rect)),
+    hb = union(glyphs.map((p) => p.rect)),
+    rule = exterior[0].rect,
+    line = exterior[0].visiblePaintPoints,
+    lineArgs = o.argsArray[exterior[0].operationIndex]
+  if (
+    !raw ||
+    !witnessRaw ||
+    !/^[A-Z][A-Z .&'-]{2,}$/u.test(raw.str) ||
+    text !== raw.str ||
+    glyphs.some((p) => p.fontName !== raw.fontName) ||
+    raw.sourceItem?.pageNumber !== page.pageNumber ||
+    raw.sourceItem?.index !== 0 ||
+    raw.sourceItem?.text !== raw.str ||
+    new Set(glyphs.map((p) => p.packetBegin)).size !== 1 ||
+    new Set(glyphs.map((p) => p.packetEnd)).size !== 1 ||
+    witnessRaw.sourceItem?.pageNumber !== w.witnessPageNumber ||
+    witnessRaw.sourceItem?.index !== 0 ||
+    witnessRaw.sourceItem?.text !== witnessRaw.str ||
+    hb[2] - hb[0] <= 2 * (hb[3] - hb[1]) ||
+    lb[0] <= hb[2] ||
+    lb[2] - lb[0] > page.width * 0.25 ||
+    lb[3] - lb[1] > page.height * 0.035 ||
+    hb[1] >= lb[3] ||
+    lb[1] >= hb[3] ||
+    rule[2] - rule[0] < page.width * 0.7 ||
+    rule[3] - rule[1] > page.height * 0.005 ||
+    o.fnArray[exterior[0].operationIndex] !== OPS.constructPath ||
+    lineArgs?.[0] !== OPS.stroke ||
+    lineArgs[1]?.length !== 1 ||
+    lineArgs[1][0]?.length !== 6 ||
+    lineArgs[1][0][0] !== 0 ||
+    lineArgs[1][0][3] !== 1 ||
+    line?.length !== 2 ||
+    line[0][1] !== line[1][1] ||
+    Math.min(line[0][0], line[1][0]) > hb[0] ||
+    Math.max(line[0][0], line[1][0]) < lb[2] ||
+    line[0][1] <= Math.max(hb[3], lb[3]) ||
+    line[0][1] - Math.max(hb[3], lb[3]) > raw.height * 1.5 ||
+    content.items.slice(1).some((r) => {
+      if (typeof r.str !== 'string' || !r.str.trim()) return false
+      const bounds = nativeFigureLabelBounds(r, content.styles[r.fontName], v)
+      return !pictureValid(bounds) || bounds[1] <= rule[3]
+    })
+  )
+    return
+  const keys = ['str', 'dir', 'width', 'height', 'transform', 'fontName', 'hasEOL']
+  if (
+    keys.some((k) => JSON.stringify(raw[k]) !== JSON.stringify(witnessRaw[k])) ||
+    JSON.stringify(content.styles[raw.fontName]) !==
+      JSON.stringify(w.witnessContent.styles?.[witnessRaw.fontName])
+  )
+    return
+  const advance = tableTextToken(raw, v, 0)?.rect
+  if (
+    !pictureValid(advance) ||
+    glyphs.some(
+      (p) =>
+        !pictureValid(p.advance) ||
+        p.advance.some((n, i) => (i < 2 ? n < advance[i] - 0.02 : n > advance[i] + 0.02))
+    )
+  )
+    return
+  const lastPaint = Math.max(...header.map((p) => p.operationIndex)),
+    closing = data.scopes.filter(
+      (s) => s.begin < lastPaint && s.end > lastPaint && s.end < drawing.begin
+    ),
+    end = Math.max(lastPaint, ...closing.map((s) => s.end))
+  if (
+    end >= drawing.begin ||
+    end < logo.end ||
+    end >= other.fnArray.length ||
+    end >= other.argsArray.length
+  )
+    return
+  // Compare the complete stream prefix from the default graphics/text state,
+  // including every transform, Form bbox/clip, path byte and paint setting.
+  const stack = []
+  for (let i = 0; i <= end; i++) {
+    const op = o.fnArray[i]
+    if (
+      op !== other.fnArray[i] ||
+      JSON.stringify(o.argsArray[i]) !== JSON.stringify(other.argsArray[i])
+    )
+      return
+    if (op === OPS.save || op === OPS.paintFormXObjectBegin || op === OPS.beginText) stack.push(op)
+    else if (op === OPS.restore || op === OPS.paintFormXObjectEnd || op === OPS.endText) {
+      const expected =
+        op === OPS.restore
+          ? OPS.save
+          : op === OPS.paintFormXObjectEnd
+            ? OPS.paintFormXObjectBegin
+            : OPS.beginText
+      if (stack.pop() !== expected) return
+    }
+  }
+  if (stack.length) return
+  const font = context.glyphBounds?.filter((f) => f.fontName === raw.fontName),
+    otherFont = proof.glyphBounds?.filter((f) => f.fontName === raw.fontName)
+  if (font?.length !== 1 || otherFont?.length !== 1) return
+  const shown = o.fnArray
+    .slice(0, end + 1)
+    .flatMap((op, i) =>
+      op === OPS.showText ? (o.argsArray[i]?.[0]?.filter((g) => typeof g === 'object') ?? []) : []
+    )
+  if (!shown.length) return
+  for (const g of shown) {
+    const a = font[0].glyphs.filter((x) => x.fontChar === g.fontChar),
+      b = otherFont[0].glyphs.filter((x) => x.fontChar === g.fontChar)
+    if (a.length !== 1 || b.length !== 1 || JSON.stringify(a[0]) !== JSON.stringify(b[0])) return
+  }
+  return { own, excluded: header, kind: 'complete-native-picture-with-repeated-header' }
 }
 
 function pictureSavedScope(data, items, figure) {
@@ -5278,13 +5610,15 @@ function savedUncoloredPixelCrop(
 ) {
   try {
     const input = nativeRecoveryOwnValues(context),
-      current =
-        input &&
-        retainNativeRecoveryInputs(
-          [page, figure, captions, tables, tokens, peers, originalCrop],
-          input.viewport
-        )
-    if (!current) return
+      binding = savePixelContextBinding(context)
+    if (!input || !binding || input.type3GlyphPrograms !== undefined) return
+    const keep = retainNativeRecoveryInputs(
+      [page, figure, captions, tables, tokens, peers, originalCrop],
+      input.viewport
+    )
+    if (!keep) return
+    const current = () => binding.current() && keep()
+    context = binding.input
     if (
       !pictureValid(figure?.rect) ||
       !pictureValid(originalCrop) ||
@@ -5306,19 +5640,47 @@ function savedUncoloredPixelCrop(
     const handle = createNativeSavedUncoloredPixelEvidence(page, tokens, context),
       data = nativeSavedUncoloredPixelEvidenceData(handle, page, tokens, context)
     if (!data || context.operators.fnArray.includes(OPS.setGState)) return
-    const member = (scope, i) => i > scope.begin && i < scope.end,
-      scopes = data.scopes.filter(
-        (s) =>
-          data.patterns.every((i) => member(s, i)) &&
-          data.paths.every((p) => member(s, p.operationIndex))
-      ),
-      scope = scopes.sort((a, b) => a.begin - b.begin)[0]
-    if (!scope || scopes.some((s) => s !== scope && !(s.begin > scope.begin && s.end < scope.end)))
+    const member = (scope, i) => i > scope.begin && i < scope.end
+    const candidates = data.scopes.filter((s) => data.patterns.some((i) => member(s, i)))
+    const selected = data.patterns.map(
+      (i) => candidates.filter((s) => member(s, i)).sort((a, b) => a.begin - b.begin)[0]
+    )
+    if (selected.some((s) => !s)) return
+    const scopes = [...new Set(selected)]
+    if (scopes.some((s, n) => scopes.some((t, k) => k !== n && s.begin < t.end && s.end > t.begin)))
       return
-    const owns = (g) => member(scope, g.operationIndex),
-      ownedGlyphs = data.glyphs.filter(owns),
-      foreignGlyphs = data.glyphs.filter((g) => !owns(g)),
-      ownedRecords = data.records.filter((r) => r.glyphIndices.some((i) => owns(data.glyphs[i])))
+    if (
+      data.patterns.length === 2 &&
+      (scopes.length !== 1 || data.paths.some((p) => !member(scopes[0], p.operationIndex)))
+    )
+      return
+    if (data.patterns.length === 3 && ![1, 3].includes(scopes.length)) return
+    const scope = {
+        begin: Math.min(...scopes.map((s) => s.begin)),
+        end: Math.max(...scopes.map((s) => s.end))
+      },
+      owns = (g) => scopes.some((s) => member(s, g.operationIndex)),
+      // Complete the actual ink of whole native Sources already inside the
+      // old preview. Their nominal source cells alone can clip descenders.
+      retained =
+        data.patterns.length === 3
+          ? data.records.filter(
+              (r) =>
+                r.raw.str.trim() &&
+                r.glyphIndices.length &&
+                pictureInside(originalCrop, r.rect) &&
+                r.glyphIndices.every((i) => !owns(data.glyphs[i])) &&
+                union(r.glyphIndices.map((i) => data.glyphs[i].advance)).every(
+                  (v, i) => Math.abs(v - r.rect[i]) <= 0.02
+                )
+            )
+          : [],
+      retainedGlyphs = new Set(retained.flatMap((r) => r.glyphIndices)),
+      ownedGlyphs = data.glyphs.filter((g, i) => owns(g) || retainedGlyphs.has(i)),
+      foreignGlyphs = data.glyphs.filter((g, i) => !owns(g) && !retainedGlyphs.has(i)),
+      ownedRecords = data.records.filter(
+        (r) => retained.includes(r) || r.glyphIndices.some((i) => owns(data.glyphs[i]))
+      )
     if (
       ownedGlyphs.length < 4 ||
       ownedRecords.length < 2 ||
@@ -5360,7 +5722,8 @@ function savedUncoloredPixelCrop(
         box,
         strokeMargins: new Map(data.paths.map((p) => [p.operationIndex, p.strokeMargin]))
       },
-      owned = []
+      owned = [],
+      foreignPaths = []
     for (const p of data.paths) {
       const a = inv.o.argsArray[p.operationIndex],
         s = p.state
@@ -5399,7 +5762,8 @@ function savedUncoloredPixelCrop(
           pictureExpand(union(points), pad),
           Util.transform(context.viewport.transform, s.transform)
         )
-      owned.push({ rect: union([paint.rect, hull]), floor: paint.floor })
+      const destination = owns(p) ? owned : foreignPaths
+      destination.push({ rect: union([paint.rect, hull]), floor: paint.floor })
     }
     owned.push(
       ...ownedGlyphs.flatMap((g) => [
@@ -5408,20 +5772,40 @@ function savedUncoloredPixelCrop(
       ]),
       ...ownedRecords.map((r) => ({ rect: r.rect, floor: 0 }))
     )
+    // Three independently closed hatch panels only enlarge an existing
+    // preview. Original pixels (including external panel descriptions) remain
+    // in place; only the newly exposed bands require new ownership.
+    const expansion = data.patterns.length === 3
+    const exterior = (r) => {
+      if (!expansion) return [r]
+      const [x0, y0, x1, y1] = originalCrop
+      return [
+        [r[0], r[1], Math.min(r[2], x0), r[3]],
+        [Math.max(r[0], x1), r[1], r[2], r[3]],
+        [Math.max(r[0], x0), r[1], Math.min(r[2], x1), Math.min(r[3], y0)],
+        [Math.max(r[0], x0), Math.max(r[1], y1), Math.min(r[2], x1), r[3]]
+      ].filter(pictureValid)
+    }
     const physical = union(owned.map((p) => p.rect)),
       minScale = 1.5,
       bounds = owned.map((p) => pictureExpand(p.rect, (p.floor + 1) / minScale)),
-      rect = pictureExpand(union(bounds), 2 / minScale),
+      provedRect = pictureExpand(union(bounds), 2 / minScale),
       foreignRecords = data.records.filter((r) => r.raw.str.trim() && !ownedRecords.includes(r)),
       foreign = foreignGlyphs
         .flatMap((g) => [g.rect, g.advance])
         .concat(foreignRecords.map((r) => r.rect)),
-      foreignBounds = foreign.map((r) => pictureExpand(r, 1 / minScale)),
-      outside = foreignGlyphs.filter((g) => pictureHit(originalCrop, g.rect))
+      foreignBounds = foreign
+        .map((r) => pictureExpand(r, 1 / minScale))
+        .concat(foreignPaths.map((p) => pictureExpand(p.rect, (p.floor + 1) / minScale)))
+        .flatMap(exterior),
+      outside = foreignGlyphs.filter((g) => pictureHit(originalCrop, g.rect)),
+      // A label completion with no removed foreign prose is expansion only.
+      // Keep every old pixel and prove all three saved panels independently.
+      rect = expansion ? union([provedRect, originalCrop]) : provedRect
     if (
       !pictureInside([0, 0, page.width, page.height], rect) ||
-      !outside.length ||
-      foreignBounds.some((r) => pictureHit(rect, pictureExpand(r, 2 / minScale))) ||
+      (!outside.length && data.patterns.length !== 3) ||
+      foreignBounds.some((r) => pictureHit(rect, expansion ? r : pictureExpand(r, 2 / minScale))) ||
       pictureHit(rect, figure.caption.rect) ||
       rect.every((v, i) => Math.abs(v - originalCrop[i]) < 1e-6)
     )
@@ -5429,58 +5813,60 @@ function savedUncoloredPixelCrop(
     // Save membership alone cannot delete a title/legend printed outside it.
     // Only the complete preceding page-column ordinary sentence may leave the
     // old crop; bind all of its original Sources, outlines and advance cells.
-    const band = union(outside.map((g) => g.rect)),
-      body = foreignRecords.filter((r) =>
-        r.glyphIndices.some((i) => {
-          const g = data.glyphs[i]
-          return g.rect[1] < band[3] && g.rect[3] > band[1]
-        })
-      ),
-      first = body[0],
-      last = body.at(-1),
-      em = first?.raw.height,
-      literal = body.map((r) => r.raw.str).join(' '),
-      bodyGlyphs = new Set(body.flatMap((r) => r.glyphIndices)),
-      bodyFont = first?.raw.fontName,
-      witnesses = foreignRecords.filter(
-        (r) =>
-          r.index < first?.index &&
-          r.raw.fontName === bodyFont &&
-          r.raw.height === em &&
-          Math.abs(r.rect[0] - first.rect[0]) <= em * 2 &&
-          r.rect[2] - r.rect[0] >= page.width * 0.4 &&
-          /\p{L}{3,}\s+\p{L}{3,}/u.test(r.raw.str)
+    if (!expansion) {
+      const band = union(outside.map((g) => g.rect)),
+        body = foreignRecords.filter((r) =>
+          r.glyphIndices.some((i) => {
+            const g = data.glyphs[i]
+            return g.rect[1] < band[3] && g.rect[3] > band[1]
+          })
+        ),
+        first = body[0],
+        last = body.at(-1),
+        em = first?.raw.height,
+        literal = body.map((r) => r.raw.str).join(' '),
+        bodyGlyphs = new Set(body.flatMap((r) => r.glyphIndices)),
+        bodyFont = first?.raw.fontName,
+        witnesses = foreignRecords.filter(
+          (r) =>
+            r.index < first?.index &&
+            r.raw.fontName === bodyFont &&
+            r.raw.height === em &&
+            Math.abs(r.rect[0] - first.rect[0]) <= em * 2 &&
+            r.rect[2] - r.rect[0] >= page.width * 0.4 &&
+            /\p{L}{3,}\s+\p{L}{3,}/u.test(r.raw.str)
+        )
+      if (
+        !first ||
+        !last ||
+        !(em > 0) ||
+        witnesses.length < 2 ||
+        first.rect[0] >= physical[0] - em * 2 ||
+        !/^\p{Lu}\p{Ll}*\s+\p{L}/u.test(literal) ||
+        !/\p{L}{3,}/u.test(literal) ||
+        /^(?:Figure|Fig\.?|Table|Tab\.?|Algorithm)\s/iu.test(literal) ||
+        !/[.!?]$/u.test(literal) ||
+        foreignRecords.filter(
+          (r) => r.index >= first.index && r.index <= last.index && r.raw.str.trim()
+        ).length !== body.filter((r) => r.raw.str.trim()).length ||
+        body.some(
+          (r) =>
+            r.glyphIndices.some((i) => data.glyphs[i].operationIndex >= scope.begin) ||
+            r.raw.transform[1] !== 0 ||
+            r.raw.transform[2] !== 0 ||
+            !(r.raw.transform[0] > 0) ||
+            !(r.raw.transform[3] > 0)
+        ) ||
+        outside.some((g) => !bodyGlyphs.has(data.glyphs.indexOf(g))) ||
+        union(
+          body.flatMap((r) => [
+            r.rect,
+            ...r.glyphIndices.flatMap((i) => [data.glyphs[i].rect, data.glyphs[i].advance])
+          ])
+        )[3] >= physical[1]
       )
-    if (
-      !first ||
-      !last ||
-      !(em > 0) ||
-      witnesses.length < 2 ||
-      first.rect[0] >= physical[0] - em * 2 ||
-      !/^\p{Lu}\p{Ll}*\s+\p{L}/u.test(literal) ||
-      !/\p{L}{3,}/u.test(literal) ||
-      /^(?:Figure|Fig\.?|Table|Tab\.?|Algorithm)\s/iu.test(literal) ||
-      !/[.!?]$/u.test(literal) ||
-      foreignRecords.filter(
-        (r) => r.index >= first.index && r.index <= last.index && r.raw.str.trim()
-      ).length !== body.filter((r) => r.raw.str.trim()).length ||
-      body.some(
-        (r) =>
-          r.glyphIndices.some((i) => data.glyphs[i].operationIndex >= scope.begin) ||
-          r.raw.transform[1] !== 0 ||
-          r.raw.transform[2] !== 0 ||
-          !(r.raw.transform[0] > 0) ||
-          !(r.raw.transform[3] > 0)
-      ) ||
-      outside.some((g) => !bodyGlyphs.has(data.glyphs.indexOf(g))) ||
-      union(
-        body.flatMap((r) => [
-          r.rect,
-          ...r.glyphIndices.flatMap((i) => [data.glyphs[i].rect, data.glyphs[i].advance])
-        ])
-      )[3] >= physical[1]
-    )
-      return
+        return
+    }
     const cap = data.records.filter(
       (r) => r.raw.str.trim() && pictureInside(figure.caption.rect, r.rect)
     )
@@ -5529,6 +5915,141 @@ function savedUncoloredPixelCrop(
   }
 }
 
+// Each leading panel marker is an exact whole record of the complete page
+// bridge. It immediately precedes one closed top-level Form in paint order;
+// unrelated footer Forms remain foreign even when they follow the caption.
+function pictureLeadingType3Forms(data, items, figure, pageCaps, tokens) {
+  const records = data.leadingMarkerRecords
+  if (!records || records.some((r) => !pictureValid(r.fontRect))) return
+  const caption = records.filter((r) => pictureInside(figure.caption.rect, r.rect))
+  if (!caption.length) return
+  if (
+    pictureCompact(caption.map((r) => r.text).join('')) !==
+    pictureCompact(figure.caption.lines.join(' '))
+  ) {
+    // Caption grouping displays a tightly attached raised digit as a superscript.
+    // Reproduce that display from the complete native records, preserving every
+    // literal source and its order; Unicode folding would also accept a baseline digit.
+    if (
+      caption.some(
+        (r) =>
+          tokens.filter(
+            (t) =>
+              t.horizontal &&
+              t.text === r.text &&
+              t.sourceItem?.pageNumber === figure.caption.page &&
+              t.sourceItem.index === r.index &&
+              t.sourceItem.text === r.text &&
+              t.height === r.height &&
+              t.rect.every((n, i) => Math.abs(n - r.rect[i]) <= 1e-6)
+          ).length !== 1
+      )
+    )
+      return
+    const fragments = caption.map((r) => ({
+        text: r.text,
+        x: r.rect[0],
+        y: r.rect[1],
+        width: r.rect[2] - r.rect[0],
+        height: r.rect[3] - r.rect[1],
+        fontSize: r.height
+      })),
+      origins = new Map(),
+      rows = groupPageLines({ lines: fragments }, [], origins),
+      consumed = rows.flatMap((r) => origins.get(r) ?? [])
+    if (
+      consumed.length !== fragments.length ||
+      consumed.some((r, i) => r !== fragments[i]) ||
+      pictureCompact(rows.map((r) => r.text).join(' ')) !==
+        pictureCompact(figure.caption.lines.join(' '))
+    )
+      return
+  }
+  const byGlyph = new Map(items.filter((p) => p.kind === 'glyph').map((p) => [p.glyphOrdinal, p])),
+    capPaint = caption.flatMap((r) => r.glyphOrdinals.map((i) => byGlyph.get(i)))
+  if (capPaint.some((p) => !p)) return
+  const capStart = Math.min(...capPaint.map((p) => p.operationIndex)),
+    forms = data.scopes.filter(
+      (s) =>
+        s.op === OPS.paintFormXObjectBegin &&
+        s.end < capStart &&
+        !data.scopes.some(
+          (t) => t.op === OPS.paintFormXObjectBegin && t.begin < s.begin && t.end > s.end
+        )
+    )
+  if (forms.length !== 1 && forms.length !== 2) return
+  if (items.some((p) => p.operationIndex > forms.at(-1).end && p.operationIndex < capStart)) return
+  const own = [],
+    bounds = []
+  if (forms.length === 1) {
+    // The same whole-page Type3 witness can close one complete plate. Its
+    // outer labels must belong to that Form, not merely lie near its images.
+    const pieces = pictureScopePieces(forms[0], items)
+    if (
+      pieces.filter((p) => p.kind !== 'glyph').length < 3 ||
+      !pieces.some((p) => p.kind === 'glyph')
+    )
+      return
+    own.push(...pieces)
+  } else {
+    const marks = ['a', 'b'].map((text) => records.filter((r) => r.text === text))
+    if (marks.some((r) => r.length !== 1)) return
+    const [a, b] = marks.map((r) => r[0])
+    if (a.fontName !== b.fontName || a.height !== b.height || !(a.height > 0)) return
+    for (const [i, r] of [a, b].entries()) {
+      const form = forms[i],
+        mark = r.glyphOrdinals.map((id) => byGlyph.get(id))
+      if (!mark.length || mark.some((p) => !p) || mark.map((p) => p.text).join('') !== r.text)
+        return
+      const start = Math.min(...mark.map((p) => p.operationIndex)),
+        end = Math.max(...mark.map((p) => p.operationIndex))
+      if (
+        end >= form.begin ||
+        (i && start <= forms[i - 1].end) ||
+        items.some(
+          (p) => p.operationIndex >= start && p.operationIndex < form.begin && !mark.includes(p)
+        )
+      )
+        return
+      const pieces = pictureScopePieces(form, items)
+      if (!pieces.some((p) => p.kind !== 'glyph') || !pieces.some((p) => p.kind === 'glyph')) return
+      const bound = union(pieces.map((p) => p.bound)),
+        em = r.height
+      if (
+        r.rect[0] > bound[0] + em ||
+        bound[0] - r.rect[0] > 3 * em ||
+        r.rect[1] > bound[1] ||
+        bound[1] - r.rect[3] > 3 * em
+      )
+        return
+      own.push(...mark, ...pieces)
+      bounds.push(bound)
+    }
+    if (
+      bounds[0][2] >= bounds[1][0] ||
+      Math.min(bounds[0][3], bounds[1][3]) - Math.max(bounds[0][1], bounds[1][1]) <
+        0.75 * Math.min(bounds[0][3] - bounds[0][1], bounds[1][3] - bounds[1][1])
+    )
+      return
+  }
+  const rect = pictureExpand(union(own.map((p) => p.bound)), 2 / 1.5),
+    ownedGlyphs = new Set(own.filter((p) => p.kind === 'glyph').map((p) => p.glyphOrdinal))
+  // A whole source cannot straddle a panel boundary. Foreign font envelopes
+  // remain an exclusion domain in addition to actual foreign paint.
+  if (
+    records.some((r) => {
+      const count = r.glyphOrdinals.filter((i) => ownedGlyphs.has(i)).length
+      return count
+        ? count !== r.glyphOrdinals.length ||
+            tokens.filter((t) => t.sourceItem?.index === r.index && t.text === r.text).length !== 1
+        : pictureHit(rect, pictureExpand(r.fontRect, 2 / 1.5))
+    }) ||
+    pageCaps.some((c) => c !== figure.caption && pictureHit(rect, c.rect))
+  )
+    return
+  return { own, kind: 'complete-native-leading-type3-forms' }
+}
+
 export function nativeCertifiedFigurePixelCrop(
   page,
   figure,
@@ -5537,7 +6058,8 @@ export function nativeCertifiedFigurePixelCrop(
   tokens,
   context,
   peers = [],
-  originalCropRect = figure.rect
+  originalCropRect = figure.rect,
+  live
 ) {
   try {
     const normalPair = nativeNormalRasterPairPixelCrop(
@@ -5631,7 +6153,9 @@ export function nativeCertifiedFigurePixelCrop(
       figure.cropRects
     )
       return
-    const handle = createNativeFigurePaintCertificate(page, tokens, context),
+    const ordinaryHandle = createNativeFigurePaintCertificate(page, tokens, context),
+      handle =
+        ordinaryHandle ?? createNativeLeadingType3PixelCertificate(page, tokens, context, live),
       data = nativeFigurePaintCertificateData(handle, page, tokens, context)
     if (!data) return
     const minScale = 1.5,
@@ -5645,29 +6169,35 @@ export function nativeCertifiedFigurePixelCrop(
       : undefined
     if (figure.sourceItems?.length && !stacked) return
     const picked =
-      stacked ??
-      pictureOpeningParagraphForm(data, items, figure, pageCaps, page, tokens, context) ??
-      picturePairedSavedDiagrams(data, items, figure, pageCaps, page, tokens, context) ??
-      pictureKeyedFormGrid(data, items, figure, pageCaps, page, tokens, context) ??
-      pictureMultipart(data, items, figure, pageCaps) ??
-      pictureFormWithBoxedPanel(data, items, figure, pageCaps, page, tokens, context) ??
-      pictureCaptionedFormGrid(data, items, figure, pageCaps) ??
-      pictureCaptionedRasterRows(
-        items,
-        figure,
-        pageCaps,
-        page,
-        tokens,
-        context,
-        originalCropRect
-      ) ??
-      pictureRasterRowKeys(data, items, figure, tokens, context) ??
-      picturePairedRasterSave(data, items, figure) ??
-      pictureSavedScope(data, items, figure) ??
-      pictureAboveCaptionNotes(data, items, figure, pageCaps, page, tokens, context) ??
-      pictureRasterPanelsWithNotes(data, items, figure, pageCaps, page, tokens, context) ??
-      pictureAboveHeadingTwinScope(data, items, figure, tokens, context) ??
-      pictureRepeatedHeader(items, page, figure, context, tokens)
+      (data.leadingMarkerRecords
+        ? pictureLeadingType3Forms(data, items, figure, pageCaps, tokens)
+        : undefined) ??
+      (!data.leadingMarkerRecords
+        ? (stacked ??
+          pictureOpeningParagraphForm(data, items, figure, pageCaps, page, tokens, context) ??
+          picturePairedSavedDiagrams(data, items, figure, pageCaps, page, tokens, context) ??
+          pictureKeyedFormGrid(data, items, figure, pageCaps, page, tokens, context) ??
+          pictureMultipart(data, items, figure, pageCaps) ??
+          pictureFormWithBoxedPanel(data, items, figure, pageCaps, page, tokens, context) ??
+          pictureCaptionedFormGrid(data, items, figure, pageCaps) ??
+          pictureCaptionedRasterRows(
+            items,
+            figure,
+            pageCaps,
+            page,
+            tokens,
+            context,
+            originalCropRect
+          ) ??
+          pictureRasterRowKeys(data, items, figure, tokens, context) ??
+          picturePairedRasterSave(data, items, figure) ??
+          pictureRepeatedPaintHeader(data, items, figure, page, context) ??
+          pictureSavedScope(data, items, figure) ??
+          pictureAboveCaptionNotes(data, items, figure, pageCaps, page, tokens, context) ??
+          pictureRasterPanelsWithNotes(data, items, figure, pageCaps, page, tokens, context) ??
+          pictureAboveHeadingTwinScope(data, items, figure, tokens, context) ??
+          pictureRepeatedHeader(items, page, figure, context, tokens))
+        : undefined)
     if (!picked) return
     if (picked.kind === 'complete-native-saved-picture') {
       const excluded = pictureExteriorNumberedBody(
@@ -5705,16 +6235,27 @@ export function nativeCertifiedFigurePixelCrop(
         ) ??
         pictureExteriorCompleteCaption(items, picked, figure, page, tokens, context)
       if (completeCaption) picked.excluded = completeCaption
-      const proofTail = pictureExteriorProofTail(
-        data,
-        items,
-        picked,
-        figure,
-        page,
-        tokens,
-        context,
-        originalCropRect
-      )
+      const proofTail =
+        pictureExteriorWrappedProof(
+          data,
+          items,
+          picked,
+          figure,
+          page,
+          tokens,
+          context,
+          originalCropRect
+        ) ??
+        pictureExteriorProofTail(
+          data,
+          items,
+          picked,
+          figure,
+          page,
+          tokens,
+          context,
+          originalCropRect
+        )
       if (proofTail) {
         picked.excluded = [...new Set([...(picked.excluded ?? []), ...proofTail])]
         picked.closedProofTail = true

@@ -11,6 +11,14 @@ import {
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
 
+const windowsProcessIsAlive = vi.hoisted(() => vi.fn<(pid: number) => boolean>(() => true))
+
+vi.mock('../windows-process-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../windows-process-query')>()
+  windowsProcessIsAlive.mockImplementation(actual.windowsProcessIsAlive)
+  return { ...actual, windowsProcessIsAlive }
+})
+
 const processIsAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
@@ -437,6 +445,146 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
   })
 
+  it('keeps a proofless Windows receipt fenced when only the native host process has exited', async () => {
+    windowsProcessIsAlive.mockReturnValueOnce(false)
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+
+    await expect(
+      defaultController('win32').probe({
+        version: 1,
+        receiptId: 'receipt-windows-exited',
+        ownerInstanceId: 'owner-a',
+        ownerToken: 'owner-token-a',
+        platform: 'win32',
+        spawnedAt: 1,
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a',
+        pid: 4242
+      })
+    ).resolves.toBe('unknown')
+
+    expect(kill).not.toHaveBeenCalled()
+  })
+
+  it.each(['started-and-reaped', 'never-started'] as const)(
+    'clears a Windows receipt after the persisted supervisor proof reports %s',
+    async (processState) => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-proof-'))
+      const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+      const proof = {
+        path: proofPath,
+        token: 'proof-token',
+        requestPath: `${proofPath}.request`
+      }
+      const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      await first.ensureReady()
+      const intent = first.beginSpawn(
+        {
+          laneKey: 'lane-a',
+          processKey: 'repl',
+          kernelEpochId: 'epoch-a'
+        },
+        'owner-token-a',
+        proof
+      )
+      first.recordSpawned(intent, { pid: 4242 })
+      await writeFile(proof.path, JSON.stringify({ version: 1, token: proof.token, processState }))
+
+      windowsProcessIsAlive.mockReturnValueOnce(false)
+      const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      await restarted.ensureReady()
+
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+      await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  it('retains a Windows tree proof until receipt completion settles', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-proof-settlement-'))
+    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+    const proof = {
+      path: proofPath,
+      token: 'proof-token',
+      requestPath: `${proofPath}.request`
+    }
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await owner.ensureReady()
+    const intent = owner.beginSpawn(
+      {
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a'
+      },
+      'owner-token-a',
+      proof
+    )
+    const receipt = owner.recordSpawned(intent, { pid: 4242 })
+    await writeFile(
+      proof.path,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+
+    await expect(readFile(proof.path, 'utf8')).resolves.toContain(proof.token)
+    owner.complete(receipt, true)
+    await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps a Windows reused-PID receipt fenced until its tree proof is terminal', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-reused-proof-'))
+    const proofPath = join(
+      root,
+      'proof-parent-created-after-recovery',
+      '.open-science-process-tree-terminated-proof.proof'
+    )
+    const proof = {
+      path: proofPath,
+      token: 'proof-token',
+      requestPath: `${proofPath}.request`
+    }
+    const controller = {
+      probe: vi.fn().mockResolvedValue('reused' as const),
+      terminate: vi.fn().mockResolvedValue({ reaped: false })
+    }
+    const first = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      controller
+    })
+    await first.ensureReady()
+    const intent = first.beginSpawn(
+      {
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a'
+      },
+      'owner-token-a',
+      proof
+    )
+    first.recordSpawned(intent, { pid: 4242 })
+
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      controller
+    })
+    await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+
+    await mkdir(join(root, 'proof-parent-created-after-recovery'), { recursive: true })
+    await writeFile(
+      proof.path,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+    const recovered = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      controller
+    })
+    await recovered.ensureReady()
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+  })
+
   it('treats a missing macOS process group as dead without a boot token', async () => {
     vi.spyOn(process, 'kill').mockImplementation(() => {
       throw Object.assign(new Error('missing'), { code: 'ESRCH' })
@@ -501,6 +649,36 @@ describe('KernelProcessLifecycleOwner', () => {
     await restarted.ensureReady()
 
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+  })
+
+  it('cleans proof files when recovery cancels a stale pending receipt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-proof-'))
+    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+    const proof = {
+      path: proofPath,
+      token: 'proof-token',
+      requestPath: `${proofPath}.request`
+    }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await first.ensureReady()
+    first.beginSpawn(
+      {
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a'
+      },
+      'owner-token-a',
+      proof
+    )
+    await writeFile(proof.path, 'proof')
+    await writeFile(proof.requestPath, proof.token)
+
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await restarted.ensureReady()
+
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+    await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(proof.requestPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('prevents a delayed process host from activating after recovery cancels its intent', async () => {
@@ -640,47 +818,37 @@ describe('KernelProcessLifecycleOwner', () => {
   })
 
   describe.skipIf(process.platform !== 'win32')('Windows startup recovery', () => {
-    it('verifies a real command identity and taskkills its complete process tree', async () => {
+    it('keeps a legacy proofless receipt fenced after the host exits', async () => {
       root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-recovery-'))
+      const probe = vi.fn().mockResolvedValue('unknown' as const)
+      const terminate = vi.fn().mockResolvedValue({ reaped: false })
       const first = new KernelProcessLifecycleOwner({
         storageRoot: root,
-        ownerInstanceId: 'owner-a'
+        ownerInstanceId: 'owner-a',
+        platform: 'win32',
+        controller: { probe, terminate }
       })
       await first.ensureReady()
-      const ownerToken = first.createOwnerToken()
-      const marker = `open-science-kernel-${ownerToken}`
       const intent = first.beginSpawn(
         {
           laneKey: '["project-1","session-1","root",null,null]',
           processKey: 'repl',
           kernelEpochId: 'epoch-windows'
         },
-        ownerToken
+        'owner-token-a'
       )
-      const child = spawn(
-        process.execPath,
-        [
-          '-e',
-          "require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)']); setInterval(()=>{},1000)",
-          marker
-        ],
-        { windowsHide: true, env: { ...process.env, ...first.environment(ownerToken) } }
-      )
-      await new Promise<void>((resolve, reject) => {
-        child.once('spawn', resolve)
-        child.once('error', reject)
-      })
-      const pid = child.pid!
-      first.recordSpawned(intent, { pid, commandIdentityMarker: marker })
+      first.recordSpawned(intent, { pid: 4242 })
 
       const restarted = new KernelProcessLifecycleOwner({
         storageRoot: root,
-        ownerInstanceId: 'owner-b'
+        ownerInstanceId: 'owner-b',
+        platform: 'win32',
+        controller: { probe, terminate }
       })
-      await restarted.ensureReady()
 
-      await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
-      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
-    }, 20_000)
+      await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+      expect(terminate).not.toHaveBeenCalled()
+    })
   })
 })

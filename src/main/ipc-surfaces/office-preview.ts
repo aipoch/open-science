@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { app, net, protocol, webContents } from 'electron'
-import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import {
   OFFICE_PREVIEW_STATE_CHANNEL,
-  type OfficePreviewOpenRequest
+  getOfficeManagedPreviewRequest
 } from '../../shared/office-preview'
 import {
   createOfficePreviewFrameProcessResolver,
@@ -55,21 +54,13 @@ export const createOfficePreviewElectronSurfaces = ({
         registerOfficePreviewCommandIpc(commands)
       )
     ]
-  const toManagedPreviewRequest = (
-    request: OfficePreviewOpenRequest
-  ): AcquireManagedPreviewRequest =>
-    request.source === 'notebook-input' || request.source === 'literature'
-      ? { source: request.source, path: request.path }
-      : {
-          source: request.source,
-          projectId: request.projectId,
-          fileId: request.fileId,
-          ...(request.versionId ? { versionId: request.versionId } : {})
-        }
   const officePreviewSupervisor = new OfficePreviewSupervisor({
-    inspectResource: (request) => previewResources.inspect(toManagedPreviewRequest(request)),
+    inspectResource: (request) => previewResources.inspect(getOfficeManagedPreviewRequest(request)),
     acquireResource: (ownerId, request, snapshot, maxBytes) =>
-      previewResources.acquire(ownerId, toManagedPreviewRequest(request), { snapshot, maxBytes }),
+      previewResources.acquire(ownerId, getOfficeManagedPreviewRequest(request), {
+        snapshot,
+        maxBytes
+      }),
     releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
     createSessionId: randomUUID,
     createRuntimeUrl: createOfficePreviewRuntimeUrl,

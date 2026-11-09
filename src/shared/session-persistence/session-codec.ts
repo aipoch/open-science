@@ -1,3 +1,4 @@
+import { isComputeProviderId } from '../compute'
 import { readPersistedFailure } from './turn-outcome'
 import { sanitizeAcpContextUsage } from '../acp'
 import {
@@ -246,9 +247,7 @@ export const sanitizeSession = (
     session.sessionDetailsGeneration
   )
   const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
-    ? session.enabledComputeHosts.filter(
-        (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
-      )
+    ? session.enabledComputeHosts.filter((item): item is string => isComputeProviderId(item))
     : []
   const hasSelectedComputeHosts = Object.prototype.hasOwnProperty.call(
     session,
@@ -256,9 +255,7 @@ export const sanitizeSession = (
   )
   const selectedComputeHostCandidates = hasSelectedComputeHosts
     ? Array.isArray(session.selectedComputeHosts)
-      ? session.selectedComputeHosts.filter(
-          (item): item is string => typeof item === 'string' && item.startsWith('ssh:')
-        )
+      ? session.selectedComputeHosts.filter((item): item is string => isComputeProviderId(item))
       : []
     : enabledComputeHosts
   const enabledComputeHostSet = new Set(enabledComputeHosts)
@@ -335,6 +332,19 @@ export const sanitizeSession = (
     }
   }
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
+  if (
+    typeof session.parentSessionId === 'string' &&
+    /^import-[a-zA-Z0-9-]+$/.test(session.parentSessionId) &&
+    session.parentSessionId !== id
+  )
+    sanitized.parentSessionId = session.parentSessionId
+  if (
+    typeof session.deletedDiscussionSourceId === 'string' &&
+    /^import-[a-zA-Z0-9-]+$/.test(session.deletedDiscussionSourceId) &&
+    !sanitized.parentSessionId &&
+    session.deletedDiscussionSourceId !== id
+  )
+    sanitized.deletedDiscussionSourceId = session.deletedDiscussionSourceId
   if (branchSource) sanitized.branchSource = branchSource
   if (session.packageOrigin !== undefined) {
     const origin = packageOriginSchema.safeParse(session.packageOrigin)

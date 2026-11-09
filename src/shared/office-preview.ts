@@ -1,4 +1,5 @@
 import { isLocale, type Locale } from './locale'
+import type { AcquireManagedPreviewRequest } from './preview-resources'
 
 export const OFFICE_PREVIEW_MAX_FILE_BYTES = 40 * 1024 * 1024
 export const OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES = 1_536 * 1024 * 1024
@@ -45,7 +46,7 @@ export const getOfficePreviewTimeoutMs = (size: number, attempt: number): number
 
 export type OfficePreviewExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
 export type OfficePreviewRequestedExtension = OfficePreviewExtension | 'spreadsheet'
-export type OfficePreviewSource = 'artifact' | 'upload' | 'notebook-input' | 'literature'
+export type OfficePreviewSource = OfficePreviewOpenRequest['source']
 
 type OfficePreviewPresentation = {
   requestId: string
@@ -62,15 +63,28 @@ export type OfficePreviewOpenRequest = OfficePreviewPresentation &
         fileId: string
         versionId?: string
       }
-    | {
-        source: 'notebook-input'
-        path: string
-      }
-    | {
-        source: 'literature'
-        path: string
-      }
+    | ({ path: string } & (
+        { source: 'compute-output' } | { source: 'notebook-input' } | { source: 'literature' }
+      ))
   )
+
+export const getOfficeManagedPreviewRequest = (
+  request: OfficePreviewOpenRequest
+): AcquireManagedPreviewRequest => {
+  if (
+    request.source === 'compute-output' ||
+    request.source === 'notebook-input' ||
+    request.source === 'literature'
+  ) {
+    return { source: request.source, path: request.path }
+  }
+  return {
+    source: request.source,
+    projectId: request.projectId,
+    fileId: request.fileId,
+    ...(request.versionId ? { versionId: request.versionId } : {})
+  }
+}
 
 export type OfficePreviewErrorCode =
   | 'FILE_TOO_LARGE'
@@ -200,7 +214,9 @@ export const isOfficePreviewOpenRequest = (value: unknown): value is OfficePrevi
     OFFICE_PREVIEW_EXTENSIONS.has(request.extension as OfficePreviewRequestedExtension) &&
     Number.isSafeInteger(request.attempt) &&
     (request.attempt as number) >= 0 &&
-    (request.source === 'notebook-input' || request.source === 'literature'
+    (request.source === 'compute-output' ||
+    request.source === 'notebook-input' ||
+    request.source === 'literature'
       ? isNonEmptyString(request.path)
       : (request.source === 'artifact' || request.source === 'upload') &&
         isNonEmptyString(request.projectId) &&

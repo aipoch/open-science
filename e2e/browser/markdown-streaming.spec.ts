@@ -176,9 +176,9 @@ test('uses the current hyperlink after an equal-length source replacement', asyn
   await input.fill('[Paper](https://sources.invalid/new) summary.')
   await expect(link).toHaveAttribute('href', 'https://sources.invalid/new')
   await link.hover()
-  await expect(page.locator('[data-source-preview-hover-url]')).toHaveText(
-    'https://sources.invalid/new'
-  )
+  const previewLink = page.locator('[data-source-preview-hover-url]')
+  await expect(previewLink).toHaveText('sources.invalid')
+  await expect(previewLink).toHaveAttribute('href', 'https://sources.invalid/new')
   expect(requests).toEqual([])
 })
 

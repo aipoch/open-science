@@ -125,6 +125,7 @@ describe('usePreviewFileContent', () => {
   it.each([
     ['artifact', '11112222', undefined],
     ['upload', '11112222', undefined],
+    ['compute-output', '11112222', undefined],
     ['artifact', '11', undefined],
     ['upload', '11', undefined],
     ['artifact', '11112222', 'old'],
@@ -137,11 +138,15 @@ describe('usePreviewFileContent', () => {
       let nextId = 0
       const resources = new Map<string, string>()
       vi.mocked(window.api.previewResources.acquire).mockImplementation(async (request) => {
-        if (request.source !== 'artifact' && request.source !== 'upload') {
+        if (
+          request.source !== 'artifact' &&
+          request.source !== 'upload' &&
+          request.source !== 'compute-output'
+        ) {
           throw new Error('Expected a managed version request.')
         }
         // A capability pins the version resolved at acquisition, until release.
-        const content = versions[request.versionId ?? head]
+        const content = versions[('versionId' in request ? request.versionId : undefined) ?? head]
         const id = String(++nextId)
         const url = `https://preview.test/${id}`
         resources.set(url, content)
@@ -166,10 +171,12 @@ describe('usePreviewFileContent', () => {
       const PaginatedProbe = ({ fileId = 'file-1' }: { fileId?: string }): React.JSX.Element => {
         const state = usePreviewFileContent({
           projectId: 'project-1',
-          managedFileId: fileId,
-          selectedVersionId,
+          ...(source === 'compute-output' ? {} : { managedFileId: fileId, selectedVersionId }),
           source,
-          path: '/managed/file.txt',
+          path:
+            source === 'compute-output'
+              ? 'compute-output:v1:project-1/session-1/hpc/job-1/featured/' + fileId + '.txt'
+              : '/managed/file.txt',
           maxBytes: 4
         })
         return state.status === 'ready' ? (

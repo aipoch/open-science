@@ -1113,6 +1113,7 @@ describe('ProviderAccountsModule', () => {
       cancelLogin: vi.fn()
     }
     xaiOAuth = {
+      quiesce: vi.fn(() => ({ settled: Promise.resolve(), release: vi.fn() })),
       beginLogin: vi.fn(async () => ({
         userCode: 'GROK-1234',
         verificationUri: 'https://auth.x.ai/activate',
@@ -1123,7 +1124,8 @@ describe('ProviderAccountsModule', () => {
       cancelLogin: vi.fn(),
       getAccessToken: vi.fn(async () => 'access-token'),
       getAccessCredential: vi.fn(async () => ({ token: 'access-token' })),
-      logout: vi.fn(async () => undefined)
+      logout: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
     }
     runClaudeSubscriptionProbe = vi.fn(async (): Promise<ValidateProviderResult> => ({
       ok: true,
@@ -1935,7 +1937,31 @@ describe('ProviderAccountsModule', () => {
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
-    expect(xaiOAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(xaiOAuth.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('waits for the xAI credential owner before completing disposal', async () => {
+    let finish!: () => void
+    vi.mocked(xaiOAuth.dispose).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const done = vi.fn()
+    const closing = module.dispose().then(done)
+    await Promise.resolve()
+    expect(done).not.toHaveBeenCalled()
+    finish()
+    await closing
+    expect(done).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the authentication quit lease through the account facade', () => {
+    const lease = { settled: Promise.resolve(), release: vi.fn() }
+    vi.mocked(xaiOAuth.quiesce).mockReturnValue(lease)
+    expect(module.quiesceAuthentication()).toBe(lease)
+    expect(xaiOAuth.quiesce).toHaveBeenCalledOnce()
   })
 
   it('returns bounded failures for missing model catalogs', async () => {
@@ -1964,6 +1990,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('probes a custom gateway over its own route under a foreign framework and persists health only', async () => {
+    await repository.setAgentFramework('claude-code')
     // An incompatible pairing no longer short-circuits the probe. The endpoint is still tested over
     // its own declared route (framework-agnostic), the framework mismatch rides along as a flag,
     // and the outcome persists as endpoint health — never as an 'incompatible' failure that would
@@ -1995,7 +2022,7 @@ describe('ProviderAccountsModule', () => {
       applied: true,
       frameworkIncompatible: true
     })
-    // The default framework (Claude Code) speaks /v1/messages only; the probe must exercise the
+    // The selected framework (Claude Code) speaks /v1/messages only; the probe must exercise the
     // provider's own /v1/chat/completions route, not the framework's. A verified endpoint pairs
     // its success with the specific route mismatch.
     expect(probedUrls).toEqual(['https://lab.example/v1/chat/completions'])
@@ -2009,6 +2036,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('probes an official vendor over its own route under a foreign framework and persists health only', async () => {
+    await repository.setAgentFramework('claude-code')
     // OpenCode Zen speaks only /v1/chat/completions; Claude Code cannot drive it. The vendor's own
     // route is still probed, the pairing rides along as a flag, and the vendor's default model is
     // the persisted target.
@@ -2046,6 +2074,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('keeps the actionable probe failure when an incompatible pairing also fails its probe', async () => {
+    await repository.setAgentFramework('claude-code')
     vi.stubGlobal(
       'fetch',
       vi.fn(

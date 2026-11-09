@@ -58,7 +58,7 @@ const importsOwner = (path: string): boolean => {
 }
 
 describe('Provider transport ownership', () => {
-  it('keeps one deep acquire seam behind the transport owner', () => {
+  it('keeps framework and harness acquisition behind the transport owner', () => {
     const source = readSource(ownerPath)
     expect(source).not.toMatch(/console\.|JSON\.stringify\([^\n]*(?:key|token|credential)/i)
 
@@ -77,7 +77,7 @@ describe('Provider transport ownership', () => {
         ? [member.name.text]
         : []
     })
-    expect(operations).toEqual(['acquire'])
+    expect(operations).toEqual(['acquireHarness', 'acquire'])
 
     const exports = sourceFileFor(ownerPath).statements.filter(isExportDeclaration)
     expect(
@@ -97,7 +97,12 @@ describe('Provider transport ownership', () => {
       productionSources()
         .filter(importsOwner)
         .map((path) => relative(projectRoot, path).replaceAll('\\', '/'))
-    ).toEqual(['src/main/settings/backend-resolver.ts'])
+    ).toEqual([
+      'src/main/settings/backend-resolver.ts',
+      'src/main/settings/harness-model-request.ts',
+      'src/main/settings/harness-session-owner.ts',
+      'src/main/settings/service.ts'
+    ])
 
     const resolver = readSource(resolverPath)
     expect(resolver).not.toMatch(

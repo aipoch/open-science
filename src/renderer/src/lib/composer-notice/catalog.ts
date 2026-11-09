@@ -81,6 +81,15 @@ export const noticeCatalog = {
 
 // Reason-specific copy is intentionally outside this change; unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'session/tool-outcome-unknown': {
+    level: 'warning',
+    titleKey: 'Check the interrupted tool result',
+    descriptionKey:
+      'The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.',
+    primaryAction: 'export-diagnostics',
+    secondaryActions: ['new-session'],
+    feedback: 'none'
+  },
   'configuration/claude-cli': {
     ...noticeCatalog.configuration,
     primaryAction: 'open-agent-settings'

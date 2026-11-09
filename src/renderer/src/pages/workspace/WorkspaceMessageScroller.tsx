@@ -899,17 +899,20 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
-  const [pauseState, setPauseState] = useState<{ scopeId: string | undefined; paused: boolean }>({
-    scopeId: undefined,
-    paused: false
+  const [scrollState, setScrollState] = useState({
+    scopeId: undefined as string | undefined,
+    paused: false,
+    away: false
   })
-  const followingPaused = pauseState.scopeId === currentPresentationScopeId && pauseState.paused
-  const handlePauseChange = useCallback(
-    (paused: boolean): void => {
-      setPauseState((current) =>
-        current.scopeId === currentPresentationScopeId && current.paused === paused
+  const followingPaused = scrollState.scopeId === currentPresentationScopeId && scrollState.paused
+  const handleScrollStateChange = useCallback(
+    (paused: boolean, away: boolean): void => {
+      setScrollState((current) =>
+        current.scopeId === currentPresentationScopeId &&
+        current.paused === paused &&
+        current.away === away
           ? current
-          : { scopeId: currentPresentationScopeId, paused }
+          : { scopeId: currentPresentationScopeId, paused, away }
       )
     },
     [currentPresentationScopeId]
@@ -921,6 +924,10 @@ const WorkspaceMessageScrollerImpl = ({
     messageScrollerViewportRef,
     followingPaused
   )
+  // A newly mounted prompt anchor would pull a reader out of history on send.
+  const skipScrollAnchorOnMount =
+    !transcriptWindow.isFollowingEnd ||
+    (scrollState.scopeId === currentPresentationScopeId && scrollState.away)
   const pendingProcessReveal = useRef<{ scopeId: string | undefined; id: string }>(undefined)
   const revealWindowMessage = transcriptWindow.revealMessage
   const revealTranscriptItem = useCallback(
@@ -1678,7 +1685,7 @@ const WorkspaceMessageScrollerImpl = ({
         <MessageScrollerFollowIntent
           active={scrollIntentActive}
           onChange={onScrollFollowingChange}
-          onPauseChange={handlePauseChange}
+          onScrollStateChange={handleScrollStateChange}
         />
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
           <AnnotationMessageReveal
@@ -1897,6 +1904,7 @@ const WorkspaceMessageScrollerImpl = ({
                       : undefined,
                     projectId: currentProjectId,
                     isPackageSession: Boolean(activeSession?.packageOrigin),
+                    deletedDiscussionSourceId: activeSession?.deletedDiscussionSourceId,
                     onPreviewArtifact,
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
@@ -1942,7 +1950,8 @@ const WorkspaceMessageScrollerImpl = ({
                       if (runIsActive) return response ? 'responding' : 'waiting'
                       return 'failed'
                     })(),
-                    disableScrollAnchor: windowFindOpen
+                    disableScrollAnchor: windowFindOpen,
+                    skipScrollAnchorOnMount
                   }
                   if (item.message.role === 'agent') {
                     const nextConversationItem = conversationItems[itemIndex + 1]
@@ -2277,7 +2286,9 @@ const WorkspaceMessageScrollerImpl = ({
                 <WorkspaceMessageItem
                   message={optimisticMessage}
                   isPackageSession={Boolean(activeSession?.packageOrigin)}
+                  deletedDiscussionSourceId={activeSession?.deletedDiscussionSourceId}
                   disableScrollAnchor={windowFindOpen}
+                  skipScrollAnchorOnMount={skipScrollAnchorOnMount}
                   projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}
                   onPreviewArtifactModal={onPreviewArtifactModal}
@@ -2363,6 +2374,8 @@ const WorkspaceMessageScrollerImpl = ({
           ) : null}
 
           <MessageScrollerButton
+            aria-label={t('Scroll to end')}
+            behavior="instant"
             onClick={() => {
               // The primitive's click handler measures the end immediately after this callback.
               flushSync(() => {
@@ -2372,7 +2385,19 @@ const WorkspaceMessageScrollerImpl = ({
             }}
             size="icon-lg"
             className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
-          />
+          >
+            {optimisticMessage || agentLoadingPhase !== 'hidden' || presentationRevealing ? (
+              <span aria-hidden="true" className="flex items-center gap-0.5">
+                {[0, 1, 2].map((index) => (
+                  <span
+                    key={index}
+                    className="size-1 rounded-full bg-current motion-safe:animate-[scroll-indicator-wave_1.2s_ease-in-out_infinite]"
+                    style={{ animationDelay: `${index * 120}ms` }}
+                  />
+                ))}
+              </span>
+            ) : undefined}
+          </MessageScrollerButton>
           <div
             data-testid="message-completion-live-region"
             aria-live="polite"

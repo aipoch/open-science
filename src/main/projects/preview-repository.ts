@@ -34,12 +34,15 @@ const isExistingPreviewStateError = (error: unknown): boolean =>
   (error instanceof Error && /UNIQUE constraint failed/i.test(error.message))
 
 const toSnapshot = (row: ProjectPreviewState): PreviewStateSnapshot => {
-  const state = normalizePersistedPreviewState({
-    version: PREVIEW_STATE_VERSION,
-    panelState: row.panelState,
-    activeItemId: row.activeItemId ?? undefined,
-    items: parseItems(row.items)
-  })
+  const state = normalizePersistedPreviewState(
+    {
+      version: PREVIEW_STATE_VERSION,
+      panelState: row.panelState,
+      activeItemId: row.activeItemId ?? undefined,
+      items: parseItems(row.items)
+    },
+    row.projectId
+  )
 
   return {
     revision: row.updatedAt.getTime(),
@@ -74,7 +77,7 @@ class PreviewStateRepository {
       throw new Error('Preview state revision must be a non-negative integer.')
     }
 
-    const normalized = normalizePersistedPreviewState(state)
+    const normalized = normalizePersistedPreviewState(state, projectId)
     const data = {
       panelState: normalized.panelState,
       activeItemId: normalized.activeItemId ?? null,
@@ -82,7 +85,8 @@ class PreviewStateRepository {
       items: JSON.stringify([
         ...normalized.items.map((item) => ({
           ...item,
-          path: encodeDataPath(item.path) ?? item.path
+          path:
+            item.source === 'compute-output' ? item.path : (encodeDataPath(item.path) ?? item.path)
         })),
         ...(normalized.subagents ? [normalized.subagents] : [])
       ])

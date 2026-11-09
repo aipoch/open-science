@@ -401,3 +401,99 @@ it.each(['open side', 'missing opening', 'foreign text', 'missing source', 'ambi
     expect(recoverOwnedTableCrop(table, evidence, [400, 400], items)).toEqual(table.cropRect)
   }
 )
+
+const splitInitialLineFrame = (): ReturnType<typeof JSON.parse> => {
+  const f = distantFrame()
+  f.table.cells = f.table.cells.filter((c: { row: number }) => c.row > 0)
+  f.items = f.items.slice(3)
+  const line = [
+    ['Known', 100, 130],
+    ['↔', 134, 144],
+    ['unknown', 148, 192]
+  ].map(([text, left, right], n) => ({
+    text,
+    rect: [left, 108, right, 118],
+    height: 10,
+    baseline: 118,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: 30 + n * 2, text }
+  }))
+  f.items.push(...line)
+  f.fonts = structuredClone(f.items)
+  f.table.unassigned = line.map((i) => i.text)
+  f.table.issues = ['unassigned-source-text', 'native-table-structure-ambiguous']
+  f.table.reviewCandidate = false
+  return { ...f, line }
+}
+it('completes only the outer crop for a whole native initial line split into multiple items', () => {
+  const f = splitInitialLineFrame(),
+    before = structuredClone(f)
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual([39.5, 96, 370.5, 174])
+  expect(f).toEqual(before)
+})
+it('retains the singleton initial-line ambiguity guard when an owned cell repeats its literal', () => {
+  const f = splitInitialLineFrame()
+  f.items.splice(-2)
+  const title = f.items.at(-1)
+  title.text = f.items[0].text
+  title.sourceItem.text = title.text
+  f.table.unassigned = [title.text]
+  f.fonts = structuredClone(f.items)
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual(f.table.cropRect)
+})
+it.each([
+  'missing-line-item',
+  'wrong-source',
+  'partial-source',
+  'duplicate-font',
+  'different-baseline',
+  'overlapping-items',
+  'reversed-source-order',
+  'foreign-leading-item',
+  'foreign-strip',
+  'outside-current-crop',
+  'unclosed-side',
+  'missing-side-paint'
+])('keeps a partial native initial line from expanding the crop: %s', (kind) => {
+  const f = splitInitialLineFrame(),
+    last = f.items.at(-1),
+    native = f.fonts.at(-1)
+  if (kind === 'missing-line-item') f.table.unassigned.pop()
+  if (kind === 'wrong-source') native.sourceItem.text = 'Other'
+  if (kind === 'partial-source') last.sourceItem.start = 0
+  if (kind === 'duplicate-font') f.fonts.push(structuredClone(native))
+  if (kind === 'different-baseline') {
+    last.baseline += 1
+    native.baseline += 1
+  }
+  if (kind === 'overlapping-items') {
+    last.rect[0] = 140
+    native.rect[0] = 140
+  }
+  if (kind === 'reversed-source-order') {
+    last.sourceItem.index = 29
+    native.sourceItem.index = 29
+  }
+  if (kind === 'foreign-leading-item')
+    f.fonts.push({
+      ...native,
+      text: 'Foreign',
+      sourceItem: { pageNumber: 1, index: 35, text: 'Foreign' },
+      rect: [200, 108, 230, 118]
+    })
+  if (kind === 'foreign-strip') f.items.push({ text: 'Adjacent', rect: [300, 125, 320, 135] })
+  if (kind === 'outside-current-crop') {
+    last.rect = [300, 108, 340, 118]
+    native.rect = [300, 108, 340, 118]
+  }
+  if (kind === 'unclosed-side')
+    f.rules = f.rules.filter((r: number[]) => r.join(',') !== '370,120.4,370,139.6')
+  if (kind === 'missing-side-paint') f.paint.delete('370,120.4,370,139.6')
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual(f.table.cropRect)
+})

@@ -4,9 +4,11 @@
 // a complete balanced foreign paint scope outside their preserved crop.
 import { MAX_SCALE, MAX_EDGE } from './literature-pdf-crop.mjs'
 import assert from 'node:assert/strict'
+import { isDeepStrictEqual } from 'node:util'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
 import { Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { retainNativeRecoveryInputs } from './literature-pdf-native-figure-recovery-profile.mjs'
 
 // Inspect every descriptor chain before invoking any PDF.js getter. Unknown
 // accessors must not run and mutate an earlier font after its bytes were checked.
@@ -277,6 +279,80 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b),
   valid = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
 
+// getOperatorList uses PDF.js's NullOptimizer, whereas display rendering folds
+// q / translation / path / Q. Consume every original occurrence in order and
+// retain its paint index. No bbox, string or reordered-paint matching is allowed.
+function cropOperatorOccurrences(actual, rendered) {
+  assert(
+    actual &&
+      Array.isArray(actual.fnArray) &&
+      Array.isArray(actual.argsArray) &&
+      actual.fnArray.length === actual.argsArray.length &&
+      actual.fnArray.length <= 100000 &&
+      rendered.fnArray.length === rendered.argsArray.length
+  )
+  const occurrences = []
+  let i = 0
+  for (const op of rendered.fnArray) {
+    if (actual.fnArray[i] === op) {
+      occurrences.push({ index: i, args: actual.argsArray[i++] })
+      continue
+    }
+    const f = actual.fnArray,
+      a = actual.argsArray,
+      m = a[i + 1],
+      p = a[i + 2]
+    assert(
+      op === OPS.constructPath &&
+        f[i] === OPS.save &&
+        a[i] === null &&
+        f[i + 1] === OPS.transform &&
+        f[i + 2] === OPS.constructPath &&
+        f[i + 3] === OPS.restore &&
+        a[i + 3] === null &&
+        Array.isArray(m) &&
+        m.length === 6 &&
+        m.every(Number.isFinite) &&
+        m[0] === 1 &&
+        m[1] === 0 &&
+        m[2] === 0 &&
+        m[3] === 1 &&
+        Array.isArray(p) &&
+        p.length === 3 &&
+        [OPS.fill, OPS.stroke].includes(p[0]) &&
+        Array.isArray(p[1]) &&
+        p[1].length === 1 &&
+        p[1][0] instanceof Float32Array &&
+        p[1][0].length > 0 &&
+        p[1][0].length <= 100000 &&
+        p[1][0].every(Number.isFinite) &&
+        p[2]?.length === 4 &&
+        Array.from(p[2]).every(Number.isFinite)
+    )
+    const args = structuredClone(p),
+      path = args[1][0]
+    for (let k = 0; k < path.length;) {
+      const command = path[k++]
+      if (command === 0 || command === 1) {
+        assert(k + 2 <= path.length)
+        Util.applyTransform(path, m, k)
+        k += 2
+      } else if (command === 2) {
+        assert(k + 6 <= path.length)
+        Util.applyTransformToBezier(path, m, k)
+        k += 6
+      } else assert.equal(command, 4)
+    }
+    Util.scaleMinMax(m, args[2])
+    assert(path.every(Number.isFinite) && Array.from(args[2]).every(Number.isFinite))
+    occurrences.push({ index: i + 2, args })
+    i += 4
+  }
+  assert.equal(i, actual.fnArray.length)
+  assert.equal(new Set(occurrences.map((p) => p.index)).size, occurrences.length)
+  return occurrences
+}
+
 // The only foreign color operator accepted is a single filled mask inside this
 // exact local q / clip / color / fill / Q sequence. It cannot paint text or leak state.
 function closedForeignShading(n, table, v, i) {
@@ -412,21 +488,14 @@ export function captureNativeTableCropWitness(
       }
     }
 
-    let operatorBridge
+    let operatorBridge, operatorBridgeCurrent
     if (purpose === 'closed-ruled-body' || n.glyphBounds.some((f) => !forward.has(f.fontName))) {
       const actual = context.operators
-      assert(
-        actual &&
-          Array.isArray(actual.fnArray) &&
-          Array.isArray(actual.argsArray) &&
-          actual.fnArray.length === n.operators.fnArray.length &&
-          actual.argsArray.length === n.operators.argsArray.length
-      )
-      assert(actual.fnArray.every((op, i) => op === n.operators.fnArray[i]))
+      const occurrences = cropOperatorOccurrences(actual, n.operators)
       for (const [i, op] of n.operators.fnArray.entries())
         if (op === OPS.setFont) {
           const a = n.operators.argsArray[i],
-            b = actual.argsArray[i]
+            b = occurrences[i].args
           assert(
             Array.isArray(a) &&
               a.length === 2 &&
@@ -449,10 +518,12 @@ export function captureNativeTableCropWitness(
             : op === OPS.dependency
               ? a.map((id) => forward.get(id) ?? id)
               : a
-        assert(same(expected, actual.argsArray[i]))
+        assert(isDeepStrictEqual(expected, occurrences[i].args))
       }
       assert(n.glyphBounds.every((f) => forward.has(f.fontName)))
       operatorBridge = actual
+      operatorBridgeCurrent = retainNativeRecoveryInputs([actual, n.operators])
+      assert(operatorBridgeCurrent)
     }
     if (purpose === 'closed-ruled-body') {
       assert(operatorBridge)
@@ -647,6 +718,10 @@ export function captureNativeTableCropWitness(
       n.operators.fnArray.length === n.operators.argsArray.length &&
         n.operators.fnArray.length <= 100000 &&
         n.operators.fnArray.every((op, i) => {
+          // This pixel-only purpose inventories the same render's image paints.
+          // Its caller must exclude every image from the expanded table crop;
+          // it neither aliases API image IDs nor claims image Source ownership.
+          if (purpose === 'foreign-raster-footer' && op === OPS.paintImageXObject) return true
           if (allowed.has(op) || (purpose === 'closed-ruled-body' && op === OPS.clip)) return true
           if (op !== OPS.setFillColorN) return false
           const scope = closedForeignShading(n, table, v, i)
@@ -670,10 +745,16 @@ export function captureNativeTableCropWitness(
       (i) => ![OPS.clip, OPS.eoClip, OPS.endPath].includes(n.operators.argsArray[i]?.[0])
     )
     assert(
-      e.images.length === 0 &&
-        paints.length === n.graphicsBounds.length &&
-        new Set(n.graphicsBounds.map((g) => g.operationIndex)).size === paints.length &&
-        n.graphicsBounds.every((g) => g.kind === 'path' && paints.includes(g.operationIndex))
+      (purpose === 'foreign-raster-footer' || e.images.length === 0) &&
+        paints.length + e.images.length === n.graphicsBounds.length &&
+        new Set(n.graphicsBounds.map((g) => g.operationIndex)).size === n.graphicsBounds.length &&
+        n.graphicsBounds.every((g) =>
+          g.kind === 'path'
+            ? paints.includes(g.operationIndex)
+            : purpose === 'foreign-raster-footer' &&
+              g.kind === 'image' &&
+              e.images.filter((image) => image.operationIndex === g.operationIndex).length === 1
+        )
     )
 
     const fontCurrent = () => {
@@ -773,12 +854,14 @@ export function captureNativeTableCropWitness(
         glyphs,
         paths: [...e.paths],
         texts: [...e.texts],
+        images: e.images,
         foreignShadingScopes
       })
     const current = () => {
       try {
         return (
           refs().every((r, i) => r === originalRefs[i]) &&
+          (!operatorBridgeCurrent || operatorBridgeCurrent()) &&
           value() === originalValue &&
           fontCurrent() &&
           JSON.stringify({
@@ -786,6 +869,7 @@ export function captureNativeTableCropWitness(
             glyphs,
             paths: [...e.paths],
             texts: [...e.texts],
+            images: e.images,
             foreignShadingScopes
           }) === data
         )

@@ -4,6 +4,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  screen,
   shell,
   webFrameMain,
   WebContentsView,
@@ -72,6 +73,45 @@ const loadRenderer = (window: BrowserWindow): Promise<void> => {
   }
 
   return window.loadFile(rendererEntry)
+}
+
+type MainWindowSize = {
+  width: number
+  height: number
+  minWidth: number
+  minHeight: number
+}
+
+export const constrainMainWindowSize = (
+  preferred: MainWindowSize,
+  workArea: Pick<MainWindowSize, 'width' | 'height'>
+): MainWindowSize => {
+  const clamp = (value: number, maximum: number): number =>
+    Number.isFinite(maximum) && maximum > 0 ? Math.min(value, maximum) : value
+  const width = clamp(preferred.width, workArea.width)
+  const height = clamp(preferred.height, workArea.height)
+
+  return {
+    width,
+    height,
+    minWidth: Math.min(preferred.minWidth, width),
+    minHeight: Math.min(preferred.minHeight, height)
+  }
+}
+
+const resolveMainWindowSize = (): MainWindowSize => {
+  const preferred: MainWindowSize = {
+    width: 1280,
+    height: 960,
+    minWidth: 1100,
+    minHeight: 720
+  }
+  if (process.platform !== 'win32') return preferred
+
+  // BrowserWindow dimensions are device-independent pixels. Use the display work area (which is
+  // already reported in the same units) so a highly scaled Windows display never lets the initial
+  // window extend below the taskbar.
+  return constrainMainWindowSize(preferred, screen.getPrimaryDisplay().workAreaSize)
 }
 
 const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindow => {
@@ -189,6 +229,54 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   return window
 }
 
+let connectMobileWindow: BrowserWindow | undefined
+let quitting = false
+let quitListenerInstalled = false
+
+const openConnectMobileWindow = (): void => {
+  if (connectMobileWindow && !connectMobileWindow.isDestroyed()) {
+    connectMobileWindow.show()
+    connectMobileWindow.focus()
+    return
+  }
+  if (!quitListenerInstalled) {
+    quitListenerInstalled = true
+    app.once('before-quit', () => {
+      quitting = true
+    })
+  }
+  const window = createAppWindow({
+    width: 440,
+    height: 640,
+    minWidth: 440,
+    minHeight: 640,
+    maxWidth: 440,
+    maxHeight: 640,
+    resizable: false,
+    title: 'Connect mobile device'
+  })
+  connectMobileWindow = window
+  window.on('close', (event) => {
+    if (!quitting) {
+      event.preventDefault()
+      window.hide()
+    }
+  })
+  window.on('closed', () => {
+    if (connectMobileWindow === window) connectMobileWindow = undefined
+  })
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const url = new URL(process.env['ELECTRON_RENDERER_URL'])
+    url.searchParams.set('connect-mobile', '1')
+    void window.loadURL(url.toString())
+  } else {
+    void window.loadFile(rendererEntry, { query: { 'connect-mobile': '1' } })
+  }
+}
+
+const isConnectMobileWindow = (window: BrowserWindow): boolean =>
+  connectMobileWindow === window && !window.isDestroyed()
+
 // How the main window resolves a close: classifyClose decides synchronously at close time
 // ('close' = let it close, 'hide' = minimize to tray, 'quit' = retain the renderer while app quit
 // flushes it, 'confirm' = ask via resolveCloseAction).
@@ -214,14 +302,15 @@ const createMainWindow = (
   opts?: MainWindowCloseOptions,
   translate: NativeTranslator = englishNativeTranslator
 ): BrowserWindow => {
+  const size = resolveMainWindowSize()
   const window = createAppWindow({
-    width: 1280,
+    width: size.width,
     // The first-run environment summary needs enough vertical space to keep its Continue action
-    // visible at the default size. Electron still clamps this to the display work area on smaller
-    // screens, where the onboarding surface provides its own vertical scroll fallback.
-    height: 960,
-    minWidth: 1100,
-    minHeight: 720,
+    // visible at the default size. Smaller Windows work areas are explicitly clamped so the native
+    // window remains above the taskbar; the onboarding surface provides its own vertical scroll fallback.
+    height: size.height,
+    minWidth: size.minWidth,
+    minHeight: size.minHeight,
     title: 'Open-Science',
     ...(process.platform === 'win32'
       ? { titleBarStyle: 'hidden', titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT } }
@@ -631,5 +720,11 @@ const createMainWindow = (
   return window
 }
 
-export { configureMainWindow, createMainWindow, isMainWindow }
+export {
+  configureMainWindow,
+  createMainWindow,
+  isMainWindow,
+  isConnectMobileWindow,
+  openConnectMobileWindow
+}
 export type { MainWindowCloseOptions }

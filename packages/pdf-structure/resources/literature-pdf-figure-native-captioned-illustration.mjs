@@ -6,6 +6,14 @@ import { area, intersection, union, lineRect } from './literature-pdf-page-geome
 import { nativeTableDividerGraphic } from './literature-pdf-native-owned-figure-labels.mjs'
 import { captionKind, groupPageLines } from './literature-pdf-caption-group.mjs'
 import {
+  getInitialPdfCropRaster,
+  getPdfCropRasterProtectionFromPng
+} from './literature-pdf-crop.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+import { retainNativeRecoveryInputs } from './literature-pdf-native-figure-recovery-profile.mjs'
+import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
+import { nativeClosedProgramInkPacket } from './literature-pdf-figure-native-plot-labels.mjs'
+import {
   nativeTopParagraphTail,
   completeNativeNodeGlyphProgram
 } from './literature-pdf-figure-native-plot-bands.mjs'
@@ -30,6 +38,8 @@ const captionFont = (page, caption) =>
 const blocked = (rect, caption, captions, tables) =>
   tables.some((r) => intersection(r, rect) > 0) ||
   captions.some((c) => c !== caption && c.page === caption.page && intersection(c.rect, rect) > 0)
+
+const keyedPhotoTimelineProofs = new WeakMap()
 
 // Three independently painted source rasters can have two native title rows.
 // Complete raw text/image operations, unique source-font rows, and one caption
@@ -2223,12 +2233,29 @@ export function nativeCaptionedRepeatedRasterRows(page, caption, captions, table
       rect[1] >= top &&
       rect[3] <= caption.rect[1] &&
       rect[2] - rect[0] >= font * 3 &&
-      rect[3] - rect[1] >= font * 3 &&
-      (caption.rect[2] - caption.rect[0] < page.width * 0.45 ||
-        (rect[0] >= caption.rect[0] - font * 2 && rect[2] <= caption.rect[2] + font * 2))
+      rect[3] - rect[1] >= font * 3
   )
   const rows = rasterRows(images, font)
   if (rows.length < 3 || rows.some((row) => row.length < 4 || row.length > 12)) return
+  // A centered caption can be narrower than its plate. Do not discard outer
+  // images before proving the rows: that can certify a complete-looking subset.
+  // Each newly admitted outer lane must repeat in every row; an unrelated image
+  // in that band must reject the candidate, not disappear from its evidence.
+  if (
+    caption.rect[2] - caption.rect[0] >= page.width * 0.45 &&
+    images.some(
+      (rect) =>
+        (rect[0] < caption.rect[0] - font * 2 || rect[2] > caption.rect[2] + font * 2) &&
+        rows.some(
+          (row) =>
+            !row.some(
+              (other) =>
+                Math.abs(other[0] - rect[0]) <= font && Math.abs(other[2] - rect[2]) <= font
+            )
+        )
+    )
+  )
+    return
   const bounds = union(images)
   if (
     caption.rect[1] - bounds[3] > font * 4 ||
@@ -2309,6 +2336,195 @@ export function nativeCaptionedRepeatedRasterRows(page, caption, captions, table
   return { caption, rect, graphicsCount: images.length, reason: 'native-repeated-raster-rows' }
 }
 
+// A thin horizontal color raster below a repeated plate owns its ordered
+// endpoint/center ticks and one centered axis title. Use actual operator and
+// complete glyph bounds: the coarse rendered image envelope is not its extent.
+export function nativeRepeatedRasterPaletteTail(page, figure, captions, tables, tokens, context) {
+  try {
+    const caption = figure?.caption,
+      prior = figure?.rect
+    const plate = caption && nativeCaptionedRepeatedRasterRows(page, caption, captions, tables)
+    if (!plate || !prior || !contains(prior, plate.rect) || !context) return
+    const em = captionFont(page, caption)
+    const seed = tokens.find((t) => t.sourceItem && intersection(t.rect, caption.rect) > 0)
+    const packet = seed && nativeClosedProgramInkPacket(page, tokens, context, [seed.sourceItem])
+    if (
+      !packet ||
+      !(em > 0) ||
+      new Set(page.graphicsBounds.map((g) => g.operationIndex)).size !== page.graphicsBounds.length
+    )
+      return
+    const palettes = packet.evidence.images.filter(
+      ({ rect }) =>
+        rect[0] >= prior[0] &&
+        rect[2] <= prior[2] &&
+        rect[1] >= prior[3] - em &&
+        rect[3] <= prior[3] + em &&
+        rect[2] - rect[0] >= em * 4 &&
+        rect[3] - rect[1] > 0 &&
+        rect[3] - rect[1] <= em * 0.75 &&
+        prior[3] - rect[3] <= em * 2
+    )
+    if (palettes.length !== 1) return
+    const palette = palettes[0].rect
+    const ticks = packet.records
+      .filter(
+        (r) =>
+          r.rect[1] >= palette[3] &&
+          r.rect[1] - palette[3] <= em &&
+          r.rect[0] >= palette[0] - em &&
+          r.rect[2] <= palette[2] + em &&
+          /^[−+-]?\d+(?:\.\d+)?$/u.test(r.r.str.trim())
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      ticks.length !== 3 ||
+      ticks.some(
+        (r, n) =>
+          !r.advanceComplete ||
+          !r.ink ||
+          r.rect[3] - r.rect[1] > em ||
+          Math.abs(r.rect[1] - ticks[0].rect[1]) > em * 0.15 ||
+          Math.abs(
+            (r.rect[0] + r.rect[2]) / 2 - (palette[0] + (n * (palette[2] - palette[0])) / 2)
+          ) >
+            em * 0.6 ||
+          (n > 0 &&
+            Number(r.r.str.replace('−', '-')) <= Number(ticks[n - 1].r.str.replace('−', '-')))
+      )
+    )
+      return
+    const tickBottom = Math.max(...ticks.map((r) => Math.max(r.rect[3], r.ink[3])))
+    const titles = packet.records.filter(
+      (r) =>
+        r.rect[1] >= ticks[0].rect[3] &&
+        r.rect[1] - tickBottom <= em &&
+        r.rect[0] >= palette[0] &&
+        r.rect[2] <= palette[2] &&
+        /\p{L}/u.test(r.r.str) &&
+        r.r.str.trim().length <= 60 &&
+        r.rect[3] - r.rect[1] <= em &&
+        Math.abs((r.rect[0] + r.rect[2] - palette[0] - palette[2]) / 2) <= em
+    )
+    if (titles.length !== 1 || !titles[0].advanceComplete || !titles[0].ink) return
+    const owned = [...ticks, titles[0]]
+    const claims = owned.map((r) =>
+      tokens.find((t) => t.sourceItem?.index === r.index && t.text === r.r.str)
+    )
+    if (claims.some((t) => !t) || !proveNativeUniqueWholeFonts(claims, tokens)) return
+    const nativePaint = [],
+      paintOps = new Set([palettes[0].operationIndex])
+    const plateImages = packet.evidence.images.filter(
+      (p) =>
+        contains(prior, p.rect) &&
+        p.rect[2] - p.rect[0] >= em * 3 &&
+        p.rect[3] - p.rect[1] >= em * 3
+    )
+    if (plateImages.length < 12) return
+    for (const [i, state] of packet.evidence.paths) {
+      const args = packet.o.argsArray[i],
+        program = args?.[1]?.[0]
+      const paint = nativeFigurePathPaint(packet, i, state)
+      if (!paint || !program || !state.clip || !contains(state.clip, paint.rect)) continue
+      const core = packet.box(
+        Array.from(args[2]),
+        Util.transform(packet.v.transform, state.transform)
+      )
+      const points = [],
+        commands = []
+      for (let n = 0; n < program.length;) {
+        const command = program[n++]
+        commands.push(command)
+        if (command === 0 || command === 1) {
+          const point = [program[n++], program[n++]]
+          Util.applyTransform(point, Util.transform(packet.v.transform, state.transform))
+          points.push(point)
+        } else if (command !== 4) {
+          commands.push(-1)
+          break
+        }
+      }
+      const simple = commands.every((c) => c === 0 || c === 1 || c === 4) && commands[0] === 0
+      const rectangle =
+        simple &&
+        commands.at(-1) === 4 &&
+        points.length >= 4 &&
+        [
+          [core[0], core[1]],
+          [core[2], core[1]],
+          [core[2], core[3]],
+          [core[0], core[3]]
+        ].every((c) =>
+          points.some((p) => Math.abs(p[0] - c[0]) < 0.001 && Math.abs(p[1] - c[1]) < 0.001)
+        ) &&
+        points.every(
+          ([x, y]) =>
+            Math.abs(x - core[0]) < 0.001 ||
+            Math.abs(x - core[2]) < 0.001 ||
+            Math.abs(y - core[1]) < 0.001 ||
+            Math.abs(y - core[3]) < 0.001
+        ) &&
+        points.every((p, n) => {
+          const q = points[(n + 1) % points.length]
+          return Math.abs(p[0] - q[0]) < 0.001 || Math.abs(p[1] - q[1]) < 0.001
+        })
+      const paletteFrame = rectangle && core.every((v, n) => Math.abs(v - palette[n]) < 0.001)
+      const tick =
+        commands.join(',') === '0,1' &&
+        Math.abs(core[2] - core[0]) < 0.001 &&
+        Math.abs(core[1] - palette[3]) < 0.001 &&
+        core[3] <= ticks[0].rect[1] + em * 0.25 &&
+        ticks.some((t) => Math.abs((t.rect[0] + t.rect[2]) / 2 - core[0]) < em * 0.6)
+      // An earlier simple fill enclosing every native panel is the plate's
+      // underlay. Keep its complete physical bound, never a clipped fragment.
+      const underlay =
+        rectangle &&
+        args[0] === OPS.fill &&
+        plateImages.every((p) => i < p.operationIndex && contains(core, p.rect)) &&
+        intersection(core, prior) / area(prior) > 0.95 &&
+        core[3] < caption.rect[1] &&
+        core[2] - core[0] <= prior[2] - prior[0] + em * 2 &&
+        core[3] - core[1] <= prior[3] - prior[1] + em * 3
+      if (paletteFrame || tick || underlay) {
+        paintOps.add(i)
+        nativePaint.push(paint.rect)
+      }
+    }
+    const rect = union([prior, palette, ...nativePaint, ...owned.flatMap((r) => [r.rect, r.ink])])
+    if (rect[3] >= caption.rect[1] || blocked(rect, caption, captions, tables)) return
+    const newlyExposed = (r) => intersection(r, rect) > intersection(r, prior)
+    if (packet.records.some((r) => !owned.includes(r) && newlyExposed(r.ink ?? r.rect))) return
+    // Canonical lines cannot disappear merely because their native token was
+    // omitted from an input. Every newly exposed line must match owned records.
+    if (
+      (page.lines ?? []).some(
+        (l) =>
+          l.text?.trim() &&
+          newlyExposed(lineRect(l)) &&
+          owned
+            .filter((r) => intersection(r.rect, lineRect(l)) > 0)
+            .sort((a, b) => a.rect[0] - b.rect[0])
+            .map((r) => r.r.str)
+            .join('')
+            .replace(/\s/gu, '') !== l.text.replace(/\s/gu, '')
+      )
+    )
+      return
+    if (
+      (page.graphicsBounds ?? []).some((g) => {
+        const r = (g.paintedNormalizedRect ?? g.normalizedRect).map(
+          (v, n) => v * (n % 2 ? page.height : page.width)
+        )
+        return newlyExposed(r) && !paintOps.has(g.operationIndex)
+      })
+    )
+      return
+    return { rect }
+  } catch {
+    return
+  }
+}
+
 // Video examples often place a frame strip over several boxed answers. The
 // strip and repeated frames together prove a bounded visual plate; small logos
 // or unframed prose alone cannot establish this ownership.
@@ -2387,7 +2603,16 @@ export function nativeCaptionedRasterAnswerPlate(page, caption, captions, tables
 // A numbered task timeline can mix a raster strip with typeset examples and
 // a lower summary. Require both an ordered list and the same small raster icon
 // repeated alongside its entries; an ordinary list near a photo is insufficient.
-export function nativeCaptionedRasterTaskTimeline(page, figure, captions, tables) {
+export function nativeCaptionedRasterTaskTimeline(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens = [],
+  context
+) {
+  const keyed = nativeKeyedPhotoTimeline(page, figure, captions, tables, tokens, context)
+  if (keyed) return keyed
   const caption = figure?.caption
   if (!caption || !figure.rect || !/\btasks?\b/i.test(caption.lines.join(' '))) return
   const font = captionFont(page, caption)
@@ -2456,6 +2681,281 @@ export function nativeCaptionedRasterTaskTimeline(page, figure, captions, tables
     })
   }
   if (candidates.length === 1) return candidates[0]
+}
+
+// A photo strip and a timeline can share category keys rather than numbered
+// tasks. Prove the complete key partition and its native row paint; adjacency
+// or a larger image-count allowance alone cannot join the two components.
+function nativeKeyedPhotoTimeline(page, figure, captions, tables, tokens, context) {
+  const caption = figure?.caption
+  if (
+    !caption ||
+    !figure.rect ||
+    page.invalidGraphicsBounds !== 0 ||
+    !/\bTop:/u.test(caption.lines.join(' ')) ||
+    !/\bBottom:/u.test(caption.lines.join(' '))
+  )
+    return
+  const font = captionFont(page, caption),
+    top = captionLaneTop(caption, captions)
+  if (!(font > 0) || !Number.isFinite(font)) return
+  const paints = page.graphicsBounds
+    .map((g) => ({
+      g,
+      rect: (g.paintedNormalizedRect ?? g.normalizedRect).map(
+        (v, n) => v * (n % 2 ? page.height : page.width)
+      )
+    }))
+    .filter(({ rect }) => rect[1] >= top && rect[3] <= caption.rect[1])
+  if (
+    paints.some(({ g }) => !Number.isSafeInteger(g.operationIndex) || g.operationIndex < 0) ||
+    new Set(paints.map(({ g }) => g.operationIndex)).size !== paints.length
+  )
+    return
+  const images = paints.filter(({ g }) => g.kind === 'image').sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    images.length < 4 ||
+    images.length > 10 ||
+    images.some(
+      ({ rect }, n) =>
+        !rect.every(Number.isFinite) ||
+        rect[2] - rect[0] < font * 3 ||
+        rect[3] - rect[1] < font * 2 ||
+        Math.abs(rect[1] - images[0].rect[1]) > font ||
+        Math.abs(rect[3] - images[0].rect[3]) > font ||
+        (n && (rect[0] - images[n - 1].rect[2] < -font || rect[0] - images[n - 1].rect[2] > font))
+    )
+  )
+    return
+  const imageBounds = union(images.map((i) => i.rect))
+  const keys = images.map(({ rect }) =>
+    tokens.filter(
+      (t) =>
+        /^[A-Z0-9-]+$/u.test(t.text ?? '') &&
+        t.horizontal &&
+        t.rect?.every(Number.isFinite) &&
+        t.rect[0] >= rect[0] &&
+        t.rect[2] <= rect[2] &&
+        t.rect[1] >= rect[3] - font &&
+        t.rect[3] <= rect[3] + font * 2 &&
+        Math.abs((t.rect[0] + t.rect[2] - rect[0] - rect[2]) / 2) <= font * 2
+    )
+  )
+  if (keys.some((group) => !group.length)) return
+  for (const group of keys) {
+    group.sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      group.some(
+        (t, n) =>
+          Math.abs(t.baseline - group[0].baseline) > font * 0.1 ||
+          (n && (t.rect[0] < group[n - 1].rect[2] || t.rect[0] - group[n - 1].rect[2] > font * 0.6))
+      )
+    )
+      return
+  }
+  const labels = keys.flat(),
+    names = new Set(keys.map((group) => group.map((t) => t.text).join(''))),
+    groups = []
+  if (
+    names.size !== images.length ||
+    labels.some((t) => Math.abs(t.baseline - labels[0].baseline) > font * 0.1)
+  )
+    return
+  const lower = tokens.filter(
+    (t) =>
+      t.text?.trim() &&
+      t.rect?.every(Number.isFinite) &&
+      t.rect[1] > Math.max(...labels.map((k) => k.rect[3])) &&
+      t.rect[3] < caption.rect[1] &&
+      t.rect[0] >= imageBounds[0] &&
+      t.rect[2] <= imageBounds[2]
+  )
+  for (const t of lower
+    .filter((t) => /^[A-Z, -]+$/u.test(t.text))
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = groups.find((g) => Math.abs(g[0].baseline - t.baseline) <= font * 0.1)
+    if (group) group.push(t)
+    else groups.push([t])
+  }
+  if (groups.length < 2 || groups.length > images.length) return
+  const covered = [],
+    rows = []
+  for (const group of groups) {
+    group.sort((a, b) => a.rect[0] - b.rect[0])
+    const namesInRow = group
+      .map((t) => t.text)
+      .join('')
+      .replace(/\s/gu, '')
+      .split(',')
+    if (
+      namesInRow.some((name) => !names.has(name)) &&
+      group.every((t) => contains(figure.rect, t.nativeLabelRect ?? t.rect))
+    )
+      continue
+    if (
+      namesInRow.some((name) => !names.has(name)) ||
+      group.some(
+        (t, n) =>
+          n && (t.rect[0] < group[n - 1].rect[2] || t.rect[0] - group[n - 1].rect[2] > font * 0.6)
+      )
+    )
+      return
+    covered.push(...namesInRow)
+    const keyRect = union(group.map((t) => t.rect)),
+      baseline = group[0].baseline
+    const rowText = lower.filter((t) => Math.abs(t.baseline - baseline) <= font * 0.25)
+    if (
+      !rowText.some((t) => /^\d+\s+\p{L}+$/u.test(t.text)) ||
+      rowText.some((t) => t.rect[0] < keyRect[0])
+    )
+      return
+    const bars = paints.filter(
+      ({ g, rect }) =>
+        g.kind === 'path' &&
+        rect[2] - rect[0] >= font * 3 &&
+        rect[3] - rect[1] <= font * 2.5 &&
+        rect[0] >= keyRect[2] &&
+        rect[0] - keyRect[2] <= font * 2 &&
+        rect[1] <= baseline &&
+        rect[3] >= keyRect[1]
+    )
+    if (!bars.length) return
+    const bar = bars.sort((a, b) => b.rect[2] - b.rect[0] - (a.rect[2] - a.rect[0]))[0].rect
+    if (rows.length && Math.abs(bar[0] - rows[0].bar[0]) > font * 0.2) return
+    rows.push({ keyRect, bar, text: rowText })
+  }
+  if (rows.length < 2) return
+  if (covered.length !== names.size || new Set(covered).size !== names.size) return
+  const selected = [...labels, ...rows.flatMap((r) => r.text)]
+  if (
+    !proveNativeUniqueWholeFonts(selected, tokens) ||
+    selected.some(
+      (t) =>
+        t.sourceItem.pageNumber !== page.pageNumber ||
+        !Array.isArray(t.nativeLabelRect) ||
+        t.nativeLabelRect.length !== 4 ||
+        !t.nativeLabelRect.every(Number.isFinite) ||
+        t.nativeLabelRect[2] <= t.nativeLabelRect[0] ||
+        t.nativeLabelRect[3] <= t.nativeLabelRect[1] ||
+        t.nativeLabelRect.some((v, n) => Math.abs(v - t.rect[n]) > t.height)
+    )
+  )
+    return
+  const rowPaint = paints.filter(
+    ({ g, rect }) => g.kind === 'path' && rows.some((row) => contains(row.bar, rect, font))
+  )
+  const rect = union([
+    figure.rect,
+    imageBounds,
+    ...selected.map((t) => t.nativeLabelRect),
+    ...rowPaint.map((p) => p.rect)
+  ])
+  const glyphs = (text) => text.replace(/\s/gu, '')
+  if (
+    rect[0] < 0 ||
+    rect[1] < top ||
+    rect[2] > page.width ||
+    rect[3] >= caption.rect[1] ||
+    blocked(rect, caption, captions, tables) ||
+    tokens.some(
+      (t) =>
+        t.text?.trim() &&
+        intersection(t.rect, rect) > 0 &&
+        !contains(figure.rect, t.nativeLabelRect ?? t.rect) &&
+        !selected.includes(t) &&
+        !images.some((image) => contains(image.rect, t.nativeLabelRect ?? t.rect))
+    ) ||
+    page.lines.some((line) => {
+      const r = lineRect(line)
+      return (
+        line.text?.trim() &&
+        intersection(r, rect) > 0 &&
+        !contains(figure.rect, r) &&
+        !images.some((image) => contains(image.rect, r)) &&
+        glyphs(
+          selected
+            .filter((t) => contains(r, t.rect, 1e-6))
+            .sort((a, b) => a.rect[0] - b.rect[0])
+            .map((t) => t.text)
+            .join('')
+        ) !== glyphs(line.text)
+      )
+    }) ||
+    page.graphicsBounds.some((g) => {
+      const r = (g.paintedNormalizedRect ?? g.normalizedRect).map(
+        (v, n) => v * (n % 2 ? page.height : page.width)
+      )
+      return (
+        intersection(r, rect) > 0 &&
+        !contains(figure.rect, r) &&
+        !images.some((i) => i.g === g) &&
+        !rowPaint.some((p) => p.g === g)
+      )
+    })
+  )
+    return
+  if (
+    context &&
+    (context.pageNumber !== page.pageNumber ||
+      selected.some((t) => context.content?.items?.[t.sourceItem.index]?.str !== t.text))
+  )
+    return
+  const current = retainNativeRecoveryInputs(
+    [page, caption, captions, tables, tokens, context, rect],
+    context?.viewport
+  )
+  if (!current) return
+  const proof = Object.freeze({})
+  const outside = [
+    ...page.graphicsBounds.map((g) =>
+      (g.paintedNormalizedRect ?? g.normalizedRect).map(
+        (v, n) => v * (n % 2 ? page.height : page.width)
+      )
+    ),
+    ...tokens.filter((t) => t.text?.trim()).map((t) => t.nativeLabelRect ?? t.rect)
+  ].filter((r) => !contains(rect, r))
+  keyedPhotoTimelineProofs.set(proof, { page, caption, context, rect, current, outside })
+  return {
+    caption,
+    rect,
+    graphicsCount: images.length + rowPaint.length,
+    reason: 'native-keyed-photo-timeline',
+    keyedPhotoTimelineRaster: proof
+  }
+}
+
+// Later native form observers may describe only the timeline. A private,
+// current complete-plate proof must survive all the way to raster publication;
+// neither a copied marker nor a smaller otherwise-valid plan can replace it.
+export function nativeKeyedPhotoTimelineCropPlan(page, figure, context) {
+  const proof = keyedPhotoTimelineProofs.get(figure?.keyedPhotoTimelineRaster)
+  if (
+    !context ||
+    !proof ||
+    proof.page !== page ||
+    proof.context !== context ||
+    proof.caption !== figure.caption ||
+    !proof.current() ||
+    !figure.rect?.every((v, n) => v === proof.rect[n])
+  )
+    return
+  const unchanged = retainNativeRecoveryInputs([figure], context.viewport)
+  if (!unchanged) return
+  const rect = Object.freeze([...proof.rect])
+  const current = () => proof.current() && unchanged()
+  return Object.freeze({
+    rect,
+    current,
+    validatePng(png, finalRect) {
+      if (!current() || !finalRect?.every((v, n) => v === rect[n])) return false
+      const raster = getPdfCropRasterProtectionFromPng(png, rect, page)
+      return (
+        !!raster &&
+        contains([0, 0, page.width, page.height], raster.protection) &&
+        proof.outside.every((r) => intersection(r, raster.protection) === 0)
+      )
+    }
+  })
 }
 
 // A raster color key repeated beside aligned vector cell grids proves a stack
@@ -3214,6 +3714,396 @@ export function nativeCaptionedConnectedNodes(page, caption, captions, tables, t
   )
     return
   return { caption, rect, graphicsCount: inside.length }
+}
+
+// A saved circular diagram is complete only when each shaft and arrowhead
+// binds two distinct labeled circles. A detached variable key can separate
+// the drawing from its caption, but stays exterior to this pixel-only proof.
+const diagramOffset = (a, b) => [a[0] - b[0], a[1] - b[1]]
+const diagramDistance = (a, b) => Math.hypot(...diagramOffset(a, b))
+const diagramDot = (a, b) => a[0] * b[0] + a[1] * b[1]
+const diagramCross = (a, b) => a[0] * b[1] - a[1] * b[0]
+const diagramPad = (rect, pad) => rect.map((v, i) => v + (i < 2 ? -pad : pad))
+const diagramLiteral = (text) => text.replace(/\s/gu, '')
+const circleK = 0.55228475
+const circularCubic = [
+  [1, 0],
+  [1, -circleK],
+  [circleK, -1],
+  [0, -1],
+  [-circleK, -1],
+  [-1, -circleK],
+  [-1, 0],
+  [-1, circleK],
+  [-circleK, 1],
+  [0, 1],
+  [circleK, 1],
+  [1, circleK],
+  [1, 0]
+]
+
+function circularNode(mark) {
+  if (mark.paint !== OPS.fillStroke || mark.fill !== '#ffffff' || mark.commands !== '0,2,2,2,2,4,0')
+    return
+  const center = mark.points[13]
+  const radius = diagramDistance(mark.points[0], center)
+  if (
+    !(radius > 0) ||
+    !circularCubic.every(
+      ([x, y], i) =>
+        diagramDistance(mark.points[i], [center[0] + radius * x, center[1] + radius * y]) <=
+        radius * 0.007
+    )
+  )
+    return
+  return { mark, center, radius }
+}
+
+function circularGraphIsConnected(nodes, shafts, heads) {
+  const edges = [],
+    used = new Set()
+  for (const shaft of shafts) {
+    const [start, end] = shaft.points
+    const span = diagramDistance(end, start)
+    if (span < nodes[0].radius * 2) return false
+    const axis = diagramOffset(end, start).map((v) => v / span)
+    const matching = heads.filter((head) => {
+      const [tip, wingA, stem, wingB] = head.points.map((p) => diagramOffset(p, end))
+      const sideA = diagramCross(axis, wingA),
+        sideB = diagramCross(axis, wingB)
+      return (
+        Math.hypot(...stem) <= 0.4 &&
+        diagramDot(axis, tip) > 1.2 &&
+        diagramDot(axis, tip) < 5 &&
+        Math.abs(diagramCross(axis, tip)) < 0.3 &&
+        sideA * sideB < 0 &&
+        Math.max(Math.abs(sideA), Math.abs(sideB)) < 3 &&
+        diagramDot(axis, wingA) < 0 &&
+        diagramDot(axis, wingB) < 0
+      )
+    })
+    if (matching.length !== 1 || used.has(matching[0])) return false
+    const head = matching[0]
+    const endpoints = (point, sign) =>
+      nodes.filter((node) => {
+        const radial = diagramOffset(point, node.center),
+          distance = Math.hypot(...radial)
+        return (
+          distance >= node.radius - 0.6 &&
+          distance <= node.radius + 4 &&
+          sign * diagramDot(radial, axis) >= distance * 0.96
+        )
+      })
+    const from = endpoints(start, 1),
+      to = endpoints(head.points[0], -1)
+    if (
+      from.length !== 1 ||
+      to.length !== 1 ||
+      from[0] === to[0] ||
+      edges.some(([a, b]) => a === from[0] && b === to[0])
+    )
+      return false
+    if (
+      nodes.some((node) => {
+        if (node === from[0] || node === to[0]) return false
+        const along = Math.max(
+          0,
+          Math.min(span, diagramDot(diagramOffset(node.center, start), axis))
+        )
+        const nearest = start.map((v, i) => v + axis[i] * along)
+        return diagramDistance(node.center, nearest) <= node.radius + 0.5
+      })
+    )
+      return false
+    used.add(head)
+    edges.push([from[0], to[0]])
+  }
+  const connected = new Set([nodes[0]])
+  const ordered = new Set()
+  for (let pass = 0; pass < nodes.length; pass++) {
+    for (const [a, b] of edges) {
+      if (connected.has(a) || connected.has(b)) {
+        connected.add(a)
+        connected.add(b)
+      }
+    }
+    for (const node of nodes)
+      if (edges.every(([a, b]) => b !== node || ordered.has(a))) ordered.add(node)
+  }
+  return (
+    used.size === heads.length && connected.size === nodes.length && ordered.size === nodes.length
+  )
+}
+
+function circularDiagramPaint(packet) {
+  const { o, v, evidence } = packet
+  const allowed = new Set([
+    OPS.save,
+    OPS.restore,
+    OPS.transform,
+    OPS.setFillRGBColor,
+    OPS.setStrokeRGBColor,
+    OPS.setDash,
+    OPS.setLineWidth,
+    OPS.setLineCap,
+    OPS.setLineJoin,
+    OPS.constructPath,
+    OPS.beginText,
+    OPS.endText,
+    OPS.dependency,
+    OPS.setFont,
+    OPS.moveText,
+    OPS.setTextMatrix,
+    OPS.showText
+  ])
+  if (o.fnArray.some((op) => !allowed.has(op))) return
+  let fill = '#000000',
+    stroke = '#000000'
+  const scopes = [],
+    saved = [],
+    marks = []
+  for (const [i, op] of o.fnArray.entries()) {
+    const args = o.argsArray[i]
+    if (op === OPS.save) saved.push({ i, fill, stroke })
+    else if (op === OPS.restore) {
+      const previous = saved.pop()
+      if (!previous) return
+      fill = previous.fill
+      stroke = previous.stroke
+      if (!saved.length) scopes.push([previous.i, i])
+    } else if (op === OPS.setFillRGBColor) fill = args[0]
+    else if (op === OPS.setStrokeRGBColor) stroke = args[0]
+    else if (op === OPS.constructPath && args[1]?.[0]) {
+      const state = evidence.paths.get(i)
+      const bound = nativeFigurePathPaint(packet, i, state)
+      if (
+        !bound ||
+        !state.clip ||
+        !contains(state.clip, bound.rect) ||
+        stroke !== '#000000' ||
+        state.strokeAlpha !== 1 ||
+        state.fillAlpha !== 1 ||
+        !state.solidStroke
+      )
+        return
+      const program = args[1][0],
+        matrix = Util.transform(v.transform, state.transform)
+      const commands = [],
+        points = []
+      for (let n = 0; n < program.length;) {
+        const command = program[n++]
+        const count = command === 0 || command === 1 ? 2 : command === 2 ? 6 : 0
+        commands.push(command)
+        for (let j = 0; j < count; j += 2) {
+          const point = [program[n + j], program[n + j + 1]]
+          Util.applyTransform(point, matrix)
+          points.push(point)
+        }
+        n += count
+      }
+      marks.push({ i, ...bound, points, commands: commands.join(','), paint: args[0], fill })
+    }
+  }
+  if (!saved.length) return { scopes, marks }
+}
+
+export function nativeCaptionedCircularDags(page, figure, captions, tables, tokens, context) {
+  try {
+    const caption = figure?.caption
+    const local = captions.filter((c) => c.page === page.pageNumber)
+    const operators = context?.operators
+    if (
+      page.rotation !== 0 ||
+      page.renderRotation !== 0 ||
+      page.invalidGraphicsBounds !== 0 ||
+      local.length !== 1 ||
+      local[0] !== caption ||
+      !/^Figure\s+\d+[.:]\s/u.test(caption.lines[0]) ||
+      figure.sourceItems?.length ||
+      figure.parts ||
+      figure.formCropRaster ||
+      figure.fallbackFigure ||
+      page.graphicsBounds.length < 12 ||
+      page.graphicsBounds.length > 60 ||
+      page.graphicsBounds.some((g) => g.kind !== 'path') ||
+      !context?.glyphBounds ||
+      context.content.items.length > 1500 ||
+      operators.fnArray.length > 20000 ||
+      page.graphicsBounds.filter(({ operationIndex }) => {
+        const args = operators.argsArray[operationIndex]
+        return args?.[0] === OPS.fillStroke && args[1]?.[0]?.length === 35
+      }).length < 4
+    )
+      return
+    const em = captionFont(page, caption)
+    const seed = tokens.find(
+      (t) => t.sourceItem?.text?.trim() && intersection(t.rect, caption.rect) > 0
+    )
+    const packet = seed && nativeClosedProgramInkPacket(page, tokens, context, [seed.sourceItem])
+    if (!(em > 0) || !packet || packet.evidence.images.length || packet.records.length > 1500)
+      return
+    const { records } = packet
+    const captionRecords = records.filter((r) => intersection(r.rect, caption.rect) > 0)
+    if (
+      !captionRecords.length ||
+      captionRecords.some((r) => !r.advanceComplete) ||
+      diagramLiteral(captionRecords.map((r) => r.r.str).join('')) !==
+        diagramLiteral(caption.lines.join(''))
+    )
+      return
+    const paint = circularDiagramPaint(packet)
+    if (!paint) return
+    const diagrams = []
+    for (const [start, end] of paint.scopes) {
+      const marks = paint.marks.filter((p) => p.i > start && p.i < end)
+      const nodes = marks.map(circularNode).filter(Boolean)
+      if (!nodes.length) continue
+      const heads = marks.filter(
+        (p) => p.paint === OPS.fillStroke && p.fill === '#000000' && p.commands === '0,1,1,1,4'
+      )
+      const shafts = marks.filter((p) => p.paint === OPS.stroke && p.commands === '0,1')
+      if (
+        nodes.length < 4 ||
+        nodes.length > 8 ||
+        nodes.some(
+          (n) =>
+            n.radius < em * 0.8 ||
+            n.radius > em * 1.3 ||
+            Math.abs(n.radius - nodes[0].radius) > 0.02
+        ) ||
+        heads.length !== shafts.length ||
+        marks.length !== nodes.length + heads.length + shafts.length ||
+        !circularGraphIsConnected(nodes, shafts, heads)
+      )
+        return
+      const labels = records.filter((r) => r.part.some((z) => z.g.i > start && z.g.i < end))
+      const labelValues = new Set(labels.map((r) => r.r.str.trim()))
+      if (
+        labels.length !== nodes.length ||
+        labelValues.size !== nodes.length ||
+        labels.some(
+          (r) =>
+            !r.advanceComplete ||
+            !/^[A-Z]$/u.test(r.r.str.trim()) ||
+            r.part.some((z) => z.g.i <= start || z.g.i >= end)
+        ) ||
+        nodes.some(
+          (n) =>
+            labels.filter((r) => {
+              const [x, y, right, bottom] = r.ink
+              return (
+                r.part[0].g.i > n.mark.i &&
+                [
+                  [x, y],
+                  [x, bottom],
+                  [right, y],
+                  [right, bottom]
+                ].every((p) => diagramDistance(p, n.center) < n.radius * 0.8)
+              )
+            }).length !== 1
+        )
+      )
+        return
+      const body = union([...marks.map((p) => p.rect), ...labels.map((r) => r.ink)])
+      if (body[3] >= caption.rect[1]) return
+      diagrams.push({ marks, labels, labelValues, body })
+    }
+    if (diagrams.length < 1 || diagrams.length > 2) return
+    const drawing = union(diagrams.map((d) => d.body))
+    const overlapX = Math.min(caption.rect[2], drawing[2]) - Math.max(caption.rect[0], drawing[0])
+    if (
+      overlapX < Math.min(caption.rect[2] - caption.rect[0], drawing[2] - drawing[0]) * 0.65 ||
+      caption.rect[1] - drawing[3] > em * 6 ||
+      paint.marks.some(
+        (p) =>
+          !diagrams.some((d) => d.marks.includes(p)) &&
+          p.rect[1] < caption.rect[1] &&
+          p.rect[3] > drawing[1]
+      )
+    )
+      return
+    const gap = page.lines.filter(
+      (l) => l.y >= drawing[3] - em * 0.15 && l.y < caption.rect[1] - em * 0.2 && l.text.trim()
+    )
+    if (
+      gap.length > 6 ||
+      gap.some((l) => {
+        const match = /^([A-Z])\s*(?:=\s*\d+\s*)?:\s*\p{L}/u.exec(l.text.trim())
+        return !match || !diagrams.some((d) => d.labelValues.has(match[1]))
+      })
+    )
+      return
+    const panelTitles = []
+    if (diagrams.length === 2) {
+      diagrams.sort((a, b) => a.body[0] - b.body[0])
+      const [left, right] = diagrams.map((d) => d.body)
+      if (
+        left[2] >= right[0] ||
+        Math.abs(left[1] - right[1]) > em * 0.3 ||
+        Math.abs(left[3] - right[3]) > em * 0.3
+      )
+        return
+      for (const [i, d] of diagrams.entries()) {
+        const titles = records.filter(
+          (r) =>
+            r.ink[0] >= d.body[0] &&
+            r.ink[2] <= d.body[2] &&
+            r.ink[3] < d.body[1] &&
+            r.ink[1] > d.body[1] - em * 1.8
+        )
+        if (
+          !titles.length ||
+          titles.some(
+            (r) => !r.advanceComplete || Math.abs(r.ink[1] - titles[0].ink[1]) > em * 0.2
+          ) ||
+          !titles
+            .map((r) => r.r.str)
+            .join(' ')
+            .trim()
+            .startsWith(i === 0 ? 'Left Panel:' : 'Right Panel:')
+        )
+          return
+        panelTitles.push(...titles)
+      }
+    }
+    const included = [...diagrams.flatMap((d) => d.labels), ...panelTitles]
+    if (
+      included.some((record) =>
+        record.part.some(
+          ({ g }) => g.textPaint.fillColor !== '#000000' || g.textPaint.fillAlpha !== 1
+        )
+      ) ||
+      (figure.rect && included.every((record) => contains(figure.rect, record.ink)))
+    )
+      return
+    const owned = diagrams.flatMap((d) => d.marks)
+    const ownedRects = [
+      ...owned.map((p) => diagramPad(p.rect, p.floor / 4)),
+      ...included.map((r) => r.ink)
+    ]
+    const foreignPaints = [
+      ...paint.marks.filter((p) => !owned.includes(p)).map(({ rect, floor }) => ({ rect, floor })),
+      ...records
+        .filter((r) => !included.includes(r) && area(r.ink) > 0)
+        .map((r) => ({ rect: r.ink, floor: 0 }))
+    ]
+    const rect = diagramPad(union(ownedRects), 0.75)
+    const padded = diagramPad(rect, 2 / (Math.ceil(page.width * 1.5) / page.width))
+    const initial = getInitialPdfCropRaster(padded, page)
+    if (
+      initial?.scale !== 4 ||
+      blocked(initial.protection, caption, captions, tables) ||
+      initial.protection[3] >= caption.rect[1] ||
+      (figure.rect && !contains(padded, figure.rect)) ||
+      foreignPaints.some(
+        (p) => intersection(initial.protection, diagramPad(p.rect, (p.floor + 2) / 4)) > 0
+      )
+    )
+      return
+    return { rect, graphicsCount: owned.length, formCropRaster: { ownedRects, foreignPaints } }
+  } catch {
+    return
+  }
 }
 
 // A narrow-column vector plate can contain only boxes, arrows, and short

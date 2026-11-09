@@ -1440,6 +1440,24 @@ export async function installPackages(
       ...workloadCacheEnv,
       ...caBundleEnv(deps.caBundle)
     }
+    if (req.language === 'r') {
+      // Rscript loads native dependencies before it can emit diagnostics. Mirror conda activation
+      // so managed R installers can find the environment's DLLs on Windows.
+      const inheritedPath =
+        platform === 'win32'
+          ? Object.entries(spawnEnv)
+              .filter(([key]) => key.toUpperCase() === 'PATH')
+              .map(([, value]) => value)
+              .filter((value): value is string => Boolean(value))
+              .join(';')
+          : (spawnEnv.PATH ?? '')
+      if (platform === 'win32') {
+        for (const key of Object.keys(spawnEnv)) {
+          if (key.toUpperCase() === 'PATH') delete spawnEnv[key]
+        }
+      }
+      spawnEnv.PATH = condaActivatedPath(prefix, inheritedPath, platform)
+    }
   }
   // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
   // they must hold the shared cache lock — otherwise a concurrent corrupt-cache repair (which takes the

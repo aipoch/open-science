@@ -73,7 +73,7 @@ const CATEGORY_LABEL_KEYS = {
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
-  models: 'Local parsing models',
+  models: 'Local capabilities',
   'research-video-jobs': 'Research film jobs',
   'research-video-presentations': 'Research films',
   'pdf-structure': 'PDF parsing results',

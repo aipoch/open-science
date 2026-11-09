@@ -15,12 +15,23 @@ const binding = (): Binding => {
 // .NET DateTime.Ticks counts from 0001-01-01; FILETIME counts from 1601-01-01, both in 100 ns.
 const DOTNET_TICKS_AT_FILETIME_EPOCH = 504911232000000000n
 
-/** Creation time as persisted by earlier releases: `(Get-Process).StartTime.ToUniversalTime().Ticks`. */
-export function windowsProcessStartTicks(pid: number): string | undefined {
+const readWindowsProcessCreationTime = (pid: number): string | undefined => {
   const filetime = binding().getWindowsProcessCreationTime(pid)
   if (filetime === null) return undefined
   if (!/^\d+$/.test(filetime)) throw new Error('Invalid Windows process creation time.')
+  return filetime
+}
+
+/** Creation time as persisted by earlier releases: `(Get-Process).StartTime.ToUniversalTime().Ticks`. */
+export function windowsProcessStartTicks(pid: number): string | undefined {
+  const filetime = readWindowsProcessCreationTime(pid)
+  if (filetime === undefined) return undefined
   return String(BigInt(filetime) + DOTNET_TICKS_AT_FILETIME_EPOCH)
+}
+
+/** A missing native creation time means the process handle was signaled and the process exited. */
+export function windowsProcessIsAlive(pid: number): boolean {
+  return readWindowsProcessCreationTime(pid) !== undefined
 }
 
 export function windowsProcessCommandLine(pid: number): string | undefined {

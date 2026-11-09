@@ -54,6 +54,7 @@ const expectedChannels = [
   'settings:get-github-token-status',
   'settings:get-package-mirror',
   'settings:review-notebook-private-destination',
+  'settings:get-source-link-metadata',
   'settings:get-notebook-network-status',
   'settings:get-local-shell-runtime-preference',
   'settings:get-wsl2-bash-preview-status',

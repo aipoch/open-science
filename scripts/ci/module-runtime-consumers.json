@@ -129,7 +129,10 @@
     "src/main/windows.ts"
   ],
   "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
-  "src/main/session-diagnostics/worker-entry.ts": ["src/main/composition/session-foundation.ts"],
+  "src/main/session-diagnostics/worker-entry.ts": [
+    "src/main/composition/session-foundation.ts",
+    "src/main/session-diagnostics/electron-fallback.ts"
+  ],
   "packages/pdf-structure/resources/host.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/scratch.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/literature-pdf-extract.mjs": [
@@ -268,5 +271,16 @@
   "packages/research-film/src/runtime-assets.json": ["packages/research-film/src/runtime.ts"],
   "packages/research-film/resources/authoring/KIT.md": ["packages/research-film/src/authoring.ts"],
   "packages/research-film/src/ffmpeg-assets.json": ["packages/research-film/src/ffmpeg-catalog.ts"],
-  "packages/research-film/src/skill-video.schema.json": ["packages/research-film/src/screenplay.ts"]
+  "packages/research-film/src/skill-video.schema.json": [
+    "packages/research-film/src/screenplay.ts"
+  ],
+  "src/main/notebook/source-analysis-worker-entry.ts": [
+    "src/main/notebook/source-analysis-worker.ts"
+  ],
+  "packages/compute/src/hugging-face-bucket-worker.ts": [
+    "packages/compute/src/hugging-face-bucket.ts"
+  ],
+  "resources/compute-modal.py": ["src/main/compute/modal-sdk.ts"],
+  "resources/compute-hf-auth.py": ["src/main/compute/compute-account-hf.ts"],
+  "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"]
 }

@@ -164,6 +164,10 @@ describe('fixed replay question references', () => {
       'Explain this file\n[Session reading](#session-replay:project:saved-upload)'
     )
     expect(prepared.referencedArtifacts).toBeUndefined()
+    // The locator is an Agent-preparation transport detail; it is not copied into the
+    // user-facing annotation quote. The annotation identity still carries the local snapshot id.
+    expect(annotation.quote).not.toContain('#session-replay:')
+    expect(annotation.id).toContain('session-replay:')
 
     // Legacy inline annotation transport would mistake the archive Session for the upload owner.
     expect(createSessionDiscussionAnnotation(uploadContext)).toBeUndefined()

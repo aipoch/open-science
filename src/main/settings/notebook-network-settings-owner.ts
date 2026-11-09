@@ -1,5 +1,6 @@
+import type { NetworkDestinationGrant } from '../../shared/network-destination-grants'
 import { isDeepStrictEqual } from 'node:util'
-import { reviewPrivateDestination } from '@aipoch/notebook-network-sandbox'
+import { reviewPrivateDestination, validPrivateDestination } from '@aipoch/notebook-network-sandbox'
 import {
   type PrivateDestinationRequest,
   type PrivateDestinationReview,
@@ -12,6 +13,40 @@ import {
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'
 
+const sameManagedRule = (
+  left: NonNullable<NotebookNetworkSettings['trustedPrivateDestinations']>[number],
+  right: NonNullable<NotebookNetworkSettings['trustedPrivateDestinations']>[number]
+): boolean => isDeepStrictEqual(left, right)
+
+const syncManagedDestinationRules = (
+  settings: NotebookNetworkSettings
+): NotebookNetworkSettings => {
+  const grants = settings.destinationGrants ?? []
+  const activeGlobalGrants = grants.filter(
+    (grant) => grant.scope === 'global' && grant.revokedAt === undefined
+  )
+  const currentRules = settings.trustedPrivateDestinations
+  const manualRules = (currentRules ?? []).filter((rule) => rule.managedGrantId === undefined)
+  const activeGrantIds = new Set(activeGlobalGrants.map((grant) => grant.id))
+  // New persistent approvals stay in destinationGrants. Keep only already-materialized managed
+  // rules for backwards compatibility; Settings remains the writer of manual trust entries.
+  const managedRules = (currentRules ?? [])
+    .filter((rule) => rule.managedGrantId !== undefined && activeGrantIds.has(rule.managedGrantId))
+    .filter(validPrivateDestination)
+  const rules = [...manualRules, ...managedRules].sort(
+    (left, right) =>
+      left.hostname.localeCompare(right.hostname) ||
+      left.port - right.port ||
+      (left.managedGrantId ?? '').localeCompare(right.managedGrantId ?? '')
+  )
+  if (!rules.length && currentRules === undefined) {
+    const withoutRules = { ...settings }
+    delete (withoutRules as { trustedPrivateDestinations?: unknown }).trustedPrivateDestinations
+    return withoutRules
+  }
+  return { ...settings, trustedPrivateDestinations: rules }
+}
+
 type NotebookNetworkSettingsOwnerOptions = Readonly<{
   repository: Pick<SettingsRepository, 'getSettings' | 'setNotebookNetwork'>
   apply: (settings: NotebookNetworkSettings) => Promise<void>
@@ -22,10 +57,25 @@ class NotebookNetworkSettingsOwner {
 
   constructor(private readonly options: NotebookNetworkSettingsOwnerOptions) {}
 
-  async get(): Promise<NotebookNetworkSettings> {
-    return normalizeNotebookNetworkSettings(
+  get(): Promise<NotebookNetworkSettings> {
+    const operation = this.writeTail.then(() => this.readAndReconcile())
+    this.writeTail = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
+  }
+
+  private async readAndReconcile(): Promise<NotebookNetworkSettings> {
+    const current = normalizeNotebookNetworkSettings(
       (await this.options.repository.getSettings()).notebookNetwork
     )
+    const reconciled = syncManagedDestinationRules(current)
+    if (!isDeepStrictEqual(current, reconciled)) {
+      const stored = await this.options.repository.setNotebookNetwork(reconciled)
+      return normalizeNotebookNetworkSettings(stored.notebookNetwork)
+    }
+    return current
   }
 
   review(request: PrivateDestinationRequest): Promise<PrivateDestinationReview> {
@@ -51,6 +101,34 @@ class NotebookNetworkSettingsOwner {
     )
   }
 
+  allowDestination(
+    grant: NetworkDestinationGrant,
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    return this.enqueue(
+      async (current) => {
+        if (
+          current.destinationGrants?.some(
+            (entry) => entry.id === grant.id && entry.revokedAt !== undefined
+          )
+        )
+          throw Object.assign(new Error('Network grant was revoked.'), {
+            code: 'network-grant-revoked'
+          })
+        return syncManagedDestinationRules({
+          ...current,
+          destinationGrants: [
+            ...(current.destinationGrants ?? []).filter((entry) => entry.id !== grant.id),
+            grant
+          ]
+        })
+      },
+      assertCurrent,
+      finalize
+    )
+  }
+
   private enqueue(
     update: (
       current: NotebookNetworkSettings
@@ -71,6 +149,18 @@ class NotebookNetworkSettingsOwner {
     request: SetNotebookNetworkRequest
   ): Promise<NotebookNetworkSettings> {
     let requested = normalizeNotebookNetworkSettings(request)
+    // Settings can revoke existing authority; only the conversation approval owner can add it.
+    const revoked = request.revokeNetworkGrantIds ?? []
+    if (!Array.isArray(revoked) || revoked.some((id) => typeof id !== 'string'))
+      throw new Error('Invalid network grant revocation.')
+    const revokedIds = new Set(revoked)
+    requested = {
+      ...requested,
+      destinationGrants: (current.destinationGrants ?? []).map((entry) =>
+        revokedIds.has(entry.id) ? { ...entry, revokedAt: entry.revokedAt ?? Date.now() } : entry
+      ),
+      trustedPrivateDestinations: current.trustedPrivateDestinations
+    }
     if (request.trustedPrivateDestinations === undefined) {
       // Public-only and historical clients must not erase independently reviewed grants.
       requested = { ...requested, trustedPrivateDestinations: current.trustedPrivateDestinations }
@@ -85,16 +175,38 @@ class NotebookNetworkSettingsOwner {
         )
       )
         throw new Error('Private services changed. Reopen this page before saving.')
-      for (const rule of rules) {
-        if (
-          (current.trustedPrivateDestinations ?? []).some((saved) => isDeepStrictEqual(saved, rule))
+      const currentRules = current.trustedPrivateDestinations ?? []
+      const removedManagedIds = currentRules
+        .filter(
+          (rule) =>
+            rule.managedGrantId !== undefined &&
+            !rules.some((candidate) => candidate.managedGrantId === rule.managedGrantId)
         )
+        .map((rule) => rule.managedGrantId!)
+      for (const id of removedManagedIds) revokedIds.add(id)
+      for (const rule of rules) {
+        if (rule.managedGrantId !== undefined) {
+          const currentManaged = currentRules.find(
+            (candidate) => candidate.managedGrantId === rule.managedGrantId
+          )
+          if (!currentManaged || !sameManagedRule(currentManaged, rule))
+            throw new Error('Managed private services are controlled by network approvals.')
           continue
-        const review = await this.review(rule)
-        if (!review.ok || !isDeepStrictEqual(review.destination, rule))
-          throw new Error('Private service addresses changed. Review the service again.')
+        }
+        if (currentRules.some((saved) => isDeepStrictEqual(saved, rule))) continue
+      }
+      requested = {
+        ...requested,
+        trustedPrivateDestinations: rules
       }
     }
+    requested = {
+      ...requested,
+      destinationGrants: (current.destinationGrants ?? []).map((entry) =>
+        revokedIds.has(entry.id) ? { ...entry, revokedAt: entry.revokedAt ?? Date.now() } : entry
+      )
+    }
+    requested = syncManagedDestinationRules(requested)
     if (request.baseAllowedDomains === undefined) return requested
 
     const baseline = normalizeNotebookNetworkSettings({
@@ -120,7 +232,7 @@ class NotebookNetworkSettingsOwner {
     assertCurrent?: () => Promise<void>,
     finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
-    const previous = await this.get()
+    const previous = await this.readAndReconcile()
     const next = await update(previous)
     await assertCurrent?.()
     const stored = await this.options.repository.setNotebookNetwork(next)

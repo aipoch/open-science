@@ -369,7 +369,9 @@ const createProductionDelegatedFrameworkRuntime = (
             runtimeHome,
             frameworkId,
             runtimeConstructionIsProcessFree:
-              frameworkId === 'claude-code' || frameworkId === 'opencode',
+              frameworkId === 'claude-code' ||
+              frameworkId === 'opencode' ||
+              frameworkId === 'open-science-agent',
             permissionPrompts,
             permissionProfile:
               options.resolvePermissionProfile?.(input.session.sessionId) ??

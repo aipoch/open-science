@@ -140,6 +140,7 @@ window.api = {
     abortTransfer: async () => {}
   },
   literature: {
+    overviewBatch: async () => null,
     lookupMetadata: async (reference: string) => {
       linkReferences.push(reference)
       await new Promise<void>((resolve) => pendingLinkLookups.push(resolve))

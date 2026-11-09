@@ -1,3 +1,10 @@
+import { PROTECTED_STRING_PREFIX } from './protected-string-format'
+import {
+  decodeRayTokenDocument,
+  rayTokenFileName,
+  rayTokenDocumentMaxBytes
+} from './ray-token-document'
+import { computeAccountFileNames, decodeComputeAccountDocument } from './compute-account-document'
 import { decodeDeviceCredentialsDocument } from '../settings/device-credentials-codec'
 import { validateSettingsDocumentShape } from '../settings/document-shape'
 import { settingsDocumentReadError } from '../settings/document-read-error'
@@ -11,7 +18,6 @@ import {
   type InventoryDiagnostic
 } from './diagnostic'
 
-const PROTECTED_PREFIX = 'open-science:protected:v1:'
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 // Read the original documents directly: the normal durable store may promote crash-recovery temps
@@ -40,6 +46,16 @@ export const readCredentialCiphertexts = (options: {
     values.push(bytes)
   }
   const collectDocument = (contents: string, name: string): void => {
+    if (name === rayTokenFileName) {
+      for (const { sealed } of decodeRayTokenDocument(contents).entries)
+        collectRef(sealed, PROTECTED_STRING_PREFIX)
+      return
+    }
+    if (name !== 'settings.json' && name !== 'credentials.json') {
+      const account = decodeComputeAccountDocument(contents)
+      if (account.source === 'managed') collectRef(account.sealed, PROTECTED_STRING_PREFIX)
+      return
+    }
     const value: unknown =
       name === 'credentials.json' ? decodeDeviceCredentialsDocument(contents) : JSON.parse(contents)
     if (name === 'settings.json') validateSettingsDocumentShape(value)
@@ -84,7 +100,7 @@ export const readCredentialCiphertexts = (options: {
       'lastPollError',
       'harvestError'
     ])
-      collectRef(row[field], PROTECTED_PREFIX)
+      collectRef(row[field], PROTECTED_STRING_PREFIX)
     for (const field of [
       'resourceRequest',
       'inputManifest',
@@ -98,18 +114,23 @@ export const readCredentialCiphertexts = (options: {
       const container: unknown = JSON.parse(value)
       if (Array.isArray(container)) {
         if (container.length === 2 && container[0] === 'open-science:protected-json:v1')
-          collectRef(container[1], PROTECTED_PREFIX)
+          collectRef(container[1], PROTECTED_STRING_PREFIX)
       } else {
         const object = record(container)
         if (Object.keys(object).length === 1)
-          collectRef(object['open-science:protected-json:v1'], PROTECTED_PREFIX)
+          collectRef(object['open-science:protected-json:v1'], PROTECTED_STRING_PREFIX)
       }
     }
   }
   try {
     if (existsSync(options.configRoot)) {
       const entries = readdirSync(options.configRoot)
-      for (const name of ['settings.json', 'credentials.json']) {
+      for (const name of [
+        'settings.json',
+        'credentials.json',
+        ...Object.values(computeAccountFileNames),
+        rayTokenFileName
+      ]) {
         source = name === 'settings.json' ? 'settings' : 'credentials'
         stage = 'read-files'
         if (entries.some((entry) => entry.startsWith(`${name}.`) && entry.endsWith('.tmp')))
@@ -117,7 +138,10 @@ export const readCredentialCiphertexts = (options: {
         const path = join(options.configRoot, name)
         if (!existsSync(path)) continue
         try {
-          if (statSync(path).size > MAX_DOCUMENT_BYTES)
+          if (
+            statSync(path).size >
+            (name === rayTokenFileName ? rayTokenDocumentMaxBytes : MAX_DOCUMENT_BYTES)
+          )
             fail('too-large', 'Credential document is too large')
           const contents = readFileSync(path, 'utf8')
           stage = 'parse-document'

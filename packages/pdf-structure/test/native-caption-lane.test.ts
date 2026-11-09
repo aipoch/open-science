@@ -938,3 +938,150 @@ it.each(['source literal', 'equal source replacement', 'equal caption replacemen
     expect(nativeTableFooterAssociationCurrent(result)).toBe(false)
   }
 )
+
+function anonymousWrappedAboveTitle(variant = 'base'): ReturnType<typeof JSON.parse> {
+  const rows = [
+    ['Table 1 Complete measured records', 60, 40],
+    [
+      variant === 'unclosed caption'
+        ? 'and their independent comparisons'
+        : 'and their independent comparisons.',
+      variant === 'caption indent' ? 64 : 60,
+      variant === 'caption gap' ? 60 : variant === 'overlapping caption' ? 45 : 54
+    ],
+    ['Field', 65, 80],
+    ['Value', 190, variant === 'crossing text' ? 95 : 80],
+    ['Alpha', 65, 105],
+    ['1.25', 190, 105],
+    ['Beta', 65, 130],
+    ['2.50', 190, 130],
+    ['Table 2 Independent following records.', 60, 160]
+  ]
+  if (variant === 'split caption')
+    rows.splice(0, 1, ['Table 1', 60, 40], ['Complete measured records', 100, 40])
+  const f = anonymousCaptionLane(rows)
+  f.add(OPS.setStrokeRGBColor, ['#000000'])
+  f.add(OPS.setLineWidth, [0.5])
+  const rules = [65, 90, 140].map((y) => [
+    variant === 'partial separator' && y === 90 ? 70 : 60,
+    y,
+    225,
+    y
+  ])
+  for (const [x, y, right] of rules)
+    f.add(OPS.constructPath, [
+      OPS.stroke,
+      [new Float32Array([0, x, 400 - y, 1, right, 400 - y])],
+      new Float32Array([x, 400 - y, right, 400 - y])
+    ])
+  const { page, context, tokens } = f.args
+  if (variant === 'split caption')
+    page.lines.splice(0, 2, {
+      ...page.lines[0],
+      text: 'Table 1 Complete measured records',
+      width: 165
+    })
+  const captions = [
+    {
+      page: 1,
+      lines: page.lines.slice(0, 2).map((l) => l.text),
+      rect: [
+        60,
+        30,
+        Math.max(...page.lines.slice(0, 2).map((l) => l.x + l.width)),
+        page.lines[1].y + page.lines[1].height
+      ]
+    },
+    { page: 1, lines: [page.lines.at(-1).text], rect: [60, 150, 245, 160] }
+  ]
+  return {
+    f,
+    page,
+    context,
+    captions,
+    rules,
+    tables: [{ rect: [60, 68, 225, 138] }],
+    native: { context, tokens, sourceSha256: context.sourceSha256 }
+  }
+}
+
+it('reserves a complete wrapped native above-caption across an independent header separator', () => {
+  const s = anonymousWrappedAboveTitle()
+  const legacy = associateNativeFooter(s.page, s.tables, s.captions, s.rules)[0]
+  expect(legacy.caption).toBe(s.captions[1])
+  const result = terminalFooterAssociation(s)
+  expect(result.caption).toBe(s.captions[0])
+  expect(nativeTableFooterAssociationCurrent(result)).toBe(true)
+})
+
+it('reserves the same caption when one native line has separate complete source runs', () => {
+  const s = anonymousWrappedAboveTitle('split caption')
+  const result = terminalFooterAssociation(s)
+  expect(result.caption).toBe(s.captions[0])
+  expect(nativeTableFooterAssociationCurrent(result)).toBe(true)
+})
+
+it.each([
+  'unclosed caption',
+  'caption gap',
+  'caption indent',
+  'overlapping caption',
+  'crossing text',
+  'partial separator'
+])('declines a wrapped above-owner with %s', (variant) => {
+  const s = anonymousWrappedAboveTitle(variant)
+  const legacy = associateNativeFooter(s.page, s.tables, s.captions, s.rules)[0]
+  const result = terminalFooterAssociation(s)
+  expect(result).toEqual(legacy)
+  expect(nativeTableFooterAssociationCurrent(result)).toBeUndefined()
+})
+
+it.each([
+  'caption literal',
+  'omitted continuation',
+  'reversed rows',
+  'caption envelope',
+  'glyph crossing separator'
+])('requires complete literal and geometric ownership for a wrapped title: %s', (variant) => {
+  const s = anonymousWrappedAboveTitle()
+  if (variant === 'caption literal') s.captions[0].lines[1] += ' changed'
+  if (variant === 'omitted continuation') s.captions[0].lines.pop()
+  if (variant === 'reversed rows') s.captions[0].lines.reverse()
+  if (variant === 'caption envelope') s.captions[0].rect[2] -= 1
+  if (variant === 'glyph crossing separator') {
+    s.context.glyphBounds[0].glyphs.find((g) => g.fontChar === 'Value').bounds[1] = -1.1
+  }
+  const legacy = associateNativeFooter(s.page, s.tables, s.captions, s.rules)[0]
+  const result = terminalFooterAssociation(s)
+  expect(result).toEqual(legacy)
+  expect(nativeTableFooterAssociationCurrent(result)).toBeUndefined()
+})
+
+it.each(['caption identity', 'source identity', 'separator paint'])(
+  'revokes a wrapped caption proof after changed %s',
+  (variant) => {
+    const s = anonymousWrappedAboveTitle(),
+      result = terminalFooterAssociation(s)
+    expect(nativeTableFooterAssociationCurrent(result)).toBe(true)
+    if (variant === 'caption identity') s.captions[0].lines = [...s.captions[0].lines]
+    if (variant === 'source identity')
+      s.context.content.items[1] = { ...s.context.content.items[1] }
+    if (variant === 'separator paint') s.context.operators.argsArray.at(-2)[1][0][1] += 1
+    expect(nativeTableFooterAssociationCurrent(result)).toBe(false)
+  }
+)
+
+it('keeps a native opening coincident with the recovered first row boundary', () => {
+  const s = anonymousWrappedAboveTitle()
+  s.tables[0].rect[1] = 65
+  const result = terminalFooterAssociation(s)
+  expect(result.caption).toBe(s.captions[0])
+  expect(nativeTableFooterAssociationCurrent(result)).toBe(true)
+})
+
+it('declines an opening below the recovered first row boundary', () => {
+  const s = anonymousWrappedAboveTitle()
+  s.tables[0].rect[1] = 64
+  const result = terminalFooterAssociation(s)
+  expect(nativeTableFooterAssociationCurrent(result)).toBeUndefined()
+})

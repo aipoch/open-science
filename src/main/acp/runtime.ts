@@ -1,3 +1,4 @@
+import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import { agentUserChoiceOutcomes, USER_CHOICE_SKIP_GUIDANCE } from './elicitation-owner'
 import {
   registerResourceObservation,
@@ -3036,6 +3037,14 @@ class AcpRuntime {
     signal?: AbortSignal
   }): Promise<boolean> {
     return this.permissionContext.requestAppApproval(input)
+  }
+
+  networkApprovalRecordStatus(
+    projectId: string,
+    sessionId: string,
+    recordId: string
+  ): Promise<NetworkApprovalRecordStatus | undefined> {
+    return this.sandboxNetworkApprovalOwner.recordStatus(projectId, sessionId, recordId)
   }
 
   async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {

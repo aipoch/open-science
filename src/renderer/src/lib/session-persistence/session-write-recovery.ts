@@ -1,3 +1,4 @@
+import type { AcpRuntimeEvent } from '../../../../shared/acp'
 import { isDesktopRuntimeConnectionError } from '../../../../shared/desktop-runtime-recovery'
 import type { RendererSessionWriteRecoveryDiagnostics } from '../../../../shared/diagnostics'
 import {
@@ -53,6 +54,7 @@ export type SessionWriteIssue = Readonly<{
   kind: 'connection' | 'size-limit' | 'conflict' | 'storage'
   canDiscard?: boolean
   reviewRequired?: boolean
+  terminalScopes?: readonly NonNullable<AcpRuntimeEvent['terminalScope']>[]
 }>
 
 export class SessionWriteUnconfirmedError extends Error {

@@ -103,7 +103,12 @@
     "src/renderer/src/pages/settings/TrustedPrivateServices.tsx",
     "src/renderer/src/pages/settings/settings-manual-update-guide.ts",
     "src/renderer/src/pages/settings/ResourceRecordingRow.tsx",
-    "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx"
+    "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx",
+    "src/renderer/src/pages/settings/ComputeTargetGroup.tsx",
+    "src/renderer/src/pages/settings/HostedTargets.tsx",
+    "src/renderer/src/pages/settings/KubernetesTargets.tsx",
+    "src/renderer/src/pages/settings/ModalTargets.tsx",
+    "src/renderer/src/pages/settings/RayTargets.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",

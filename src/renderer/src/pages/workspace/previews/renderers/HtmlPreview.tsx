@@ -22,6 +22,7 @@ import { usePreviewFileContent } from '../usePreviewFileContent'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
 import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-hooks'
+import { Loader2, Video } from 'lucide-react'
 
 type HtmlPreviewMode = 'render' | 'source'
 
@@ -204,7 +205,10 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
     }
   }
   const modeToggle = (
-    <div className="flex shrink-0 items-center justify-between border-b border-border-300 bg-bg-000 px-3 py-2">
+    <div
+      data-research-video-export-toolbar
+      className="flex min-w-0 shrink-0 items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2"
+    >
       <div className="flex items-center gap-1 rounded-md bg-bg-200 p-0.5">
         {HTML_PREVIEW_MODES.map((option) => (
           <button
@@ -222,56 +226,76 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
           </button>
         ))}
       </div>
-      {(mode === 'render' || exporting) &&
+      {!exporting &&
+        mode === 'render' &&
         videoKey === requestKey &&
         document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
-          <div className="flex items-center gap-2">
-            {exporting ? (
-              <>
-                {installSnapshot ? (
-                  <DownloadProgressLine progress={localModelDownloadProgress(installSnapshot)} />
-                ) : exportProgress ? (
-                  <ResearchVideoProgressLine progress={exportProgress} />
-                ) : (
-                  <span role="status" className="text-xs">
-                    {t('Exporting MP4…')}
-                  </span>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    void cancelExport().catch((error) => setExportError(String(error)))
-                  }
-                >
-                  {t('Cancel')}
-                </Button>
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                {installBytes !== undefined && (
-                  <span className="text-xs text-muted-foreground">
-                    {t('Video export components required: {{size}} MiB', {
-                      size: (installBytes / 1024 / 1024).toFixed(1)
-                    })}
-                  </span>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void exportVideo(installBytes !== undefined)}
-                >
-                  {installBytes !== undefined ? t('Install and export') : t('Export MP4')}
-                </Button>
-              </div>
-            )}
-          </div>
+          <Button
+            size="xs"
+            variant="ghost"
+            className="text-text-000"
+            onClick={() => void exportVideo(installBytes !== undefined)}
+          >
+            <Video aria-hidden="true" />
+            {t('Export MP4')}
+          </Button>
         )}
     </div>
   )
+  const exportStatus = exporting && (
+    <div
+      data-research-video-export-status
+      className="flex min-w-0 shrink-0 items-center gap-3 border-b border-border-300 bg-bg-000 px-3 py-2"
+    >
+      {installSnapshot ? (
+        <DownloadProgressLine compact progress={localModelDownloadProgress(installSnapshot)} />
+      ) : exportProgress ? (
+        <ResearchVideoProgressLine compact progress={exportProgress} />
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+          <span role="status" className="truncate">
+            {t('Exporting MP4…')}
+          </span>
+        </div>
+      )}
+      <Button
+        size="xs"
+        variant="ghost"
+        className="shrink-0"
+        onClick={() => void cancelExport().catch((error) => setExportError(String(error)))}
+      >
+        {t('Cancel')}
+      </Button>
+    </div>
+  )
+  const installPrompt = !exporting &&
+    installBytes !== undefined &&
+    mode === 'render' &&
+    videoKey === requestKey &&
+    document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
+      <div className="flex min-w-0 shrink-0 items-center gap-3 border-b border-border-300 bg-bg-000 px-3 py-2">
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {t('Video export components required: {{size}} MiB', {
+            size: (installBytes / 1024 / 1024).toFixed(1)
+          })}
+        </span>
+        <Button
+          size="xs"
+          variant="secondary"
+          className="shrink-0"
+          onClick={() => void exportVideo(true)}
+        >
+          <Video aria-hidden="true" />
+          {t('Install and export')}
+        </Button>
+      </div>
+    )
   const topContent = (
     <>
       {modeToggle}
+      {exportStatus}
+      {installPrompt}
       {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
     </>
   )

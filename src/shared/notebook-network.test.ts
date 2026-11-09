@@ -26,27 +26,28 @@ describe('disabled automatic domain access', () => {
     ['rest.uniprot.org', 'rest.uniprot.org', 'www.uniprot.org'],
     ['*.ncbi.nlm.nih.gov', 'eutils.ncbi.nlm.nih.gov', 'www.nih.gov'],
     ['*.uniprot.org', 'rest.uniprot.org', 'www.rcsb.org']
-  ])('asks for %s despite overlapping built-in rules', async (disabled, host, sibling) => {
-    const settings = normalizeNotebookNetworkSettings({ disabledOpenScienceDomains: [disabled] })
-    const inspect = (value: typeof settings): DestinationPolicy =>
-      new DestinationPolicy(
-        createRuntimeConfig({
-          policy: buildNotebookNetworkPolicy(value),
-          resources: { root: '/resources' }
-        })
-      )
+  ])(
+    'keeps %s preview consent independent from HTTPS admission',
+    async (disabled, host, sibling) => {
+      const settings = normalizeNotebookNetworkSettings({ disabledOpenScienceDomains: [disabled] })
+      const inspect = (value: typeof settings): DestinationPolicy =>
+        new DestinationPolicy(
+          createRuntimeConfig({
+            policy: buildNotebookNetworkPolicy(value),
+            resources: { root: '/resources' }
+          })
+        )
 
-    expect
-      .soft(await inspect(settings).inspect(host, 443))
-      .toMatchObject({ kind: 'ask', source: 'explicit', host })
-    expect.soft(notebookNetworkSettingsAllowDomain(settings, host)).toBe(false)
-    expect(await inspect(settings).inspect(sibling, 443)).toMatchObject({ kind: 'allow' })
+      expect.soft(await inspect(settings).inspect(host, 443)).toMatchObject({ kind: 'allow' })
+      expect.soft(notebookNetworkSettingsAllowDomain(settings, host)).toBe(false)
+      expect(await inspect(settings).inspect(sibling, 443)).toMatchObject({ kind: 'allow' })
 
-    // A later explicit approval remains effective; turning off auto-allow is not a permanent ban.
-    const approved = { ...settings, allowedDomains: [host] }
-    expect(await inspect(approved).inspect(host, 443)).toMatchObject({ kind: 'allow' })
-    expect(notebookNetworkSettingsAllowDomain(approved, host)).toBe(true)
-  })
+      // A later explicit approval remains effective; turning off auto-allow is not a permanent ban.
+      const approved = { ...settings, allowedDomains: [host] }
+      expect(await inspect(approved).inspect(host, 443)).toMatchObject({ kind: 'allow' })
+      expect(notebookNetworkSettingsAllowDomain(approved, host)).toBe(true)
+    }
+  )
 })
 
 describe('notebook network policy', () => {
@@ -62,9 +63,11 @@ describe('notebook network policy', () => {
   it('enables every Open-Science domain group by default', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
 
-    expect(policy.allowedDomains).toContain('pypi.org')
-    expect(policy.allowedDomains).toContain('rest.uniprot.org')
-    expect(policy.allowedDomains).toContain('clinicaltrials.gov')
+    expect(notebookNetworkSettingsAllowDomain(DEFAULT_NOTEBOOK_NETWORK_SETTINGS, 'pypi.org')).toBe(
+      true
+    )
+    expect(policy.allowedDomains).toEqual([])
+    expect(policy.askDomains).toEqual([])
   })
 
   it('removes disabled groups and individual built-in domains', () => {
@@ -74,7 +77,7 @@ describe('notebook network policy', () => {
       disabledOpenScienceDomains: ['rest.uniprot.org']
     })
 
-    expect(policy.allowedDomains).toContain('research.example')
+    expect(policy.allowedDomains).toEqual([])
     expect(policy.allowedDomains).not.toContain('api.crossref.org')
     expect(policy.allowedDomains).not.toContain('rest.uniprot.org')
   })
@@ -87,13 +90,15 @@ describe('notebook network policy', () => {
 
     expect(settings.disabledOpenScienceDomainGroups).toEqual([])
     expect(settings.disabledOpenScienceDomains).toEqual([])
-    expect(buildNotebookNetworkPolicy(settings).allowedDomains).toContain('pypi.org')
+    expect(notebookNetworkSettingsAllowDomain(settings, 'pypi.org')).toBe(true)
   })
 
   it('allows only catalogued package-mirror redirect hosts', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
 
-    expect(policy.allowedDomains).toContain('mirrors.nju.edu.cn')
+    expect(
+      notebookNetworkSettingsAllowDomain(DEFAULT_NOTEBOOK_NETWORK_SETTINGS, 'mirrors.nju.edu.cn')
+    ).toBe(true)
     expect(policy.allowedDomains).not.toContain('redirect.example')
   })
 
@@ -143,8 +148,7 @@ describe('notebook network policy', () => {
     const destination = new DestinationPolicy(policy)
 
     expect(await destination.inspect('unknown.research.example', 443)).toMatchObject({
-      kind: 'ask',
-      source: 'unknown'
+      kind: 'allow'
     })
     expect(notebookNetworkSettingsAllowDomain(settings, 'unknown.research.example')).toBe(false)
     expect(buildNotebookNetworkPolicy(settings)).toEqual(policy)
@@ -245,7 +249,7 @@ describe('custom public domain input', () => {
     }
     for (const host of ['example.com', 'otherexample.com', 'example.com.other.example']) {
       expect(notebookNetworkSettingsAllowDomain(settings, host)).toBe(false)
-      expect(await policy.inspect(host, 443)).toMatchObject({ kind: 'ask' })
+      expect(await policy.inspect(host, 443)).toMatchObject({ kind: 'allow' })
     }
   })
 
@@ -260,24 +264,46 @@ describe('custom public domain input', () => {
         'rest.uniprot.org',
         443
       )
-    ).toMatchObject({ kind: 'ask', source: 'explicit' })
+    ).toMatchObject({ kind: 'allow' })
   })
 
-  it('keeps private service grants exact-only', () => {
+  it('keeps trusted service grants exact-only and accepts literal hosts', () => {
     expect(
       normalizeNotebookNetworkSettings({
         trustedPrivateDestinations: [
           {
-            hostname: '*.example.com',
+            hostname: '127.0.0.1',
             port: 443,
-            approvedAddresses: ['10.32.0.7']
+            protocol: 'http',
+            approvedAddresses: []
           }
+        ]
+      }).trustedPrivateDestinations
+    ).toMatchObject([{ hostname: '127.0.0.1', protocol: 'http' }])
+  })
+
+  it('normalizes IPv4, IPv6 and localhost trusted service keys consistently', () => {
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [
+          { hostname: '[2001:0DB8::1]', port: 8080, protocol: 'http', approvedAddresses: [] },
+          { hostname: 'localhost', port: 80, protocol: 'http', approvedAddresses: [] }
+        ]
+      }).trustedPrivateDestinations
+    ).toEqual([
+      { hostname: '2001:db8::1', port: 8080, protocol: 'http', approvedAddresses: [] },
+      { hostname: 'localhost', port: 80, protocol: 'http', approvedAddresses: [] }
+    ])
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [
+          { hostname: '[2001:db8::1]:8080', port: 8080, protocol: 'https', approvedAddresses: [] }
         ]
       }).trustedPrivateDestinations
     ).toEqual([])
   })
 
-  it('never permits a private DNS destination through a custom wildcard', async () => {
+  it('does not classify a private DNS answer as a policy violation', async () => {
     lookup.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }])
     const settings = normalizeNotebookNetworkSettings({ allowedDomains: ['*.example.com'] })
     expect(
@@ -285,14 +311,19 @@ describe('custom public domain input', () => {
         'data.example.com',
         443
       )
-    ).toMatchObject({ kind: 'deny', configurable: false })
+    ).toMatchObject({ kind: 'allow' })
   })
 })
 
 describe('private trust persistence contract', () => {
   it('preserves historical defaults and never promotes a private grant to a public domain grant', () => {
     expect(normalizeNotebookNetworkSettings({})).toEqual(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
-    const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+    const rule = {
+      hostname: 'lab.internal.example',
+      protocol: 'http' as const,
+      port: 8443,
+      approvedAddresses: ['10.32.0.7']
+    }
     const settings = normalizeNotebookNetworkSettings({ trustedPrivateDestinations: [rule] })
     expect(buildNotebookNetworkPolicy(settings).trustedPrivateDestinations).toEqual([rule])
     expect(notebookNetworkSettingsAllowDomain(settings, rule.hostname)).toBe(false)
@@ -300,7 +331,12 @@ describe('private trust persistence contract', () => {
     expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
   })
   it('fails closed for ambiguous duplicate services and malformed records', () => {
-    const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+    const rule = {
+      hostname: 'lab.internal.example',
+      protocol: 'http' as const,
+      port: 8443,
+      approvedAddresses: ['10.32.0.7']
+    }
     expect(
       normalizeNotebookNetworkSettings({
         trustedPrivateDestinations: [rule, { ...rule, approvedAddresses: ['10.32.0.8'] }]
@@ -311,4 +347,70 @@ describe('private trust persistence contract', () => {
         .trustedPrivateDestinations
     ).toEqual([])
   })
+})
+
+it('migrates obsolete HTTPS domain exceptions without broadening HTTP/IP authority or scope', () => {
+  const base = {
+    port: 8080,
+    approvedAddresses: [],
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    createdAt: 1
+  }
+  const grants = [
+    {
+      ...base,
+      id: 'https-domain',
+      recordId: 'r1',
+      scope: 'global',
+      hostname: 'localhost',
+      protocol: 'https'
+    },
+    {
+      ...base,
+      id: 'legacy-domain',
+      recordId: 'r2',
+      scope: 'project',
+      hostname: 'private.internal'
+    },
+    {
+      ...base,
+      id: 'http-domain',
+      recordId: 'r3',
+      scope: 'project',
+      hostname: 'private.internal',
+      protocol: 'http'
+    },
+    {
+      ...base,
+      id: 'https-ip',
+      recordId: 'r4',
+      scope: 'global',
+      hostname: '[::1]',
+      protocol: 'https',
+      port: 80
+    },
+    { ...base, id: 'legacy-ip', recordId: 'r5', scope: 'project', hostname: '127.0.0.1' }
+  ]
+  const settings = normalizeNotebookNetworkSettings({
+    destinationGrants: grants,
+    trustedPrivateDestinations: grants
+  })
+  expect(settings.destinationGrants).toEqual([
+    grants[2],
+    { ...grants[3], hostname: '::1' },
+    grants[4]
+  ])
+  expect(
+    settings.trustedPrivateDestinations?.map(({ hostname, protocol, port }) => ({
+      hostname,
+      protocol,
+      port
+    }))
+  ).toEqual([
+    { hostname: '::1', protocol: 'https', port: 80 },
+    { hostname: '127.0.0.1', protocol: undefined, port: 8080 },
+    { hostname: 'private.internal', protocol: 'http', port: 8080 }
+  ])
+  expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
 })

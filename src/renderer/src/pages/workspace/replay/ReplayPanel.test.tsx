@@ -1,6 +1,5 @@
 import { createLinearConversationGraph } from '../../../../../shared/conversation-graph'
 import { buildReplayDocument } from '@/lib/replay/timeline'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -339,31 +338,6 @@ describe('research replay interaction', () => {
     })
   })
 
-  it('exposes the visible playhead during playback and captures its latest position on demand', () => {
-    const props = callbacks()
-    const document = makeDocument()
-    const { rerender, unmount } = render(<ReplayPanel document={document} {...props} />)
-    const playhead = useSessionReplayStore.getState().playhead!
-    expect(playhead.capture().stepId).toBe('one')
-    fireEvent.click(screen.getByLabelText('Play replay'))
-    expect(useSessionReplayStore.getState().playhead).toBe(playhead)
-    fireEvent.click(screen.getByLabelText('Pause replay'))
-    const track = screen.getByTestId('replay-progress-track')
-    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 32))
-    track.setPointerCapture = vi.fn()
-    track.hasPointerCapture = () => true
-    track.releasePointerCapture = vi.fn()
-    fireEvent.pointerDown(track, { clientX: 800, button: 0 })
-    fireEvent.pointerUp(track, { clientX: 800, button: 0 })
-    expect(playhead.capture()).toMatchObject({ stepId: 'three', stepNumber: 3 })
-    act(() => requestReplaySeek({ ...playhead.capture(), stepId: 'one', stepOffsetMs: 0 }))
-    expect(playhead.capture().stepId).toBe('one')
-    expect(useSessionReplayStore.getState().playhead).toBe(playhead)
-    rerender(<ReplayPanel document={document} {...props} active={false} />)
-    expect(useSessionReplayStore.getState().playhead).toBeUndefined()
-    unmount()
-  })
-
   it('starts a whole-research discussion without selecting the current playback step', () => {
     const props = callbacks()
     render(<ReplayPanel document={makeDocument()} {...props} />)
@@ -376,6 +350,65 @@ describe('research replay interaction', () => {
         stepNumber: undefined
       })
     )
+  })
+
+  it('keeps the header step indicator in sync with replay navigation', () => {
+    const props = callbacks()
+    render(<ReplayPanel document={makeDocument()} {...props} />)
+
+    const indicator = screen.getByTestId('replay-current-step')
+    expect(indicator.textContent).toBe('Step 1 of 3')
+    expect(indicator.getAttribute('title')).toBe('Initial observation')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
+
+    expect(indicator.textContent).toBe('Step 2 of 3')
+    expect(indicator.getAttribute('title')).toBe('Interpret saved evidence')
+  })
+
+  it('offers the current step as a contextual question after seeking or pausing', () => {
+    vi.useFakeTimers()
+    const props = callbacks()
+    try {
+      render(<ReplayPanel document={makeDocument()} {...props} />)
+
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next step' }))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(799))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+      expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
+      const prompt = screen.getByTestId('replay-ask-step-prompt')
+      const askButton = within(prompt).getByRole('button')
+      expect(askButton.textContent).toContain('Ask')
+      expect(askButton.className).toContain('max-w-36')
+      expect(askButton.getAttribute('data-ask-prompt')).toBe('true')
+      expect(askButton.className).toContain('ring-2')
+      expect(askButton.className).toContain('bg-primary/10')
+      fireEvent.click(within(screen.getByTestId('replay-ask-step-prompt')).getByRole('button'))
+      expect(props.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'two' }))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }))
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(800))
+      expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+      expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Browse steps' }))
+      expect(screen.getByRole('dialog', { name: 'Browse steps' })).toBeTruthy()
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(800))
+      expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('browses only the selected branch, pauses, and returns focus after a direct step jump', async () => {
@@ -1820,4 +1853,32 @@ it('generates directly from the replay source branch without opening a discussio
     expect(start).toHaveBeenCalledWith({ projectId: 'p', sessionId: 's', branchId: 'main' })
   )
   expect(props.onAskStep).not.toHaveBeenCalled()
+})
+
+it('quotes a completed card from the displayed branch only on explicit Ask', () => {
+  const doc = makeDocument()
+  const branch = doc.branches[1]
+  branch.steps = Array.from({ length: 11 }, (_, i) => ({
+    ...step(`b${i}`, i * 1000, `Branch observation ${i}`),
+    branchId: branch.id
+  }))
+  branch.durationMs = 11000
+  const props = callbacks()
+  const { container } = render(<ReplayPanel document={doc} {...props} />)
+  chooseBranch('Other branch')
+  seekProgress(10500)
+  const card = container.querySelector<HTMLElement>('[data-replay-step="b2"]')!
+  fireEvent.wheel(card, { deltaY: -100 })
+  expect(props.onAskStep).not.toHaveBeenCalled()
+  fireEvent.click(within(card).getByRole('button', { name: 'Ask' }))
+  expect(props.onAskStep).toHaveBeenCalledWith(
+    expect.objectContaining({
+      stepNumber: 3,
+      stepId: 'b2',
+      branchId: branch.id,
+      excerpt: 'Branch observation 2',
+      stepOffsetMs: 999
+    })
+  )
+  expect(screen.getByTestId('replay-current-step').textContent).toContain('11')
 })

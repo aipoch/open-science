@@ -20,6 +20,7 @@ import {
   usePackageOperationStore
 } from '../../stores/package-operation-store'
 
+import { parseApplicationCommandError } from '../../../../shared/application-command-contract'
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest,
@@ -1274,7 +1275,9 @@ const createOrderedSessionPersistence = (
       const result = await task()
       failedWritesByTarget.delete(target)
       return result
-    } catch (error) {
+    } catch (cause) {
+      // Electron session writes can reject with a public command envelope across contextBridge.
+      const error = cause instanceof Error ? cause : (parseApplicationCommandError(cause) ?? cause)
       if (
         !(error instanceof SessionPersistenceGenerationChangedError) &&
         !(error instanceof SessionExportSaveDeferred)
@@ -1571,45 +1574,63 @@ const saveSessionInOrder = async (
   const target = `session:${session.id}`
   let saveOptions = withPendingConversationCommands(session, options)
   const retained = persistence.recovery.get(target)
-  const retainedCommands = retained?.intent?.options?.conversationCommands
-  const rejectedCommand = retainedCommands?.length === 1 ? retainedCommands[0] : undefined
-  const commands = saveOptions?.conversationCommands
-  const command = commands?.length === 1 ? commands[0] : undefined
-  if (
-    retained?.state === 'failed' &&
-    !retained.reviewRequired &&
-    retained.intent?.kind !== 'fields' &&
-    retained.intent?.session.projectId === session.projectId &&
-    retained.intent.session.runtimeTranscriptOwner === 'main' &&
-    session.runtimeTranscriptOwner === 'main' &&
-    sessionIntentFields(retained.intent).length === 0 &&
-    !saveOptions?.conflictRebaseFields?.length &&
-    !saveOptions?.runtimeWriterToken &&
-    ((rejectedCommand?.kind === 'rollback-prompt' &&
-      command?.kind === 'rollback-prompt' &&
-      rejectedCommand.preparationId === command.preparationId &&
-      Boolean(rejectedCommand.preserveSubmittedMessage) ===
-        Boolean(command.preserveSubmittedMessage)) ||
-      (rejectedCommand?.kind === 'prepare-prompt' &&
-        command?.kind === 'prepare-prompt' &&
-        rejectedCommand.promptMessageId === command.promptMessageId &&
-        rejectedCommand.mode === command.mode) ||
-      (command?.kind === 'rollback-prompt' &&
-        session.promptPreparation?.id === command.preparationId &&
-        retainedCommands?.length &&
-        retainedCommands.every((pending) => pending.preparationId === command.preparationId) &&
-        retainActivePreparationCommands(retainedCommands).length === 0))
-  ) {
-    saveOptions = {
-      ...saveOptions,
-      conversationCommands: [
-        rejectedCommand?.kind === 'prepare-prompt' || rejectedCommand?.kind === 'rollback-prompt'
-          ? rejectedCommand
-          : command!
-      ]
+  if (retained) {
+    const rejected = retained.intent?.options?.conversationCommands ?? []
+    const requested = saveOptions?.conversationCommands ?? []
+    // An edited prompt can reset the provider context before its write fails. Keep the exact
+    // pending segment opens for that real reset alongside rollback of the rejected edit.
+    const segments = rejected.filter(
+      (entry) => entry.kind === 'open-segment' && !entry.preparationId
+    )
+    const pendingSegments = requested.filter((entry) => entry.kind === 'open-segment')
+    const replaySegments =
+      requested[0]?.kind === 'rollback-prompt' &&
+      segments.length === pendingSegments.length &&
+      segments.every((segment, index) => segment.id === pendingSegments[index].id)
+        ? segments
+        : []
+    const segmentIds = new Set(replaySegments.map(({ id }) => id))
+    const retainedCommands = rejected.filter(({ id }) => !segmentIds.has(id))
+    const rejectedCommand = retainedCommands.length === 1 ? retainedCommands[0] : undefined
+    const commands = requested.filter(({ id }) => !segmentIds.has(id))
+    const command = commands.length === 1 ? commands[0] : undefined
+    if (
+      retained.state === 'failed' &&
+      !retained.reviewRequired &&
+      retained.intent?.kind !== 'fields' &&
+      retained.intent?.session.projectId === session.projectId &&
+      retained.intent.session.runtimeTranscriptOwner === 'main' &&
+      session.runtimeTranscriptOwner === 'main' &&
+      sessionIntentFields(retained.intent).length === 0 &&
+      !saveOptions?.conflictRebaseFields?.length &&
+      !saveOptions?.runtimeWriterToken &&
+      ((rejectedCommand?.kind === 'rollback-prompt' &&
+        command?.kind === 'rollback-prompt' &&
+        rejectedCommand.preparationId === command.preparationId &&
+        Boolean(rejectedCommand.preserveSubmittedMessage) ===
+          Boolean(command.preserveSubmittedMessage)) ||
+        (rejectedCommand?.kind === 'prepare-prompt' &&
+          command?.kind === 'prepare-prompt' &&
+          rejectedCommand.promptMessageId === command.promptMessageId &&
+          rejectedCommand.mode === command.mode) ||
+        (command?.kind === 'rollback-prompt' &&
+          session.promptPreparation?.id === command.preparationId &&
+          retainedCommands.length > 0 &&
+          retainedCommands.every((pending) => pending.preparationId === command.preparationId) &&
+          retainActivePreparationCommands(retainedCommands).length === 0))
+    ) {
+      saveOptions = {
+        ...saveOptions,
+        conversationCommands: [
+          rejectedCommand?.kind === 'prepare-prompt' || rejectedCommand?.kind === 'rollback-prompt'
+            ? rejectedCommand
+            : command!,
+          ...replaySegments
+        ]
+      }
+    } else {
+      persistence.recovery.assertSettled(target)
     }
-  } else {
-    persistence.recovery.assertSettled(target)
   }
   try {
     const durable = await persistence.saveSessionWithRecovery(
@@ -3165,7 +3186,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             title: useSessionStore.getState().sessions.find(({ id }) => id === event.sessionId)
               ?.title,
             state: 'failed',
-            kind: 'storage'
+            kind: 'storage',
+            terminalScopes: [event.terminalScope]
           }
         ]
       })
@@ -3984,6 +4006,21 @@ const useSessionPersistence = (): SessionPersistenceState => {
     }
   }, [loadAttempt, presentOutstandingWriteFailures, recoveryLoadEpoch])
 
+  // A retained edit and a failed terminal commit can share a target. Keep the edit's
+  // recovery controls while exposing the executions owned by global Retry.
+  const writeIssues = new Map(retainedWriteIssues.map((issue) => [issue.target, issue]))
+  for (const issue of terminalWriteIssues) {
+    const existing = writeIssues.get(issue.target)
+    writeIssues.set(
+      issue.target,
+      existing
+        ? {
+            ...existing,
+            terminalScopes: [...(existing.terminalScopes ?? []), ...(issue.terminalScopes ?? [])]
+          }
+        : issue
+    )
+  }
   return {
     isHydrated,
     isLoading,
@@ -3997,9 +4034,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     writeErrorRetryable,
     isCheckingWrites: retainedWriteIssues.some(({ state }) => state === 'checking'),
     isRetryingWrites,
-    writeIssues: [...retainedWriteIssues, ...terminalWriteIssues].filter(
-      (issue, index, all) => all.findIndex(({ target }) => target === issue.target) === index
-    ),
+    writeIssues: [...writeIssues.values()],
     persistenceBlockedSessionIds: [
       ...new Set([
         ...persistenceBlockedSessionIds,
