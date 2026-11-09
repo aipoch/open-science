@@ -557,7 +557,7 @@ describe('GrantFolderAccessDialog', () => {
     expect(document.activeElement).toBe(radios[0])
   })
 
-  it('shows "Folder access could not be updated." when the grant is rejected', async () => {
+  it('shows the concrete grant rejection directly', async () => {
     grantRoot.mockRejectedValue(new Error('Directory is outside the granted scope.'))
     renderDialog()
     await flush()
@@ -567,16 +567,18 @@ describe('GrantFolderAccessDialog', () => {
     await confirmGrant()
 
     expect(document.body.textContent).toContain('Folder access could not be updated.')
+    expect(document.body.textContent).toContain('Directory is outside the granted scope.')
     // The failure clears on navigation.
     await click(document.body.querySelector('[data-testid="grant-access-crumb-home"]'))
-    expect(document.body.textContent).not.toContain('Folder access could not be updated.')
+    expect(document.body.textContent).not.toContain('Directory is outside the granted scope.')
   })
 
-  it('explains a rejected grant when browsing succeeds but Notebook cleanup is incomplete', async () => {
+  it('shows the full grant preflight failure in place without closing the dialog', async () => {
     const reason =
-      'Notebook cleanup is incomplete; folder access changes are unavailable until cleanup is verified.'
+      'Path: D:\\spss\nStage: inspect-selected-path\nWin32 error: 5 (ERROR_ACCESS_DENIED)\nRemediation: Choose a local NTFS folder you own.'
+    const onGranted = vi.fn()
     grantRoot.mockRejectedValue(new Error(reason))
-    renderDialog()
+    renderDialog(onGranted)
     await flush()
 
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
@@ -589,6 +591,10 @@ describe('GrantFolderAccessDialog', () => {
     expect(
       document.body.querySelector('[data-testid="grant-folder-access-dialog"]')?.textContent
     ).toContain(reason)
+    expect(document.body.textContent).toContain('Folder access could not be updated.')
+    expect(document.body.querySelector('[data-testid="grant-access-error"] details')).toBeNull()
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(onGranted).not.toHaveBeenCalled()
   })
 
   it.each([new Error(''), undefined])(

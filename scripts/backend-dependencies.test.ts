@@ -342,6 +342,7 @@ describe('desktop-only dependency contents', () => {
       for (const file of [
         'scripts/stage-backend.mjs',
         'scripts/backend-dependencies.mjs',
+        'scripts/build-notebook-host.mjs',
         'scripts/desktop-pdf-lib.mjs',
         'scripts/desktop-dependency-chains.mjs'
       ])
