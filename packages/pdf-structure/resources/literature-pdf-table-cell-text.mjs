@@ -3599,6 +3599,12 @@ export function recoverUnassignedInsertedParameterRows({
     )
   }
   const parameter = (text) => /^[A-Za-z][A-Za-z0-9_. -]*$/.test(text.trim())
+  const numericValue = (text) => {
+    const value = text.trim()
+    const unit = value.match(/[A-Za-z]{1,3}$/u)
+    const core = (unit ? value.slice(0, -unit[0].length) : value).trimEnd()
+    return /(?=.*\d)^[<>≤≥−+\-\d\s.,()\[\]%±–—\/<>=]+$/u.test(core)
+  }
   const groups = []
   for (const item of items
     .filter(
@@ -3639,8 +3645,7 @@ export function recoverUnassignedInsertedParameterRows({
     const descriptionText = laneText(lanes[2])
     if (
       !parameter(parameterText) ||
-      !/\d/u.test(valueText) ||
-      /\p{L}/u.test(valueText) ||
+      !numericValue(valueText) ||
       !/\p{L}/u.test(descriptionText) ||
       source.some((item) => Math.abs(item.baseline - group.baseline) > height * 0.4)
     )

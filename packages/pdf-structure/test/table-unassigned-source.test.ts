@@ -958,9 +958,14 @@ it('recovers a terminal unassigned row in a two-column directory', () => {
   expect(repairs).toContain('unassigned-complete-source-row-recovered')
 })
 
-it.each(['Parameters', 'Hyperparameters'])(
-  'inserts a strictly witnessed three-column parameter row between complete rows: %s',
-  (captionWord) => {
+it.each([
+  ['Parameters', '1'],
+  ['Hyperparameters', '5ms'],
+  ['Parameters', '10Hz'],
+  ['Hyperparameters', '20%']
+])(
+  'inserts a strictly witnessed three-column parameter row between complete rows: %s/%s',
+  (captionWord, valueText) => {
     const token = (text: string, x: number, y: number): Record<string, unknown> => ({
       text,
       rect: [x, y, x + Math.max(8, text.length * 3), y + 10],
@@ -993,7 +998,7 @@ it.each(['Parameters', 'Hyperparameters'])(
     ]
     const missing = [
       token('target_update_interval', 8, 33),
-      token('1', 108, 33),
+      token(valueText, 108, 33),
       token('Frequency of target updates', 208, 33)
     ]
     const next = [
