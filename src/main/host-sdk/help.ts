@@ -3,7 +3,6 @@ import {
   type HostCapabilityOperationKey
 } from './capability-projection'
 import { DELEGATION_DISABLED_MESSAGE } from '../delegation/durable-delegated-work-error'
-import { HOST_VIEW_IMAGE_DELIVERY_GUIDANCE } from './view-image-guidance'
 
 const HOST_SDK_SUBAGENT_OPERATION_IDS = HOST_CAPABILITY_OPERATION_KEYS.map(
   (operation) => `host.${operation}` as const
@@ -744,12 +743,7 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   returns: {
     type: 'object',
     fields: [
-      {
-        name: 'attached',
-        type: 'true',
-        required: true,
-        description: 'Staged as model input, not published as an Artifact.'
-      },
+      { name: 'attached', type: 'true', required: true, description: 'Staged successfully.' },
       {
         name: 'sourceKind',
         type: 'string',
@@ -765,7 +759,6 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   constraints: [
     'Use host.viewImage during a foreground repl_execute. Only path sources require a trusted execution workspace.',
     'The returned JavaScript object is attachment metadata, not image bytes. Visual results reach the Agent only after the enclosing repl_execute succeeds. A visual model receives images. A text-only model receives descriptions from the configured Vision model. A failed invocation discards every image it staged.',
-    HOST_VIEW_IMAGE_DELIVERY_GUIDANCE,
     'Attach at most four images per repl_execute invocation. Split larger sets across successful invocations.',
     'Only PNG and JPEG sources are supported.',
     'The output long edge is at most 1568 pixels and is never upscaled. Omit maxSize for the maximum available resolution; use a crop whose long edge is at most 1568 pixels when native pixels are required.'

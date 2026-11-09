@@ -17,7 +17,6 @@ import {
   VISION_MODEL_NOT_CONFIGURED_MESSAGE
 } from '../../shared/failure/messages'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
-import { HOST_VIEW_IMAGE_DELIVERY_GUIDANCE } from '../host-sdk/view-image-guidance'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { isRecord } from '../value-guards'
 import type {
@@ -52,13 +51,6 @@ const VISION_EVIDENCE_USAGE_GUIDANCE = [
   'Do not use filesystem, shell, Notebook, MCP, Skill, plugin, or network tools merely to find, open, read, or parse the images again.',
   'Use tools when the user request independently requires work beyond reading the images, such as comparing project files, running an analysis, or creating an output.',
   '</open_science_vision_evidence_instructions>'
-].join('\n')
-
-const NOTEBOOK_VISION_EVIDENCE_USAGE_GUIDANCE = [
-  '<open_science_view_image_evidence_instructions>',
-  'The populated `<view-image-evidence>` blocks are image inspection results from `host.viewImage`, prepared for the active text-only model.',
-  HOST_VIEW_IMAGE_DELIVERY_GUIDANCE,
-  '</open_science_view_image_evidence_instructions>'
 ].join('\n')
 
 type ImageEvidence = Readonly<{
@@ -481,7 +473,7 @@ class ImageInputCompatibilityOwner {
       includedEvidence[index] = true
     }
     let imageIndex = 0
-    let guidanceIncluded = false
+    let needsAttachmentGuidance = !notebookToolResult
     return input.content.map((block) => {
       if (!isImageRelayBlock(block)) return block
       const index = imageIndex
@@ -489,11 +481,11 @@ class ImageInputCompatibilityOwner {
       if (!includedEvidence[index])
         return { type: 'text', text: renderHistoricalImageOmission(displayName(block, index)) }
       const rendered = renderedEvidence[index]!
-      if (guidanceIncluded) return { type: 'text', text: rendered }
-      guidanceIncluded = true
+      if (!needsAttachmentGuidance) return { type: 'text', text: rendered }
+      needsAttachmentGuidance = false
       return {
         type: 'text',
-        text: `${notebookToolResult ? NOTEBOOK_VISION_EVIDENCE_USAGE_GUIDANCE : VISION_EVIDENCE_USAGE_GUIDANCE}\n\n${rendered}`
+        text: `${VISION_EVIDENCE_USAGE_GUIDANCE}\n\n${rendered}`
       }
     })
   }

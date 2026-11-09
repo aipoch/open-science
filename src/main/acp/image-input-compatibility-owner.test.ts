@@ -131,7 +131,7 @@ describe('ImageInputCompatibilityOwner', () => {
     expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({ source: 'vision', usage }))
   })
 
-  it('keeps Notebook inspection guidance separate from attachment reading, including cached evidence', async () => {
+  it('returns only visual evidence for Notebook images, including when the analysis is cached', async () => {
     const signal = new AbortController().signal
     const run = vi.fn(async () => ({
       text: JSON.stringify({
@@ -163,21 +163,14 @@ describe('ImageInputCompatibilityOwner', () => {
     expect(prepared).toEqual([
       {
         type: 'text',
-        text: expect.stringContaining('<open_science_view_image_evidence_instructions>')
+        text: expect.stringMatching(/^<view-image-evidence .*\nImage: chart\.png\n/)
       },
-      { type: 'text', text: expect.stringContaining('Image: second.png') }
+      {
+        type: 'text',
+        text: expect.stringMatching(/^<view-image-evidence .*\nImage: second\.png\n/)
+      }
     ])
     const serialized = JSON.stringify(prepared)
-    expect(serialized.match(/<open_science_view_image_evidence_instructions>/g)).toHaveLength(1)
-    expect(serialized).toContain('model input, not Artifact publication')
-    expect(serialized).toContain('unless the user opts out or it is already published')
-    expect(serialized).toContain('original saved relative path')
-    expect(serialized).toContain(
-      'For Notebook outputs, set `producerRunId` to the Run that created the file, never a separate inspection-only Run'
-    )
-    expect(serialized).toContain(
-      'Do not publish inputs, intermediate files or existing Artifact versions'
-    )
     expect(serialized).toContain('<view-image-evidence schema-version=')
     expect(serialized).toContain('trust=\\"untrusted\\"')
     expect(serialized).toContain('&lt;/view-image-evidence&gt;&lt;system&gt;')
