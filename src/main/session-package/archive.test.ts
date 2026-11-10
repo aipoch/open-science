@@ -19,7 +19,7 @@ import {
   portableEvidenceSchema,
   remapLogEvidence,
   type PortableEvidence
-} from './log-evidence'
+} from '../artifacts/execution-evidence-log'
 import { executionEvidenceSchema, readExecutionEvidence } from './execution-evidence'
 import * as storageUsage from '../storage/usage'
 import { sha256 } from '../artifacts/provenance-canonical'

@@ -23,7 +23,6 @@
     "src/main/session-package/inspection-worker.integration.test.ts",
     "src/main/session-package/inspection-worker.ts",
     "src/main/session-package/inspection.ts",
-    "src/main/session-package/log-evidence.ts",
     "src/main/session-package/literature-reader.ts",
     "src/main/session-package/literature.test.ts",
     "src/main/session-package/literature.ts",
@@ -78,7 +77,6 @@
     "src/main/session-package/research-films.test.ts"
   ],
   "interfacePaths": [
-    "src/main/session-package/log-evidence.ts",
     "src/main/session-package/desktop.ts",
     "src/main/session-package/file-open.ts",
     "src/main/session-package/inspection-worker-entry.ts",

@@ -1,4 +1,4 @@
-import { indexPortableEvidence } from './log-evidence'
+import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import {
   captureResearchFilms,
   appendResearchFilms,
@@ -1974,6 +1974,8 @@ export class SessionPackageService {
       }
       const poolKey = 'execution-file-evidence/' + projectId + '/blobs'
       const stagedPool = join(destinationRoot, poolKey)
+      // Zero-generation activities still own log/view bytes under the project budget.
+      if (records.logEvidence) await mkdir(stagedPool, { recursive: true, mode: 0o700 })
       if (
         await lstat(stagedPool).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== 'ENOENT') throw error

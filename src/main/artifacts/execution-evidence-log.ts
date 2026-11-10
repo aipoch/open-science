@@ -10,8 +10,8 @@ import {
   type PackedGeneration,
   type ViewRow
 } from '../../../resources/notebook/file_evidence_codec.mjs'
-import { sha256 } from '../artifacts/provenance-canonical'
-import { assertPackageSourcePath } from './archive'
+import { sha256 } from './provenance-canonical'
+import { assertRegularStoragePath } from './provenance-storage'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/u)
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/u)
@@ -205,7 +205,7 @@ export async function collectLaneRecords(
   const prefix = lane + '/.shadow-evidence'
   const log = prefix + '/log.jsonl'
   try {
-    await assertPackageSourcePath(root, log)
+    await assertRegularStoragePath(root, log)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
@@ -218,7 +218,7 @@ export async function collectLaneRecords(
     if (depth > 64) return invalidEvidence()
     if (!diskLane.views[key]) {
       const path = prefix + '/views/' + key
-      await assertPackageSourcePath(root, path)
+      await assertRegularStoragePath(root, path)
       const body = JSON.parse(await readFileWithinLimit(join(root, path), limit))
       if (Array.isArray(body.rows)) diskLane.views[key] = rowsSchema.parse(body.rows)
       else {
@@ -329,7 +329,7 @@ export async function readNativeEvidence(
   maxBytes: number
 ): Promise<Buffer> {
   try {
-    await assertPackageSourcePath(root, key)
+    await assertRegularStoragePath(root, key)
     const bytes = Buffer.from(await readFileWithinLimit(join(root, key), maxBytes))
     if (sha256(bytes) !== expectedChecksum)
       throw new Error('Execution file evidence checksum mismatch.')

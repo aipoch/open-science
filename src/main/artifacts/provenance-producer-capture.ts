@@ -39,7 +39,7 @@ import {
   inputEvidence,
   resolveRunEnvironmentCapture
 } from './provenance-execution-evidence'
-import { readNativeEvidence } from '../session-package/log-evidence'
+import { readNativeEvidence } from './execution-evidence-log'
 import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
 
 const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024

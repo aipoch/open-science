@@ -6,7 +6,7 @@ import {
   evidenceLocation,
   indexPortableEvidence,
   type PortableEvidence
-} from './log-evidence'
+} from '../artifacts/execution-evidence-log'
 import { posix } from 'node:path'
 import { z } from 'zod'
 import type { NotebookRunDocument } from '../../shared/notebook'

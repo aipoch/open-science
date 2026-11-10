@@ -5,7 +5,7 @@ import {
   installLaneLogs,
   portableEvidenceSchema,
   remapLogEvidence
-} from './log-evidence'
+} from '../artifacts/execution-evidence-log'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { sessionPackageReceiptSchema } from '../../shared/session-package'
 import { z } from 'zod'

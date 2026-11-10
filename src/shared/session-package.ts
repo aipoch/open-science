@@ -269,13 +269,21 @@ export const packageInventoryEntrySchema = z
   })
   .strict()
 
+const packageFeatureSchema = z.enum([
+  'literature',
+  'ro-crate',
+  'content-dedupe',
+  'research-film',
+  'log-evidence'
+])
+
 export const sessionPackageManifestSchema = z
   .object({
     format: z.literal('open-science-session'),
     // content-dedupe lets logical inventory entries share one content-addressed object path.
     requiredFeatures: z
-      .array(z.enum(['literature', 'ro-crate', 'content-dedupe', 'research-film', 'log-evidence']))
-      .max(4)
+      .array(packageFeatureSchema)
+      .max(packageFeatureSchema.options.length)
       .optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),

@@ -10,7 +10,7 @@ import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'no
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry, readPackageArchive } from './archive'
-import { readNativeEvidence } from './log-evidence'
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { remapStorageKey } from './native-snapshot'
 import { ProjectRepository } from '../projects/repository'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
@@ -144,6 +144,83 @@ it('round-trips a compaction activity and its conversation through a science pac
     expect(session?.conversationGraph?.activities).toHaveLength(1)
   } finally {
     await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
+it('activates project accounting for imported logs with no generation objects', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  const scope = { projectId: 'project-empty', sessionId: 'session-empty' }
+  await source.client.project.create({ data: { id: scope.projectId, name: 'Empty' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: scope.sessionId,
+    projectId: scope.projectId,
+    title: 'Empty',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const lane = createFrameNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-empty')
+  const document = await source.notebookRepository.loadOrCreate({
+    ...scope,
+    lane,
+    workspaceCwd: source.storageRoot
+  })
+  await mkdir(document.dataRoot, { recursive: true })
+  const prefix = 'execution-file-evidence/project-empty/session-empty'
+  const capture = await startWorkingFileObservation({
+    runId: 'run-empty',
+    dataRoot: document.dataRoot,
+    notebookSessionRoot: document.notebookSessionRoot,
+    fileEvidenceStorageRoot: source.storageRoot,
+    fileEvidenceRoot: join(source.storageRoot, prefix),
+    fileEvidenceStoragePrefix: prefix
+  })
+  const { fileEvidence } = await capture.finish()
+  expect(fileEvidence.generationCount).toBe(0)
+  await source.notebookRepository.appendRun({
+    ...scope,
+    lane,
+    run: {
+      runId: 'run-empty',
+      cellId: 'cell-empty',
+      source: 'user',
+      kernelKind: 'python',
+      status: 'completed',
+      script: 'pass',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      artifacts: [],
+      outputs: [],
+      workingFiles: [],
+      fileEvidence
+    }
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'empty.science')
+    await exporter.exportTo(scope, archive)
+    const imported = await importer.importFrom(archive)
+    const project = join(target.storageRoot, 'execution-file-evidence', imported.projectId)
+    expect(await readdir(join(project, 'blobs'))).toEqual([])
+    expect((await stat(join(project, '.shadow-evidence-v1'))).size).toBe(0)
+    expect(
+      (await stat(join(project, imported.sessionId, '.shadow-evidence', 'log.jsonl'))).size
+    ).toBeGreaterThan(0)
+  } finally {
+    await exporter.close()
+    await importer.close()
   }
 })
 
