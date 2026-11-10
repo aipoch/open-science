@@ -583,8 +583,14 @@ describe('independent source regression', () => {
         scheduled.jobs.regression.steps.find(({ id }) => id === 'accessibility')?.env
           ?.PLAYWRIGHT_BLOB_OUTPUT_DIR
       ).toBe('blob-report/accessibility')
+      const suiteBudgets = [...step.run!.matchAll(/--global-timeout=(\d+)/g)].map((match) =>
+        Number(match[1])
+      )
+      expect(suiteBudgets).toHaveLength(2)
+      const [browserBudget, visualBudget] = suiteBudgets
       expect(
-        scheduled.jobs.regression['timeout-minutes']! * 60000 - (900000 + 600000 + 600000)
+        scheduled.jobs.regression['timeout-minutes']! * 60000 -
+          (browserBudget + visualBudget + 600000)
       ).toBeGreaterThanOrEqual(10 * 60000)
     }
   )

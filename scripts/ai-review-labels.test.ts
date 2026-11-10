@@ -712,7 +712,9 @@ describe('label configuration contracts', () => {
         Boolean(
           label.type ||
           label.name.startsWith('size:') ||
-          ['needs-triage', 'reproducibility'].includes(label.name)
+          ['needs-triage', 'reproducibility', 'needs-author-action', 'needs-review'].includes(
+            label.name
+          )
         )
       ).toBe(true)
     }
