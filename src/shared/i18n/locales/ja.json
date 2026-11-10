@@ -2531,6 +2531,7 @@
     "Reveal log file": "ログファイルを表示",
     "Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.": "デフォルトのエージェントに戻します。スペシャリスト機能のスコープが削除され、有効になっているすべてのスキルとコネクタが再び利用可能になります。",
     "Review": "総説",
+    "Review_audit": "レビュー",
     "Review error": "レビューエラー",
     "Review could not start. Try again.": "レビューを開始できませんでした。もう一度お試しください。",
     "Review or dismiss the current execution Plan before submitting a revision.": "修正を送信する前に、現在の実行プランを確認または却下します。",

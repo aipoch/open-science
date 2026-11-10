@@ -2622,6 +2622,7 @@
     "Reveal log file": "顯示記錄檔",
     "Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.": "恢復為預設智能體。專家的能力範圍限制將被移除 — 所有已啟用的技能和連接器將重新可用。",
     "Review": "綜述",
+    "Review_audit": "審核",
     "Review error": "審查出錯",
     "Review could not start. Try again.": "無法開始審查，請再試一次。",
     "Review or dismiss the current execution Plan before submitting a revision.": "提交修訂前請先審閱或忽略目前執行計劃。",
