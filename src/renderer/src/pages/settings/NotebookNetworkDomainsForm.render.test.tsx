@@ -399,9 +399,6 @@ it.each(['relaxed', 'strict'] as const)(
     })
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await act(async () => button('Edit').click())
-    await act(async () =>
-      useSettingsStore.setState({ notebookNetwork: { ...initial, mode: nextMode } })
-    )
     await typeInput(hostInput(), 'changed.local')
     await act(async () => button('Confirm').click())
     expect(container.querySelector('form')).toBeNull()
@@ -618,7 +615,188 @@ it('switches modes while discarding an incomplete new address', async () => {
   await act(async () => button('Add address').click())
   await typeInput(hostInput(), 'unfinished address')
   await act(async () => button('Strict').click())
+  expect(hostInput().value).toBe('unfinished address')
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+  await act(async () => button('Switch to Strict mode').click())
   expect(container.querySelector('form')).toBeNull()
   expect(useSettingsStore.getState().notebookNetwork.mode).toBe('strict')
   expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations ?? []).toEqual([])
+})
+
+const modeRadio = (mode: string): HTMLButtonElement =>
+  [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
+    (element) => element.textContent === mode
+  )!
+const modePanel = (): HTMLElement | null =>
+  container.querySelector('[aria-label="Confirm network mode change"]')
+const key = async (element: Element, value: string): Promise<void> => {
+  await act(async () =>
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true }))
+  )
+}
+
+it.each([
+  [
+    'relaxed',
+    'Strict',
+    'Trusted unsafe networks',
+    'Connections outside the whitelist will be blocked.'
+  ],
+  ['strict', 'Relaxed', 'Strict whitelist', 'Network access will expand.']
+] as const)(
+  'requires a separate confirmation from %s mode and retains the active list',
+  async (mode, target, list, impact) => {
+    useSettingsStore.setState({ notebookNetwork: { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, mode } })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => modeRadio(target).click())
+    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+    expect(container.querySelector(`[aria-label="${list}"]`)).not.toBeNull()
+    expect(modePanel()?.textContent).toContain(impact)
+    expect(modePanel()?.textContent).toContain('Not yet applied')
+    expect(container.textContent).toContain(
+      mode === 'relaxed' ? 'Current: Relaxed' : 'Current: Strict'
+    )
+    await act(async () => button(`Switch to ${target} mode`).click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().notebookNetwork.mode).toBe(target.toLowerCase())
+    expect(modePanel()).toBeNull()
+  }
+)
+
+it.each(['cancel', 'escape', 'active'] as const)(
+  'preserves address drafts when cancelling with %s',
+  async (method) => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => button('Add address').click())
+    await typeInput(hostInput(), 'draft.local')
+    await act(async () => modeRadio('Strict').click())
+    expect(hostInput().value).toBe('draft.local')
+    if (method === 'cancel') await act(async () => modePanel()!.querySelector('button')!.click())
+    if (method === 'escape') await key(modeRadio('Strict'), 'Escape')
+    if (method === 'active') await act(async () => modeRadio('Relaxed').click())
+    expect(modePanel()).toBeNull()
+    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+    expect(hostInput().value).toBe('draft.local')
+    expect(document.activeElement).toBe(modeRadio('Relaxed'))
+  }
+)
+
+it('keeps failed mode changes pending and retries only on explicit confirmation', async () => {
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('private backend details'))
+    .mockImplementation(async (next) => {
+      useSettingsStore.setState({ notebookNetwork: next })
+      return next
+    })
+  useSettingsStore.setState({ setNotebookNetwork: save })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => modeRadio('Strict').click())
+  await act(async () => button('Switch to Strict mode').click())
+  expect(container.textContent).toContain('Current: Relaxed')
+  expect(modePanel()?.querySelector('[role="alert"]')).not.toBeNull()
+  expect(container.textContent).not.toContain('private backend details')
+  expect(save).toHaveBeenCalledOnce()
+  await act(async () => button('Switch to Strict mode').click())
+  expect(save).toHaveBeenCalledTimes(2)
+  expect(container.textContent).toContain('Current: Strict')
+})
+
+it('blocks duplicate confirmations and keeps the old mode until the save resolves', async () => {
+  let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
+  const save = vi.fn(
+    () =>
+      new Promise<typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS>((resolve) => {
+        finish = resolve
+      })
+  )
+  useSettingsStore.setState({ setNotebookNetwork: save })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => modeRadio('Strict').click())
+  await act(async () => {
+    button('Switch to Strict mode').click()
+    button('Switch to Strict mode').click()
+  })
+  expect(save).toHaveBeenCalledOnce()
+  expect(modeRadio('Relaxed').disabled).toBe(true)
+  expect(modePanel()?.textContent).toContain('Switching…')
+  expect(container.textContent).toContain('Current: Relaxed')
+  await key(modeRadio('Strict'), 'Escape')
+  expect(modePanel()).not.toBeNull()
+  const result = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, mode: 'strict' as const }
+  await act(async () => {
+    useSettingsStore.setState({ notebookNetwork: result })
+    finish(result)
+  })
+  expect(modePanel()).toBeNull()
+  expect(container.textContent).toContain('Current: Strict')
+})
+
+it('invalidates pending confirmation when another window changes the mode', async () => {
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => modeRadio('Strict').click())
+  await act(async () =>
+    useSettingsStore.setState({
+      notebookNetwork: { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, mode: 'strict' }
+    })
+  )
+  expect(modePanel()).toBeNull()
+  expect(container.textContent).toContain('Current: Strict')
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+})
+
+it('confirms against the latest unrelated rule updates without including address drafts', async () => {
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Add address').click())
+  await typeInput(hostInput(), 'unsaved.local')
+  await act(async () => modeRadio('Strict').click())
+  const latest = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['other.example'] }
+  await act(async () => useSettingsStore.setState({ notebookNetwork: latest }))
+  await act(async () => button('Switch to Strict mode').click())
+  const save = vi.mocked(useSettingsStore.getState().setNotebookNetwork)
+  expect(save.mock.calls[0][4]).toBe(latest)
+  expect(save.mock.calls[0][0].allowedDomains).toEqual(['other.example'])
+  expect(save.mock.calls[0][0].trustedPrivateDestinations ?? []).toEqual([])
+})
+
+it('keyboard selection only stages a mode and does not create an extra leave guard', async () => {
+  const leave = vi.fn()
+  await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={leave} />))
+  await key(modeRadio('Relaxed'), 'End')
+  expect(modePanel()).not.toBeNull()
+  expect(document.activeElement).toBe(modeRadio('Strict'))
+  await key(modeRadio('Strict'), 'Home')
+  expect(modePanel()).toBeNull()
+  await key(modeRadio('Relaxed'), 'ArrowRight')
+  expect(modePanel()).not.toBeNull()
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+  expect(leave).toHaveBeenLastCalledWith(expect.objectContaining({ dirty: false, busy: false }))
+})
+
+it('invalidates both a pending switch and its old-mode editor after an external mode change', async () => {
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Add address').click())
+  await typeInput(hostInput(), 'draft.local')
+  await act(async () => modeRadio('Strict').click())
+  await act(async () =>
+    useSettingsStore.setState({
+      notebookNetwork: { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, mode: 'strict' }
+    })
+  )
+  expect(modePanel()).toBeNull()
+  expect(container.querySelector('form')).toBeNull()
+  expect(container.querySelector('[aria-label="Strict whitelist"]')).not.toBeNull()
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+})
+
+it('uses the authoritative returned mode even when it differs from the requested mode', async () => {
+  const save = vi.fn(async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+  useSettingsStore.setState({ setNotebookNetwork: save })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => modeRadio('Strict').click())
+  await act(async () => button('Switch to Strict mode').click())
+  expect(modePanel()).toBeNull()
+  expect(modeRadio('Relaxed').getAttribute('aria-checked')).toBe('true')
+  expect(container.querySelector('[aria-label="Trusted unsafe networks"]')).not.toBeNull()
+  expect(document.activeElement).toBe(modeRadio('Relaxed'))
 })

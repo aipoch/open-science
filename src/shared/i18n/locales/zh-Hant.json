@@ -7966,7 +7966,6 @@
     "Clinical and translational research": "臨床與轉譯研究",
     "Ungrouped": "未分組",
     "Network access mode": "網路存取模式",
-    "Relaxed is the default.": "預設為寬鬆模式。",
     "Relaxed": "寬鬆",
     "Strict": "嚴格",
     "How Strict mode works": "嚴格模式規則",
@@ -7990,6 +7989,23 @@
     "Agent request": "智能體請求",
     "No matching addresses.": "沒有相符的位址。",
     "{{count}} rules_other": "{{count}} 條規則",
-    "Confirm": "確定"
+    "Confirm": "確定",
+    "Applies to Notebooks in all projects.": "對所有專案的 Notebook 生效。",
+    "Current: Strict": "目前：嚴格",
+    "Current: Relaxed": "目前：寬鬆",
+    "Select a network mode to confirm": "選擇待確認的網路模式",
+    "Confirm network mode change": "確認網路模式切換",
+    "Switch to Strict mode?": "切換為嚴格模式？",
+    "Switch to Relaxed mode?": "切換為寬鬆模式？",
+    "Not yet applied": "尚未生效",
+    "Connections outside the whitelist will be blocked.": "未列入允許清單的連線將遭拒絕。",
+    "Network access will expand.": "存取範圍將擴大。",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "無法申請臨時授權；「信任的不安全位址」將不再參與放行。",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "預設允許 HTTPS 主機名稱；HTTP 與直接 IP 連線可申請授權，原有信任位址將重新生效。",
+    "Strict mode is still active.": "目前仍為嚴格模式",
+    "Relaxed mode is still active.": "目前仍為寬鬆模式",
+    "Switch to Strict mode": "切換為嚴格模式",
+    "Switch to Relaxed mode": "切換為寬鬆模式",
+    "Could not switch network mode. Try again.": "無法切換網路模式，請重試。"
   }
 }

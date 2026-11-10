@@ -8455,7 +8455,6 @@
     "Clinical and translational research": "Клинические и трансляционные исследования",
     "Ungrouped": "Без группы",
     "Network access mode": "Режим доступа к сети",
-    "Relaxed is the default.": "По умолчанию используется мягкий режим.",
     "Relaxed": "Мягкий",
     "Strict": "Строгий",
     "How Strict mode works": "Как работает строгий режим",
@@ -8482,6 +8481,23 @@
     "{{count}} rules_few": "{{count}} правила",
     "{{count}} rules_many": "{{count}} правил",
     "{{count}} rules_other": "{{count}} правила",
-    "Confirm": "Подтвердить"
+    "Confirm": "Подтвердить",
+    "Applies to Notebooks in all projects.": "Применяется к Notebook во всех проектах.",
+    "Current: Strict": "Сейчас: Строгий",
+    "Current: Relaxed": "Сейчас: Свободный",
+    "Select a network mode to confirm": "Выбрать сетевой режим для подтверждения",
+    "Confirm network mode change": "Подтвердить смену сетевого режима",
+    "Switch to Strict mode?": "Переключиться в строгий режим?",
+    "Switch to Relaxed mode?": "Переключиться в свободный режим?",
+    "Not yet applied": "Ещё не применено",
+    "Connections outside the whitelist will be blocked.": "Соединения вне списка разрешённых будут заблокированы.",
+    "Network access will expand.": "Доступ к сети будет расширен.",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "Временное разрешение запросить будет нельзя. Доверенные небезопасные сети больше не будут разрешать соединения.",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "Имена хостов HTTPS будут разрешены по умолчанию. Соединения HTTP и по прямому IP смогут запрашивать разрешение, а сохранённые доверенные адреса снова начнут действовать.",
+    "Strict mode is still active.": "Строгий режим пока активен.",
+    "Relaxed mode is still active.": "Свободный режим пока активен.",
+    "Switch to Strict mode": "Переключиться в строгий режим",
+    "Switch to Relaxed mode": "Переключиться в свободный режим",
+    "Could not switch network mode. Try again.": "Не удалось переключить сетевой режим. Повторите попытку."
   }
 }

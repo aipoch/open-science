@@ -7966,7 +7966,6 @@
     "Clinical and translational research": "臨床研究と橋渡し研究",
     "Ungrouped": "未分類",
     "Network access mode": "ネットワークアクセスモード",
-    "Relaxed is the default.": "既定は緩和モードです。",
     "Relaxed": "緩和",
     "Strict": "厳格",
     "How Strict mode works": "厳格モードの動作",
@@ -7990,6 +7989,23 @@
     "Agent request": "エージェントのリクエスト",
     "No matching addresses.": "一致するアドレスがありません。",
     "{{count}} rules_other": "{{count}} 件のルール",
-    "Confirm": "確定"
+    "Confirm": "確定",
+    "Applies to Notebooks in all projects.": "すべてのプロジェクトの Notebook に適用されます。",
+    "Current: Strict": "現在：厳格",
+    "Current: Relaxed": "現在：緩和",
+    "Select a network mode to confirm": "確認するネットワークモードを選択",
+    "Confirm network mode change": "ネットワークモードの切り替えを確認",
+    "Switch to Strict mode?": "厳格モードに切り替えますか？",
+    "Switch to Relaxed mode?": "緩和モードに切り替えますか？",
+    "Not yet applied": "未適用",
+    "Connections outside the whitelist will be blocked.": "許可リストにない接続は拒否されます。",
+    "Network access will expand.": "ネットワークへのアクセス範囲が広がります。",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "一時的な承認を申請できなくなります。信頼済みの安全でないネットワークによる接続の許可は無効になります。",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "HTTPS ホスト名は既定で許可されます。HTTP および直接 IP 接続は承認を申請でき、保存済みの信頼するアドレスが再び有効になります。",
+    "Strict mode is still active.": "現在も厳格モードが有効です。",
+    "Relaxed mode is still active.": "現在も緩和モードが有効です。",
+    "Switch to Strict mode": "厳格モードに切り替える",
+    "Switch to Relaxed mode": "緩和モードに切り替える",
+    "Could not switch network mode. Try again.": "ネットワークモードを切り替えられませんでした。再試行してください。"
   }
 }

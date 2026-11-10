@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
-import { openSettingsPage } from './fixtures/settings-preferences'
+import { openSettingsPage, setTheme } from './fixtures/settings-preferences'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
 
@@ -20,8 +20,10 @@ for (const mode of ['Relaxed', 'Strict'] as const) {
       await expect(
         settings.getByRole('region', { name: 'Notebook network protection', exact: true })
       ).toBeHidden()
-    if (mode === 'Strict')
+    if (mode === 'Strict') {
       await settings.getByRole('radio', { name: 'Strict', exact: true }).click()
+      await settings.getByRole('button', { name: 'Switch to Strict mode', exact: true }).click()
+    }
     const add = settings.getByRole('button', {
       name: mode === 'Strict' ? 'Add rule' : 'Add address',
       exact: true
@@ -163,6 +165,12 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
     await settings.getByLabel('Hostname', { exact: true }).fill('incomplete address')
     await settings.getByRole('radio', { name: 'Strict', exact: true }).click()
     await expect(settings.getByRole('radio', { name: 'Strict', exact: true })).toBeChecked()
+    await expect(settings.getByLabel('Hostname', { exact: true })).toHaveValue('incomplete address')
+    expect(
+      (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork.mode ??
+        'relaxed'
+    ).toBe('relaxed')
+    await settings.getByRole('button', { name: 'Switch to Strict mode', exact: true }).click()
     await expect(settings.locator('form')).toHaveCount(0)
     await expect(settings.getByRole('button', { name: 'Restore built-ins' })).toHaveCount(0)
     await expect(settings.getByRole('button', { name: 'Save changes' })).toHaveCount(0)
@@ -218,6 +226,7 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
     await localGroup.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(settings.locator('form')).toHaveCount(0)
     await settings.getByRole('radio', { name: 'Relaxed', exact: true }).click()
+    await settings.getByRole('button', { name: 'Switch to Relaxed mode', exact: true }).click()
     await expect(settings.getByText('Trusted unsafe networks', { exact: true })).toBeVisible()
     await expect(settings.getByRole('textbox', { name: 'Search network addresses' })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath('relaxed-mode.png') })
@@ -227,3 +236,79 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
+
+for (const theme of ['Light', 'Dark'] as const) {
+  test(`confirms network mode changes with keyboard and compact ${theme} layout`, async ({
+    app
+  }, testInfo) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
+    await setTheme(page, theme)
+    await page.setViewportSize({ width: 791, height: 874 })
+    const settings = await openSettingsPage(page, 'Network')
+    await settings.getByRole('button', { name: 'Manage access', exact: true }).click()
+    const relaxed = settings.getByRole('radio', { name: 'Relaxed', exact: true })
+    const strict = settings.getByRole('radio', { name: 'Strict', exact: true })
+    const panel = settings.getByRole('region', { name: 'Confirm network mode change', exact: true })
+    const active = async (): Promise<'relaxed' | 'strict'> =>
+      (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork.mode ??
+      'relaxed'
+    const selector = settings.getByRole('radiogroup', { name: 'Select a network mode to confirm' })
+    const bounds = await selector.boundingBox()
+    expect(bounds!.height).toBeLessThanOrEqual(37)
+    expect(bounds!.width).toBeLessThanOrEqual(193)
+    await strict.click()
+    await expect(panel).toBeVisible()
+    await expect(settings.getByText('Current: Relaxed', { exact: true })).toBeVisible()
+    expect(await active()).toBe('relaxed')
+    await page.screenshot({ path: testInfo.outputPath('pending-strict.png') })
+    await panel.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(relaxed).toBeFocused()
+    await strict.click()
+    await page.keyboard.press('Escape')
+    await expect(settings).toBeVisible()
+    await expect(panel).toHaveCount(0)
+    await expect(relaxed).toBeFocused()
+    await relaxed.press('End')
+    await expect(strict).toBeFocused()
+    await strict.press('Enter')
+    expect(await active()).toBe('relaxed')
+    await strict.press('Tab')
+    await expect(panel.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(
+      panel.getByRole('button', { name: 'Switch to Strict mode', exact: true })
+    ).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(panel).toHaveCount(0)
+    await expect(settings.getByText('Current: Strict', { exact: true })).toBeVisible()
+    expect(await active()).toBe('strict')
+    await page.screenshot({ path: testInfo.outputPath('confirmed-strict.png') })
+    await strict.press('Home')
+    expect(await active()).toBe('strict')
+    await expect(panel.getByText('Network access will expand.', { exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Switch to Relaxed mode', exact: true }).click()
+    await expect(settings.getByText('Current: Relaxed', { exact: true })).toBeVisible()
+    expect(await active()).toBe('relaxed')
+    await strict.click()
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'de' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+    const germanPanel = page.getByRole('region', {
+      name: 'Netzwerkmoduswechsel bestätigen',
+      exact: true
+    })
+    await expect(germanPanel).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('compact-german.png') })
+    expect(await germanPanel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
+    const clipped = await germanPanel
+      .locator('button')
+      .evaluateAll((buttons) =>
+        buttons.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent)
+      )
+    expect(clipped).toEqual([])
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await settings.getByRole('button', { name: 'Close settings' }).click()
+    await expect(settings).toBeHidden()
+    expect(await active()).toBe('relaxed')
+  })
+}

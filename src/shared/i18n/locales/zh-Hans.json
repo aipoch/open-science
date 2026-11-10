@@ -7966,7 +7966,6 @@
     "Clinical and translational research": "临床与转化研究",
     "Ungrouped": "未分组",
     "Network access mode": "网络访问模式",
-    "Relaxed is the default.": "默认为宽松模式。",
     "Relaxed": "宽松",
     "Strict": "严格",
     "How Strict mode works": "严格模式规则",
@@ -7990,6 +7989,23 @@
     "Agent request": "智能体请求",
     "No matching addresses.": "没有匹配的地址。",
     "{{count}} rules_other": "{{count}} 条规则",
-    "Confirm": "确定"
+    "Confirm": "确定",
+    "Applies to Notebooks in all projects.": "对所有项目的 Notebook 生效。",
+    "Current: Strict": "当前：严格",
+    "Current: Relaxed": "当前：宽松",
+    "Select a network mode to confirm": "选择待确认的网络模式",
+    "Confirm network mode change": "确认网络模式切换",
+    "Switch to Strict mode?": "切换为严格模式？",
+    "Switch to Relaxed mode?": "切换为宽松模式？",
+    "Not yet applied": "尚未生效",
+    "Connections outside the whitelist will be blocked.": "未列入白名单的连接将被拒绝。",
+    "Network access will expand.": "访问范围将扩大。",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "无法申请临时授权；“信任的不安全地址”将不再参与放行。",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "HTTPS 主机名默认允许；HTTP 和直连 IP 可申请授权，原有信任地址重新生效。",
+    "Strict mode is still active.": "当前仍为严格模式",
+    "Relaxed mode is still active.": "当前仍为宽松模式",
+    "Switch to Strict mode": "切换为严格模式",
+    "Switch to Relaxed mode": "切换为宽松模式",
+    "Could not switch network mode. Try again.": "无法切换网络模式，请重试。"
   }
 }

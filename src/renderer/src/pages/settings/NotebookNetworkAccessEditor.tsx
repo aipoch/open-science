@@ -4,6 +4,7 @@ import { Check, ChevronRight, Plus } from 'lucide-react'
 import { normalizeStrictNetworkRule } from '@aipoch/notebook-network-sandbox/network-address'
 import type {
   NotebookNetworkSettings,
+  NotebookNetworkMode,
   NotebookStrictWhitelistEntry,
   TrustedPrivateDestination
 } from '../../../../shared/notebook-network-settings'
@@ -100,12 +101,19 @@ export function NotebookNetworkAccessEditor({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [savedMessage, setSavedMessage] = useState(false)
+  const [pendingMode, setPendingMode] = useState<NotebookNetworkMode>()
+  const [modeError, setModeError] = useState('')
+  const [switching, setSwitching] = useState(false)
+  const modeOptions = useRef<HTMLDivElement>(null)
+  const modeFocus = useRef<NotebookNetworkMode | undefined>(undefined)
   const saving = useRef(false)
   const mounted = useRef(true)
   const hostInput = useRef<HTMLInputElement>(null)
   const addButton = useRef<HTMLButtonElement>(null)
   const id = useId()
-  const strict = settings.mode === 'strict'
+  const currentMode = settings.mode ?? 'relaxed'
+  const selectedMode = pendingMode ?? currentMode
+  const strict = currentMode === 'strict'
   const editingExisting = Boolean(editor?.id || editor?.original)
   const editorOpen = Boolean(editor)
   const rules = settings.strictWhitelist ?? []
@@ -113,15 +121,21 @@ export function NotebookNetworkAccessEditor({
   const manual = (settings.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)
   const grants = (settings.destinationGrants ?? []).filter((grant) => grant.revokedAt === undefined)
   const showSearch = strict || manual.length + grants.length > 10
-  // Retain an edit's baseline until it is confirmed or cancelled.
-  if (external !== observed && !editor && !busy) {
-    setObserved(external)
-    setSettings(external)
+  // Rule edits retain their baseline. A different effective mode invalidates all local intent.
+  if (external !== observed && !busy) {
+    const modeChanged = (external.mode ?? 'relaxed') !== (observed.mode ?? 'relaxed')
+    if (!editor || modeChanged) {
+      setObserved(external)
+      setSettings(external)
+    }
+    if (modeChanged) {
+      setPendingMode(undefined)
+      setModeError('')
+      setEditor(undefined)
+      setError('')
+    }
   }
   if (!showSearch && search) setSearch('')
-  useEffect(() => {
-    onLeaveStateChange?.({ dirty: Boolean(editor), busy })
-  }, [editor, busy, onLeaveStateChange])
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -132,6 +146,14 @@ export function NotebookNetworkAccessEditor({
   useEffect(() => {
     if (editorOpen) hostInput.current?.focus()
   }, [editorOpen])
+  useEffect(() => {
+    if (!busy && modeFocus.current) {
+      modeOptions.current
+        ?.querySelector<HTMLButtonElement>(`[data-mode="${modeFocus.current}"]`)
+        ?.focus()
+      modeFocus.current = undefined
+    }
+  }, [busy])
   const close = (): void => {
     if (saving.current) return
     setEditor(undefined)
@@ -142,12 +164,15 @@ export function NotebookNetworkAccessEditor({
     async (
       next: NotebookNetworkSettings,
       base: NotebookNetworkSettings,
-      revoke?: readonly string[]
+      revoke?: readonly string[],
+      changingMode = false
     ): Promise<void> => {
       if (saving.current) return
       saving.current = true
       setBusy(true)
-      setError('')
+      setSwitching(changingMode)
+      if (changingMode) setModeError('')
+      else setError('')
       setSavedMessage(false)
       try {
         const result = await save(
@@ -162,17 +187,60 @@ export function NotebookNetworkAccessEditor({
         // Close the draft before adopting another window's merged mode or rules.
         setEditor(undefined)
         setSavedMessage(true)
-        addButton.current?.focus()
+        if (changingMode || (result.mode ?? 'relaxed') !== (next.mode ?? 'relaxed')) {
+          setPendingMode(undefined)
+          setModeError('')
+          setSearch('')
+          setError('')
+          modeFocus.current = result.mode ?? 'relaxed'
+        } else addButton.current?.focus()
       } catch {
-        if (mounted.current)
-          setError(t('Could not save network rules. Reopen this page and try again.'))
+        if (mounted.current) {
+          if (changingMode) setModeError(t('Could not switch network mode. Try again.'))
+          else setError(t('Could not save network rules. Reopen this page and try again.'))
+        }
       } finally {
         saving.current = false
-        if (mounted.current) setBusy(false)
+        if (mounted.current) {
+          setBusy(false)
+          setSwitching(false)
+        }
       }
     },
     [save, t]
   )
+  const cancelModeChange = useCallback((): void => {
+    if (saving.current) return
+    setPendingMode(undefined)
+    setModeError('')
+    modeOptions.current?.querySelector<HTMLButtonElement>(`[data-mode="${currentMode}"]`)?.focus()
+  }, [currentMode])
+  useEffect(() => {
+    onLeaveStateChange?.({
+      dirty: Boolean(editor),
+      busy,
+      ...(pendingMode ? { cancelPendingMode: cancelModeChange } : {})
+    })
+  }, [editor, busy, pendingMode, cancelModeChange, onLeaveStateChange])
+  const selectMode = (mode: NotebookNetworkMode): void => {
+    if (saving.current) return
+    if (mode === currentMode) cancelModeChange()
+    else {
+      setPendingMode(mode)
+      setModeError('')
+      setSavedMessage(false)
+    }
+  }
+  const confirmModeChange = (): void => {
+    if (!pendingMode || saving.current) return
+    // Read the latest authoritative rules, never the address editor's unsaved draft.
+    const base = useSettingsStore.getState().notebookNetwork
+    if ((base.mode ?? 'relaxed') !== currentMode) {
+      cancelModeChange()
+      return
+    }
+    void commit({ ...base, mode: pendingMode }, base, undefined, true)
+  }
   const removeStrictRule = (ruleId: string): void => {
     void commit(
       { ...settings, strictWhitelist: rules.filter((item) => item.id !== ruleId) },
@@ -419,63 +487,129 @@ export function NotebookNetworkAccessEditor({
     </form>
   ) : null
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+    <div
+      className="space-y-5"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && pendingMode && !event.defaultPrevented) {
+          event.preventDefault()
+          event.stopPropagation()
+          cancelModeChange()
+        }
+      }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <h3 className="text-sm font-medium">{t('Network access mode')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{t('Relaxed is the default.')}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('Applies to Notebooks in all projects.')}
+          </p>
         </div>
-        <div
-          data-discard-network-draft
-          className="relative grid grid-cols-2 rounded-lg border border-border bg-bg-10 p-1"
-          role="radiogroup"
-          aria-label={t('Network access mode')}
-        >
-          <span
-            aria-hidden="true"
-            className={`pointer-events-none absolute bottom-1 top-1 w-[calc(50%-4px)] rounded-md bg-primary/15 transition-transform motion-reduce:transition-none ${strict ? 'translate-x-full' : 'translate-x-0'}`}
-          />
-          {(['relaxed', 'strict'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              role="radio"
-              aria-checked={(settings.mode ?? 'relaxed') === mode}
-              tabIndex={(settings.mode ?? 'relaxed') === mode ? 0 : -1}
-              disabled={busy}
-              className="relative rounded-md px-7 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
-              onKeyDown={(event) => {
-                if (['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) {
-                  event.preventDefault()
-                  const next =
-                    event.key === 'Home'
-                      ? 'relaxed'
-                      : event.key === 'End'
-                        ? 'strict'
-                        : strict
-                          ? 'relaxed'
-                          : 'strict'
-                  setSearch('')
-                  void commit({ ...settings, mode: next }, settings)
-                  ;(
-                    event.currentTarget.parentElement?.querySelectorAll('button')[
-                      next === 'strict' ? 1 : 0
-                    ] as HTMLButtonElement
-                  )?.focus()
-                }
-              }}
-              onClick={() => {
-                if (mode !== (settings.mode ?? 'relaxed')) {
-                  setSearch('')
-                  void commit({ ...settings, mode }, settings)
-                }
-              }}
-            >
-              {mode === 'relaxed' ? t('Relaxed') : t('Strict')}
-            </button>
-          ))}
+        <div className="flex max-w-full flex-wrap items-center gap-3">
+          <span className="text-xs font-medium" role="status">
+            {strict ? t('Current: Strict') : t('Current: Relaxed')}
+          </span>
+          <div
+            ref={modeOptions}
+            className="grid min-h-9 w-48 max-w-full grid-cols-2 rounded-lg border border-border bg-bg-10 p-0.5 [@media(pointer:coarse)]:min-h-11"
+            role="radiogroup"
+            aria-label={t('Select a network mode to confirm')}
+            aria-describedby={pendingMode ? `${id}-mode-status` : undefined}
+          >
+            {(['relaxed', 'strict'] as const).map((mode) => (
+              <button
+                key={mode}
+                data-mode={mode}
+                type="button"
+                role="radio"
+                aria-checked={selectedMode === mode}
+                tabIndex={selectedMode === mode ? 0 : -1}
+                disabled={busy}
+                className={`min-w-0 rounded-md border px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? (pendingMode ? 'border-dashed border-primary bg-primary/10' : 'border-transparent bg-primary/15') : 'border-transparent'}`}
+                onKeyDown={(event) => {
+                  if (
+                    ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(
+                      event.key
+                    )
+                  ) {
+                    event.preventDefault()
+                    const next =
+                      event.key === 'Home'
+                        ? 'relaxed'
+                        : event.key === 'End'
+                          ? 'strict'
+                          : mode === 'strict'
+                            ? 'relaxed'
+                            : 'strict'
+                    selectMode(next)
+                    modeOptions.current
+                      ?.querySelector<HTMLButtonElement>(`[data-mode="${next}"]`)
+                      ?.focus()
+                  }
+                }}
+                onClick={() => selectMode(mode)}
+              >
+                {mode === 'relaxed' ? t('Relaxed') : t('Strict')}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+      {pendingMode ? (
+        <section
+          aria-label={t('Confirm network mode change')}
+          aria-busy={switching}
+          className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-4"
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <h4 className="text-sm font-medium">
+              {pendingMode === 'strict'
+                ? t('Switch to Strict mode?')
+                : t('Switch to Relaxed mode?')}
+            </h4>
+            <span
+              id={`${id}-mode-status`}
+              role="status"
+              className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground"
+            >
+              {t('Not yet applied')}
+            </span>
+          </div>
+          <div className="space-y-1 text-sm leading-6">
+            <p className="font-medium">
+              {pendingMode === 'strict'
+                ? t('Connections outside the whitelist will be blocked.')
+                : t('Network access will expand.')}
+            </p>
+            <p className="text-muted-foreground">
+              {pendingMode === 'strict'
+                ? t(
+                    'Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.'
+                  )
+                : t(
+                    'HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.'
+                  )}
+            </p>
+          </div>
+          {modeError ? <ErrorNotice level="error" role="alert" description={modeError} /> : null}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <p className="text-xs text-muted-foreground">
+              {strict ? t('Strict mode is still active.') : t('Relaxed mode is still active.')}
+            </p>
+            <div className="ml-auto flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="ghost" disabled={busy} onClick={cancelModeChange}>
+                {t('Cancel')}
+              </Button>
+              <Button type="button" disabled={busy} onClick={confirmModeChange}>
+                {switching
+                  ? t('Switching…')
+                  : pendingMode === 'strict'
+                    ? t('Switch to Strict mode')
+                    : t('Switch to Relaxed mode')}
+              </Button>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <details
         key={strict ? 'strict' : 'relaxed'}
         className="group rounded-xl border border-primary/20 bg-primary/5 p-4"

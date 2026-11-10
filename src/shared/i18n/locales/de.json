@@ -8133,7 +8133,6 @@
     "Clinical and translational research": "Klinische und translationale Forschung",
     "Ungrouped": "Ohne Gruppe",
     "Network access mode": "Netzwerkzugriffsmodus",
-    "Relaxed is the default.": "Standardmäßig ist der lockere Modus aktiv.",
     "Relaxed": "Locker",
     "Strict": "Streng",
     "How Strict mode works": "So funktioniert der strenge Modus",
@@ -8158,6 +8157,23 @@
     "No matching addresses.": "Keine passenden Adressen.",
     "{{count}} rules_one": "{{count}} Regel",
     "{{count}} rules_other": "{{count}} Regeln",
-    "Confirm": "Bestätigen"
+    "Confirm": "Bestätigen",
+    "Applies to Notebooks in all projects.": "Gilt für Notebooks in allen Projekten.",
+    "Current: Strict": "Aktuell: Streng",
+    "Current: Relaxed": "Aktuell: Locker",
+    "Select a network mode to confirm": "Netzwerkmodus zur Bestätigung auswählen",
+    "Confirm network mode change": "Netzwerkmoduswechsel bestätigen",
+    "Switch to Strict mode?": "Zum strengen Modus wechseln?",
+    "Switch to Relaxed mode?": "Zum lockeren Modus wechseln?",
+    "Not yet applied": "Noch nicht angewendet",
+    "Connections outside the whitelist will be blocked.": "Verbindungen außerhalb der Positivliste werden blockiert.",
+    "Network access will expand.": "Der Netzwerkzugriff wird erweitert.",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "Temporäre Genehmigungen sind nicht mehr verfügbar. Vertrauenswürdige unsichere Netzwerke erlauben keine Verbindungen mehr.",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "HTTPS-Hostnamen werden standardmäßig zugelassen. HTTP- und direkte IP-Verbindungen können eine Genehmigung anfordern; gespeicherte vertrauenswürdige Adressen gelten wieder.",
+    "Strict mode is still active.": "Der strenge Modus ist weiterhin aktiv.",
+    "Relaxed mode is still active.": "Der lockere Modus ist weiterhin aktiv.",
+    "Switch to Strict mode": "Zum strengen Modus wechseln",
+    "Switch to Relaxed mode": "Zum lockeren Modus wechseln",
+    "Could not switch network mode. Try again.": "Der Netzwerkmodus konnte nicht gewechselt werden. Versuchen Sie es erneut."
   }
 }

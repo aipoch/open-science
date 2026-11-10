@@ -8308,7 +8308,6 @@
     "Clinical and translational research": "Recherche clinique et translationnelle",
     "Ungrouped": "Sans groupe",
     "Network access mode": "Mode d’accès réseau",
-    "Relaxed is the default.": "Le mode souple est utilisé par défaut.",
     "Relaxed": "Souple",
     "Strict": "Strict",
     "How Strict mode works": "Fonctionnement du mode strict",
@@ -8334,6 +8333,23 @@
     "{{count}} rules_one": "{{count}} règle",
     "{{count}} rules_many": "{{count}} règles",
     "{{count}} rules_other": "{{count}} règles",
-    "Confirm": "Confirmer"
+    "Confirm": "Confirmer",
+    "Applies to Notebooks in all projects.": "S’applique aux Notebooks de tous les projets.",
+    "Current: Strict": "Actuel : Strict",
+    "Current: Relaxed": "Actuel : Souple",
+    "Select a network mode to confirm": "Sélectionner un mode réseau à confirmer",
+    "Confirm network mode change": "Confirmer le changement de mode réseau",
+    "Switch to Strict mode?": "Passer en mode strict ?",
+    "Switch to Relaxed mode?": "Passer en mode souple ?",
+    "Not yet applied": "Pas encore appliqué",
+    "Connections outside the whitelist will be blocked.": "Les connexions hors de la liste autorisée seront bloquées.",
+    "Network access will expand.": "L’accès au réseau sera élargi.",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "Les autorisations temporaires ne seront plus disponibles. Les réseaux non sécurisés de confiance ne permettront plus les connexions.",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "Les noms d’hôte HTTPS seront autorisés par défaut. Les connexions HTTP et par IP directe pourront demander une autorisation, et les adresses de confiance enregistrées seront de nouveau actives.",
+    "Strict mode is still active.": "Le mode strict est toujours actif.",
+    "Relaxed mode is still active.": "Le mode souple est toujours actif.",
+    "Switch to Strict mode": "Passer en mode strict",
+    "Switch to Relaxed mode": "Passer en mode souple",
+    "Could not switch network mode. Try again.": "Impossible de changer le mode réseau. Réessayez."
   }
 }

@@ -42,7 +42,11 @@ const statusReasonLabel = (
   }
 }
 
-export type NetworkEditorLeaveState = Readonly<{ dirty: boolean; busy: boolean }>
+export type NetworkEditorLeaveState = Readonly<{
+  dirty: boolean
+  busy: boolean
+  cancelPendingMode?: () => void
+}>
 const NotebookNetworkDomainsForm = ({
   onLeaveStateChange
 }: {

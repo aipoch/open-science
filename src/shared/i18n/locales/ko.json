@@ -7964,7 +7964,6 @@
     "Clinical and translational research": "임상 및 중개 연구",
     "Ungrouped": "그룹 없음",
     "Network access mode": "네트워크 접근 모드",
-    "Relaxed is the default.": "기본값은 완화 모드입니다.",
     "Relaxed": "완화",
     "Strict": "엄격",
     "How Strict mode works": "엄격 모드 작동 방식",
@@ -7988,6 +7987,23 @@
     "Agent request": "에이전트 요청",
     "No matching addresses.": "일치하는 주소가 없습니다.",
     "{{count}} rules_other": "규칙 {{count}}개",
-    "Confirm": "확인"
+    "Confirm": "확인",
+    "Applies to Notebooks in all projects.": "모든 프로젝트의 Notebook에 적용됩니다.",
+    "Current: Strict": "현재: 엄격",
+    "Current: Relaxed": "현재: 완화",
+    "Select a network mode to confirm": "확인할 네트워크 모드 선택",
+    "Confirm network mode change": "네트워크 모드 변경 확인",
+    "Switch to Strict mode?": "엄격 모드로 전환하시겠습니까?",
+    "Switch to Relaxed mode?": "완화 모드로 전환하시겠습니까?",
+    "Not yet applied": "아직 적용되지 않음",
+    "Connections outside the whitelist will be blocked.": "허용 목록에 없는 연결은 차단됩니다.",
+    "Network access will expand.": "네트워크 접근 범위가 확대됩니다.",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "임시 승인을 요청할 수 없습니다. 신뢰하는 안전하지 않은 네트워크는 더 이상 연결을 허용하지 않습니다.",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "HTTPS 호스트 이름은 기본적으로 허용됩니다. HTTP 및 직접 IP 연결은 승인을 요청할 수 있으며, 저장된 신뢰 주소가 다시 적용됩니다.",
+    "Strict mode is still active.": "엄격 모드가 계속 적용 중입니다.",
+    "Relaxed mode is still active.": "완화 모드가 계속 적용 중입니다.",
+    "Switch to Strict mode": "엄격 모드로 전환",
+    "Switch to Relaxed mode": "완화 모드로 전환",
+    "Could not switch network mode. Try again.": "네트워크 모드를 전환하지 못했습니다. 다시 시도하세요."
   }
 }

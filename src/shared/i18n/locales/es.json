@@ -8308,7 +8308,6 @@
     "Clinical and translational research": "Investigación clínica y traslacional",
     "Ungrouped": "Sin grupo",
     "Network access mode": "Modo de acceso a la red",
-    "Relaxed is the default.": "El modo flexible es el predeterminado.",
     "Relaxed": "Flexible",
     "Strict": "Estricto",
     "How Strict mode works": "Cómo funciona el modo estricto",
@@ -8334,6 +8333,23 @@
     "{{count}} rules_one": "{{count}} regla",
     "{{count}} rules_many": "{{count}} reglas",
     "{{count}} rules_other": "{{count}} reglas",
-    "Confirm": "Confirmar"
+    "Confirm": "Confirmar",
+    "Applies to Notebooks in all projects.": "Se aplica a los Notebooks de todos los proyectos.",
+    "Current: Strict": "Actual: Estricto",
+    "Current: Relaxed": "Actual: Flexible",
+    "Select a network mode to confirm": "Seleccionar un modo de red para confirmar",
+    "Confirm network mode change": "Confirmar el cambio de modo de red",
+    "Switch to Strict mode?": "¿Cambiar al modo estricto?",
+    "Switch to Relaxed mode?": "¿Cambiar al modo flexible?",
+    "Not yet applied": "Aún no aplicado",
+    "Connections outside the whitelist will be blocked.": "Se bloquearán las conexiones fuera de la lista de permitidos.",
+    "Network access will expand.": "Se ampliará el acceso a la red.",
+    "Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.": "No se podrá solicitar autorización temporal. Las redes inseguras de confianza dejarán de permitir conexiones.",
+    "HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.": "Los nombres de host HTTPS se permitirán de forma predeterminada. Las conexiones HTTP y por IP directa podrán solicitar autorización, y las direcciones de confianza guardadas volverán a aplicarse.",
+    "Strict mode is still active.": "El modo estricto sigue activo.",
+    "Relaxed mode is still active.": "El modo flexible sigue activo.",
+    "Switch to Strict mode": "Cambiar al modo estricto",
+    "Switch to Relaxed mode": "Cambiar al modo flexible",
+    "Could not switch network mode. Try again.": "No se pudo cambiar el modo de red. Inténtelo de nuevo."
   }
 }
