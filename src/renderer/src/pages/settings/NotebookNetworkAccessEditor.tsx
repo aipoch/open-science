@@ -17,12 +17,18 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectStore } from '@/stores/project-store'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
 import type { NetworkEditorLeaveState } from './NotebookNetworkDomainsForm'
 
 type Editor = { base: NotebookNetworkSettings; id?: string; original?: TrustedPrivateDestination }
-const selectClass = 'h-9 w-full rounded-md border border-input bg-background px-2 text-sm'
 
 function NetworkAddressDeleteButton({
   hostname,
@@ -331,20 +337,24 @@ export function NotebookNetworkAccessEditor({
       <fieldset disabled={busy} className="grid grid-cols-[6rem_minmax(0,1fr)_5rem] gap-3">
         <label className="space-y-1 text-xs">
           {t('Protocol')}
-          <select
-            aria-label={t('Protocol')}
-            className={selectClass}
+          <Select
             value={protocol}
-            onChange={(event) => {
-              const next = event.target.value as 'http' | 'https'
+            disabled={busy}
+            onValueChange={(value) => {
+              const next = value as 'http' | 'https'
               setProtocol(next)
               if (!editingExisting && (port === '80' || port === '443'))
                 setPort(next === 'https' ? '443' : '80')
             }}
           >
-            <option value="http">{t('HTTP')}</option>
-            <option value="https">{t('HTTPS')}</option>
-          </select>
+            <SelectTrigger aria-label={t('Protocol')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="http">{t('HTTP')}</SelectItem>
+              <SelectItem value="https">{t('HTTPS')}</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
         <label className="min-w-0 space-y-1 text-xs">
           {strict ? t('Hostname, IP or pattern') : t('Hostname')}
@@ -366,20 +376,24 @@ export function NotebookNetworkAccessEditor({
         {strict ? (
           <label className="col-span-full space-y-1 text-xs">
             {t('Group')}
-            <select
-              aria-label={t('Group')}
-              className={selectClass}
-              value={group}
-              onChange={(event) => setGroup(event.target.value)}
+            <Select
+              value={group || '__ungrouped__'}
+              disabled={busy}
+              onValueChange={(value) => setGroup(value === '__ungrouped__' ? '' : value)}
             >
-              <option value="">{t('Ungrouped')}</option>
-              {groups.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {groupLabel(item.id)}
-                </option>
-              ))}
-              <option value="__new__">{t('New group…')}</option>
-            </select>
+              <SelectTrigger aria-label={t('Group')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__ungrouped__">{t('Ungrouped')}</SelectItem>
+                {groups.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {groupLabel(item.id)}
+                  </SelectItem>
+                ))}
+                <SelectItem value="__new__">{t('New group…')}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
         ) : null}
         {strict && group === '__new__' ? (

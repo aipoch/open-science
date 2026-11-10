@@ -7,6 +7,13 @@ import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../../../shared/notebook-n
 import { useSettingsStore } from '@/stores/settings-store'
 import { NotebookNetworkDomainsForm } from './NotebookNetworkDomainsForm'
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = (): void => undefined
+
 let container: HTMLDivElement
 let root: Root
 
@@ -497,11 +504,20 @@ it('creates a logical group and a manual strict rule without an origin field', a
   await act(async () => root.render(<NotebookNetworkDomainsForm />))
   await act(async () => button('Add rule').click())
   await typeInput(hostInput(), '*.example.org')
-  const select = container.querySelector('select[aria-label="Group"]') as HTMLSelectElement
-  await act(async () => {
-    select.value = '__new__'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  const selectOption = async (label: string, value: string): Promise<void> => {
+    const trigger = container.querySelector<HTMLButtonElement>(
+      `[role="combobox"][aria-label="${label}"]`
+    )!
+    await act(async () =>
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    )
+    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (item) => item.textContent === value
+    )!
+    await act(async () => option.click())
+  }
+  await selectOption('Protocol', 'HTTP')
+  await selectOption('Group', 'New group…')
   await typeInput(
     [...container.querySelectorAll('form input')].at(-1) as HTMLInputElement,
     'My research'
@@ -511,6 +527,8 @@ it('creates a logical group and a manual strict rule without an origin field', a
   expect(saved.strictWhitelistGroups?.[0]?.name).toBe('My research')
   expect(saved.strictWhitelist?.[0]).toMatchObject({
     hostnamePattern: '*.example.org',
+    protocol: 'http',
+    port: 80,
     origin: 'manual',
     groupId: saved.strictWhitelistGroups?.[0]?.id
   })

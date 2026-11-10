@@ -183,10 +183,14 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
       'aria-invalid',
       'false'
     )
-    await settings.getByLabel('Protocol', { exact: true }).selectOption('http')
+    await settings.getByRole('combobox', { name: 'Protocol', exact: true }).click()
+    await page.getByRole('listbox').screenshot({ path: testInfo.outputPath('protocol-select.png') })
+    await page.getByRole('option', { name: 'HTTP', exact: true }).click()
     await settings.getByLabel('Hostname, IP or pattern', { exact: true }).fill('localhost')
     await settings.getByLabel('Port', { exact: true }).fill(String(address.port))
-    await settings.getByLabel('Group', { exact: true }).selectOption('__new__')
+    await settings.getByRole('combobox', { name: 'Group', exact: true }).click()
+    await page.getByRole('listbox').screenshot({ path: testInfo.outputPath('group-select.png') })
+    await page.getByRole('option', { name: 'New group…', exact: true }).click()
     await settings.getByLabel('Group name', { exact: true }).fill('Local research')
     await page.screenshot({ path: testInfo.outputPath('strict-editor.png') })
     await settings.getByRole('button', { name: 'Confirm', exact: true }).click()
