@@ -45,7 +45,6 @@ export function NotebookNetworkAccessEditor({
   const [error, setError] = useState('')
   const [savedMessage, setSavedMessage] = useState(false)
   const saving = useRef(false)
-  const closeAfterSave = useRef(false)
   const mounted = useRef(true)
   const hostInput = useRef<HTMLInputElement>(null)
   const addButton = useRef<HTMLButtonElement>(null)
@@ -78,10 +77,7 @@ export function NotebookNetworkAccessEditor({
     if (editorOpen) hostInput.current?.focus()
   }, [editorOpen])
   const close = (): void => {
-    if (saving.current) {
-      closeAfterSave.current = true
-      return
-    }
+    if (saving.current) return
     setEditor(undefined)
     setError('')
     addButton.current?.focus()
@@ -90,8 +86,7 @@ export function NotebookNetworkAccessEditor({
     async (
       next: NotebookNetworkSettings,
       base: NotebookNetworkSettings,
-      revoke?: readonly string[],
-      keepEditor?: Editor
+      revoke?: readonly string[]
     ): Promise<void> => {
       if (saving.current) return
       saving.current = true
@@ -108,35 +103,15 @@ export function NotebookNetworkAccessEditor({
         )
         if (!mounted.current) return
         setSettings(result)
-        // A concurrent mode change must never reinterpret the open address editor.
-        const retainEditor =
-          keepEditor &&
-          !closeAfterSave.current &&
-          (result.mode ?? 'relaxed') === (keepEditor.base.mode ?? 'relaxed')
-        if (retainEditor) {
-          const savedRule = result.strictWhitelist?.find((row) => row.id === keepEditor.id)
-          setEditor({
-            ...keepEditor,
-            base: result,
-            original: keepEditor.original
-              ? result.trustedPrivateDestinations?.find(
-                  (row) => trustedDestinationId(row) === trustedDestinationId(keepEditor.original!)
-                )
-              : undefined
-          })
-          if (savedRule) {
-            setGroup(savedRule.groupId ?? '')
-            setNewGroup('')
-          }
-        } else setEditor(undefined)
+        // Close the draft before adopting another window's merged mode or rules.
+        setEditor(undefined)
         setSavedMessage(true)
-        if (!retainEditor) addButton.current?.focus()
+        addButton.current?.focus()
       } catch {
         if (mounted.current)
           setError(t('Could not save network rules. Reopen this page and try again.'))
       } finally {
         saving.current = false
-        closeAfterSave.current = false
         if (mounted.current) setBusy(false)
       }
     },
@@ -161,24 +136,18 @@ export function NotebookNetworkAccessEditor({
     setSavedMessage(false)
     setEditor({ base: settings, id: rule?.id, original })
   }
-  const confirm = (
-    closeAfter = true,
-    changes: { protocol?: 'http' | 'https'; port?: string; group?: string } = {}
-  ): void => {
+  const confirm = (): void => {
     if (!editor || busy) return
-    const nextProtocol = changes.protocol ?? protocol
-    const nextPort = changes.port ?? port
-    const nextGroup = changes.group ?? group
     const target = normalizeStrictNetworkRule({
-      protocol: nextProtocol,
+      protocol,
       hostnamePattern: hostname,
-      port: /^\d+$/.test(nextPort) ? Number(nextPort) : 0
+      port: /^\d+$/.test(port) ? Number(port) : 0
     })
     if (!target || (!strict && target.hostnamePattern.startsWith('*.'))) {
       setError(t('Enter a valid hostname or IP and a port from 1 to 65535.'))
       return
     }
-    if (!strict && !requiresNetworkException(target.hostnamePattern, nextProtocol)) {
+    if (!strict && !requiresNetworkException(target.hostnamePattern, protocol)) {
       setError(t('HTTPS domains already work without an exception. Use HTTP or an IP address.'))
       return
     }
@@ -186,29 +155,29 @@ export function NotebookNetworkAccessEditor({
     const persist = (next: NotebookNetworkSettings): void => {
       if (JSON.stringify(next) === JSON.stringify(base)) {
         setError('')
-        if (closeAfter) close()
+        close()
         return
       }
-      void commit(next, base, undefined, closeAfter ? undefined : editor)
+      void commit(next, base)
     }
     if (strict) {
-      let groupId = nextGroup
-      let nextGroups = [...(base.strictWhitelistGroups ?? [])]
-      if (nextGroup === '__new__') {
+      let groupId = group
+      let groups = [...(base.strictWhitelistGroups ?? [])]
+      if (group === '__new__') {
         const name = newGroup.trim()
         if (!name) {
           setError(t('Enter a group name.'))
           return
         }
-        const existing = nextGroups.find((item) => item.name.toLowerCase() === name.toLowerCase())
+        const existing = groups.find((item) => item.name.toLowerCase() === name.toLowerCase())
         groupId = existing?.id ?? crypto.randomUUID()
-        if (!existing) nextGroups = [...nextGroups, { id: groupId, name }]
+        if (!existing) groups = [...groups, { id: groupId, name }]
       }
       const remaining = (base.strictWhitelist ?? []).filter((rule) => rule.id !== editor.id)
       if (
         remaining.some(
           (rule) =>
-            rule.protocol === nextProtocol &&
+            rule.protocol === protocol &&
             rule.hostnamePattern === target.hostnamePattern &&
             rule.port === target.port
         )
@@ -227,7 +196,7 @@ export function NotebookNetworkAccessEditor({
         strictWhitelist: editor.id
           ? (base.strictWhitelist ?? []).map((item) => (item.id === editor.id ? rule : item))
           : [...remaining, rule],
-        strictWhitelistGroups: nextGroups
+        strictWhitelistGroups: groups
       })
     } else {
       const remaining = (base.trustedPrivateDestinations ?? []).filter(
@@ -238,7 +207,7 @@ export function NotebookNetworkAccessEditor({
           (rule) =>
             rule.hostname === target.hostnamePattern &&
             rule.port === target.port &&
-            (rule.protocol ?? 'https') === nextProtocol
+            (rule.protocol ?? 'https') === protocol
         )
       ) {
         setError(t('This address is already in the list.'))
@@ -249,7 +218,7 @@ export function NotebookNetworkAccessEditor({
         id: editor.original ? trustedDestinationId(editor.original) : crypto.randomUUID(),
         hostname: target.hostnamePattern,
         port: target.port,
-        protocol: nextProtocol,
+        protocol,
         approvedAddresses: []
       }
       const next = normalizeTrustedPrivateDestinations(
@@ -297,6 +266,94 @@ export function NotebookNetworkAccessEditor({
   const rowClass =
     'flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-3 text-sm'
   const tagClass = 'rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground'
+  const editorForm = editor ? (
+    <form
+      id={`${id}-form`}
+      className="border-t border-border bg-bg-10 p-4"
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault()
+      }}
+      onSubmit={(event) => {
+        event.preventDefault()
+        confirm()
+      }}
+    >
+      <fieldset disabled={busy} className="grid grid-cols-[6rem_minmax(0,1fr)_5rem] gap-3">
+        <label className="space-y-1 text-xs">
+          {t('Protocol')}
+          <select
+            aria-label={t('Protocol')}
+            className={selectClass}
+            value={protocol}
+            onChange={(event) => {
+              const next = event.target.value as 'http' | 'https'
+              setProtocol(next)
+              if (!editingExisting && (port === '80' || port === '443'))
+                setPort(next === 'https' ? '443' : '80')
+            }}
+          >
+            <option value="http">{t('HTTP')}</option>
+            <option value="https">{t('HTTPS')}</option>
+          </select>
+        </label>
+        <label className="min-w-0 space-y-1 text-xs">
+          {strict ? t('Hostname, IP or pattern') : t('Hostname')}
+          <Input
+            ref={hostInput}
+            value={hostname}
+            aria-invalid={!!error}
+            onChange={(event) => setHostname(event.target.value)}
+          />
+        </label>
+        <label className="space-y-1 text-xs">
+          {t('Port')}
+          <Input
+            inputMode="numeric"
+            value={port}
+            onChange={(event) => setPort(event.target.value)}
+          />
+        </label>
+        {strict ? (
+          <label className="col-span-full space-y-1 text-xs">
+            {t('Group')}
+            <select
+              aria-label={t('Group')}
+              className={selectClass}
+              value={group}
+              onChange={(event) => setGroup(event.target.value)}
+            >
+              <option value="">{t('Ungrouped')}</option>
+              {groups.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {groupLabel(item.id)}
+                </option>
+              ))}
+              <option value="__new__">{t('New group…')}</option>
+            </select>
+          </label>
+        ) : null}
+        {strict && group === '__new__' ? (
+          <label className="col-span-full space-y-1 text-xs">
+            {t('Group name')}
+            <Input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} />
+          </label>
+        ) : null}
+      </fieldset>
+      {error ? (
+        <ErrorNotice className="mt-3" level="error" role="alert" description={error} />
+      ) : null}
+      {editingExisting ? (
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="ghost" disabled={busy} onClick={close}>
+            {t('Cancel')}
+          </Button>
+          <Button type="submit" disabled={busy}>
+            {busy ? t('Saving…') : t('Confirm')}
+          </Button>
+        </div>
+      ) : null}
+    </form>
+  ) : null
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -432,6 +489,7 @@ export function NotebookNetworkAccessEditor({
               <Input
                 className="min-w-0 flex-1"
                 value={search}
+                disabled={!!editor}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder={t('Search hostname or group…')}
                 aria-label={t('Search network addresses')}
@@ -446,24 +504,20 @@ export function NotebookNetworkAccessEditor({
               ref={addButton}
               type={editor && !editingExisting ? 'submit' : 'button'}
               form={editor && !editingExisting ? `${id}-form` : undefined}
-              disabled={busy && !editingExisting}
+              disabled={busy || editingExisting}
               className="shrink-0"
               onClick={
-                editingExisting
-                  ? close
-                  : editor
-                    ? undefined
-                    : (event) => {
-                        event.preventDefault()
-                        open()
-                      }
+                editor && !editingExisting
+                  ? undefined
+                  : (event) => {
+                      event.preventDefault()
+                      open()
+                    }
               }
             >
-              {editor ? (
-                busy && !editingExisting ? (
+              {editor && !editingExisting ? (
+                busy ? (
                   t('Saving…')
-                ) : editingExisting ? (
-                  t('Done')
                 ) : (
                   t('Confirm')
                 )
@@ -476,109 +530,7 @@ export function NotebookNetworkAccessEditor({
             </Button>
           </div>
         </div>
-        {editor ? (
-          <form
-            id={`${id}-form`}
-            className="border-t border-border bg-bg-10 p-4"
-            onKeyDown={(event) => {
-              if (
-                editingExisting &&
-                event.key === 'Enter' &&
-                !event.nativeEvent.isComposing &&
-                event.target instanceof HTMLInputElement
-              ) {
-                event.preventDefault()
-                confirm(false)
-              }
-            }}
-            onBlur={(event) => {
-              if (!editingExisting || saving.current) return
-              // Retain the editor through the following click, even when saving is immediate.
-              if (
-                event.relatedTarget instanceof HTMLElement &&
-                event.relatedTarget.closest('[data-discard-network-draft]')
-              )
-                return
-              if (event.target instanceof HTMLInputElement) confirm(false)
-            }}
-            onSubmit={(event) => {
-              event.preventDefault()
-              confirm()
-            }}
-          >
-            <fieldset disabled={busy} className="grid grid-cols-[6rem_minmax(0,1fr)_5rem] gap-3">
-              <label className="space-y-1 text-xs">
-                {t('Protocol')}
-                <select
-                  aria-label={t('Protocol')}
-                  className={selectClass}
-                  value={protocol}
-                  onChange={(event) => {
-                    const next = event.target.value as 'http' | 'https'
-                    setProtocol(next)
-                    const nextPort =
-                      !editingExisting && (port === '80' || port === '443')
-                        ? next === 'https'
-                          ? '443'
-                          : '80'
-                        : port
-                    setPort(nextPort)
-                    if (editingExisting) confirm(false, { protocol: next, port: nextPort })
-                  }}
-                >
-                  <option value="http">{t('HTTP')}</option>
-                  <option value="https">{t('HTTPS')}</option>
-                </select>
-              </label>
-              <label className="min-w-0 space-y-1 text-xs">
-                {strict ? t('Hostname, IP or pattern') : t('Hostname')}
-                <Input
-                  ref={hostInput}
-                  value={hostname}
-                  aria-invalid={!!error}
-                  onChange={(event) => setHostname(event.target.value)}
-                />
-              </label>
-              <label className="space-y-1 text-xs">
-                {t('Port')}
-                <Input
-                  inputMode="numeric"
-                  value={port}
-                  onChange={(event) => setPort(event.target.value)}
-                />
-              </label>
-              {strict ? (
-                <label className="col-span-full space-y-1 text-xs">
-                  {t('Group')}
-                  <select
-                    aria-label={t('Group')}
-                    className={selectClass}
-                    value={group}
-                    onChange={(event) => {
-                      const next = event.target.value
-                      setGroup(next)
-                      if (editingExisting && next !== '__new__') confirm(false, { group: next })
-                    }}
-                  >
-                    <option value="">{t('Ungrouped')}</option>
-                    {groups.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {groupLabel(item.id)}
-                      </option>
-                    ))}
-                    <option value="__new__">{t('New group…')}</option>
-                  </select>
-                </label>
-              ) : null}
-              {strict && group === '__new__' ? (
-                <label className="col-span-full space-y-1 text-xs">
-                  {t('Group name')}
-                  <Input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} />
-                </label>
-              ) : null}
-            </fieldset>
-          </form>
-        ) : null}
+        {editor && !editingExisting ? editorForm : null}
         {strict ? (
           visibleGroups.map(({ groupId, rows }) => (
             <details key={groupId} className="group" open={query ? true : undefined}>
@@ -595,27 +547,37 @@ export function NotebookNetworkAccessEditor({
                 </span>
               </summary>
               {rows.map((rule) => (
-                <div key={rule.id} className={rowClass}>
-                  <code
-                    className="min-w-0 flex-1 break-all text-xs"
-                    title={`${rule.protocol}://${rule.hostnamePattern}:${rule.port}`}
-                  >
-                    {rule.protocol}://{rule.hostnamePattern}:{rule.port}
-                  </code>
-                  <span className={tagClass}>
-                    {rule.origin === 'builtin' ? t('Built-in') : t('Manual')}
-                  </span>
-                  <Button variant="ghost" disabled={busy || !!editor} onClick={() => open(rule)}>
-                    {t('Edit')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={busy || !!editor}
-                    onClick={() => removeStrictRule(rule.id)}
-                    aria-label={t('Remove {{domain}}', { domain: rule.hostnamePattern })}
-                  >
-                    {t('Delete')}
-                  </Button>
+                <div key={rule.id}>
+                  {editor?.id === rule.id ? (
+                    editorForm
+                  ) : (
+                    <div className={rowClass}>
+                      <code
+                        className="min-w-0 flex-1 break-all text-xs"
+                        title={`${rule.protocol}://${rule.hostnamePattern}:${rule.port}`}
+                      >
+                        {rule.protocol}://{rule.hostnamePattern}:{rule.port}
+                      </code>
+                      <span className={tagClass}>
+                        {rule.origin === 'builtin' ? t('Built-in') : t('Manual')}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        disabled={busy || !!editor}
+                        onClick={() => open(rule)}
+                      >
+                        {t('Edit')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={busy || !!editor}
+                        onClick={() => removeStrictRule(rule.id)}
+                        aria-label={t('Remove {{domain}}', { domain: rule.hostnamePattern })}
+                      >
+                        {t('Delete')}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             </details>
@@ -625,37 +587,43 @@ export function NotebookNetworkAccessEditor({
             {manual
               .filter((rule) => matches(rule.hostname))
               .map((rule) => (
-                <div key={`${rule.protocol}://${rule.hostname}:${rule.port}`} className={rowClass}>
-                  <code className="min-w-0 flex-1 break-all text-xs">
-                    {(rule.protocol ?? 'https').toUpperCase()}://
-                    {formatNetworkHostname(rule.hostname)}:{rule.port}
-                  </code>
-                  <span className={tagClass}>{t('Manual')}</span>
-                  <Button
-                    variant="ghost"
-                    disabled={busy || !!editor}
-                    onClick={() => open(undefined, rule)}
-                  >
-                    {t('Edit')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={busy || !!editor}
-                    onClick={() =>
-                      void commit(
-                        {
-                          ...settings,
-                          trustedPrivateDestinations: (
-                            settings.trustedPrivateDestinations ?? []
-                          ).filter((item) => item !== rule)
-                        },
-                        settings
-                      )
-                    }
-                    aria-label={t('Remove {{domain}}', { domain: rule.hostname })}
-                  >
-                    {t('Delete')}
-                  </Button>
+                <div key={trustedDestinationId(rule)}>
+                  {editor?.original === rule ? (
+                    editorForm
+                  ) : (
+                    <div className={rowClass}>
+                      <code className="min-w-0 flex-1 break-all text-xs">
+                        {(rule.protocol ?? 'https').toUpperCase()}://
+                        {formatNetworkHostname(rule.hostname)}:{rule.port}
+                      </code>
+                      <span className={tagClass}>{t('Manual')}</span>
+                      <Button
+                        variant="ghost"
+                        disabled={busy || !!editor}
+                        onClick={() => open(undefined, rule)}
+                      >
+                        {t('Edit')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={busy || !!editor}
+                        onClick={() =>
+                          void commit(
+                            {
+                              ...settings,
+                              trustedPrivateDestinations: (
+                                settings.trustedPrivateDestinations ?? []
+                              ).filter((item) => item !== rule)
+                            },
+                            settings
+                          )
+                        }
+                        aria-label={t('Remove {{domain}}', { domain: rule.hostname })}
+                      >
+                        {t('Delete')}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ))}
             {grants
@@ -700,7 +668,7 @@ export function NotebookNetworkAccessEditor({
           </p>
         ) : null}
       </section>
-      {error ? (
+      {error && !editor ? (
         <ErrorNotice level="error" role="alert" description={error} />
       ) : savedMessage ? (
         <p className="text-xs text-muted-foreground" role="status">

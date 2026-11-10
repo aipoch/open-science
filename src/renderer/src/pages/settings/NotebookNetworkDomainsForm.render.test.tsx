@@ -396,7 +396,7 @@ it.each(['relaxed', 'strict'] as const)(
       useSettingsStore.setState({ notebookNetwork: { ...initial, mode: nextMode } })
     )
     await typeInput(hostInput(), 'changed.local')
-    await act(async () => hostInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
+    await act(async () => button('Confirm').click())
     expect(container.querySelector('form')).toBeNull()
     expect(container.querySelector(`[role="radio"][aria-checked="true"]`)?.textContent).toBe(
       nextMode === 'strict' ? 'Strict' : 'Relaxed'
@@ -407,7 +407,7 @@ it.each(['relaxed', 'strict'] as const)(
   }
 )
 
-it('saves valid existing fields on blur, retains the editor, and never saves invalid input', async () => {
+it('keeps existing edits local until confirmed and discards them on cancel', async () => {
   useSettingsStore.setState({
     notebookNetwork: {
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
@@ -426,23 +426,27 @@ it('saves valid existing fields on blur, retains the editor, and never saves inv
   await act(async () => button('Edit').click())
   await typeInput(hostInput(), 'research.local')
   await act(async () => hostInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
-  expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations?.[0]).toMatchObject(
-    {
-      id: 'manual-one',
-      hostname: 'research.local'
-    }
-  )
-  expect(container.querySelector('form')).not.toBeNull()
-  await typeInput(hostInput(), 'not a host')
-  await act(async () => hostInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
   expect(
     useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations?.[0]?.hostname
-  ).toBe('research.local')
-  expect(button('Done').type).toBe('button')
-  await act(async () => button('Done').click())
+  ).toBe('localhost')
+  expect(button('Add address').disabled).toBe(true)
+  await act(async () => button('Cancel').click())
   expect(container.querySelector('form')).toBeNull()
-  expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledOnce()
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+  await act(async () => button('Edit').click())
+  expect(hostInput().value).toBe('localhost')
+  await typeInput(hostInput(), 'not a host')
+  await act(async () => button('Confirm').click())
+  expect(container.querySelector('[role="alert"]')).not.toBeNull()
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+  await typeInput(hostInput(), 'research.local')
+  await act(async () => button('Confirm').click())
+  expect(container.querySelector('form')).toBeNull()
+  expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations?.[0]).toMatchObject(
+    { id: 'manual-one', hostname: 'research.local' }
+  )
 })
+
 it('opens a form below the toolbar and immediately saves an exact address with the same Confirm button', async () => {
   await act(async () => root.render(<NotebookNetworkDomainsForm />))
   expect(container.querySelector('form')).toBeNull()
