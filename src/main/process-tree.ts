@@ -1233,7 +1233,17 @@ const scanForOwnedDescendants = async (
           // Permission denied: check if this process could be a setuid descendant
           const pid = parseInt(pidStr, 10)
           if (couldBeDescendant(pid)) {
-            console.error('proof: unreadable candidate', pid, code, startTimeMap.get(pid), spawnedAt, leaderBirthToken)
+            const lineage = []
+            let ancestor = pid
+            while (ancestor > 0 && lineage.length < 12) {
+              try {
+                const status = readFileSync(`/proc/${ancestor}/status`, 'utf8')
+                const parent = Number(/^PPid:\s*(\d+)/m.exec(status)?.[1])
+                lineage.push({pid: ancestor, parent, uid: /^Uid:\s*(\d+)/m.exec(status)?.[1], name: /^Name:\s*(.+)$/m.exec(status)?.[1], state: /^State:\s*(\w)/m.exec(status)?.[1]})
+                ancestor = parent
+              } catch { break }
+            }
+            console.error('proof: unreadable candidate', pid, code, startTimeMap.get(pid), spawnedAt, leaderBirthToken, process.pid, JSON.stringify(lineage))
             hadRelevantPermissionDenied = true
           }
         }
