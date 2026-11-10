@@ -293,6 +293,9 @@ test('explains disabled revision navigation while a turn is running', async ({ a
     await expect(
       conversation.getByText('Queue gate lead-in chunk 3.', { exact: true })
     ).toBeVisible()
+    // Release the active turn's scroll anchor with a reader-originated wheel gesture.
+    await conversation.hover()
+    await page.mouse.wheel(0, -100_000)
     await trigger.scrollIntoViewIfNeeded()
     await expect(trigger).toBeInViewport()
     await trigger.focus()
