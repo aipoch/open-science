@@ -41,7 +41,8 @@ describe('ScenarioModelList', () => {
       setSubagentModel: vi.fn(async () => undefined),
       setReviewerModel: vi.fn(async () => undefined),
       setSessionDetailsModel: vi.fn(async () => undefined),
-      setVisionModel: vi.fn(async () => undefined)
+      setVisionModel: vi.fn(async () => undefined),
+      setPromptOptimizationModel: vi.fn(async () => undefined)
     })
   })
 
@@ -61,10 +62,12 @@ describe('ScenarioModelList', () => {
     const subagentRow = rowButton('Subagent')
     const reviewerRow = rowButton('Reviewer')
     const visionRow = rowButton('Vision')
+    const promptOptimizationRow = rowButton('Prompt optimization')
     expect(sessionDetailsRow?.getAttribute('aria-expanded')).toBe('false')
     expect(subagentRow?.getAttribute('aria-expanded')).toBe('false')
     expect(reviewerRow?.getAttribute('aria-expanded')).toBe('false')
     expect(visionRow?.getAttribute('aria-expanded')).toBe('false')
+    expect(promptOptimizationRow?.getAttribute('aria-expanded')).toBe('false')
     expect(visionRow?.compareDocumentPosition(sessionDetailsRow!)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -78,7 +81,8 @@ describe('ScenarioModelList', () => {
       'Expand Subagent settings',
       'Expand Reviewer settings',
       'Expand Vision settings',
-      'Expand Session details settings'
+      'Expand Session details settings',
+      'Expand Prompt optimization settings'
     ])
 
     expect(sessionDetailsRow?.textContent).toContain('Same as main model')

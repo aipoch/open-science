@@ -1,5 +1,14 @@
 import { packageResearchFilmsSchema, researchFilmStorageKeys } from './research-films-contract'
 import { Prisma, type PrismaClient } from '@prisma/client'
+import {
+  indexPortableEvidence,
+  installLaneLogs,
+  portableEvidenceSchema,
+  remapLogEvidence
+} from '../artifacts/execution-evidence-log'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
+import { sessionPackageReceiptSchema } from '../../shared/session-package'
+import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -32,7 +41,7 @@ import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { createPackageMaterializer } from './materialize'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
-import { assertPackageSourcePath, readPackageJson } from './archive'
+import { assertPackageSourcePath, readPackageJson, fileChecksum } from './archive'
 import { readExecutionEvidence } from './execution-evidence'
 import { packageHistorySchema } from './history-schema'
 const tableNames = Object.keys(COLUMNS) as NativeTable[]
@@ -283,6 +292,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
     typeof value.tables !== 'object'
   )
     throw new Error('Unsupported package records.')
+  if ('logEvidence' in value) portableEvidenceSchema.parse(value.logEvidence)
   if ('researchFilms' in value && value.researchFilms !== undefined)
     packageResearchFilmsSchema.parse(value.researchFilms)
   if ('literature' in value && value.literature !== undefined)
@@ -506,7 +516,8 @@ export const mapPackageReferences = (
   value: unknown,
   identities: Record<string, string>,
   key = '',
-  checksums: Record<string, string> = {}
+  checksums: Record<string, string> = {},
+  pooledKeys?: ReadonlySet<string>
 ): unknown => {
   if (key === 'sourceScope' || key === 'sourceSessionCheck') return value
   if (['content', 'text', 'script', 'code', 'outputs', 'structuredOutputEvidence'].includes(key))
@@ -541,8 +552,12 @@ export const mapPackageReferences = (
         )
       return tagged && identities[tagged[2]] ? `${tagged[1]}${identities[tagged[2]]}` : value
     }
-    if (/(?:StorageKey|storageKey|storage_key)$/.test(key))
-      return remapStorageKey(value, identities)
+    if (/(?:StorageKey|storageKey|storage_key)$/.test(key)) {
+      const mapped = remapStorageKey(value, identities)
+      if (pooledKeys?.has(value))
+        return mapped.split('/').slice(0, 2).join('/') + '/blobs/' + mapped.split('/').at(-1)
+      return mapped
+    }
     if (
       [
         'path',
@@ -559,17 +574,27 @@ export const mapPackageReferences = (
     return value
   }
   if (Array.isArray(value))
-    return value.map((item) => mapPackageReferences(item, identities, key, checksums))
+    return value.map((item) => mapPackageReferences(item, identities, key, checksums, pooledKeys))
   if (value && typeof value === 'object')
     return Object.fromEntries(
       Object.entries(value).map(([name, item]) => [
         name,
-        mapPackageReferences(item, identities, name, checksums)
+        mapPackageReferences(item, identities, name, checksums, pooledKeys)
       ])
     )
   return value
 }
 
+export const logIdentityPlanSchema = z
+  .object({
+    operationId: z.uuid(),
+    manifestChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+    projectId: sessionPackageReceiptSchema.shape.projectId,
+    sessionId: sessionPackageReceiptSchema.shape.sessionId,
+    identities: sessionPackageReceiptSchema.shape.identities
+  })
+  .strict()
+export type LogIdentityPlan = z.infer<typeof logIdentityPlanSchema>
 export const prepareNativeImport = async (
   sourceDirectory: string,
   destinationRoot: string,
@@ -579,7 +604,8 @@ export const prepareNativeImport = async (
   sessionId: string,
   session?: PersistedChatSession,
   signal?: AbortSignal,
-  onProgress?: (progress: import('../../shared/session-package').PackageProgress) => void
+  onProgress?: (progress: import('../../shared/session-package').PackageProgress) => void,
+  retryPlan?: { path: string; operationId: string; previous?: LogIdentityPlan }
 ): Promise<{
   records: PackageRecords
   identities: Record<string, string>
@@ -587,8 +613,9 @@ export const prepareNativeImport = async (
 }> => {
   const identities: Record<string, string> = Object.create(null)
   const checksums: Record<string, string> = Object.create(null)
+  const pooledKeys = new Set<string>()
   const mapReferences = (value: unknown, ids = identities): unknown =>
-    mapPackageReferences(value, ids, '', checksums)
+    mapPackageReferences(value, ids, '', checksums, pooledKeys)
   identities[manifest.source.projectId] = projectId
   identities[manifest.source.sessionId] = sessionId
   for (const item of records.literature?.items ?? []) identities[item.itemId] ??= randomUUID()
@@ -659,6 +686,63 @@ export const prepareNativeImport = async (
     ])
       identities[id] ??= randomUUID()
     sidecars.set(entry.storageKey, value)
+  }
+  const projected = indexPortableEvidence(records.logEvidence ?? [])
+  for (const { bytes } of projected.values()) {
+    const sidecar = readExecutionEvidence(JSON.parse(bytes.toString()))
+    for (const g of [
+      ...sidecar.relations.flatMap((r) => (r.generation ? [r.generation] : [])),
+      ...(sidecar.predecessorGenerations ?? [])
+    ])
+      pooledKeys.add(g.contentStorageKey)
+    for (const id of [
+      sidecar.activityId,
+      sidecar.evidenceId,
+      ...sidecar.relations.flatMap((r) => (r.generation ? [r.generation.generationId] : [])),
+      ...(sidecar.predecessorGenerations ?? []).map((g) => g.generationId)
+    ])
+      identities[id] ??= randomUUID()
+  }
+  let targetLogs: PackageRecords['logEvidence']
+  if (records.logEvidence) {
+    const manifestChecksum = await fileChecksum(join(sourceDirectory, 'manifest.json'))
+    if (!retryPlan) throw new Error('Missing durable identity allocation for log import.')
+    const allocated = retryPlan.previous
+    if (allocated) {
+      if (
+        allocated.manifestChecksum !== manifestChecksum ||
+        allocated.projectId !== projectId ||
+        allocated.sessionId !== sessionId ||
+        Object.keys(allocated.identities).length !== Object.keys(identities).length ||
+        Object.keys(identities).some((k) => !Object.hasOwn(allocated.identities, k)) ||
+        allocated.identities[manifest.source.projectId] !== projectId ||
+        allocated.identities[manifest.source.sessionId] !== sessionId
+      )
+        throw new Error('Invalid persisted import identity allocation.')
+      Object.assign(identities, allocated.identities)
+    } else
+      await writeDurableJsonFile(
+        retryPlan.path,
+        JSON.stringify(
+          logIdentityPlanSchema.parse({
+            operationId: retryPlan.operationId,
+            manifestChecksum,
+            projectId,
+            sessionId,
+            identities
+          })
+        )
+      )
+    const remapped = remapLogEvidence(
+      records.logEvidence,
+      identities,
+      manifestChecksum,
+      (value) => mapPackageReferences(value, identities),
+      (key) => remapStorageKey(key, identities)
+    )
+    Object.assign(checksums, remapped.checksums)
+    targetLogs = remapped.lanes
+    await installLaneLogs(destinationRoot, targetLogs)
   }
   const transformedSidecars = new Map<string, string>()
   for (const entry of manifest.inventory) {
@@ -735,7 +819,10 @@ export const prepareNativeImport = async (
   // Byte totals describe copying only. Derived evidence still needs validation after the last
   // file, so discard counters before the unmeasurable work rather than leaving the UI at 100%.
   onProgress?.({ phase: 'validating', importStage: 'import-files', stageProgress: 1 })
-  const mapped = projectIncludedHeads(mapReferences(records, identities) as PackageRecords)
+  const mapped = projectIncludedHeads(
+    mapReferences({ ...records, logEvidence: undefined }, identities) as PackageRecords
+  )
+  if (targetLogs) mapped.logEvidence = targetLogs
   for (const row of mapped.tables.ArtifactMessageSnapshot) {
     if (typeof row.storageKey !== 'string') throw new Error('Invalid Message snapshot storage key.')
     const file = resolveStorageKey(destinationRoot, row.storageKey)

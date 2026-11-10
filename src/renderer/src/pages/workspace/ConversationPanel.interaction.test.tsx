@@ -10099,6 +10099,236 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
   }
 )
 
+describe('prompt optimization admission', () => {
+  it('passes the fixed prompt optimization provider, model, and reasoning effort to IPC', async () => {
+    const optimizePrompt = vi.fn(async () => ({ text: 'Improved' }))
+    window.api.projects = {
+      optimizePrompt,
+      recordOptimizationEvent: vi.fn(async () => {})
+    } as unknown as typeof window.api.projects
+    useSettingsStore.setState({
+      promptOptimizationModel: {
+        mode: 'fixed',
+        providerId: 'prompt-provider',
+        model: 'prompt-model',
+        reasoningEffort: 'xhigh'
+      }
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'optimization-model-session',
+          projectId: 'project',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: { view: { doc: docFromText('Original') } },
+      conversation: { availability: { submit: true } }
+    })
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Optimize question"]')!.click()
+    )
+
+    expect(optimizePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project',
+        input: 'Original',
+        agentConfiguration: {
+          providerId: 'prompt-provider',
+          model: 'prompt-model',
+          reasoningEffort: 'xhigh'
+        }
+      })
+    )
+  })
+
+  it('routes optimization failures through the shared notice slot without a send retry', async () => {
+    window.api.projects = {
+      optimizePrompt: vi.fn(async () => {
+        throw new Error('Optimization unavailable')
+      }),
+      recordOptimizationEvent: vi.fn(async () => {})
+    } as unknown as typeof window.api.projects
+    const submit = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'optimization-session',
+          projectId: 'project',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: { view: { doc: docFromText('Original') } },
+      agentControls: {
+        modelConfiguration: {
+          providerId: 'session',
+          model: 'session-model',
+          reasoningEffort: 'high'
+        }
+      },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
+    })
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Optimize question"]')!.click()
+    )
+    const notices = container.querySelectorAll('[data-testid="composer-notice-slot"]')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].textContent).toContain(
+      'Could not optimize your question. Your draft was kept. Please try again.'
+    )
+    expect(notices[0].querySelector('[data-notice-action="retry"]')).toBeNull()
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it.each(['select', 'paste', 'drop'] as const)(
+    'resets optimization when files are added by %s, including while a request is pending',
+    async (method) => {
+      let finish!: (result: { text: string }) => void
+      window.api.projects = {
+        optimizePrompt: vi.fn(
+          () =>
+            new Promise<{ text: string }>((resolve) => {
+              finish = resolve
+            })
+        ),
+        recordOptimizationEvent: vi.fn(async () => {})
+      } as unknown as typeof window.api.projects
+      let doc = docFromText('Original')
+      const render = (): void =>
+        renderPanel({
+          view: {
+            activeSession: {
+              id: 'attachment-session',
+              projectId: 'project',
+              title: 'Session',
+              cwd: '/workspace',
+              status: 'idle',
+              messages: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          },
+          composer: {
+            view: { doc },
+            actions: {
+              changeDoc: (next) => {
+                doc = next
+                render()
+              }
+            }
+          },
+          agentControls: {
+            modelConfiguration: { providerId: 'session', model: 'model', reasoningEffort: 'high' }
+          }
+        })
+      const button = (label: string): HTMLButtonElement | null =>
+        container.querySelector(`button[aria-label="${label}"]`)
+      const attach = (): void => {
+        const files = [new File(['data'], 'data.csv', { type: 'text/csv' })]
+        if (method === 'paste') dispatchPaste(files)
+        else if (method === 'drop') dispatchDrag('drop', ['Files'], files)
+        else {
+          const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+          Object.defineProperty(input, 'files', { configurable: true, value: files })
+          act(() => {
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+          })
+        }
+      }
+      render()
+      act(() => button('Optimize question')!.click())
+      await act(async () => finish({ text: 'Improved' }))
+      expect(button('Undo optimization')).not.toBeNull()
+      attach()
+      expect(button('Undo optimization')).toBeNull()
+      expect(button('Optimize question')).not.toBeNull()
+      expect(doc).toEqual(docFromText('Improved'))
+      act(() => button('Optimize question')!.click())
+      attach()
+      await act(async () => finish({ text: 'Obsolete result' }))
+      expect(doc).toEqual(docFromText('Improved'))
+      expect(button('Undo optimization')).toBeNull()
+      expect(button('Optimize question')).not.toBeNull()
+    }
+  )
+
+  it('keeps undo after a rejected send and clears it only after acceptance', async () => {
+    const recordOptimizationEvent = vi.fn(async () => {})
+    window.api.projects = {
+      optimizePrompt: vi.fn(async () => ({ text: 'Improved' })),
+      recordOptimizationEvent
+    } as unknown as typeof window.api.projects
+    let doc = docFromText('Original')
+    let sessionId = 'pending-session'
+    const submit = vi.fn<PanelProps['conversation']['actions']['submit']['draft']>()
+    const render = (): void =>
+      renderPanel({
+        view: {
+          activeSession: {
+            id: sessionId,
+            projectId: 'project',
+            title: 'Session',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        },
+        composer: {
+          view: { doc },
+          actions: {
+            changeDoc: (next) => {
+              doc = next
+              render()
+            }
+          }
+        },
+        agentControls: {
+          modelConfiguration: {
+            providerId: 'session',
+            model: 'session-model',
+            reasoningEffort: 'high'
+          }
+        },
+        conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
+      })
+    const button = (label: string): HTMLButtonElement | undefined =>
+      container.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]:not([aria-hidden="true"])`
+      ) ??
+      Array.from(container.querySelectorAll('button')).find((node) => node.textContent === label)
+    render()
+    await act(async () => button('Optimize question')!.click())
+    expect(doc).toEqual(docFromText('Improved'))
+    act(() => button('Send message')!.click())
+    expect(submit).toHaveBeenCalledOnce()
+    // WorkspacePage preserves this panel instance when its pending Session binds.
+    sessionId = 'bound-session'
+    render()
+    expect(button('Undo optimization')).toBeDefined()
+    expect(recordOptimizationEvent).not.toHaveBeenCalledWith({ action: 'send' })
+    act(() => button('Undo optimization')!.click())
+    expect(doc).toEqual(docFromText('Original'))
+    await act(async () => button('Optimize question')!.click())
+    act(() => button('Send message')!.click())
+    act(() => submit.mock.calls.at(-1)![0].onAccepted?.())
+    expect(button('Undo optimization')).toBeUndefined()
+    expect(recordOptimizationEvent).toHaveBeenCalledWith({ action: 'send' })
+  })
+})
+
 const selectAdditionalNotice = (index = 0): void => {
   const slot = container.querySelector('[data-testid="composer-notice-slot"]')
   act(() => slot?.querySelector<HTMLButtonElement>('[aria-expanded="false"]')?.click())

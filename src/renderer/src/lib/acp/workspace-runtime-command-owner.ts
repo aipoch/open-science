@@ -96,6 +96,8 @@ type SendWorkspaceMessageIntent = {
   messageId?: string
   // Renderer-only notification: the real message now replaces the composer's pending preview.
   onMessageAppended?: (message: SendWorkspaceMessageResult) => void
+  // Main has admitted this prompt; optimistic append alone does not establish ownership.
+  onPromptAccepted?: () => void
   onPreparationRejected?: (
     error: string,
     sessionId?: string,
@@ -311,6 +313,7 @@ type PromptDispatch = {
   }
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
   accepted?: () => void
+  onPromptAccepted?: SendWorkspaceMessageIntent['onPromptAccepted']
   preparation?: WorkspacePromptPreparation
   rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
   beforeDispatch?: () => void
@@ -340,6 +343,9 @@ const dispatchPrompt = (
   let resolveAdmission!: (accepted: boolean) => void
   const admission = new Promise<boolean>((resolve) => {
     resolveAdmission = resolve
+  })
+  void admission.then((accepted) => {
+    if (accepted) request.onPromptAccepted?.()
   })
   const unsubscribe = useSessionStore.subscribe(() => {
     if (!request.preparation) return
@@ -1027,6 +1033,7 @@ const startPendingPrompt = (
         preparation: promptPreparation,
         cancelled: () => attempt?.cancelled === true,
         rejected: request.onPreparationRejected,
+        onPromptAccepted: request.onPromptAccepted,
         accepted: () =>
           useSessionStore.getState().clearPendingContextReplay(created.sessionId, boundMessageId)
       })
@@ -1682,6 +1689,7 @@ const performSendWorkspaceMessage = async (
           ? { ...replay, historyAttachments: promptMedia.historyAttachments }
           : replay,
         turnIntent: input.turnIntent,
+        onPromptAccepted: input.onPromptAccepted,
         accepted: () => prepared.acceptPrompt(appended.messageId),
         beforeDispatch: () => {
           if (attempt) {

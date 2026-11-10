@@ -108,6 +108,36 @@ describe('SessionDetailsModelOwner', () => {
     }
   )
 
+  it.each(['codex-isolated', 'codex-shared'] as const)(
+    'admits the built-in Agent inherited %s through runtime compatibility checks',
+    async (type) => {
+      const { owner, providers } = createOwner(
+        { mode: 'inherit', reasoningEffort: 'low' },
+        { id: CODEX_SUBSCRIPTION_PROVIDER_ID, type }
+      )
+      await expect(
+        owner.admit(
+          session({
+            agentFrameworkId: 'open-science-agent',
+            agentModel: 'model-a',
+            agentConfiguration: {
+              providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+              reasoningEffort: 'high'
+            }
+          })
+        )
+      ).resolves.toMatchObject({
+        mode: 'target',
+        target: {
+          frameworkId: 'open-science-agent',
+          reasoningEffort: 'low',
+          model: { kind: 'required', id: 'model-a' }
+        }
+      })
+      expect(providers.resolveRuntimeTarget).toHaveBeenCalledOnce()
+    }
+  )
+
   it('admits disabled without requiring a Session model target', async () => {
     const { owner } = createOwner({ mode: 'disabled' })
     await expect(owner.admit(session())).resolves.toEqual({ mode: 'disabled' })

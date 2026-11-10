@@ -111,6 +111,7 @@ const expectedChannels = [
   'settings:set-notebook-network',
   'settings:set-project-files-filter',
   'settings:set-reviewer-model',
+  'settings:set-prompt-optimization-model',
   'settings:select-wsl-profile',
   'settings:switch-local-shell-to-powershell',
   'settings:use-wsl2-bash',

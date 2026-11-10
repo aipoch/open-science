@@ -78,6 +78,8 @@ const definitions: readonly OfficialVendor[] = [
     models: [
       { id: 'claude-opus-5', contextWindow: 1_000_000 },
       { id: 'claude-opus-5-5', contextWindow: 1_000_000 },
+      // https://platform.claude.com/docs/en/models/fable-5-2/overview
+      { id: 'claude-fable-5-2', contextWindow: 1_000_000 },
       { id: 'claude-fable-5-1', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },

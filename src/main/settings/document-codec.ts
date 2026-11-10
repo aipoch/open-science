@@ -264,6 +264,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
+    promptOptimizationModel: sanitizeSubagentModel(value.promptOptimizationModel),
     sessionDetailsModel: sanitizeSessionDetailsModel(value.sessionDetailsModel),
     ...(visionModel ? { visionModel } : {})
   }

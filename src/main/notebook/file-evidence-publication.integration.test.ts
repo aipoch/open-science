@@ -135,6 +135,38 @@ const runChild = (
   })
 }
 
+it('publishes an import-owned project receipt when the worker cannot create hard links', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'import-no-links-'))
+  try {
+    const preloadPath = join(root, 'deny-links.cjs')
+    await writeFile(
+      preloadPath,
+      "require('node:fs').linkSync = () => { throw Error('hard links disabled') }"
+    )
+    const metadata = await stat(root)
+    const result = await runChild(
+      process.execPath,
+      ['--require', preloadPath, workerPath],
+      root,
+      JSON.stringify({
+        operation: 'ensure-project',
+        importOperationId: 'a5722944-8803-47e3-a8c3-a1fe725a8708',
+        projectName: 'imported',
+        expectedRootIdentity: { dev: metadata.dev, ino: metadata.ino }
+      })
+    )
+    expect(result.code, result.stdout + result.stderr).toBe(0)
+    expect(
+      JSON.parse(await readFile(join(root, '.project-ownership-imported.json'), 'utf8'))
+    ).toMatchObject({
+      phase: 'owned',
+      ownershipToken: 'a5722944-8803-47e3-a8c3-a1fe725a8708'
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 const exercisePublication = async (
   runtime: WorkerRuntime,
   holdMilliseconds: number,
@@ -549,6 +581,10 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
       // A user-selected installation ancestor may belong to an unrelated ESM project.
       await writeFile(join(packageRoot, 'package.json'), '{"type":"module"}')
       await writeFile(join(source, 'package.json'), '{"type":"commonjs"}')
+      await copyFile(
+        join(workerPath, '..', 'file_evidence_codec.mjs'),
+        join(notebook, 'file_evidence_codec.mjs')
+      )
       await copyFile(workerPath, join(notebook, 'file_evidence_worker.js'))
       await copyFile(
         join(workerPath, '..', 'file_evidence_shadow.js'),

@@ -393,6 +393,8 @@ const SETTINGS_WRITE_ERROR_COPY: Record<SettingsWriteErrorCode, string> = {
     'Could not save Session details model. Refresh the model catalog and try again.',
   'reviewer-model': 'Could not save Reviewer model. Refresh the model catalog and try again.',
   'subagent-model': 'Could not save Subagent model. Refresh the model catalog and try again.',
+  'prompt-optimization-model':
+    'Could not save Prompt optimization model. Refresh the model catalog and try again.',
   'vision-model': 'Could not save Vision model. Refresh the model catalog and try again.',
   notifications: 'Could not save notification preference. Try again.',
   'notification-content': 'Could not save notification preference. Try again.',
@@ -2374,7 +2376,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
                           showCodexSubscriptions={
-                            agentFrameworkId === 'codex' && modelView.kind === 'create'
+                            (agentFrameworkId === 'codex' ||
+                              agentFrameworkId === 'open-science-agent') &&
+                            modelView.kind === 'create'
                           }
                           showClaudeIsolated={
                             agentFrameworkId === 'claude-code' && modelView.kind === 'create'

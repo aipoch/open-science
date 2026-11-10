@@ -6038,7 +6038,8 @@ describe('LiteratureLibraryPage', () => {
       expect(createProjectApi).toHaveBeenCalledWith({
         name: 'Reading project',
         description: '',
-        agentContext: ''
+        agentContext: '',
+        optimizationPrompt: ''
       })
     )
     await waitFor(() =>

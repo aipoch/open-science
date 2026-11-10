@@ -141,6 +141,328 @@ const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
 describe('ProviderTransportOwner harness leases', () => {
   const makeHarnessTarget = (): ProviderRuntimeTarget => ({ ...makeTarget(), configRevision: 3 })
 
+  const makeCodexHarnessTarget = (): ProviderRuntimeTarget => ({
+    ...makeHarnessTarget(),
+    providerType: 'codex-isolated',
+    apiEndpoints: ['responses'],
+    provider: { type: 'codex-isolated', apiEndpoints: ['responses'], model: 'model-a' }
+  })
+
+  const sendCodexRequest = (
+    connection: { baseUrl: string; token: string },
+    body: Record<string, unknown> = {},
+    signal?: AbortSignal
+  ): Promise<Response> =>
+    fetch(`${connection.baseUrl}/v1/responses`, {
+      method: 'POST',
+      signal,
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json',
+        'ChatGPT-Account-Id': 'client-cannot-select-account',
+        cookie: 'client-cannot-inject-cookie'
+      },
+      body: JSON.stringify({
+        model: 'client-model',
+        input: [],
+        store: false,
+        stream: true,
+        ...body
+      })
+    })
+
+  it('binds the Codex account once and resolves private credentials for every request', async () => {
+    const upstream = vi.fn<typeof fetch>(
+      async () =>
+        new Response('data: {"type":"response.completed","response":{}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' }
+        })
+    )
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'private-preflight-token',
+        accountId: 'account-one'
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'private-token-one',
+        accountId: 'account-one'
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'http://127.0.0.2:42000/imported/responses',
+        accessToken: 'private-token-two',
+        accountId: 'account-one'
+      })
+    const bind = vi.fn<(target: ProviderRuntimeTarget) => typeof resolve>(() => resolve)
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: bind,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const target = makeCodexHarnessTarget()
+    const acquiring = owner.acquireHarness(target, new AbortController().signal)
+    expect(bind).toHaveBeenCalledOnce()
+    target.configRevision = 4
+    const lease = await acquiring
+    expect(bind.mock.calls[0][0]).toMatchObject({ configRevision: 3 })
+    expect(resolve).toHaveBeenCalledOnce()
+    expect(JSON.stringify(lease)).not.toMatch(/private-token|account-one|chatgpt\.com/)
+    const tools = [{ type: 'function', name: 'sum', parameters: { type: 'object' } }]
+    const input = [
+      { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      { type: 'function_call', call_id: 'call-1', name: 'sum', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call-1', output: '42' }
+    ]
+    try {
+      for (let index = 0; index < 2; index++) {
+        const response = await sendCodexRequest(lease.connection, {
+          tools,
+          input,
+          instructions: 'Instructions',
+          max_output_tokens: 64,
+          reasoning: { effort: 'high' }
+        })
+        expect(await response.text()).toContain('response.completed')
+      }
+      expect(resolve).toHaveBeenCalledTimes(3)
+      expect(upstream).toHaveBeenCalledTimes(2)
+      for (const [index, [url, init]] of upstream.mock.calls.entries()) {
+        expect(String(url)).toBe(
+          index
+            ? 'http://127.0.0.2:42000/imported/responses'
+            : 'https://chatgpt.com/backend-api/codex/responses'
+        )
+        const headers = new Headers(init?.headers)
+        expect(headers.get('authorization')).toBe(
+          index ? 'Bearer private-token-two' : 'Bearer private-token-one'
+        )
+        expect(headers.get('ChatGPT-Account-Id')).toBe('account-one')
+        expect(headers.get('cookie')).toBeNull()
+        expect(init?.redirect).toBe('error')
+        expect(init?.credentials).toBe('omit')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'model-a',
+          store: false,
+          stream: true,
+          input,
+          tools,
+          instructions: 'Instructions',
+          reasoning: { effort: 'high' }
+        })
+      }
+    } finally {
+      await lease.release()
+    }
+    await expect(sendCodexRequest(lease.connection)).rejects.toThrow()
+  })
+
+  it('returns sanitized Codex 401 errors without retrying or caching an expired credential', async () => {
+    const resolve = vi.fn(async () => ({
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      accessToken: 'PRIVATE_CREDENTIAL',
+      accountId: 'PRIVATE_ACCOUNT'
+    }))
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        { error: { code: 'invalid_api_key', message: 'PRIVATE_CREDENTIAL PRIVATE_ACCOUNT' } },
+        { status: 401, headers: { 'x-private-header': 'PRIVATE_CREDENTIAL' } }
+      )
+    )
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => resolve,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      for (let index = 0; index < 2; index++) {
+        const response = await sendCodexRequest(lease.connection)
+        expect(response.status).toBe(401)
+        expect(response.headers.get('x-private-header')).toBeNull()
+        const text = await response.text()
+        expect(text).toContain('invalid_api_key')
+        expect(text).not.toMatch(/PRIVATE_CREDENTIAL|PRIVATE_ACCOUNT/)
+        expect(upstream).toHaveBeenCalledTimes(index + 1)
+      }
+      expect(resolve).toHaveBeenCalledTimes(3)
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it.each([
+    'https://evil.example/responses',
+    'https://chatgpt.com/backend-api/codex/responses?key=PRIVATE_CREDENTIAL',
+    'https://PRIVATE_CREDENTIAL@chatgpt.com/backend-api/codex/responses',
+    'http://remote.example/responses',
+    'file:///tmp/responses'
+  ])('rejects an unapproved Codex endpoint without sending credentials: %s', async (endpoint) => {
+    const upstream = vi.fn<typeof fetch>()
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => async () => ({
+        endpoint,
+        accessToken: 'PRIVATE_CREDENTIAL',
+        accountId: 'PRIVATE_ACCOUNT'
+      }),
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    await expect(
+      owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    ).rejects.toThrow('Invalid Codex harness endpoint.')
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('does not follow a Codex redirect or expose its location to the ACP client', async () => {
+    const upstream = vi.fn<typeof fetch>(
+      async () =>
+        new Response(null, { status: 302, headers: { location: 'https://evil.example/private' } })
+    )
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => async () => ({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'private',
+        accountId: 'account'
+      }),
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      const response = await sendCodexRequest(lease.connection)
+      expect(response.status).toBe(502)
+      expect(response.headers.get('location')).toBeNull()
+      expect(upstream).toHaveBeenCalledOnce()
+      expect(upstream.mock.calls[0][1]?.redirect).toBe('error')
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it('cancels Codex credential resolution on lease release before credentials reach upstream', async () => {
+    let resolveStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    let requestSignal!: AbortSignal
+    const upstream = vi.fn<typeof fetch>()
+    let resolving = 0
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => async (signal) => {
+        if (resolving++ === 0)
+          return {
+            endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+            accessToken: 'private',
+            accountId: 'account'
+          }
+        requestSignal = signal
+        resolveStarted()
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('PRIVATE_CREDENTIAL')), {
+            once: true
+          })
+        })
+        return { endpoint: '', accessToken: '', accountId: '' }
+      },
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    const pending = sendCodexRequest(lease.connection).then(
+      (response) => response.text(),
+      () => 'closed'
+    )
+    await started
+    await lease.release()
+    expect(requestSignal.aborted).toBe(true)
+    expect(await pending).not.toContain('PRIVATE_CREDENTIAL')
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('requires a host-owned authentication binder for Codex subscription leases', async () => {
+    const createBridge = vi.fn(() => makeOpenAiBridge(0))
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: createBridge })
+    await expect(
+      owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    ).rejects.toThrow()
+    expect(createBridge).not.toHaveBeenCalled()
+  })
+
+  it('stops a revoked Codex lease before forwarding and hides authentication diagnostics', async () => {
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'PRIVATE_CREDENTIAL',
+        accountId: 'PRIVATE_ACCOUNT'
+      })
+      .mockRejectedValue(new Error('Revoked PRIVATE_CREDENTIAL PRIVATE_ACCOUNT'))
+    const upstream = vi.fn<typeof fetch>()
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => resolve,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      const response = await sendCodexRequest(lease.connection)
+      expect(response.status).toBe(502)
+      expect(await response.text()).not.toMatch(/PRIVATE_CREDENTIAL|PRIVATE_ACCOUNT/)
+      expect(upstream).not.toHaveBeenCalled()
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it('does not send late credentials after a client cancels the request', async () => {
+    const credentials = {
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      accessToken: 'private',
+      accountId: 'account'
+    }
+    let finish!: (value: typeof credentials) => void
+    let started!: () => void
+    const accepted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let requestSignal!: AbortSignal
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce(credentials)
+      .mockImplementationOnce((signal: AbortSignal) => {
+        requestSignal = signal
+        started()
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+      })
+    const upstream = vi.fn<typeof fetch>()
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => resolve,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      const controller = new AbortController()
+      const pending = sendCodexRequest(lease.connection, {}, controller.signal)
+      const result = pending.catch(() => undefined)
+      await accepted
+      const aborted = new Promise<void>((resolve) => {
+        requestSignal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      controller.abort()
+      await aborted
+      finish(credentials)
+      await result
+      expect(upstream).not.toHaveBeenCalled()
+    } finally {
+      await lease.release()
+    }
+  })
+
   it.each(['responses', 'messages'] as const)(
     'forwards native %s without conversion and revokes the lease',
     async (wire) => {

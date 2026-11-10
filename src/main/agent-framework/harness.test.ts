@@ -46,7 +46,7 @@ describe('built-in Agent host boundary', () => {
     )
     expect(vi.mocked(spawnProcess).mock.calls[0][1]).toContain(HARNESS_ACP_ARG)
   })
-  it('rejects remote model credentials and unreviewed subscription routes', () => {
+  it('rejects remote model credentials and unsupported subscription routes', () => {
     expect(
       harnessConfigSchema.safeParse({
         endpoint: 'https://provider.example/v1/chat/completions',
@@ -57,7 +57,7 @@ describe('built-in Agent host boundary', () => {
         maxOutputTokens: 1000
       }).success
     ).toBe(false)
-    for (const type of ['codex-isolated', 'claude-shared'] as const)
+    for (const type of ['claude-isolated', 'claude-shared'] as const)
       expect(
         isProviderUsableByFramework({ type, apiEndpoints: ['chat-completions'] }, harnessFramework)
       ).toBe(false)
@@ -67,6 +67,8 @@ describe('built-in Agent host boundary', () => {
         harnessFramework
       )
     ).toBe(true)
+    for (const type of ['codex-shared', 'codex-isolated'] as const)
+      expect(isProviderUsableByFramework({ type }, harnessFramework)).toBe(true)
     expect(harnessFramework.supportsDelegatedWork).toBe(true)
     expect(
       isProviderUsableByFramework(

@@ -489,6 +489,21 @@ const dataContentApplicationCommands = Object.freeze({
     'project-files:search-artifacts',
     'searchArtifacts'
   ),
+  projectOptimizePrompt: projectCommand(
+    'projects:optimize-prompt',
+    'optimizePrompt',
+    Projects.projectApplicationCommandContracts.optimizePrompt
+  ),
+  projectCancelPromptOptimization: projectCommand(
+    'projects:cancel-prompt-optimization',
+    'cancelPromptOptimization',
+    Projects.projectApplicationCommandContracts.cancelPromptOptimization
+  ),
+  projectRecordOptimizationEvent: projectCommand(
+    'projects:record-optimization-event',
+    'recordOptimizationEvent',
+    Projects.projectApplicationCommandContracts.recordOptimizationEvent
+  ),
   projectCreate: projectCommand(
     'projects:create',
     'create',
@@ -745,6 +760,9 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectFilesSearchArtifacts
   ] as const),
   defineApplicationCommandGroup('projects', [
+    dataContentApplicationCommands.projectOptimizePrompt,
+    dataContentApplicationCommands.projectCancelPromptOptimization,
+    dataContentApplicationCommands.projectRecordOptimizationEvent,
     dataContentApplicationCommands.projectCreate,
     dataContentApplicationCommands.projectUpdateArchive,
     dataContentApplicationCommands.projectDelete,
@@ -1052,6 +1070,11 @@ const registerDataContentApplicationCommands = (
         dependencies.projectFiles.searchArtifacts(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[5], {
+      'projects:optimize-prompt': ({ args }) => dependencies.projects.optimizePrompt(args[0]),
+      'projects:cancel-prompt-optimization': ({ args }) =>
+        dependencies.projects.cancelPromptOptimization(args[0]),
+      'projects:record-optimization-event': ({ args }) =>
+        dependencies.projects.recordOptimizationEvent(args[0]),
       'projects:create': ({ args }) =>
         dependencies.withDataRootWrite(async () => {
           const project = await dependencies.projects.create(args[0])

@@ -181,12 +181,22 @@ const writeExclusiveFile = (name, contents) => {
     closeSync(descriptor)
   }
 }
-const publishExclusiveFile = (name, contents) => {
+const publishExclusiveFile = (name, contents, withoutLinks = false) => {
   const temporaryName = `.publish-${randomUUID()}.tmp`
   try {
     writeExclusiveFile(temporaryName, contents)
-    linkSync(temporaryName, name)
-    rmSync(temporaryName, { force: true })
+    if (withoutLinks) {
+      // The unpacked worker and standalone backend both ship this Node-API binary.
+      require('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node').publishNoReplace(
+        process.cwd(),
+        '',
+        temporaryName,
+        name
+      )
+    } else {
+      linkSync(temporaryName, name)
+      rmSync(temporaryName)
+    }
     syncDirectory()
   } finally {
     rmSync(temporaryName, { force: true })
@@ -622,11 +632,14 @@ const ensureProject = (request) => {
           schemaVersion: 1,
           phase: 'prepared',
           projectName,
-          ownershipToken: randomUUID()
+          ownershipToken: request.importOperationId
+            ? assertSafeName(request.importOperationId)
+            : randomUUID()
         },
         null,
         2
-      )}\n`
+      )}\n`,
+      Boolean(request.importOperationId)
     )
   }
   const receipt = readProjectOwnership(projectName)
@@ -792,7 +805,7 @@ const blobEntry = (name) => {
   const match = BLOB_DELETION_TOMBSTONE_NAME.exec(name)
   return match ? { blobName: match[1], quarantined: true } : undefined
 }
-const blobPoolBytes = (blobPool) => {
+const blobPoolBytes = (blobPool, includeUnactivated = false) => {
   let bytes = 0
   for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
     const parsed = blobEntry(entry.name)
@@ -815,7 +828,7 @@ const blobPoolBytes = (blobPool) => {
     }
     bytes += metadata.size
   }
-  return bytes + shadow.projectBytes(blobPool)
+  return bytes + shadow.projectBytes(blobPool, includeUnactivated)
 }
 const shadowIO = {
   readFile(path, limit) {
@@ -2298,6 +2311,8 @@ const deleteProject = (request) => {
     return { ok: true, removedProjectEntries: 0 }
   }
   let receipt = readProjectOwnership(projectName)
+  if (request.importOperationId && receipt.ownershipToken !== request.importOperationId)
+    return { ok: true, removedProjectEntries: 0 }
   if (receipt.phase === 'prepared') {
     ensureProject(request)
     receipt = readProjectOwnership(projectName)
@@ -2320,6 +2335,18 @@ const deleteProject = (request) => {
     }
     if (projectIdentity) {
       verifyProjectMarker(projectName, receipt.ownershipToken)
+      if (request.importOperationId) {
+        for (const entry of readdirSync(projectName, { withFileTypes: true })) {
+          if (entry.name === ownershipFile(receipt.ownershipToken)) continue
+          if (
+            entry.name === 'blobs' &&
+            entry.isDirectory() &&
+            !readdirSync(join(projectName, entry.name)).length
+          )
+            continue
+          return { ok: true, removedProjectEntries: 0 }
+        }
+      }
       renameSync(projectName, tombstoneName)
       syncDirectory()
       const renamedIdentity = entryIdentity(tombstoneName)
@@ -2364,7 +2391,106 @@ const deleteProject = (request) => {
   return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
+const importPoolReceipt = '.import-pool-receipt.json'
+const rollbackImportedPool = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const receipt = readJson(importPoolReceipt)
+  if (!sameIdentity(pool.identity, receipt.pool) || !Array.isArray(receipt.additions))
+    throw new Error('Invalid import pool rollback receipt.')
+  const marks = shadow.protectedBlobs(pool, shadowIO)
+  for (const { name, fingerprint } of receipt.additions) {
+    if (typeof name !== 'string' || !BLOB_NAME.test(name) || typeof fingerprint !== 'string')
+      throw new Error('Invalid import pool rollback object.')
+    // Entries still staged never reached the pool (including interruption before activation).
+    if (entryExists(name) || marks.live.has(name)) continue
+    if (!marks.active) throw new Error('Missing imported evidence project marker.')
+    const path = join(pool.path, name)
+    if (!entryExists(path)) continue
+    const stat = lstatSync(path)
+    // Rename back only this operation's exact inode, unless another lane or legacy link owns it.
+    if (stat.isFile() && stat.nlink === 1 && quarantineFingerprint(stat) === fingerprint) {
+      renameSync(path, name)
+    }
+  }
+  const marker = join(dirname(pool.path), shadow.projectMarker)
+  if (
+    receipt.activation &&
+    entryExists(marker) &&
+    quarantineFingerprint(lstatSync(marker)) === receipt.activation &&
+    !marks.live.size &&
+    !readdirSync(pool.path).length &&
+    !shadow.projectBytes(pool)
+  ) {
+    rmSync(marker)
+    syncDirectoryPath(dirname(pool.path))
+  }
+  syncDirectoryPath(pool.path)
+  syncDirectory()
+  return { ok: true, poolPublished: false }
+}
+
+const publishImportedPool = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const project = dirname(pool.path)
+  const marker = join(project, shadow.projectMarker)
+  const activate = !entryExists(marker)
+  if (!activate && (!lstatSync(marker).isFile() || lstatSync(marker).size !== 0))
+    throw new Error('Invalid evidence pool activation marker.')
+  // Staged lanes are already installed. Count them even before the project first opts in.
+  let bytes = blobPoolBytes(pool, true)
+  if (!Number.isSafeInteger(request.maxEvidenceBytes) || bytes > request.maxEvidenceBytes)
+    throw new Error('Imported execution evidence exceeds the project budget.')
+  const additions = []
+  for (const entry of readdirSync('.', { withFileTypes: true })) {
+    if (!entry.isFile() || !BLOB_NAME.test(entry.name))
+      throw new Error('Invalid imported pool object.')
+    const size = lstatSync(entry.name).size
+    const target = join(pool.path, entry.name)
+    if (entryExists(target)) {
+      if (!lstatSync(target).isFile()) throw new Error('Invalid existing evidence pool object.')
+      verifyBlob(target, size, entry.name.slice(7))
+    } else {
+      bytes += size
+      if (bytes > request.maxEvidenceBytes)
+        throw new Error('Imported execution evidence exceeds the project budget.')
+      verifyBlob(entry.name, size, entry.name.slice(7))
+      additions.push({
+        name: entry.name,
+        fingerprint: quarantineFingerprint(lstatSync(entry.name))
+      })
+    }
+  }
+  // Persist ownership before the first move so a partial batch is recoverable after restart.
+  const stagedMarker = '.import-pool-activation'
+  if (activate) writeExclusiveFile(stagedMarker, '')
+  if (activate || additions.length)
+    replaceJson(importPoolReceipt, {
+      pool: pool.identity,
+      additions,
+      ...(activate ? { activation: quarantineFingerprint(lstatSync(stagedMarker)) } : {})
+    })
+  if (activate) {
+    renameSync(stagedMarker, marker)
+    syncDirectoryPath(project)
+  }
+  for (const { name } of additions) {
+    const fd = openSync(name, constants.O_RDWR | constants.O_NOFOLLOW)
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(name, join(pool.path, name))
+  }
+  syncDirectoryPath(pool.path)
+  return { ok: true, poolPublished: true }
+}
+
 const operationHandlers = new Map([
+  ['publish-imported-pool', publishImportedPool],
+  ['rollback-imported-pool', rollbackImportedPool],
   ['compact-history', compactHistory],
   ['begin', begin],
   ['ensure-capture', ensureCapture],

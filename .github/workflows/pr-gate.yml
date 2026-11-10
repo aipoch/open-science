@@ -1215,6 +1215,7 @@ jobs:
           src/main/update/installation-reboot-recovery.test.ts
           src/main/delegation/acp-execution.test.ts
           src/main/delegation/production-framework-runtime.test.ts
+          src/main/settings/codex-harness-auth.test.ts
           src/main/acp/specialist-switch-recovery.integration.test.ts
           src/main/file-save.test.ts
           src/main/bounded-file-io.test.ts

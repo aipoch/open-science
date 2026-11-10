@@ -318,10 +318,12 @@ describe('Settings backend ownership architecture', () => {
       'value:createSubagentModels'
     ])
     expect(exportInventoryFrom(settingsPaths.subagentModelSettings)).toEqual([
+      'type:PromptOptimizationModelValidator',
       'type:ReviewerModelValidator',
       'type:SessionDetailsModelValidator',
       'type:SubagentModelValidator',
       'type:VisionModelValidator',
+      'value:buildPromptOptimizationModelMutation',
       'value:buildReviewerModelMutation',
       'value:buildSessionDetailsModelMutation',
       'value:buildSubagentModelMutation',
@@ -386,6 +388,7 @@ describe('Settings backend ownership architecture', () => {
       'setOpencodeInfo',
       'setPackageMirror',
       'setProjectFilesFilter',
+      'setPromptOptimizationModel',
       'setReasoningEffort',
       'setReviewerModel',
       'setRuntimeEnablement',
@@ -414,6 +417,7 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(publicOperationsOf(settingsPaths.providerAccounts, 'ProviderAccountsModule')).toEqual([
       'beginXaiOAuthLogin',
+      'bindCodexHarnessConnection',
       'bootstrapOpenAi',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',
@@ -516,7 +520,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
-        setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
@@ -700,6 +704,7 @@ describe('Settings backend ownership architecture', () => {
       'packageMirror',
       'pathsNormalizedAt',
       'projectFilesFilter',
+      'promptOptimizationModel',
       'providers',
       'reasoningEffort',
       'reviewerModel',

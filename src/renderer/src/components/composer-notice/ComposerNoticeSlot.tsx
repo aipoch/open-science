@@ -142,11 +142,12 @@ const ComposerFailureNoticeSlot = ({
   const available = (action: NoticeActionId, notice = current): boolean =>
     action === 'copy-error' ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
-  const primary = available(presentation.primaryAction)
-    ? presentation.primaryAction
-    : presentation.primaryAction === 'open-environment' && available('retry')
-      ? 'retry'
-      : undefined
+  const primary =
+    presentation.primaryAction && available(presentation.primaryAction)
+      ? presentation.primaryAction
+      : presentation.primaryAction === 'open-environment' && available('retry')
+        ? 'retry'
+        : undefined
   const actionButton = (
     action: NoticeActionId,
     notice: ComposerNotice,
@@ -280,7 +281,7 @@ const ComposerFailureNoticeSlot = ({
                     >
                       <TruncatedText text={t(item.titleKey)} />
                     </button>
-                    {actionButton(item.primaryAction, notice)}
+                    {item.primaryAction ? actionButton(item.primaryAction, notice) : null}
                   </li>
                 )
               })}

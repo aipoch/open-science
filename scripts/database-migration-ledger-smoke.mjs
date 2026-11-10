@@ -228,6 +228,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0056_compute_kubernetes_workspace',
     checksum: '658ff2adbd570b019249e119f3e5579e27c385ab247321311a383ff3739f5e7d'
+  },
+  {
+    id: '0057_project_optimization_prompt',
+    checksum: '226fb954f1b09aeab18527a4562a9a0f5551145edf5259e57513f73c8dbb150e'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

@@ -84,7 +84,7 @@ describe('provider registry', () => {
     })
   })
 
-  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])(
+  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'])(
     'offers %s with its published capabilities and preserves the default',
     (model) => {
       expect(getVendorModelIds('anthropic')).toContain(model)
