@@ -55,6 +55,7 @@ for (const mode of ['Relaxed', 'Strict'] as const) {
     if (mode === 'Strict')
       await settings.locator('summary').filter({ hasText: 'Ungrouped' }).click()
     const address = settings.locator('code').filter({ hasText: 'review.local' }).locator('..')
+    await address.screenshot({ path: testInfo.outputPath('address-row.png') })
     await address.getByRole('button', { name: 'Edit', exact: true }).click()
     const form = settings.locator('form')
     await expect(add).toBeVisible()

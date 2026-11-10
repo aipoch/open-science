@@ -603,12 +603,12 @@ export function NotebookNetworkAccessEditor({
                   ) : (
                     <div className={rowClass}>
                       <code
-                        className="min-w-0 flex-1 break-all text-xs"
+                        className="min-w-0 break-all text-xs"
                         title={`${rule.protocol}://${rule.hostnamePattern}:${rule.port}`}
                       >
                         {rule.protocol}://{rule.hostnamePattern}:{rule.port}
                       </code>
-                      <span className={tagClass}>
+                      <span className={`${tagClass} mr-auto`}>
                         {rule.origin === 'builtin' ? t('Built-in') : t('Manual')}
                       </span>
                       <Button
@@ -640,11 +640,11 @@ export function NotebookNetworkAccessEditor({
                     editorForm
                   ) : (
                     <div className={rowClass}>
-                      <code className="min-w-0 flex-1 break-all text-xs">
+                      <code className="min-w-0 break-all text-xs">
                         {(rule.protocol ?? 'https').toUpperCase()}://
                         {formatNetworkHostname(rule.hostname)}:{rule.port}
                       </code>
-                      <span className={tagClass}>{t('Manual')}</span>
+                      <span className={`${tagClass} mr-auto`}>{t('Manual')}</span>
                       <Button
                         variant="ghost"
                         disabled={busy || !!editor}
@@ -681,6 +681,7 @@ export function NotebookNetworkAccessEditor({
                       {(grant.protocol ?? 'https').toUpperCase()}://
                       {formatNetworkHostname(grant.hostname)}:{grant.port}
                     </code>
+                    <span className={`${tagClass} ml-2 inline-block`}>{t('Agent request')}</span>
                     <p className="text-xs text-muted-foreground">
                       {grant.scope === 'global'
                         ? t('All projects')
@@ -691,7 +692,6 @@ export function NotebookNetworkAccessEditor({
                           })}
                     </p>
                   </div>
-                  <span className={tagClass}>{t('Agent request')}</span>
                   <Button
                     variant="ghost"
                     disabled={busy || !!editor}
