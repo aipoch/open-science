@@ -1,6 +1,10 @@
+import { computePythonRuntime, ComputePythonError } from './compute-python-runtime'
+import { boundModalAccountAdapter } from './modal-account-auth'
+import type { ComputeAccountOperation } from '../../shared/compute-python-runtime'
 import { getManualStagedCleanup } from './manual-staged-cleanup'
 import { getRayToken, rayTokens } from './ray-token'
 import { computeAccounts } from './compute-account-service'
+import { boundHfAccountAdapter } from './compute-account-hf'
 import { getHuggingFaceJobAccess } from './hugging-face-job-access'
 import { inspectModalTarget } from './modal-sdk'
 import { readComputeOutputPreview } from './job-output-preview'
@@ -336,12 +340,48 @@ const createComputeHandlers = (
       return createHost()
     })
 
+  const connect = async (
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider,
+    context: ComputeAccountOperation | undefined,
+    local: boolean
+  ): Promise<import('../../shared/compute-accounts').ComputeAccountStatus> => {
+    const runtime = computePythonRuntime(provider)
+    const operation = context ?? { operationId: randomUUID(), revision: runtime.currentRevision() }
+    try {
+      const { binding, signal } = await runtime.prepare(operation)
+      const bound = {
+        adapter:
+          provider === 'modal' ? boundModalAccountAdapter(binding) : boundHfAccountAdapter(binding),
+        signal,
+        operationId: operation.operationId,
+        revision: binding.revision,
+        assertCurrent: () => runtime.assertCurrent(operation, signal)
+      }
+      return await (local
+        ? computeAccounts.useLocal(provider, bound)
+        : computeAccounts.connect(provider, bound))
+    } catch (error) {
+      return {
+        provider,
+        state: 'unavailable',
+        runtimeRevision: runtime.currentRevision(),
+        runtimeError: error instanceof ComputePythonError ? error.reason : 'cancelled'
+      }
+    }
+  }
   return {
+    getComputePythonRuntime: (provider) => computePythonRuntime(provider).get(),
+    selectComputePythonRuntime: (provider, request) =>
+      computePythonRuntime(provider).select(request),
     list: () => service.list(),
     accountStatus: (provider, force) => computeAccounts.status(provider, force),
-    connectAccount: (provider) => computeAccounts.connect(provider),
-    useLocalAccount: (provider) => computeAccounts.useLocal(provider),
-    cancelAccountConnection: (provider) => computeAccounts.cancel(provider),
+    connectAccount: (provider, context) => connect(provider, context, false),
+    useLocalAccount: (provider, context) => connect(provider, context, true),
+    cancelAccountConnection: (provider, context) => {
+      if (!context) return computeAccounts.cancel(provider)
+      computePythonRuntime(provider).cancel(context.operationId)
+      return computeAccounts.cancelOperation(provider, context.operationId)
+    },
     disconnectAccount: (provider) => computeAccounts.disconnect(provider),
     listRayTokens: () => rayTokens.list(),
     setRayToken: (endpoint, token) => rayTokens.set(endpoint, token),

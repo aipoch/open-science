@@ -340,7 +340,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(58)
+    expect(compute).toHaveLength(60)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -357,12 +357,14 @@ describe('renderer contract catalog', () => {
       'compute.createRayTarget',
       'compute.disconnectAccount',
       'compute.download',
+      'compute.getComputePythonRuntime',
       'compute.jobsSetRemoteCleanup',
       'compute.listRayTokens',
       'compute.passwordCapability',
       'compute.removeRayToken',
       'compute.resetPassword',
       'compute.revealInFolder',
+      'compute.selectComputePythonRuntime',
       'compute.setRayToken',
       'compute.updateTarget',
       'compute.useLocalAccount',

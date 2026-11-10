@@ -8466,8 +8466,6 @@
     "Authorization was not completed": "Авторизация не завершена",
     "Authorization timed out": "Время авторизации истекло",
     "Authorization cancelled": "Авторизация отменена",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "Установите {{packageName}} в среде Python на этом компьютере или задайте {{variable}}.",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "Установите {{packageName}} с поддержкой входа с устройства или задайте {{variable}}.",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "Каждый токен используется только для указанного URL панели управления, включая путь шлюза.",
     "Dashboard access tokens": "Токены панели управления",
     "Add access token": "Добавить токен",
@@ -8475,6 +8473,15 @@
     "No saved tokens.": "Нет сохранённых токенов.",
     "Use HTTPS or a loopback IP address with HTTP.": "Используйте HTTPS или локальный петлевой IP-адрес с HTTP.",
     "Stop sending the saved token to {{endpoint}}?": "Прекратить отправку сохранённого токена на {{endpoint}}?",
-    "Paste a valid Ray access token without spaces or line breaks.": "Вставьте действительный токен доступа Ray без пробелов и переносов строк."
+    "Paste a valid Ray access token without spaces or line breaks.": "Вставьте действительный токен доступа Ray без пробелов и переносов строк.",
+    "Open-Science (recommended)": "Open-Science (рекомендуется)",
+    "Preparing {{provider}}…": "Подготовка {{provider}}…",
+    "Checking environment…": "Проверка среды…",
+    "Use another environment": "Использовать другую среду",
+    "This environment is unavailable. Check Runtimes or choose another environment.": "Эта среда недоступна. Проверьте среды выполнения или выберите другую среду.",
+    "Preparation failed. Retry or choose another environment.": "Не удалось завершить подготовку. Повторите попытку или выберите другую среду.",
+    "Python environment": "Среда Python",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "Локальные данные входа не найдены. Войдите через браузер."
   }
 }

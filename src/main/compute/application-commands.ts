@@ -1,3 +1,7 @@
+import {
+  computeAccountOperationSchema,
+  computePythonSelectSchema
+} from '../../shared/compute-python-runtime'
 import { computeAccountProviders } from '../../shared/compute-accounts'
 import { type SetComputeJobRemoteCleanupRequest } from '@aipoch/compute'
 import {
@@ -28,6 +32,8 @@ type ComputeCommandOwner = Pick<
   | 'listKubernetesTargets'
   | 'createKubernetesTarget'
   | 'listHostedTargets'
+  | 'getComputePythonRuntime'
+  | 'selectComputePythonRuntime'
   | 'accountStatus'
   | 'connectAccount'
   | 'useLocalAccount'
@@ -128,6 +134,16 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'accountStatus'>,
     OwnerResult<ComputeCommandOwner, 'accountStatus'>
   >('compute:account-status'),
+  getComputePythonRuntime: defineApplicationCommand<
+    'compute:python-runtime:get',
+    OwnerArgs<ComputeCommandOwner, 'getComputePythonRuntime'>,
+    OwnerResult<ComputeCommandOwner, 'getComputePythonRuntime'>
+  >('compute:python-runtime:get'),
+  selectComputePythonRuntime: defineApplicationCommand<
+    'compute:python-runtime:select',
+    OwnerArgs<ComputeCommandOwner, 'selectComputePythonRuntime'>,
+    OwnerResult<ComputeCommandOwner, 'selectComputePythonRuntime'>
+  >('compute:python-runtime:select'),
   connectAccount: defineApplicationCommand<
     'compute:connect-account',
     OwnerArgs<ComputeCommandOwner, 'connectAccount'>,
@@ -386,6 +402,8 @@ const computeApplicationCommands = Object.freeze({
 })
 
 const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', [
+  computeApplicationCommands.getComputePythonRuntime,
+  computeApplicationCommands.selectComputePythonRuntime,
   computeApplicationCommands.accountStatus,
   computeApplicationCommands.connectAccount,
   computeApplicationCommands.useLocalAccount,
@@ -514,20 +532,42 @@ const registerComputeApplicationCommands = (
           throw new Error('Invalid refresh option.')
         return dependencies.compute.accountStatus(...args)
       },
+      'compute:python-runtime:get': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:python-runtime:get')
+        assertAccountProvider(args[0])
+        return dependencies.compute.getComputePythonRuntime(args[0])
+      },
+      'compute:python-runtime:select': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:python-runtime:select')
+        assertAccountProvider(args[0])
+        return dependencies.compute.selectComputePythonRuntime(
+          args[0],
+          computePythonSelectSchema.parse(args[1])
+        )
+      },
       'compute:connect-account': ({ args, callerContext }) => {
         assertAccountSettingsCaller(callerContext, 'compute:connect-account')
         assertAccountProvider(args[0])
-        return dependencies.compute.connectAccount(args[0])
+        return dependencies.compute.connectAccount(
+          args[0],
+          args[1] === undefined ? undefined : computeAccountOperationSchema.parse(args[1])
+        )
       },
       'compute:use-local-account': ({ args, callerContext }) => {
         assertAccountSettingsCaller(callerContext, 'compute:use-local-account')
         assertAccountProvider(args[0])
-        return dependencies.compute.useLocalAccount(args[0])
+        return dependencies.compute.useLocalAccount(
+          args[0],
+          args[1] === undefined ? undefined : computeAccountOperationSchema.parse(args[1])
+        )
       },
       'compute:cancel-account-connection': ({ args, callerContext }) => {
         assertAccountSettingsCaller(callerContext, 'compute:cancel-account-connection')
         assertAccountProvider(args[0])
-        return dependencies.compute.cancelAccountConnection(args[0])
+        return dependencies.compute.cancelAccountConnection(
+          args[0],
+          args[1] === undefined ? undefined : computeAccountOperationSchema.parse(args[1])
+        )
       },
       'compute:disconnect-account': ({ args, callerContext }) => {
         assertAccountSettingsCaller(callerContext, 'compute:disconnect-account')

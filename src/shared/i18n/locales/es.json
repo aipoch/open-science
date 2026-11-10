@@ -8319,8 +8319,6 @@
     "Authorization was not completed": "No se completó la autorización",
     "Authorization timed out": "Se agotó el tiempo de autorización",
     "Authorization cancelled": "Autorización cancelada",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "Instale {{packageName}} en el entorno Python del equipo o configure {{variable}}.",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "Instale {{packageName}} con soporte para el inicio de sesión en dispositivos o configure {{variable}}.",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "Cada token se usa solo con su URL del panel, incluida la ruta de la puerta de enlace.",
     "Dashboard access tokens": "Tokens del panel de control",
     "Add access token": "Añadir token",
@@ -8328,6 +8326,15 @@
     "No saved tokens.": "No hay tokens guardados.",
     "Use HTTPS or a loopback IP address with HTTP.": "Utilice HTTPS o una dirección IP de bucle local con HTTP.",
     "Stop sending the saved token to {{endpoint}}?": "¿Dejar de enviar el token guardado a {{endpoint}}?",
-    "Paste a valid Ray access token without spaces or line breaks.": "Pegue un token de acceso de Ray válido sin espacios ni saltos de línea."
+    "Paste a valid Ray access token without spaces or line breaks.": "Pegue un token de acceso de Ray válido sin espacios ni saltos de línea.",
+    "Open-Science (recommended)": "Open-Science (recomendado)",
+    "Preparing {{provider}}…": "Preparando {{provider}}…",
+    "Checking environment…": "Comprobando el entorno…",
+    "Use another environment": "Usar otro entorno",
+    "This environment is unavailable. Check Runtimes or choose another environment.": "Este entorno no está disponible. Revise Entornos de ejecución o seleccione otro entorno.",
+    "Preparation failed. Retry or choose another environment.": "No se pudo completar la preparación. Vuelva a intentarlo o seleccione otro entorno.",
+    "Python environment": "Entorno de Python",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "No se encontró un inicio de sesión local. Inicie sesión en el navegador."
   }
 }

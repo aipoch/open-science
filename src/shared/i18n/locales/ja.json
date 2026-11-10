@@ -7977,8 +7977,6 @@
     "Authorization was not completed": "認証が完了していません",
     "Authorization timed out": "認証がタイムアウトしました",
     "Authorization cancelled": "認証をキャンセルしました",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "ホストの Python 環境に {{packageName}} をインストールするか、{{variable}} を設定してください。",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "デバイスログインに対応した {{packageName}} をインストールするか、{{variable}} を設定してください。",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "各トークンは、ゲートウェイのパスを含む指定のダッシュボード URL にのみ使用されます。",
     "Dashboard access tokens": "ダッシュボードのトークン",
     "Add access token": "トークンを追加",
@@ -7986,6 +7984,15 @@
     "No saved tokens.": "保存済みのトークンはありません。",
     "Use HTTPS or a loopback IP address with HTTP.": "HTTPS、または HTTP とループバック IP アドレスを使用してください。",
     "Stop sending the saved token to {{endpoint}}?": "保存済みのトークンを {{endpoint}} に送信しないようにしますか？",
-    "Paste a valid Ray access token without spaces or line breaks.": "空白や改行を含まない有効な Ray アクセストークンを貼り付けてください。"
+    "Paste a valid Ray access token without spaces or line breaks.": "空白や改行を含まない有効な Ray アクセストークンを貼り付けてください。",
+    "Open-Science (recommended)": "Open-Science（推奨）",
+    "Preparing {{provider}}…": "{{provider}} を準備中…",
+    "Checking environment…": "環境を確認中…",
+    "Use another environment": "別の環境を使用",
+    "This environment is unavailable. Check Runtimes or choose another environment.": "この環境は利用できません。ランタイムを確認するか、別の環境を選択してください。",
+    "Preparation failed. Retry or choose another environment.": "準備に失敗しました。再試行するか、別の環境を選択してください。",
+    "Python environment": "Python 環境",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "ローカルのログイン情報が見つかりません。ブラウザーでログインしてください。"
   }
 }

@@ -224,6 +224,7 @@
         "src/main/composition/settings-effects.ts",
         "src/main/composition/settings-bootstrap.ts",
         "src/main/compute/compute-account-hf.ts",
+        "src/main/compute/compute-python-runtime.ts",
         "src/main/compute/connection-adapters.ts",
         "src/main/compute/credential-vault.ts",
         "src/main/compute/kubernetes-job-files.ts",

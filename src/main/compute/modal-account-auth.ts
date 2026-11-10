@@ -1,29 +1,17 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { basename, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
-import { runtimeMetadata } from '../runtime-metadata'
+import {
+  computePythonRuntime,
+  computeHelperPath,
+  type ComputePythonBinding
+} from './compute-python-runtime'
 import {
   AccountAuthError,
   type AccountChallenge,
   type ComputeAccountAdapter,
   type ModalMaterial
 } from './compute-account-adapter'
-
-export function modalPythonCommand(helper: 'compute-modal.py' | 'compute-modal-auth.py'): {
-  python: string
-  args: string[]
-} {
-  const python = process.env.OPEN_SCIENCE_MODAL_PYTHON
-  if (python && !isAbsolute(python)) throw new AccountAuthError('dependency')
-  const { applicationPath } = runtimeMetadata()
-  const root =
-    basename(applicationPath) === 'app.asar' ? applicationPath + '.unpacked' : applicationPath
-  return {
-    python: python || (process.platform === 'win32' ? 'python' : 'python3'),
-    args: ['-I', join(root, 'resources', helper)]
-  }
-}
 
 const protocol = z.union([
   z.strictObject({ url: z.url(), userCode: z.string().max(64) }),
@@ -33,12 +21,14 @@ const protocol = z.union([
 ])
 
 async function invoke(
+  binding: ComputePythonBinding,
   material: ModalMaterial | undefined,
   signal: AbortSignal,
   challenge?: AccountChallenge
 ): Promise<string | ModalMaterial> {
   if (signal.aborted) throw new AccountAuthError('cancelled')
-  const { python, args } = modalPythonCommand('compute-modal-auth.py')
+  const python = binding.python
+  const args = ['-I', '-B', computeHelperPath('compute-modal-auth.py')]
   const timeoutMs = challenge ? 300_000 : 25_000
   const expiresAt = Date.now() + timeoutMs
   const deadline = AbortSignal.timeout(timeoutMs)
@@ -48,6 +38,7 @@ async function invoke(
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'ignore']
   })
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
   child.stdin.on('error', () => {})
   child.stdin.end(
     JSON.stringify(challenge ? { action: 'authorize' } : { action: 'probe', material })
@@ -100,19 +91,44 @@ async function invoke(
     throw new AccountAuthError('network')
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    await closed
   }
 }
 
+export function boundModalAccountAdapter(binding: ComputePythonBinding): ComputeAccountAdapter {
+  return {
+    async probe(material, signal) {
+      if (material && !('tokenId' in material)) throw new AccountAuthError('authorization')
+      const workspace = await computePythonRuntime('modal').run(
+        binding,
+        () => invoke(binding, material, signal),
+        signal
+      )
+      if (typeof workspace !== 'string') throw new AccountAuthError('network')
+      return workspace
+    },
+    async authorize(challenge, signal) {
+      const material = await computePythonRuntime('modal').run(
+        binding,
+        () => invoke(binding, undefined, signal, challenge),
+        signal
+      )
+      if (typeof material === 'string') throw new AccountAuthError('network')
+      return material
+    }
+  }
+}
 export const modalAccountAdapter: ComputeAccountAdapter = {
   async probe(material, signal) {
-    if (material && !('tokenId' in material)) throw new AccountAuthError('authorization')
-    const workspace = await invoke(material, signal)
-    if (typeof workspace !== 'string') throw new AccountAuthError('network')
-    return workspace
+    return boundModalAccountAdapter(await computePythonRuntime('modal').binding(signal)).probe(
+      material,
+      signal
+    )
   },
   async authorize(challenge, signal) {
-    const material = await invoke(undefined, signal, challenge)
-    if (typeof material === 'string') throw new AccountAuthError('network')
-    return material
+    return boundModalAccountAdapter(await computePythonRuntime('modal').binding(signal)).authorize(
+      challenge,
+      signal
+    )
   }
 }

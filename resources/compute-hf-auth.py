@@ -44,6 +44,22 @@ def run():
         result = poll_device_token(challenge)
     elif request["action"] == "refresh":
         result = refresh_access_token(request["refreshToken"])
+    elif request["action"] == "probe":
+        # Keep post-login verification on the same SDK session and proxy configuration.
+        response = get_session().get(
+            f"{issuer}/api/whoami-v2",
+            headers={"Authorization": "Bearer " + request["accessToken"]},
+            timeout=15,
+        )
+        if response.status_code in (401, 403):
+            emit({"error": "authorization"})
+            return
+        response.raise_for_status()
+        identity = response.json()["name"]
+        if not isinstance(identity, str) or not 1 <= len(identity) <= 256:
+            raise ValueError("Invalid account identity")
+        emit({"identity": identity})
+        return
     elif request["action"] == "local":
         from huggingface_hub.utils._auth import _get_token_from_file_refreshed
 

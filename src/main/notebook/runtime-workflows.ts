@@ -62,6 +62,7 @@ type RuntimeWorkflowDeps = {
 }
 
 type RuntimeWorkflows = {
+  listPythonEnvironments(): Promise<DiscoveredInterpreter[]>
   listEnvironments(): Promise<{
     python: DiscoveredInterpreter[]
     r: DiscoveredInterpreter[]
@@ -153,6 +154,7 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
   }
 
   return {
+    listPythonEnvironments: () => discoverLanguageEnvs('python'),
     setSandboxAccess: async (request) => {
       const diagnostic = startDiagnosticOperation(createLogger('notebook:runtime'), {
         operation: 'r-sandbox-access-request',

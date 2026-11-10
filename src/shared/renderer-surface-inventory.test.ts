@@ -253,6 +253,8 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'jobs:set-remote-cleanup',
     'list-ray-tokens',
     'password-capability',
+    'python-runtime:get',
+    'python-runtime:select',
     'remove-ray-token',
     'reset-password',
     'reveal-in-folder',

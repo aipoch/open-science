@@ -7977,8 +7977,6 @@
     "Authorization was not completed": "授权未完成",
     "Authorization timed out": "授权超时",
     "Authorization cancelled": "授权已取消",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "请在主机的 Python 环境中安装 {{packageName}}，或设置 {{variable}}。",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "请安装支持设备登录的 {{packageName}}，或设置 {{variable}}。",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "令牌按完整的 Dashboard 地址匹配，包括网关路径。",
     "Dashboard access tokens": "Dashboard 令牌",
     "Add access token": "添加令牌",
@@ -7986,6 +7984,15 @@
     "No saved tokens.": "尚未保存令牌。",
     "Use HTTPS or a loopback IP address with HTTP.": "请使用 HTTPS；HTTP 仅支持回环 IP 地址。",
     "Stop sending the saved token to {{endpoint}}?": "停止向 {{endpoint}} 发送已保存的令牌？",
-    "Paste a valid Ray access token without spaces or line breaks.": "请粘贴有效的 Ray 访问令牌，其中不能包含空格或换行符。"
+    "Paste a valid Ray access token without spaces or line breaks.": "请粘贴有效的 Ray 访问令牌，其中不能包含空格或换行符。",
+    "Open-Science (recommended)": "Open-Science（推荐）",
+    "Preparing {{provider}}…": "正在准备 {{provider}}…",
+    "Checking environment…": "正在检查环境…",
+    "Use another environment": "使用其他环境",
+    "This environment is unavailable. Check Runtimes or choose another environment.": "此环境不可用。请检查运行时设置或选择其他环境。",
+    "Preparation failed. Retry or choose another environment.": "准备失败。请重试或选择其他环境。",
+    "Python environment": "Python 环境",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "未找到本地登录凭证。请通过浏览器登录。"
   }
 }
