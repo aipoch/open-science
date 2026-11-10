@@ -49,9 +49,10 @@ const readView = (views, hash, readFile, depth = 0) => {
     throw new Error('Shadow evidence view checksum mismatch.')
   return { rows, hash, chain }
 }
-const putView = (views, rows, base, io) => {
+const planView = (views, rows, base, io) => {
   const hash = digest(JSON.stringify(rows))
   const path = join(views, hash)
+  if (base?.hash === hash) return base
   if (metadata(path)) return readView(views, hash, io.readFile)
   let body = { rows }
   let chain = 0
@@ -70,16 +71,18 @@ const putView = (views, rows, base, io) => {
     }
   }
   const encoded = JSON.stringify(body)
-  checkCapacity(views, Buffer.byteLength(encoded), io.reserveBytes)
+  return { rows, hash, chain, encoded }
+}
+const publishView = (views, view, io) => {
+  if (!view.encoded) return
   const temp = join(views, '.tmp-' + randomUUID())
   try {
-    io.writeExclusive(temp, encoded)
-    fs.renameSync(temp, path)
+    io.writeExclusive(temp, view.encoded)
+    fs.renameSync(temp, join(views, view.hash))
     io.syncDirectory(views)
   } finally {
     fs.rmSync(temp, { force: true })
   }
-  return { rows, hash, chain }
 }
 
 // Only the append path can repair a torn tail. GC is read-only. Offsets count raw bytes,
@@ -115,11 +118,25 @@ const append = (lane, capture, sidecar, serialized, io) => {
   ensureDirectory(views, io.syncDirectory)
   const log = join(root, 'log.jsonl')
   let previous
+  const committedViews = new Set()
   let existing
   const { length, complete } = scanLog(log, io, (record) => {
+    committedViews.add(record.pre)
+    committedViews.add(record.post)
     previous = record.post
     if (record.activityId === sidecar.activityId) existing = record.checksum
   })
+  // v1 only encodes a delta against this record's pre-view or the previous
+  // committed post-view. Every committed base is itself named in the verified log.
+  // Clean only our unpublished files, under the same worker queue that writes them.
+  for (const file of fs.readdirSync(views, { withFileTypes: true })) {
+    if (
+      file.isFile() &&
+      !committedViews.has(file.name) &&
+      (digestPattern.test(file.name) || /^\.tmp-[0-9a-f-]{36}$/u.test(file.name))
+    )
+      fs.unlinkSync(join(views, file.name))
+  }
   const checksum = digest(serialized)
   if (existing && existing !== checksum) throw new Error('Conflicting shadow evidence publication.')
   const files = new Map()
@@ -130,11 +147,13 @@ const append = (lane, capture, sidecar, serialized, io) => {
   }
   for (const relation of capture.relations) observe(relation)
   const base = previous ? readView(views, previous, io.readFile) : undefined
-  const pre = putView(views, list(files), base, io)
+  // Previous is only a compression base. Each activity must preserve the pre-state
+  // captured at its own begin, including overlapping runs completed in reverse order.
+  const pre = planView(views, list(files), base, io)
   for (const relation of sidecar.relations) {
     if (relation.relation !== 'present-before') observe(relation)
   }
-  const post = putView(views, list(files), pre, io)
+  const post = planView(views, list(files), pre, io)
   const indexes = [pre, post].map(
     (view) => new Map(view.rows.map(([path, sum], index) => [path, { sum, index }]))
   )
@@ -161,7 +180,15 @@ const append = (lane, capture, sidecar, serialized, io) => {
   const line = Buffer.from(json + '\t' + digest(json) + '\n')
   if (!existing && complete + line.length > maxBytes)
     throw new Error('Shadow evidence log exceeds its limit.')
-  if (!existing) checkCapacity(root, line.length, io.reserveBytes)
+  const planned = pre.hash === post.hash ? [pre] : [pre, post]
+  const added = planned.reduce(
+    (sum, view) => sum + Buffer.byteLength(view.encoded ?? ''),
+    existing ? 0 : line.length
+  )
+  if (!Number.isFinite(io.projectLimit) || io.projectUsage() + added > io.projectLimit)
+    throw new Error('Shadow evidence exceeds the project budget.')
+  checkCapacity(root, added, io.reserveBytes)
+  for (const view of planned) publishView(views, view, io)
   const fd = fs.openSync(
     log,
     fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW,
@@ -217,6 +244,46 @@ const projectSidecar = (record, views, activityPrefix) => {
   return bytes
 }
 
+const visitLanes = (project, visit) => {
+  for (const entry of fs.readdirSync(project, { withFileTypes: true })) {
+    if (entry.name === 'blobs' || !entry.isDirectory()) continue
+    const session = join(project, entry.name)
+    visit(session)
+    const frames = join(session, 'frames')
+    if (!metadata(frames)) continue
+    requireDirectory(frames)
+    for (const frame of fs.readdirSync(frames, { withFileTypes: true })) {
+      if (frame.isDirectory()) visit(join(frames, frame.name))
+    }
+  }
+}
+
+// Count private view and log bytes across all lanes sharing the pool budget. Never
+// descend through arbitrary entries in an evidence directory.
+const projectBytes = (pool) => {
+  const project = dirname(pool.path)
+  if (
+    !/^execution-file-evidence\/[^/]+\/blobs$/u.test(pool.storageKeyPrefix) ||
+    !metadata(join(project, projectMarker))
+  )
+    return 0
+  let bytes = 0
+  visitLanes(project, (lane) => {
+    const root = join(lane, directoryName)
+    if (!metadata(root)) return
+    requireDirectory(root)
+    const log = metadata(join(root, 'log.jsonl'))
+    if (log?.isFile()) bytes += log.size
+    const views = join(root, 'views')
+    if (!metadata(views)) return
+    requireDirectory(views)
+    for (const file of fs.readdirSync(views, { withFileTypes: true })) {
+      if (file.isFile()) bytes += fs.lstatSync(join(views, file.name)).size
+    }
+  })
+  return bytes
+}
+
 const protectedBlobs = (pool, io) => {
   const live = new Set()
   const project = dirname(pool.path)
@@ -241,17 +308,7 @@ const protectedBlobs = (pool, io) => {
         live.add('sha256-' + checksum)
     }
   }
-  for (const entry of fs.readdirSync(project, { withFileTypes: true })) {
-    if (entry.name === 'blobs' || !entry.isDirectory()) continue
-    const session = join(project, entry.name)
-    markLane(session)
-    const frames = join(session, 'frames')
-    if (!metadata(frames)) continue
-    requireDirectory(frames)
-    for (const frame of fs.readdirSync(frames, { withFileTypes: true })) {
-      if (frame.isDirectory()) markLane(join(frames, frame.name))
-    }
-  }
+  visitLanes(project, markLane)
   return { live, active }
 }
-module.exports = { append, directoryName, graceMs, protectedBlobs, projectMarker }
+module.exports = { append, directoryName, graceMs, protectedBlobs, projectMarker, projectBytes }

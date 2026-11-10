@@ -815,7 +815,7 @@ const blobPoolBytes = (blobPool) => {
     }
     bytes += metadata.size
   }
-  return bytes
+  return bytes + shadow.projectBytes(blobPool)
 }
 const shadowIO = {
   readFile(path, limit) {
@@ -1743,6 +1743,8 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
             ...shadowIO,
             projectRoot: dirname(blobPool.path),
             reserveBytes: request.diskReserveBytes,
+            projectLimit: request.maxEvidenceBytes,
+            projectUsage: () => blobPoolBytes(blobPool),
             storageKeyPrefix: receipt.storageKeyPrefix + '/' + receipt.finalName
           })
         } catch (error) {

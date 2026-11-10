@@ -489,6 +489,39 @@ it(
       expect(await readFile(shadowLog(b), 'utf8')).toBe(bad)
       await begin(other, 'healthy', 'shared')
       expect((await call(other, 'healthy', 'persist')).shadowError).toBeUndefined()
+      // Both activities begin in the same lane and finish in reverse order. Each log
+      // record must still describe its own captured input, even when paths coincide.
+      await begin(other, 'older', 'first input')
+      await begin(other, 'newer', 'second input')
+      for (const id of ['newer', 'older'])
+        expect((await call(other, id, 'persist')).shadowError).toBeUndefined()
+      const lines = (await readFile(shadowLog(other), 'utf8')).trimEnd().split('\n')
+      for (const [i, content] of ['second input', 'first input'].entries()) {
+        const record = JSON.parse(lines[lines.length - 2 + i].split('\t')[0])
+        const rows = [
+          [
+            'handoff/input',
+            createHash('sha256').update(content).digest('hex'),
+            Buffer.byteLength(content)
+          ]
+        ]
+        expect(record.pre).toBe(createHash('sha256').update(JSON.stringify(rows)).digest('hex'))
+      }
+      const views = join(other, '.shadow-evidence', 'views')
+      const beforeViews = (await readdir(views)).sort()
+      const beforeLog = await readFile(shadowLog(other))
+      const orphan = createHash('sha256').update('[]').digest('hex')
+      await writeFile(join(views, orphan), JSON.stringify({ rows: [] }), { flag: 'wx' })
+      await begin(other, 'bounded', 'new bytes')
+      // The lane log alone already uses this budget, before counting the other
+      // lanes, their views and the shared pool. No new view may be published.
+      const bounded = await call(other, 'bounded', 'persist', {
+        maxEvidenceBytes: beforeLog.length
+      })
+      expect(bounded.shadowError).toMatch(/project budget/)
+      expect(bounded.fileEvidence.activityId).toBe('bounded')
+      expect(await readFile(shadowLog(other))).toEqual(beforeLog)
+      expect((await readdir(views)).sort()).toEqual(beforeViews)
       await rm(a, { recursive: true })
       await sweep()
       await expect(stat(first)).rejects.toMatchObject({ code: 'ENOENT' })
