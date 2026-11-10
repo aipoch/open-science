@@ -145,6 +145,7 @@ const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']
 const CONTEXT_SUFFIXES = new Set([
   'readingStatus',
   'ago',
+  'audit',
   'duration',
   'files',
   'inUse',

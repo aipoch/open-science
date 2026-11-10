@@ -2627,6 +2627,7 @@
     "Reveal log file": "Показать файл журнала",
     "Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.": "Возвращается к стандартному агенту. Определение возможностей специалиста удаляется — все включённые навыки и коннекторы снова становятся доступными.",
     "Review": "Обзорная статья",
+    "Review_audit": "Проверка",
     "Review error": "Проверить ошибку",
     "Review could not start. Try again.": "Не удалось начать проверку. Повторите попытку.",
     "Review or dismiss the current execution Plan before submitting a revision.": "Проверьте или закройте текущий план выполнения перед отправкой новой версии.",

@@ -2614,6 +2614,7 @@
     "Reveal log file": "Mostrar el archivo de registro",
     "Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.": "Vuelve al agente predeterminado. Se elimina el alcance de las capacidades especializadas: todas las habilidades y conectores habilitados vuelven a estar disponibles.",
     "Review": "Revisión",
+    "Review_audit": "Revisión",
     "Review error": "Error de revisión",
     "Review could not start. Try again.": "No se pudo iniciar la revisión. Inténtelo de nuevo.",
     "Review or dismiss the current execution Plan before submitting a revision.": "Revise o descarte el plan de ejecución actual antes de enviar una revisión.",

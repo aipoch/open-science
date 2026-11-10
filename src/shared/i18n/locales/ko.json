@@ -2538,6 +2538,7 @@
     "Reveal log file": "로그 파일 표시",
     "Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.": "기본 에이전트로 되돌립니다. 스페셜리스트 기능 범위가 제거되어 활성화된 모든 스킬과 커넥터를 다시 사용할 수 있습니다.",
     "Review": "종설",
+    "Review_audit": "검토",
     "Review error": "검토 오류",
     "Review could not start. Try again.": "검토를 시작할 수 없습니다. 다시 시도하세요.",
     "Review or dismiss the current execution Plan before submitting a revision.": "수정본을 제출하기 전에 현재 실행 계획을 검토하거나 무시하세요.",

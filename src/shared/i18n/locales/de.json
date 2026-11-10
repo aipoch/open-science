@@ -2348,6 +2348,7 @@
     "Reveal log file": "Protokolldatei anzeigen",
     "Reverts to the default agent. Specialist capability scoping is removed — all enabled skills and connectors become available again.": "Kehrt zum Standardagenten zurück. Die Festlegung des Spezialfähigkeitsbereichs wird entfernt – alle aktivierten Fähigkeiten und Konnektoren sind wieder verfügbar.",
     "Review": "Review",
+    "Review_audit": "Review",
     "Review error": "Review-Fehler",
     "Review or dismiss the current execution Plan before submitting a revision.": "Überprüfen Sie den aktuellen Ausführungsplan oder verwerfen Sie ihn, bevor Sie eine Überarbeitung einreichen.",
     "Review pending": "Review ausstehend",
