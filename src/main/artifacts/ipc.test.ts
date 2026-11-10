@@ -913,10 +913,18 @@ describe('artifact IPC handlers', () => {
       openInBrowser
     })
 
-    await handlers.openInBrowser({ artifactId: 'artifact-html-1' })
+    await handlers.openInBrowser({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
+    })
 
     expect(openInBrowser).toHaveBeenCalledOnce()
-    expect(openInBrowser).toHaveBeenCalledWith({ artifactId: 'artifact-html-1' })
+    expect(openInBrowser).toHaveBeenCalledWith({
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
+    })
   })
 
   it('reads only bounded preview text from managed artifact files', async () => {

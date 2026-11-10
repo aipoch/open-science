@@ -156,7 +156,7 @@ export function composeArtifactSurfaces({
       sessionPersistenceCoordinator.commitRecoveredArtifactReferences(request, artifacts),
     recoverPendingArtifacts: (request) =>
       sessionPersistenceCoordinator.retryArtifactFinalization(request),
-    openInBrowser: ({ artifactId }) => openArtifactInBrowser(artifactId)
+    openInBrowser: openArtifactInBrowser
   })
   artifactHandlersRef.current = artifactHandlers
   const reproducibilityCommands = createArtifactReproducibilityCommands(

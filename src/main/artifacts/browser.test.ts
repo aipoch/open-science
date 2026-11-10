@@ -8,7 +8,7 @@ describe('createArtifactBrowserOpener', () => {
     const buildUrl = vi
       .fn()
       .mockResolvedValue(
-        'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&token=token'
+        'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&projectId=project-1&versionId=version-2&token=token'
       )
     const opener = createArtifactBrowserOpener({
       resolveConfigRoot: () => '/isolated/config',
@@ -17,11 +17,15 @@ describe('createArtifactBrowserOpener', () => {
       openExternal
     })
 
-    await opener('artifact-1')
+    await opener({ artifactId: 'artifact-1', projectId: 'project-1', versionId: 'version-2' })
 
-    expect(buildUrl).toHaveBeenCalledWith('/isolated/config', 44123, 'artifact-1')
+    expect(buildUrl).toHaveBeenCalledWith('/isolated/config', 44123, {
+      artifactId: 'artifact-1',
+      projectId: 'project-1',
+      versionId: 'version-2'
+    })
     expect(openExternal).toHaveBeenCalledWith(
-      'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&token=token'
+      'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&projectId=project-1&versionId=version-2&token=token'
     )
   })
 
@@ -33,7 +37,9 @@ describe('createArtifactBrowserOpener', () => {
       openExternal
     })
 
-    await expect(opener('artifact-1')).rejects.toThrow('local Web service is not running')
+    await expect(
+      opener({ artifactId: 'artifact-1', projectId: 'project-1', versionId: 'version-2' })
+    ).rejects.toThrow('local Web service is not running')
     expect(openExternal).not.toHaveBeenCalled()
   })
 })

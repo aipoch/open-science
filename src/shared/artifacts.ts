@@ -150,7 +150,9 @@ export type OpenArtifactFileRequest = {
 
 // Renderer request to open the current managed artifact through the authenticated local Web service.
 export type OpenArtifactInBrowserRequest = {
+  projectId: string
   artifactId: string
+  versionId: string
 }
 
 // Renderer request for a bounded text preview of one managed artifact.

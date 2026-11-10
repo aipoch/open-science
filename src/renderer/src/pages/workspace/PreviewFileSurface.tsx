@@ -1156,16 +1156,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
           if (result) throw new Error(result)
         } else {
-          // Task artifacts are persisted by Version id; keep historical previews pointed at the
-          // exact bytes currently selected instead of silently opening the session's head.
-          const artifactId =
-            resolvedPreviewItem.selectedVersionId ??
-            resolvedPreviewItem.artifactId ??
-            resolvedPreviewItem.managedFileId
-          if (!artifactId) {
+          // Use the same immutable selection as the rendered bytes, including default head previews.
+          const artifactId = contentItem.artifactId ?? contentItem.managedFileId
+          const versionId = contentItem.selectedVersionId
+          if (!artifactId || !versionId || !contentItem.projectId) {
             throw new Error(t('Could not open this file.'))
           }
-          await window.api.artifacts.openInBrowser({ artifactId })
+          await window.api.artifacts.openInBrowser({
+            projectId: contentItem.projectId,
+            artifactId,
+            versionId
+          })
         }
       } catch (error) {
         setLocalActionFailure({

@@ -4945,7 +4945,9 @@ describe('PreviewFileSurface file header actions', () => {
 
     await click(browserButton)
     expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
-      artifactId: 'version-1'
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
     })
 
     await act(async () => {
@@ -4959,9 +4961,52 @@ describe('PreviewFileSurface file header actions', () => {
     ).toContain('Open in browser')
     await clickMenuItem('Open in browser')
     expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
-      artifactId: 'version-1'
+      artifactId: 'artifact-html-1',
+      projectId: 'project-1',
+      versionId: 'version-1'
     })
   })
+
+  it.each([undefined, 'html-v1'])(
+    'opens the rendered managed HTML Version with selection %s',
+    async (selection) => {
+      const versions = managedInspect.versions.map((version, index) => ({
+        ...version,
+        id: `html-v${index + 1}`,
+        fileId: 'artifact-html-1',
+        source: 'artifact' as const,
+        displayName: 'immersive-showcase.html',
+        contentType: 'text/html'
+      }))
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          source: 'artifact',
+          fileId: 'artifact-html-1',
+          headVersionId: 'html-v2',
+          selectedVersionId: selection ?? 'html-v2',
+          versions
+        }
+      })
+      await act(async () => {
+        root.render(
+          <PreviewFileSurface
+            item={{ ...managedHtmlItem, selectedVersionId: selection, path: '/stale/report.html' }}
+            onClose={vi.fn()}
+          />
+        )
+      })
+      const renderedVersion = previewContentSpy.mock.lastCall?.[0].item.selectedVersionId
+      expect(renderedVersion).toBe(selection ?? 'html-v2')
+      await click(container.querySelector('[aria-label="Open in browser"]'))
+      expect(window.api.artifacts.openInBrowser).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        artifactId: 'artifact-html-1',
+        versionId: renderedVersion
+      })
+    }
+  )
 
   it('leaves context-menu events outside the preview content region untouched', async () => {
     await act(async () => {
@@ -5102,6 +5147,30 @@ describe('PreviewFileSurface file header actions', () => {
     expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
       'Save as artifact'
     )
+  })
+
+  it('retries browser opening with the same immutable Version after a launch failure', async () => {
+    vi.mocked(window.api.artifacts.openInBrowser).mockRejectedValueOnce(
+      new Error('browser unavailable')
+    )
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+    })
+    await click(container.querySelector('[aria-label="Open in browser"]'))
+    const toast = document.body.querySelector('[data-testid="local-file-action-error-toast"]')
+    expect(toast?.textContent).toContain('Could not open this file.')
+    expect(toast?.textContent).toContain('browser unavailable')
+    await click(
+      [...(toast?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Retry'
+      ) ?? null
+    )
+    expect(window.api.artifacts.openInBrowser).toHaveBeenCalledTimes(2)
+    expect(window.api.artifacts.openInBrowser).toHaveBeenLastCalledWith({
+      projectId: 'project-1',
+      artifactId: 'artifact-html-1',
+      versionId: 'version-1'
+    })
   })
 
   it('shows a retryable toast when a local file download fails', async () => {

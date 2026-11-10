@@ -1307,7 +1307,21 @@ const handleTaskApiRequest = async (
       const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
       if (artifactMatch && (request.method === 'GET' || request.method === 'HEAD')) {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
+        const artifactId = decodeURIComponent(artifactMatch[1])
+        const inline = url.searchParams.get('disposition') === 'inline'
+        const projectId = url.searchParams.get('projectId')
+        const versionId = url.searchParams.get('versionId')
+        if (inline && (projectId !== null || versionId !== null) && (!projectId || !versionId)) {
+          throw new TaskApiError(
+            'invalid_request',
+            'Inline Version requests require projectId and versionId.'
+          )
+        }
+        // Scoped browser reads must not change the default Task artifact download contract.
+        const artifact =
+          inline && projectId && versionId
+            ? await tasks.acquireArtifact(artifactId, { projectId, versionId })
+            : await tasks.acquireArtifact(artifactId)
         try {
           await streamPreviewResource(
             request,
