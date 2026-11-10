@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 /**
  * harvest-engine.test.ts — injected-fake tests for the harvest download engine.
  *
@@ -718,6 +719,7 @@ describe('harvestJob — clean harvest', () => {
       inputs: []
     })
 
+    const { repo, updates } = makeJobRepo(job)
     await harvestJob(job, {
       connectionBroker: brokerFromRunners(
         makeSshRunner(
@@ -729,22 +731,24 @@ describe('harvestJob — clean harvest', () => {
         makeWritingScpRunner()
       ),
       hostRepository: makeHostRepo(sampleHost()),
-      jobRepository: makeJobRepo(job).repo,
+      jobRepository: repo,
       storageRoot
     })
 
+    const evidence = (
+      updates.find(({ data }) => 'fileEvidence' in (data as object))!.data as {
+        fileEvidence: ExecutionFileEvidenceSummary
+      }
+    ).fileEvidence
     const sidecar = JSON.parse(
-      await readFile(
-        join(
+      (
+        await readNativeEvidence(
           storageRoot,
-          'execution-file-evidence',
-          job.project_id,
-          job.session_id,
-          `activity-${job.job_id}`,
-          'evidence.json'
-        ),
-        'utf8'
-      )
+          evidence.storageKey!,
+          evidence.checksum!,
+          16 * 1024 ** 2
+        )
+      ).toString()
     ) as { relations: Array<{ relation: string; relativePath: string }> }
     expect(sidecar.relations).toEqual(
       expect.arrayContaining([
@@ -1173,10 +1177,14 @@ describe('harvestJob — harvest_failed', () => {
       scientificOutputCount: 1,
       reasonCodes: expect.arrayContaining(['harvest-incomplete'])
     })
-    const sidecar = await readFile(
-      join(storageRoot, ...(fileEvidence!.storageKey as string).split('/')),
-      'utf8'
-    )
+    const sidecar = (
+      await readNativeEvidence(
+        storageRoot,
+        fileEvidence!.storageKey!,
+        fileEvidence!.checksum!,
+        16 * 1024 ** 2
+      )
+    ).toString()
     expect(sidecar).toContain('first.result')
     expect(sidecar).not.toContain('second.result')
   })

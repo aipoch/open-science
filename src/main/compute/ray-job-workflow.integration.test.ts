@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -296,7 +297,12 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     expect(evidence.storageKey).toBe(
       `execution-file-evidence/${scope.projectId}/${scope.sessionId}/activity-${jobId}/evidence.json`
     )
-    const record = await readFile(join(root, evidence.storageKey!))
+    const record = await readNativeEvidence(
+      root,
+      evidence.storageKey!,
+      evidence.checksum!,
+      16 * 1024 ** 2
+    )
     expect(sha256(record)).toBe(evidence.checksum)
     expect(record.toString()).toContain(sha256(input))
     expect(record.toString()).toContain(sha256(expected))

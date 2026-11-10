@@ -8,7 +8,7 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import { decodeReviewScopeSnapshot } from '../artifacts/provenance-snapshot-decoder'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createPackageMaterializer } from './materialize'
-import { executionEvidenceKeys } from './execution-evidence'
+import { executionEvidenceKeys, hasComputeLogEvidence } from './execution-evidence'
 import { validatePackageLiterature } from './literature'
 import {
   nativeStorageKeys,
@@ -63,6 +63,11 @@ export const validatePackageRecords = async (
 ): Promise<void> => {
   if (Boolean(records.literature) !== Boolean(manifest.requiredFeatures?.includes('literature')))
     throw new Error('Literature package capability declaration is invalid.')
+  if (
+    hasComputeLogEvidence(records.logEvidence) !==
+    Boolean(manifest.requiredFeatures?.includes('compute-log-evidence'))
+  )
+    throw new Error('Invalid Compute log feature declaration.')
   if (Boolean(records.logEvidence) !== Boolean(manifest.requiredFeatures?.includes('log-evidence')))
     throw new Error('Invalid execution log feature declaration.')
   validateResearchFilms(records, manifest)
