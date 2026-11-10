@@ -2828,12 +2828,32 @@ mod windows_host {
         Ok(())
     }
 
-    fn preflight_launch_spec(spec: &AclPreflightSpec) -> Result<LaunchSpec> {
-        if !Path::new(&spec.path).is_absolute() {
-            bail!("ACL preflight path must be absolute");
+    fn require_absolute_acl_path(path: &str, label: &str) -> Result<()> {
+        if !Path::new(path).is_absolute() {
+            bail!("ACL preflight {label} must be absolute: {path}");
         }
+        Ok(())
+    }
+
+    fn preflight_launch_spec(spec: &AclPreflightSpec) -> Result<LaunchSpec> {
+        require_absolute_acl_path(&spec.path, "path")?;
         if spec.access != "ro" && spec.access != "rw" {
             bail!("ACL preflight access must be ro or rw");
+        }
+        if let Some(requested_path) = &spec.requested_path {
+            require_absolute_acl_path(requested_path, "requestedPath")?;
+        }
+        if let Some(filesystem) = &spec.filesystem {
+            for (label, roots) in [
+                ("readOnlyRoots", &filesystem.read_only_roots),
+                ("readWriteRoots", &filesystem.read_write_roots),
+                ("deniedReadRoots", &filesystem.denied_read_roots),
+                ("deniedWriteRoots", &filesystem.denied_write_roots),
+            ] {
+                for root in roots {
+                    require_absolute_acl_path(root, label)?;
+                }
+            }
         }
         let mut launch = LaunchSpec {
             executable: String::new(),
@@ -3025,6 +3045,22 @@ mod windows_host {
                     "policy-plan",
                     "Windows AppContainer cannot enforce a denied read root overlapping an allowed root.",
                     "Choose a data folder that does not overlap protected application directories.",
+                ));
+            }
+        }
+        for denied in &spec.denied_write_roots {
+            // Equal roots are downgraded to ReadOnlyTree by the planner; only a strict ancestor
+            // would re-grant writes inside the protected subtree.
+            if spec.read_write_roots.iter().any(|root| {
+                !paths_equal(root, Path::new(denied)) && path_is_within(root, Path::new(denied))
+            }) {
+                return Err(acl_failure(
+                    "WINDOWS_ACL_POLICY_CONFLICT",
+                    denied,
+                    "rw",
+                    "policy-plan",
+                    "A denied write root cannot contain a writable root.",
+                    "Choose a writable folder outside the protected directory, or request read-only access.",
                 ));
             }
         }
@@ -6865,6 +6901,326 @@ exit 1"#
             )
             .unwrap();
             fs::remove_dir_all(root).unwrap();
+        }
+
+        fn policy_spec(
+            read_only_roots: Vec<String>,
+            read_write_roots: Vec<String>,
+            denied_read_roots: Vec<String>,
+            denied_write_roots: Vec<String>,
+        ) -> LaunchSpec {
+            LaunchSpec {
+                executable: "cmd.exe".into(),
+                arguments: Vec::new(),
+                verbatim_arguments: false,
+                cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+                read_only_roots,
+                optional_read_only_roots: Vec::new(),
+                read_write_roots,
+                denied_read_roots,
+                denied_write_roots,
+                termination_proof_path: None,
+                termination_proof_token: None,
+                termination_request_path: None,
+                shell_control_pipe: None,
+            }
+        }
+
+        #[test]
+        fn preflight_launch_spec_rejects_relative_paths_per_field() {
+            for invalid in ["", "folder", "C:folder", r"\folder"] {
+                let cases = [
+                    ("path", serde_json::json!({"path": invalid, "access": "rw"})),
+                    (
+                        "requestedPath",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw", "requestedPath": invalid
+                        }),
+                    ),
+                    (
+                        "readOnlyRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [invalid],
+                                "readWriteRoots": [r"C:\data"],
+                                "deniedReadRoots": [r"C:\protected"],
+                                "deniedWriteRoots": [r"C:\protected"]
+                            }
+                        }),
+                    ),
+                    (
+                        "readWriteRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [r"C:\readonly"],
+                                "readWriteRoots": [invalid],
+                                "deniedReadRoots": [r"C:\protected"],
+                                "deniedWriteRoots": [r"C:\protected"]
+                            }
+                        }),
+                    ),
+                    (
+                        "deniedReadRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [r"C:\readonly"],
+                                "readWriteRoots": [r"C:\data"],
+                                "deniedReadRoots": [invalid],
+                                "deniedWriteRoots": [r"C:\protected"]
+                            }
+                        }),
+                    ),
+                    (
+                        "deniedWriteRoots",
+                        serde_json::json!({
+                            "path": r"C:\data", "access": "rw",
+                            "filesystem": {
+                                "readOnlyRoots": [r"C:\readonly"],
+                                "readWriteRoots": [r"C:\data"],
+                                "deniedReadRoots": [r"C:\protected-read"],
+                                "deniedWriteRoots": [invalid]
+                            }
+                        }),
+                    ),
+                ];
+                for (label, value) in cases {
+                    let request: AclPreflightSpec = serde_json::from_value(value).unwrap();
+                    let error = format!("{:#}", preflight_launch_spec(&request).unwrap_err());
+                    assert!(error.contains(label), "{invalid:?} {label}: {error}");
+                    assert!(
+                        error.contains("must be absolute"),
+                        "{invalid:?} {label}: {error}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn preflight_launch_spec_accepts_absolute_paths_and_absent_optional_fields() {
+            for path in [
+                r"C:\data",
+                r"C:/data",
+                r"\\?\C:\data",
+                // Absolute-path acceptance does not mean the network share is supported; the
+                // rejection test below covers the policy check separately.
+                r"\\server\share\data",
+                r"\\?\UNC\server\share\data",
+            ] {
+                let request: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                    "path": path, "access": "rw"
+                }))
+                .unwrap();
+                let spec = preflight_launch_spec(&request).unwrap();
+                assert_eq!(spec.read_write_roots, vec![path]);
+            }
+
+            let missing: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": r"C:\data", "access": "ro"
+            }))
+            .unwrap();
+            let spec = preflight_launch_spec(&missing).unwrap();
+            assert_eq!(spec.read_only_roots, vec![r"C:\data"]);
+            assert!(spec.read_write_roots.is_empty());
+
+            let empty: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": r"C:\data", "access": "rw",
+                "filesystem": {
+                    "readOnlyRoots": [],
+                    "readWriteRoots": [],
+                    "deniedReadRoots": [],
+                    "deniedWriteRoots": []
+                }
+            }))
+            .unwrap();
+            let spec = preflight_launch_spec(&empty).unwrap();
+            assert!(spec.read_only_roots.is_empty());
+            assert!(spec.read_write_roots.is_empty());
+            assert!(spec.denied_read_roots.is_empty());
+            assert!(spec.denied_write_roots.is_empty());
+
+            let populated: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": r"C:\data", "access": "rw", "requestedPath": r"C:/data",
+                "filesystem": {
+                    "readOnlyRoots": [r"C:\readonly"],
+                    "readWriteRoots": [r"C:\writable"],
+                    "deniedReadRoots": [r"C:\denied-read"],
+                    "deniedWriteRoots": [r"C:\denied-write"]
+                }
+            }))
+            .unwrap();
+            let spec = preflight_launch_spec(&populated).unwrap();
+            assert_eq!(spec.read_only_roots, vec![r"C:\readonly"]);
+            assert_eq!(spec.read_write_roots, vec![r"C:\writable"]);
+            assert_eq!(spec.denied_read_roots, vec![r"C:\denied-read"]);
+            assert_eq!(spec.denied_write_roots, vec![r"C:\denied-write"]);
+        }
+
+        #[test]
+        fn network_share_rejection_reports_unsupported_without_accessing_a_share() {
+            for path in [r"\\server\share\data", r"\\?\UNC\server\share\data"] {
+                let error = reject_network_or_hosted_volume(path, "rw", "target").unwrap_err();
+                let failure = error.downcast_ref::<AclFailure>().unwrap();
+                assert_eq!(failure.code, "WINDOWS_ACL_NETWORK_PATH_UNSUPPORTED");
+                assert_eq!(failure.path, path);
+            }
+        }
+
+        #[test]
+        fn writable_root_allows_a_protected_read_only_subtree() {
+            let root = unique_test_root("denied-write-subtree");
+            let protected = root.join(".git");
+            fs::create_dir_all(&protected).unwrap();
+            let spec = policy_spec(
+                Vec::new(),
+                vec![root.to_string_lossy().into_owned()],
+                Vec::new(),
+                vec![protected.to_string_lossy().into_owned()],
+            );
+
+            let grants = required_command_acl_grants(&spec).unwrap();
+
+            assert_eq!(
+                grants.get(&root.to_string_lossy().into_owned()),
+                Some(&AclGrant::ModifyTree)
+            );
+            assert_eq!(
+                grants.get(&protected.to_string_lossy().into_owned()),
+                Some(&AclGrant::ReadOnlyTree)
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn equal_denied_write_root_downgrades_to_read_only() {
+            let root = unique_test_root("denied-write-equal");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let spec = policy_spec(
+                Vec::new(),
+                vec![path.clone()],
+                Vec::new(),
+                vec![path.clone()],
+            );
+
+            let grants = required_command_acl_grants(&spec).unwrap();
+
+            assert_eq!(grants.get(&path), Some(&AclGrant::ReadOnlyTree));
+            assert_ne!(grants.get(&path), Some(&AclGrant::ModifyTree));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn denied_write_ancestor_of_writable_root_is_a_policy_conflict() {
+            let root = unique_test_root("denied-write-ancestor");
+            let protected = root.join("protected");
+            let writable = protected.join("output");
+            fs::create_dir_all(&writable).unwrap();
+            let spec = policy_spec(
+                Vec::new(),
+                vec![writable.to_string_lossy().into_owned()],
+                Vec::new(),
+                vec![protected.to_string_lossy().into_owned()],
+            );
+
+            let error = required_command_acl_grants(&spec).unwrap_err();
+            let failure = error.downcast_ref::<AclFailure>().unwrap();
+
+            assert_eq!(failure.code, "WINDOWS_ACL_POLICY_CONFLICT");
+            assert_eq!(failure.path, protected.to_string_lossy());
+            assert_eq!(failure.access, "rw");
+            assert_eq!(failure.stage, "policy-plan");
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn denied_write_root_overlapping_a_read_only_root_is_redundant() {
+            let root = unique_test_root("denied-write-read-only-overlap");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let spec = policy_spec(
+                vec![path.clone()],
+                Vec::new(),
+                Vec::new(),
+                vec![path.clone()],
+            );
+
+            let grants = required_command_acl_grants(&spec).unwrap();
+
+            assert_eq!(grants.get(&path), Some(&AclGrant::ReadOnlyTree));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn writable_roots_inside_a_protected_tree_conflict_in_any_order() {
+            let root = unique_test_root("denied-write-ordering");
+            let outside = root.join("outside");
+            let protected = root.join("protected");
+            let inside = protected.join("output");
+            fs::create_dir_all(&outside).unwrap();
+            fs::create_dir_all(&inside).unwrap();
+            let denied = vec![protected.to_string_lossy().into_owned()];
+            let outside = outside.to_string_lossy().into_owned();
+            let protected = protected.to_string_lossy().into_owned();
+            let inside = inside.to_string_lossy().into_owned();
+            let root = root.to_string_lossy().into_owned();
+
+            for roots in [
+                vec![outside.clone(), root.clone(), inside.clone()],
+                vec![inside.clone(), root.clone(), outside.clone()],
+            ] {
+                let spec = policy_spec(Vec::new(), roots, Vec::new(), denied.clone());
+                let error = required_command_acl_grants(&spec).unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<AclFailure>().unwrap().code,
+                    "WINDOWS_ACL_POLICY_CONFLICT"
+                );
+            }
+
+            let spec = policy_spec(
+                Vec::new(),
+                vec![root.clone(), outside.clone()],
+                Vec::new(),
+                denied,
+            );
+            let grants = required_command_acl_grants(&spec).unwrap();
+            assert_eq!(grants.get(&root), Some(&AclGrant::ModifyTree));
+            assert_eq!(grants.get(&protected), Some(&AclGrant::ReadOnlyTree));
+            assert_eq!(grants.get(&outside), Some(&AclGrant::ModifyTree));
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn preflight_reports_a_contended_operation_lock_as_busy() {
+            // Named mutexes are keyed by installation ID; a fixed test ID would make parallel
+            // tests contend with each other.
+            let installation_id = &new_resource_key().unwrap()[..24];
+            let root = unique_test_root("preflight-operation-lock");
+            let requested_root = root.join(installation_id);
+            fs::create_dir_all(&requested_root).unwrap();
+            let requested_root = requested_root.to_string_lossy().into_owned();
+            let request: AclPreflightSpec = serde_json::from_value(serde_json::json!({
+                "path": root.to_string_lossy(), "access": "ro"
+            }))
+            .unwrap();
+
+            let lock = OperationLock::acquire(installation_id).unwrap();
+            let response = std::thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        preflight_filesystem_acls(installation_id, &requested_root, &request)
+                    })
+                    .join()
+            });
+            drop(lock);
+            fs::remove_dir_all(root).unwrap();
+
+            let response = response.unwrap();
+            assert!(!response.ok);
+            let failure = response.error.unwrap();
+            assert_eq!(failure.code, "WINDOWS_ACL_PREFLIGHT_BUSY");
         }
 
         #[test]

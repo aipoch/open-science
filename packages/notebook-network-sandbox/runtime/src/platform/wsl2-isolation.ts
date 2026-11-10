@@ -489,10 +489,19 @@ const openWsl2GatewayBridge: Wsl2GatewayBridgeOpener = async ({
   return bridge
 }
 
-const WSL_UNC_PREFIX = /^\\\\(wsl\.localhost|wsl\$)\\([^\\]+)(?:\\(.*))?$/isu
+const WSL_UNC_PREFIX =
+  /^(?:\\\\(wsl\.localhost|wsl\$)|\\\\\?\\UNC\\(wsl\.localhost|wsl\$))\\([^\\]+)(?:\\(.*))?$/isu
 
 const isWindowsPath = (path: string): boolean =>
   WINDOWS_PATH.test(path) || WSL_UNC_PREFIX.test(path)
+
+/**
+ * Names the distro in a modern (`\\wsl.localhost\...`), legacy (`\\wsl$\...`) or
+ * extended (`\\?\UNC\wsl.localhost\...`) WSL UNC path. Windows realpath may
+ * normalize an Explorer path to the extended form, so callers must classify
+ * both spellings before deciding whether native Windows ACLs apply.
+ */
+export const wslUncDistro = (path: string): string | undefined => WSL_UNC_PREFIX.exec(path)?.[3]
 
 /**
  * Translates a `\\wsl.localhost\<distro>\...` (or legacy `\\wsl$\...`) path
@@ -505,8 +514,8 @@ const isWindowsPath = (path: string): boolean =>
 export const mapWslUncPath = (path: string, distro: string): string | undefined => {
   const match = WSL_UNC_PREFIX.exec(path)
   if (!match) return undefined
-  if (match[2].toLowerCase() !== distro.toLowerCase()) return undefined
-  const guest = `/${(match[3] ?? '').replace(/\\/g, '/')}`
+  if (match[3].toLowerCase() !== distro.toLowerCase()) return undefined
+  const guest = `/${(match[4] ?? '').replace(/\\/g, '/')}`
   if (/[\0\r\n]/u.test(guest)) return undefined
   return guest
 }

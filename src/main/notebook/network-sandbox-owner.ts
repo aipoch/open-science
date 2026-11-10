@@ -3,7 +3,7 @@ import {
   destinationGrantAllows,
   type NetworkBlockEvidence
 } from '../../shared/network-destination-grants'
-import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import { NotebookNetworkSandbox, wslUncDistro } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, realpathSync, type Stats } from 'node:fs'
@@ -287,6 +287,11 @@ const protectedWriteRoots = (readWriteRoots: readonly string[]): string[] =>
     ...readWriteRoots.map((root) => join(root, '.git'))
   ].filter(existsSync)
 
+// Application authority that must never be writable from a broad or nested grant. Grant-time and
+// execution-time planning must agree, or a saved grant poisons every later command.
+const authorityWriteDenyRoots = (configRoot: string | undefined): string[] =>
+  configRoot ? [join(configRoot, 'settings.json'), join(configRoot, 'sessions')] : []
+
 const dependencyReason = (message: string): NotebookNetworkStatusReason => {
   if (message.includes('bubblewrap')) return 'linuxBubblewrapMissing'
   if (message.includes('Seatbelt')) return 'macSeatbeltUnavailable'
@@ -408,6 +413,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   ): Promise<void> {
     if (this.platform !== 'win32') return
     if (!(await this.windowsProtectionConfigured())) return
+    // WSL2 grants are enforced by guest-side bubblewrap; native ACLs reject the UNC form.
+    if (wslUncDistro(path)) return
     const filesystem = {
       readOnlyRoots: [path],
       readWriteRoots: access === 'rw' ? [path] : [],
@@ -416,6 +423,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         : [],
       deniedWriteRoots: [
         ...(this.options.configRoot ? await managedSkillReadRoots(this.options.configRoot) : []),
+        ...authorityWriteDenyRoots(this.options.configRoot),
         ...protectedWriteRoots(access === 'rw' ? [path] : [])
       ]
     }
@@ -592,6 +600,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
     const grantedRoots = grantedRootsOverride ?? (await this.options.getGrantedLocalRoots?.()) ?? []
+    // Directories under \\wsl.localhost (or \\wsl$) belong to one guest. Native protected
+    // execution cannot use them, and another distro must not map them to its own guest paths.
+    const applicableGrantedRoots = grantedRoots.filter((root) => {
+      const distro = wslUncDistro(root.path)
+      if (!distro) return true
+      if (target.kind === 'wsl2') return distro.toLowerCase() === target.distro.toLowerCase()
+      return !(nativeWindows && windowsProtectionRequired === true)
+    })
     // Broad writable ancestors must never make application authority or its future staging
     // files writable. Keep explicit descendant workspaces and caches usable.
     const physicalPath = (path: string): string => {
@@ -625,7 +641,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
           ? []
           : environmentPathRoots(invocation.env, this.platform)),
-        ...grantedRoots.map((root) => root.path),
+        ...applicableGrantedRoots.map((root) => root.path),
         ...(this.trustBundle ? [this.trustBundle.path] : [])
       ],
       ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
@@ -638,27 +654,22 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         : {}),
       readWriteRoots: [
         ...invocation.filesystem.readWriteRoots,
-        ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+        ...applicableGrantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
       ].filter((path) => !coversAuthority(path)),
       deniedReadRoots: invocation.filesystem.deniedReadRoots,
       deniedWriteRoots: [
         ...invocation.filesystem.deniedWriteRoots,
-        ...(this.options.configRoot
-          ? [
-              join(this.options.configRoot, 'settings.json'),
-              join(this.options.configRoot, 'sessions')
-            ]
-          : []),
+        ...authorityWriteDenyRoots(this.options.configRoot),
         ...skillReadRoots,
         ...protectedWriteRoots([
           ...invocation.filesystem.readWriteRoots,
-          ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+          ...applicableGrantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
         ]),
         ...(this.trustBundle ? [this.trustBundle.path] : [])
       ]
     }
     if (nativeWindows && windowsProtectionRequired === true) {
-      for (const root of grantedRoots) {
+      for (const root of applicableGrantedRoots) {
         invocation.signal?.throwIfAborted()
         // Re-check the stored grants without re-walking their trees: each command would otherwise
         // enumerate every granted folder. The grant-time preflight already walked them, and a
