@@ -9290,6 +9290,76 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('reclaims excess idle interpreter instances and gates cold execution until cleanup finishes', async () => {
+    const root = await createStorageRoot()
+    let busy = true
+    const stopped = createDeferred<void>()
+    const release = vi.fn(() => stopped.promise.then(() => true))
+    const dispatch = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      isSessionBusy: () => busy,
+      executorFactory: () => {
+        let identity: object | undefined
+        return {
+          execute: async (request) => {
+            identity ??= {}
+            dispatch(request.sessionId)
+            return {
+              status: 'completed',
+              stdout: 'ok',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          idleProcesses: () =>
+            identity
+              ? [
+                  {
+                    identity,
+                    processKey: `python:${DEFAULT_PY_ENV}`,
+                    release: async () => {
+                      await release()
+                      identity = undefined
+                      return true
+                    }
+                  }
+                ]
+              : [],
+          shutdown: async () => ({ reaped: true })
+        }
+      }
+    })
+    try {
+      const runs = []
+      for (let index = 0; index < 4; index++)
+        runs.push(
+          await service.execute({ sessionId: `idle-${index}`, workspaceCwd: root, code: '1' })
+        )
+      expect(release).not.toHaveBeenCalled()
+      busy = false
+      service.noteSessionActivity('idle-3')
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      const resumed = service.execute({ sessionId: 'idle-0', workspaceCwd: root, code: '2' })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(dispatch).toHaveBeenCalledTimes(4)
+      stopped.resolve()
+      const run = await resumed
+      expect(run.status).toBe('completed')
+      expect(run.kernelEpochId).not.toBe(runs[0].kernelEpochId)
+      expect(dispatch).toHaveBeenCalledTimes(5)
+      const history = await service.state({ sessionId: 'idle-0', workspaceCwd: root })
+      expect(history.kernelStatus).toBe('idle')
+    } finally {
+      stopped.resolve()
+      await service.dispose()
+    }
+  })
+
   it.each(['idle-shutdown', 'termination'] as const)(
     'keeps live and durable kernel state unchanged when %s persistence fails',
     async (callback) => {
