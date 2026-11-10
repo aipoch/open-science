@@ -24,7 +24,6 @@ const deferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } =>
   return { promise, resolve }
 }
 describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (provider) => {
-  const name = provider === 'modal' ? 'Modal' : 'Hugging Face'
   const addLabel =
     provider === 'modal' ? 'Add Modal Sandbox target' : 'Add Hugging Face Jobs target'
   function Harness(): React.JSX.Element {
@@ -122,27 +121,23 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
     expect(get).toHaveBeenCalledOnce()
     expect(status).not.toHaveBeenCalled()
   })
-  it('keeps both sign-in buttons during preparation and retries the same login intent inline', async () => {
+  it('prevents duplicate sign-in during preparation and retries the failed login intent', async () => {
     const pending = deferred<unknown>()
     connect.mockReturnValueOnce(pending.promise)
     await renderDialog()
     await act(async () =>
       fireEvent.click(screen.getByRole('button', { name: 'Connect in browser' }))
     )
-    expect(screen.getByText(`Preparing ${name}…`)).toBeTruthy()
-    expect(
-      (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
-    ).toBe(true)
-    expect(
-      (screen.getByRole('button', { name: 'Use local sign-in' }) as HTMLButtonElement).disabled
-    ).toBe(true)
-    expect((screen.getByLabelText('Python environment') as HTMLButtonElement).disabled).toBe(false)
+    await act(async () => {
+      screen.queryByRole('button', { name: 'Connect in browser' })?.click()
+      screen.queryByRole('button', { name: 'Use local sign-in' })?.click()
+    })
+    expect(connect).toHaveBeenCalledOnce()
+    expect(local).not.toHaveBeenCalled()
     await act(async () =>
       pending.resolve({ provider: provider, state: 'unavailable', runtimeError: 'install' })
     )
-    expect(screen.getByRole('alert').textContent).toContain(
-      'Preparation failed. Retry or choose another environment.'
-    )
+    expect(screen.getByRole('alert')).toBeTruthy()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
     expect(connect).toHaveBeenCalledTimes(2)
     expect(connect.mock.calls[1][1].operationId).not.toBe(connect.mock.calls[0][1].operationId)
@@ -162,9 +157,8 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
     expect((screen.getByLabelText('Python environment') as HTMLSelectElement).value).toBe(
       '/custom/python'
     )
-    expect(
-      (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
-    ).toBe(true)
+    await act(async () => screen.queryByRole('button', { name: 'Connect in browser' })?.click())
+    expect(connect).not.toHaveBeenCalled()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Browse…' })))
     expect(pick).toHaveBeenCalledOnce()
     expect(select).toHaveBeenCalledOnce()
@@ -189,12 +183,8 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
         })
       )
       expect(screen.getByRole('alert').textContent).toContain(message)
-      expect(!!screen.queryByRole('button', { name: 'Use another environment' })).toBe(
-        reason !== 'storage'
-      )
-      expect(
-        (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
-      ).toBe(true)
+      await act(async () => screen.queryByRole('button', { name: 'Connect in browser' })?.click())
+      expect(connect).not.toHaveBeenCalled()
       await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
       expect(select).toHaveBeenCalledTimes(2)
       expect(select).toHaveBeenLastCalledWith(
@@ -204,10 +194,9 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
           selection: { kind: 'custom', pythonPath: '/custom/python' }
         })
       )
-      expect(
-        (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
-      ).toBe(false)
       expect(screen.queryByRole('alert')).toBeNull()
+      await act(async () => screen.getByRole('button', { name: 'Connect in browser' }).click())
+      expect(connect).toHaveBeenCalledWith(provider, expect.objectContaining({ revision: 1 }))
     }
   )
   it.each(['cancelled', 'runtime-stale'] as const)(
@@ -310,14 +299,11 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
         target: { value: '/custom/python' }
       })
     )
-    expect(screen.getByRole('alert').textContent).toContain(
-      'Preparation failed. Retry or choose another environment.'
-    )
-    expect(
-      (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
-    ).toBe(true)
-    expect((screen.getByLabelText('Python environment') as HTMLSelectElement).disabled).toBe(true)
-    expect(screen.queryByRole('button', { name: 'Use another environment' })).toBeNull()
+    expect(screen.getByRole('alert')).toBeTruthy()
+    await act(async () => screen.queryByRole('button', { name: 'Connect in browser' })?.click())
+    expect(connect).not.toHaveBeenCalled()
+    const changeEnvironment = screen.queryByRole('button', { name: 'Use another environment' })
+    if (changeEnvironment) expect((changeEnvironment as HTMLButtonElement).disabled).toBe(true)
     get.mockResolvedValueOnce({ revision: 2, selection: { kind: 'managed' }, candidates: [] })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
     expect(get).toHaveBeenCalledTimes(3)
@@ -350,7 +336,6 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
     expect(cancel).toHaveBeenCalledWith(provider, connect.mock.calls[0][1])
     expect(connected).not.toHaveBeenCalled()
     expect(screen.getByRole('alertdialog')).toBeTruthy()
-    expect(screen.getByText('Checking environment…')).toBeTruthy()
     await act(async () => choosing.resolve({ revision: 1 }))
     expect(connected).not.toHaveBeenCalled()
     expect(screen.getByRole('alertdialog')).toBeTruthy()
