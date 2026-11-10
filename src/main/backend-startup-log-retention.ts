@@ -11,13 +11,17 @@ const startupLog = /^desktop-backend-\d{1,10}-(\d{13})\.log$/
 // FileShare.None and DeleteOnClose check for conflicting handles and delete through
 // the same handle. An independently running backend may still have inherited stdout.
 const removeExclusive = `
+$ErrorActionPreference = 'Stop'
 foreach ($name in ($env:OPEN_SCIENCE_PRUNE_LOGS | ConvertFrom-Json)) {
   $path = [IO.Path]::Combine([Environment]::CurrentDirectory, $name)
   try {
     if ([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) { continue }
-    [IO.FileStream]::new($path, 'Open', 'ReadWrite', 'None', 4096, 'DeleteOnClose').Dispose()
+    # Typed enums select FileOptions instead of the Boolean useAsync overload.
+    [IO.FileStream]::new($path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None, 4096, [IO.FileOptions]::DeleteOnClose).Dispose()
   } catch [IO.IOException] {} catch [UnauthorizedAccessException] {}
-}`
+}
+# A skipped final file must not turn a handled sharing violation into process failure.
+exit 0`
 
 function isGone(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code
