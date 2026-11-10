@@ -181,7 +181,7 @@ export const indexPortableEvidence = (lanes: PortableEvidence): Map<string, Proj
       const sidecar = JSON.parse(bytes.toString())
       if (
         sidecar.activityId !== record.activityId ||
-        sidecar.activityKind !== 'notebook-run' ||
+        !['notebook-run', 'compute-job'].includes(sidecar.activityKind) ||
         !id.safeParse(sidecar.evidenceId).success
       )
         return invalidEvidence()
@@ -337,6 +337,15 @@ export async function readNativeEvidence(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+  return readLoggedEvidence(root, key, expectedChecksum, maxBytes)
+}
+
+export async function readLoggedEvidence(
+  root: string,
+  key: string,
+  expectedChecksum: string,
+  maxBytes: number
+): Promise<Buffer> {
   const loc = evidenceLocation(key)
   if (!loc) return invalidEvidence()
   const lane = await collectLaneRecords(root, loc.lane, new Set([loc.activity]))

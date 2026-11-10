@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { execFile as execFileCallback } from 'node:child_process'
@@ -86,6 +87,13 @@ afterEach(async () => {
   storageRoot = undefined
 })
 
+const legacyWorker: typeof runEvidenceWorker = (root, request, signal) =>
+  runEvidenceWorker(
+    root,
+    request.operation === 'begin' ? { ...request, poolAddressed: false } : request,
+    signal
+  )
+
 describe('working-file evidence', () => {
   it.each([
     'unused',
@@ -129,7 +137,7 @@ describe('working-file evidence', () => {
         fileEvidenceRoot: location.root,
         fileEvidenceStoragePrefix: location.storageKeyPrefix
       },
-      { watchDirectory: watcherUnavailable }
+      { watchDirectory: watcherUnavailable, runEvidenceWorker: legacyWorker }
     )
     const result = await observation.finish()
     await completeWorkingFileEvidence(location, {
@@ -2305,10 +2313,14 @@ describe('working-file evidence', () => {
     )
     const firstResult = await first.finish()
     const firstSidecar = JSON.parse(
-      await readFile(
-        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
-        'utf8'
-      )
+      (
+        await readNativeEvidence(
+          storageRoot!,
+          firstResult.fileEvidence.storageKey!,
+          firstResult.fileEvidence.checksum!,
+          64 * 1024 ** 2
+        )
+      ).toString()
     ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
     const blobPath = join(
       storageRoot as string,
@@ -3655,10 +3667,14 @@ describe('working-file evidence', () => {
       { runId: 'project-reuse-first', fileEvidence: firstResult.fileEvidence }
     )
     const firstSidecar = JSON.parse(
-      await readFile(
-        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
-        'utf8'
-      )
+      (
+        await readNativeEvidence(
+          storageRoot!,
+          firstResult.fileEvidence.storageKey!,
+          firstResult.fileEvidence.checksum!,
+          64 * 1024 ** 2
+        )
+      ).toString()
     ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
 
     const worker: typeof runEvidenceWorker = async (root, request, signal) => {
@@ -3736,7 +3752,7 @@ describe('working-file evidence', () => {
         fileEvidenceStoragePrefix: storageKeyPrefix,
         runId: 'project-copied-run'
       },
-      { watchDirectory: watcherUnavailable }
+      { watchDirectory: watcherUnavailable, runEvidenceWorker: legacyWorker }
     )
     const result = await observation.finish()
     await completeWorkingFileEvidence(

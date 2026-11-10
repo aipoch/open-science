@@ -109,14 +109,16 @@ const scanLog = (path, io, visit) => {
 }
 const append = (lane, capture, sidecar, serialized, io) => {
   const marker = join(io.projectRoot, projectMarker)
-  if (!metadata(marker)) {
+  if (!io.verifyOnly && !metadata(marker)) {
     io.writeExclusive(marker, '')
     io.syncDirectory(io.projectRoot)
   }
   const root = join(lane, directoryName)
-  ensureDirectory(root, io.syncDirectory)
+  if (!io.verifyOnly) ensureDirectory(root, io.syncDirectory)
+  else if (metadata(root)) requireDirectory(root)
   const views = join(root, 'views')
-  ensureDirectory(views, io.syncDirectory)
+  if (!io.verifyOnly) ensureDirectory(views, io.syncDirectory)
+  else if (metadata(views)) requireDirectory(views)
   const log = join(root, 'log.jsonl')
   let previous
   const committedViews = new Set()
@@ -130,7 +132,7 @@ const append = (lane, capture, sidecar, serialized, io) => {
   // v1 only encodes a delta against this record's pre-view or the previous
   // committed post-view. Every committed base is itself named in the verified log.
   // Clean only our unpublished files, under the same worker queue that writes them.
-  for (const file of fs.readdirSync(views, { withFileTypes: true })) {
+  for (const file of io.verifyOnly ? [] : fs.readdirSync(views, { withFileTypes: true })) {
     if (
       file.isFile() &&
       !committedViews.has(file.name) &&
@@ -168,6 +170,7 @@ const append = (lane, capture, sidecar, serialized, io) => {
   const packed = mapGenerations(sidecar, encode)
   const record = {
     version: 1,
+    ...(io.poolAddressed ? { poolAddressed: true } : {}),
     activityId: sidecar.activityId,
     pre: pre.hash,
     post: post.hash,
@@ -188,7 +191,8 @@ const append = (lane, capture, sidecar, serialized, io) => {
   )
   if (!Number.isFinite(io.projectLimit) || io.projectUsage() + added > io.projectLimit)
     throw new Error('Shadow evidence exceeds the project budget.')
-  checkCapacity(root, added, io.reserveBytes)
+  checkCapacity(lane, added, io.reserveBytes)
+  if (io.verifyOnly) return
   for (const view of planned) publishView(views, view, io)
   const fd = fs.openSync(
     log,
@@ -224,6 +228,24 @@ const projectSidecar = (record, views, activityPrefix) => {
   return bytes
 }
 
+const committedRecord = (lane, id, prefix, io) => {
+  const root = join(lane, directoryName)
+  if (!metadata(root)) return
+  requireDirectory(root)
+  let bytes
+  scanLog(join(root, 'log.jsonl'), io, (record) => {
+    if (record.activityId !== id) return
+    if (!record.poolAddressed || bytes) throw new Error('Conflicting native evidence record.')
+    const views = join(root, 'views')
+    requireDirectory(views)
+    bytes = projectSidecar(
+      record,
+      [record.pre, record.post].map((hash) => readView(views, hash, io.readFile).rows),
+      prefix
+    )
+  })
+  return bytes
+}
 const visitLanes = (project, visit) => {
   for (const entry of fs.readdirSync(project, { withFileTypes: true })) {
     if (entry.name === 'blobs' || !entry.isDirectory()) continue
@@ -270,7 +292,6 @@ const protectedBlobs = (pool, io) => {
   const active = Boolean(metadata(join(project, projectMarker)))
   if (!/^execution-file-evidence\/[^/]+\/blobs$/u.test(pool.storageKeyPrefix))
     return { live, active: false }
-  if (!active) return { live, active }
   const markLane = (lane) => {
     io.markPending(lane, live)
     const root = join(lane, directoryName)
@@ -291,4 +312,12 @@ const protectedBlobs = (pool, io) => {
   visitLanes(project, markLane)
   return { live, active }
 }
-module.exports = { append, directoryName, graceMs, protectedBlobs, projectMarker, projectBytes }
+module.exports = {
+  append,
+  committedRecord,
+  directoryName,
+  graceMs,
+  protectedBlobs,
+  projectMarker,
+  projectBytes
+}

@@ -133,6 +133,7 @@ type EvidenceWorkerBlobPoolBinding = {
 }
 type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'begin'
+  poolAddressed?: boolean
   expectedRootIdentity: FileIdentity
   receiptName: string
   stagingName: string
@@ -1778,6 +1779,7 @@ const beginEvidenceCapture = async (
       capture.evidenceRoot.path,
       {
         operation: 'begin',
+        poolAddressed: Boolean(projectScope),
         expectedRootIdentity: capture.evidenceRoot.identity,
         receiptName: capture.receiptName,
         stagingName: capture.stagingName,
@@ -2440,6 +2442,7 @@ const beginComputeJobFileEvidence = async (request: {
   try {
     const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
       operation: 'begin',
+      poolAddressed: true,
       expectedRootIdentity: evidenceRoot.identity,
       receiptName: receiptNameForActivity(request.jobId),
       stagingName,
@@ -2476,7 +2479,7 @@ const beginComputeJobFileEvidence = async (request: {
       if (!generation) throw new Error(`Compute input could not be frozen: ${input.label}`)
       return {
         ...input,
-        frozenPath: join(evidenceRoot.path, stagingName, 'blobs', `sha256-${generation.checksum}`),
+        frozenPath: join(blobRoot.path, `sha256-${generation.checksum}`),
         generationId: generation.generationId,
         checksum: generation.checksum,
         sizeBytes: generation.sizeBytes
@@ -2560,6 +2563,7 @@ const publishComputeJobFileEvidence = async (request: {
   const freeBytes = await availableBytes(evidenceRoot.path)
   const capture = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
     operation: 'ensure-capture',
+    poolAddressed: true,
     expectedRootIdentity: evidenceRoot.identity,
     receiptName: receiptNameForActivity(request.jobId),
     stagingName: `staging-${request.jobId}`,

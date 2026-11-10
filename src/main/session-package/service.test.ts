@@ -31,6 +31,10 @@ import { SessionProjectionAfterCommitError } from '../session-persistence/save-s
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   startWorkingFileObservation,
+  beginComputeJobFileEvidence,
+  publishComputeJobFileEvidence,
+  settleComputeJobFileEvidence,
+  runEvidenceWorker,
   completeWorkingFileEvidence,
   maintainWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
@@ -182,6 +186,14 @@ it('activates project accounting for imported logs with no generation objects', 
     fileEvidenceStoragePrefix: prefix
   })
   const { fileEvidence } = await capture.finish()
+  await completeWorkingFileEvidence(
+    {
+      storageRoot: source.storageRoot,
+      root: join(source.storageRoot, prefix),
+      storageKeyPrefix: prefix
+    },
+    { runId: 'run-empty', fileEvidence }
+  )
   expect(fileEvidence.generationCount).toBe(0)
   await source.notebookRepository.appendRun({
     ...scope,
@@ -317,6 +329,12 @@ it('defers native evidence cleanup while an import publishes its marked director
       fileEvidenceStoragePrefix: location.storageKeyPrefix
     },
     {
+      runEvidenceWorker: (root, request, signal) =>
+        runEvidenceWorker(
+          root,
+          request.operation === 'begin' ? { ...request, poolAddressed: false } : request,
+          signal
+        ),
       watchDirectory: () => {
         throw new Error('No watcher in fixture')
       }
@@ -1695,6 +1713,109 @@ it('keeps terminal Task and Compute results as evidence without installing jobs 
   await expect(target.client.computeJob.count()).resolves.toBe(0)
 })
 
+it('forwards the remapped frozen Compute input after deleting its source archive and reforking', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  const scope = { projectId: 'compute-project', sessionId: 'compute-session' }
+  const owner = { storageRoot: source.storageRoot, ...scope, jobId: 'compute-run' }
+  await source.client.project.create({ data: { id: scope.projectId, name: 'Compute' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: scope.sessionId,
+    projectId: scope.projectId,
+    title: 'Compute',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const input = join(source.storageRoot, 'input.csv')
+  await writeFile(input, 'original')
+  const [frozen] = await beginComputeJobFileEvidence({
+    ...owner,
+    inputs: [{ localPath: input, dstFilename: 'sample.csv', label: 'input' }]
+  })
+  await writeFile(input, 'modified')
+  expect(await readFile(frozen.frozenPath, 'utf8')).toBe('original')
+  const evidence = await publishComputeJobFileEvidence({ ...owner, outputs: [] })
+  await source.client.computeJob.create({
+    data: {
+      id: owner.jobId,
+      ...scope,
+      providerId: 'test',
+      shape: 'direct_ssh',
+      status: 'success',
+      intent: 'read frozen input',
+      command: 'cat sample.csv',
+      commandHash: sha256('cat sample.csv'),
+      sensitiveDataEncrypted: false,
+      finishedAt: new Date(2),
+      fileEvidence: JSON.stringify(evidence)
+    }
+  })
+  await settleComputeJobFileEvidence({ ...owner, fileEvidence: evidence })
+  await expect(stat(join(source.storageRoot, evidence.storageKey!))).rejects.toMatchObject({
+    code: 'ENOENT'
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const archive = join(source.storageRoot, 'compute.science')
+  try {
+    await exporter.exportTo(scope, archive)
+    initDataRoot(target.storageRoot)
+    let child = await importer.importFrom(archive)
+    await fsPromises.rm(archive)
+    const origin = await importer.readOrigin(child)
+    expect(origin.sourceManifest.requiredFeatures).toContain('compute-log-evidence')
+    await fsPromises.rm(
+      join(
+        target.storageRoot,
+        'artifacts',
+        child.projectId,
+        child.sessionId,
+        '.session-package',
+        'source'
+      ),
+      { recursive: true }
+    )
+    for (let hop = 0; hop < 2; hop++) {
+      child = await importer.fork(child)
+      const records = (await importer.readOrigin(child)).history!.computeJobs
+      expect(records).toHaveLength(1)
+      expect(records[0].id).not.toBe(owner.jobId)
+      expect(records[0].fileEvidence?.checksum).not.toBe(evidence.checksum)
+    }
+    await importer.exportTo(child, archive)
+    const copy = await importer.importFrom(archive)
+    expect((await importer.readOrigin(copy)).sourceManifest.requiredFeatures).toContain(
+      'compute-log-evidence'
+    )
+    expect(
+      await readFile(
+        join(
+          target.storageRoot,
+          'execution-file-evidence',
+          child.projectId,
+          'blobs',
+          'sha256-' + sha256('original')
+        ),
+        'utf8'
+      )
+    ).toBe('original')
+  } finally {
+    await exporter.close()
+    await importer.close()
+  }
+})
+
 it('exports scheduler cancellation as cancelled evidence without a local cancel operation', async () => {
   const source = await createProvenanceTestFixture()
   initDataRoot(source.storageRoot)
@@ -2661,6 +2782,14 @@ it.each(['root', 'frame'] as const)(
     )
     await writeFile(plot, createPngBytes('portable plot'))
     const observed = await observation.finish()
+    await completeWorkingFileEvidence(
+      {
+        storageRoot: source.storageRoot,
+        root: join(source.storageRoot, 'execution-file-evidence/project-1/session-1'),
+        storageKeyPrefix: 'execution-file-evidence/project-1/session-1'
+      },
+      { runId: 'notebook-run-1', fileEvidence: observed.fileEvidence }
+    )
     expect(observed.fileEvidence.generationCount).toBe(1)
     const metadata = await stat(plot)
     await source.notebookRepository.appendRun({
@@ -2787,6 +2916,14 @@ it.each(['root', 'frame'] as const)(
       }
     )
     const repeatedEvidence = await repeatedObservation.finish()
+    await completeWorkingFileEvidence(
+      {
+        storageRoot: source.storageRoot,
+        root: join(source.storageRoot, 'execution-file-evidence/project-1/session-1'),
+        storageKeyPrefix: 'execution-file-evidence/project-1/session-1'
+      },
+      { runId: 'notebook-run-2', fileEvidence: repeatedEvidence.fileEvidence }
+    )
     await source.notebookRepository.appendRun({
       projectId: 'project-1',
       sessionId: 'session-1',
