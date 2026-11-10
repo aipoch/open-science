@@ -1028,7 +1028,8 @@ export class SessionPackageService {
       this.options.storageRoot,
       records,
       notebooks,
-      this.signal
+      this.signal,
+      options.consumeSnapshot ? undefined : request
     )
     if (logEvidence) {
       records.logEvidence = logEvidence
