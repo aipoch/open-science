@@ -86,7 +86,8 @@ type ProviderAccountsModuleOptions = {
   allocateSettingsIdSequence: () => number
   resolveCodexExecutable: (
     adapterPath: string | undefined,
-    nativePath: string | undefined
+    nativePath: string | undefined,
+    prepareForHarness?: boolean
   ) => Promise<string>
   resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   runClaudeSubscriptionProbe: (
@@ -131,7 +132,15 @@ class ProviderAccountsModule {
   }
 
   quiesceAuthentication(): ReturnType<XaiProviderAccountOwner['quiesce']> {
-    return this.xai.quiesce()
+    const xai = this.xai.quiesce()
+    const codex = this.auth.quiesceCodexHarnessCredentials()
+    return {
+      settled: Promise.all([xai.settled, codex.settled]).then(() => undefined),
+      release: () => {
+        codex.release()
+        xai.release()
+      }
+    }
   }
 
   async prepareBootstrapCodex(): Promise<void> {
@@ -166,6 +175,7 @@ class ProviderAccountsModule {
   async completeBootstrapCodex(): Promise<string> {
     return this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const provider = settings.providers.find(({ id }) => id === identity.id)
       if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
@@ -532,6 +542,16 @@ class ProviderAccountsModule {
     await this.xai.logout()
   }
 
+  bindCodexHarnessConnection(
+    target: ProviderRuntimeTarget
+  ): ReturnType<ProviderAuthLifecycleOwner['bindCodexHarnessConnection']> {
+    return this.auth.bindCodexHarnessConnection(
+      target.providerId,
+      target.providerType,
+      target.configRevision
+    )
+  }
+
   getXaiOAuthAccessToken(forceRefresh = false): Promise<string> {
     return this.xai.getAccessToken(forceRefresh)
   }
@@ -755,6 +775,14 @@ class ProviderAccountsModule {
     ) {
       return { ...result, applied: false }
     }
+    if (result.applied === false) return result
+    // Harness capability is projected per framework, never persisted as an account-wide failure.
+    if (
+      framework.id === 'open-science-agent' &&
+      isCodexSubscriptionProvider(resolved.provider.type) &&
+      result.frameworkIncompatible
+    )
+      return result
     if (
       healthPolicy === 'definitive-failures' &&
       (result.ok ||
@@ -856,9 +884,16 @@ class ProviderAccountsModule {
     return this.runtimeProjection.toProviderView(provider, activeModel)
   }
 
-  async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
+  async isProviderKeyUsable(
+    provider: StoredProvider,
+    frameworkId?: AgentFrameworkId
+  ): Promise<boolean> {
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
-    return this.auth.isProviderKeyUsable(provider)
+    if (!isCodexSubscriptionProvider(provider.type)) return this.auth.isProviderKeyUsable(provider)
+    return this.auth.isProviderKeyUsable(
+      provider,
+      frameworkId ?? (await this.repository.getSettings()).agentFrameworkId
+    )
   }
 
   resolveActiveModel(provider: StoredProvider | undefined, requested?: string): string | undefined {

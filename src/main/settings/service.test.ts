@@ -36,6 +36,7 @@ import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
+import { harnessConfigSchema } from '../harness-acp/config'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import { SkillMarketplaceService } from '../skill-marketplace/service'
 import { ProviderTransportOwner } from './provider-transport-owner'
@@ -349,6 +350,210 @@ afterEach(async () => {
 })
 
 describe('SettingsService: harness session ownership', () => {
+  it.each(['imported', 'isolated'] as const)(
+    'uses the %s Codex sign-in for a built-in Agent and fences the old connection after reauthentication',
+    async (mode) => {
+      const userCodexDir = join(storageRoot, 'no-user-codex')
+      const ownedHome = codexSubscriptionStorageDir(storageRoot)
+      let account = 'account-one'
+      const storeLogin = async (directory: string): Promise<void> => {
+        const payload = Buffer.from(
+          JSON.stringify({
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            'https://api.openai.com/auth': { chatgpt_account_id: account }
+          })
+        ).toString('base64url')
+        const jwt = `header.${payload}.signature`
+        await mkdir(directory, { recursive: true })
+        await writeFile(
+          join(directory, 'auth.json'),
+          JSON.stringify({
+            auth_mode: 'chatgpt',
+            tokens: {
+              access_token: jwt,
+              id_token: jwt,
+              account_id: account,
+              refresh_token: 'refresh'
+            },
+            last_refresh: new Date().toISOString()
+          })
+        )
+      }
+      const service = createService(undefined, {
+        userCodexDir,
+        codexAuth: {
+          getStatus: vi.fn(),
+          loginIsolated: async () => {
+            await storeLogin(ownedHome)
+            return { mode: 'isolated', supported: true, authenticated: true }
+          },
+          cancelLogin: vi.fn(),
+          logoutIsolated: vi.fn()
+        }
+      })
+      const upstream = vi.spyOn(mockedNet, 'fetch').mockImplementation(async (_url, init) => {
+        const headers = new Headers(init.headers)
+        expect(headers.get('ChatGPT-Account-Id')).toBe(account)
+        expect(headers.get('authorization')).toMatch(/^Bearer header\./)
+        expect(JSON.parse(init.body)).not.toHaveProperty('max_output_tokens')
+        return new Response('data: {"type":"response.completed","response":{}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      })
+      const backends: Awaited<ReturnType<typeof resolveActiveBackend>>[] = []
+      const open = async () => {
+        const backend = await resolveActiveBackend(service, {
+          includeSkillAndConnectorContext: false
+        })
+        backends.push(backend)
+        const config = harnessConfigSchema.parse(
+          backend.authentication?._meta?.['open-science-agent']
+        )
+        return () =>
+          fetch(config.endpoint, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${config.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: config.model,
+              stream: true,
+              store: false,
+              input: [],
+              max_output_tokens: 128
+            })
+          })
+      }
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        const type = mode === 'imported' ? 'codex-shared' : 'codex-isolated'
+        if (mode === 'imported') await storeLogin(userCodexDir)
+        await service.upsertProvider({ type })
+        if (mode === 'isolated') expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        else {
+          // A fresh imported live token needs no ACP adapter or native runtime for validation.
+          expect(
+            (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+          ).toBe(true)
+          expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(true)
+        }
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        const first = await open()
+        expect(await (await first()).text()).toContain('response.completed')
+        if (mode === 'imported') {
+          await rm(join(userCodexDir, 'auth.json'))
+          await expect(
+            service.upsertProvider({ type, reimportCodexAuthentication: true })
+          ).rejects.toThrow('file-backed Codex credential')
+          expect(await (await first()).text()).toContain('response.completed')
+          expect(upstream).toHaveBeenCalledTimes(2)
+          upstream.mockClear()
+          // Keep the successful-switch assertions identical for both authentication flows.
+          await first()
+        }
+        account = 'account-two'
+        if (mode === 'imported') {
+          await storeLogin(userCodexDir)
+          await service.upsertProvider({ type, reimportCodexAuthentication: true })
+        } else {
+          expect((await service.logoutIsolatedCodex()).ok).toBe(true)
+          expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        }
+        const stale = await first()
+        expect(stale.ok).toBe(false)
+        await stale.body?.cancel()
+        expect(upstream).toHaveBeenCalledTimes(1)
+        const second = await open()
+        expect(await (await second()).text()).toContain('response.completed')
+        expect(upstream).toHaveBeenCalledTimes(2)
+      } finally {
+        await Promise.all(backends.map((backend) => backend.providerTransportLease?.release()))
+        upstream.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it.each(['api-key', 'gateway', 'websocket'] as const)(
+    'keeps %s profiles available to native Codex but unavailable to the built-in Agent',
+    async (kind) => {
+      const status = vi.fn(async () => ({
+        mode: 'isolated' as const,
+        supported: true,
+        authenticated: true
+      }))
+      const service = createService(undefined, {
+        codexAuth: {
+          getStatus: status,
+          loginIsolated: status,
+          logoutIsolated: status,
+          cancelLogin: vi.fn()
+        }
+      })
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        await service.upsertProvider({
+          type: 'codex-isolated',
+          codexTransport: kind === 'websocket' ? 'websocket' : 'auto'
+        })
+        const home = codexSubscriptionStorageDir(storageRoot)
+        const token = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify(
+            kind === 'api-key'
+              ? { auth_mode: 'apikey', OPENAI_API_KEY: 'private-key' }
+              : {
+                  auth_mode: 'chatgpt',
+                  last_refresh: new Date().toISOString(),
+                  tokens: {
+                    access_token: token,
+                    id_token: token,
+                    refresh_token: 'refresh',
+                    account_id: 'account-one'
+                  }
+                }
+          )
+        )
+        if (kind === 'gateway')
+          await writeFile(
+            join(home, 'config.toml'),
+            'model_provider = "gateway"\n[model_providers.gateway]\nbase_url = "https://gateway.example/v1"\nwire_api = "responses"\n'
+          )
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        const validatedAt = (await repository.getSettings()).providers[0].lastValidatedAt
+        status.mockClear()
+        await repository.setAgentFramework('open-science-agent')
+        expect(
+          await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+        ).toMatchObject({
+          ok: false,
+          frameworkIncompatible: true
+        })
+        expect((await repository.getSettings()).providers[0].lastValidatedAt).toBe(validatedAt)
+        expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+        expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(false)
+        expect((await service.getPreflight()).activeProviderReady).toBe(false)
+        await expect(
+          resolveActiveBackend(service, { includeSkillAndConnectorContext: false })
+        ).rejects.toThrow()
+        expect(status).not.toHaveBeenCalled()
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        expect(status).toHaveBeenCalledOnce()
+      } finally {
+        await service.dispose()
+      }
+    }
+  )
+
   it('binds account edits and service shutdown to live harness sessions', async () => {
     const releases: ReturnType<typeof vi.fn>[] = []
     type TransportWithXai = {

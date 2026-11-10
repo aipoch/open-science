@@ -175,7 +175,7 @@ describe('provider endpoint compatibility', () => {
     expect(isModelBridgeSupported({ vendorId: 'deepseek' }, undefined)).toBe(true)
   })
 
-  it('allows Codex subscription profiles only with the Codex framework', () => {
+  it('allows Codex subscription profiles with Codex and the built-in Agent', () => {
     const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
     const claude = { id: 'claude-code' as const, supportedApiTypes: ['messages'] as const }
     const opencode = {
@@ -185,6 +185,13 @@ describe('provider endpoint compatibility', () => {
 
     for (const type of ['codex-shared', 'codex-isolated'] as const) {
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, codex)).toBe(true)
+      expect(
+        isProviderUsableByFramework(
+          { type },
+          { id: 'open-science-agent', supportedApiTypes: ['responses'] }
+        )
+      ).toBe(true)
+      expect(providerEndpoints({ type, apiEndpoints: ['messages'] })).toEqual(['responses'])
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, claude)).toBe(false)
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, opencode)).toBe(
         false

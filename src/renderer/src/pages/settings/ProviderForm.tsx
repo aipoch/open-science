@@ -439,8 +439,7 @@ const ProviderForm = ({
             {PROVIDER_KIND_GROUPS.map((group) => {
               const kinds = PROVIDER_KINDS.filter((kind) => {
                 if (kind.group !== group.id) return false
-                // The Codex subscription section only shows when Codex is the active framework
-                // (the only one that can drive it), mirroring the showCodexSubscriptions gate.
+                // Codex and the built-in Agent share the app-owned subscription sign-in.
                 if (group.id === 'codex' && !showCodexSubscriptions) return false
                 // The Claude subscription section mirrors it: gate on Claude Code being active,
                 // the only framework that speaks the app-owned bearer token.

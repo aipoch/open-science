@@ -2374,7 +2374,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
                           showCodexSubscriptions={
-                            agentFrameworkId === 'codex' && modelView.kind === 'create'
+                            (agentFrameworkId === 'codex' ||
+                              agentFrameworkId === 'open-science-agent') &&
+                            modelView.kind === 'create'
                           }
                           showClaudeIsolated={
                             agentFrameworkId === 'claude-code' && modelView.kind === 'create'

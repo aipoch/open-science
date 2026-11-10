@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { preferredEndpoint } from '../../shared/settings'
+import { isLoopbackProviderBaseUrl } from '@aipoch/providers/transport'
+import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
@@ -44,6 +45,7 @@ import {
   type ProtocolForwardingBridgeTarget
 } from './protocol-forwarding-bridge'
 import type { ProviderRuntimeTarget } from './provider-accounts'
+import type { CodexHarnessConnection } from './codex-harness-auth'
 
 import {
   ResponsesToChatCompletionsBridge,
@@ -140,6 +142,7 @@ type ProviderTransportOwnerOptions = {
     failure: ProviderFailureObservation
   ) => Promise<void>
   getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+  bindCodexHarnessConnection?: BindCodexHarnessConnection
   createResponsesToChatCompletionsBridge?: (
     target: ResponsesToChatCompletionsBridgeTarget,
     options?: ResponsesToChatCompletionsBridgeOptions
@@ -160,6 +163,40 @@ type ProviderTransportOwnerOptions = {
   ) => ChatCompletionsCompatibilityBridgePort
   createXaiOAuthProviderBridge?: CreateXaiOAuthProviderBridge
   nextGenerationId?: () => string
+}
+
+/** Main owns authentication and binds each lease to its current account generation. */
+type BindCodexHarnessConnection = (
+  target: ProviderRuntimeTarget
+) => (signal: AbortSignal) => Promise<CodexHarnessConnection>
+
+const codexHarnessEndpoint = (value: string): string => {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('Invalid Codex harness endpoint.')
+  }
+  if (
+    url.username ||
+    url.password ||
+    value.includes('?') ||
+    value.includes('#') ||
+    (url.href !== 'https://chatgpt.com/backend-api/codex/responses' &&
+      !(isLoopbackProviderBaseUrl(url.href) && url.pathname.endsWith('/responses')))
+  )
+    throw new Error('Invalid Codex harness endpoint.')
+  return url.href
+}
+
+const validateCodexHarnessConnection = (connection: CodexHarnessConnection): string => {
+  if (
+    !connection.accessToken.trim() ||
+    !connection.accountId.trim() ||
+    /[\r\n]/.test(connection.accessToken + connection.accountId)
+  )
+    throw new Error('Invalid Codex harness authentication.')
+  return codexHarnessEndpoint(connection.endpoint)
 }
 
 export type HarnessProviderLease = Readonly<{
@@ -199,6 +236,7 @@ class ProviderTransportOwner {
   private readonly createXaiOAuthProviderBridge: CreateXaiOAuthProviderBridge
   private readonly nextGenerationId: () => string
   private readonly getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+  private readonly bindCodexHarnessConnection?: BindCodexHarnessConnection
   private readonly responsesToChatCompletionsBridges = new Map<
     string,
     ResponsesToChatCompletionsBridgeEntry
@@ -232,6 +270,45 @@ class ProviderTransportOwner {
       options.createXaiOAuthProviderBridge ?? createXaiOAuthProviderBridge
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
     this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
+    this.bindCodexHarnessConnection = options.bindCodexHarnessConnection
+  }
+
+  private async createCodexHarnessBridge(
+    target: ProviderRuntimeTarget,
+    id: string,
+    model: string,
+    signal: AbortSignal
+  ): Promise<ProtocolForwardingBridgePort> {
+    if (!this.bindCodexHarnessConnection)
+      throw new Error('Codex subscription authentication is unavailable.')
+    const resolve = this.bindCodexHarnessConnection(target)
+    const endpoint = validateCodexHarnessConnection(await resolve(signal))
+    signal.throwIfAborted()
+    return this.createProtocolForwardingBridge(
+      [
+        {
+          id,
+          model,
+          wire: 'responses',
+          endpoint,
+          resolveConnection: async (requestSignal) => {
+            const connection = await resolve(requestSignal)
+            requestSignal.throwIfAborted()
+            return {
+              endpoint: validateCodexHarnessConnection(connection),
+              key: connection.accessToken,
+              headers: { 'ChatGPT-Account-Id': connection.accountId }
+            }
+          },
+          adaptRequest: (request) => {
+            const adapted = { ...request }
+            delete adapted.max_output_tokens
+            return adapted
+          }
+        }
+      ],
+      id
+    )
   }
 
   // The signal covers acquisition; the host owns release after active requests settle.
@@ -244,33 +321,41 @@ class ProviderTransportOwner {
     const { provider, providerId, configRevision } = snapshot
     const model = snapshot.effectiveModel ?? provider.model
     const usesXaiOAuth = snapshot.providerType === 'xai-subscription'
+    const usesCodexOAuth = isCodexSubscriptionProvider(snapshot.providerType)
     const wire = preferredEndpoint(snapshot.apiEndpoints, [
       'responses',
       'chat-completions',
       'messages'
     ])
     if (
-      !['custom', 'official', 'xai-subscription'].includes(snapshot.providerType) ||
-      !['custom', 'official', 'xai-subscription'].includes(provider.type) ||
+      !['custom', 'official', 'xai-subscription', 'codex-isolated', 'codex-shared'].includes(
+        snapshot.providerType
+      ) ||
+      !['custom', 'official', 'xai-subscription', 'codex-isolated', 'codex-shared'].includes(
+        provider.type
+      ) ||
       usesXaiOAuth !== (provider.type === 'xai-subscription') ||
+      usesCodexOAuth !== isCodexSubscriptionProvider(provider.type) ||
       snapshot.disconnectedAt !== undefined ||
       !providerId.trim() ||
       configRevision === undefined ||
       !Number.isSafeInteger(configRevision) ||
       configRevision < 0 ||
       !model?.trim() ||
-      !wire
+      !wire ||
+      (usesCodexOAuth && wire !== 'responses')
     ) {
       throw new Error('Harness requires a connected, versioned provider target.')
     }
-    const endpoint = usesXaiOAuth
-      ? undefined
-      : wire === 'chat-completions'
-        ? resolveChatCompletionsUrl(provider)
-        : wire === 'responses'
-          ? `${resolveResponsesBaseUrl(provider)}/responses`
-          : `${normalizeMessagesRootUrl(provider.baseUrl ?? '')}/v1/messages`
-    if (!usesXaiOAuth) {
+    const endpoint =
+      usesXaiOAuth || usesCodexOAuth
+        ? undefined
+        : wire === 'chat-completions'
+          ? resolveChatCompletionsUrl(provider)
+          : wire === 'responses'
+            ? `${resolveResponsesBaseUrl(provider)}/responses`
+            : `${normalizeMessagesRootUrl(provider.baseUrl ?? '')}/v1/messages`
+    if (!usesXaiOAuth && !usesCodexOAuth) {
       if (!endpoint) throw new Error('Harness provider endpoint is unavailable.')
       const url = new URL(endpoint)
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
@@ -285,42 +370,44 @@ class ProviderTransportOwner {
       model,
       protocol: wire
     })
-    const bridge = usesXaiOAuth
-      ? this.createXaiOAuthProviderBridge(
-          [{ id: route.id, model }],
-          route.id,
-          wire,
-          this.getXaiOAuthAccessToken
-        )
-      : wire === 'messages'
-        ? this.createMessagesBridge(
-            [
-              {
-                ...this.healthObservation(snapshot),
-                id: route.id,
-                baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
-                key: provider.key,
-                model,
-                useApiKeyHeader:
-                  provider.vendorId === 'anthropic' ||
-                  (!!provider.vendorId && usesVendorMessagesApiKeyHeader(provider.vendorId))
-              }
-            ],
-            route.id
+    const bridge = usesCodexOAuth
+      ? await this.createCodexHarnessBridge(snapshot, route.id, model, signal)
+      : usesXaiOAuth
+        ? this.createXaiOAuthProviderBridge(
+            [{ id: route.id, model }],
+            route.id,
+            wire,
+            this.getXaiOAuthAccessToken
           )
-        : this.createProtocolForwardingBridge(
-            [
-              {
-                ...this.healthObservation(snapshot),
-                id: route.id,
-                wire,
-                endpoint: endpoint!,
-                key: provider.key,
-                model
-              }
-            ],
-            route.id
-          )
+        : wire === 'messages'
+          ? this.createMessagesBridge(
+              [
+                {
+                  ...this.healthObservation(snapshot),
+                  id: route.id,
+                  baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
+                  key: provider.key,
+                  model,
+                  useApiKeyHeader:
+                    provider.vendorId === 'anthropic' ||
+                    (!!provider.vendorId && usesVendorMessagesApiKeyHeader(provider.vendorId))
+                }
+              ],
+              route.id
+            )
+          : this.createProtocolForwardingBridge(
+              [
+                {
+                  ...this.healthObservation(snapshot),
+                  id: route.id,
+                  wire,
+                  endpoint: endpoint!,
+                  key: provider.key,
+                  model
+                }
+              ],
+              route.id
+            )
     let releasePromise: Promise<void> | undefined
     const release = (): Promise<void> =>
       (releasePromise ??= Promise.resolve().then(() => bridge.close()))

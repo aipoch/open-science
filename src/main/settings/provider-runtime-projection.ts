@@ -75,6 +75,7 @@ const requiresNativeResponsesCompatibility = (
 // and ephemeral runtime targets without mutating durable selection or entering account lifecycles.
 class ProviderRuntimeProjectionOwner {
   resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ModelProtocol[] {
+    if (isCodexSubscriptionProvider(provider.type)) return ['responses']
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
@@ -140,7 +141,18 @@ class ProviderRuntimeProjectionOwner {
     selection: RuntimeProviderModelSelection,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
-    const target = this.resolveProviderTarget(storedProvider, selection)
+    // Native Codex owns an omitted default; the built-in Agent must pin its model before launch.
+    const modelSelection =
+      framework.id === 'open-science-agent' &&
+      isCodexSubscriptionProvider(storedProvider.type) &&
+      selection.kind !== 'required' &&
+      (selection.kind !== 'configured' || !selection.requestedModel)
+        ? {
+            kind: 'configured' as const,
+            requestedModel: storedProvider.model ?? defaultVendorModel('openai')
+          }
+        : selection
+    const target = this.resolveProviderTarget(storedProvider, modelSelection)
     return {
       ...target,
       frameworkCompatible: isProviderUsableByFramework(

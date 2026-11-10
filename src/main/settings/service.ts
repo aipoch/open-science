@@ -146,6 +146,7 @@ import type {
   ValidateProviderResult,
   VisionModelConfiguration as VisionModel
 } from '../../shared/settings'
+import { isCodexSubscriptionProvider } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
   InstallMissingWslDependenciesRequest,
@@ -634,8 +635,14 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
       allocateSettingsIdSequence,
-      resolveCodexExecutable: (adapterPath, nativePath) =>
-        this.runtimeManager.resolveCodexExecutable(adapterPath, nativePath),
+      resolveCodexExecutable: async (adapterPath, nativePath, prepareForHarness) => {
+        if (
+          prepareForHarness ||
+          (await this.repository.getSettings()).agentFrameworkId === 'open-science-agent'
+        )
+          return this.runtimeManager.prepareCodexAuthenticationRuntime()
+        return this.runtimeManager.resolveCodexExecutable(adapterPath, nativePath)
+      },
       resolveCodexProxyEnvironment: () => this.runtimeManager.resolveCodexProxyEnvironment(),
       runClaudeSubscriptionProbe: (provider, settings) =>
         this.runtimeManager.runClaudeSubscriptionProbe(provider, settings),
@@ -664,6 +671,7 @@ class SettingsService {
       storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
+      bindCodexHarnessConnection: (target) => this.providers.bindCodexHarnessConnection(target),
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
     this.detachSkillDiagnostics = attachSkillDiagnostics()
@@ -693,6 +701,16 @@ class SettingsService {
         ...buildSettingsSnapshot(settings, this.runtimeManager, this.providers),
         credentialStore: getCredentialStore()
       }
+      await Promise.all(
+        snapshot.providers.map(async (view) => {
+          if (!isCodexSubscriptionProvider(view.type)) return
+          const provider = settings.providers.find(({ id }) => id === view.id)!
+          view.codexHarnessAvailable = await this.providers.isProviderKeyUsable(
+            provider,
+            'open-science-agent'
+          )
+        })
+      )
       operation.complete({ providerCount: settings.providers.length })
       return snapshot
     } catch (error) {

@@ -31,6 +31,31 @@ const provider = (
 })
 
 describe('configured model catalog', () => {
+  it.each([
+    { type: 'codex-shared', codexAuthMode: undefined },
+    { type: 'codex-isolated', codexAuthMode: 'imported' },
+    { type: 'codex-isolated', codexAuthMode: 'isolated' }
+  ] as const)('offers $type/$codexAuthMode in primary and fixed-model catalogs', (auth) => {
+    const entries = buildConfiguredModelCatalog({
+      providers: [
+        provider('builtin-codex-subscription', ['gpt-5.5'], {
+          ...auth,
+          apiEndpoints: [],
+          hasKey: false
+        })
+      ],
+      frameworkId: 'open-science-agent',
+      frameworkEndpoints: ['responses', 'chat-completions', 'messages']
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      providerId: 'builtin-codex-subscription',
+      model: 'gpt-5.5',
+      selectable: true,
+      supportsImageInput: true
+    })
+  })
+
   it('keeps same-named models distinct by compound provider identity', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [provider('first', ['shared']), provider('second', ['shared'])],
@@ -215,4 +240,25 @@ describe('configured model catalog', () => {
       }).map((entry) => entry.providerId)
     ).toEqual([CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID])
   })
+})
+
+it('keeps a native-only Codex subscription selectable only for native Codex', () => {
+  const provider = {
+    id: 'subscription',
+    name: 'Codex subscription',
+    type: 'codex-isolated' as const,
+    codexHarnessAvailable: false,
+    supportsImageInput: true,
+    models: ['gpt-6.1-sol'],
+    hasKey: false,
+    needsKey: false
+  }
+  for (const frameworkId of ['codex', 'open-science-agent'] as const) {
+    const catalog = buildConfiguredModelCatalog({
+      providers: [provider],
+      frameworkId,
+      frameworkEndpoints: ['responses']
+    })
+    expect(catalog[0].selectable).toBe(frameworkId === 'codex')
+  }
 })

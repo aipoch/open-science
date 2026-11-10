@@ -6092,53 +6092,56 @@ describe('SettingsPage Codex framework', () => {
     expect(frameworkRadios[0]?.tabIndex).toBe(0)
   })
 
-  it('routes isolated subscription sign-out from the provider list', async () => {
-    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
-    const provider = {
-      id: 'builtin-codex-subscription',
-      type: 'codex-isolated',
-      name: 'Codex subscription',
-      apiEndpoints: ['responses'],
-      models: ['gpt-5.6-sol'],
-      supportsImageInput: true,
-      hasKey: false,
-      needsKey: false,
-      lastValidatedAt: 1
-    }
-    const snapshot = {
-      claude: {},
-      opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
-      providers: [provider],
-      activeProviderId: provider.id,
-      activeModel: 'gpt-5.6-sol',
-      agentFrameworkId: 'codex',
-      agentFrameworks: frameworks,
-      claudeManaged: false,
-      opencodeManaged: false,
-      codexManaged: true
-    }
-    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
-    api.settings.getPreflight = vi.fn().mockResolvedValue({
-      codexReady: true,
-      agentFrameworkId: 'codex',
-      agentReady: true,
-      activeProviderReady: true
-    })
-    const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
-    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+  it.each(['codex', 'open-science-agent'] as const)(
+    'routes isolated subscription sign-out from the provider list under %s',
+    async (agentFrameworkId) => {
+      const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+      const provider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        name: 'Codex subscription',
+        apiEndpoints: ['responses'],
+        models: ['gpt-5.6-sol'],
+        supportsImageInput: true,
+        hasKey: false,
+        needsKey: false,
+        lastValidatedAt: 1
+      }
+      const snapshot = {
+        claude: {},
+        opencode: {},
+        codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: 'gpt-5.6-sol',
+        agentFrameworkId,
+        agentFrameworks: frameworks,
+        claudeManaged: false,
+        opencodeManaged: false,
+        codexManaged: true
+      }
+      api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+      api.settings.getPreflight = vi.fn().mockResolvedValue({
+        codexReady: true,
+        agentFrameworkId,
+        agentReady: true,
+        activeProviderReady: true
+      })
+      const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+      api.settings.logoutIsolatedCodex = logoutIsolatedCodex
 
-    useSettingsStore.getState().openSettingsToPanel('model')
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
-    await act(async () => signOut?.click())
+      useSettingsStore.getState().openSettingsToPanel('model')
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+      await act(async () => signOut?.click())
 
-    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
-    const errorAlert = document.body.querySelector('[role="alert"]')
-    expect(errorAlert).toBeNull()
-  })
+      expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+      const errorAlert = document.body.querySelector('[role="alert"]')
+      expect(errorAlert).toBeNull()
+    }
+  )
 
   it('surfaces a Codex sign-out timeout through the provider error alert', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
@@ -6191,58 +6194,61 @@ describe('SettingsPage Codex framework', () => {
     expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
   })
 
-  it('summarizes Codex login-check IPC failures and keeps their diagnostics available', async () => {
-    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
-    const provider = {
-      id: 'builtin-codex-subscription',
-      type: 'codex-shared',
-      name: 'Codex subscription',
-      apiEndpoints: ['responses'],
-      models: ['gpt-5.6-sol'],
-      supportsImageInput: true,
-      hasKey: false,
-      needsKey: false
+  it.each(['codex', 'open-science-agent'] as const)(
+    'summarizes Codex login-check IPC failures and keeps their diagnostics available under %s',
+    async (agentFrameworkId) => {
+      const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+      const provider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-shared',
+        name: 'Codex subscription',
+        apiEndpoints: ['responses'],
+        models: ['gpt-5.6-sol'],
+        supportsImageInput: true,
+        hasKey: false,
+        needsKey: false
+      }
+      api.settings.getSettings = vi.fn().mockResolvedValue({
+        claude: {},
+        opencode: {},
+        codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+        providers: [provider],
+        activeProviderId: provider.id,
+        agentFrameworkId,
+        agentFrameworks: frameworks,
+        claudeManaged: false,
+        opencodeManaged: false,
+        codexManaged: true
+      })
+      api.settings.getPreflight = vi.fn().mockResolvedValue({
+        codexReady: true,
+        agentFrameworkId,
+        agentReady: true,
+        activeProviderReady: false
+      })
+      api.settings.validateProvider = vi
+        .fn()
+        .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
+
+      useSettingsStore.getState().openSettingsToPanel('model')
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      const testLogin = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Check Codex login"]'
+      )
+      await act(async () => testLogin?.click())
+
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+        'Could not test the provider connection.'
+      )
+      const details = document.body.querySelector('details')
+      expect(details?.open).toBe(false)
+      expect(details?.textContent).toContain(
+        'The Codex adapter does not support authentication status.'
+      )
     }
-    api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: {},
-      opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
-      providers: [provider],
-      activeProviderId: provider.id,
-      agentFrameworkId: 'codex',
-      agentFrameworks: frameworks,
-      claudeManaged: false,
-      opencodeManaged: false,
-      codexManaged: true
-    })
-    api.settings.getPreflight = vi.fn().mockResolvedValue({
-      codexReady: true,
-      agentFrameworkId: 'codex',
-      agentReady: true,
-      activeProviderReady: false
-    })
-    api.settings.validateProvider = vi
-      .fn()
-      .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
-
-    useSettingsStore.getState().openSettingsToPanel('model')
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    const testLogin = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Check Codex login"]'
-    )
-    await act(async () => testLogin?.click())
-
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
-      'Could not test the provider connection.'
-    )
-    const details = document.body.querySelector('details')
-    expect(details?.open).toBe(false)
-    expect(details?.textContent).toContain(
-      'The Codex adapter does not support authentication status.'
-    )
-  })
+  )
 
   it('cancels a pending isolated sign-in when the dialog closes mid-flow', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
