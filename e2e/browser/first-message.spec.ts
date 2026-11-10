@@ -38,7 +38,7 @@ for (const { count, expandHistory, notices } of [
     await expect(firstMessage).toBeVisible()
     await firstMessage.click()
     const firstRow = viewport.locator('[data-message-id="history-0"]')
-    const firstRowOffset = () =>
+    const firstRowOffset = (): Promise<number> =>
       firstRow.evaluate((node) => {
         const viewport = node.closest('[data-slot="message-scroller-viewport"]')!
         return Math.abs(node.getBoundingClientRect().top - viewport.getBoundingClientRect().top)
