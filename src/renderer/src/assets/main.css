@@ -1486,11 +1486,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
 
   .resource-installed-card [data-appearance-state],
-  .resource-installed-card [data-avatar-size] {
+  .resource-installed-card [data-avatar-size='md'] {
     @apply size-10;
   }
 
-  .resource-installed-card [data-specialist-icon] {
+  .resource-installed-card [data-avatar-size='md'] [data-specialist-icon] {
     @apply size-5;
   }
 }
