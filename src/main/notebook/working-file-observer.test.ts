@@ -2408,7 +2408,7 @@ describe('working-file evidence', () => {
         const sessionRoot = join(storageRoot as string, `notebook-${sessionId}`)
         const dataRoot = join(sessionRoot, 'data')
         await mkdir(dataRoot, { recursive: true })
-        await writeFile(join(dataRoot, `${sessionId}.csv`), sessionId.padEnd(6, sessionId))
+        await writeFile(join(dataRoot, `${sessionId}.csv`), sessionId.padEnd(64 * 1024, sessionId))
         return startWorkingFileObservation(
           {
             dataRoot,
@@ -2418,7 +2418,7 @@ describe('working-file evidence', () => {
             fileEvidenceStoragePrefix: `execution-file-evidence/project-budget/${sessionId}`,
             runId: `budget-${sessionId}`
           },
-          { watchDirectory: watcherUnavailable, maxEvidenceBytes: 10 }
+          { watchDirectory: watcherUnavailable, maxEvidenceBytes: 96 * 1024 }
         )
       })
     )

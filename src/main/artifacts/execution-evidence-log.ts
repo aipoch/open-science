@@ -1,10 +1,13 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { mkdir, open, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { deflateRawSync, inflateRawSync } from 'node:zlib'
 import { z } from 'zod'
 import { readFileWithinLimit } from '@aipoch/durable-files'
 import {
   expandProjection,
+  jsonBytesWithinLimit,
   mapGenerations,
   type EvidenceBody,
   type PackedGeneration,
@@ -89,7 +92,7 @@ const decodedViews = new WeakMap<
   Lane['views'],
   { rows: Map<string, { listing: ViewRow[]; depth: number }>; bytes: number }
 >()
-export function viewRows(lane: Lane, key: string, depth = 0): ViewRow[] {
+export function viewRows(lane: Lane, key: string, depth = 0, maxBytes = expandedLimit): ViewRow[] {
   if (depth > 64) return invalidEvidence()
   let cache = decodedViews.get(lane.views)
   if (!cache) {
@@ -98,7 +101,7 @@ export function viewRows(lane: Lane, key: string, depth = 0): ViewRow[] {
   }
   const cached = cache.rows.get(key)
   if (cached) {
-    if (cached.depth + depth > 64) return invalidEvidence()
+    if (cached.depth + depth > 64 || cache.bytes > maxBytes) return invalidEvidence()
     return cached.listing
   }
   const view = lane.views[key]
@@ -107,14 +110,16 @@ export function viewRows(lane: Lane, key: string, depth = 0): ViewRow[] {
   let rows
   if (Array.isArray(view)) rows = view
   else {
-    const files = new Map(viewRows(lane, view.base, depth + 1).map((row) => [row[0], row]))
+    const files = new Map(
+      viewRows(lane, view.base, depth + 1, maxBytes).map((row) => [row[0], row])
+    )
     chain = 1 + cache.rows.get(view.base)!.depth
     for (const path of view.removed) if (!files.delete(path)) return invalidEvidence()
     for (const row of view.changed) files.set(row[0], row)
     rows = [...files.values()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
   }
+  cache.bytes += jsonBytesWithinLimit(rows, maxBytes - cache.bytes)
   const text = JSON.stringify(rows)
-  cache.bytes += Buffer.byteLength(text)
   if (
     cache.bytes > expandedLimit ||
     rows.length > 10000 ||
@@ -148,11 +153,12 @@ export function compactLaneViews(lane: Lane): Lane {
   }
   return { ...lane, views }
 }
-export const projectRecord = (lane: Lane, record: RecordEntry): Buffer => {
+export const projectRecord = (lane: Lane, record: RecordEntry, maxBytes?: number): Buffer => {
   const bytes = expandProjection(
     parseDetail(record.detail),
-    [viewRows(lane, record.pre), viewRows(lane, record.post)],
-    activityPrefix(lane.key, record)
+    [viewRows(lane, record.pre, 0, maxBytes), viewRows(lane, record.post, 0, maxBytes)],
+    activityPrefix(lane.key, record),
+    maxBytes ?? limit
   )
   if (bytes.length > limit || sha256(bytes) !== record.checksum) return invalidEvidence()
   return bytes
@@ -194,12 +200,85 @@ export const indexPortableEvidence = (lanes: PortableEvidence): Map<string, Proj
   return index
 }
 
+// Verify the whole log without buffering it. Native writers put the activity ID first;
+// an oversized unrelated record still has to pass its trailing checksum.
+async function* verifiedLogRecords(
+  path: string,
+  activities: Set<string>,
+  budget: number,
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  const fd = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    const stat = await fd.stat()
+    if (!stat.isFile() || stat.size > limit || budget < 1) return invalidEvidence()
+    const chunk = Buffer.allocUnsafe(Math.max(4096, Math.min(budget, 64 * 1024)))
+    let parts: Buffer[] = [],
+      prefix = '',
+      tail: Buffer = Buffer.alloc(0),
+      length = 0
+    let hash = createHash('sha256')
+    for (let position = 0; position < stat.size;) {
+      signal?.throwIfAborted()
+      const { bytesRead } = await fd.read(
+        chunk,
+        0,
+        Math.min(chunk.length, stat.size - position),
+        position
+      )
+      if (!bytesRead) return invalidEvidence()
+      position += bytesRead
+      const data = chunk.subarray(0, bytesRead)
+      for (let start = 0; start < data.length;) {
+        const end = data.indexOf(10, start)
+        const piece = data.subarray(start, end < 0 ? data.length : end)
+        if (length < 512) prefix += piece.subarray(0, 512 - length).toString('latin1')
+        length += piece.length
+        if (length <= budget) parts.push(Buffer.from(piece))
+        else parts = []
+        const joined = Buffer.concat([tail, piece])
+        const split = Math.max(0, joined.length - 65)
+        hash.update(joined.subarray(0, split))
+        tail = joined.subarray(split)
+        if (end < 0) break
+        if (
+          tail.length !== 65 ||
+          tail[0] !== 9 ||
+          hash.digest('hex') !== tail.toString('latin1', 1)
+        )
+          return invalidEvidence()
+        if (length <= budget)
+          yield Buffer.concat(parts, length)
+            .subarray(0, length - 65)
+            .toString()
+        else {
+          const id =
+            /^\{"version":1,(?:"poolAddressed":true,)?"activityId":"([A-Za-z0-9][A-Za-z0-9._-]{0,255})"[,}]/u.exec(
+              prefix
+            )?.[1]
+          if (!id || activities.has(id))
+            throw new Error('Execution evidence exceeds the read limit.')
+        }
+        parts = []
+        prefix = ''
+        length = 0
+        tail = Buffer.alloc(0)
+        hash = createHash('sha256')
+        start = end + 1
+      }
+    }
+  } finally {
+    await fd.close()
+  }
+}
+
 // Read only explicitly requested activities. Delta ancestry stays within the supplied lane.
 export async function collectLaneRecords(
   root: string,
   lane: string,
   activities: Set<string>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  maxBytes?: number
 ): Promise<Lane | undefined> {
   laneKey.parse(lane)
   const prefix = lane + '/.shadow-evidence'
@@ -210,7 +289,8 @@ export async function collectLaneRecords(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
   }
-  const text = await readFileWithinLimit(join(root, log), limit)
+  const budget = Math.min(maxBytes ?? limit, limit)
+  let remainingViews = maxBytes ?? expandedLimit
   const selected: Lane = { key: lane, views: Object.create(null), records: [] }
   const diskLane: Lane = { key: lane, views: Object.create(null), records: [] }
   async function readView(key: string, depth = 0): Promise<ViewRow[]> {
@@ -219,7 +299,9 @@ export async function collectLaneRecords(
     if (!diskLane.views[key]) {
       const path = prefix + '/views/' + key
       await assertRegularStoragePath(root, path)
-      const body = JSON.parse(await readFileWithinLimit(join(root, path), limit))
+      const encoded = await readFileWithinLimit(join(root, path), Math.min(remainingViews, limit))
+      remainingViews -= Buffer.byteLength(encoded)
+      const body = JSON.parse(encoded)
       if (Array.isArray(body.rows)) diskLane.views[key] = rowsSchema.parse(body.rows)
       else {
         const delta = deltaSchema.parse(body)
@@ -227,19 +309,14 @@ export async function collectLaneRecords(
         diskLane.views[key] = delta
       }
     }
-    return viewRows(diskLane, key, depth)
+    return viewRows(diskLane, key, depth, maxBytes ?? expandedLimit)
   }
   let size = 0
-  for (const line of text.slice(0, text.lastIndexOf('\n') + 1).split('\n')) {
-    if (!line) continue
-    signal?.throwIfAborted()
-    const tab = line.lastIndexOf('\t')
-    const json = line.slice(0, tab)
-    if (tab < 0 || sha256(json) !== line.slice(tab + 1)) return invalidEvidence()
+  for await (const json of verifiedLogRecords(join(root, log), activities, budget, signal)) {
     const { projection, ...record } = diskRecord.parse(JSON.parse(json))
     if (!activities.has(record.activityId)) continue
     const detail = inflateRawSync(Buffer.from(projection, 'base64'), {
-      maxOutputLength: limit
+      maxOutputLength: Math.min(budget, (maxBytes ?? expandedLimit) - size)
     }).toString()
     size += Buffer.byteLength(detail)
     if (size > expandedLimit) return invalidEvidence()
@@ -348,10 +425,15 @@ export async function readLoggedEvidence(
 ): Promise<Buffer> {
   const loc = evidenceLocation(key)
   if (!loc) return invalidEvidence()
-  const lane = await collectLaneRecords(root, loc.lane, new Set([loc.activity]))
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) return invalidEvidence()
+  const lane = await collectLaneRecords(
+    root,
+    loc.lane,
+    new Set([loc.activity]),
+    undefined,
+    maxBytes
+  )
   if (!lane || lane.records.length !== 1 || lane.records[0].checksum !== expectedChecksum)
     return invalidEvidence()
-  const bytes = projectRecord(lane, lane.records[0])
-  if (bytes.length > maxBytes) return invalidEvidence()
-  return bytes
+  return projectRecord(lane, lane.records[0], Math.min(maxBytes, limit))
 }

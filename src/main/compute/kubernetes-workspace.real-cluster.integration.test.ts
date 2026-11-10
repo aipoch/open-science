@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 // Opt-in: RUN_COMPUTE_KUBERNETES=1, COMPUTE_TEST_K8S_CONTEXT and COMPUTE_TEST_K8S_NAMESPACE.
 // File roundtrip additionally requires COMPUTE_TEST_K8S_IMAGE, Jobs, Pods, exec, logs and a storage class.
 import { createHash, randomUUID, randomBytes } from 'node:crypto'
@@ -374,7 +375,14 @@ it.runIf(process.env.RUN_COMPUTE_KUBERNETES === '1' && !!process.env.COMPUTE_TES
       expect(job?.remote_cleanup_disposition).toBe('cleaned')
       expect(
         createHash('sha256')
-          .update(await readFile(evidencePath))
+          .update(
+            await readNativeEvidence(
+              root,
+              job!.file_evidence!.storageKey!,
+              job!.file_evidence!.checksum!,
+              16 * 1024 ** 2
+            )
+          )
           .digest('hex')
       ).toBe(job?.file_evidence?.checksum)
       const archived = await readFile(result)

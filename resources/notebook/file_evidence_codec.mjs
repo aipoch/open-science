@@ -11,7 +11,37 @@ export function mapGenerations(sidecar, transform) {
   return result
 }
 
-export function expandProjection(packed, views, prefix) {
+// Account for repeated paths and pretty-print indentation before allocating the JSON string.
+// Inputs are decoded JSON and generated scalar fields, so there are no omitted properties.
+export function jsonBytesWithinLimit(value, maxBytes, pretty = false) {
+  let size = 0
+  function charge(n) {
+    size += n
+    if (size > maxBytes) throw new Error('Execution evidence exceeds the read limit.')
+  }
+  function visit(item, depth) {
+    if (depth > 128) throw new Error('Invalid execution evidence nesting.')
+    if (item === null || typeof item !== 'object') {
+      charge(Buffer.byteLength(JSON.stringify(item)))
+      return
+    }
+    const array = Array.isArray(item)
+    charge(2)
+    let count = 0
+    for (const key in item) {
+      if (!Object.hasOwn(item, key)) continue
+      if (count++) charge(1)
+      if (pretty) charge(1 + 2 * (depth + 1))
+      if (!array) charge(Buffer.byteLength(JSON.stringify(key)) + (pretty ? 2 : 1))
+      visit(item[key], depth + 1)
+    }
+    if (pretty && count) charge(1 + 2 * depth)
+  }
+  visit(value, 0)
+  return size
+}
+
+export function expandProjection(packed, views, prefix, maxBytes) {
   const sidecar = mapGenerations(packed, (reference) => {
     if (!Array.isArray(reference) || reference.length !== 4)
       throw new Error('Invalid execution evidence generation reference.')
@@ -34,5 +64,6 @@ export function expandProjection(packed, views, prefix) {
       capturedAt
     }
   })
+  if (maxBytes !== undefined) jsonBytesWithinLimit(sidecar, maxBytes - 1, true)
   return Buffer.from(JSON.stringify(sidecar, null, 2) + '\n')
 }
