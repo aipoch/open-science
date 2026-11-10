@@ -14,6 +14,8 @@ import {
   type LiteratureItemView,
   type LiteratureMetadataCompletionResult
 } from '../src/contracts.js'
+import { LITERATURE_OVERSIZED_REFERENCE } from '../src/export.js'
+import { referenceCsv } from '../src/client/reference-csv.js'
 import { expect, it, vi } from 'vitest'
 const item = (id = 'paper', revision = 1): LiteratureItemView => ({
   id,
@@ -88,6 +90,43 @@ it('assembles Unicode export chunks and rejects mixed record versions', async ()
     .mockResolvedValueOnce({ chunk: 'a', digest: 'a', nextOffset: 1 })
     .mockResolvedValueOnce({ chunk: 'b', digest: 'b' })
   await expect(client.readLiteratureRecord('paper')).rejects.toThrow('changed during export')
+})
+it.each([{ mergedIntoItemId: 'survivor' }, { deletedAt: 0 }])(
+  'rejects a retained record in oversized active selection recovery: %j',
+  async (retained) => {
+    const transport = api()
+    vi.mocked(transport.search)
+      .mockRejectedValueOnce(new Error(LITERATURE_OVERSIZED_REFERENCE + 'paper'))
+      .mockResolvedValueOnce({ entries: [], totalCount: 1 })
+    vi.mocked(transport.exportRecord).mockResolvedValue({
+      chunk: JSON.stringify({ ...item(), ...retained }),
+      digest: 'a'.repeat(64)
+    })
+    await expect(
+      createLiteratureClient(transport).readLiteratureSelectionPage({
+        scope: 'library',
+        lifecycle: 'active',
+        itemIds: ['paper']
+      })
+    ).rejects.toThrow('Reference changed')
+  }
+)
+it('recovers a retained oversized record for a Trash selection', async () => {
+  const transport = api()
+  const retained = { ...item(), deletedAt: 0, mergedIntoItemId: 'survivor' }
+  vi.mocked(transport.search)
+    .mockRejectedValueOnce(new Error(LITERATURE_OVERSIZED_REFERENCE + 'paper'))
+    .mockResolvedValueOnce({ entries: [], totalCount: 1 })
+  vi.mocked(transport.exportRecord).mockResolvedValue({
+    chunk: JSON.stringify(retained),
+    digest: 'a'.repeat(64)
+  })
+  const page = await createLiteratureClient(transport).readLiteratureSelectionPage({
+    scope: 'library',
+    lifecycle: 'deleted',
+    itemIds: ['paper']
+  })
+  expect(page.entries).toEqual([retained])
 })
 it('does not return an older relationship snapshot after a newer detail read', async () => {
   const old = deferred<LiteratureItemView>(),
@@ -336,6 +375,19 @@ it('holds export admission until save settles and never saves partial batches', 
   ).rejects.toThrow('duplicate citation keys')
   expect(save).not.toHaveBeenCalled()
 })
+
+it.each([
+  [undefined, '2024-05-16', '2024'],
+  [2023, '2024-05-16', '2023'],
+  [undefined, 'in press', '']
+] as const)(
+  'exports year %s with publication date %s as %s',
+  (issuedYear, issuedText, expected) => {
+    const record = item()
+    Object.assign(record.item, { issuedYear, issuedText })
+    expect(referenceCsv([record], false).split(',')[3]).toBe(`"${expected}"`)
+  }
+)
 
 it('exports bibliographic CSV as UTF-8 spreadsheet data without loading a citation style', async () => {
   const record = item('record-1')

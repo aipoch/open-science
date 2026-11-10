@@ -1,3 +1,4 @@
+import { literatureIssuedYear } from '@aipoch/literature-citations/contracts'
 import type { LiteratureItemView } from '../contracts.js'
 
 const columns = [
@@ -52,7 +53,7 @@ export function referenceCsv(items: readonly LiteratureItemView[], includeHeader
             : [creator.givenName, creator.familyName].filter(Boolean).join(' ')
         )
         .join('; '),
-      item.issuedYear,
+      item.issuedYear ?? literatureIssuedYear(item.issuedText),
       item.itemType,
       item.containerTitle,
       field('volume'),
