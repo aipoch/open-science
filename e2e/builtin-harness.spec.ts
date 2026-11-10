@@ -179,7 +179,7 @@ type HarnessReply = string | { tool: string; args: Record<string, unknown> } | n
 async function capabilityHost(
   app: import('./fixtures/electron-app').ElectronApp,
   reply: (body: HarnessRequest) => HarnessReply | Promise<HarnessReply>,
-  options: { supportsImageInput?: boolean } = {}
+  options: { supportsImageInput?: boolean; contextWindow?: number } = {}
 ): Promise<{
   page: import('@playwright/test').Page
   requests: HarnessRequest[]
@@ -230,7 +230,7 @@ async function capabilityHost(
   try {
     const page = await app.completeOnboarding()
     await page.evaluate(
-      async ({ baseUrl, supportsImageInput }) => {
+      async ({ baseUrl, supportsImageInput, contextWindow }) => {
         await window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
         const settings = await window.api.settings.upsertProvider({
           type: 'custom',
@@ -240,7 +240,7 @@ async function capabilityHost(
           key: 'fixture',
           apiEndpoints: ['chat-completions'],
           supportsImageInput,
-          contextWindow: 200000,
+          contextWindow,
           maxOutputTokens: 4096
         })
         const provider = settings.providers.find((p) => p.name === 'Harness capability fixture')!
@@ -249,6 +249,7 @@ async function capabilityHost(
       },
       {
         baseUrl: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`,
+        contextWindow: options.contextWindow ?? 200000,
         supportsImageInput: options.supportsImageInput ?? true
       }
     )
@@ -1887,19 +1888,23 @@ for (const outcome of ['completed', 'cancelled', 'failed'] as const) {
     })
     let summaries = 0,
       seedReplies = 0
-    const host = await capabilityHost(app, async (body) => {
-      if (lastUser(body).includes('Create a compact continuation checkpoint')) {
-        summaries++
-        return summaries === 1 ? pending : checkpoint
-      }
-      if (!summaries && lastUser(body).includes('SEED_COMPACT_')) {
-        seedReplies++
-        return (
-          '```text\n' + 'archived evidence '.repeat(1000) + '\n```\n\nSEED_READY_' + seedReplies
-        )
-      }
-      return 'COMPACT_CONTINUATION_OK'
-    })
+    const host = await capabilityHost(
+      app,
+      async (body) => {
+        if (lastUser(body).includes('Create a compact continuation checkpoint')) {
+          summaries++
+          return summaries === 1 ? pending : checkpoint
+        }
+        if (!summaries && lastUser(body).includes('SEED_COMPACT_')) {
+          seedReplies++
+          return (
+            '```text\n' + 'archived evidence '.repeat(1000) + '\n```\n\nSEED_READY_' + seedReplies
+          )
+        }
+        return 'COMPACT_CONTINUATION_OK'
+      },
+      { contextWindow: 48_000 }
+    )
     const projectName = `Harness compact ${outcome}`
     try {
       await createProject(host.page, projectName)

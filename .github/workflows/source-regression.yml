@@ -158,8 +158,8 @@ jobs:
     needs: [macos_setup]
     if: ${{ !cancelled() && needs.macos_setup.result == 'success' }}
     runs-on: macos-15
-    # Presentation has up to 35 minutes of suite budgets; reserve restore/upload time.
-    timeout-minutes: 45
+    # Presentation has up to 45 minutes of suite budgets; reserve restore/upload time.
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.macos_setup.outputs.matrix) }}
@@ -229,10 +229,9 @@ jobs:
         if: ${{ matrix.group == 'presentation' }}
         continue-on-error: true
         run: |
-          # All 462 browser tests passed before the 10-minute budget expired in
-          # teardown. Keep visual's separate budget and collect both outcomes.
+          # The 739-test browser suite exceeded 15 minutes on a hosted Mac.
           browser_status=0
-          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/browser PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser.json npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=900000 || browser_status=$?
+          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/browser PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser.json npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=1500000 || browser_status=$?
           PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/visual PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/visual.json npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=600000 --output=test-results/visual
           exit "$browser_status"
       - name: Test concurrent screening flights
