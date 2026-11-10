@@ -11,16 +11,36 @@ test.use({ windowMode: 'normal' })
 for (const mode of ['Relaxed', 'Strict'] as const) {
   test(`saves an existing ${mode} address with Enter without leaving the editor`, async ({
     app
-  }) => {
+  }, testInfo) => {
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
     const settings = await openSettingsPage(page, 'Network')
     await settings.getByRole('button', { name: 'Manage access', exact: true }).click()
     if (mode === 'Strict')
       await settings.getByRole('radio', { name: 'Strict', exact: true }).click()
-    await settings
-      .getByRole('button', { name: mode === 'Strict' ? 'Add rule' : 'Add address', exact: true })
-      .click()
+    const add = settings.getByRole('button', {
+      name: mode === 'Strict' ? 'Add rule' : 'Add address',
+      exact: true
+    })
+    if (mode === 'Relaxed') {
+      await expect(settings.getByRole('textbox', { name: 'Search network addresses' })).toHaveCount(
+        0
+      )
+      const heading = await settings
+        .getByRole('heading', { name: 'Trusted unsafe networks', exact: true })
+        .boundingBox()
+      const action = await add.boundingBox()
+      expect(heading).not.toBeNull()
+      expect(action).not.toBeNull()
+      expect(action!.x).toBeGreaterThanOrEqual(heading!.x + heading!.width)
+      expect(action!.y).toBeLessThan(heading!.y + heading!.height)
+      await settings
+        .getByRole('region', { name: 'Trusted unsafe networks', exact: true })
+        .screenshot({
+          path: testInfo.outputPath('network-access-header.png')
+        })
+    }
+    await add.click()
     const hostname = settings.getByLabel(
       mode === 'Strict' ? 'Hostname, IP or pattern' : 'Hostname',
       { exact: true }

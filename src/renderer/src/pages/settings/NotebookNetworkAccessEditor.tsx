@@ -413,63 +413,68 @@ export function NotebookNetworkAccessEditor({
         className="overflow-hidden rounded-xl border border-border bg-card"
         aria-label={strict ? t('Strict whitelist') : t('Trusted unsafe networks')}
       >
-        <div className="p-4">
-          <h3 className="font-medium">
-            {strict ? t('Strict whitelist') : t('Trusted unsafe networks')}
-          </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {strict
-              ? t('Edit allowed destinations and organize them into groups.')
-              : t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
-          </p>
-        </div>
-        <div data-network-editor-actions className="flex items-center justify-end gap-3 px-4 pb-4">
-          {showSearch ? (
-            <Input
-              className="min-w-0 flex-1"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder={t('Search hostname or group…')}
-              aria-label={t('Search network addresses')}
-            />
-          ) : null}
-          {editor && !editingExisting ? (
-            <Button data-discard-network-draft variant="ghost" disabled={busy} onClick={close}>
-              {t('Cancel')}
-            </Button>
-          ) : null}
-          <Button
-            ref={addButton}
-            type={editor && !editingExisting ? 'submit' : 'button'}
-            form={editor && !editingExisting ? `${id}-form` : undefined}
-            disabled={busy && !editingExisting}
-            className="shrink-0"
-            onClick={
-              editingExisting
-                ? close
-                : editor
-                  ? undefined
-                  : (event) => {
-                      event.preventDefault()
-                      open()
-                    }
-            }
+        <div className={showSearch ? undefined : 'flex items-start justify-between gap-4'}>
+          <div className="min-w-0 flex-1 p-4">
+            <h3 className="font-medium">
+              {strict ? t('Strict whitelist') : t('Trusted unsafe networks')}
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {strict
+                ? t('Edit allowed destinations and organize them into groups.')
+                : t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
+            </p>
+          </div>
+          <div
+            data-network-editor-actions
+            className={`flex items-center justify-end gap-3 ${showSearch ? 'px-4 pb-4' : 'shrink-0 py-4 pr-4'}`}
           >
-            {editor ? (
-              busy && !editingExisting ? (
-                t('Saving…')
-              ) : editingExisting ? (
-                t('Done')
+            {showSearch ? (
+              <Input
+                className="min-w-0 flex-1"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={t('Search hostname or group…')}
+                aria-label={t('Search network addresses')}
+              />
+            ) : null}
+            {editor && !editingExisting ? (
+              <Button data-discard-network-draft variant="ghost" disabled={busy} onClick={close}>
+                {t('Cancel')}
+              </Button>
+            ) : null}
+            <Button
+              ref={addButton}
+              type={editor && !editingExisting ? 'submit' : 'button'}
+              form={editor && !editingExisting ? `${id}-form` : undefined}
+              disabled={busy && !editingExisting}
+              className="shrink-0"
+              onClick={
+                editingExisting
+                  ? close
+                  : editor
+                    ? undefined
+                    : (event) => {
+                        event.preventDefault()
+                        open()
+                      }
+              }
+            >
+              {editor ? (
+                busy && !editingExisting ? (
+                  t('Saving…')
+                ) : editingExisting ? (
+                  t('Done')
+                ) : (
+                  t('Confirm')
+                )
               ) : (
-                t('Confirm')
-              )
-            ) : (
-              <>
-                <Plus className="size-4" aria-hidden="true" />
-                {strict ? t('Add rule') : t('Add address')}
-              </>
-            )}
-          </Button>
+                <>
+                  <Plus className="size-4" aria-hidden="true" />
+                  {strict ? t('Add rule') : t('Add address')}
+                </>
+              )}
+            </Button>
+          </div>
         </div>
         {editor ? (
           <form
