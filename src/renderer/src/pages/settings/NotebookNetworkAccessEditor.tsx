@@ -597,7 +597,7 @@ export function NotebookNetworkAccessEditor({
               {rows.map((rule) => (
                 <div key={rule.id} className={rowClass}>
                   <code
-                    className="min-w-0 flex-1 break-all"
+                    className="min-w-0 flex-1 break-all text-xs"
                     title={`${rule.protocol}://${rule.hostnamePattern}:${rule.port}`}
                   >
                     {rule.protocol}://{rule.hostnamePattern}:{rule.port}
@@ -626,7 +626,7 @@ export function NotebookNetworkAccessEditor({
               .filter((rule) => matches(rule.hostname))
               .map((rule) => (
                 <div key={`${rule.protocol}://${rule.hostname}:${rule.port}`} className={rowClass}>
-                  <code className="min-w-0 flex-1 break-all">
+                  <code className="min-w-0 flex-1 break-all text-xs">
                     {(rule.protocol ?? 'https').toUpperCase()}://
                     {formatNetworkHostname(rule.hostname)}:{rule.port}
                   </code>
@@ -663,7 +663,7 @@ export function NotebookNetworkAccessEditor({
               .map((grant) => (
                 <div key={grant.id} className={rowClass}>
                   <div className="min-w-0 flex-1">
-                    <code className="break-all">
+                    <code className="break-all text-xs">
                       {(grant.protocol ?? 'https').toUpperCase()}://
                       {formatNetworkHostname(grant.hostname)}:{grant.port}
                     </code>
