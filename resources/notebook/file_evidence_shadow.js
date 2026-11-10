@@ -1,6 +1,7 @@
 'use strict'
 
 const fs = require('node:fs')
+const { expandProjection, mapGenerations } = require('./file_evidence_codec.mjs')
 const { createHash, randomUUID } = require('node:crypto')
 const { dirname, join } = require('node:path')
 const { deflateRawSync, inflateRawSync } = require('node:zlib')
@@ -213,32 +214,11 @@ const append = (lane, capture, sidecar, serialized, io) => {
   }
   io.syncDirectory(root)
 }
-const mapGenerations = (sidecar, transform) => {
-  const result = { ...sidecar }
-  result.relations = sidecar.relations.map((r) =>
-    r.generation ? { ...r, generation: transform(r.generation) } : r
-  )
-  if (sidecar.predecessorGenerations)
-    result.predecessorGenerations = sidecar.predecessorGenerations.map(transform)
-  return result
-}
-
 const projectSidecar = (record, views, activityPrefix) => {
   const packed = JSON.parse(
     inflateRawSync(Buffer.from(record.projection, 'base64'), { maxOutputLength: maxBytes })
   )
-  const sidecar = mapGenerations(packed, ([view, index, generationId, capturedAt]) => {
-    const [relativePath, checksum, sizeBytes] = views[view][index]
-    return {
-      generationId,
-      relativePath,
-      checksum,
-      sizeBytes,
-      contentStorageKey: activityPrefix + '/blobs/sha256-' + checksum,
-      capturedAt
-    }
-  })
-  const bytes = Buffer.from(JSON.stringify(sidecar, null, 2) + '\n')
+  const bytes = expandProjection(packed, views, activityPrefix)
   if (digest(bytes) !== record.checksum)
     throw new Error('Shadow evidence projection checksum mismatch.')
   return bytes
@@ -260,11 +240,11 @@ const visitLanes = (project, visit) => {
 
 // Count private view and log bytes across all lanes sharing the pool budget. Never
 // descend through arbitrary entries in an evidence directory.
-const projectBytes = (pool) => {
+const projectBytes = (pool, includeUnactivated = false) => {
   const project = dirname(pool.path)
   if (
     !/^execution-file-evidence\/[^/]+\/blobs$/u.test(pool.storageKeyPrefix) ||
-    !metadata(join(project, projectMarker))
+    (!includeUnactivated && !metadata(join(project, projectMarker)))
   )
     return 0
   let bytes = 0

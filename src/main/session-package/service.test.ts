@@ -10,6 +10,9 @@ import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'no
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry, readPackageArchive } from './archive'
+import { readNotebookFileGenerations } from '../notebook/analysis-file-evidence'
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
+import { remapStorageKey } from './native-snapshot'
 import { ProjectRepository } from '../projects/repository'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -30,7 +33,8 @@ import {
   startWorkingFileObservation,
   completeWorkingFileEvidence,
   maintainWorkingFileEvidence,
-  deleteWorkingFileEvidenceProject
+  deleteWorkingFileEvidenceProject,
+  ensureWorkingFileEvidenceProject
 } from '../notebook/working-file-observer'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
@@ -142,6 +146,127 @@ it('round-trips a compaction activity and its conversation through a science pac
     expect(session?.conversationGraph?.activities).toHaveLength(1)
   } finally {
     await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
+it('activates project accounting for imported logs with no generation objects', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  const scope = { projectId: 'project-empty', sessionId: 'session-empty' }
+  await source.client.project.create({ data: { id: scope.projectId, name: 'Empty' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: scope.sessionId,
+    projectId: scope.projectId,
+    title: 'Empty',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const lane = createFrameNotebookLane(scope.projectId, scope.sessionId, 'root-frame-session-empty')
+  const document = await source.notebookRepository.loadOrCreate({
+    ...scope,
+    lane,
+    workspaceCwd: source.storageRoot
+  })
+  await mkdir(document.dataRoot, { recursive: true })
+  const prefix = 'execution-file-evidence/project-empty/session-empty'
+  const capture = await startWorkingFileObservation({
+    runId: 'run-empty',
+    dataRoot: document.dataRoot,
+    notebookSessionRoot: document.notebookSessionRoot,
+    fileEvidenceStorageRoot: source.storageRoot,
+    fileEvidenceRoot: join(source.storageRoot, prefix),
+    fileEvidenceStoragePrefix: prefix
+  })
+  const { fileEvidence } = await capture.finish()
+  expect(fileEvidence.generationCount).toBe(0)
+  await source.notebookRepository.appendRun({
+    ...scope,
+    lane,
+    run: {
+      runId: 'run-empty',
+      cellId: 'cell-empty',
+      source: 'user',
+      kernelKind: 'python',
+      status: 'completed',
+      script: 'pass',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      artifacts: [],
+      outputs: [],
+      workingFiles: [],
+      fileEvidence
+    }
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'empty.science')
+    await exporter.exportTo(scope, archive)
+    const evidenceRoot = join(target.storageRoot, 'execution-file-evidence')
+    const beforeCommit = vi
+      .spyOn(target.client, '$transaction')
+      .mockRejectedValueOnce(new Error('failed empty pool import'))
+    try {
+      await expect(importer.importFrom(archive)).rejects.toThrow('failed empty pool import')
+    } finally {
+      beforeCommit.mockRestore()
+    }
+    expect(await readdir(evidenceRoot)).toEqual([])
+    const interrupted = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client,
+      onSessionPublished: async () => {
+        throw new Error('interrupted after database commit')
+      }
+    })
+    const retries = join(target.storageRoot, 'session-package-log-retries')
+    try {
+      await expect(interrupted.importFrom(archive)).rejects.toBeInstanceOf(
+        PackageImportRecoveryRequiredError
+      )
+    } finally {
+      await interrupted.close()
+    }
+    const [allocation] = await readdir(retries)
+    const first = JSON.parse(await readFile(join(retries, allocation), 'utf8'))
+    await importer.recover()
+    expect(await readdir(retries)).toEqual([])
+    const { SessionProjectionRepository } = await import('../session-persistence/projection')
+    const sessions = new SessionRepository(
+      target.storageRoot,
+      {},
+      new SessionProjectionRepository(async () => target.client)
+    )
+    const prior = await sessions.loadSession(first.projectId, first.sessionId)
+    await importer.prepareSessionDeletion(prior!)
+    await sessions.deleteSession(first.projectId, first.sessionId)
+    await importer.recover({ collectDeletedPackages: true })
+    await expect(stat(join(evidenceRoot, first.projectId, first.sessionId))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(await stat(join(evidenceRoot, first.projectId, 'blobs'))).toBeDefined()
+    const imported = await importer.importFrom(archive)
+    expect(imported.sessionId).not.toBe(first.sessionId)
+    const project = join(target.storageRoot, 'execution-file-evidence', imported.projectId)
+    expect(await readdir(join(project, 'blobs'))).toEqual([])
+    expect((await stat(join(project, '.shadow-evidence-v1'))).size).toBe(0)
+    expect(
+      (await stat(join(project, imported.sessionId, '.shadow-evidence', 'log.jsonl'))).size
+    ).toBeGreaterThan(0)
+  } finally {
+    await exporter.close()
+    await importer.close()
   }
 })
 
@@ -2746,21 +2871,131 @@ it.each(['root', 'frame'] as const)(
       getClient: async () => target.client
     })
     const destination = laneKind === 'frame' ? 'existing-project' : undefined
-    if (destination)
+    if (destination) {
       await target.client.project.create({ data: { id: destination, name: 'Existing research' } })
+      await ensureWorkingFileEvidenceProject(target.storageRoot, destination)
+      const pool = join(target.storageRoot, 'execution-file-evidence', destination, 'blobs')
+      await mkdir(pool, { recursive: true })
+      const existing = 'sha256-' + sha256('pre-existing pool object')
+      await writeFile(join(pool, existing), 'pre-existing pool object')
+      const sourcePool = join(source.storageRoot, 'execution-file-evidence', 'project-1', 'blobs')
+      const candidate = (await readdir(sourcePool)).find((name) => name.startsWith('sha256-'))!
+      const invalid = join(pool, candidate)
+      await writeFile(invalid, 'corrupt duplicate content')
+      await expect(
+        importer.importFrom(archive, undefined, undefined, undefined, {
+          projectId: destination
+        })
+      ).rejects.toThrow(/blob (metadata|checksum) mismatch/i)
+      await expect(stat(join(pool, '..', '.shadow-evidence-v1'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await fsPromises.unlink(invalid)
+      const failPublication = vi
+        .spyOn(target.client, '$transaction')
+        .mockImplementationOnce(async () => {
+          expect((await readdir(pool)).length).toBeGreaterThan(1)
+          throw new Error('interrupted after pool publication')
+        })
+      try {
+        await expect(
+          importer.importFrom(archive, undefined, undefined, undefined, {
+            projectId: destination
+          })
+        ).rejects.toThrow('interrupted after pool publication')
+      } finally {
+        failPublication.mockRestore()
+      }
+      expect(await readdir(pool)).toEqual([existing])
+      expect(await readFile(join(pool, existing), 'utf8')).toBe('pre-existing pool object')
+    }
+    async function interruptDerivation(
+      operation: () => Promise<unknown>,
+      sourceRun: string
+    ): Promise<string> {
+      let interruptedLog: string | undefined
+      const write = fsPromises.writeFile
+      const fault = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (...args) => {
+        await Reflect.apply(write, fsPromises, args)
+        const path = String(args[0])
+        if (
+          path.endsWith(join('.shadow-evidence', 'log.jsonl')) &&
+          path.includes(sep + 'destination' + sep)
+        ) {
+          interruptedLog = await readFile(path, 'utf8')
+          const retries = join(target.storageRoot, 'session-package-log-retries')
+          const [name] = await readdir(retries)
+          const allocation = JSON.parse(await readFile(join(retries, name), 'utf8'))
+          expect(allocation.identities[sourceRun]).toEqual(expect.any(String))
+          throw new Error('interrupted after evidence derivation')
+        }
+      })
+      try {
+        await expect(operation()).rejects.toThrow('interrupted after evidence derivation')
+      } finally {
+        fault.mockRestore()
+      }
+      await importer.recover()
+      if (!interruptedLog) throw new Error('Expected an interrupted log')
+      return interruptedLog
+    }
+    const interruptedLog =
+      laneKind === 'root'
+        ? await interruptDerivation(() => importer.importFrom(archive), 'notebook-run-1')
+        : undefined
+    const denyLinks =
+      laneKind === 'frame'
+        ? vi
+            .spyOn(fsPromises, 'link')
+            .mockRejectedValue(Object.assign(new Error('links unavailable'), { code: 'EXDEV' }))
+        : undefined
     const imported = await importer.importFrom(archive, undefined, undefined, undefined, {
       projectId: destination
     })
     const history = await importer.readOrigin(imported)
+    const laneDirectory = join(
+      target.storageRoot,
+      'execution-file-evidence',
+      imported.projectId,
+      imported.sessionId,
+      '.shadow-evidence'
+    )
+    const localLog = await readFile(join(laneDirectory, 'log.jsonl'), 'utf8')
+    if (laneKind === 'root') expect(localLog).toBe(interruptedLog)
+    const expectedViews = (await readdir(join(laneDirectory, 'views'))).sort()
+    const firstRecord = JSON.parse(localLog.split('\n')[0].split('\t')[0])
+    expect(firstRecord.sources).toEqual([
+      {
+        activityId: 'notebook-run-1',
+        evidenceId: observed.fileEvidence.evidenceId,
+        checksum: observed.fileEvidence.checksum,
+        manifestChecksum: await fileChecksum(
+          join(
+            target.storageRoot,
+            'artifacts',
+            imported.projectId,
+            imported.sessionId,
+            '.session-package',
+            'source',
+            'manifest.json'
+          )
+        )
+      }
+    ])
     expect(history.identities['upload-version-2']).toEqual(expect.any(String))
     const forwardingSelection = vi.fn(
       async (files: import('../../shared/session-package').PackageSelectableFile[]) => {
         expect(
-          files.find((file) => file.storageKey === sourceVersion.contentStorageKey)
+          files.find(
+            (file) =>
+              file.storageKey ===
+              remapStorageKey(sourceVersion.contentStorageKey, history.identities)
+          )
         ).toMatchObject({ requiredForEvidence: true })
-        expect(files.find((file) => file.storageKey === secondKey)?.dependentFiles).toContain(
-          'Notebook notebook-run-2'
-        )
+        expect(
+          files.find((file) => file.storageKey === remapStorageKey(secondKey, history.identities))
+            ?.dependentFiles
+        ).toContain(`Notebook ${history.identities['notebook-run-2']}`)
         return []
       }
     )
@@ -2775,19 +3010,38 @@ it.each(['root', 'frame'] as const)(
     expect(importedEvidence.storageKey).toBe(
       `execution-file-evidence/${imported.projectId}/${imported.sessionId}/activity-${importedRun.runId}/evidence.json`
     )
-    const sidecarText = await readFile(
-      join(target.storageRoot, ...importedEvidence.storageKey!.split('/')),
-      'utf8'
-    )
+    const sidecarText = (
+      await readNativeEvidence(
+        target.storageRoot,
+        importedEvidence.storageKey!,
+        importedEvidence.checksum!,
+        64 * 1024 ** 2
+      )
+    ).toString()
     expect(sha256(sidecarText)).toBe(importedEvidence.checksum)
     const sidecar = JSON.parse(sidecarText)
+    expect(sidecar.relations.length).toBeGreaterThan(0)
+    expect(
+      await readNotebookFileGenerations(target.storageRoot, importedRun, { remaining: 1024 ** 2 })
+    ).toContainEqual({
+      path: sidecar.relations[0].relativePath,
+      checksum: sidecar.relations[0].generation.checksum,
+      relation: sidecar.relations[0].relation
+    })
     expect(sidecar.activityId).toBe(importedRun.runId)
     const importedRuns = await target.notebookRepository.readSessionRuns(
       imported.projectId,
       imported.sessionId
     )
     const secondSidecar = JSON.parse(
-      await readFile(join(target.storageRoot, importedRuns[1].fileEvidence!.storageKey!), 'utf8')
+      (
+        await readNativeEvidence(
+          target.storageRoot,
+          importedRuns[1].fileEvidence!.storageKey!,
+          importedRuns[1].fileEvidence!.checksum!,
+          64 * 1024 ** 2
+        )
+      ).toString()
     )
     const importedBlob = join(target.storageRoot, sidecar.relations[0].generation.contentStorageKey)
     const secondBlob = join(
@@ -2860,6 +3114,19 @@ it.each(['root', 'frame'] as const)(
       lineageBuilder: JSON.parse(sourceVersion.executionSnapshotJson!).analysisRevision
         .lineageBuilder
     })
+    await fsPromises.rm(archive)
+    await fsPromises.rm(
+      join(
+        target.storageRoot,
+        'artifacts',
+        imported.projectId,
+        imported.sessionId,
+        '.session-package',
+        'source'
+      ),
+      { recursive: true }
+    )
+    await importer.exportTo(imported, join(target.storageRoot, 'without-source.science'))
     const runs = await target.notebookRepository.readSessionRuns(
       imported.projectId,
       imported.sessionId
@@ -2924,6 +3191,10 @@ it.each(['root', 'frame'] as const)(
     expect(executorFactory).not.toHaveBeenCalled()
     // Fork uses the same complete evidence copier, but publishes writable ownership. Verify
     // Notebook history, upstream Upload inputs and derived execution evidence survive together.
+    const interruptedFork =
+      laneKind === 'frame'
+        ? await interruptDerivation(() => importer.fork(imported), importedRun.runId)
+        : undefined
     const forked = await importer.fork(imported)
     const forkHistory = await importer.readOrigin(forked)
     // Upstream inputs retain evidence ownership; the child may read but cannot rewrite them.
@@ -2931,7 +3202,7 @@ it.each(['root', 'frame'] as const)(
       files.inspect({
         projectId: forked.projectId,
         source: 'upload',
-        fileId: forkHistory.identities['upload-1']
+        fileId: forkHistory.identities[history.identities['upload-1']]
       })
     ).resolves.toMatchObject({ canEdit: false })
     const forkedRuns = await target.notebookRepository.readSessionRuns(
@@ -2941,14 +3212,27 @@ it.each(['root', 'frame'] as const)(
     expect(forkedRuns.map((run) => run.script)).toEqual(['draw_plot()', 'read_input()'])
     expect(forkedRuns[0].runId).not.toBe(importedRun.runId)
     const forkedEvidence = forkedRuns[0].fileEvidence!
-    const forkedEvidenceText = await readFile(
-      join(target.storageRoot, forkedEvidence.storageKey!),
-      'utf8'
-    )
+    const forkedEvidenceText = (
+      await readNativeEvidence(
+        target.storageRoot,
+        forkedEvidence.storageKey!,
+        forkedEvidence.checksum!,
+        64 * 1024 ** 2
+      )
+    ).toString()
     expect(sha256(forkedEvidenceText)).toBe(forkedEvidence.checksum)
     const forkedSidecars = await Promise.all(
       forkedRuns.map(async (run) =>
-        JSON.parse(await readFile(join(target.storageRoot, run.fileEvidence!.storageKey!), 'utf8'))
+        JSON.parse(
+          (
+            await readNativeEvidence(
+              target.storageRoot,
+              run.fileEvidence!.storageKey!,
+              run.fileEvidence!.checksum!,
+              64 * 1024 ** 2
+            )
+          ).toString()
+        )
       )
     )
     const forkedBlobs = forkedSidecars.map((item) =>
@@ -2959,7 +3243,30 @@ it.each(['root', 'frame'] as const)(
       dev: forkedBlobStats.dev,
       ino: forkedBlobStats.ino
     })
-    expect(forkedBlobStats.ino).not.toBe(importedBlobStats.ino)
+    const secondFork = await importer.fork(forked)
+    for (const [scope, hops] of [
+      [forked, 2],
+      [secondFork, 3]
+    ] as const) {
+      const dir = join(
+        target.storageRoot,
+        'execution-file-evidence',
+        scope.projectId,
+        scope.sessionId,
+        '.shadow-evidence'
+      )
+      expect((await readdir(join(dir, 'views'))).sort()).toEqual(expectedViews)
+      if (hops === 2 && interruptedFork)
+        expect(await readFile(join(dir, 'log.jsonl'), 'utf8')).toBe(interruptedFork)
+      const head = JSON.parse(
+        (await readFile(join(dir, 'log.jsonl'), 'utf8')).split('\n')[0].split('\t')[0]
+      )
+      expect(head.sources).toHaveLength(hops)
+      expect(head.sources[0]).toEqual(firstRecord.sources[0])
+    }
+    denyLinks?.mockRestore()
+    expect(forkedBlobs[0]).toBe(importedBlob)
+    expect(forkedBlobStats.ino).toBe(importedBlobStats.ino)
     await expect(
       files.adoptLegacyArtifact({
         projectId: forked.projectId,
@@ -3005,7 +3312,9 @@ it.each(['root', 'frame'] as const)(
     await expect(
       deleteWorkingFileEvidenceProject(target.storageRoot, imported.projectId)
     ).resolves.toBeUndefined()
-  }
+  },
+  // Real database publication, two forks and fault-injected retry share this fixture.
+  90_000
 )
 
 it.each(['checksum', 'sidecar'] as const)(

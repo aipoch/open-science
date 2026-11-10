@@ -39,7 +39,7 @@ import {
   inputEvidence,
   resolveRunEnvironmentCapture
 } from './provenance-execution-evidence'
-import { resolveStorageKey } from './provenance-storage'
+import { readNativeEvidence } from './execution-evidence-log'
 import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
 
 const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024
@@ -410,13 +410,12 @@ class ArtifactProvenanceProducerCapture {
     ): Promise<string | undefined> => {
       if (!hasImmutableExecutionFileEvidenceReference(summary)) return undefined
       try {
-        const path = resolveStorageKey(this.options.storageRoot, summary.storageKey)
-        const metadata = await stat(path)
-        if (!metadata.isFile() || metadata.size > remainingGraphSourceBytes) return undefined
-        const bytes = await readFile(path)
-        if (bytes.byteLength !== metadata.size || bytes.byteLength > remainingGraphSourceBytes) {
-          return undefined
-        }
+        const bytes = await readNativeEvidence(
+          this.options.storageRoot,
+          summary.storageKey,
+          summary.checksum,
+          remainingGraphSourceBytes
+        )
         remainingGraphSourceBytes -= bytes.byteLength
         return bytes.toString('utf8')
       } catch {

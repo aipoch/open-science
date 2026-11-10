@@ -265,15 +265,22 @@ type EvidenceWorkerCleanupRequest = EvidenceWorkerBlobPoolBinding & {
 }
 type EvidenceWorkerDeleteProjectRequest = {
   operation: 'delete-project'
+  importOperationId?: string
   expectedRootIdentity: FileIdentity
   projectName: string
 }
 type EvidenceWorkerEnsureProjectRequest = {
   operation: 'ensure-project'
+  importOperationId?: string
   expectedRootIdentity: FileIdentity
   projectName: string
 }
 type EvidenceWorkerRequest =
+  | (EvidenceWorkerBlobPoolBinding & {
+      operation: 'publish-imported-pool' | 'rollback-imported-pool'
+      expectedRootIdentity: FileIdentity
+      maxEvidenceBytes: number
+    })
   | EvidenceWorkerBeginRequest
   | EvidenceWorkerHistoryRequest
   | EvidenceWorkerEnsureCaptureRequest
@@ -313,6 +320,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
+  | { ok: true; poolPublished: boolean }
   | { ok: true; maintainedFiles: number }
 
 type ActiveEvidenceCapture = {
@@ -709,8 +717,39 @@ const runSerializedEvidenceWorker = async (
   } finally {
     if (request.operation === 'delete-project') ensuredEvidenceProjects.clear()
     release()
-    if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
+    void tail.then(() => {
+      if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
+    })
   }
+}
+
+// The import journal owns fresh lane directories. Only the project worker may add
+// verified content to an existing pool; rollback must never claim that directory.
+export async function updateImportedEvidencePool(
+  operation: 'publish-imported-pool' | 'rollback-imported-pool',
+  storageRoot: string,
+  projectId: string,
+  stagedRoot: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const publish = operation === 'publish-imported-pool'
+  if (publish) await ensureWorkingFileEvidenceProject(storageRoot, projectId)
+  const source = await secureEvidenceRoot(storageRoot, stagedRoot, false)
+  const prefix = EXECUTION_FILE_EVIDENCE_DIR + '/' + projectId + '/blobs'
+  const pool = await secureEvidenceRoot(storageRoot, join(storageRoot, prefix), publish)
+  await runSerializedEvidenceWorker(
+    runEvidenceWorker,
+    source.path,
+    {
+      operation,
+      expectedRootIdentity: source.identity,
+      blobRoot: pool.path,
+      expectedBlobRootIdentity: pool.identity,
+      blobStorageKeyPrefix: prefix,
+      maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes
+    },
+    signal
+  )
 }
 
 const evidenceReaders = new Map<string, number>()
@@ -791,7 +830,8 @@ export const maintainWorkingFileEvidence = (
 const ensureWorkingFileEvidenceProject = async (
   storageRoot: string,
   projectId: string,
-  worker: typeof runEvidenceWorker = runEvidenceWorker
+  worker: typeof runEvidenceWorker = runEvidenceWorker,
+  importOperationId?: string
 ): Promise<void> => {
   if (!SAFE_ACTIVITY_ID.test(projectId))
     throw new Error('Unsafe Execution file-evidence Project ID.')
@@ -805,6 +845,7 @@ const ensureWorkingFileEvidenceProject = async (
   if (existing) return existing
   const ensuring = runSerializedEvidenceWorker(worker, evidenceRoot.path, {
     operation: 'ensure-project',
+    importOperationId,
     expectedRootIdentity: evidenceRoot.identity,
     projectName: projectId
   }).then((result) => {
@@ -848,7 +889,8 @@ const projectEvidenceScope = (
 const deleteFileEvidenceProjectAtRoot = async (
   storageRoot: string,
   evidenceDirectory: string,
-  projectId: string
+  projectId: string,
+  importOperationId?: string
 ): Promise<void> => {
   const root = await secureEvidenceRoot(storageRoot, join(storageRoot, evidenceDirectory))
   const result = await runSerializedEvidenceWorker(
@@ -856,6 +898,7 @@ const deleteFileEvidenceProjectAtRoot = async (
     root.path,
     {
       operation: 'delete-project',
+      importOperationId,
       expectedRootIdentity: root.identity,
       projectName: projectId
     },
@@ -866,6 +909,13 @@ const deleteFileEvidenceProjectAtRoot = async (
     throw new Error('File-evidence Project deletion returned an invalid result.')
   }
 }
+
+export const releaseImportedEvidenceProject = (
+  storageRoot: string,
+  projectId: string,
+  operation: string
+): Promise<void> =>
+  deleteFileEvidenceProjectAtRoot(storageRoot, EXECUTION_FILE_EVIDENCE_DIR, projectId, operation)
 
 const deleteWorkingFileEvidenceProject = async (
   storageRoot: string,

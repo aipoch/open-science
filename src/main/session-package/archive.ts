@@ -14,7 +14,7 @@ import {
   type PackageProgress
 } from '../../shared/session-package'
 import { readFileWithinLimit } from '@aipoch/durable-files'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
+import { assertRegularStoragePath as assertPackageSourcePath } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'
 import { assertPackageCapacity, packageCapacityChecker } from './capacity'
@@ -44,17 +44,7 @@ const MAX_ENTRIES = 10004
 const ENTRY_PATH =
   /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
 
-// The configured root may itself use a platform alias (/var -> /private/var). Below that owned
-// root, reject links at every level so a Notebook directory cannot include unrelated local data.
-export const assertPackageSourcePath = async (root: string, key: string): Promise<void> => {
-  resolveStorageKey(root, key)
-  const segments = key.split('/')
-  for (let length = 1; length <= segments.length; length++) {
-    const info = await lstat(join(root, ...segments.slice(0, length)))
-    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile()))
-      throw new Error('Session package source contains a link or special file.')
-  }
-}
+export { assertPackageSourcePath }
 
 export const fileChecksum = async (path: string, signal?: AbortSignal): Promise<string> =>
   (await digestFileWithinBudget(path, PACKAGE_MAX_BYTES, signal)).checksum
