@@ -213,7 +213,27 @@ it('activates project accounting for imported logs with no generation objects', 
   try {
     const archive = join(source.storageRoot, 'empty.science')
     await exporter.exportTo(scope, archive)
+    const interrupted = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client,
+      onSessionPublished: async () => {
+        throw new Error('interrupted after database commit')
+      }
+    })
+    const retries = join(target.storageRoot, 'session-package-log-retries')
+    try {
+      await expect(interrupted.importFrom(archive)).rejects.toBeInstanceOf(
+        PackageImportRecoveryRequiredError
+      )
+    } finally {
+      await interrupted.close()
+    }
+    const [allocation] = await readdir(retries)
+    const first = JSON.parse(await readFile(join(retries, allocation), 'utf8'))
+    await importer.recover()
+    expect(await readdir(retries)).toEqual([])
     const imported = await importer.importFrom(archive)
+    expect(imported.sessionId).not.toBe(first.sessionId)
     const project = join(target.storageRoot, 'execution-file-evidence', imported.projectId)
     expect(await readdir(join(project, 'blobs'))).toEqual([])
     expect((await stat(join(project, '.shadow-evidence-v1'))).size).toBe(0)
@@ -2834,6 +2854,19 @@ it.each(['root', 'frame'] as const)(
       await mkdir(pool, { recursive: true })
       const existing = 'sha256-' + sha256('pre-existing pool object')
       await writeFile(join(pool, existing), 'pre-existing pool object')
+      const sourcePool = join(source.storageRoot, 'execution-file-evidence', 'project-1', 'blobs')
+      const candidate = (await readdir(sourcePool)).find((name) => name.startsWith('sha256-'))!
+      const invalid = join(pool, candidate)
+      await writeFile(invalid, 'corrupt duplicate content')
+      await expect(
+        importer.importFrom(archive, undefined, undefined, undefined, {
+          projectId: destination
+        })
+      ).rejects.toThrow(/blob (metadata|checksum) mismatch/i)
+      await expect(stat(join(pool, '..', '.shadow-evidence-v1'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await fsPromises.unlink(invalid)
       const failPublication = vi
         .spyOn(target.client, '$transaction')
         .mockImplementationOnce(async () => {

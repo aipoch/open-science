@@ -38,7 +38,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -163,6 +163,10 @@ const activeLogImports = new Set<string>()
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
     schemaVersion: z.literal(1),
+    retryPlanName: z
+      .string()
+      .regex(/^[a-f0-9]{64}\.json$/u)
+      .optional(),
     directories: z
       .array(
         z
@@ -1934,7 +1938,13 @@ export class SessionPackageService {
           directories.push({ scope, sessionId: child })
         }
       }
-      journal = importJournalSchema.parse({ schemaVersion: 1, projectId, sessionId, directories })
+      journal = importJournalSchema.parse({
+        schemaVersion: 1,
+        projectId,
+        sessionId,
+        directories,
+        ...(retryPlan ? { retryPlanName: basename(retryPlan.path) } : {})
+      })
       // SessionRepository owns its encoding; capacity uses known journal bytes and the shared
       // reserve, without scanning its private storage or serializing the Session twice.
       const journalContents = JSON.stringify(journal)
@@ -2088,7 +2098,6 @@ export class SessionPackageService {
     // Publication failures retain the journal; after publication retry only staging removal.
     try {
       await this.finishPublishedImport(configOperationRoot, operationId)
-      if (retryPlan) await rm(retryPlan.path, { force: true })
     } catch (error) {
       if (forkSource)
         throw new ForkRecoveryRequiredError(
@@ -2421,12 +2430,28 @@ export class SessionPackageService {
     const identity =
       knownIdentity ??
       importJournalSchema.parse(await readPackageJson(join(operationRoot, 'journal.json')))
+    const retirePlan = async (): Promise<void> => {
+      if (!identity.retryPlanName) return
+      const directory = join(this.configRoot, 'session-package-log-retries')
+      const path = join(directory, identity.retryPlanName)
+      const raw = await readPackageJson(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+      if (!raw) return
+      const plan = logIdentityPlanSchema.parse(raw)
+      // Recovery of an old operation must leave a later allocation for the same input intact.
+      if (plan.operationId !== operation) return
+      if (plan.projectId !== identity.projectId || plan.sessionId !== identity.sessionId)
+        throw new Error('Import retry allocation identity mismatch.')
+      await rm(path, { force: true })
+      await defaultFileDurability.syncDirectory(directory)
+    }
     const client = await this.options.getClient()
     const projected = await client.session.findUnique({ where: { id: identity.sessionId } })
     if (projected && projected.projectId !== identity.projectId)
       throw new Error('Import publication Session identity mismatch.')
     // A cleanup retry cannot revive a Session deleted after successful publication.
-    if (projected?.deletedAtMs != null) return
+    if (projected?.deletedAtMs != null) return retirePlan()
     const repository = new SessionRepository(
       this.configRoot,
       {},
@@ -2459,6 +2484,7 @@ export class SessionPackageService {
       : await work()
     // Adoption also enters the owner lane, so publish only after the complete write has released it.
     await publish(saved)
+    await retirePlan()
     // Keep the directory claims after publication. Startup package deletion requires these exact
     // import identities before it can retire any native scope, including retained upstream scopes.
   }

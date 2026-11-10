@@ -240,11 +240,11 @@ const visitLanes = (project, visit) => {
 
 // Count private view and log bytes across all lanes sharing the pool budget. Never
 // descend through arbitrary entries in an evidence directory.
-const projectBytes = (pool) => {
+const projectBytes = (pool, includeUnactivated = false) => {
   const project = dirname(pool.path)
   if (
     !/^execution-file-evidence\/[^/]+\/blobs$/u.test(pool.storageKeyPrefix) ||
-    !metadata(join(project, projectMarker))
+    (!includeUnactivated && !metadata(join(project, projectMarker)))
   )
     return 0
   let bytes = 0

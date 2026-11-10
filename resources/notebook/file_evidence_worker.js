@@ -792,7 +792,7 @@ const blobEntry = (name) => {
   const match = BLOB_DELETION_TOMBSTONE_NAME.exec(name)
   return match ? { blobName: match[1], quarantined: true } : undefined
 }
-const blobPoolBytes = (blobPool) => {
+const blobPoolBytes = (blobPool, includeUnactivated = false) => {
   let bytes = 0
   for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
     const parsed = blobEntry(entry.name)
@@ -815,7 +815,7 @@ const blobPoolBytes = (blobPool) => {
     }
     bytes += metadata.size
   }
-  return bytes + shadow.projectBytes(blobPool)
+  return bytes + shadow.projectBytes(blobPool, includeUnactivated)
 }
 const shadowIO = {
   readFile(path, limit) {
@@ -2372,11 +2372,12 @@ const rollbackImportedPool = (request) => {
   if (!sameIdentity(pool.identity, receipt.pool) || !Array.isArray(receipt.additions))
     throw new Error('Invalid import pool rollback receipt.')
   const marks = shadow.protectedBlobs(pool, shadowIO)
-  if (!marks.active) throw new Error('Missing imported evidence project marker.')
   for (const { name, fingerprint } of receipt.additions) {
     if (typeof name !== 'string' || !BLOB_NAME.test(name) || typeof fingerprint !== 'string')
       throw new Error('Invalid import pool rollback object.')
+    // Entries still staged never reached the pool (including interruption before activation).
     if (entryExists(name) || marks.live.has(name)) continue
+    if (!marks.active) throw new Error('Missing imported evidence project marker.')
     const path = join(pool.path, name)
     if (!entryExists(path)) continue
     const stat = lstatSync(path)
@@ -2395,13 +2396,11 @@ const publishImportedPool = (request) => {
   const pool = bindBlobPool(request)
   const project = dirname(pool.path)
   const marker = join(project, shadow.projectMarker)
-  if (!entryExists(marker)) {
-    writeExclusiveFile(marker, '')
-    syncDirectoryPath(project)
-  } else if (!lstatSync(marker).isFile() || lstatSync(marker).size !== 0) {
+  const activate = !entryExists(marker)
+  if (!activate && (!lstatSync(marker).isFile() || lstatSync(marker).size !== 0))
     throw new Error('Invalid evidence pool activation marker.')
-  }
-  let bytes = blobPoolBytes(pool)
+  // Staged lanes are already installed. Count them even before the project first opts in.
+  let bytes = blobPoolBytes(pool, true)
   if (!Number.isSafeInteger(request.maxEvidenceBytes) || bytes > request.maxEvidenceBytes)
     throw new Error('Imported execution evidence exceeds the project budget.')
   const additions = []
@@ -2426,6 +2425,10 @@ const publishImportedPool = (request) => {
   }
   // Persist ownership before the first move so a partial batch is recoverable after restart.
   if (additions.length) replaceJson(importPoolReceipt, { pool: pool.identity, additions })
+  if (activate) {
+    writeExclusiveFile(marker, '')
+    syncDirectoryPath(project)
+  }
   for (const { name } of additions) {
     const fd = openSync(name, constants.O_RDWR | constants.O_NOFOLLOW)
     try {
