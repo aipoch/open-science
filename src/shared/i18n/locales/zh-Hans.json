@@ -7662,6 +7662,7 @@
     "The cancellation attempt ended. The job is still being tracked.": "本次取消操作已结束。系统仍在跟踪任务。",
     "Unable to get job status": "无法获取任务状态",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "调度器没有此任务的可用结果。远程进程可能仍在运行。请先检查调度器和远程文件，再决定下一步操作。",
+    "Advanced agent options": "智能体高级选项",
     "Optimization prompt": "优化提示词",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "仅在优化当前项目中的提问时使用。留空则使用内置默认模板。",
     "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details.": "在保留用户原始意图和重要细节的前提下，将用户输入改写为清晰、具体且可执行的提示词。",

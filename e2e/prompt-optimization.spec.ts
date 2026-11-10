@@ -28,6 +28,7 @@ test('optimizes drafts without sending and persists project-specific templates',
   await homeNewProjectButton(page).click()
   let dialog = page.getByRole('dialog', { name: 'New project', exact: true })
   await dialog.getByLabel('Name', { exact: true }).fill('Prompt optimization')
+  await dialog.getByText('Advanced agent options', { exact: true }).click()
   await dialog
     .getByLabel('Optimization prompt', { exact: true })
     .fill('Preserve the scientific intent and use concise language.')
@@ -129,6 +130,7 @@ test('optimizes drafts without sending and persists project-specific templates',
   await page.locator('button[title="Prompt optimization"]').click()
   await page.getByRole('menuitem', { name: 'Project settings', exact: true }).click()
   dialog = page.getByRole('dialog', { name: 'Project Settings', exact: true })
+  await dialog.getByText('Advanced agent options', { exact: true }).click()
   await expect(dialog.getByLabel('Optimization prompt', { exact: true })).toHaveValue(
     'Preserve the scientific intent and use concise language.'
   )
@@ -142,6 +144,7 @@ test('optimizes drafts without sending and persists project-specific templates',
   await page.locator('button[title="Prompt optimization"]').click()
   await page.getByRole('menuitem', { name: 'Project settings', exact: true }).click()
   dialog = page.getByRole('dialog', { name: 'Project Settings', exact: true })
+  await dialog.getByText('Advanced agent options', { exact: true }).click()
   await expect(dialog.getByLabel('Optimization prompt', { exact: true })).toHaveValue(
     'Prefer structured research tasks.'
   )

@@ -7998,6 +7998,7 @@
     "The cancellation attempt ended. The job is still being tracked.": "Cette tentative d’annulation est terminée. Le suivi de la tâche continue.",
     "Unable to get job status": "Impossible d’obtenir l’état de la tâche",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "L’ordonnanceur ne dispose d’aucun résultat pour cette tâche. Le processus distant est peut-être toujours en cours. Vérifiez l’ordonnanceur et les fichiers distants avant de décider de la suite.",
+    "Advanced agent options": "Options avancées de l’agent",
     "Optimization prompt": "Prompt d’optimisation",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Utilisé uniquement pour optimiser une question dans ce projet. Laissez vide pour utiliser le modèle intégré par défaut.",
     "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details.": "Réécrivez la saisie de l’utilisateur sous la forme d’un prompt clair, précis et exploitable, tout en préservant son intention d’origine et les détails importants.",

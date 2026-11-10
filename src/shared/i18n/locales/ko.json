@@ -7660,6 +7660,7 @@
     "The cancellation attempt ended. The job is still being tracked.": "이번 취소 처리가 종료되었습니다. 작업은 계속 추적됩니다.",
     "Unable to get job status": "작업 상태를 가져올 수 없음",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "스케줄러에 이 작업의 사용 가능한 결과가 없습니다. 원격 프로세스가 계속 실행 중일 수 있습니다. 다음 작업을 결정하기 전에 스케줄러와 원격 파일을 확인하세요.",
+    "Advanced agent options": "에이전트 고급 옵션",
     "Optimization prompt": "최적화 프롬프트",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "이 프로젝트의 질문을 최적화할 때만 사용합니다. 비워 두면 기본 제공 기본 템플릿을 사용합니다.",
     "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details.": "사용자의 입력을 원래 의도와 중요한 세부 정보를 유지하면서 명확하고 구체적이며 실행 가능한 프롬프트로 다시 작성합니다.",

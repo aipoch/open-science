@@ -7662,6 +7662,7 @@
     "The cancellation attempt ended. The job is still being tracked.": "今回のキャンセル処理は終了しました。ジョブの追跡は継続しています。",
     "Unable to get job status": "ジョブの状態を取得できません",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "スケジューラーにこのジョブの利用可能な結果がありません。リモートプロセスはまだ実行中の可能性があります。次の操作を決める前に、スケジューラーとリモートファイルを確認してください。",
+    "Advanced agent options": "エージェントの詳細オプション",
     "Optimization prompt": "最適化プロンプト",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "このプロジェクトの質問を最適化するときだけ使用します。空欄にすると組み込みの既定テンプレートを使用します。",
     "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details.": "ユーザーの入力を、元の意図と重要な詳細を保ちながら、明確で具体的かつ実行可能なプロンプトに書き換えます。",

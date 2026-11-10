@@ -8142,6 +8142,7 @@
     "The cancellation attempt ended. The job is still being tracked.": "Эта попытка отмены завершена. Отслеживание задания продолжается.",
     "Unable to get job status": "Не удалось получить состояние задания",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "В планировщике нет доступного результата этого задания. Удалённый процесс может всё ещё выполняться. Проверьте планировщик и удалённые файлы, прежде чем решать, что делать дальше.",
+    "Advanced agent options": "Дополнительные параметры агента",
     "Optimization prompt": "Промпт оптимизации",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Используется только при оптимизации вопроса в этом проекте. Оставьте поле пустым, чтобы использовать встроенный шаблон по умолчанию.",
     "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details.": "Перепишите ввод пользователя в виде ясного, конкретного и практичного промпта, сохранив его исходный замысел и важные детали.",
