@@ -1,6 +1,5 @@
 {
   "ownerPaths": [
-    "src/main/artifacts/execution-evidence-log.ts",
     "src/main/artifacts/artifact-provenance-graph.test.ts",
     "src/main/artifacts/artifact-provenance-graph.ts",
     "src/main/artifacts/artifact-reproducibility-outputs.test.ts",
@@ -17,7 +16,6 @@
     "src/main/artifacts/reproducibility-source.ts"
   ],
   "interfacePaths": [
-    "src/main/artifacts/execution-evidence-log.ts",
     "src/main/artifacts/artifact-provenance-graph.ts",
     "src/main/artifacts/artifact-reproducibility-commands.ts",
     "src/main/artifacts/artifact-reproducibility-export.ts",
@@ -498,6 +496,5 @@
   },
   "consumerModules": ["session_persistence"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime",
-  "fullTestReason": "Portable evidence adds a persisted Notebook worker codec and log-backed reads for package import, provenance and dependency analysis. Run full CI until these cross-module filesystem contracts are reviewed."
+  "fallbackCapability": "main_runtime"
 }

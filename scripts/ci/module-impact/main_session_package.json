@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/artifacts/execution-evidence-log.ts",
     "src/main/session-package/archive.test.ts",
     "src/main/session-package/archive.ts",
     "src/main/session-package/capacity.ts",
@@ -77,6 +78,7 @@
     "src/main/session-package/research-films.test.ts"
   ],
   "interfacePaths": [
+    "src/main/artifacts/execution-evidence-log.ts",
     "src/main/session-package/desktop.ts",
     "src/main/session-package/file-open.ts",
     "src/main/session-package/inspection-worker-entry.ts",
@@ -136,6 +138,7 @@
       "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/analysis-file-evidence.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/index-fatal-errors.test.ts",
       "src/main/index-startup-failure.test.ts",

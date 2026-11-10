@@ -275,7 +275,7 @@ type EvidenceWorkerEnsureProjectRequest = {
 }
 type EvidenceWorkerRequest =
   | (EvidenceWorkerBlobPoolBinding & {
-      operation: 'publish-imported-pool'
+      operation: 'publish-imported-pool' | 'rollback-imported-pool'
       expectedRootIdentity: FileIdentity
       maxEvidenceBytes: number
     })
@@ -318,7 +318,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
-  | { ok: true; poolPublished: true }
+  | { ok: true; poolPublished: boolean }
   | { ok: true; maintainedFiles: number }
 
 type ActiveEvidenceCapture = {
@@ -723,21 +723,23 @@ const runSerializedEvidenceWorker = async (
 
 // The import journal owns fresh lane directories. Only the project worker may add
 // verified content to an existing pool; rollback must never claim that directory.
-export async function publishImportedEvidencePool(
+export async function updateImportedEvidencePool(
+  operation: 'publish-imported-pool' | 'rollback-imported-pool',
   storageRoot: string,
   projectId: string,
   stagedRoot: string,
   signal?: AbortSignal
 ): Promise<void> {
-  await ensureWorkingFileEvidenceProject(storageRoot, projectId)
+  const publish = operation === 'publish-imported-pool'
+  if (publish) await ensureWorkingFileEvidenceProject(storageRoot, projectId)
   const source = await secureEvidenceRoot(storageRoot, stagedRoot, false)
   const prefix = EXECUTION_FILE_EVIDENCE_DIR + '/' + projectId + '/blobs'
-  const pool = await secureEvidenceRoot(storageRoot, join(storageRoot, prefix))
+  const pool = await secureEvidenceRoot(storageRoot, join(storageRoot, prefix), publish)
   await runSerializedEvidenceWorker(
     runEvidenceWorker,
     source.path,
     {
-      operation: 'publish-imported-pool',
+      operation,
       expectedRootIdentity: source.identity,
       blobRoot: pool.path,
       expectedBlobRootIdentity: pool.identity,

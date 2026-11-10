@@ -33,7 +33,8 @@ import {
   startWorkingFileObservation,
   completeWorkingFileEvidence,
   maintainWorkingFileEvidence,
-  deleteWorkingFileEvidenceProject
+  deleteWorkingFileEvidenceProject,
+  ensureWorkingFileEvidenceProject
 } from '../notebook/working-file-observer'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
@@ -2826,8 +2827,31 @@ it.each(['root', 'frame'] as const)(
       getClient: async () => target.client
     })
     const destination = laneKind === 'frame' ? 'existing-project' : undefined
-    if (destination)
+    if (destination) {
       await target.client.project.create({ data: { id: destination, name: 'Existing research' } })
+      await ensureWorkingFileEvidenceProject(target.storageRoot, destination)
+      const pool = join(target.storageRoot, 'execution-file-evidence', destination, 'blobs')
+      await mkdir(pool, { recursive: true })
+      const existing = 'sha256-' + sha256('pre-existing pool object')
+      await writeFile(join(pool, existing), 'pre-existing pool object')
+      const failPublication = vi
+        .spyOn(target.client, '$transaction')
+        .mockImplementationOnce(async () => {
+          expect((await readdir(pool)).length).toBeGreaterThan(1)
+          throw new Error('interrupted after pool publication')
+        })
+      try {
+        await expect(
+          importer.importFrom(archive, undefined, undefined, undefined, {
+            projectId: destination
+          })
+        ).rejects.toThrow('interrupted after pool publication')
+      } finally {
+        failPublication.mockRestore()
+      }
+      expect(await readdir(pool)).toEqual([existing])
+      expect(await readFile(join(pool, existing), 'utf8')).toBe('pre-existing pool object')
+    }
     async function interruptDerivation(
       operation: () => Promise<unknown>,
       sourceRun: string

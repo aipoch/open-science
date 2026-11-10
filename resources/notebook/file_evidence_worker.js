@@ -2364,6 +2364,32 @@ const deleteProject = (request) => {
   return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
+const importPoolReceipt = '.import-pool-receipt.json'
+const rollbackImportedPool = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const receipt = readJson(importPoolReceipt)
+  if (!sameIdentity(pool.identity, receipt.pool) || !Array.isArray(receipt.additions))
+    throw new Error('Invalid import pool rollback receipt.')
+  const marks = shadow.protectedBlobs(pool, shadowIO)
+  if (!marks.active) throw new Error('Missing imported evidence project marker.')
+  for (const { name, fingerprint } of receipt.additions) {
+    if (typeof name !== 'string' || !BLOB_NAME.test(name) || typeof fingerprint !== 'string')
+      throw new Error('Invalid import pool rollback object.')
+    if (entryExists(name) || marks.live.has(name)) continue
+    const path = join(pool.path, name)
+    if (!entryExists(path)) continue
+    const stat = lstatSync(path)
+    // Rename back only this operation's exact inode, unless another lane or legacy link owns it.
+    if (stat.isFile() && stat.nlink === 1 && quarantineFingerprint(stat) === fingerprint) {
+      renameSync(path, name)
+    }
+  }
+  syncDirectoryPath(pool.path)
+  syncDirectory()
+  return { ok: true, poolPublished: false }
+}
+
 const publishImportedPool = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const pool = bindBlobPool(request)
@@ -2392,10 +2418,15 @@ const publishImportedPool = (request) => {
       if (bytes > request.maxEvidenceBytes)
         throw new Error('Imported execution evidence exceeds the project budget.')
       verifyBlob(entry.name, size, entry.name.slice(7))
-      additions.push(entry.name)
+      additions.push({
+        name: entry.name,
+        fingerprint: quarantineFingerprint(lstatSync(entry.name))
+      })
     }
   }
-  for (const name of additions) {
+  // Persist ownership before the first move so a partial batch is recoverable after restart.
+  if (additions.length) replaceJson(importPoolReceipt, { pool: pool.identity, additions })
+  for (const { name } of additions) {
     const fd = openSync(name, constants.O_RDWR | constants.O_NOFOLLOW)
     try {
       fsyncSync(fd)
@@ -2410,6 +2441,7 @@ const publishImportedPool = (request) => {
 
 const operationHandlers = new Map([
   ['publish-imported-pool', publishImportedPool],
+  ['rollback-imported-pool', rollbackImportedPool],
   ['compact-history', compactHistory],
   ['begin', begin],
   ['ensure-capture', ensureCapture],

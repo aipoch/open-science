@@ -12,7 +12,7 @@ import type {
 } from '../../shared/research-video-presentation'
 import {
   withWorkingFileEvidenceRead,
-  publishImportedEvidencePool
+  updateImportedEvidencePool
 } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import {
@@ -1981,7 +1981,8 @@ export class SessionPackageService {
           if (error.code !== 'ENOENT') throw error
         })
       ) {
-        await publishImportedEvidencePool(
+        await updateImportedEvidencePool(
+          'publish-imported-pool',
           this.options.storageRoot,
           projectId,
           stagedPool,
@@ -2396,6 +2397,18 @@ export class SessionPackageService {
         )
         await rm(directory, { recursive: true, force: true })
         await defaultFileDurability.syncDirectory(parent)
+      }
+      const root = this.options.storageRoot
+      const stage = join(root, 'session-package-imports', operation)
+      const pool = join(stage, 'destination', 'execution-file-evidence', journal.projectId, 'blobs')
+      if (await this.ownsDirectory(stage, operation)) {
+        const receipt = await lstat(join(pool, '.import-pool-receipt.json')).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+          }
+        )
+        if (receipt)
+          await updateImportedEvidencePool('rollback-imported-pool', root, journal.projectId, pool)
       }
     })
   }
