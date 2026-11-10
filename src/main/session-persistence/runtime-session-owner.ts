@@ -32,10 +32,9 @@ const DEFAULT_FLUSH_INTERVAL_MS = 2_000
 const MAX_RETAINED_TURNS = 500
 const MAX_RETAINED_PUBLICATIONS = 500
 export const TERMINAL_COMMIT_MAX_ATTEMPTS = 3
-export const TERMINAL_COMMIT_RETRY_BUDGET_MS = 2_000
+export const TERMINAL_COMMIT_RETRY_BUDGET_MS = 30_000
 export const TERMINAL_COMMIT_INITIAL_BUDGET_MS = 500
-export const TERMINAL_ADMISSION_WAIT_BUDGET_MS =
-  TERMINAL_COMMIT_INITIAL_BUDGET_MS + TERMINAL_COMMIT_RETRY_BUDGET_MS
+export const TERMINAL_ADMISSION_WAIT_BUDGET_MS = 2_500
 export const TERMINAL_CONTINUATION_WAIT_BUDGET_MS = 30_000
 
 export type RuntimeSessionTurnScope = RuntimeSessionScope & {
@@ -101,7 +100,8 @@ type RuntimeSessionOwnerDependencies = {
   loadSession(scope: RuntimeSessionTurnScope): Promise<PersistedChatSession | undefined>
   mutateSession(
     scope: RuntimeSessionTurnScope,
-    mutate: (latest: PersistedChatSession) => PersistedChatSession
+    mutate: (latest: PersistedChatSession) => PersistedChatSession,
+    onJsonCommitted?: () => void
   ): Promise<PersistedChatSession>
   finalizeArtifacts(request: { claimId: string; messageId: string }): Promise<ArtifactFile[]>
   onCommitted?(session: PersistedChatSession): void
@@ -126,6 +126,7 @@ type Turn = {
   tail: Promise<void>
   cancelScheduledFlush?: () => void
   terminalObserved: boolean
+  terminalReceipt?: { eventId: string; promise: Promise<void>; resolve: () => void }
   replayConsumptionPending: boolean
   approvedHandoffFailures?: Map<string, () => boolean>
   approvedHandoffContinuation?: () => boolean
@@ -940,6 +941,8 @@ export class RuntimeSessionOwner {
         runtimeSegmentId: turn.scope.runtimeSegmentId
       }
     }
+    const { promise, resolve } = Promise.withResolvers<void>()
+    turn.terminalReceipt = { eventId: event.id, promise, resolve }
     this.accept(event)
     try {
       await this.flushTerminalWithin(turn, TERMINAL_COMMIT_INITIAL_BUDGET_MS, event.id)
@@ -1052,7 +1055,11 @@ export class RuntimeSessionOwner {
   private async flushTerminalWithin(turn: Turn, budget: number, eventId: string): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
-    const flushed = this.flush(turn.scope.sessionId, turn.scope.promptMessageId)
+    const flush = this.flush(turn.scope.sessionId, turn.scope.promptMessageId)
+    // The lane continues indexing and may drain more events. Only this terminal event's
+    // authoritative commit can acknowledge it before the full flush completes.
+    const receipt = turn.terminalReceipt
+    const flushed = receipt?.eventId === eventId ? Promise.race([receipt.promise, flush]) : flush
     // A write that outlives its budget may still commit. Judge it by its eventual result so a slow
     // success publishes the real terminal instead of leaving only the uncommitted live release.
     void flushed.then(
@@ -1092,11 +1099,7 @@ export class RuntimeSessionOwner {
     const turn = this.turns.get(turnKey(sessionId, promptMessageId))
     const commit = turn?.terminalCommit
     if (!turn || !commit || turn.scope.executionId !== executionId) return
-    await this.flushTerminalWithin(
-      turn,
-      TERMINAL_COMMIT_INITIAL_BUDGET_MS + TERMINAL_COMMIT_RETRY_BUDGET_MS,
-      commit.event.id
-    )
+    await this.flushTerminalWithin(turn, TERMINAL_ADMISSION_WAIT_BUDGET_MS, commit.event.id)
     if (turn.terminalCommit !== commit) return
     turn.terminalCommit = undefined
     this.publishTerminal({ ...commit.event, publicationOwner: 'main' }, commit.publish)
@@ -1205,7 +1208,7 @@ export class RuntimeSessionOwner {
     while (turn.pending.length > 0 || turn.replayConsumptionPending) {
       const batch = turn.pending.slice()
       const consumeReplay = turn.replayConsumptionPending
-      committed = await this.mutateSession(turn.scope, 'flush-events', (latest) => {
+      const applyBatch = (latest: PersistedChatSession): PersistedChatSession => {
         if (this.turns.get(turnKey(turn.scope.sessionId, turn.scope.promptMessageId)) !== turn)
           return latest
         // Admission may have included this batch while an older physical write was waiting for
@@ -1261,7 +1264,11 @@ export class RuntimeSessionOwner {
           next.updatedAt = Math.max(next.updatedAt, this.now())
         }
         return next
-      })
+      }
+      const receipt = turn.terminalReceipt
+      const acknowledge =
+        receipt && batch.some(({ id }) => id === receipt.eventId) ? receipt.resolve : undefined
+      committed = await this.mutateSession(turn.scope, 'flush-events', applyBatch, acknowledge)
       const committedIds = new Set(batch.map(({ id }) => id))
       turn.pending = turn.pending.filter(({ id }) => !committedIds.has(id))
       for (const id of committedIds) turn.approvedHandoffFailures?.delete(id)
@@ -1386,10 +1393,11 @@ export class RuntimeSessionOwner {
     scope: RuntimeSessionTurnScope,
     phase:
       'begin-turn' | 'prepare-permission' | 'flush-events' | 'stage-artifacts' | 'attach-artifacts',
-    mutate: (latest: PersistedChatSession) => PersistedChatSession
+    mutate: (latest: PersistedChatSession) => PersistedChatSession,
+    onJsonCommitted?: () => void
   ): Promise<PersistedChatSession> {
     try {
-      return await this.dependencies.mutateSession(scope, mutate)
+      return await this.dependencies.mutateSession(scope, mutate, onJsonCommitted)
     } catch (error) {
       try {
         log.warn('Runtime Session mutation failed', {

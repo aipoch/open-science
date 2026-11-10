@@ -109,7 +109,8 @@ type SessionStateRepository = {
   retainRuntimeSessionState?(projectId: string, sessionId: string, retained: boolean): void
   saveSession(
     session: PersistedChatSession,
-    expectedRevision?: number
+    expectedRevision?: number,
+    onJsonCommitted?: (session: PersistedChatSession) => void
   ): Promise<PersistedChatSession>
 }
 
@@ -928,7 +929,8 @@ class SessionPersistenceStateOwner {
 
   async mutateRuntimeSession(
     scope: { projectId: string; sessionId: string },
-    mutate: (session: PersistedChatSession) => PersistedChatSession
+    mutate: (session: PersistedChatSession) => PersistedChatSession,
+    onJsonCommitted?: () => void
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(scope.projectId, scope.sessionId, 'mutate')
     const loaded = await loadAuthority(this.options.repository, scope.projectId, scope.sessionId)
@@ -974,19 +976,27 @@ class SessionPersistenceStateOwner {
     )
     if (validation.status === 'conflict') throw validation.error
     let persisted: PersistedChatSession
+    let recorded = false
+    const recordJsonCommit = (session: PersistedChatSession): void => {
+      this.recordSession(session)
+      this.invalidateBindingTopology(scope.projectId, scope.sessionId)
+      recorded = true
+      onJsonCommitted?.()
+    }
     try {
-      persisted = await saveSessionWithRevision(
-        this.options.repository,
-        candidate,
-        previous.revision ?? 0
-      )
+      persisted = onJsonCommitted
+        ? await this.options.repository.saveSession(
+            candidate,
+            previous.revision ?? 0,
+            recordJsonCommit
+          )
+        : await saveSessionWithRevision(this.options.repository, candidate, previous.revision ?? 0)
     } catch (error) {
       if (!(error instanceof SessionProjectionAfterCommitError)) throw error
       persisted = error.committedSession
       this.markMetadataIncomplete()
     }
-    this.recordSession(persisted)
-    this.invalidateBindingTopology(scope.projectId, scope.sessionId)
+    if (!recorded) recordJsonCommit(persisted)
     // JSON is the authoritative commit. Derived capture/index/publication failure must not report
     // that this mutation never happened or invite another execution of the provider work.
     try {
