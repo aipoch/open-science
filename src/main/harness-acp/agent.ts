@@ -687,7 +687,6 @@ export function createHarnessAcpAgent(directory: string): {
                 if (
                   error instanceof ResponsesError &&
                   [
-                    'http',
                     'insufficient_quota',
                     'rate_limit_exceeded',
                     'model_not_found',
@@ -696,7 +695,7 @@ export function createHarnessAcpAgent(directory: string): {
                 )
                   throw new acp.RequestError(-32603, error.message, {
                     errorName: 'APIError',
-                    errorKind: error.code === 'http' ? 'provider-error' : error.code,
+                    errorKind: error.code,
                     ...(error.status === undefined ? {} : { status: error.status })
                   })
                 throw error

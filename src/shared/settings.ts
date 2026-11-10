@@ -230,7 +230,11 @@ export const requiresChatCompletionsBridge = (
 // Codex subscription providers use either the native Codex runtime or the built-in Agent's
 // host-owned subscription bridge. Enforced both in the renderer gates and main-side (preflight + spawn).
 export const isProviderUsableByFramework = (
-  provider: { apiEndpoints?: readonly ModelProtocol[]; type: ProviderType },
+  provider: {
+    apiEndpoints?: readonly ModelProtocol[]
+    type: ProviderType
+    codexHarnessAvailable?: boolean
+  },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
   if (
@@ -240,7 +244,10 @@ export const isProviderUsableByFramework = (
   )
     return false
   if (isCodexSubscriptionProvider(provider.type))
-    return framework.id === 'codex' || framework.id === 'open-science-agent'
+    return (
+      framework.id === 'codex' ||
+      (framework.id === 'open-science-agent' && provider.codexHarnessAvailable !== false)
+    )
   // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
   // claude-code knows how to read; OpenCode receives neither an endpoint nor a token.
   if (isClaudeSubscriptionProvider(provider.type) && framework.id !== 'claude-code') return false
@@ -351,6 +358,8 @@ export type ProviderView = {
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
   codexTransport?: CodexSubscriptionTransport
+  // Host-derived capability of the built-in Agent; native Codex remains independently available.
+  codexHarnessAvailable?: boolean
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
   // treat as ['messages'] (every legacy provider).

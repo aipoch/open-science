@@ -133,7 +133,7 @@ export const buildConfiguredModelCatalog = (
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
     const frameworkCompatible = isProviderUsableByFramework(
-      { apiEndpoints, type: provider.type },
+      { apiEndpoints, type: provider.type, codexHarnessAvailable: provider.codexHarnessAvailable },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
     // The probe records its target against the provider's own best route when the framework cannot

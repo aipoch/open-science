@@ -86,7 +86,8 @@ type ProviderAccountsModuleOptions = {
   allocateSettingsIdSequence: () => number
   resolveCodexExecutable: (
     adapterPath: string | undefined,
-    nativePath: string | undefined
+    nativePath: string | undefined,
+    prepareForHarness?: boolean
   ) => Promise<string>
   resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   runClaudeSubscriptionProbe: (
@@ -174,6 +175,7 @@ class ProviderAccountsModule {
   async completeBootstrapCodex(): Promise<string> {
     return this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const provider = settings.providers.find(({ id }) => id === identity.id)
       if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
@@ -773,6 +775,14 @@ class ProviderAccountsModule {
     ) {
       return { ...result, applied: false }
     }
+    if (result.applied === false) return result
+    // Harness capability is projected per framework, never persisted as an account-wide failure.
+    if (
+      framework.id === 'open-science-agent' &&
+      isCodexSubscriptionProvider(resolved.provider.type) &&
+      result.frameworkIncompatible
+    )
+      return result
     if (
       healthPolicy === 'definitive-failures' &&
       (result.ok ||
@@ -874,9 +884,16 @@ class ProviderAccountsModule {
     return this.runtimeProjection.toProviderView(provider, activeModel)
   }
 
-  async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
+  async isProviderKeyUsable(
+    provider: StoredProvider,
+    frameworkId?: AgentFrameworkId
+  ): Promise<boolean> {
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
-    return this.auth.isProviderKeyUsable(provider)
+    if (!isCodexSubscriptionProvider(provider.type)) return this.auth.isProviderKeyUsable(provider)
+    return this.auth.isProviderKeyUsable(
+      provider,
+      frameworkId ?? (await this.repository.getSettings()).agentFrameworkId
+    )
   }
 
   resolveActiveModel(provider: StoredProvider | undefined, requested?: string): string | undefined {

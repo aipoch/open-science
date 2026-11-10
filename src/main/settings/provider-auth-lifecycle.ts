@@ -1,6 +1,10 @@
 import { isDeepStrictEqual } from 'node:util'
 
-import type { UpsertProviderRequest, ValidateProviderResult } from '../../shared/settings'
+import type {
+  AgentFrameworkId,
+  UpsertProviderRequest,
+  ValidateProviderResult
+} from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
@@ -34,7 +38,12 @@ import {
   type ClaudeSharedAuthControllerPort,
   type ClaudeSharedAuthStatus
 } from './claude-shared-auth'
-import { readCodexHarnessConnection } from './codex-harness-auth'
+import {
+  CodexHarnessCompatibilityError,
+  inspectCodexHarnessAvailability,
+  readCodexHarnessConnection,
+  type CodexHarnessAuthOptions
+} from './codex-harness-auth'
 import { encryptKey, isCredentialStorageAvailable, maskKey, tryDecryptKey } from './crypto'
 import { getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import {
@@ -57,7 +66,8 @@ type ProviderAuthLifecycleOwnerOptions = {
   userCodexDir: string
   resolveCodexExecutable: (
     adapterPath: string | undefined,
-    nativePath: string | undefined
+    nativePath: string | undefined,
+    prepareForHarness?: boolean
   ) => Promise<string>
   resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   runClaudeSubscriptionProbe: (
@@ -95,12 +105,15 @@ class ProviderAuthLifecycleOwner {
           const provider = settings.providers.find((candidate) =>
             isCodexSubscriptionProvider(candidate.type)
           )
+          const adapterPath = await options.resolveCodexExecutable(
+            settings.codex?.resolvedPath,
+            settings.codex?.nativePath
+          )
+          // Preparing authentication may have installed the paired native runtime.
+          const current = await this.repository.getSettings()
           return openCodexAuthSession({
-            adapterPath: await options.resolveCodexExecutable(
-              settings.codex?.resolvedPath,
-              settings.codex?.nativePath
-            ),
-            nativePath: settings.codex?.nativePath,
+            adapterPath,
+            nativePath: current.codex?.nativePath,
             mode,
             storageRoot: options.storageRoot,
             transport: resolveEffectiveCodexSubscriptionTransport(provider ?? {}),
@@ -182,12 +195,7 @@ class ProviderAuthLifecycleOwner {
           throw new Error('The Codex subscription connection is no longer available.')
         }
         const connection = await readCodexHarnessConnection(
-          {
-            storageRoot: this.options.storageRoot,
-            nativePath: settings.codex?.nativePath,
-            transport: resolveEffectiveCodexSubscriptionTransport(provider),
-            resolveProxyEnvironment: this.options.resolveCodexProxyEnvironment
-          },
+          this.codexHarnessOptions(provider, settings),
           signal
         )
         signal.throwIfAborted()
@@ -200,6 +208,27 @@ class ProviderAuthLifecycleOwner {
         boundAccount = connection.accountId
         return connection
       })
+    }
+  }
+
+  private codexHarnessOptions(
+    provider: Pick<StoredProvider, 'codexTransport' | 'codexAutoUseHttps'>,
+    settings: StoredSettings
+  ): CodexHarnessAuthOptions {
+    return {
+      storageRoot: this.options.storageRoot,
+      nativePath: settings.codex?.nativePath,
+      transport: resolveEffectiveCodexSubscriptionTransport(provider),
+      resolveProxyEnvironment: this.options.resolveCodexProxyEnvironment,
+      resolveNativePath: async () => {
+        const current = await this.repository.getSettings()
+        await this.options.resolveCodexExecutable(
+          current.codex?.resolvedPath,
+          current.codex?.nativePath,
+          true
+        )
+        return (await this.repository.getSettings()).codex?.nativePath
+      }
     }
   }
 
@@ -234,12 +263,12 @@ class ProviderAuthLifecycleOwner {
     if (isCodexSubscriptionProvider(request.type)) this.codexIsolatedLoginGeneration += 1
     const reimport = request.type === 'codex-shared' && request.reimportCodexAuthentication === true
     if (request.type === 'codex-shared' && (existing?.codexAuthMode !== 'imported' || reimport)) {
-      this.revokeCodexHarnessCredentials()
       await this.codexAuth.cancelLogin()
       await importCodexAuthentication(
         this.options.userCodexDir,
         codexSubscriptionStorageDir(this.options.storageRoot)
       )
+      this.revokeCodexHarnessCredentials()
       if (reimport) onAuthenticationReimported()
     } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
       this.revokeCodexHarnessCredentials()
@@ -322,6 +351,17 @@ class ProviderAuthLifecycleOwner {
     if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
       return { ...result, applied: false }
     }
+
+    if (result.ok && settings.agentFrameworkId === 'open-science-agent')
+      result = (await this.validateProviderAuth(
+        this.options.resolveProvider(provider),
+        settings,
+        provider
+      ))!
+
+    if (result.applied === false) return result
+    if (result.frameworkIncompatible)
+      return { ...result, applied: this.codexIsolatedLoginGeneration === loginGeneration }
 
     const applied = await this.serializeAccountMutation(() => {
       if (this.codexIsolatedLoginGeneration !== loginGeneration) return Promise.resolve(false)
@@ -601,6 +641,36 @@ class ProviderAuthLifecycleOwner {
     storedProvider?: StoredProvider
   ): Promise<ValidateProviderResult | undefined> {
     if (isCodexSubscriptionProvider(provider.type)) {
+      if (settings.agentFrameworkId === 'open-science-agent') {
+        const generation = this.codexHarnessCredentials.signal
+        const interrupted: ValidateProviderResult = {
+          ok: false,
+          category: 'unknown',
+          applied: false,
+          message: 'The Codex subscription connection is no longer available.'
+        }
+        try {
+          const checked = await this.serializeAccountMutation(async () => {
+            generation.throwIfAborted()
+            if (this.codexSignInPending || this.codexCredentialHolds > 0) return false
+            await readCodexHarnessConnection(
+              this.codexHarnessOptions(provider, settings),
+              generation
+            )
+            return true
+          })
+          return checked ? { ok: true, category: 'ok' } : interrupted
+        } catch (error) {
+          if (generation.aborted) return interrupted
+          const incompatible = error instanceof CodexHarnessCompatibilityError
+          return {
+            ok: false,
+            category: incompatible ? 'incompatible' : 'auth',
+            ...(incompatible ? { frameworkIncompatible: true } : {}),
+            message: (error as Error).message
+          }
+        }
+      }
       return this.codexAuthValidationResult(
         await this.codexAuth.getStatus(
           resolveCodexSubscriptionType(provider) === 'codex-shared' ? 'shared' : 'isolated'
@@ -615,8 +685,16 @@ class ProviderAuthLifecycleOwner {
     return undefined
   }
 
-  async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
+  async isProviderKeyUsable(
+    provider: StoredProvider,
+    frameworkId?: AgentFrameworkId
+  ): Promise<boolean> {
     if (isCodexSubscriptionProvider(provider.type)) {
+      if (frameworkId === 'open-science-agent') {
+        if (this.codexSignInPending || this.codexCredentialHolds > 0) return false
+        const settings = await this.repository.getSettings()
+        return inspectCodexHarnessAvailability(this.codexHarnessOptions(provider, settings))
+      }
       return (
         (await inspectAppOwnedCodexAuthentication(this.options.storageRoot)).state === 'present'
       )

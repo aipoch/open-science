@@ -268,7 +268,8 @@ export class ProtocolForwardingBridge {
             'authentication_error',
             'model_not_found',
             'rate_limit_exceeded',
-            'insufficient_quota'
+            'insufficient_quota',
+            'context_length_exceeded'
           ]
           if (allowed.includes(error?.code)) code = error.code
         } catch {

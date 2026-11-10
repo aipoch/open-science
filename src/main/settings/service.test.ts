@@ -431,9 +431,27 @@ describe('SettingsService: harness session ownership', () => {
         if (mode === 'imported') await storeLogin(userCodexDir)
         await service.upsertProvider({ type })
         if (mode === 'isolated') expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        else {
+          // A fresh imported live token needs no ACP adapter or native runtime for validation.
+          expect(
+            (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+          ).toBe(true)
+          expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(true)
+        }
         await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
         const first = await open()
         expect(await (await first()).text()).toContain('response.completed')
+        if (mode === 'imported') {
+          await rm(join(userCodexDir, 'auth.json'))
+          await expect(
+            service.upsertProvider({ type, reimportCodexAuthentication: true })
+          ).rejects.toThrow('file-backed Codex credential')
+          expect(await (await first()).text()).toContain('response.completed')
+          expect(upstream).toHaveBeenCalledTimes(2)
+          upstream.mockClear()
+          // Keep the successful-switch assertions identical for both authentication flows.
+          await first()
+        }
         account = 'account-two'
         if (mode === 'imported') {
           await storeLogin(userCodexDir)
@@ -452,6 +470,85 @@ describe('SettingsService: harness session ownership', () => {
       } finally {
         await Promise.all(backends.map((backend) => backend.providerTransportLease?.release()))
         upstream.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it.each(['api-key', 'gateway', 'websocket'] as const)(
+    'keeps %s profiles available to native Codex but unavailable to the built-in Agent',
+    async (kind) => {
+      const status = vi.fn(async () => ({
+        mode: 'isolated' as const,
+        supported: true,
+        authenticated: true
+      }))
+      const service = createService(undefined, {
+        codexAuth: {
+          getStatus: status,
+          loginIsolated: status,
+          logoutIsolated: status,
+          cancelLogin: vi.fn()
+        }
+      })
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        await service.upsertProvider({
+          type: 'codex-isolated',
+          codexTransport: kind === 'websocket' ? 'websocket' : 'auto'
+        })
+        const home = codexSubscriptionStorageDir(storageRoot)
+        const token = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify(
+            kind === 'api-key'
+              ? { auth_mode: 'apikey', OPENAI_API_KEY: 'private-key' }
+              : {
+                  auth_mode: 'chatgpt',
+                  last_refresh: new Date().toISOString(),
+                  tokens: {
+                    access_token: token,
+                    id_token: token,
+                    refresh_token: 'refresh',
+                    account_id: 'account-one'
+                  }
+                }
+          )
+        )
+        if (kind === 'gateway')
+          await writeFile(
+            join(home, 'config.toml'),
+            'model_provider = "gateway"\n[model_providers.gateway]\nbase_url = "https://gateway.example/v1"\nwire_api = "responses"\n'
+          )
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        const validatedAt = (await repository.getSettings()).providers[0].lastValidatedAt
+        status.mockClear()
+        await repository.setAgentFramework('open-science-agent')
+        expect(
+          await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+        ).toMatchObject({
+          ok: false,
+          frameworkIncompatible: true
+        })
+        expect((await repository.getSettings()).providers[0].lastValidatedAt).toBe(validatedAt)
+        expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+        expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(false)
+        expect((await service.getPreflight()).activeProviderReady).toBe(false)
+        await expect(
+          resolveActiveBackend(service, { includeSkillAndConnectorContext: false })
+        ).rejects.toThrow()
+        expect(status).not.toHaveBeenCalled()
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        expect(status).toHaveBeenCalledOnce()
+      } finally {
         await service.dispose()
       }
     }

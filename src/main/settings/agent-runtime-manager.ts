@@ -743,6 +743,28 @@ export class AgentRuntimeManager {
     }, signal)
   }
 
+  async prepareCodexAuthenticationRuntime(): Promise<string> {
+    const resolve = async (): Promise<string> => {
+      const { codex } = await this.repository.getSettings()
+      return this.resolveCodexExecutable(codex?.resolvedPath, codex?.nativePath)
+    }
+    try {
+      return await resolve()
+    } catch {
+      await this.detectCodex()
+    }
+    try {
+      return await resolve()
+    } catch {
+      const result = await this.installCodex({ source: 'managed' }, () => undefined)
+      if (!result.ok)
+        throw new Error(
+          'Codex authentication runtime could not be prepared. Install Codex in Settings.'
+        )
+    }
+    return resolve()
+  }
+
   async bootstrapCodex(onEvent: (event: ClaudeInstallEvent) => void): Promise<void> {
     await this.repository.selectBootstrapCodex()
     const healthy = (): Promise<boolean> =>

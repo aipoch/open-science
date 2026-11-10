@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readCodexHarnessConnection } from './codex-harness-auth'
+import { inspectCodexHarnessAvailability, readCodexHarnessConnection } from './codex-harness-auth'
 import { resolveCodexHarnessEndpoint } from './codex-auth'
 import { codexSubscriptionStorageDir } from './codex-paths'
 
@@ -105,7 +105,7 @@ describe('Codex harness authentication', () => {
     async (auth) => {
       const { storageRoot } = await profile(auth)
       await expect(readCodexHarnessConnection({ storageRoot }, signal())).rejects.toThrow(
-        'The Codex subscription sign-in is unavailable. Reconnect Codex in Settings.'
+        /Codex.*(?:unavailable|not supported)/
       )
     }
   )
@@ -177,9 +177,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     )
   })
 
-  it.each(['account-one', 'account-two'])(
-    'lets Codex refresh its own file and checks the resulting account (%s)',
-    async (refreshedAccount) => {
+  it.each([
+    { refreshedAccount: 'account-one', lazy: false },
+    { refreshedAccount: 'account-two', lazy: false },
+    { refreshedAccount: 'account-one', lazy: true }
+  ])(
+    'lets Codex refresh its own file and checks the account ($refreshedAccount, lazy=$lazy)',
+    async ({ refreshedAccount, lazy }) => {
       vi.stubEnv('OPENAI_API_KEY', 'host-private-key')
       vi.stubEnv('CODEX_ACCESS_TOKEN', 'host-private-token')
       vi.stubEnv('CODEX_REFRESH_TOKEN_URL_OVERRIDE', 'https://untrusted.example/token')
@@ -206,16 +210,23 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });`
       )
       const resolveProxyEnvironment = vi.fn(async () => ({}))
-      const request = readCodexHarnessConnection(
-        { storageRoot, nativePath, resolveProxyEnvironment },
-        signal()
-      )
+      const resolveNativePath = lazy ? vi.fn(async () => nativePath) : undefined
+      const options = {
+        storageRoot,
+        nativePath: lazy ? undefined : nativePath,
+        resolveNativePath,
+        resolveProxyEnvironment
+      }
+      expect(await inspectCodexHarnessAvailability(options)).toBe(true)
+      if (resolveNativePath) expect(resolveNativePath).not.toHaveBeenCalled()
+      const request = readCodexHarnessConnection(options, signal())
       if (refreshedAccount === 'account-one') {
         await expect(request).resolves.toMatchObject({
           accessToken: next.tokens.access_token,
           accountId: refreshedAccount
         })
       } else await expect(request).rejects.toThrow('could not be refreshed')
+      if (resolveNativePath) expect(resolveNativePath).toHaveBeenCalledOnce()
       expect(resolveProxyEnvironment).toHaveBeenCalledOnce()
       expect(JSON.parse(await readFile(join(home, 'probe.json'), 'utf8'))).toEqual({
         params: { includeToken: false, refreshToken: true },
@@ -252,4 +263,34 @@ describe('Codex harness routing', () => {
   ])('rejects remote or secret-dependent profile routes (%#)', (config) => {
     expect(() => resolveCodexHarnessEndpoint(config)).toThrow('route is not supported')
   })
+})
+
+describe('Codex harness availability', () => {
+  it.each([
+    [credential(), '', 'auto', true],
+    [{ auth_mode: 'apikey', OPENAI_API_KEY: 'private-key' }, '', 'auto', false],
+    [credential(), loopbackRoute('env_key = "PRIVATE_TOKEN"'), 'auto', false],
+    [credential(), '', 'websocket', false],
+    [credential(), loopbackRoute(), 'websocket', true],
+    [credential('account-one', 1), '', 'auto', false]
+  ] as const)(
+    'projects the same credential and route requirements as a request (%#)',
+    async (auth, config, transport, available) => {
+      const { storageRoot } = await profile(auth, config)
+      const options = { storageRoot, transport }
+      expect(await inspectCodexHarnessAvailability(options)).toBe(available)
+      if (available)
+        await expect(readCodexHarnessConnection(options, signal())).resolves.toHaveProperty(
+          'endpoint'
+        )
+      else await expect(readCodexHarnessConnection(options, signal())).rejects.toThrow()
+    }
+  )
+})
+
+it('does not advertise an expired token with a missing refresh executable', async () => {
+  const { storageRoot } = await profile(credential('account-one', 1))
+  expect(
+    await inspectCodexHarnessAvailability({ storageRoot, nativePath: join(storageRoot, 'missing') })
+  ).toBe(false)
 })

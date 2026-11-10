@@ -16,14 +16,20 @@ vi.mock('../session-persistence/ipc', () => ({
 vi.mock('../runtime-metadata', () => ({ runtimeMetadata: () => ({ version: 'test' }) }))
 afterEach(() => vi.restoreAllMocks())
 
-it.each([
-  { type: 'codex-isolated', status: 'queued' },
-  { type: 'codex-shared', status: 'queued' },
-  { type: 'codex-isolated', status: 'failed' },
-  { type: 'codex-shared', status: 'failed' }
-] as const)(
-  'generates $status Session details through the composed $type subscription runner',
-  async ({ type, status }) => {
+it.each(
+  (
+    [
+      { type: 'codex-isolated', status: 'queued' },
+      { type: 'codex-shared', status: 'queued' },
+      { type: 'codex-isolated', status: 'failed' },
+      { type: 'codex-shared', status: 'failed' }
+    ] as const
+  ).flatMap((entry) =>
+    (['codex', 'open-science-agent'] as const).map((frameworkId) => ({ ...entry, frameworkId }))
+  )
+)(
+  'generates $status Session details through the composed $frameworkId/$type subscription runner',
+  async ({ type, status, frameworkId }) => {
     const providerId =
       type === 'codex-shared' ? CODEX_SHARED_PROVIDER_ID : CODEX_SUBSCRIPTION_PROVIDER_ID
     let session: PersistedChatSession = {
@@ -35,7 +41,7 @@ it.each([
       status: 'idle',
       createdAt: 1,
       updatedAt: 1,
-      agentFrameworkId: 'codex',
+      agentFrameworkId: frameworkId,
       agentModel: 'model',
       agentConfiguration: { providerId, model: 'model', reasoningEffort: 'high' },
       sessionDetailsSource: 'fallback',
@@ -63,13 +69,20 @@ it.each([
       repository: {
         getSettings: async () => ({
           version: 2,
-          providers: [{ id: providerId, type, name: 'Codex' }],
-          sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
+          providers: [{ id: providerId, type, name: 'Codex' }]
+          // Exercise the default inherited details-model configuration.
         })
       },
       providers: {
         resolveRuntimeTarget: vi.fn(() => {
-          throw new Error('Subscription must retain its native route.')
+          if (frameworkId === 'codex') throw new Error('Subscription must retain its native route.')
+          return {
+            providerId,
+            providerType: type,
+            effectiveModel: 'model',
+            apiEndpoints: ['responses'],
+            frameworkCompatible: true
+          }
         })
       },
       backendResolver: { captureConfiguredSelection: vi.fn() }
@@ -77,7 +90,7 @@ it.each([
     const run = vi.spyOn(RestrictedInferenceRunner.prototype, 'run').mockResolvedValue({
       text: '{"title":"Proteins","description":"Investigate proteins"}',
       stopReason: 'end_turn',
-      frameworkId: 'codex',
+      frameworkId,
       model: 'model'
     })
     const modules: ApplicationModuleBuilder = {
@@ -116,10 +129,10 @@ it.each([
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({
           target: {
-            frameworkId: 'codex',
+            frameworkId,
             providerId,
             model: { kind: 'required', id: 'model' },
-            reasoningEffort: 'high'
+            reasoningEffort: 'low'
           }
         })
       )

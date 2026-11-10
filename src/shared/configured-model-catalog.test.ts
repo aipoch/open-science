@@ -241,3 +241,24 @@ describe('configured model catalog', () => {
     ).toEqual([CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID])
   })
 })
+
+it('keeps a native-only Codex subscription selectable only for native Codex', () => {
+  const provider = {
+    id: 'subscription',
+    name: 'Codex subscription',
+    type: 'codex-isolated' as const,
+    codexHarnessAvailable: false,
+    supportsImageInput: true,
+    models: ['gpt-6.1-sol'],
+    hasKey: false,
+    needsKey: false
+  }
+  for (const frameworkId of ['codex', 'open-science-agent'] as const) {
+    const catalog = buildConfiguredModelCatalog({
+      providers: [provider],
+      frameworkId,
+      frameworkEndpoints: ['responses']
+    })
+    expect(catalog[0].selectable).toBe(frameworkId === 'codex')
+  }
+})

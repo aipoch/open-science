@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
@@ -16,6 +17,7 @@ import type { SystemProxyEnvironment } from './system-proxy'
 export type CodexHarnessAuthOptions = Readonly<{
   storageRoot: string
   nativePath?: string
+  resolveNativePath?: () => Promise<string | undefined>
   transport?: CodexSubscriptionTransport
   resolveProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
 }>
@@ -25,6 +27,8 @@ export type CodexHarnessConnection = Readonly<{
   accessToken: string
   accountId: string
 }>
+
+export class CodexHarnessCompatibilityError extends Error {}
 
 const AUTH_ERROR = 'The Codex subscription sign-in is unavailable. Reconnect Codex in Settings.'
 const REFRESH_ERROR = 'Codex subscription authentication could not be refreshed.'
@@ -56,7 +60,10 @@ const readCredential = async (
     const tokens = object(auth?.tokens)
     if (!auth) throw new Error()
     const mode = resolveCodexStoredAuthMode(auth)
-    if (mode !== 'chatgpt' && mode !== 'chatgptAuthTokens') throw new Error()
+    if (mode !== 'chatgpt' && mode !== 'chatgptAuthTokens')
+      throw new CodexHarnessCompatibilityError(
+        'The Codex profile authentication is not supported by the built-in Agent.'
+      )
     if (!headerValue(tokens?.access_token) || !headerValue(tokens?.refresh_token)) throw new Error()
     const claims = tokenClaims(tokens.access_token)
     const identityClaims = tokenClaims(tokens.id_token)
@@ -68,7 +75,8 @@ const readCredential = async (
     const expiresAt =
       typeof claims.exp === 'number' && Number.isFinite(claims.exp) ? claims.exp * 1000 : 0
     return { accessToken: tokens.access_token, accountId, expiresAt }
-  } catch {
+  } catch (error) {
+    if (error instanceof CodexHarnessCompatibilityError) throw error
     throw new Error(AUTH_ERROR)
   }
 }
@@ -184,11 +192,28 @@ const refreshWithCodex = async (
   }
 }
 
-export const readCodexHarnessConnection = async (
-  options: CodexHarnessAuthOptions,
-  signal: AbortSignal
-): Promise<CodexHarnessConnection> => {
-  signal.throwIfAborted()
+// Cheap capability projection: no subprocess, refresh or credential mutation during Settings reads.
+// The request path uses the same profile parser and additionally refreshes expired tokens.
+export const inspectCodexHarnessAvailability = async (
+  options: CodexHarnessAuthOptions
+): Promise<boolean> => {
+  try {
+    const { credential } = await readHarnessProfile(options)
+    if (credential.expiresAt > Date.now() || options.resolveNativePath) return true
+    if (!options.nativePath) return false
+    await access(
+      options.nativePath,
+      /\.[cm]?js$/i.test(options.nativePath) ? constants.R_OK : constants.X_OK
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+const readHarnessProfile = async (
+  options: CodexHarnessAuthOptions
+): Promise<{ endpoint: string; credential: Awaited<ReturnType<typeof readCredential>> }> => {
   const home = codexSubscriptionStorageDir(options.storageRoot)
   let config = ''
   try {
@@ -196,12 +221,30 @@ export const readCodexHarnessConnection = async (
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(AUTH_ERROR)
   }
-  const endpoint = resolveCodexHarnessEndpoint(config, options.transport)
-  const initial = await readCredential(home)
+  let endpoint: string
+  try {
+    endpoint = resolveCodexHarnessEndpoint(config, options.transport)
+  } catch (error) {
+    throw new CodexHarnessCompatibilityError((error as Error).message)
+  }
+  return { endpoint, credential: await readCredential(home) }
+}
+
+export const readCodexHarnessConnection = async (
+  options: CodexHarnessAuthOptions,
+  signal: AbortSignal
+): Promise<CodexHarnessConnection> => {
+  signal.throwIfAborted()
+  const home = codexSubscriptionStorageDir(options.storageRoot)
+  const { endpoint, credential: initial } = await readHarnessProfile(options)
   signal.throwIfAborted()
   if (initial.expiresAt > Date.now())
     return { endpoint, accessToken: initial.accessToken, accountId: initial.accountId }
-  await refreshWithCodex(options, signal)
+  const nativePath = options.resolveNativePath
+    ? await options.resolveNativePath()
+    : options.nativePath
+  signal.throwIfAborted()
+  await refreshWithCodex({ ...options, nativePath }, signal)
   const refreshed = await readCredential(home)
   signal.throwIfAborted()
   if (refreshed.accountId !== initial.accountId || refreshed.expiresAt <= Date.now())
