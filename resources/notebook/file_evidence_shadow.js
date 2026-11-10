@@ -165,9 +165,16 @@ const append = (lane, capture, sidecar, serialized, io) => {
       const entry = indexes[view].get(g.relativePath)
       if (entry?.sum === g.checksum) return [view, entry.index, g.generationId, g.capturedAt]
     }
+    if (io.publishHistoricalContent) return null
     throw new Error('Generation missing from shadow views.')
   }
   const packed = mapGenerations(sidecar, encode)
+  if (
+    io.publishHistoricalContent &&
+    (packed.relations.some((r) => r.generation === null) ||
+      packed.predecessorGenerations?.includes(null))
+  )
+    return
   const record = {
     version: 1,
     ...(io.poolAddressed ? { poolAddressed: true } : {}),
@@ -178,8 +185,11 @@ const append = (lane, capture, sidecar, serialized, io) => {
     projection: deflateRawSync(JSON.stringify(packed)).toString('base64')
   }
   const prefix = io.storageKeyPrefix
-  if (!projectSidecar(record, [pre.rows, post.rows], prefix).equals(serialized))
+  const projected = decodeSidecar(record, [pre.rows, post.rows], prefix)
+  if (!projected.equals(serialized)) {
+    if (io.publishHistoricalContent) return
     throw new Error('Shadow evidence projection differs from native evidence.')
+  }
   const json = JSON.stringify(record)
   const line = Buffer.from(json + '\t' + digest(json) + '\n')
   if (!existing && complete + line.length > maxBytes)
@@ -193,6 +203,7 @@ const append = (lane, capture, sidecar, serialized, io) => {
     throw new Error('Shadow evidence exceeds the project budget.')
   checkCapacity(lane, added, io.reserveBytes)
   if (io.verifyOnly) return
+  io.publishHistoricalContent?.(views)
   for (const view of planned) publishView(views, view, io)
   const fd = fs.openSync(
     log,
@@ -218,11 +229,14 @@ const append = (lane, capture, sidecar, serialized, io) => {
   }
   io.syncDirectory(root)
 }
-const projectSidecar = (record, views, activityPrefix) => {
+const decodeSidecar = (record, views, activityPrefix) => {
   const packed = JSON.parse(
     inflateRawSync(Buffer.from(record.projection, 'base64'), { maxOutputLength: maxBytes })
   )
-  const bytes = expandProjection(packed, views, activityPrefix)
+  return expandProjection(packed, views, activityPrefix)
+}
+const projectSidecar = (record, views, activityPrefix) => {
+  const bytes = decodeSidecar(record, views, activityPrefix)
   if (digest(bytes) !== record.checksum)
     throw new Error('Shadow evidence projection checksum mismatch.')
   return bytes

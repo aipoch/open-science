@@ -276,7 +276,19 @@ type EvidenceWorkerEnsureProjectRequest = {
   expectedRootIdentity: FileIdentity
   projectName: string
 }
+type HistoricalEvidenceOwner = Pick<
+  EvidenceWorkerCompleteRequest,
+  'activityId' | 'activityKind' | 'parentActivityId' | 'evidenceId' | 'checksum'
+>
 type EvidenceWorkerRequest =
+  | (EvidenceWorkerBlobPoolBinding & {
+      operation: 'backfill-history'
+      expectedRootIdentity: FileIdentity
+      storageKeyPrefix: string
+      owners: HistoricalEvidenceOwner[]
+      maxEvidenceBytes: number
+      diskReserveBytes: number
+    })
   | (EvidenceWorkerBlobPoolBinding & {
       operation: 'publish-imported-pool' | 'rollback-imported-pool'
       expectedRootIdentity: FileIdentity
@@ -721,6 +733,37 @@ const runSerializedEvidenceWorker = async (
     void tail.then(() => {
       if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
     })
+  }
+}
+
+// Bound batches leave room for live captures between historical publications.
+export async function backfillWorkingFileEvidence(
+  storageRoot: string,
+  lane: string,
+  owners: HistoricalEvidenceOwner[],
+  signal?: AbortSignal
+): Promise<void> {
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, lane), false)
+  const project = projectEvidenceScope(storageRoot, join(storageRoot, lane), lane)
+  if (!project) throw new Error('Invalid historical evidence lane.')
+  const pool = await secureEvidenceRoot(storageRoot, join(project.projectRoot, 'blobs'))
+  for (let offset = 0; offset < owners.length; offset += 32) {
+    await runSerializedEvidenceWorker(
+      runEvidenceWorker,
+      root.path,
+      {
+        operation: 'backfill-history',
+        expectedRootIdentity: root.identity,
+        storageKeyPrefix: lane,
+        owners: owners.slice(offset, offset + 32),
+        blobRoot: pool.path,
+        expectedBlobRootIdentity: pool.identity,
+        blobStorageKeyPrefix: project.blobStorageKeyPrefix,
+        maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+        diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+      },
+      signal
+    )
   }
 }
 

@@ -1081,6 +1081,137 @@ const releaseUnusedActivityBlobs = (retainedGenerations, blobPool, receipt) => {
   syncDirectoryPath(ACTIVITY_BLOBS_DIRECTORY)
   sweepBlobPool(blobPool)
 }
+// Historical conversion is additive. Only native summaries from the exporting lane can
+// authorize a record; never discover candidates by walking a Project or a working directory.
+const backfillHistory = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const project = dirname(pool.path)
+  const lane = process.cwd()
+  const laneKey = relative(project, lane).split(sep).join('/')
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/frames\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/u.test(laneKey) ||
+    request.storageKeyPrefix !== pool.storageKeyPrefix.slice(0, -'/blobs'.length) + '/' + laneKey ||
+    request.owners.length > 32
+  )
+    throw new Error('Invalid historical evidence lane.')
+  const verified = new Map()
+  const observation = (st) => [st.dev, st.ino, st.size, st.mtimeNs, st.ctimeNs].join(':')
+  const verify = (path, g) => {
+    const st = lstatSync(path, { bigint: true })
+    const stamp = observation(st)
+    if (!st.isFile() || st.size !== BigInt(g.sizeBytes))
+      throw new Error('Invalid historical evidence blob.')
+    const reusable = process.platform !== 'win32' && st.ino > 0n
+    if (!reusable || verified.get(stamp) !== g.checksum) {
+      verifyBlob(path, g.sizeBytes, g.checksum)
+      if (stamp !== observation(lstatSync(path, { bigint: true })))
+        throw new Error('Historical evidence changed during conversion.')
+      if (reusable) verified.set(stamp, g.checksum)
+    }
+  }
+  for (const owner of request.owners) {
+    const activity = 'activity-' + assertSafeName(owner.activityId)
+    if (!entryIdentity(activity)) throw new Error('Unsafe historical activity directory.')
+    const prefix = request.storageKeyPrefix + '/' + activity
+    const bytes = shadowIO.readFile(join(activity, 'evidence.json'), MAX_INTERNAL_JSON_BYTES)
+    if (createHash('sha256').update(bytes).digest('hex') !== owner.checksum)
+      throw new Error('Execution file evidence checksum mismatch.')
+    const body = JSON.parse(bytes)
+    if (
+      body.schemaVersion !== 1 ||
+      body.activityId !== owner.activityId ||
+      body.activityKind !== assertActivityKind(owner.activityKind) ||
+      body.parentActivityId !== owner.parentActivityId ||
+      body.evidenceId !== owner.evidenceId
+    )
+      throw new Error('Execution file evidence ownership mismatch.')
+    const predecessors = body.predecessorGenerations ?? []
+    if (
+      !Array.isArray(body.relations) ||
+      body.relations.length > 10000 ||
+      !Array.isArray(predecessors) ||
+      predecessors.length > 10000
+    )
+      throw new Error('Invalid historical execution evidence.')
+    const generations = [
+      ...body.relations.flatMap((r) => (r.generation ? [r.generation] : [])),
+      ...predecessors
+    ]
+    const ids = new Set(generations.map((g) => g.generationId))
+    // Preserve the legacy archive path for an incomplete predecessor mapping or an older
+    // generation layout. Neither can safely be described by the current projection.
+    if (
+      body.relations.some((r) => r.previousGenerationId && !ids.has(r.previousGenerationId)) ||
+      generations.some(
+        (g) =>
+          !BLOB_NAME.test('sha256-' + g.checksum) ||
+          g.contentStorageKey !== prefix + '/blobs/sha256-' + g.checksum ||
+          !Number.isSafeInteger(g.sizeBytes) ||
+          g.sizeBytes < 0 ||
+          typeof g.relativePath !== 'string' ||
+          !g.relativePath.length ||
+          g.relativePath.length > 4096
+      )
+    )
+      continue
+    const dir = join(activity, 'blobs')
+    if (generations.length && !entryIdentity(dir))
+      throw new Error('Unsafe historical blob directory.')
+    const missing = new Map()
+    for (const g of generations) {
+      const name = 'sha256-' + g.checksum
+      verify(join(dir, name), g)
+      if (entryExists(join(pool.path, name))) verify(join(pool.path, name), g)
+      else missing.set(name, g)
+    }
+    const capture = {
+      relations: [
+        ...body.relations.filter(
+          (r) => r.relation === 'present-before' || r.relation === 'staged-input'
+        ),
+        ...predecessors.map((generation) => ({ generation }))
+      ]
+    }
+    const missingBytes = [...missing.values()].reduce((sum, g) => sum + g.sizeBytes, 0)
+    shadow.append(lane, capture, body, bytes, {
+      ...shadowIO,
+      projectRoot: project,
+      storageKeyPrefix: prefix,
+      reserveBytes: request.diskReserveBytes + missingBytes,
+      projectLimit: request.maxEvidenceBytes,
+      projectUsage: () => blobPoolBytes(pool, true) + missingBytes,
+      publishHistoricalContent(views) {
+        for (const [name, g] of missing) {
+          // The append owner reclaims interrupted .tmp files from this lane on retry.
+          const tmp = join(views, '.tmp-' + randomUUID())
+          const from = openSync(
+            join(dir, name),
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+          )
+          try {
+            const to = openSync(tmp, 'wx', 0o600)
+            try {
+              const copy = streamDescriptor(from, g.sizeBytes, to)
+              if (copy.bytesRead !== g.sizeBytes || copy.checksum !== g.checksum)
+                throw new Error('Historical evidence changed during conversion.')
+              fsyncSync(to)
+            } finally {
+              closeSync(to)
+            }
+            renameSync(tmp, join(pool.path, name))
+            syncDirectoryPath(pool.path)
+          } finally {
+            closeSync(from)
+            rmSync(tmp, { force: true })
+          }
+        }
+      }
+    })
+  }
+  return { ok: true }
+}
+
 // Maintenance consumes completed owner records, never directory names as deletion authority.
 // Every native sidecar in the Project participates in the reference set, including other lanes.
 const compactHistory = (request) => {
@@ -2636,6 +2767,7 @@ const operationHandlers = new Map([
   ['publish-imported-pool', publishImportedPool],
   ['rollback-imported-pool', rollbackImportedPool],
   ['compact-history', compactHistory],
+  ['backfill-history', backfillHistory],
   ['begin', begin],
   ['ensure-capture', ensureCapture],
   ['ensure-project', ensureProject],

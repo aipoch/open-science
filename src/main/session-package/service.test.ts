@@ -11,7 +11,7 @@ import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry, readPackageArchive } from './archive'
 import { readNotebookFileGenerations } from '../notebook/analysis-file-evidence'
-import { readNativeEvidence } from '../artifacts/execution-evidence-log'
+import { readLoggedEvidence, readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { remapStorageKey } from './native-snapshot'
 import { ProjectRepository } from '../projects/repository'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
@@ -150,6 +150,131 @@ it('round-trips a compaction activity and its conversation through a science pac
     expect(session?.conversationGraph?.activities).toHaveLength(1)
   } finally {
     await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
+it('resumes historical export in a frame, verifies independent aliases and reuses the written log', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  const scope = { projectId: 'project', sessionId: 'session' }
+  await source.client.project.create({ data: { id: scope.projectId, name: 'Historical' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    ...scope,
+    id: scope.sessionId,
+    title: 'Historical',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const lane = createFrameNotebookLane('project', 'session', 'frame')
+  const doc = await source.notebookRepository.loadOrCreate({
+    ...scope,
+    lane,
+    workspaceCwd: source.storageRoot
+  })
+  await mkdir(doc.dataRoot, { recursive: true })
+  await writeFile(join(doc.dataRoot, 'result.txt'), 'retained')
+  const prefix = 'execution-file-evidence/project/session/frames/frame'
+  const root = join(source.storageRoot, prefix)
+  const location = { storageRoot: source.storageRoot, root, storageKeyPrefix: prefix }
+  const store = join(root, '.shadow-evidence')
+  const refs = []
+  for (const id of ['one', 'two']) {
+    const observation = await startWorkingFileObservation(
+      {
+        runId: id,
+        dataRoot: doc.dataRoot,
+        notebookSessionRoot: doc.notebookSessionRoot,
+        fileEvidenceRoot: root,
+        fileEvidenceStorageRoot: source.storageRoot,
+        fileEvidenceStoragePrefix: prefix
+      },
+      {
+        runEvidenceWorker: (root, request, signal) =>
+          runEvidenceWorker(
+            root,
+            request.operation === 'begin' ? { ...request, poolAddressed: false } : request,
+            signal
+          )
+      }
+    )
+    const { fileEvidence } = await observation.finish()
+    await completeWorkingFileEvidence(location, { runId: id, fileEvidence })
+    await source.notebookRepository.appendRun({
+      ...scope,
+      lane,
+      run: {
+        runId: id,
+        cellId: 'cell-' + id,
+        source: 'user',
+        kernelKind: 'python',
+        status: 'completed',
+        script: 'pass',
+        startedAt: 1,
+        endedAt: 2,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        artifacts: [],
+        outputs: [],
+        workingFiles: [],
+        fileEvidence
+      }
+    })
+    const bytes = await readFile(join(source.storageRoot, fileEvidence.storageKey!))
+    const alias = join(
+      source.storageRoot,
+      JSON.parse(bytes.toString()).relations[0].generation.contentStorageKey
+    )
+    refs.push({ bytes, alias, key: fileEvidence.storageKey!, checksum: fileEvidence.checksum! })
+  }
+  // Before the log writer shipped, the aliases could outlive the pooled file.
+  await fsPromises.rm(store, { recursive: true })
+  await fsPromises.unlink(
+    join(source.storageRoot, 'execution-file-evidence/project/blobs/sha256-' + sha256('retained'))
+  )
+  await fsPromises.unlink(refs[1].alias)
+  await writeFile(refs[1].alias, 'tampered')
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const archive = join(source.storageRoot, 'old.science')
+  const log = join(store, 'log.jsonl')
+  try {
+    await expect(exporter.exportTo(scope, archive)).rejects.toThrow(/checksum mismatch/)
+    await expect(stat(archive)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readFile(log, 'utf8')).trimEnd().split('\n')).toHaveLength(1)
+    // An interrupted append can leave a zero-filled tail without a newline.
+    await fsPromises.appendFile(log, Buffer.alloc(9))
+    await writeFile(refs[1].alias, 'retained')
+    await exporter.exportTo(scope, archive)
+    const committed = await readFile(log, 'utf8')
+    expect(committed.trimEnd().split('\n')).toHaveLength(2)
+    for (const ref of refs) {
+      expect(await readFile(join(source.storageRoot, ref.key))).toEqual(ref.bytes)
+      expect(await readFile(ref.alias, 'utf8')).toBe('retained')
+      expect(await readLoggedEvidence(source.storageRoot, ref.key, ref.checksum, 65536)).toEqual(
+        ref.bytes
+      )
+    }
+    const modified = (await stat(log, { bigint: true })).mtimeNs
+    await exporter.exportTo(scope, join(source.storageRoot, 'repeat.science'))
+    expect((await stat(log, { bigint: true })).mtimeNs).toBe(modified)
+    initDataRoot(target.storageRoot)
+    const imported = await importer.importFrom(archive)
+    expect((await importer.readOrigin(imported)).sourceManifest.requiredFeatures).toContain(
+      'log-evidence'
+    )
+  } finally {
+    await exporter.close()
+    await importer.close()
   }
 })
 

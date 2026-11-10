@@ -75,7 +75,8 @@ type EvidenceReference = {
 }
 const evidenceReferences = (
   records: PackageRecords,
-  notebooks: readonly NotebookRunDocument[]
+  notebooks: readonly NotebookRunDocument[],
+  owners?: Map<string, EvidenceReference>
 ): Map<string, EvidenceReference> => {
   const references = new Map<string, EvidenceReference>()
   const visit = (value: unknown): void => {
@@ -113,7 +114,18 @@ const evidenceReferences = (
     }
     Object.values(row).forEach(visit)
   }
-  for (const notebook of notebooks) for (const run of notebook.runs) visit(run.fileEvidence)
+  for (const notebook of notebooks)
+    for (const run of notebook.runs) {
+      const ref = run.fileEvidence
+      visit(ref)
+      if (
+        ref?.storageKey &&
+        ref.checksum &&
+        ref.activityId === run.runId &&
+        ref.activityKind === 'notebook-run'
+      )
+        owners?.set(ref.storageKey, references.get(ref.storageKey)!)
+    }
   for (const job of records.history?.computeJobs ?? []) {
     const ref = job.fileEvidence
     if (
@@ -124,6 +136,8 @@ const evidenceReferences = (
     )
       throw new Error('Compute file evidence ownership mismatch.')
     visit(ref)
+    if (ref?.storageKey && ref.checksum)
+      owners?.set(ref.storageKey, references.get(ref.storageKey)!)
   }
   for (const version of records.tables.ArtifactVersion)
     if (typeof version.executionSnapshotJson === 'string')
@@ -192,9 +206,11 @@ export async function collectPackageLogEvidence(
   root: string,
   records: PackageRecords,
   notebooks: readonly NotebookRunDocument[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  backfillSession?: { projectId: string; sessionId: string }
 ): Promise<PortableEvidence | undefined> {
-  const refs = evidenceReferences(records, notebooks)
+  const owners = backfillSession ? new Map<string, EvidenceReference>() : undefined
+  const refs = evidenceReferences(records, notebooks, owners)
   const groups = new Map<string, Set<string>>()
   for (const key of refs.keys()) {
     const loc = evidenceLocation(key)
@@ -205,7 +221,41 @@ export async function collectPackageLogEvidence(
   }
   const result: PortableEvidence = []
   for (const [key, ids] of groups) {
-    const lane = await collectLaneRecords(root, key, ids, signal)
+    let lane = await collectLaneRecords(root, key, ids, signal)
+    const [, project, session] = key.split('/')
+    if (
+      backfillSession &&
+      project === backfillSession.projectId &&
+      session === backfillSession.sessionId
+    ) {
+      const logged = new Set(lane?.records.map((r) => r.activityId))
+      const missing = [...ids].flatMap((activityId) => {
+        const path = key + '/activity-' + activityId + '/evidence.json'
+        const ref = owners?.get(path)
+        if (
+          !ref ||
+          logged.has(activityId) ||
+          ref.activityId !== activityId ||
+          (ref.activityKind !== 'notebook-run' && ref.activityKind !== 'compute-job') ||
+          ref.evidenceId !== 'execution-file-evidence-' + activityId
+        )
+          return []
+        return [
+          {
+            activityId,
+            activityKind: ref.activityKind,
+            evidenceId: ref.evidenceId,
+            parentActivityId: ref.parentActivityId,
+            checksum: ref.checksum
+          }
+        ] as const
+      })
+      if (missing.length) {
+        const { backfillWorkingFileEvidence } = await import('../notebook/working-file-observer')
+        await backfillWorkingFileEvidence(root, key, missing, signal)
+        lane = await collectLaneRecords(root, key, ids, signal)
+      }
+    }
     if (!lane) continue
     const verified = indexPortableEvidence([lane])
     lane.records = lane.records.filter((record) => {
