@@ -1,6 +1,7 @@
 import type { LiteratureProject, LiteratureNavigation } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
+import type { ReferenceExportRequest } from '@aipoch/literature-library/client'
 import { ExternalLink, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureAddMenu, LiteratureLibraryActionsMenu } from './LiteratureLibraryMenus'
@@ -64,7 +65,7 @@ export function LiteratureLibraryHeader({
   loadCollections: () => Promise<LiteratureCollectionView[] | undefined>
   entriesLoading: boolean
   projectItemCounts: Record<string, number>
-  exportCurrentScope: (format: 'bibtex' | 'ris') => Promise<boolean>
+  exportCurrentScope: (format: ReferenceExportRequest['format']) => Promise<boolean>
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (

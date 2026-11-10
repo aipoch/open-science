@@ -61,7 +61,13 @@ fetch(process.argv[2], { signal: AbortSignal.timeout(3000) }).then(async r => {
     await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
     const address = upstream.address()
     if (!address || typeof address === 'string') throw new Error('Missing upstream address')
-    const settings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['example.test'] }
+    const settings = {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      // HTTP requires an exact exception; the legacy domain list only governs link previews.
+      trustedPrivateDestinations: [
+        { hostname: 'example.test', port: 80, protocol: 'http' as const, approvedAddresses: [] }
+      ]
+    }
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: join(process.cwd(), 'resources'),
       temporaryRoot: join(root, 'command-temp'),
