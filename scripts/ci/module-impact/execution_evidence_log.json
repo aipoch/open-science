@@ -17,7 +17,8 @@
     "consumer": [
       "src/main/session-package/service.test.ts",
       "src/main/notebook/analysis-file-evidence.test.ts",
-      "src/main/compute/harvest-engine.test.ts"
+      "src/main/compute/harvest-engine.test.ts",
+      "src/main/artifacts/provenance-write-contract.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],
