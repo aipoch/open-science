@@ -4,7 +4,11 @@ export type { LiteratureDetailController, LiteratureDetailSnapshot } from './det
 export { createLiteratureEntries } from './entries.js'
 export type { LiteratureEntriesOptions, LiteratureEntriesSnapshot } from './entries.js'
 export { createReferenceExporter } from './export.js'
-export type { ReferenceExportFile, ReferenceExportRequest } from './export.js'
+export type {
+  ReferenceExportFile,
+  ReferenceExportRequest,
+  ReferenceExportFormat
+} from './export.js'
 export { createLiteratureMetadata } from './metadata.js'
 export type { DetailMode, LiteratureMetadataIdentifier, MetadataSnapshot } from './metadata.js'
 export { createLiteratureClient } from './pages.js'
