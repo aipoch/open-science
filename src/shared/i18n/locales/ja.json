@@ -7883,6 +7883,7 @@
     "Choose what to save. Review the exported files before sharing; nothing is uploaded.": "保存する内容を選択してください。共有前にエクスポートしたファイルを確認してください。アップロードはされません。",
     "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
     "Select a model in Settings before generating a research film.": "研究動画を生成する前に、設定でモデルを選択してください。",
+    "<chooseModel>Select a model</chooseModel> in Settings before generating a research film.": "研究動画を生成する前に、設定で<chooseModel>モデルを選択</chooseModel>してください。",
     "The selected provider credentials are unavailable. Check them in Settings.": "選択したプロバイダーの認証情報を利用できません。設定で確認してください。",
     "The selected model is unavailable. Select another model in Settings.": "選択したモデルを利用できません。設定で別のモデルを選択してください。",
     "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",

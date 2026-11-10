@@ -8369,6 +8369,7 @@
     "Choose what to save. Review the exported files before sharing; nothing is uploaded.": "Выберите данные для сохранения. Проверьте экспортированные файлы перед передачей; данные не отправляются.",
     "Set up the selected agent runtime in Settings before generating a research film.": "Перед созданием исследовательского фильма настройте среду выполнения выбранного агента в настройках.",
     "Select a model in Settings before generating a research film.": "Перед созданием исследовательского фильма выберите модель в настройках.",
+    "<chooseModel>Select a model</chooseModel> in Settings before generating a research film.": "Перед созданием исследовательского фильма <chooseModel>выберите модель</chooseModel> в настройках.",
     "The selected provider credentials are unavailable. Check them in Settings.": "Учётные данные выбранного поставщика недоступны. Проверьте их в настройках.",
     "The selected model is unavailable. Select another model in Settings.": "Выбранная модель недоступна. Выберите другую модель в настройках.",
     "Check the selected model and credentials in Settings before generating a research film.": "Перед созданием исследовательского фильма проверьте выбранную модель и учётные данные в настройках.",

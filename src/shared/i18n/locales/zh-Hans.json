@@ -7883,6 +7883,7 @@
     "Choose what to save. Review the exported files before sharing; nothing is uploaded.": "选择要保存的内容。分享前请检查导出的文件；不会上传任何内容。",
     "Set up the selected agent runtime in Settings before generating a research film.": "请先在设置中配置所选智能体的运行时，再生成研究影片。",
     "Select a model in Settings before generating a research film.": "生成研究短片前，请在设置中选择模型。",
+    "<chooseModel>Select a model</chooseModel> in Settings before generating a research film.": "生成研究短片前，请在设置中<chooseModel>选择模型</chooseModel>。",
     "The selected provider credentials are unavailable. Check them in Settings.": "所选服务商的凭据不可用。请在设置中检查。",
     "The selected model is unavailable. Select another model in Settings.": "所选模型不可用。请在设置中选择其他模型。",
     "Check the selected model and credentials in Settings before generating a research film.": "请先在设置中检查所选模型及凭据，再生成研究影片。",

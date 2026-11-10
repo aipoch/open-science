@@ -18,7 +18,7 @@ import {
   MoreHorizontal,
   Trash2
 } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
 import { DownloadProgressLine } from './DownloadProgressLine'
@@ -30,9 +30,14 @@ import type {
   ResearchVideoPresentationStatus
 } from '../../../shared/research-video-presentation'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 export type ResearchVideoTriggerState = { label: string; disabledReason?: string }
+
+const missingModel = 'Select a model in Settings before generating a research film.'
+const missingRuntime =
+  'Set up the selected agent runtime in Settings before generating a research film.'
 
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
@@ -77,6 +82,7 @@ export function ResearchVideoButton({
     if (confirmRegeneration) cancelRegenerationRef.current?.focus()
     else regenerateRef.current?.focus()
   }, [confirmRegeneration])
+  const settingsAfterClose = useRef(false)
   const statusVersion = useRef(0)
   const live = useRef(true)
   const startAfterInstall = useRef(false)
@@ -91,9 +97,7 @@ export function ResearchVideoButton({
     busy: t('Wait for the current response to finish before generating.')
   }
   const preflightMessages: Record<string, string> = {
-    'Select a model in Settings before generating a research film.': t(
-      'Select a model in Settings before generating a research film.'
-    ),
+    [missingModel]: t('Select a model in Settings before generating a research film.'),
     'The selected provider credentials are unavailable. Check them in Settings.': t(
       'The selected provider credentials are unavailable. Check them in Settings.'
     ),
@@ -107,7 +111,7 @@ export function ResearchVideoButton({
       t(
         'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
       ),
-    'Set up the selected agent runtime in Settings before generating a research film.': t(
+    [missingRuntime]: t(
       'Set up the selected agent runtime in Settings before generating a research film.'
     ),
     'Check the selected model and credentials in Settings before generating a research film.': t(
@@ -117,6 +121,11 @@ export function ResearchVideoButton({
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
     : status.preflightError && (preflightMessages[status.preflightError] ?? status.preflightError)
+  const modelSettingsAvailable =
+    !status.generationBlock &&
+    status.preflightError &&
+    status.preflightError !== missingRuntime &&
+    Object.hasOwn(preflightMessages, status.preflightError)
   const triggerState: ResearchVideoTriggerState = {
     label: !statusLoaded
       ? t('Loading…')
@@ -131,6 +140,18 @@ export function ResearchVideoButton({
         ? blocked
         : undefined
   }
+  const renderSettingsButton = (label?: string): React.JSX.Element => (
+    <button
+      type="button"
+      className="cursor-pointer rounded-sm text-left text-primary underline underline-offset-2 focus-visible:outline-ring"
+      onClick={() => {
+        settingsAfterClose.current = true
+        setOpen(false)
+      }}
+    >
+      {label}
+    </button>
+  )
   const desktop = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true'
   useEffect(() => {
     live.current = true
@@ -315,6 +336,10 @@ export function ResearchVideoButton({
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             triggerRef.current?.querySelector('button')?.focus()
+            if (settingsAfterClose.current) {
+              useSettingsStore.getState().openSettingsToPanel('model')
+              settingsAfterClose.current = false
+            }
           }}
           className="w-[min(480px,calc(100vw-2rem))]"
           footer={
@@ -445,7 +470,24 @@ export function ResearchVideoButton({
         >
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`} data-workflow-body>
             <div className="space-y-4" data-workflow-content>
-              {blocked && !busy && <ErrorNotice inline level="warning" description={blocked} />}
+              {blocked && !busy && (
+                <ErrorNotice
+                  inline
+                  level="warning"
+                  content={
+                    modelSettingsAvailable && status.preflightError === missingModel ? (
+                      <Trans
+                        i18nKey="<chooseModel>Select a model</chooseModel> in Settings before generating a research film."
+                        components={{ chooseModel: renderSettingsButton() }}
+                      />
+                    ) : modelSettingsAvailable ? (
+                      renderSettingsButton(blocked)
+                    ) : (
+                      blocked
+                    )
+                  }
+                />
+              )}
               {!blocked && (error || status.error) && (
                 <ErrorNotice inline tone="amber" description={error ?? status.error} />
               )}

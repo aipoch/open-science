@@ -518,6 +518,7 @@ const ConversationPanel = ({
       attachments,
       transfers: attachmentTransfers,
       error: composerError,
+      errorFailure: composerFailure,
       errorDetail: composerErrorDetail,
       historyStatus,
       isHistoryBrowsing,
@@ -1036,7 +1037,7 @@ const ConversationPanel = ({
       {
         id: 'action',
         message: actionError,
-        failure: operationFailure,
+        failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:
           operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
         occurredAt: operationDiagnostic?.occurredAt
@@ -1047,6 +1048,7 @@ const ConversationPanel = ({
           composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
             ? composerError
             : undefined,
+        failure: composerFailure,
         detail: composerErrorDetail
       },
       {

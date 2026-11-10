@@ -8223,6 +8223,7 @@
     "Choose what to save. Review the exported files before sharing; nothing is uploaded.": "Choisir les données à enregistrer. Vérifier les fichiers exportés avant de les partager ; aucun téléversement.",
     "Set up the selected agent runtime in Settings before generating a research film.": "Configurez le moteur de l’agent sélectionné dans les paramètres avant de générer un film de recherche.",
     "Select a model in Settings before generating a research film.": "Sélectionnez un modèle dans les paramètres avant de générer un film de recherche.",
+    "<chooseModel>Select a model</chooseModel> in Settings before generating a research film.": "<chooseModel>Sélectionnez un modèle</chooseModel> dans les paramètres avant de générer un film de recherche.",
     "The selected provider credentials are unavailable. Check them in Settings.": "Les identifiants du fournisseur sélectionné ne sont pas disponibles. Vérifiez-les dans les paramètres.",
     "The selected model is unavailable. Select another model in Settings.": "Le modèle sélectionné n’est pas disponible. Sélectionnez un autre modèle dans les paramètres.",
     "Check the selected model and credentials in Settings before generating a research film.": "Vérifiez le modèle sélectionné et les identifiants dans les paramètres avant de générer un film de recherche.",
