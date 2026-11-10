@@ -1698,7 +1698,7 @@ describe('mandatory product glossary', () => {
 
     expect(malformedTableRows).toEqual([])
     expect(readme).not.toMatch(/Fertigkeit|Anschl(?:uss|üsse)/u)
-    expect(readme).not.toMatch(/\b(?:Skill|Connector|Subagent|Shell)\b|Active-Agent-Framework/u)
+    expect(readme).not.toMatch(/\b(?:Skills?|Connector|Subagent|Shell)\b|Active-Agent-Framework/u)
     expect(readme).not.toMatch(/\bAnrufe\b|Turnusbezogene/u)
     expect(readme).not.toMatch(/Ã|Â|â€|�/u)
     // The README is an onboarding overview; detailed provider catalogs and old feature
@@ -1706,7 +1706,7 @@ describe('mandatory product glossary', () => {
     for (const heading of [
       '🚀 Schnellstart',
       'Benchmark-Ergebnisse',
-      'Kernkompetenzen',
+      'Warum AIPOCH Open-Science verwenden?',
       'Modellanbieter',
       'Daten, Berechtigungen und Vertrauen',
       'Entwicklung & Verpackung',

@@ -653,10 +653,19 @@ const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked })
   } finally {
     await lock.release()
   }
-  const cleared = await command('recheck')
-  if (cleared.state !== 'ready' || cleared.reason || !cleared.recovery?.canRetryInstall) {
-    throw new Error(`Released file holder still blocks retry: ${JSON.stringify(cleared)}`)
-  }
+  await waitFor(
+    'released file holder to allow retry',
+    async () => {
+      const status = await command('recheck')
+      if (status.state === 'ready' && !status.reason && status.recovery?.canRetryInstall)
+        return status
+      if (status.reason === 'installation-busy') return undefined
+      throw new Error(
+        `Released file holder returned an unexpected status: ${JSON.stringify(status)}`
+      )
+    },
+    30_000
+  )
   console.log(`External process recovery: ${JSON.stringify(observations)}`)
   return observations
 }
@@ -845,7 +854,8 @@ const main = async () => {
                 onBlocked: async () => {
                   const dialog = page.getByTestId('runtime-update-dialog')
                   await expect(dialog).toContainText('Another app is using Open-Science files')
-                  await expect(dialog).toContainText('Quit the other app, then recheck.')
+                  await expect(dialog).toContainText('Quit ')
+                  await expect(dialog).toContainText('then recheck.')
                   await expect(
                     dialog.getByRole('button', { name: 'Cancel', exact: true })
                   ).toBeEnabled()

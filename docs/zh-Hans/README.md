@@ -67,21 +67,6 @@ _2026 年 11 月 9 日_
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
 </p>
 
-## 目录
-
-- [快速开始](#-快速开始)
-- [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
-- [AIPOCH Open-Science 论文与引用](#aipoch-open-science-论文与引用)
-- [基准测试结果](#基准测试表现)
-- [核心能力](#核心能力)
-- [模型服务商](#模型服务商)
-- [数据、权限与信任](#数据权限与信任)
-- [开发与打包](#开发与打包)
-- [常见问题](#常见问题)
-- [贡献者](#贡献者)
-- [参与项目](#参与项目)
-- [许可证](#许可证)
-
 ## 🚀 快速开始
 
 ### 1. 下载应用
@@ -173,38 +158,11 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 
 Side Chat 对话、私人阅读书签和凭据不随包导出，所含文件取决于导出选择。收到的验证记录描述发送方执行过的检查，不代表接收计算机已重新运行。详见 [`.science` 包指南](https://aipoch.com/docs/guides/research-packages/)。
 
-## AIPOCH Open-Science 论文与引用
-
-**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
-
-arXiv 预印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交于 2026 年 10 月 12 日。
-
-我们的预印本介绍了 AIPOCH Open-Science：一个开源 AI 科研工作台，通过可移植的 `.science` 包共享研究上下文、产物版本和验证记录。阅读论文，了解包交换设计与受控评估。
-
-如果在研究中使用 AIPOCH Open-Science，可引用这篇预印本：
-
-<details>
-<summary>BibTeX 引用</summary>
-
-```bibtex
-@misc{ouyang2026aipochopenscienceopensourceai,
-      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
-      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
-      year={2026},
-      eprint={2610.17110},
-      archivePrefix={arXiv},
-      primaryClass={cs.SE},
-      url={https://arxiv.org/abs/2610.17110},
-}
-```
-
-</details>
-
 <a id="基准测试表现"></a>
 
 ## 基准测试结果
 
-AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回答论文内容相关问题和执行研究计划。以下结果来自 AIPOCH 自行开展的测试，每项成绩对应特定任务与评测配置。
+AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回答论文内容相关问题和执行研究计划。以下结果来自 AIPOCH 自行开展的测试，每项成绩对应特定任务与评测配置。 评测还覆盖计算复现和基于数据的假设发现。
 
 | 任务             | AIPOCH Open-Science 的结果                                                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -213,6 +171,8 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 | 综合带引用的答案 | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
 | 执行研究流程     | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
 | 分析生物医学数据 | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
+| 复现已发表的结果 | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
+| 根据数据提出假设 | DiscoveryBench — 在验证集的 25 项任务上，本地模型评分的均值为 0.7467/1。                                                                    |
 
 ### AstaBench — 文献任务
 
@@ -249,6 +209,22 @@ AIPOCH 运行了 AstaBench v0.5.4 中 LitQA2-FullText 的 75 题 Test 集。图�
 
 </details>
 
+### AstaBench — 计算复现与假设发现
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+11 月 6 日，AIPOCH 使用 DeepSeek Flash（Max 推理）复现论文结果，依据所给代码、数据和 README 执行任务。官方程序评分器在本地运行，一项任务的所有必答项均正确才得 1 分。37 项均获评分，含复测。 [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0.7467/1</strong></summary>
+
+11 月 9 日，AIPOCH 使用 deepseek-v4-flash 生成假设，并用同一模型按本地实现的评测流程评分。25 项中，18 项满分、2 项部分得分、5 项零分。题集和评分模型均与官方完整测试不同，分数不能直接排名。
+
+</details>
+
 ### ASI-Bench — 执行计划与选择方法
 
 四种条件分别要求智能体执行指定计划（B1）、组织工作流程（B2）、选择研究方法（B3），以及在干扰信息下开展研究（B4）。图表前两行比较使用相同 GPT-6 Astra 模型的本地测试。
@@ -278,42 +254,26 @@ Open-Science 在 B1–B4 上分别获得 **79.35、56.11、59.67 和 59.46**；�
 
 评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)及 [BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)。
 
-## 核心能力
+<a id="核心能力"></a>
 
-AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智能体执行、Python 和 R Notebook、科学数据连接器、带来源的不可变产物版本，以及受权限控制的人工参与机制。不断变化的目录、打包细节和新增选项应以已安装应用及[最新发行说明](https://github.com/aipoch/open-science/releases/latest)为准。
+## 为什么使用 AIPOCH Open-Science？
 
-| 领域                           | 核心能力                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **科学技能**                   | 提供 **24 个内置技能**，并可从 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安装 **525 个技能**，支持一键安装与更新。可通过对话或已完成的工作创建技能，导入技能包及 GitHub 来源，并保存 GitHub 仓库供后续导入时复用；仅保存仓库不会安装其中的技能。市场投稿经审核后发布，本地导入不会自动上架。                                                                                                                                                                                                                                                 |
-| **连接器**                     | 通过 **48 个内置连接器** 访问科学资源，也可添加自定义本地或远程 MCP 连接器。部分内置数据源默认关闭，需要按数据源明确启用。支持工具级权限管理，以及连接器配置的导入和导出。                                                                                                                                                                                                                                                                                                                                                                                                       |
-| **专家与委派**                 | 从 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安装 **10 个专家**，或创建和定制个人专家，由主智能体委派任务。专家包支持导入和导出；市场投稿经审核后发布，本地导入不会自动上架。                                                                                                                                                                                                                                                                                                                                                       |
-| **模型与智能体后端**           | 连接云端模型、兼容的自定义网关，或使用 Claude、Codex 订阅登录。新安装默认使用内置 Open-Science Agent；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可选用，并提供模型连接检查、图片输入和推理强度设置。                                                                                                                                                                                                                                                                                                                                                                       |
-| **项目、会话与 `.science` 包** | 管理项目，支持会话置顶、消息分支、侧边对话和历史恢复。将会话导出为**可移植的 `.science` 包**，并导入其他项目或计算机，携带对话分支、所选文件版本、Notebook 记录和验证证据。导入结果为只读历史，不执行代码或恢复凭据；侧边对话和书签不随包导出，文件范围取决于导出选择。                                                                                                                                                                                                                                                                                                          |
-| **审阅智能体**                 | 按需开启自动审阅，在独立上下文中核对智能体已完成轮次的回复、执行记录及相关文件证据。生成带依据的通过、警告或失败检查项，发现问题后可触发主智能体修正，并在有限轮次内复审。保留审阅日志与问题处理状态，审阅范围限于该轮可用记录。                                                                                                                                                                                                                                                                                                                                                 |
-| **Python、R、Notebook 与 HPC** | 使用托管环境或自配解释器，在本地运行 Python、R、Notebook 和 Shell 任务，支持后台执行与历史记录。也可通过 SSH、Slurm、Kubernetes、Hugging Face Jobs、Modal 或 Ray 提交经批准的任务。需自行准备目标账户、软件、资源和权限；云端任务可能在所连接账户上产生费用。                                                                                                                                                                                                                                                                                                                    |
-| **文献库**                     | 导入和管理文献与 PDF，支持合集、标签、项目关联、笔记及重复条目合并。通过 Semantic Scholar 发现论文的参考文献与施引文献，下载和预览补充附件，并拖放导入 PDF 或书目文件。查找开放获取全文，阅读 PDF 并提取图表，在会话中调用库内文献辅助分析。对于 DOI 有效的文献，可手动通过 Crossref 检查已知撤稿或更正；检查会将 DOI 发送给 Crossref，且覆盖范围并不完整，因此没有提示不代表论文未受影响。生成参考文献，将文献导出为 BibTeX 或 RIS，并将 Smart Screening 判定导出为 CSV。 手动设置未读、阅读中或已读状态，支持批量设置所选文献并按状态筛选。 可在现有文献搜索框中搜索个人备注。 |
-| **科学文件与预览**             | 单个上传文件最大 **10 GiB**，支持项目文件管理及科学数据、PDF、Office 文档、图像、代码和分子结构预览。这是上传大小限制，不代表模型可以读取全部内容；模型上下文、附件解析和预览各有限制。大文件通常需要通过代码分块读取或分析。                                                                                                                                                                                                                                                                                                                                                    |
-| **产物与溯源**                 | 保存不可变的产物版本及可用的生成代码、输入、执行历史、环境信息和审阅证据。可从已授权文件夹导入产物；AIPOCH Open-Science 会将每个导入文件复制到受管理的产物存储中。在桌面端，可使用完整执行配方、必要输入和可用运行时重放符合条件的版本，比较输出并导出验证记录。证据缺失可能阻止验证，重放检查不证明科学结论有效。                                                                                                                                                                                                                                                               |
+1. **在一个项目里读论文、分析数据。**
+   - 从 Zotero 导入文献，或一次粘贴最多 100 个文献标识符或文章链接。配置筛选模型后，可按纳入和排除标准筛选文献，对照模型和自己的判断，再打开 PDF 核对原文。
+   - 在论文旁预览科学数据、文档、图像和分子结构。在笔记本中运行 Python 或 R，将项目数据整理成表格或图，再对照源文件检查结果。
 
-按坐标查询 eQTL Catalogue 时，请使用 GRCh38 参考基因组坐标。连接器会检查所用的参考基因组。
+2. **查看结果如何生成，以及回答有哪些依据。**
+   - 在「溯源」中打开某个版本的图、表或报告，查看可用的输入、代码和执行历史。输入、执行步骤和运行环境齐备时，可在桌面端重跑该版本并比较输出。
+   - 启用 Reviewer，让它独立对照本轮执行日志和文件检查智能体的回答。你可以查看它指出的问题，以及智能体修正后的复查结果。
 
-可从同一台电脑上运行的 Zotero 10 或更高版本导入文献记录、标签、合集和来源链接，也可选择复制本地 PDF 附件。导入仅单向进行，不会修改 Zotero。
+3. **把结果连同上下文一起交给同事。**
+   - 选择要放入 `.science` 包的对话分支、文件版本、Notebook 记录和验证证据。同事可以在另一台电脑上打开包，查看一张图或表是怎样生成的。
+   - 导入的记录为只读，导入时不会执行代码或恢复凭据。验证记录展示发送方电脑上的检查。要追问新问题，同事可选择 **Fork to continue**，在可写副本中继续。
 
-可通过 DOI、arXiv ID、PMID、PMCID 或支持的文章链接添加文献，也可一次粘贴最多 100 条，每行一条。单篇文献可核对并编辑元数据后保存；批量导入可选择要导入的文献。全文 PDF 可另行添加。
-
-支持持久化 PDF 批注与文档笔记。配置筛选模型后，智能合集可按纳入／排除标准评估文献；AI 判断与人工判断分别记录，用于辅助人工审阅。
-
-在阅读模式下，智能体可列出、定位并创建关联 PDF 的笔记与标记。PDF 批注绑定到被批注的文件版本，不会跨计算机同步。
-
-文献详情页的 AI 研究快照使用已配置的主模型，归纳研究问题、研究人群、方法、主要发现和局限，并标明依据的是全文还是摘要。
-
-下载可选 OCR 组件及所需语言包后，即可识别扫描版 PDF 页面中的文字。共有九种语言包：英语、简体中文、繁体中文、德语、西班牙语、法语、日语、韩语和俄语。逐页覆盖状态会标明哪些页面仍缺少文本。
-
-翻译版 PDF 可选择将正文和图注重排为单栏、内容优先的版式，同时保留原始图像、表格、公式和参考文献，并提供源文件与输出文件的页码映射，便于对照。新安装中，Notebook 与 Shell 文件夹限制默认开启，将这些运行时限制在工作区、已批准的文件夹和工具所需文件内；此设置不控制智能体原生工具或远程计算机。
-
-桌面端还可将产物溯源导出为 RO-Crate 1.1。与版本绑定的环境包只有在捕获内容完整且兼容目标平台时，才能用于创建托管环境；这不等于完整计算机备份。
-
-在资源中心浏览研究案例，按类别筛选、按关键词搜索，并从案例详情下载包。
+4. **为分析选择工具和算力。**
+   - 选择模型服务商，通过 **48 个内置连接器**访问科学数据源。部分连接器需要先手动启用。
+   - 使用 **24 个内置技能**处理重复任务，也可从 [技能市场](https://github.com/aipoch/openscience-skill-marketplace) 的 **525 个技能**中选择安装。需要委派部分工作时，可从[专家市场](https://github.com/aipoch/openscience-specialist-marketplace)选择 **10 个专家**中的一个。
+   - 在本地运行分析，或通过 SSH、Slurm、Kubernetes、Hugging Face Jobs、Modal 或 Ray 提交到你管理的计算环境。批准远程任务前先核对目标、命令、资源和输出。云任务可能产生费用，由关联账户承担。
 
 ## 模型服务商
 
@@ -505,6 +465,29 @@ open-science artifacts download <artifact-id> --output ./report.md
 > 如果 AIPOCH Open-Science 对你有帮助，欢迎在 GitHub 上为仓库 Star。
 
 已交付、部分实现和计划能力见[能力地图](../ROADMAP.md#capability-map)。
+
+<a id="aipoch-open-science-论文与引用"></a>
+
+## 引用
+
+如果你的研究使用了 AIPOCH Open-Science，请引用[AIPOCH Open-Science 预印本](https://arxiv.org/abs/2610.17110)。
+
+<details>
+<summary>BibTeX 引用</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## 许可证
 

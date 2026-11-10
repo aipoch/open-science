@@ -177,6 +177,7 @@ import {
 import {
   deduplicateTableRegions,
   deduplicateSourceOwnedTableSubsets,
+  ensureGraphicalTableIssue,
   narrativeDuplicateTableIndices,
   recoverCaptionedBorderlessMathTables,
   encodedControlImageOnlyTable
@@ -5513,8 +5514,9 @@ try {
     const restoreCaption = (caption) => restoreCaptionCoordinates(caption, geometry.pages)
     for (const item of [...figures, ...algorithms, ...tables]) {
       restoreCaption(item.caption)
-      for (const data of [item, ...(item.parts ?? [])])
-        for (const note of data.notes ?? []) {
+      const parts = Array.isArray(item.parts) ? item.parts : []
+      for (const data of [item, ...parts])
+        for (const note of Array.isArray(data.notes) ? data.notes : []) {
           const source = geometry.pages.find((p) => p.pageNumber === (note.page ?? item.page))
           note.rect = originalRect(
             note.rect,
@@ -5534,18 +5536,19 @@ try {
         }
         const restore = (rect) => originalRect(rect, width, height, rotation)
         if (data.cropRect) data.cropRect = restore(data.cropRect)
-        if (data.cropRects) data.cropRects = data.cropRects.map(restore)
-        for (const cell of data.cells ?? []) {
+        if (Array.isArray(data.cropRects)) data.cropRects = data.cropRects.map(restore)
+        for (const cell of Array.isArray(data.cells) ? data.cells : []) {
           cell.rect = restore(cell.rect)
-          cell.sourceRects = cell.sourceRects.map(restore)
-          for (const segment of cell.sourceSegments ?? []) segment.rect = restore(segment.rect)
+          if (Array.isArray(cell.sourceRects)) cell.sourceRects = cell.sourceRects.map(restore)
+          if (Array.isArray(cell.sourceSegments))
+            for (const segment of cell.sourceSegments) segment.rect = restore(segment.rect)
         }
-        for (const row of data.rows ?? []) row.rect = restore(row.rect)
+        for (const row of Array.isArray(data.rows) ? data.rows : []) row.rect = restore(row.rect)
         if (data.sourceViewport && rotation !== 180)
           data.sourceViewport = { ...data.sourceViewport, width: height, height: width }
       }
       restoreTable(item)
-      item.parts?.forEach(restoreTable)
+      for (const part of parts) restoreTable(part)
     }
     // Native proof inputs stay upright and retain their original references.
     // Candidate transport copies are restored only when building the result.
@@ -5597,7 +5600,7 @@ try {
         figures.splice(index, 1)
     }
     for (const table of tables)
-      for (const part of [table, ...(table.parts ?? [])]) {
+      for (const part of [table, ...(Array.isArray(table.parts) ? table.parts : [])]) {
         if (part.caption && excludedIndexCaptions.has(captionOrigins.get(part.caption))) {
           delete part.caption
           part.captionIssue = 'no-adjacent-table-caption'
@@ -5697,7 +5700,7 @@ try {
     // grid/cells and each cell's sourceRects. Keep them in memory for repairs,
     // then omit only table-owned duplicates from the bounded result payload.
     const tableTransportData = (data) => {
-      const transport = { ...data }
+      const transport = ensureGraphicalTableIssue({ ...data })
       delete transport.rows
       if (Array.isArray(data.cells))
         transport.cells = data.cells.map((cell) => {
@@ -5930,7 +5933,7 @@ try {
       figures: figures.filter((figure) => !metadataOmittedFigures.has(figure)),
       algorithms,
       tables: tables.map((table) =>
-        table.parts
+        Array.isArray(table.parts)
           ? { ...tableTransportData(table), parts: table.parts.map(tableTransportData) }
           : tableTransportData(table)
       )

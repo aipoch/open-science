@@ -11,6 +11,7 @@ import {
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 import { SessionMessageLink } from './SessionMessageLink'
+import { SourceLinkSummary, resetSourceLinkSummaryCacheForTests } from './SourceLinkSummary'
 import { PresentedAgentMarkdown } from './AgentMarkdown'
 
 describe('SessionMessageLink', () => {
@@ -18,6 +19,7 @@ describe('SessionMessageLink', () => {
   let root: Root
 
   beforeEach(() => {
+    resetSourceLinkSummaryCacheForTests()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSettingsStore.setState({
       ...createInitialSettingsState(),
@@ -119,9 +121,15 @@ describe('SessionMessageLink', () => {
     expect(open).toHaveBeenCalledWith('http://example.com/paper', '_blank', 'noreferrer')
   })
 
-  it('keeps an unapproved HTTPS source local until external navigation is confirmed', async () => {
+  it('loads unknown HTTPS metadata while keeping external navigation confirmation', async () => {
     vi.useFakeTimers()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+    const getSourceLinkMetadata = vi.fn().mockResolvedValue({
+      title: 'Public page',
+      description: 'Public summary'
+    })
+    vi.stubGlobal('api', { settings: { getSourceLinkMetadata } })
 
     await act(async () => {
       root.render(
@@ -136,6 +144,9 @@ describe('SessionMessageLink', () => {
     await act(async () => vi.advanceTimersByTimeAsync(350))
 
     const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
+    expect(getSourceLinkMetadata).toHaveBeenCalledWith('https://tracking.example/paper')
+    expect(hoverCard?.textContent).toContain('Public page')
+    expect(hoverCard?.textContent).toContain('Public summary')
     expect(hoverCard?.textContent).toContain('tracking.example')
     expect(hoverCard?.textContent).not.toContain('Unapproved source')
     expect(document.body.querySelector('[data-session-link-favicon] img')).toBeNull()
@@ -169,12 +180,15 @@ describe('SessionMessageLink', () => {
     vi.useFakeTimers()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
-    const getSourceLinkMetadata = vi.fn().mockResolvedValue({
-      title: 'Article title',
-      description: 'Abstract',
-      image: 'data:image/png;base64,AA=='
-    })
-    vi.stubGlobal('api', { settings: { getSourceLinkMetadata } })
+    const metadataResult = Promise.withResolvers<{
+      title: string
+      description: string
+      imageUrl: string
+    }>()
+    const imageResult = Promise.withResolvers<string>()
+    const getSourceLinkMetadata = vi.fn().mockReturnValue(metadataResult.promise)
+    const getSourceLinkImage = vi.fn().mockReturnValue(imageResult.promise)
+    vi.stubGlobal('api', { settings: { getSourceLinkMetadata, getSourceLinkImage } })
     await act(async () => {
       root.render(
         <SessionMessageLink
@@ -195,17 +209,33 @@ describe('SessionMessageLink', () => {
 
     expect(getSourceLinkMetadata).not.toHaveBeenCalled()
     fireEvent.pointerEnter(sourceLink!)
-    await act(async () => vi.runAllTimersAsync())
+    await act(async () => vi.advanceTimersByTimeAsync(99))
+    expect(document.body.querySelector('[data-source-preview-hover-card]')).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
 
     const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
     expect(getSourceLinkMetadata).toHaveBeenCalledWith('https://example.com/paper#results')
+    expect(hoverCard?.textContent).toBe('example.com')
+    expect(hoverCard?.getAttribute('data-side')).toBe('bottom')
+    expect(getSourceLinkImage).not.toHaveBeenCalled()
+    await act(async () => {
+      metadataResult.resolve({
+        title: 'Article title',
+        description: 'Abstract',
+        imageUrl: 'https://cdn.example/cover.png'
+      })
+    })
+    expect(hoverCard?.textContent).toContain('Article title')
+    expect(hoverCard!.querySelector('img[src^="data:"]')).toBeNull()
+    expect(getSourceLinkImage).toHaveBeenCalledWith('https://cdn.example/cover.png')
+    await act(async () => {
+      imageResult.resolve('data:image/png;base64,AA==')
+    })
     expect(hoverCard?.textContent).toContain('Article title')
     expect(hoverCard?.textContent).toContain('Abstract')
     const artwork = hoverCard!.querySelector<HTMLImageElement>('img[src^="data:"]')!
     expect(artwork).not.toBeNull()
-    fireEvent.error(artwork)
-    expect(hoverCard?.contains(artwork)).toBe(false)
     let hoverCardUrl = hoverCard?.querySelector<HTMLAnchorElement>(
       '[data-source-preview-hover-url]'
     )
@@ -233,6 +263,15 @@ describe('SessionMessageLink', () => {
     fireEvent.pointerEnter(sourceLink!)
     await act(async () => vi.runAllTimersAsync())
     hoverCardUrl = document.body.querySelector<HTMLAnchorElement>('[data-source-preview-hover-url]')
+    expect(getSourceLinkMetadata).toHaveBeenCalledTimes(1)
+    expect(getSourceLinkImage).toHaveBeenCalledTimes(1)
+    const cachedCard = document.body.querySelector('[data-source-preview-hover-card]')!
+    expect(cachedCard.textContent).toContain('Article title')
+    const cachedArtwork = cachedCard.querySelector<HTMLImageElement>('img[src^="data:"]')!
+    expect(cachedArtwork).not.toBeNull()
+    fireEvent.error(cachedArtwork)
+    expect(cachedCard.contains(cachedArtwork)).toBe(false)
+    expect(cachedCard.textContent).toContain('Abstract')
 
     await act(async () => {
       hoverCardUrl?.click()
@@ -254,6 +293,56 @@ describe('SessionMessageLink', () => {
         })
       ]
     })
+  })
+
+  it('shares in-flight requests across closing and reopening a preview', async () => {
+    const metadata = Promise.withResolvers<{ title: string; imageUrl: string }>()
+    const image = Promise.withResolvers<string>()
+    const getSourceLinkMetadata = vi.fn().mockReturnValue(metadata.promise)
+    const getSourceLinkImage = vi.fn().mockReturnValue(image.promise)
+    vi.stubGlobal('api', { settings: { getSourceLinkMetadata, getSourceLinkImage } })
+    const preview = (
+      <SourceLinkSummary url="https://example.com/pending" hostname="example.com" allowed />
+    )
+    await act(async () => root.render(preview))
+    await act(async () => root.render(null))
+    await act(async () => root.render(preview))
+    expect(getSourceLinkMetadata).toHaveBeenCalledTimes(1)
+    await act(async () =>
+      metadata.resolve({ title: 'Pending article', imageUrl: 'https://example.com/image.png' })
+    )
+    expect(container.textContent).toContain('Pending article')
+    await act(async () => root.render(null))
+    await act(async () => root.render(preview))
+    expect(getSourceLinkImage).toHaveBeenCalledTimes(1)
+    await act(async () => image.resolve('data:image/png;base64,AA=='))
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,AA==')
+  })
+
+  it('retries failed metadata and artwork without refetching successful text', async () => {
+    const getSourceLinkMetadata = vi
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockResolvedValue({ title: 'Recovered article', imageUrl: 'https://example.com/image.png' })
+    const getSourceLinkImage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Timeout'))
+      .mockResolvedValue('data:image/png;base64,AA==')
+    vi.stubGlobal('api', { settings: { getSourceLinkMetadata, getSourceLinkImage } })
+    const preview = (
+      <SourceLinkSummary url="https://example.com/retry" hostname="example.com" allowed />
+    )
+    await act(async () => root.render(preview))
+    expect(container.textContent).toBe('')
+    await act(async () => root.render(null))
+    await act(async () => root.render(preview))
+    expect(container.textContent).toContain('Recovered article')
+    expect(container.querySelector('img')).toBeNull()
+    await act(async () => root.render(null))
+    await act(async () => root.render(preview))
+    expect(getSourceLinkMetadata).toHaveBeenCalledTimes(2)
+    expect(getSourceLinkImage).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('img')).not.toBeNull()
   })
 
   it('keeps the interactive source preview actions keyboard reachable', async () => {

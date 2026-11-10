@@ -768,6 +768,17 @@ describe('production delegated framework runtime bridge', () => {
       await expect(running.completion).rejects.not.toThrow('configured provider is unavailable')
       expect(resolveAdmittedSubagentBackend).not.toHaveBeenCalled()
       expect(issueDelegatedNotebookConnection).toHaveBeenCalledOnce()
+      expect(issueDelegatedNotebookConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          viewImageBackend: {
+            frameworkId: admittedBackend.framework.id,
+            backendId: admittedBackend.backendId,
+            modelRoute: admittedBackend.modelRoute,
+            model: admittedBackend.contextUsageModel ?? admittedBackend.sessionModel,
+            supportsImageInput: admittedBackend.supportsImageInput === true
+          }
+        })
+      )
     } finally {
       await Promise.all([
         rm(dataRoot, { recursive: true, force: true }),

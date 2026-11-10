@@ -141,6 +141,10 @@ export const settingsSetNetworkProxyContracts = {
     'settings',
     ['settings:get-source-link-metadata', WEB]
   ),
+  'settings.getSourceLinkImage': callable<(url: string) => Promise<string | undefined>>()(
+    'settings',
+    ['settings:get-source-link-image', WEB]
+  ),
   'settings.getNotebookNetworkStatus': callable<() => Promise<NotebookNetworkStatus>>()(
     'settings',
     ['settings:get-notebook-network-status', LOCAL]

@@ -218,6 +218,17 @@ it.each(windowsCredentialDiagnosticSchema.shape.code.options)(
   }
 )
 
+it('does not give authorization advice when the Windows helper returned no key', () => {
+  const error = new CredentialIdentityError('native-secret-operation-failed', undefined, {
+    code: 'secret-empty-response',
+    exitCode: 0
+  })
+  const message = credentialRecoveryMessage(error, ['zh-CN'])
+  expect(message).toContain('可能被安全软件拦截')
+  expect(message).toContain('CREDENTIAL_DETAIL: secret-empty-response')
+  expect(message).not.toContain('授权问题')
+})
+
 it('rejects untrusted diagnostics at the error boundary', () => {
   const error = new CredentialIdentityError('windows-profile-key-unavailable', undefined, {
     code: 'profile-read-failed',

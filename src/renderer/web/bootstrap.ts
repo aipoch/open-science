@@ -9,6 +9,7 @@ import {
   preserveComposerDraftsForRecovery
 } from '@/pages/workspace/composer-draft-storage'
 import { createElement } from 'react'
+import type { z } from 'zod'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
@@ -541,11 +542,23 @@ const webManagedFileSizeLimitError = (): Error =>
     name: WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
   })
 
+const MAX_BOOTSTRAP_ISSUES = 3
+
+// A stale Web bundle fails on one issue per unknown channel, so only the first few are listed.
+const describeBootstrapIssues = (issues: readonly z.core.$ZodIssue[]): string => {
+  const shown = issues
+    .slice(0, MAX_BOOTSTRAP_ISSUES)
+    .map((issue) => (issue.path.length ? `${issue.path.join('.')}: ` : '') + issue.message)
+  const hidden = issues.length - shown.length
+  return shown.join('; ') + (hidden > 0 ? ` (+${hidden} more)` : '')
+}
+
 const installWebApi = async (): Promise<EventCursor> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
     throw new Error(
-      `Incompatible Open-Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
+      `Incompatible Open-Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}. ` +
+        describeBootstrapIssues(parsedBootstrap.error.issues)
     )
   }
   const bootstrap = parsedBootstrap.data

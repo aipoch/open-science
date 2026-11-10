@@ -85,10 +85,7 @@ import {
   type AcpAgentConnectionHooks
 } from './agent-connection-adapter'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
-import {
-  artifactPublicationContinuationText,
-  type NotebookWorkingFile
-} from './artifact-publication-continuation'
+import { artifactPublicationContinuationText } from './artifact-publication-continuation'
 import type { ArtifactTurnOwner } from './artifact-turn-owner'
 import type {
   AcpBackendGenerationOwner,
@@ -450,8 +447,14 @@ class AcpRuntime {
         disconnect: () => this.disconnect(false),
         resume: (request) => this.resumeSession(request)
       },
-      requestArtifactPublicationContinuation: (input) =>
-        this.parkArtifactPublicationContinuation(input),
+      artifactPublicationPrompt: (sessionId, files) => {
+        if (this.appContinuations.has(sessionId)) return undefined
+        const tool = renderAppMcpToolReferences(
+          this.backendGeneration.current.framework.id,
+          'write_artifact_file'
+        )
+        return artifactPublicationContinuationText(files, tool)
+      },
       onPromptEnded: (sessionId, turnToken) => this.nativeFollowUp.releaseTurn(sessionId, turnToken)
     })
     this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
@@ -1399,6 +1402,7 @@ class AcpRuntime {
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
     const hooks: AcpAgentConnectionHooks = {
+      toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
       observeSessionUpdate: (notification) => {
@@ -2777,27 +2781,6 @@ class AcpRuntime {
     }
     queueMicrotask(() => {
       void this.flushPendingAppContinuation(sessionId)
-    })
-  }
-
-  private parkArtifactPublicationContinuation(input: {
-    permissionPrompts?: AcpPromptRequest['permissionPrompts']
-    sessionId: string
-    provenanceContext?: AcpPromptRequest['provenanceContext']
-    files: readonly NotebookWorkingFile[]
-  }): void {
-    if (this.appContinuations.has(input.sessionId)) return
-    const backend = this.backendGeneration.current
-    const toolName = renderAppMcpToolReferences(backend.framework.id, 'write_artifact_file')
-    this.appContinuations.set(input.sessionId, {
-      condition: 'always',
-      request: {
-        sessionId: input.sessionId,
-        text: artifactPublicationContinuationText(input.files, toolName),
-        permissionPrompts: input.permissionPrompts,
-        suppressUserMessage: true,
-        ...(input.provenanceContext ? { provenanceContext: input.provenanceContext } : {})
-      }
     })
   }
 

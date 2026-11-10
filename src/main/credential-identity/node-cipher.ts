@@ -28,11 +28,22 @@ export type NodeSecretOperations = {
   unprotect(value: Buffer): Buffer
 }
 
-const nativeSecret = (
-  operation: string,
-  args: string[],
-  input: Buffer = Buffer.alloc(0)
-): Buffer => {
+const helperFailureCodes: Partial<
+  Record<number, 'secret-dpapi-failed' | 'secret-empty-plaintext' | 'secret-write-failed'>
+> = {
+  3: 'secret-dpapi-failed',
+  4: 'secret-empty-plaintext',
+  5: 'secret-write-failed'
+}
+// DPAPI calls have no side effects, so a lost or empty response is retried once before startup
+// stops. A reported DPAPI error is deterministic and is not retried.
+const retriedCodes = new Set([
+  'secret-empty-response',
+  'secret-empty-plaintext',
+  'secret-write-failed'
+])
+
+const runNativeSecret = (operation: string, args: string[], input: Buffer): Buffer => {
   const { secretExecutablePath } = createRequire(import.meta.url)(
     '@aipoch/credential-identity-probe-native'
   ) as { secretExecutablePath: string }
@@ -49,6 +60,10 @@ const nativeSecret = (
     stdio: ['pipe', 'pipe', 'ignore']
   })
   if (result.error || result.status !== 0 || result.signal || result.stdout.length === 0) {
+    const helperCode = result.status !== null ? helperFailureCodes[result.status] : undefined
+    // The DPAPI failure exit carries only a decimal Windows error number on stdout.
+    const osText = helperCode === 'secret-dpapi-failed' ? result.stdout?.toString('ascii') : ''
+    const osStatus = osText && /^\d{1,10}$/u.test(osText) ? Number(osText) : undefined
     result.stdout?.fill(0)
     const systemCode = credentialSystemCode(result.error)
     const signal = nativeSecretDiagnosticSchema.shape.signal.safeParse(result.signal)
@@ -60,15 +75,33 @@ const nativeSecret = (
             ? 'secret-start-failed'
             : result.signal
               ? 'secret-signalled'
-              : result.status !== 0
-                ? 'secret-exit-failed'
-                : 'secret-empty-response',
+              : (helperCode ??
+                (result.status !== 0 ? 'secret-exit-failed' : 'secret-empty-response')),
       ...(systemCode ? { systemCode } : {}),
+      ...(osStatus !== undefined && osStatus <= 0xffffffff ? { osStatus } : {}),
       ...(result.status !== null ? { exitCode: result.status } : {}),
       ...(result.signal ? { signal: signal.success ? signal.data : ('UNKNOWN' as const) } : {})
     })
   }
   return result.stdout
+}
+
+const nativeSecret = (
+  operation: string,
+  args: string[],
+  input: Buffer = Buffer.alloc(0)
+): Buffer => {
+  try {
+    return runNativeSecret(operation, args, input)
+  } catch (error) {
+    if (
+      (operation !== 'protect' && operation !== 'unprotect') ||
+      !(error instanceof CredentialIdentityError) ||
+      !retriedCodes.has(error.diagnostic?.code ?? '')
+    )
+      throw error
+    return runNativeSecret(operation, args, input)
+  }
 }
 
 const secretOperations: NodeSecretOperations = {

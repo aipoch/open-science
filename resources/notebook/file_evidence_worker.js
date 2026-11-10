@@ -12,6 +12,7 @@ const {
   mkdirSync,
   openSync,
   readdirSync,
+  realpathSync,
   readSync,
   renameSync,
   rmdirSync,
@@ -20,7 +21,8 @@ const {
   statfsSync,
   writeSync
 } = require('node:fs')
-const { join } = require('node:path')
+const { dirname, join, relative, sep } = require('node:path')
+const shadow = require('./file_evidence_shadow.js')
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024
 const MAX_INTERNAL_JSON_BYTES = 64 * 1024 * 1024
@@ -179,12 +181,22 @@ const writeExclusiveFile = (name, contents) => {
     closeSync(descriptor)
   }
 }
-const publishExclusiveFile = (name, contents) => {
+const publishExclusiveFile = (name, contents, withoutLinks = false) => {
   const temporaryName = `.publish-${randomUUID()}.tmp`
   try {
     writeExclusiveFile(temporaryName, contents)
-    linkSync(temporaryName, name)
-    rmSync(temporaryName, { force: true })
+    if (withoutLinks) {
+      // The unpacked worker and standalone backend both ship this Node-API binary.
+      require('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node').publishNoReplace(
+        process.cwd(),
+        '',
+        temporaryName,
+        name
+      )
+    } else {
+      linkSync(temporaryName, name)
+      rmSync(temporaryName)
+    }
     syncDirectory()
   } finally {
     rmSync(temporaryName, { force: true })
@@ -620,11 +632,14 @@ const ensureProject = (request) => {
           schemaVersion: 1,
           phase: 'prepared',
           projectName,
-          ownershipToken: randomUUID()
+          ownershipToken: request.importOperationId
+            ? assertSafeName(request.importOperationId)
+            : randomUUID()
         },
         null,
         2
-      )}\n`
+      )}\n`,
+      Boolean(request.importOperationId)
     )
   }
   const receipt = readProjectOwnership(projectName)
@@ -790,7 +805,7 @@ const blobEntry = (name) => {
   const match = BLOB_DELETION_TOMBSTONE_NAME.exec(name)
   return match ? { blobName: match[1], quarantined: true } : undefined
 }
-const blobPoolBytes = (blobPool) => {
+const blobPoolBytes = (blobPool, includeUnactivated = false) => {
   let bytes = 0
   for (const entry of readdirSync(blobPool.path, { withFileTypes: true })) {
     const parsed = blobEntry(entry.name)
@@ -813,8 +828,35 @@ const blobPoolBytes = (blobPool) => {
     }
     bytes += metadata.size
   }
-  return bytes
+  return bytes + shadow.projectBytes(blobPool, includeUnactivated)
 }
+const shadowIO = {
+  readFile(path, limit) {
+    if (!lstatSync(path).isFile()) throw new Error('Unsafe shadow evidence file.')
+    return readRegularFile(path, limit)
+  },
+  markPending(lane, live) {
+    for (const name of readdirSync(lane)) {
+      if (!RECEIPT_NAME.test(name)) continue
+      const receipt = readJson(join(lane, name))
+      if (!receiptShape(receipt) || receipt.receiptName !== name)
+        throw new Error('Invalid pending evidence receipt.')
+      if (receipt.phase !== 'capturing') continue
+      const staging = join(lane, receipt.stagingName)
+      const dir = entryExists(staging) ? staging : join(lane, receipt.finalName)
+      if (!sameIdentity(entryIdentity(dir), receipt.stagingIdentity))
+        throw new Error('Pending evidence changed during mark.')
+      verifyOwnershipMarker(dir, receipt.ownershipToken, 'Pending evidence')
+      const file = join(dir, CAPTURE_FILE)
+      if (!entryExists(file) && dir !== staging) continue // already published
+      for (const { generation } of readCapture(receipt, file).relations)
+        if (generation) live.add('sha256-' + generation.checksum)
+    }
+  },
+  writeExclusive: writeExclusiveFile,
+  syncDirectory: syncDirectoryPath
+}
+
 const sweepBlobPool = (blobPool) => {
   const actual = entryIdentity(blobPool.path)
   if (!actual || !sameIdentity(actual, blobPool.identity)) {
@@ -849,6 +891,31 @@ const sweepBlobPool = (blobPool) => {
   }
   if (!sameIdentity(entryIdentity(blobPool.path), blobPool.identity)) {
     throw new Error('File-evidence blob-pool identity changed during cleanup scan.')
+  }
+  // In-flight captures own real links in staging (and after rename, the final directory).
+  // They remain roots across worker calls and at any age. Only single-link candidates
+  // additionally need the committed lane logs before the old collector can unlink them.
+  if (quarantined.length || orphaned.length) {
+    let marks
+    try {
+      marks = shadow.protectedBlobs(blobPool, shadowIO)
+    } catch {
+      // An unreadable lane prevents proving unreachability, but never blocks other runs.
+      return 0
+    }
+    if (marks.active) {
+      const cutoff = Date.now() - shadow.graceMs
+      for (const candidates of [orphaned, quarantined]) {
+        for (let index = candidates.length - 1; index >= 0; index--) {
+          const { name } = candidates[index]
+          if (
+            marks.live.has(blobEntry(name).blobName) ||
+            lstatSync(join(blobPool.path, name)).mtimeMs > cutoff
+          )
+            candidates.splice(index, 1)
+        }
+      }
+    }
   }
   for (const candidate of [...quarantined, ...orphaned]) {
     const metadata = lstatSync(join(blobPool.path, candidate.name))
@@ -1007,7 +1074,8 @@ const compactHistory = (request) => {
         throw new Error('History contains unfinished work.')
       const path = join(directory, entry.name)
       if (entry.isDirectory()) {
-        if (entry.name !== 'blobs') scan(path, `${key}/${entry.name}`, depth + 1)
+        if (entry.name !== 'blobs' && entry.name !== shadow.directoryName)
+          scan(path, `${key}/${entry.name}`, depth + 1)
       } else if (entry.name === 'evidence.json') {
         const beforeRead = lstatSync(path)
         const bytes = readRegularFile(path, 8 * 1024 * 1024 - metadataBytes)
@@ -1121,6 +1189,13 @@ const compactHistory = (request) => {
           value,
           checksum: createHash('sha256').update(bytes).digest('hex')
         })
+      } else if (
+        entry.name === shadow.projectMarker &&
+        depth === 0 &&
+        entry.isFile() &&
+        lstatSync(path).size === 0
+      ) {
+        continue
       } else if (entry.name === '.session-package-owner' && depth === 1 && entry.isFile()) {
         const metadata = lstatSync(path)
         const operation = readRegularFile(path, 36).toString('utf8')
@@ -1612,9 +1687,9 @@ const ensureCapture = (request) => {
   return { ok: true, captureReady: true, initialized: true }
 }
 
-const readCapture = (receipt) => {
-  if (!lstatSync(CAPTURE_FILE).isFile()) throw new Error('Invalid file-evidence capture type.')
-  const captureBytes = readRegularFile(CAPTURE_FILE, MAX_INTERNAL_JSON_BYTES)
+const readCapture = (receipt, path = CAPTURE_FILE) => {
+  if (!lstatSync(path).isFile()) throw new Error('Invalid file-evidence capture type.')
+  const captureBytes = readRegularFile(path, MAX_INTERNAL_JSON_BYTES)
   if (createHash('sha256').update(captureBytes).digest('hex') !== receipt.captureChecksum) {
     throw new Error('File-evidence initial capture checksum mismatch.')
   }
@@ -1658,12 +1733,37 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
     throw new Error('Published file-evidence directory identity mismatch.')
   process.chdir(receipt.finalName)
   let result
+  let shadowError
   try {
     assertBoundRoot(expected)
     verifyOwnershipMarker('.', receipt.ownershipToken, 'File-evidence Activity')
     const { serialized, sidecar } = readPublication(receipt)
     if (receipt.phase === 'capturing' && entryExists(CAPTURE_FILE)) {
-      readCapture(receipt)
+      const capture = readCapture(receipt)
+      const projectPrefix = blobPool.storageKeyPrefix.replace(/\/blobs$/u, '')
+      const lane = dirname(process.cwd())
+      const laneKey = relative(dirname(realpathSync(blobPool.path)), lane)
+        .split(sep)
+        .join('/')
+      if (
+        receipt.activityKind === 'notebook-run' &&
+        /^execution-file-evidence\/[^/]+$/u.test(projectPrefix) &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/frames\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/u.test(laneKey) &&
+        receipt.storageKeyPrefix === projectPrefix + '/' + laneKey
+      ) {
+        try {
+          shadow.append(lane, capture, sidecar, serialized, {
+            ...shadowIO,
+            projectRoot: dirname(blobPool.path),
+            reserveBytes: request.diskReserveBytes,
+            projectLimit: request.maxEvidenceBytes,
+            projectUsage: () => blobPoolBytes(blobPool),
+            storageKeyPrefix: receipt.storageKeyPrefix + '/' + receipt.finalName
+          })
+        } catch (error) {
+          shadowError = error.message
+        }
+      }
       releaseUnusedActivityBlobs(
         [
           ...(sidecar.predecessorGenerations ?? []),
@@ -1678,6 +1778,7 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
     result = {
       ok: true,
       generations,
+      ...(shadowError ? { shadowError } : {}),
       fileEvidence: {
         schemaVersion: 1,
         activityId: request.activityId,
@@ -2210,6 +2311,8 @@ const deleteProject = (request) => {
     return { ok: true, removedProjectEntries: 0 }
   }
   let receipt = readProjectOwnership(projectName)
+  if (request.importOperationId && receipt.ownershipToken !== request.importOperationId)
+    return { ok: true, removedProjectEntries: 0 }
   if (receipt.phase === 'prepared') {
     ensureProject(request)
     receipt = readProjectOwnership(projectName)
@@ -2232,6 +2335,18 @@ const deleteProject = (request) => {
     }
     if (projectIdentity) {
       verifyProjectMarker(projectName, receipt.ownershipToken)
+      if (request.importOperationId) {
+        for (const entry of readdirSync(projectName, { withFileTypes: true })) {
+          if (entry.name === ownershipFile(receipt.ownershipToken)) continue
+          if (
+            entry.name === 'blobs' &&
+            entry.isDirectory() &&
+            !readdirSync(join(projectName, entry.name)).length
+          )
+            continue
+          return { ok: true, removedProjectEntries: 0 }
+        }
+      }
       renameSync(projectName, tombstoneName)
       syncDirectory()
       const renamedIdentity = entryIdentity(tombstoneName)
@@ -2276,7 +2391,106 @@ const deleteProject = (request) => {
   return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
+const importPoolReceipt = '.import-pool-receipt.json'
+const rollbackImportedPool = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const receipt = readJson(importPoolReceipt)
+  if (!sameIdentity(pool.identity, receipt.pool) || !Array.isArray(receipt.additions))
+    throw new Error('Invalid import pool rollback receipt.')
+  const marks = shadow.protectedBlobs(pool, shadowIO)
+  for (const { name, fingerprint } of receipt.additions) {
+    if (typeof name !== 'string' || !BLOB_NAME.test(name) || typeof fingerprint !== 'string')
+      throw new Error('Invalid import pool rollback object.')
+    // Entries still staged never reached the pool (including interruption before activation).
+    if (entryExists(name) || marks.live.has(name)) continue
+    if (!marks.active) throw new Error('Missing imported evidence project marker.')
+    const path = join(pool.path, name)
+    if (!entryExists(path)) continue
+    const stat = lstatSync(path)
+    // Rename back only this operation's exact inode, unless another lane or legacy link owns it.
+    if (stat.isFile() && stat.nlink === 1 && quarantineFingerprint(stat) === fingerprint) {
+      renameSync(path, name)
+    }
+  }
+  const marker = join(dirname(pool.path), shadow.projectMarker)
+  if (
+    receipt.activation &&
+    entryExists(marker) &&
+    quarantineFingerprint(lstatSync(marker)) === receipt.activation &&
+    !marks.live.size &&
+    !readdirSync(pool.path).length &&
+    !shadow.projectBytes(pool)
+  ) {
+    rmSync(marker)
+    syncDirectoryPath(dirname(pool.path))
+  }
+  syncDirectoryPath(pool.path)
+  syncDirectory()
+  return { ok: true, poolPublished: false }
+}
+
+const publishImportedPool = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const project = dirname(pool.path)
+  const marker = join(project, shadow.projectMarker)
+  const activate = !entryExists(marker)
+  if (!activate && (!lstatSync(marker).isFile() || lstatSync(marker).size !== 0))
+    throw new Error('Invalid evidence pool activation marker.')
+  // Staged lanes are already installed. Count them even before the project first opts in.
+  let bytes = blobPoolBytes(pool, true)
+  if (!Number.isSafeInteger(request.maxEvidenceBytes) || bytes > request.maxEvidenceBytes)
+    throw new Error('Imported execution evidence exceeds the project budget.')
+  const additions = []
+  for (const entry of readdirSync('.', { withFileTypes: true })) {
+    if (!entry.isFile() || !BLOB_NAME.test(entry.name))
+      throw new Error('Invalid imported pool object.')
+    const size = lstatSync(entry.name).size
+    const target = join(pool.path, entry.name)
+    if (entryExists(target)) {
+      if (!lstatSync(target).isFile()) throw new Error('Invalid existing evidence pool object.')
+      verifyBlob(target, size, entry.name.slice(7))
+    } else {
+      bytes += size
+      if (bytes > request.maxEvidenceBytes)
+        throw new Error('Imported execution evidence exceeds the project budget.')
+      verifyBlob(entry.name, size, entry.name.slice(7))
+      additions.push({
+        name: entry.name,
+        fingerprint: quarantineFingerprint(lstatSync(entry.name))
+      })
+    }
+  }
+  // Persist ownership before the first move so a partial batch is recoverable after restart.
+  const stagedMarker = '.import-pool-activation'
+  if (activate) writeExclusiveFile(stagedMarker, '')
+  if (activate || additions.length)
+    replaceJson(importPoolReceipt, {
+      pool: pool.identity,
+      additions,
+      ...(activate ? { activation: quarantineFingerprint(lstatSync(stagedMarker)) } : {})
+    })
+  if (activate) {
+    renameSync(stagedMarker, marker)
+    syncDirectoryPath(project)
+  }
+  for (const { name } of additions) {
+    const fd = openSync(name, constants.O_RDWR | constants.O_NOFOLLOW)
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(name, join(pool.path, name))
+  }
+  syncDirectoryPath(pool.path)
+  return { ok: true, poolPublished: true }
+}
+
 const operationHandlers = new Map([
+  ['publish-imported-pool', publishImportedPool],
+  ['rollback-imported-pool', rollbackImportedPool],
   ['compact-history', compactHistory],
   ['begin', begin],
   ['ensure-capture', ensureCapture],

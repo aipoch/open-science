@@ -1,0 +1,23 @@
+name: PR Review Signal
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_target:
+    branches: [main]
+    types: [synchronize]
+
+permissions: {}
+
+jobs:
+  signal:
+    name: Signal review status change
+    if: >-
+      github.event.pull_request.base.ref == 'main' &&
+      (github.event_name == 'pull_request_target' ||
+       github.event.review.state == 'changes_requested' || github.event.review.state == 'approved')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Signal only; the default-branch listener handles the labels for both events.
+      - run: 'true'

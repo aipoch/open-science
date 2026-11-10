@@ -203,6 +203,7 @@ const composeAcpRuntimeLifecycleOwners = (
   const connectionLifecycle = new AcpConnectionLifecycleWorkflow({
     appVersion: options.appVersion,
     separateProviderNotices: options.separateProviderNotices,
+    toolLess: session.sessionEnvironment.role() === 'restricted-inference',
     defaultCwd: options.defaultCwd,
     currentConnection,
     currentStatus: () => base.snapshotOwner.status,

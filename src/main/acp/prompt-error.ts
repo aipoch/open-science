@@ -1,3 +1,5 @@
+import { redactSensitiveText } from '@aipoch/diagnostics'
+
 import { classifyFailure } from '../../shared/failure/classify'
 import {
   PROVIDER_CONNECTION_FAILED_PREFIX,
@@ -20,6 +22,31 @@ export type PromptErrorContext = {
 
 // The innermost provider detail pulled from a wrapped error message.
 type UpstreamDetail = { text: string; type?: string; status?: number }
+
+const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 300
+
+const isProviderErrorKind = (error: unknown): boolean => {
+  try {
+    const data = (error as { data?: unknown } | null)?.data
+    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
+
+    return (
+      typeof kind === 'string' &&
+      kind
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '-') === 'provider-error'
+    )
+  } catch {
+    return false
+  }
+}
+
+const safeProviderErrorDetail = (value: string): string => {
+  const redacted = redactSensitiveText(value).replace(/\s+/g, ' ').trim()
+  if (redacted.length <= MAX_PROVIDER_ERROR_DETAIL_LENGTH) return redacted
+  return redacted.slice(0, MAX_PROVIDER_ERROR_DETAIL_LENGTH) + '…'
+}
 
 // The "resource not found" family. The agent renders the provider's HTTP error with an English status
 // label (`Not Found:`) and the provider's structured error type is an ASCII slug (`resource_not_found`),
@@ -115,17 +142,20 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
 
     if (!text) return undefined
 
+    const nestedStatus =
+      err?.type === 'upstream_error' &&
+      typeof err.status === 'number' &&
+      Number.isInteger(err.status) &&
+      err.status >= 400 &&
+      err.status <= 599
+        ? err.status
+        : undefined
+    const wrappedStatus = message.slice(0, braceStart).match(/\b([45]\d{2})\b/)?.[1]
+
     return {
       text,
       type: typeof err?.type === 'string' ? err.type : undefined,
-      status:
-        err?.type === 'upstream_error' &&
-        typeof err.status === 'number' &&
-        Number.isInteger(err.status) &&
-        err.status >= 400 &&
-        err.status <= 599
-          ? err.status
-          : undefined
+      status: nestedStatus ?? (wrappedStatus ? Number(wrappedStatus) : undefined)
     }
   } catch {
     return undefined
@@ -190,12 +220,25 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
     return `${PROVIDER_CONNECTION_FAILED_PREFIX}${modelPart}. Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry.${connectionDetail ? ` Connection detail: ${connectionDetail}.` : ''}`
   }
 
-  if (!isProviderNotFound(error, raw, detail)) return raw
+  if (isProviderNotFound(error, raw, detail)) {
+    const providerText = safeProviderErrorDetail(detail?.text ?? stripWrapperPrefixes(raw))
+    const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
 
-  const providerText = detail?.text ?? stripWrapperPrefixes(raw)
-  const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
+    return `${PROVIDER_RESOURCE_NOT_FOUND_PREFIX}${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
+  }
 
-  return `${PROVIDER_RESOURCE_NOT_FOUND_PREFIX}${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
+  // Preserve structured provider messages while leaving untagged ACP/runtime errors unchanged.
+  if (
+    (isApiError(error) || isProviderErrorKind(error) || isClaudeProviderApiError(error)) &&
+    detail?.text
+  ) {
+    const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
+    const statusPart = detail.status ? ` (HTTP ${detail.status})` : ''
+
+    return `Provider error${modelPart}${statusPart}: ${safeProviderErrorDetail(detail.text)}`
+  }
+
+  return raw
 }
 
 // Only interpret protocol/provider authentication signals at the ACP boundary. A 403, a tool's
@@ -237,25 +280,6 @@ export const withAgentAuthenticationRecovery = async <T>(
     if (isAgentAuthenticationFailure(error))
       throw new Error('Authentication required', { cause: error })
     throw error
-  }
-}
-
-// The agent's structured tag for a failure it relayed from the upstream model provider (as opposed to
-// an ACP protocol/session error). The bridges attach `data.errorKind: 'provider-error'` for these.
-const isProviderErrorKind = (error: unknown): boolean => {
-  try {
-    const data = (error as { data?: unknown } | null)?.data
-    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
-
-    return (
-      typeof kind === 'string' &&
-      kind
-        .trim()
-        .toLowerCase()
-        .replace(/[\s_-]+/g, '-') === 'provider-error'
-    )
-  } catch {
-    return false
   }
 }
 

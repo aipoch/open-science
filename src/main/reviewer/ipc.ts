@@ -372,6 +372,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         request.projectId,
         request.appSessionId
       )
+      if (reviews.length === 0) return reviews
       let session: PersistedChatSession | undefined
       try {
         session = await sessionReader.loadSession(request.projectId, request.appSessionId)

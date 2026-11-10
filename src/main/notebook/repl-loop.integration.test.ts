@@ -437,7 +437,7 @@ describe('repl_loop local RPC transport', () => {
     }
   })
 
-  it('exposes host.help as a thin Host SDK help RPC adapter', async () => {
+  it('exposes host.help through RPC and keeps namespace signatures aligned with the real REPL', async () => {
     let received: { method?: string; params?: Record<string, unknown> } = {}
     const server = createServer((request, response) => {
       let body = ''
@@ -474,6 +474,76 @@ describe('repl_loop local RPC transport', () => {
         availability: { status: 'available' }
       })
       expect(received).toEqual({ method: 'hostSdkHelp', params: { query: 'delegate' } })
+
+      // Introspect the exposed functions, including the two synchronous handle factories.
+      // No method that performs RPC, creates a job or mutates application state is invoked.
+      const signatures = await send(`
+        const handle = host.compute.create('signature-fixture');
+        const receivers = {
+          ...Object.fromEntries(Object.entries(host)
+            .filter(([, value]) => value !== null && typeof value === 'object')
+            .map(([name, value]) => ['host.' + name, value])),
+          handle,
+          job: handle.attachJob('signature-fixture')
+        };
+        return Object.entries(receivers).flatMap(([receiver, value]) =>
+          Object.entries(value).filter(([, fn]) => typeof fn === 'function').map(([name, fn]) => {
+            const source = fn.toString();
+            const params = source.match(/^[^(]*\\(([^)]*)\\)/)[1];
+            return {
+              topic: receiver.startsWith('host.') ? receiver : 'host.compute',
+              method: name,
+              signature: (source.startsWith('async ') ? 'await ' : '') + receiver + '.' + name + '(' + params + ')'
+            };
+          })
+        );
+      `)
+      expect(signatures.error).toBeNull()
+      const methods: { topic: string; method: string; signature: string }[] = JSON.parse(
+        signatures.result ?? '[]'
+      )
+      expect(methods.length).toBeGreaterThan(0)
+      const context = {
+        callerRole: 'main',
+        capabilities: {
+          delegate: true,
+          children: true,
+          collect: true,
+          stopChild: true,
+          sendFrameMessage: true,
+          messageReceipt: true,
+          resolveMessage: true,
+          submitOutput: true
+        }
+      } as const
+      const normalize = (signature: string): string =>
+        signature.replace(/\s*=\s*[^,)]*/g, '?').replace(/\s+/g, '')
+      for (const topic of new Set(methods.map((entry) => entry.topic))) {
+        const group = hostSdkHelp.query(topic, context)
+        expect(group.kind).toBe('operation')
+        if (group.kind !== 'operation') throw new Error(`missing namespace help: ${topic}`)
+        expect(group.callForms.map(({ signature }) => normalize(signature)).sort()).toEqual(
+          methods
+            .filter((entry) => entry.topic === topic)
+            .map((entry) => normalize(entry.signature))
+            .sort()
+        )
+      }
+      for (const { topic, method, signature } of methods) {
+        const help = hostSdkHelp.query(topic + '.' + method, context)
+        expect(help.kind).toBe('operation')
+        if (help.kind !== 'operation') throw new Error(`missing method help: ${topic}.${method}`)
+        expect(help.callForms.map((form) => normalize(form.signature))).toContain(
+          normalize(signature)
+        )
+        const parameters = normalize(signature).match(/\((.*)\)$/)?.[1]
+        expect(help.request).toMatchObject({
+          fields: parameters
+            ? parameters.split(',').map((name) => ({ name: name.replace(/\?$/, '') }))
+            : []
+        })
+        expect(help.examples).toHaveLength(1)
+      }
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

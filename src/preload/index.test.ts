@@ -711,6 +711,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.getSkillDetail',
       'settings.getSkillMarketplaceBatch',
       'settings.getSkillMarketplaceDetail',
+      'settings.getSourceLinkImage',
       'settings.getSourceLinkMetadata',
       'settings.getWsl2BashPreviewStatus',
       'settings.getWslSetupStatus',

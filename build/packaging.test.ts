@@ -484,6 +484,7 @@ SectionEnd
 !define UNINSTALLER_OUT_FILE "${root}\\current-uninstaller.exe"
 Var uninstallerFileName
 Var uninstallerFileNameTemp
+!include "${join(repoRoot, 'build/windows-install-diagnostics.nsh')}"
 !macro copyFile FROM TO
 CopyFiles /SILENT "\${FROM}" "\${TO}"
 !macroend
@@ -514,16 +515,17 @@ ${selection}
   # A live reader blocks deleting the application executable. Failed cleanup must preserve data
   # and leave the executable available to identify an incomplete uninstall; the next attempt works.
   System::Call 'kernel32::CreateFile(t "${applicationFile}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
-  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  ExecWait '"$uninstallerFileNameTemp" /S --cleanup-report="${join(root, 'cleanup-attempt-fixture.json')}" _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|locked=$0"
-  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  ExecWait '"$uninstallerFileNameTemp" /S --cleanup-report="${join(root, 'cleanup-attempt-fixture.json')}" _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|still-locked=$0"
   IfFileExists "${applicationFile}" 0 +2
   FileWriteUTF16LE $9 "|application-retained"
 ${retryFiles.map((file, index) => `FileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|retry-${index}=$7"`).join('\n')}
   System::Call 'kernel32::CloseHandle(p R6)'
-  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  ExecWait '"$uninstallerFileNameTemp" /S --cleanup-report="${join(root, 'cleanup-attempt-fixture.json')}" _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|cleanup-failed=$0"
+  CopyFiles /SILENT "${join(root, 'cleanup-attempt-fixture.json')}" "${join(root, 'access-denied.json')}"
   IfFileExists "${join(install, 'Uninstall open-science.exe')}" 0 +2
   FileWriteUTF16LE $9 "|uninstaller-retained"
 ${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\nFileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|restored-${index}=$7"`).join('\n')}
@@ -534,7 +536,7 @@ ${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\
   CreateDirectory "$INSTDIR\\resources"
 ${[['open-science.exe', 'old application'], ...retryFiles.map((file, index) => [file, `retry-payload-${index}`])].map(([file, bytes]) => `FileOpen $8 "${join(install, file)}" w\nFileWrite $8 "${bytes}"\nFileClose $8`).join('\n')}
   System::Call 'kernel32::CreateFile(t "${join(install, 'Uninstall open-science.exe')}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
-  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  ExecWait '"$uninstallerFileNameTemp" /S --cleanup-report="${join(root, 'cleanup-attempt-fixture.json')}" _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|uninstaller-locked=$0"
 ${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\nFileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|entrypoint-restored-${index}=$7"`).join('\n')}
   System::Call 'kernel32::CloseHandle(p R6)'
@@ -556,7 +558,7 @@ ${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\
   noLongPayload:
   FileWriteUTF16LE $9 "|long-payload=unavailable"
   longPayloadReady:
-  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  ExecWait '"$uninstallerFileNameTemp" /S --cleanup-report="${join(root, 'cleanup-attempt-fixture.json')}" _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|first-uninstall=$0"
   # Match the updater's existing one-retry budget. A standalone uninstall can truthfully fail
   # on a transient program-file lock; data must remain readable before that retry too.
@@ -564,7 +566,7 @@ ${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\
     FileWriteUTF16LE $9 "|retried"
 ${paths.map((path, index) => `FileOpen $8 "${join(install, path, 'research.csv')}" r\nFileRead $8 $7\nFileWriteUTF16LE $9 "|retry-data-${index}=$7"\nFileRead $8 $7\nFileWriteUTF16LE $9 "$7"\nFileClose $8`).join('\n')}
     Sleep 1000
-    ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+    ExecWait '"$uninstallerFileNameTemp" /S --cleanup-report="${join(root, 'cleanup-attempt-fixture.json')}" _?=$INSTDIR' $0
   \${EndIf}
   FileWriteUTF16LE $9 "|uninstall=$0"
   !insertmacro restoreNestedDataRoot "$INSTDIR" $backup
@@ -592,6 +594,13 @@ SectionEnd
       paths.forEach((_, index) => expect(result).toContain(`|in-place-${index}`))
       expect(result).toContain('|locked=2|still-locked=2|application-retained')
       expect(result).toContain('|cleanup-failed=2|uninstaller-retained')
+      const denied = JSON.parse(readFileSync(join(root, 'access-denied.json'), 'utf8'))
+      expect(denied).toMatchObject({ status: 'failed', fileMoveBack: 'succeeded' })
+      expect(denied.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ operation: 'open-attribute-handle', nativeErrorCode: 5 })
+        ])
+      )
       expect(result).toContain('|acl-restored=0')
       expect(result).toContain('|restored-0=old application')
       expect(result).toContain('|uninstaller-locked=2')
@@ -954,7 +963,7 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
     expect(include).toContain('$$_.ExecutablePath')
     expect(include).not.toContain('$$_.Path.')
-    expect(include).toContain('$(uninstallFailed): $R0')
+    expect(include).toContain('Call showCleanupFailure')
     expect(include).toContain('SetErrorLevel 2')
   })
 
@@ -1011,6 +1020,8 @@ describe('NSIS installer include (build/installer.nsh)', () => {
           `
 !include LogicLib.nsh
 !include FileFunc.nsh
+!define BUILD_RESOURCES_DIR "${join(repoRoot, 'build')}"
+!include "${join(repoRoot, 'build/windows-install-diagnostics.nsh')}"
 !define APP_EXECUTABLE_FILENAME "${name}"
 LoadLanguageFile "\${NSISDIR}/Contrib/Language files/English.nlf"
 LangString uninstallFailed 1033 "Fixture retry failed"

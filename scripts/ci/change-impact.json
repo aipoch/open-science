@@ -353,6 +353,7 @@
         "src/shared/wsl-setup.ts",
         "src/main/delegation/production-framework-runtime.ts",
         "src/main/desktop-connection.ts",
+        "src/main/backend-startup-log-retention.ts",
         "src/main/desktop-runtime-launcher.ts",
         "src/main/node-entry.ts",
         "src/main/notebook/code-risk-adapter.ts",

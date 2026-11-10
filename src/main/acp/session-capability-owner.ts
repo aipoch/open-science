@@ -91,7 +91,7 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
 
 export type SessionCapabilityPolicy = Readonly<{
-  role: 'primary' | 'reviewer' | 'side-chat'
+  role: 'primary' | 'reviewer' | 'side-chat' | 'restricted-inference'
   // Delegation is deliberately explicit and denied for every currently shipped Session. Issue #458
   // can extend this input later without making prompts, identity text, or provider metadata authoritative.
   delegation: 'denied'
@@ -502,6 +502,9 @@ export class AcpSessionCapabilityOwner {
         if (servers.length === 0) {
           return Object.freeze({ mcpServers: built.mcpServers, descriptor: built.descriptor })
         }
+
+        if (request.policy.role === 'restricted-inference')
+          throw new Error('Restricted inference cannot attach framework MCP servers.')
 
         const addedNames = servers.map((server) => server.name)
         if (addedNames.some((name) => typeof name !== 'string' || name.length === 0)) {

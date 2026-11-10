@@ -19,6 +19,7 @@ import {
 } from '../agents/completion-handoff-lifecycle'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { createArtifactHandlers } from '../artifacts/ipc'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import sharp from 'sharp'
 import * as attachmentMedia from '../uploads/attachment-media'
@@ -21441,6 +21442,254 @@ describe('ACP runtime session management', () => {
       }
     })
   })
+
+  it.each([
+    'recover',
+    'published',
+    'no candidates',
+    'declined',
+    'cancelled',
+    'superseded'
+  ] as const)(
+    'settles Notebook artifact delivery within the durable user turn (%s)',
+    async (scenario) => {
+      const fixture = await createArtifactSaveFixture()
+      temporaryDisconnections.push(() => fixture.dispose())
+      const { storageRoot, compatibilityRepository, notebookRepository } = fixture
+      const projectId = 'project-1'
+      const sessionId = 'session-1'
+      const promptMessageId = 'prompt-1'
+      const text = 'Create report.txt'
+      const content = 'completed report\n'
+      const producerRunId = 'report-source-run'
+      const repository = new SessionRepository(storageRoot, {
+        hasLiveRuntimeSession: () => true,
+        hasActiveRuntimePrompt: () => true
+      })
+      const sessions = new SessionPersistenceCoordinator(repository, {
+        syncSession: async () => [],
+        softDeleteSession: async () => 'deleted',
+        restoreSession: async () => undefined,
+        softDeleteProject: async () => 'deleted',
+        reconcileActiveSessions: async () => undefined,
+        reconcileProjectSessions: async () => undefined,
+        markReconciliationIncomplete: () => undefined
+      })
+      const loadSession = async (): Promise<PersistedChatSession> => {
+        const session = await sessions.loadSessionForContinuation(projectId, sessionId)
+        if (!session) throw new Error('Missing persisted test session')
+        return session
+      }
+      const initial = await repository.saveSession(
+        materializeSessionConversationGraph({
+          id: sessionId,
+          projectId,
+          cwd: storageRoot,
+          title: text,
+          status: 'running',
+          activeRun: { promptMessageId, startedAt: 1 },
+          messages: [
+            {
+              id: promptMessageId,
+              role: 'user',
+              content: text,
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        })
+      )
+      const provenanceContext = getActiveConversationContext(
+        initial.conversationGraph!,
+        promptMessageId
+      )!
+      const provenance = new ArtifactProvenanceRepository({
+        ...fixture.repositoryOptions,
+        loadSession
+      })
+      const runRegistry = new ArtifactRunRegistry()
+      const handlers = createArtifactHandlers(compatibilityRepository, runRegistry, { provenance })
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession,
+        mutateSession: (scope, mutate) => sessions.mutateRuntimeSession(scope, mutate),
+        finalizeArtifacts: handlers.finalizeRunArtifacts
+      })
+      const process = new FakeAgentProcess()
+      const save = {
+        filename: 'report.txt',
+        source: { kind: 'localPath' as const, path: 'data/report.txt' },
+        producerRunId
+      }
+      const fakeAgent = startFakeAgent(process, [sessionId], {
+        onPrompt: async ({ text: received, notifySessionUpdate }) => {
+          const first = received.includes(text)
+          if (first && scenario === 'no candidates') return
+          if (first) {
+            const lane = createFrameNotebookLane(
+              projectId,
+              sessionId,
+              provenanceContext.agentFrameId
+            )
+            await notebookRepository.loadOrCreate({
+              projectId,
+              sessionId,
+              lane,
+              workspaceCwd: storageRoot
+            })
+            const dataDir = join(storageRoot, 'notebooks', projectId, sessionId, 'data')
+            await mkdir(dataDir, { recursive: true })
+            const path = join(dataDir, 'report.txt')
+            await writeFile(path, content)
+            const { mtimeMs, size } = await stat(path)
+            const workingFiles = [
+              {
+                path,
+                relativePath: 'data/report.txt',
+                kind: 'other' as const,
+                mtimeMs,
+                size,
+                createdByRunId: producerRunId
+              }
+            ]
+            await notebookRepository.appendRun({
+              projectId,
+              sessionId,
+              lane,
+              run: {
+                ...provenanceContext,
+                runId: producerRunId,
+                cellId: 'report-cell',
+                script: 'save_report()',
+                source: 'agent',
+                kernelKind: 'python',
+                status: 'completed',
+                startedAt: mtimeMs - 1,
+                endedAt: mtimeMs + 1,
+                text: { stdout: '', stderr: '', traceback: '', plain: [] },
+                outputs: [],
+                artifacts: [],
+                inputFiles: [],
+                workingFiles
+              }
+            })
+            await notifySessionUpdate({
+              sessionUpdate: 'tool_call',
+              toolCallId: 'report-tool',
+              title: 'mcp__open-science-notebook__notebook_execute',
+              status: 'completed',
+              rawOutput: { runId: producerRunId, workingFiles }
+            })
+            if (scenario === 'superseded') {
+              await sessions.mutateRuntimeSession({ projectId, sessionId }, (latest) => ({
+                ...latest,
+                activeRun: { promptMessageId: 'newer-prompt', startedAt: Date.now() }
+              }))
+            }
+            if (scenario === 'cancelled') await runtime.cancelPrompt({ sessionId })
+            if (scenario !== 'published') return
+          } else {
+            expect(received).toContain('write_artifact_file')
+            expect(JSON.parse(received.slice(received.lastIndexOf('\n\n') + 2))).toEqual([save])
+            expect((await loadSession()).activeRun?.promptMessageId).toBe(promptMessageId)
+            if (scenario === 'declined') return
+          }
+          const projectDir = join(storageRoot, 'artifacts', projectId)
+          const [alias] = await readdir(projectDir)
+          await writeArtifactFileForCurrentRun(
+            compatibilityRepository,
+            {
+              projectId,
+              sessionId: alias,
+              storageRoot,
+              currentRunFile: join(projectDir, alias, '.pending', 'current-run.json'),
+              rpcEndpoint: fixture.connection.endpoint,
+              allowedImportRoots: [storageRoot]
+            },
+            save
+          )
+          return { stopReason: 'end_turn' }
+        }
+      })
+      const events: AcpRuntimeEvent[] = []
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: storageRoot,
+        spawnAgent: () => asAgentProcess(process),
+        runtimeSessions,
+        notebook: {
+          projectId,
+          mcpEntryPath: '/unused',
+          getRpcConnection: async () => fixture.connection
+        },
+        callbacks: {
+          onEvent: (event) => {
+            runtimeSessions.accept(event)
+            events.push(event)
+          }
+        },
+        artifacts: {
+          projectId,
+          configRoot: storageRoot,
+          dataRoot: storageRoot,
+          mcpEntryPath: '/unused',
+          repository: compatibilityRepository,
+          runRegistry,
+          provenance,
+          getRpcConnection: async () => fixture.connection,
+          issueRpcCapability: (binding, isOwnerActive) =>
+            fixture.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+          revokeRpcCapability: (token) => fixture.server.revokeArtifactRunCapability(token)
+        }
+      })
+      await runtime.createSession({ cwd: storageRoot, projectId })
+      const turn = runtime.sendPrompt({ sessionId, text, provenanceContext })
+      if (scenario === 'superseded') {
+        await expect(turn).rejects.toThrow('unknown or superseded')
+        expect(fakeAgent.prompts).toHaveLength(1)
+        const latest = await loadSession()
+        expect(latest.activeRun?.promptMessageId).toBe('newer-prompt')
+        expect(latest.artifacts ?? []).toEqual([])
+        expect(await fixture.client.artifactVersion.count()).toBe(0)
+        return
+      }
+      await turn
+      expect(fakeAgent.prompts).toHaveLength(['recover', 'declined'].includes(scenario) ? 2 : 1)
+      const saved = await loadSession()
+      expect(saved.activeRun).toBeUndefined()
+      expect(saved.runtimeSessionAdmissions).toHaveLength(1)
+      expect(saved.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+      const prompt = saved.conversationGraph!.messages.find(
+        (message) => message.id === promptMessageId
+      )
+      expect(prompt?.turnOutcome?.kind).toBe(scenario === 'cancelled' ? 'cancelled' : 'completed')
+      expect(events.filter((event) => event.kind === 'stop')).toHaveLength(1)
+      const versions = await fixture.client.artifactVersion.findMany({
+        select: { id: true, state: true, promptMessageId: true, producerRunId: true }
+      })
+      if (scenario === 'recover' || scenario === 'published') {
+        expect(saved.artifacts).toHaveLength(1)
+        const [report] = saved.artifacts!
+        expect(saved.conversationGraph!.messages).toContainEqual(
+          expect.objectContaining({
+            responseToMessageId: promptMessageId,
+            artifactIds: [report.id]
+          })
+        )
+        expect(versions).toEqual([
+          { id: report.versionId, state: 'finalized', promptMessageId, producerRunId }
+        ])
+        expect(report.name).toBe('report.txt')
+        await expect(readFile(report.path, 'utf8')).resolves.toBe(content)
+      } else {
+        expect(saved.artifacts ?? []).toEqual([])
+        expect(versions).toEqual([])
+      }
+    }
+  )
 
   it.each([undefined, 'none'] as const)(
     'preserves permission prompts %s when publishing generated Notebook files',

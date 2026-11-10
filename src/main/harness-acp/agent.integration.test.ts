@@ -10,8 +10,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
-import { createHarnessAcpAgent, measureHarnessRequest } from './agent'
-import { HARNESS_AUTH_METHOD, HARNESS_INSTRUCTIONS, HARNESS_OWNER } from './config'
+import { createHarnessAcpAgent } from './agent'
+import {
+  HARNESS_AUTH_METHOD,
+  HARNESS_INSTRUCTIONS,
+  HARNESS_OWNER,
+  HARNESS_TOOL_LESS
+} from './config'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
 import { HARNESS_INVOCATION, HARNESS_RECEIPT_METHOD, receiptResponseSchema } from './tool-receipts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -46,7 +51,8 @@ it.each(['completed', 'failed', 'cancelled'] as const)(
         'end_turn'
       )
     await seed.connection.agent.request(acp.methods.agent.session.close, { sessionId })
-    const f = await fixture(model.endpoint, seed.directory, true, 65536)
+    // About 59 KB of history and prompt is ~15k estimated tokens; this window compacts it.
+    const f = await fixture(model.endpoint, seed.directory, true, 16384)
     await f.connection.agent.request(acp.methods.agent.session.resume, {
       sessionId,
       cwd: seed.directory,
@@ -390,6 +396,21 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
 })
 
+it('sends task-only instructions without a tool catalog on the provider wire', async () => {
+  const model = await modelServer()
+  const a = await fixture(model.endpoint)
+  const created = await a.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: a.directory,
+    mcpServers: [],
+    _meta: { [HARNESS_INSTRUCTIONS]: 'Translate faithfully.', [HARNESS_TOOL_LESS]: true }
+  })
+  await prompt(a.connection, created.sessionId, 'Cell')
+  expect(model.requests).toHaveLength(1)
+  expect(model.requests[0].tools ?? []).toEqual([])
+  expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])
+  expect(JSON.stringify(model.requests[0].messages)).toContain('Translate faithfully.')
+})
+
 it('uses the package across turns and resumes durable history without replay duplication', async () => {
   const model = await modelServer()
   const a = await fixture(model.endpoint)
@@ -661,15 +682,91 @@ it('rejects duplicate authentication, unsupported MCP and changed resume workspa
   expect(model.requests).toHaveLength(0)
 })
 
-it('counts full request bytes including schemas and non-ASCII content', () => {
-  const request = {
-    requestId: 'r',
-    instructions: '中文',
-    messages: [],
-    tools: [],
-    maxOutputTokens: 12
-  }
-  expect(measureHarnessRequest(request)).toBe(Buffer.byteLength(JSON.stringify(request)) + 1024)
+it('compacts and continues the same turn once after a provider context overflow', async () => {
+  const bodies: WireRequest[] = []
+  let rejected = false
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    const body = JSON.parse(Buffer.concat(chunks).toString()) as WireRequest
+    bodies.push(body)
+    const text = JSON.stringify(body.messages.at(-1))
+    if (text.includes('OVERFLOW_TURN') && !rejected) {
+      rejected = true
+      response.writeHead(400, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          error: { message: "This model's maximum context length is 32768 tokens" }
+        })
+      )
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    if (text.includes('Create a compact continuation checkpoint'))
+      finish(
+        response,
+        '## Goal\nContinue.\n## Progress\nSeeded.\n## Evidence\nNone.\n## Next\nAnswer.'
+      )
+    else finish(response, 'answer')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())))
+  })
+  const f = await fixture(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`,
+    undefined,
+    true,
+    32768
+  )
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  // The summarized history must fit one summary request; the large latest message stays verbatim.
+  for (const seed of ['a', 'b']) await prompt(f.connection, sessionId, seed.repeat(12000))
+  const turn = `OVERFLOW_TURN ${'c'.repeat(60000)}`
+
+  expect((await prompt(f.connection, sessionId, turn)).stopReason).toBe('end_turn')
+  const summaries = bodies.filter((body) =>
+    JSON.stringify(body.messages.at(-1)).includes('Create a compact continuation checkpoint')
+  )
+  expect(summaries).toHaveLength(1)
+  expect(JSON.stringify(bodies.at(-1)!.messages.at(-1))).toContain('OVERFLOW_TURN')
+  const state = await createJournalAgentStore({
+    directory: join(f.directory, 'checkpoints')
+  }).load(sessionId)
+  expect(state!.compactions).toHaveLength(1)
+  // The rejected turn is stored once; continuing does not append the prompt again.
+  expect(
+    state!.messages.filter((message) => JSON.stringify(message.content).includes('OVERFLOW_TURN'))
+  ).toHaveLength(1)
+})
+
+it('classifies a rejected response from a bounded prefix without waiting for its end', async () => {
+  const server = createServer(async (request, response) => {
+    request.resume()
+    await once(request, 'end')
+    response.writeHead(400, { 'content-type': 'application/json' })
+    // More than the classification limit, and the body never ends.
+    response.write(JSON.stringify({ error: { message: 'x'.repeat(40_000) } }))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())))
+  })
+  const f = await fixture(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
+  )
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  await expect(prompt(f.connection, sessionId)).rejects.toThrow()
 })
 
 it('does not retry an MCP side effect after its response connection is lost', async () => {

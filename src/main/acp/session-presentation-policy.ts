@@ -214,6 +214,7 @@ class AcpSessionPresentationPolicy {
         ? [shellRuntimeSystemPromptAppend(input.shellRuntimeAgentContract)]
         : []
     const setup = input.framework.buildSessionSetup({
+      ...(input.role === 'restricted-inference' ? { toolLess: true } : {}),
       systemPromptAppends: [
         ...this.systemPromptAppends(input),
         ...sessionSpecificSystemPromptAppends
@@ -233,6 +234,7 @@ class AcpSessionPresentationPolicy {
 
   buildTurnPromptPrefix(input: AcpTurnPromptPrefixInput): string | undefined {
     const setup = input.framework.buildSessionSetup({
+      ...(input.role === 'restricted-inference' ? { toolLess: true } : {}),
       // A launcher-owned Session setup prefix already contains the stable appends for frameworks
       // without dynamic system-prompt metadata. Reuse that exact prefix instead of duplicating the
       // same appends on every turn; turn-only reminders still flow through the framework adapter.

@@ -385,6 +385,14 @@ it('admits direct API independently of ACP and refuses cross-mode resume', async
     usage: { inputTokens: 12, cacheTokens: 3, outputTokens: 2 }
   })
   owner.close(first.operationId, h.caller.lease)
+  const agent = await owner.begin({ ...input, targetId: 'agent' }, h.caller.lease)
+  await owner.translate(
+    { operationId: agent.operationId, sourceIndex: 0, source: input.sources[0] },
+    h.caller.lease
+  )
+  const { systemPrompt, prompt } = apiRunner.run.mock.calls[0][0]
+  expect(h.runner.run).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt, prompt }))
+  owner.close(agent.operationId, h.caller.lease)
   const numeric = await owner.begin(
     { ...input, targetId: 'api', sources: ['21 Moderate'] },
     h.caller.lease

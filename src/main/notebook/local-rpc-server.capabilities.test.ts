@@ -301,7 +301,7 @@ describe('capabilitiesCall RPC', () => {
     })
   })
 
-  it('does not advertise host.viewImage without a trusted execution workspace', async () => {
+  it('advertises version-based image viewing without a workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       hostViewImage: {
@@ -325,13 +325,25 @@ describe('capabilitiesCall RPC', () => {
     })
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
-      payload: { result: { viewImage: false } }
+      payload: { result: { viewImage: true } }
     })
+
+    const view = (source: { versionId: string } | { path: string }): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'viewImageCall', params: { source } })
+      })
+    expect((await view({ versionId: 'registered-version' })).status).toBe(200)
+    expect((await view({ path: 'plot.png' })).status).toBe(403)
 
     endInvocation()
   })
 
-  it('reports host.viewImage unavailable from host.help without a trusted execution workspace', async () => {
+  it('reports host.viewImage available from host.help without a workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       hostViewImage: {
@@ -355,7 +367,7 @@ describe('capabilitiesCall RPC', () => {
     })
 
     await expect(callHostSdkHelp(connection, 'viewImage')).resolves.toMatchObject({
-      payload: { result: { availability: { status: 'unavailable' } } }
+      payload: { result: { availability: { status: 'available' } } }
     })
 
     endInvocation()

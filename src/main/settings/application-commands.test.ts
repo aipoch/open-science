@@ -55,6 +55,7 @@ const expectedChannels = [
   'settings:get-package-mirror',
   'settings:review-notebook-private-destination',
   'settings:get-source-link-metadata',
+  'settings:get-source-link-image',
   'settings:get-notebook-network-status',
   'settings:get-local-shell-runtime-preference',
   'settings:get-wsl2-bash-preview-status',
