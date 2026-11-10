@@ -8049,6 +8049,7 @@
     "Choose what to save. Review the exported files before sharing; nothing is uploaded.": "Zu speichernde Inhalte auswählen. Exportierte Dateien vor dem Teilen prüfen; nichts wird hochgeladen.",
     "Set up the selected agent runtime in Settings before generating a research film.": "Richten Sie vor dem Erstellen eines Forschungsfilms die Laufzeit des ausgewählten Agenten in den Einstellungen ein.",
     "Select a model in Settings before generating a research film.": "Wählen Sie vor dem Erstellen eines Forschungsfilms ein Modell in den Einstellungen aus.",
+    "<chooseModel>Select a model</chooseModel> in Settings before generating a research film.": "Wählen Sie vor dem Erstellen eines Forschungsfilms in den Einstellungen <chooseModel>ein Modell aus</chooseModel>.",
     "The selected provider credentials are unavailable. Check them in Settings.": "Die Zugangsdaten des ausgewählten Anbieters sind nicht verfügbar. Prüfen Sie sie in den Einstellungen.",
     "The selected model is unavailable. Select another model in Settings.": "Das ausgewählte Modell ist nicht verfügbar. Wählen Sie in den Einstellungen ein anderes Modell aus.",
     "Check the selected model and credentials in Settings before generating a research film.": "Prüfen Sie vor dem Erstellen eines Forschungsfilms das ausgewählte Modell und die Zugangsdaten in den Einstellungen.",

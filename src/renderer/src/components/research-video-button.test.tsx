@@ -3,6 +3,7 @@ import { ResearchVideoProgressLine } from './research-video-progress'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { useSettingsStore } from '@/stores/settings-store'
 import { i18next } from '@/i18n'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import type { ResearchVideoPresentationStatus } from '../../../shared/research-video-presentation'
@@ -394,6 +395,20 @@ it('blocks known failures before narration download and rechecks when the entry 
   await click('Install and generate')
   expect(api.localModels.install).not.toHaveBeenCalled()
   expect(document.body.textContent).toContain('Model unavailable')
+})
+
+it('opens model settings from the missing-model warning without starting a film', async () => {
+  await act(async () => {
+    await i18next.changeLanguage('zh-Hans')
+  })
+  status = { preflightError: 'Select a model in Settings before generating a research film.' }
+  await click('生成研究短片')
+  await click('选择模型')
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(useSettingsStore.getState().pendingSettingsIntent?.route.panel).toBe('model')
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  useSettingsStore.getState().closeSettings()
 })
 
 it('still plays an existing film when generation preflight is blocked', async () => {

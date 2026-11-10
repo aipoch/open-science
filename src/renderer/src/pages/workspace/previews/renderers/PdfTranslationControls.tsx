@@ -319,6 +319,10 @@ function AgentModelDetails({
   )
 }
 
+function openModelSettings(): void {
+  useSettingsStore.getState().openSettingsToPanel('model')
+}
+
 function TranslationSettingsFields({
   executor,
   options,
@@ -450,7 +454,7 @@ function TranslationSettingsFields({
                     variant="ghost"
                     size="icon-sm"
                     className="size-6 text-muted-foreground"
-                    aria-label={t('Model settings')}
+                    aria-label={t('More information')}
                   >
                     <Info aria-hidden="true" className="size-3.5" />
                   </Button>
@@ -462,6 +466,9 @@ function TranslationSettingsFields({
                   {apiModelHint}
                 </TooltipContent>
               </Tooltip>
+              <Button variant="link" size="xs" className="ml-auto" onClick={openModelSettings}>
+                {t('Model settings')}
+              </Button>
             </div>
             <Select
               value={
@@ -551,7 +558,12 @@ function TranslationSettingsFields({
       ) : null}
       {target?.id === 'agent' ? (
         <div className="flex flex-col gap-1.5">
-          <label id={apiModelId}>{t('Model')}</label>
+          <div className="flex items-center justify-between">
+            <label id={apiModelId}>{t('Model')}</label>
+            <Button variant="link" size="xs" onClick={openModelSettings}>
+              {t('Model settings')}
+            </Button>
+          </div>
           <PdfTranslationActionHint
             reason={lockedSettingsReason}
             className="w-full [&>button]:w-full"
@@ -839,6 +851,7 @@ export function PdfTranslationControls({
   const agentCatalog = useAgentModels(pinned?.agentModel?.frameworkId)
   const [draftOwner, setDraftOwner] = useState(pinned)
   const [settingsOpen, setSettingsOpen] = useState(!pinned)
+  const globalSettingsOpen = useSettingsStore((store) => store.isSettingsOpen)
   const [newOptions, setNewOptions] = useState<PdfTranslationOptions>()
   const newAgentCatalog = useAgentModels(newOptions?.agentModel?.frameworkId)
   const localModel = useLocalPdfTranslationModel(
@@ -1071,7 +1084,7 @@ export function PdfTranslationControls({
     ) : null
   return (
     <Dialog.Root
-      open={Boolean(newOptions)}
+      open={Boolean(newOptions) && !globalSettingsOpen}
       onOpenChange={(open) => {
         if (!open) {
           setNewOptions(undefined)
@@ -1251,6 +1264,17 @@ export function PdfTranslationControls({
                                       'Completed paragraphs are kept. Check the model connection in Settings, then retry.'
                                     ))
                 }
+                primaryButton={
+                  target?.id !== 'local' &&
+                  (providerFailure
+                    ? ['authentication', 'permission', 'request', 'http'].includes(
+                        providerFailure.kind
+                      )
+                    : !state.failure ||
+                      ['model-changed', 'unsupported-model', 'unknown'].includes(state.failure))
+                    ? { label: t('Model settings'), onClick: openModelSettings }
+                    : undefined
+                }
                 secondaryButton={
                   state.failedUnitId && onSkip
                     ? {
@@ -1349,6 +1373,9 @@ export function PdfTranslationControls({
         <Dialog.Portal>
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[110]')} />
           <Dialog.Content
+            onCloseAutoFocus={(event) => {
+              if (useSettingsStore.getState().isSettingsOpen) event.preventDefault()
+            }}
             onEscapeKeyDown={(event) => {
               if (
                 event.target instanceof HTMLInputElement &&
