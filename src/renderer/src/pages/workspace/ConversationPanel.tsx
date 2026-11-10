@@ -518,6 +518,7 @@ const ConversationPanel = ({
       attachments,
       transfers: attachmentTransfers,
       error: composerError,
+      errorFailure: composerFailure,
       errorDetail: composerErrorDetail,
       historyStatus,
       isHistoryBrowsing,
@@ -974,14 +975,6 @@ const ConversationPanel = ({
       ? state.failures?.[activeSession.id]
       : undefined
   )
-  const annotationFailure =
-    composerError && composerError === annotationValidationMessage('visual-model-required', t)
-      ? {
-          category: 'configuration' as const,
-          reason: 'configuration/vision-model' as const,
-          diagnostics: {}
-        }
-      : undefined
   const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
   const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
   const optimizationModelConfiguration =
@@ -1044,8 +1037,7 @@ const ConversationPanel = ({
       {
         id: 'action',
         message: actionError,
-        failure:
-          operationFailure ?? (actionError === composerError ? annotationFailure : undefined),
+        failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:
           operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
         occurredAt: operationDiagnostic?.occurredAt
@@ -1056,7 +1048,7 @@ const ConversationPanel = ({
           composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
             ? composerError
             : undefined,
-        failure: annotationFailure,
+        failure: composerFailure,
         detail: composerErrorDetail
       },
       {

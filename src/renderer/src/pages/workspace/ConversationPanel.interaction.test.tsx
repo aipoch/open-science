@@ -9724,7 +9724,17 @@ describe('ConversationPanel unified failure notices', () => {
       useSettingsStore.setState({ openSettingsToPanel })
       renderPanel({
         view: { actionError: error },
-        composer: { view: { error, doc: docFromText('Keep my annotation draft') } }
+        composer: {
+          view: {
+            error,
+            errorFailure: {
+              category: 'configuration',
+              reason: 'configuration/vision-model',
+              diagnostics: {}
+            },
+            doc: docFromText('Keep my annotation draft')
+          }
+        }
       })
       const settings = action('open-provider-settings')
       expect(settings?.textContent).toContain(i18next.t('Model settings'))
