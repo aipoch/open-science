@@ -1,3 +1,4 @@
+import { hasCallerAuthority } from '../caller-context'
 import type { composeResearchFilm } from './research-film'
 import type { LocalModelApi } from '../../shared/local-models'
 import { UseCaseCatalog } from '../session-package/use-case-catalog'
@@ -299,8 +300,12 @@ export function composeCommandDependencies({
           ),
         importSessionPackage: async (invocation) => {
           const source = invocation.args[1]
+          // The CLI supplies a caller-owned file. Only a staged browser upload can be released.
+          const localFile =
+            invocation.args[2]?.nonInteractive === true &&
+            hasCallerAuthority(invocation.callerContext, 'import-local-package-path')
           const stagedPath =
-            invocation.callerContext.surface === 'web' && typeof source === 'string'
+            invocation.callerContext.surface === 'web' && typeof source === 'string' && !localFile
               ? await uploadRepository.resolveManagedUploadPath(
                   { path: source },
                   { sessionId: PENDING_UPLOAD_SESSION_ID }
