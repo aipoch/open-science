@@ -70,9 +70,9 @@ export function usePromptOptimization(options: Options): OptimizationState {
     setPrevious(undefined)
   }
   const successful = useRef<{ edited: boolean } | undefined>(undefined)
-  const record = (action: OptimizationEvent['action']): void => {
+  const record = (event: OptimizationEvent): void => {
     const api = current.current.options.recordEvent ?? window.api?.projects?.recordOptimizationEvent
-    void api?.({ action }).catch(() => undefined)
+    void api?.(event).catch(() => undefined)
   }
   useLayoutEffect(() => {
     busy.current = false
@@ -87,7 +87,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
     setNotice(undefined)
     if (!successful.current || successful.current.edited) return
     successful.current.edited = true
-    record('edit')
+    record({ action: 'edit' })
   }
 
   const optimize = async (): Promise<void> => {
@@ -116,20 +116,22 @@ export function usePromptOptimization(options: Options): OptimizationState {
     const id = ++requestId.current
     const remoteRequest = { projectId: snapshot.options.projectId!, requestId: crypto.randomUUID() }
     activeRequest.current = remoteRequest
+    let resultStage: Extract<OptimizationEvent, { action: 'failed' }>['stage'] | undefined
     try {
       const api = snapshot.options.optimize ?? window.api.projects.optimizePrompt
-      const result = optimizePromptResultSchema.parse(
-        await api({
-          ...remoteRequest,
-          input,
-          agentConfiguration: snapshot.options.modelConfiguration!
-        })
-      )
+      const response = await api({
+        ...remoteRequest,
+        input,
+        agentConfiguration: snapshot.options.modelConfiguration!
+      })
       if (id !== requestId.current || scope !== current.current.scope) return
+      resultStage = 'output'
+      const result = optimizePromptResultSchema.parse(response)
       if (snapshot.revision !== current.current.revision) {
         setNotice('changed')
         return
       }
+      resultStage = 'references'
       const nodes: ComposerNode[] = []
       const sorted = references
         .map((reference) => {
@@ -148,10 +150,16 @@ export function usePromptOptimization(options: Options): OptimizationState {
       const doc = { nodes }
       successful.current = { edited: false }
       setPrevious(original)
+      resultStage = 'apply'
       current.current.options.onChange(doc)
       setNotice(undefined)
     } catch {
-      if (id === requestId.current && scope === current.current.scope) setNotice('failed')
+      if (id === requestId.current && scope === current.current.scope) {
+        // Service rejections already have diagnostics; only report renderer-local failures here.
+        if (resultStage)
+          record({ action: 'failed', requestId: remoteRequest.requestId, stage: resultStage })
+        setNotice('failed')
+      }
     } finally {
       if (id === requestId.current) {
         activeRequest.current = undefined
@@ -183,13 +191,13 @@ export function usePromptOptimization(options: Options): OptimizationState {
     current.current.options.onChange(restored)
     setPrevious(undefined)
     setNotice(undefined)
-    record('undo')
+    record({ action: 'undo' })
   }
   const sendRequestId = requestId.current
   const sent = (): void => {
     // A delayed admission must not clear an optimization started in a different draft.
     if (scope !== current.current.scope || sendRequestId !== requestId.current) return
-    if (successful.current) record('send')
+    if (successful.current) record({ action: 'send' })
     abortRequest()
     setPending(false)
     setPrevious(undefined)

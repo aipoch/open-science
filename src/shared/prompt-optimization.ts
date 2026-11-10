@@ -45,9 +45,14 @@ export const cancelPromptOptimizationRequestSchema = z
   .strict()
 export type CancelPromptOptimizationRequest = z.infer<typeof cancelPromptOptimizationRequestSchema>
 
-export const optimizationEventSchema = z
-  .object({
-    action: z.enum(['undo', 'edit', 'send'])
-  })
-  .strict()
+export const optimizationEventSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.enum(['undo', 'edit', 'send']) }).strict(),
+  z
+    .object({
+      action: z.literal('failed'),
+      requestId: z.uuid(),
+      stage: z.enum(['output', 'references', 'apply'])
+    })
+    .strict()
+])
 export type OptimizationEvent = z.infer<typeof optimizationEventSchema>

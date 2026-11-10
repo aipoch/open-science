@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   optimizePromptRequestSchema,
+  optimizationEventSchema,
   resolveOptimizationPrompt,
   DEFAULT_OPTIMIZATION_PROMPT,
   type OptimizationPromptProject
@@ -63,4 +64,18 @@ describe('project optimization prompt', () => {
       "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
     )
   })
+})
+
+it('accepts bounded renderer diagnostics and rejects arbitrary error details', () => {
+  const event = { action: 'failed', requestId: crypto.randomUUID(), stage: 'references' }
+  expect(optimizationEventSchema.safeParse(event).success).toBe(true)
+  expect(optimizationEventSchema.safeParse({ ...event, message: 'private output' }).success).toBe(
+    false
+  )
+  expect(optimizationEventSchema.safeParse({ ...event, stage: 'private output' }).success).toBe(
+    false
+  )
+  expect(optimizationEventSchema.safeParse({ ...event, requestId: 'private input' }).success).toBe(
+    false
+  )
 })

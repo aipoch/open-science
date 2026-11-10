@@ -215,13 +215,18 @@ describe('composer prompt optimization', () => {
   it('retains reference chips and rejects output which drops a chip', async () => {
     const chip = { type: 'skill' as const, id: 'science', name: 'Science' }
     const initial = { nodes: [{ type: 'text' as const, text: 'Use ' }, chip] }
-    const { result, request, unmount } = harness(initial)
+    const { result, request, optimize, event, unmount } = harness(initial)
     act(() => {
       void result.current.optimization.optimize()
     })
     await act(async () => request.resolve({ text: 'Dropped reference' }))
     expect(result.current.doc).toEqual(initial)
     await waitFor(() => expect(result.current.optimization.notice).toBe('failed'))
+    expect(event).toHaveBeenCalledExactlyOnceWith({
+      action: 'failed',
+      requestId: optimize.mock.calls[0][0].requestId,
+      stage: 'references'
+    })
     unmount()
   })
   it('invalidates in-flight optimization when sending and never restores a sent draft', async () => {
@@ -250,4 +255,29 @@ describe('composer prompt optimization', () => {
     expect(result.current.doc).toEqual(original)
     unmount()
   })
+})
+
+it('records renderer-only validation errors with the IPC request ID and no content', async () => {
+  const { result, request, optimize, event, unmount } = harness()
+  act(() => {
+    void result.current.optimization.optimize()
+  })
+  await act(async () => request.resolve({ text: '' }))
+  expect(event).toHaveBeenCalledExactlyOnceWith({
+    action: 'failed',
+    requestId: optimize.mock.calls[0][0].requestId,
+    stage: 'output'
+  })
+  expect(docToText(result.current.doc)).toBe('Original')
+  unmount()
+})
+it('does not duplicate service failures in renderer diagnostics', async () => {
+  const { result, optimize, event, unmount } = harness()
+  optimize.mockRejectedValueOnce(new Error('private provider failure'))
+  await act(async () => {
+    await result.current.optimization.optimize()
+  })
+  expect(result.current.optimization.notice).toBe('failed')
+  expect(event).not.toHaveBeenCalled()
+  unmount()
 })

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { marked } from 'marked'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   cancelPromptOptimizationRequestSchema,
   type CancelPromptOptimizationRequest,
@@ -79,7 +79,9 @@ export class PromptOptimizationService {
   constructor(private readonly options: Options) {}
 
   recordEvent(event: OptimizationEvent): void {
-    log.info('interaction', { action: event.action })
+    if (event.action === 'failed') {
+      log.warn('renderer result rejected', { requestId: event.requestId, stage: event.stage })
+    } else log.debug('interaction', { action: event.action })
   }
 
   cancel(request: CancelPromptOptimizationRequest): void {
@@ -94,11 +96,20 @@ export class PromptOptimizationService {
     request: OptimizePromptRequest,
     prepare?: () => Promise<void>
   ): Promise<OptimizePromptResult> {
-    const { projectId, requestId, input, agentConfiguration } =
-      optimizePromptRequestSchema.parse(request)
-    if (this.pending.has(projectId)) throw new Error('Prompt optimization is already running.')
+    const parsed = optimizePromptRequestSchema.safeParse(request)
+    if (!parsed.success) {
+      log.warn('rejected', { requestId: randomUUID(), reason: 'invalid-request' })
+      throw parsed.error
+    }
+    const { projectId, requestId, input, agentConfiguration } = parsed.data
+    const diagnosticRequestId = requestId ?? randomUUID()
+    if (this.pending.has(projectId)) {
+      log.debug('rejected', { requestId: diagnosticRequestId, reason: 'already-running' })
+      throw new Error('Prompt optimization is already running.')
+    }
     const started = Date.now()
-    log.info('requested', { inputLength: input.length })
+    let stage = 'prepare'
+    log.debug('requested', { requestId: diagnosticRequestId })
     const controller = new AbortController()
     this.pending.set(projectId, { requestId, controller })
     let timedOut = false
@@ -116,18 +127,22 @@ export class PromptOptimizationService {
       const work = async (): Promise<OptimizePromptResult> => {
         await prepare?.()
         controller.signal.throwIfAborted()
+        stage = 'project'
         const project = await this.options.getProject(projectId)
         if (!project) throw new Error('Project is unavailable.')
         // Validate the composer selection against current main-process provider settings.
+        stage = 'target'
         const configuration = await this.options.resolveTarget({ agentConfiguration })
         if (!configuration) throw new Error('Model is unavailable.')
         controller.signal.throwIfAborted()
+        stage = 'input-protection'
         const prefix = `OS_PROTECTED_${randomUUID()}_`
         const fragments: string[] = []
         const prompt = protectFragments(input, (fragment) => {
           fragments.push(fragment)
           return `${prefix}${fragments.length - 1}_END`
         })
+        stage = 'inference'
         const result = await this.options.runner.run({
           target: {
             ...configuration,
@@ -143,7 +158,9 @@ export class PromptOptimizationService {
           outputLimitBytes: 128 * 1024
         })
         controller.signal.throwIfAborted()
+        stage = 'completion'
         if (result.stopReason !== 'end_turn') throw new Error('Prompt optimization did not finish.')
+        stage = 'protected-content'
         let text = result.text.trim()
         for (const [index, fragment] of fragments.entries()) {
           const token = `${prefix}${index}_END`
@@ -151,22 +168,28 @@ export class PromptOptimizationService {
           text = text.replace(token, () => fragment)
         }
         if (text.includes(prefix)) throw new Error('Protected content was changed.')
+        stage = 'output'
         return optimizePromptResultSchema.parse({ text })
       }
       const result = await Promise.race([work(), aborted])
       log.info('succeeded', {
-        durationMs: Date.now() - started,
-        inputLength: input.length,
-        outputLength: result.text.length
+        requestId: diagnosticRequestId,
+        durationMs: Date.now() - started
       })
       return result
-    } catch {
-      // Provider errors can echo prompts or credentials. Never forward them to logs or the renderer.
-      if (controller.signal.aborted)
-        throw new Error(
-          timedOut ? 'Prompt optimization timed out.' : 'Prompt optimization cancelled.'
-        )
-      log.info('failed', { durationMs: Date.now() - started })
+    } catch (error) {
+      // Only allowlisted diagnostic categories may leave this boundary, never provider error text.
+      if (controller.signal.aborted && !timedOut) {
+        log.debug('cancelled', { requestId: diagnosticRequestId })
+        throw new Error('Prompt optimization cancelled.')
+      }
+      log.warn('failed', {
+        requestId: diagnosticRequestId,
+        stage,
+        durationMs: Date.now() - started,
+        ...(timedOut ? { errorCategory: 'timeout' } : diagnosticErrorFields(error))
+      })
+      if (timedOut) throw new Error('Prompt optimization timed out.')
       throw new Error('Prompt optimization failed. Your draft was kept.')
     } finally {
       if (timer) clearTimeout(timer)

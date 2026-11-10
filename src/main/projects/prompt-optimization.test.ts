@@ -1,8 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PromptOptimizationService } from './prompt-optimization'
 import { resolveValidatedSessionAgentTarget } from '../acp/session-agent-target'
 import type { SettingsSnapshot } from '../../shared/settings'
 import type { RestrictedInferenceRunInput } from '../acp/restricted-inference-contract'
+
+const log = vi.hoisted(() => ({ info: vi.fn(), debug: vi.fn(), warn: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => log
+}))
+beforeEach(() => vi.clearAllMocks())
 
 const agentConfiguration = {
   providerId: 'test',
@@ -198,5 +205,137 @@ describe('prompt optimization', () => {
       service.optimize({ agentConfiguration, projectId: 'default', input: 'x'.repeat(16001) })
     ).rejects.toThrow()
     expect(generate).not.toHaveBeenCalled()
+  })
+})
+
+describe('prompt optimization diagnostics', () => {
+  const request = {
+    agentConfiguration,
+    projectId: 'default',
+    requestId: 'c97c4cec-dea9-4f2e-9e38-a85616338f83',
+    input: 'Private draft'
+  }
+  it('keeps success compact and interaction details at debug level', async () => {
+    const service = setup(async () => 'Private output')
+    await service.optimize(request)
+    service.recordEvent({ action: 'edit' })
+    expect(log.info).toHaveBeenCalledExactlyOnceWith('succeeded', {
+      requestId: request.requestId,
+      durationMs: expect.any(Number)
+    })
+    expect(log.debug).toHaveBeenCalledWith('requested', { requestId: request.requestId })
+    expect(log.debug).toHaveBeenCalledWith('interaction', { action: 'edit' })
+    expect(log.warn).not.toHaveBeenCalled()
+  })
+  it('logs inference category without provider messages, stack, or request contents', async () => {
+    const service = setup(async () => {
+      throw Object.assign(new Error('Private draft Bearer secret'), { code: 'ECONNRESET' })
+    })
+    await expect(service.optimize(request)).rejects.toThrow('Your draft was kept')
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith('failed', {
+      requestId: request.requestId,
+      stage: 'inference',
+      errorCategory: 'network',
+      durationMs: expect.any(Number)
+    })
+    expect(
+      JSON.stringify([log.info.mock.calls, log.debug.mock.calls, log.warn.mock.calls])
+    ).not.toMatch(/Private|secret|Bearer|ECONNRESET/)
+  })
+  it.each([
+    ['project', { projectId: 'deleted' }, 'unused', 'Help'],
+    [
+      'target',
+      { agentConfiguration: { ...agentConfiguration, providerId: 'deleted' } },
+      'unused',
+      'Help'
+    ],
+    ['protected-content', {}, 'Changed', 'Use `private()`'],
+    ['output', {}, '', 'Help']
+  ] as const)('identifies failures at %s', async (stage, overrides, output, input) => {
+    await expect(
+      setup(async () => output).optimize({ ...request, ...overrides, input })
+    ).rejects.toThrow()
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith(
+      'failed',
+      expect.objectContaining({
+        requestId: request.requestId,
+        stage
+      })
+    )
+  })
+  it('logs timeout once and does not log a late success', async () => {
+    let finish!: (text: string) => void
+    const service = setup(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await expect(service.optimize(request)).rejects.toThrow('timed out')
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith('failed', {
+      requestId: request.requestId,
+      stage: 'inference',
+      errorCategory: 'timeout',
+      durationMs: expect.any(Number)
+    })
+    finish('Late')
+    await Promise.resolve()
+    expect(log.info).not.toHaveBeenCalled()
+  })
+  it('keeps deliberate cancellation out of warning logs', async () => {
+    const service = setup(() => new Promise(() => {}))
+    const pending = service.optimize(request)
+    service.cancel({ projectId: request.projectId, requestId: request.requestId })
+    await expect(pending).rejects.toThrow('cancelled')
+    expect(log.warn).not.toHaveBeenCalled()
+    expect(log.debug).toHaveBeenCalledWith('cancelled', { requestId: request.requestId })
+  })
+  it('logs invalid requests without logging their values', async () => {
+    await expect(
+      setup(async () => 'unused').optimize({ ...request, requestId: 'secret' })
+    ).rejects.toThrow()
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith('rejected', {
+      requestId: expect.any(String),
+      reason: 'invalid-request'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('secret')
+  })
+  it('identifies preparation failures before inference starts', async () => {
+    await expect(
+      setup(async () => 'unused').optimize(request, async () => {
+        throw new Error('private preparation details')
+      })
+    ).rejects.toThrow('Your draft was kept')
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith('failed', {
+      requestId: request.requestId,
+      stage: 'prepare',
+      errorCategory: 'error',
+      durationMs: expect.any(Number)
+    })
+  })
+  it('keeps duplicate requests concise without logging them as inference failures', async () => {
+    const service = setup(() => new Promise(() => {}), 10000)
+    const pending = service.optimize(request)
+    const rejected = expect(pending).rejects.toThrow('cancelled')
+    await expect(service.optimize(request)).rejects.toThrow('already running')
+    service.cancel({ projectId: request.projectId, requestId: request.requestId })
+    await rejected
+    expect(log.debug).toHaveBeenCalledWith('rejected', {
+      requestId: request.requestId,
+      reason: 'already-running'
+    })
+    expect(log.warn).not.toHaveBeenCalled()
+  })
+  it('reports renderer validation failure with safe fields only', () => {
+    setup(async () => 'unused').recordEvent({
+      action: 'failed',
+      requestId: request.requestId,
+      stage: 'references'
+    })
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith('renderer result rejected', {
+      requestId: request.requestId,
+      stage: 'references'
+    })
   })
 })
