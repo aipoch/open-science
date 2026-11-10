@@ -8350,6 +8350,23 @@
     "Relaxed mode is still active.": "El modo flexible sigue activo.",
     "Switch to Strict mode": "Cambiar al modo estricto",
     "Switch to Relaxed mode": "Cambiar al modo flexible",
-    "Could not switch network mode. Try again.": "No se pudo cambiar el modo de red. Inténtelo de nuevo."
+    "Could not switch network mode. Try again.": "No se pudo cambiar el modo de red. Inténtelo de nuevo.",
+    "Whitelist matches can connect": "Las coincidencias de la lista de permitidos pueden conectarse",
+    "HTTPS domains connect directly": "Acceso directo a dominios HTTPS",
+    "Protocol, host and port must all match.": "El protocolo, el host y el puerto deben coincidir.",
+    "Includes localhost and domains that resolve to private networks.": "Incluye localhost y dominios que resuelven a redes privadas.",
+    "Unlisted connections are blocked": "Las conexiones no incluidas se bloquean",
+    "HTTP and direct IP connections require authorization": "HTTP y las conexiones por IP directa requieren autorización",
+    "Authorization is unavailable. Add the address manually.": "No se puede solicitar autorización. Añada la dirección manualmente.",
+    "Trusted addresses do not need repeated authorization.": "Las direcciones de confianza no requieren autorización repetida.",
+    "Trusted unsafe addresses": "Direcciones inseguras de confianza",
+    "Strict mode": "Modo estricto",
+    "Relaxed mode": "Modo flexible",
+    "{{count}} saved addresses_one": "{{count}} dirección guardada",
+    "{{count}} groups_one": "{{count}} grupo",
+    "{{count}} saved addresses_other": "{{count}} direcciones guardadas",
+    "{{count}} groups_other": "{{count}} grupos",
+    "{{count}} saved addresses_many": "{{count}} direcciones guardadas",
+    "{{count}} groups_many": "{{count}} grupos"
   }
 }

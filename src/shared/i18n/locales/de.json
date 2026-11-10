@@ -8174,6 +8174,21 @@
     "Relaxed mode is still active.": "Der lockere Modus ist weiterhin aktiv.",
     "Switch to Strict mode": "Zum strengen Modus wechseln",
     "Switch to Relaxed mode": "Zum lockeren Modus wechseln",
-    "Could not switch network mode. Try again.": "Der Netzwerkmodus konnte nicht gewechselt werden. Versuchen Sie es erneut."
+    "Could not switch network mode. Try again.": "Der Netzwerkmodus konnte nicht gewechselt werden. Versuchen Sie es erneut.",
+    "Whitelist matches can connect": "Treffer in der Positivliste dürfen sich verbinden",
+    "HTTPS domains connect directly": "Direkter Zugriff auf HTTPS-Domains",
+    "Protocol, host and port must all match.": "Protokoll, Host und Port müssen übereinstimmen.",
+    "Includes localhost and domains that resolve to private networks.": "Gilt auch für localhost und Domains, die auf private Netzwerke auflösen.",
+    "Unlisted connections are blocked": "Nicht gelistete Verbindungen werden blockiert",
+    "HTTP and direct IP connections require authorization": "HTTP und direkte IP-Verbindungen erfordern Genehmigung",
+    "Authorization is unavailable. Add the address manually.": "Keine Genehmigung möglich. Fügen Sie die Adresse manuell hinzu.",
+    "Trusted addresses do not need repeated authorization.": "Vertrauenswürdige Adressen benötigen keine erneute Genehmigung.",
+    "Trusted unsafe addresses": "Vertrauenswürdige unsichere Adressen",
+    "Strict mode": "Strenger Modus",
+    "Relaxed mode": "Lockerer Modus",
+    "{{count}} saved addresses_one": "{{count}} gespeicherte Adresse",
+    "{{count}} groups_one": "{{count}} Gruppe",
+    "{{count}} saved addresses_other": "{{count}} gespeicherte Adressen",
+    "{{count}} groups_other": "{{count}} Gruppen"
   }
 }

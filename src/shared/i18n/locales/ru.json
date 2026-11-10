@@ -8498,6 +8498,25 @@
     "Relaxed mode is still active.": "Свободный режим пока активен.",
     "Switch to Strict mode": "Переключиться в строгий режим",
     "Switch to Relaxed mode": "Переключиться в свободный режим",
-    "Could not switch network mode. Try again.": "Не удалось переключить сетевой режим. Повторите попытку."
+    "Could not switch network mode. Try again.": "Не удалось переключить сетевой режим. Повторите попытку.",
+    "Whitelist matches can connect": "Совпадения со списком разрешённых могут подключаться",
+    "HTTPS domains connect directly": "Прямой доступ к доменам HTTPS",
+    "Protocol, host and port must all match.": "Протокол, хост и порт должны совпадать.",
+    "Includes localhost and domains that resolve to private networks.": "Включая localhost и домены, разрешаемые в частные сети.",
+    "Unlisted connections are blocked": "Соединения вне списка блокируются",
+    "HTTP and direct IP connections require authorization": "HTTP и прямые IP-соединения требуют разрешения",
+    "Authorization is unavailable. Add the address manually.": "Запросить разрешение нельзя. Добавьте адрес вручную.",
+    "Trusted addresses do not need repeated authorization.": "Доверенные адреса не требуют повторного разрешения.",
+    "Trusted unsafe addresses": "Доверенные небезопасные адреса",
+    "Strict mode": "Строгий режим",
+    "Relaxed mode": "Свободный режим",
+    "{{count}} saved addresses_one": "{{count}} сохранённый адрес",
+    "{{count}} groups_one": "{{count}} группа",
+    "{{count}} saved addresses_few": "{{count}} сохранённых адреса",
+    "{{count}} groups_few": "{{count}} группы",
+    "{{count}} saved addresses_many": "{{count}} сохранённых адресов",
+    "{{count}} groups_many": "{{count}} групп",
+    "{{count}} saved addresses_other": "{{count}} сохранённого адреса",
+    "{{count}} groups_other": "{{count}} группы"
   }
 }

@@ -8004,6 +8004,19 @@
     "Relaxed mode is still active.": "완화 모드가 계속 적용 중입니다.",
     "Switch to Strict mode": "엄격 모드로 전환",
     "Switch to Relaxed mode": "완화 모드로 전환",
-    "Could not switch network mode. Try again.": "네트워크 모드를 전환하지 못했습니다. 다시 시도하세요."
+    "Could not switch network mode. Try again.": "네트워크 모드를 전환하지 못했습니다. 다시 시도하세요.",
+    "Whitelist matches can connect": "허용 목록과 일치하면 연결 가능",
+    "HTTPS domains connect directly": "HTTPS 도메인에 직접 접근",
+    "Protocol, host and port must all match.": "프로토콜, 호스트, 포트가 모두 일치해야 합니다.",
+    "Includes localhost and domains that resolve to private networks.": "localhost 및 사설 네트워크로 해석되는 도메인도 포함합니다.",
+    "Unlisted connections are blocked": "목록에 없는 연결은 차단",
+    "HTTP and direct IP connections require authorization": "HTTP 및 직접 IP 연결에는 승인 필요",
+    "Authorization is unavailable. Add the address manually.": "승인을 요청할 수 없습니다. 주소를 직접 추가하세요.",
+    "Trusted addresses do not need repeated authorization.": "신뢰하는 주소는 반복 승인이 필요하지 않습니다.",
+    "Trusted unsafe addresses": "신뢰하는 안전하지 않은 주소",
+    "Strict mode": "엄격 모드",
+    "Relaxed mode": "완화 모드",
+    "{{count}} saved addresses_other": "저장된 주소 {{count}}개",
+    "{{count}} groups_other": "그룹 {{count}}개"
   }
 }

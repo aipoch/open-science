@@ -471,3 +471,145 @@ describe('NetworkPanel offline retry', () => {
     expect(getInfo).toHaveBeenCalledTimes(2)
   })
 })
+
+const networkEntry = (): HTMLElement =>
+  container.querySelector('[aria-label="Notebook network access"]')!
+
+describe('Notebook network entry', () => {
+  it('shows three peer rows in default Relaxed mode and handles empty addresses', async () => {
+    await act(async () =>
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    )
+    const entry = networkEntry()
+    expect(entry.querySelectorAll('li')).toHaveLength(3)
+    expect(entry.textContent).toContain('Relaxed mode')
+    expect(entry.textContent).toContain('HTTPS domains connect directly')
+    expect(entry.textContent).toContain(
+      'Includes localhost and domains that resolve to private networks.'
+    )
+    expect(entry.textContent).toContain('HTTP and direct IP connections require authorization')
+    expect(entry.textContent).toContain('0 saved addresses')
+    expect(entry.querySelectorAll('button')).toHaveLength(1)
+    expect(entry.querySelectorAll('li')[2].textContent).toContain('Manage access')
+    expect(entry.querySelector('[role="radio"], [role="switch"]')).toBeNull()
+  })
+
+  it('counts manual addresses and active grants once, excluding derived and revoked records', async () => {
+    const base = useSettingsStore.getState().notebookNetwork
+    const grant = {
+      id: 'global-one',
+      hostname: 'localhost',
+      port: 80,
+      protocol: 'http' as const,
+      approvedAddresses: [],
+      scope: 'global' as const,
+      projectId: 'project-one',
+      sessionId: 'session-one',
+      recordId: 'record-one',
+      createdAt: 1
+    }
+    useSettingsStore.setState({
+      notebookNetwork: {
+        ...base,
+        trustedPrivateDestinations: [
+          {
+            id: 'manual-one',
+            hostname: 'manual.local',
+            port: 80,
+            protocol: 'http',
+            approvedAddresses: []
+          },
+          {
+            hostname: 'localhost',
+            port: 80,
+            protocol: 'http',
+            approvedAddresses: [],
+            managedGrantId: grant.id
+          }
+        ],
+        destinationGrants: [
+          grant,
+          { ...grant, id: 'project-grant', scope: 'project' },
+          { ...grant, id: 'revoked', revokedAt: 2 }
+        ]
+      }
+    })
+    await act(async () =>
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    )
+    expect(networkEntry().textContent).toContain('3 saved addresses')
+    await act(async () =>
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...base,
+          trustedPrivateDestinations: [
+            { hostname: 'manual.local', port: 80, approvedAddresses: [] }
+          ]
+        }
+      })
+    )
+    expect(networkEntry().textContent).toContain('1 saved address')
+  })
+
+  it('shows Strict policy and live rule and group counts without counting Relaxed records', async () => {
+    const base = useSettingsStore.getState().notebookNetwork
+    useSettingsStore.setState({
+      notebookNetwork: {
+        ...base,
+        mode: 'strict',
+        strictWhitelist: [
+          {
+            id: 'one',
+            protocol: 'https',
+            hostnamePattern: 'example.org',
+            port: 443,
+            origin: 'manual',
+            groupId: 'one'
+          }
+        ],
+        strictWhitelistGroups: [
+          { id: 'one', name: 'Research' },
+          { id: 'two', name: 'Empty group' }
+        ],
+        trustedPrivateDestinations: [{ hostname: 'manual.local', port: 80, approvedAddresses: [] }]
+      }
+    })
+    await act(async () =>
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    )
+    expect(networkEntry().textContent).toContain('Strict mode')
+    expect(networkEntry().textContent).toContain('Whitelist matches can connect')
+    expect(networkEntry().textContent).toContain('Protocol, host and port must all match.')
+    expect(networkEntry().textContent).toContain('Unlisted connections are blocked')
+    expect(networkEntry().textContent).toContain(
+      'Authorization is unavailable. Add the address manually.'
+    )
+    expect(networkEntry().textContent).toContain('1 rule')
+    expect(networkEntry().textContent).toContain('2 groups')
+    expect(networkEntry().textContent).not.toContain('saved address')
+    await act(async () =>
+      useSettingsStore.setState({
+        notebookNetwork: { ...base, mode: 'strict', strictWhitelist: [], strictWhitelistGroups: [] }
+      })
+    )
+    expect(networkEntry().textContent).toContain('0 rules')
+    expect(networkEntry().textContent).toContain('0 groups')
+  })
+
+  it('navigates to the existing manager without saving settings', async () => {
+    const onNavigate = vi.fn()
+    const save = vi.fn()
+    const original = useSettingsStore.getState().setNotebookNetwork
+    useSettingsStore.setState({ setNotebookNetwork: save })
+    try {
+      await act(async () =>
+        root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+      )
+      await act(async () => networkEntry().querySelector('button')!.click())
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'domains' })
+      expect(save).not.toHaveBeenCalled()
+    } finally {
+      useSettingsStore.setState({ setNotebookNetwork: original })
+    }
+  })
+})

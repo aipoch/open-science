@@ -8006,6 +8006,19 @@
     "Relaxed mode is still active.": "当前仍为宽松模式",
     "Switch to Strict mode": "切换为严格模式",
     "Switch to Relaxed mode": "切换为宽松模式",
-    "Could not switch network mode. Try again.": "无法切换网络模式，请重试。"
+    "Could not switch network mode. Try again.": "无法切换网络模式，请重试。",
+    "Whitelist matches can connect": "白名单命中即可访问",
+    "HTTPS domains connect directly": "HTTPS 域名直接访问",
+    "Protocol, host and port must all match.": "协议、主机与端口必须全部匹配。",
+    "Includes localhost and domains that resolve to private networks.": "包括 localhost 及解析到私网的域名。",
+    "Unlisted connections are blocked": "未命中直接拦截",
+    "HTTP and direct IP connections require authorization": "HTTP 与 IP 直连需授权",
+    "Authorization is unavailable. Add the address manually.": "不可申请授权，需手动添加地址。",
+    "Trusted addresses do not need repeated authorization.": "已信任的地址无需重复申请。",
+    "Trusted unsafe addresses": "信任的不安全地址",
+    "Strict mode": "严格模式",
+    "Relaxed mode": "宽松模式",
+    "{{count}} saved addresses_other": "{{count}} 个已保存地址",
+    "{{count}} groups_other": "{{count}} 个分组"
   }
 }

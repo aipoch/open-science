@@ -8006,6 +8006,19 @@
     "Relaxed mode is still active.": "現在も緩和モードが有効です。",
     "Switch to Strict mode": "厳格モードに切り替える",
     "Switch to Relaxed mode": "緩和モードに切り替える",
-    "Could not switch network mode. Try again.": "ネットワークモードを切り替えられませんでした。再試行してください。"
+    "Could not switch network mode. Try again.": "ネットワークモードを切り替えられませんでした。再試行してください。",
+    "Whitelist matches can connect": "許可リストに一致すれば接続可能",
+    "HTTPS domains connect directly": "HTTPS ドメインに直接アクセス",
+    "Protocol, host and port must all match.": "プロトコル、ホスト、ポートのすべてが一致する必要があります。",
+    "Includes localhost and domains that resolve to private networks.": "localhost とプライベートネットワークに解決されるドメインも含まれます。",
+    "Unlisted connections are blocked": "リストにない接続はブロック",
+    "HTTP and direct IP connections require authorization": "HTTP と直接 IP 接続には承認が必要",
+    "Authorization is unavailable. Add the address manually.": "承認は申請できません。アドレスを手動で追加してください。",
+    "Trusted addresses do not need repeated authorization.": "信頼するアドレスは繰り返し承認を申請する必要がありません。",
+    "Trusted unsafe addresses": "信頼する安全でないアドレス",
+    "Strict mode": "厳格モード",
+    "Relaxed mode": "緩和モード",
+    "{{count}} saved addresses_other": "保存済みアドレス {{count}} 件",
+    "{{count}} groups_other": "{{count}} グループ"
   }
 }

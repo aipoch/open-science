@@ -8006,6 +8006,19 @@
     "Relaxed mode is still active.": "目前仍為寬鬆模式",
     "Switch to Strict mode": "切換為嚴格模式",
     "Switch to Relaxed mode": "切換為寬鬆模式",
-    "Could not switch network mode. Try again.": "無法切換網路模式，請重試。"
+    "Could not switch network mode. Try again.": "無法切換網路模式，請重試。",
+    "Whitelist matches can connect": "符合允許清單即可存取",
+    "HTTPS domains connect directly": "HTTPS 網域可直接存取",
+    "Protocol, host and port must all match.": "通訊協定、主機與連接埠必須全部符合。",
+    "Includes localhost and domains that resolve to private networks.": "包括 localhost 及解析為私有網路的網域。",
+    "Unlisted connections are blocked": "未符合的連線直接封鎖",
+    "HTTP and direct IP connections require authorization": "HTTP 與直接 IP 連線需授權",
+    "Authorization is unavailable. Add the address manually.": "無法申請授權，請手動新增位址。",
+    "Trusted addresses do not need repeated authorization.": "信任的位址無需重複申請授權。",
+    "Trusted unsafe addresses": "信任的不安全位址",
+    "Strict mode": "嚴格模式",
+    "Relaxed mode": "寬鬆模式",
+    "{{count}} saved addresses_other": "{{count}} 個已儲存位址",
+    "{{count}} groups_other": "{{count}} 個群組"
   }
 }

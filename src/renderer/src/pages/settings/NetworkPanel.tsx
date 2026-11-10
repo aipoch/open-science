@@ -1,7 +1,18 @@
 import { readWithDeadline } from '@/lib/read-with-deadline'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { EthernetPort, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import {
+  Ban,
+  Check,
+  ChevronRight,
+  CircleHelp,
+  EthernetPort,
+  List,
+  Network,
+  RefreshCw,
+  Wifi,
+  WifiOff
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -64,7 +75,57 @@ const NetworkPanel = ({
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
-  const strictNetwork = useSettingsStore((state) => state.notebookNetwork?.mode === 'strict')
+  const notebookNetwork = useSettingsStore((state) => state.notebookNetwork)
+  const strictNetwork = notebookNetwork.mode === 'strict'
+  // Global grants also have derived trusted entries. Count the same records as the manager once.
+  const savedAddressCount =
+    (notebookNetwork.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)
+      .length +
+    (notebookNetwork.destinationGrants ?? []).filter((grant) => grant.revokedAt === undefined)
+      .length
+  const notebookRows = [
+    {
+      icon: Check,
+      title: strictNetwork
+        ? t('Whitelist matches can connect')
+        : t('HTTPS domains connect directly'),
+      description: strictNetwork
+        ? t('Protocol, host and port must all match.')
+        : t('Includes localhost and domains that resolve to private networks.')
+    },
+    {
+      icon: strictNetwork ? Ban : CircleHelp,
+      title: strictNetwork
+        ? t('Unlisted connections are blocked')
+        : t('HTTP and direct IP connections require authorization'),
+      description: strictNetwork
+        ? t('Authorization is unavailable. Add the address manually.')
+        : t('Trusted addresses do not need repeated authorization.')
+    },
+    {
+      icon: List,
+      title: strictNetwork ? t('Strict whitelist') : t('Trusted unsafe addresses'),
+      description: strictNetwork ? (
+        <>
+          {t('{{count}} rules', {
+            count: notebookNetwork.strictWhitelist?.length ?? 0,
+            defaultValue_one: '{{count}} rule'
+          })}
+          {' · '}
+          {t('{{count}} groups', {
+            count: notebookNetwork.strictWhitelistGroups?.length ?? 0,
+            defaultValue_one: '{{count}} group'
+          })}
+        </>
+      ) : (
+        t('{{count}} saved addresses', {
+          count: savedAddressCount,
+          defaultValue_one: '{{count}} saved address'
+        })
+      ),
+      manage: true
+    }
+  ]
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery,
@@ -303,39 +364,47 @@ const NetworkPanel = ({
       {!isConfiguring && notebookNetworkAvailable ? (
         <SettingsSection
           title={t('Notebook network access')}
-          description={
-            strictNetwork
-              ? t(
-                  'Only matching protocol, hostname or IP, and port are allowed. Unlisted destinations are blocked and cannot request authorization.'
-                )
-              : t(
-                  'HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.'
-                )
+          action={
+            <span
+              className="inline-flex rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium"
+              role="status"
+            >
+              {strictNetwork ? t('Strict mode') : t('Relaxed mode')}
+            </span>
           }
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
+          className="rounded-xl border border-border bg-card px-4 pt-4"
+          contentClassName="mt-1"
         >
-          <div className="rounded-xl border border-border p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm text-foreground">
-                  {strictNetwork ? t('Strict whitelist') : t('Trusted unsafe networks')}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {strictNetwork
-                    ? t('Edit allowed destinations and organize them into groups.')
-                    : t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onNavigate({ kind: 'domains' })}
-              >
-                {t('Manage access')}
-              </Button>
-            </div>
-          </div>
+          <ul className="divide-y divide-border">
+            {notebookRows.map(({ icon: Icon, title, description, manage }, index) => (
+              <li key={index} className="flex flex-wrap items-center gap-3 py-4">
+                <span
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground"
+                  aria-hidden="true"
+                >
+                  <Icon className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1 basis-48">
+                  <p className="text-sm font-medium leading-5">{title}</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+                </div>
+                {manage ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto shrink-0"
+                    onClick={() => onNavigate({ kind: 'domains' })}
+                  >
+                    {t('Manage access')}
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </SettingsSection>
       ) : null}
 
