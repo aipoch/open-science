@@ -140,7 +140,9 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
     await act(async () =>
       pending.resolve({ provider: provider, state: 'unavailable', runtimeError: 'install' })
     )
-    expect(screen.getByRole('alert').textContent).toContain(`Could not prepare ${name} support.`)
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Preparation failed. Retry or choose another environment.'
+    )
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
     expect(connect).toHaveBeenCalledTimes(2)
     expect(connect.mock.calls[1][1].operationId).not.toBe(connect.mock.calls[0][1].operationId)
@@ -169,6 +171,162 @@ describe.each(['modal', 'hugging-face'] as const)('%s connection environment', (
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
     expect(select).toHaveBeenCalledTimes(2)
     expect(connect).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['disabled', 'This environment is unavailable. Check Runtimes or choose another environment.'],
+    ['recovery', 'This environment is unavailable. Check Runtimes or choose another environment.'],
+    ['dependency', 'Preparation failed. Retry or choose another environment.'],
+    ['install', 'Preparation failed. Retry or choose another environment.'],
+    ['storage', 'Could not save changes.']
+  ] as const)(
+    'groups %s failures by recovery action and keeps retrying the unsaved choice',
+    async (reason, message) => {
+      select.mockResolvedValueOnce({ revision: 0, runtimeError: reason })
+      await renderDialog()
+      await act(async () =>
+        fireEvent.change(screen.getByLabelText('Python environment'), {
+          target: { value: '/custom/python' }
+        })
+      )
+      expect(screen.getByRole('alert').textContent).toContain(message)
+      expect(!!screen.queryByRole('button', { name: 'Use another environment' })).toBe(
+        reason !== 'storage'
+      )
+      expect(
+        (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
+      ).toBe(true)
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
+      expect(select).toHaveBeenCalledTimes(2)
+      expect(select).toHaveBeenLastCalledWith(
+        provider,
+        expect.objectContaining({
+          revision: 0,
+          selection: { kind: 'custom', pythonPath: '/custom/python' }
+        })
+      )
+      expect(
+        (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+      expect(screen.queryByRole('alert')).toBeNull()
+    }
+  )
+  it.each(['cancelled', 'runtime-stale'] as const)(
+    'silently reloads saved selection and revision after a %s selection result',
+    async (reason) => {
+      select.mockResolvedValueOnce({ revision: 3, runtimeError: reason })
+      await renderDialog()
+      get.mockResolvedValueOnce({
+        revision: 3,
+        selection: { kind: 'custom', pythonPath: '/saved/python' },
+        candidates: []
+      })
+      await act(async () =>
+        fireEvent.change(screen.getByLabelText('Python environment'), {
+          target: { value: '/custom/python' }
+        })
+      )
+      expect(get).toHaveBeenCalledTimes(2)
+      expect((screen.getByLabelText('Python environment') as HTMLSelectElement).value).toBe(
+        '/saved/python'
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(connected).not.toHaveBeenCalled()
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Connect in browser' }))
+      )
+      expect(connect).toHaveBeenCalledWith(provider, expect.objectContaining({ revision: 3 }))
+    }
+  )
+  it.each(['cancelled', 'runtime-stale'] as const)(
+    'silently recovers a %s sign-in result without authorizing an unsaved choice',
+    async (reason) => {
+      connect.mockResolvedValueOnce({
+        provider,
+        state: 'unavailable',
+        runtimeError: reason,
+        runtimeRevision: 4
+      })
+      await renderDialog()
+      get.mockResolvedValueOnce({
+        revision: 4,
+        selection: { kind: 'custom', pythonPath: '/saved/python' },
+        candidates: []
+      })
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Connect in browser' }))
+      )
+      expect(get).toHaveBeenCalledTimes(2)
+      expect((screen.getByLabelText('Python environment') as HTMLSelectElement).value).toBe(
+        '/saved/python'
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(connected).not.toHaveBeenCalled()
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Connect in browser' }))
+      )
+      expect(connect).toHaveBeenLastCalledWith(provider, expect.objectContaining({ revision: 4 }))
+    }
+  )
+  it('does not let a late recovery read overwrite a newer environment selection or revision', async () => {
+    const recovering = deferred<unknown>()
+    select.mockResolvedValueOnce({ revision: 2, runtimeError: 'runtime-stale' })
+    await renderDialog()
+    get.mockReturnValueOnce(recovering.promise)
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Python environment'), {
+        target: { value: '/custom/python' }
+      })
+    )
+    select.mockResolvedValueOnce({ revision: 3 })
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Python environment'), {
+        target: { value: 'managed' }
+      })
+    )
+    expect(select).toHaveBeenLastCalledWith(
+      provider,
+      expect.objectContaining({ revision: 2, selection: { kind: 'managed' } })
+    )
+    await act(async () =>
+      recovering.resolve({
+        revision: 2,
+        selection: { kind: 'custom', pythonPath: '/older/python' },
+        candidates: []
+      })
+    )
+    expect((screen.getByLabelText('Python environment') as HTMLSelectElement).value).toBe('managed')
+    expect(screen.queryByRole('alert')).toBeNull()
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Connect in browser' }))
+    )
+    expect(connect).toHaveBeenCalledWith(provider, expect.objectContaining({ revision: 3 }))
+  })
+  it('retries a failed recovery read instead of treating the unsaved candidate as persisted', async () => {
+    select.mockResolvedValueOnce({ revision: 2, runtimeError: 'cancelled' })
+    await renderDialog()
+    get.mockRejectedValueOnce(new Error('Read failed'))
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Python environment'), {
+        target: { value: '/custom/python' }
+      })
+    )
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Preparation failed. Retry or choose another environment.'
+    )
+    expect(
+      (screen.getByRole('button', { name: 'Connect in browser' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect((screen.getByLabelText('Python environment') as HTMLSelectElement).disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Use another environment' })).toBeNull()
+    get.mockResolvedValueOnce({ revision: 2, selection: { kind: 'managed' }, candidates: [] })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
+    expect(get).toHaveBeenCalledTimes(3)
+    expect(select).toHaveBeenCalledOnce()
+    expect((screen.getByLabelText('Python environment') as HTMLSelectElement).value).toBe('managed')
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Connect in browser' }))
+    )
+    expect(connect).toHaveBeenCalledWith(provider, expect.objectContaining({ revision: 2 }))
   })
   it('keeps a new environment choice open when cancelling the previous login returns connected', async () => {
     const choosing = deferred<unknown>()

@@ -268,8 +268,7 @@ function OpenAccountDialog({
                   void environment.select(selection)
                 }}
                 onRetry={() => {
-                  if (!environment.snapshot || environment.error === 'runtime-stale')
-                    void environment.load()
+                  if (!environment.snapshot) void environment.load()
                   else if (environment.retrySelection)
                     void environment.select(environment.selection)
                   else if (method) void signIn(method)
@@ -351,10 +350,7 @@ function OpenAccountDialog({
             {failure && !busy && !status?.runtimeError && (
               <InlineNotice level="error" role="alert" className="mt-3">
                 {!error && reason === 'dependency'
-                  ? t(
-                      '{{provider}} is not available in this environment. Choose another environment or use Open-Science.',
-                      { provider: accountNames[provider] }
-                    )
+                  ? t('Preparation failed. Retry or choose another environment.')
                   : failure}
               </InlineNotice>
             )}

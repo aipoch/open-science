@@ -12,11 +12,12 @@ import type {
 import type { ComputeAccountController } from './use-compute-account'
 
 type SignIn = 'connectAccount' | 'useLocalAccount'
+type EnvironmentFailure = Exclude<ComputePythonFailure, 'cancelled' | 'runtime-stale'>
 export type ComputePythonEnvironment = {
   snapshot?: ComputePythonSnapshot
   selection: ComputePythonSelection
   phase: 'loading' | 'idle' | 'checking' | 'preparing' | 'ready' | 'error'
-  error?: ComputePythonFailure
+  error?: EnvironmentFailure
   load: () => Promise<void>
   select: (selection: ComputePythonSelection) => Promise<void>
   signIn: (method: SignIn) => Promise<ComputeAccountStatus | undefined>
@@ -33,7 +34,7 @@ export function useComputePythonEnvironment(
   const [phase, setPhase] = useState<
     'loading' | 'idle' | 'checking' | 'preparing' | 'ready' | 'error'
   >('loading')
-  const [error, setError] = useState<ComputePythonFailure>()
+  const [error, setError] = useState<EnvironmentFailure>()
   const request = useRef<ComputeAccountOperation>({ operationId: '', revision: 0 })
   const live = useRef(true)
   const [failedSelection, setFailedSelection] = useState(false)
@@ -45,6 +46,7 @@ export function useComputePythonEnvironment(
     if (!live.current || readGeneration.current !== generation) return
     setPhase('loading')
     setError(undefined)
+    setFailedSelection(false)
     try {
       const next = await window.api.compute.getComputePythonRuntime(provider)
       if (!live.current || readGeneration.current !== generation) return
@@ -54,6 +56,7 @@ export function useComputePythonEnvironment(
       setPhase('idle')
     } catch {
       if (live.current && readGeneration.current === generation) {
+        setSnapshot(undefined)
         setError('dependency')
         setPhase('error')
       }
@@ -77,6 +80,8 @@ export function useComputePythonEnvironment(
     }
   }, [load, run])
   const cancel = (): void => {
+    // A new intent also retires any recovery snapshot still in flight.
+    readGeneration.current++
     const previous = request.current
     request.current = { ...previous, operationId: '' }
     if (previous.operationId) void account.run('cancelAccountConnection', previous)
@@ -102,6 +107,10 @@ export function useComputePythonEnvironment(
       })
       if (!current(op)) return
       request.current.revision = result.revision
+      if (result.runtimeError === 'cancelled' || result.runtimeError === 'runtime-stale') {
+        await load()
+        return
+      }
       setError(result.runtimeError)
       setPhase(result.runtimeError ? 'error' : 'ready')
       setFailedSelection(!!result.runtimeError)
@@ -119,6 +128,11 @@ export function useComputePythonEnvironment(
     const result = await account.run(method, op)
     if (!current(op)) return
     if (result?.runtimeError) {
+      if (result.runtimeError === 'cancelled' || result.runtimeError === 'runtime-stale') {
+        if (result.runtimeRevision !== undefined) request.current.revision = result.runtimeRevision
+        await load()
+        return
+      }
       setError(result.runtimeError)
       setPhase('error')
       return

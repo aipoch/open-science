@@ -1,45 +1,27 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle } from 'lucide-react'
-import type {
-  ComputePythonFailure,
-  ComputePythonSelection
-} from '../../../../shared/compute-python-runtime'
+import type { ComputePythonSelection } from '../../../../shared/compute-python-runtime'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import type { ComputePythonEnvironment } from './use-compute-python-environment'
 const MANAGED_OPTION = 'managed'
 function reasonLabel(
-  reason: ComputePythonFailure,
-  t: ReturnType<typeof useTranslation>['t'],
-  provider: string
+  reason: NonNullable<ComputePythonEnvironment['error']>,
+  t: ReturnType<typeof useTranslation>['t']
 ): string {
   switch (reason) {
     case 'disabled':
-      return t(
-        'This Python environment is disabled. Choose another environment or enable it in Runtimes.'
-      )
     case 'recovery':
-      return t(
-        'This Python environment needs recovery. Review it in Runtimes or choose another environment.'
-      )
+      return t('This environment is unavailable. Check Runtimes or choose another environment.')
     case 'install':
-      return t('Could not prepare {{provider}} support. Retry or choose another environment.', {
-        provider
-      })
-    case 'storage':
-      return t('Could not save the Python environment. Try again.')
-    case 'runtime-stale':
-      return t('The Python environment changed. Choose it again.')
-    case 'cancelled':
-      return t('Preparation cancelled.')
     case 'dependency':
-      return t(
-        '{{provider}} is not available in this environment. Choose another environment or use Open-Science.',
-        { provider }
-      )
+      return t('Preparation failed. Retry or choose another environment.')
+    case 'storage':
+      return t('Could not save changes.')
   }
 }
+
 export function ComputePythonEnvironmentControl({
   provider,
   environment,
@@ -127,19 +109,23 @@ export function ComputePythonEnvironmentControl({
         <ErrorNotice
           inline
           role="alert"
-          description={reasonLabel(error, t, provider)}
+          description={reasonLabel(error, t)}
           primaryButton={{ label: t('Retry'), onClick: onRetry }}
-          secondaryButton={{
-            label: t('Use another environment'),
-            onClick: () => {
-              picker.current?.focus()
-              try {
-                picker.current?.showPicker()
-              } catch {
-                /* Focus remains available where showPicker is unsupported. */
-              }
-            }
-          }}
+          secondaryButton={
+            error === 'storage' || !snapshot
+              ? undefined
+              : {
+                  label: t('Use another environment'),
+                  onClick: () => {
+                    picker.current?.focus()
+                    try {
+                      picker.current?.showPicker()
+                    } catch {
+                      /* Focus remains available where showPicker is unsupported. */
+                    }
+                  }
+                }
+          }
         />
       )}
     </div>
