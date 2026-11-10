@@ -3196,6 +3196,18 @@ it.each(['root', 'frame'] as const)(
         ? await interruptDerivation(() => importer.fork(imported), importedRun.runId)
         : undefined
     const forked = await importer.fork(imported)
+    const forkDirectory = join(
+      target.storageRoot,
+      'artifacts',
+      forked.projectId,
+      forked.sessionId,
+      '.session-fork'
+    )
+    await expect(stat(join(forkDirectory, 'source'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readdir(join(forkDirectory, 'origin-metadata'))).sort()).toEqual([
+      'manifest.json',
+      'records.json'
+    ])
     const forkHistory = await importer.readOrigin(forked)
     // Upstream inputs retain evidence ownership; the child may read but cannot rewrite them.
     await expect(

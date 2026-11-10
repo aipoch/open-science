@@ -1902,13 +1902,15 @@ export class SessionPackageService {
         true
       )
       onProgress?.({ importStage: 'publish', phase: 'importing' })
-      if (records.logEvidence) {
-        const metadata = join(evidenceDirectory, 'origin-metadata')
+      // Fork origin readers need only these two files. Leave the transfer in operation staging
+      // so both successful publication and restart recovery retire its payloads.
+      if (records.logEvidence || forkSource) {
+        const metadata = join(evidenceDirectory, records.logEvidence ? 'origin-metadata' : 'source')
         await mkdir(metadata)
         for (const name of ['manifest.json', 'records.json'])
           await copyFile(join(sourceRoot, name), join(metadata, name))
       }
-      await rename(sourceRoot, join(evidenceDirectory, 'source'))
+      if (!forkSource) await rename(sourceRoot, join(evidenceDirectory, 'source'))
       await writeDurableJsonFile(
         join(evidenceDirectory, 'receipt.json'),
         JSON.stringify(

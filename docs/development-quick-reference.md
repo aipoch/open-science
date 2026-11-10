@@ -228,3 +228,7 @@ upgrade assertions, and migration-ledger expectations belong in the database mig
 than in feature-module suites.
 
 [Contribution workflow](../CONTRIBUTING.md) · [Testing](testing.md) · [CI reference](ci.md)
+
+## Inspecting retained Session fork snapshots
+
+With the application stopped, run `node scripts/inspect-session-fork-snapshots.mjs "<data-root>"` for a read-only inventory. The argument is the application data directory containing `artifacts/`. The report lists fork IDs, logical bytes in their retained source directories, metadata bytes still used there, and potential duplicate bytes. Invalid ownership or unreadable metadata appears under `issues` and makes the command exit nonzero. The estimate excludes unverified forks. Filesystem sharing and the condition of the live Session must be checked separately before deciding whether to reclaim space.
