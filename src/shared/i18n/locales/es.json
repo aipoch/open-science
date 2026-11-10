@@ -189,7 +189,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "El programa auxiliar de credenciales del sistema no pudo completar la operación. Revise el código de diagnóstico y vuelva a intentar el inicio.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "El programa auxiliar de credenciales del sistema falló. Se desconoce el estado exacto de la autorización o de la clave.",
     "System credential access failed": "Error al acceder a las credenciales del sistema",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes. Vuelva a intentar el inicio después de resolver el problema de autorización."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes. Vuelva a intentar el inicio después de resolver el problema de autorización.",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "El programa auxiliar de credenciales del sistema no devolvió datos. Es posible que un software de seguridad lo esté bloqueando. Permita Open-Science y vuelva a intentar el inicio.",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes."
   },
   "renderer": {
     "Connect {{provider}}": "Conectar con {{provider}}",
@@ -5878,7 +5880,8 @@
     "Provider configuration changed. Your draft has not been saved.": "La configuración del proveedor ha cambiado. Su borrador no se ha guardado.",
     "Latest saved configuration": "Última configuración guardada",
     "Reapply my changes to the latest configuration": "Volver a aplicar mis cambios a la última configuración",
-    "Execution completed. Check the Main Agent conversation to confirm it received the result.": "La ejecución ha finalizado. Revise la conversación del agente principal para confirmar que ha recibido el resultado.",
+    "Result saved below; check the Main Agent conversation for receipt.": "Resultado guardado abajo; confirme su recepción en la conversación con el Agente principal.",
+    "Execution completed; check the Main Agent conversation for receipt.": "Ejecución completada; confirme la recepción del resultado en la conversación con el Agente principal.",
     "Saved result available below.": "El resultado guardado está disponible a continuación.",
     "Vendor": "Proveedor",
     "Region": "Región",
@@ -8177,6 +8180,7 @@
     "Internet": "Internet",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Conexión por Internet mediante Pinggy. El tráfico pasa por un servidor de terceros.",
     "Connect your mobile device to the same WiFi as this computer.": "Conecte su dispositivo móvil a la misma red WiFi que este equipo.",
+    "Choose WiFi or Internet to connect a mobile device.": "Seleccione WiFi o Internet para conectar un dispositivo móvil.",
     "Local network address": "Dirección de red local",
     "Connection unavailable": "Conexión no disponible",
     "Establishing secure tunnel…": "Estableciendo conexión segura…",

@@ -69,6 +69,7 @@ import {
   serializeNotebookToolResult
 } from './mcp-server'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import { HostViewImageError } from './host-view-image-service'
 import { NotebookRunRepository } from './repository'
 import {
   NotebookRuntimeService,
@@ -1640,6 +1641,31 @@ describe('repl_execute tool', () => {
     ).toEqual([{ type: 'text', text: expect.any(String) }])
   })
 
+  it('delivers only text to a text-only model after Vision inspects a plot (#1159)', () => {
+    const evidence = '<attached-image-evidence>Sine and Cosine</attached-image-evidence>'
+    const content = buildNotebookToolContent(
+      { status: 'completed', viewImages: [{ evidence }] },
+      tool!
+    )
+
+    expect(content).toEqual([
+      { type: 'text', text: expect.stringContaining('"status": "completed"') },
+      { type: 'text', text: evidence }
+    ])
+  })
+
+  it('rejects a relay result carrying both evidence and raw pixels', () => {
+    expect(() =>
+      buildNotebookToolContent(
+        {
+          status: 'completed',
+          viewImages: [{ evidence: 'plot', data: 'YQ==', mimeType: 'image/png' }]
+        },
+        tool!
+      )
+    ).toThrow(/invalid transient image content/u)
+  })
+
   it('fails the entire transient image attachment when any image block is malformed', () => {
     const valid = Buffer.from('valid-image').toString('base64')
 
@@ -1746,6 +1772,80 @@ describe('repl_execute tool', () => {
       expect(body.params.code).toBe('return 2')
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+
+  it('delivers image evidence failure separately from long stderr in a real MCP response', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'image-failure-mcp-'))
+    const stderr = 'existing diagnostic\n'.repeat(500)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => ({
+          status: 'completed',
+          stdout: 'computed 42',
+          stderr,
+          traceback: '',
+          cwdAfter: root,
+          outputs: [{ type: 'stream', name: 'stdout', text: 'computed 42' }]
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1',
+      token: 'control-token',
+      completeControlInvocation: async () => {
+        throw new HostViewImageError(
+          'could not prepare image evidence.',
+          new Error('private provider detail')
+        )
+      },
+      discardControlInvocation: vi.fn()
+    }))
+    const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const mcp = createNotebookMcpServer({
+      ...connection,
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    const client = new ModelContextProtocolClient({ name: 'image-failure-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await mcp.connect(serverTransport)
+      await client.connect(clientTransport)
+      const response = await client.callTool({
+        name: 'repl_execute',
+        arguments: { code: 'return 42' }
+      })
+      expect(response.isError).not.toBe(true)
+      expect(response.content).toEqual([
+        { type: 'text', text: expect.stringContaining('computed 42') },
+        { type: 'text', text: 'host.viewImage could not prepare image evidence.' }
+      ])
+      const preview = JSON.parse((response.content as { text: string }[])[0].text)
+      expect(preview).toMatchObject({ status: 'completed', stdout: 'computed 42', truncated: true })
+      expect(preview.stderr).toContain('existing diagnostic')
+      expect(JSON.stringify(response)).not.toContain('private provider detail')
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.text
+          .stderr
+      ).toBe(stderr)
+    } finally {
+      await client.close()
+      await mcp.close()
+      await rpc.close()
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
     }
   })
 

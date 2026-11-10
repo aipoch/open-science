@@ -3324,7 +3324,7 @@ export function recoverUnassignedCompleteSourceRows({
   ambiguousAssignments,
   repairs
 }) {
-  if (columnRects.length < 3) return 0
+  if (columnRects.length < 2) return 0
   const heights = items
     .filter((item) => item.horizontal && Number.isFinite(item.height) && item.height > 0)
     .map((item) => item.height)
@@ -3576,7 +3576,7 @@ export function recoverUnassignedInsertedParameterRows({
 }) {
   if (
     columnRects.length !== 3 ||
-    !captions.some((caption) => /\bparameter(?:s)?\b/i.test(caption.lines?.[0] ?? ''))
+    !captions.some((caption) => /\b(?:hyper)?parameter(?:s)?\b/i.test(caption.lines?.[0] ?? ''))
   )
     return 0
   const heights = items
@@ -3598,8 +3598,13 @@ export function recoverUnassignedInsertedParameterRows({
       )
     )
   }
-  const numeric = (text) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?(?:%|[A-Za-z]{1,3})?$/u.test(text.trim())
-  const parameter = (text) => /^[A-Za-z][A-Za-z0-9_.-]*$/.test(text.trim())
+  const parameter = (text) => /^[A-Za-z][A-Za-z0-9_. -]*$/.test(text.trim())
+  const numericValue = (text) => {
+    const value = text.trim()
+    const unit = value.match(/[A-Za-z]{1,3}$/u)
+    const core = (unit ? value.slice(0, -unit[0].length) : value).trimEnd()
+    return /(?=.*\d)^[<>≤≥−+\x2d\d\s.,()\x5b\x5d%±–—\x2f<>=]+$/u.test(core)
+  }
   const groups = []
   for (const item of items
     .filter(
@@ -3607,24 +3612,58 @@ export function recoverUnassignedInsertedParameterRows({
     )
     .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
     const group = groups.at(-1)
-    if (group && Math.abs(group.baseline - item.baseline) <= height * 0.35) {
+    const verticalBand =
+      group &&
+      Number.isFinite(item.rect?.[1]) &&
+      Number.isFinite(item.rect?.[3]) &&
+      item.rect[1] <= group.bottom + height * 0.25 &&
+      item.rect[3] >= group.top - height * 0.25
+    if (
+      group &&
+      (Math.abs(group.baseline - item.baseline) <= height * 0.35 ||
+        (verticalBand && Math.abs(group.baseline - item.baseline) <= height * 0.9))
+    ) {
       group.items.push(item)
       group.baseline = (group.baseline + item.baseline) / 2
-    } else groups.push({ baseline: item.baseline, items: [item] })
+      group.top = Math.min(group.top, item.rect[1])
+      group.bottom = Math.max(group.bottom, item.rect[3])
+    } else
+      groups.push({
+        baseline: item.baseline,
+        items: [item],
+        top: item.rect[1],
+        bottom: item.rect[3]
+      })
   }
   let recovered = 0
   for (const group of groups) {
-    if (group.items.length !== 3) continue
-    const source = group.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
-    const columns = source.map((item) => {
+    const lanes = Array.from({ length: 3 }, () => [])
+    for (const item of group.items) {
       const center = (item.rect[0] + item.rect[2]) / 2
-      return columnRects.findIndex((column) => center >= column[0] && center <= column[2])
-    })
+      const columns = columnRects
+        .map((candidate, index) => (center >= candidate[0] && center <= candidate[2] ? index : -1))
+        .filter((index) => index >= 0)
+      if (columns.length !== 1) {
+        lanes.length = 0
+        break
+      }
+      lanes[columns[0]].push(item)
+    }
+    if (lanes.length !== 3) continue
+    if (lanes[0].length !== 1 || !lanes[1].length || !lanes[2].length) continue
+    const source = lanes.flat().sort((a, b) => a.rect[0] - b.rect[0])
+    const laneText = (lane) =>
+      lane
+        .map((item) => item.text.trim())
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+    const parameterText = laneText(lanes[0])
+    const valueText = laneText(lanes[1])
+    const descriptionText = laneText(lanes[2])
     if (
-      columns.join(',') !== '0,1,2' ||
-      !parameter(source[0].text) ||
-      !numeric(source[1].text) ||
-      !/\p{L}/u.test(source[2].text) ||
+      !parameter(parameterText) ||
+      !numericValue(valueText) ||
+      !/\p{L}/u.test(descriptionText) ||
       source.some((item) => Math.abs(item.baseline - group.baseline) > height * 0.4)
     )
       continue
@@ -3670,10 +3709,12 @@ export function recoverUnassignedInsertedParameterRows({
       items: []
     }))
     cells.push(...inserted)
-    source.forEach((item, column) => {
-      assignments.set(item, inserted[column])
-      ambiguousAssignments?.delete(item)
-    })
+    lanes.forEach((lane, column) =>
+      lane.forEach((item) => {
+        assignments.set(item, inserted[column])
+        ambiguousAssignments?.delete(item)
+      })
+    )
     repairs.push('unassigned-parameter-row-inserted')
     recovered += 1
   }

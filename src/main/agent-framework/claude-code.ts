@@ -197,11 +197,13 @@ export const claudeCodeFramework: AgentFramework = {
       .filter(Boolean)
       .join('\n\n')
     if (persistentSystemPrompt) {
-      meta.systemPrompt = {
-        type: 'preset',
-        preset: 'claude_code',
-        append: persistentSystemPrompt
-      }
+      meta.systemPrompt = ctx.toolLess
+        ? persistentSystemPrompt
+        : {
+            type: 'preset',
+            preset: 'claude_code',
+            append: persistentSystemPrompt
+          }
     }
 
     const promptPrefix = ctx.turnPromptReminders

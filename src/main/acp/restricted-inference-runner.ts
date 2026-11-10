@@ -45,6 +45,8 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   ) => Promise<ResolvedAgentBackend>
   now?: () => number
   createRuntime?: (options: AcpRuntimeOptions) => RestrictedInferenceRuntime
+  // Use the supplied task contract without Workspace instructions, skills or client tools.
+  taskOnly?: boolean
   allowNativeCodexSubscription?: boolean
 }>
 
@@ -215,6 +217,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       })
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
+        taskOnly: this.options.taskOnly,
         agentName: input.agentName,
         description: input.description,
         systemPrompt: input.systemPrompt,
@@ -242,6 +245,9 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: this.options.appVersion,
         separateProviderNotices: true,
+        sessionCapabilityPolicy: this.options.taskOnly
+          ? { role: 'restricted-inference', delegation: 'denied' }
+          : undefined,
         defaultCwd: cwd,
         resolveBackend: () => {
           backendTransferred = true

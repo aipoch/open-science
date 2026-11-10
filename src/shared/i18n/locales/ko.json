@@ -187,7 +187,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "시스템 자격 증명 도우미가 작업을 완료하지 못했습니다. 진단 코드를 확인하고 시작을 다시 시도하세요.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "시스템 자격 증명 도우미가 실패했습니다. 정확한 승인 또는 키 상태를 알 수 없습니다.",
     "System credential access failed": "시스템 자격 증명 접근 실패",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다. 승인 문제를 해결한 후 시작을 다시 시도하세요."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다. 승인 문제를 해결한 후 시작을 다시 시도하세요.",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "시스템 자격 증명 도우미가 데이터를 반환하지 않았습니다. 보안 소프트웨어가 차단하고 있을 수 있습니다. Open-Science를 허용한 후 시작을 다시 시도하세요.",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
     "Connect {{provider}}": "{{provider}} 연결",
@@ -5560,7 +5562,8 @@
     "Provider configuration changed. Your draft has not been saved.": "모델 제공업체 설정이 변경되었습니다. 초안이 저장되지 않았습니다.",
     "Latest saved configuration": "최근 저장된 설정",
     "Reapply my changes to the latest configuration": "최신 설정에 내 변경 사항 다시 적용",
-    "Execution completed. Check the Main Agent conversation to confirm it received the result.": "실행이 완료되었습니다. 메인 에이전트 대화에서 결과 수신 여부를 확인하세요.",
+    "Result saved below; check the Main Agent conversation for receipt.": "결과가 아래에 저장되었으니 메인 에이전트 대화에서 수신 여부를 확인하세요.",
+    "Execution completed; check the Main Agent conversation for receipt.": "실행이 완료되었으니 메인 에이전트 대화에서 결과 수신 여부를 확인하세요.",
     "Saved result available below.": "저장된 결과는 아래에서 확인할 수 있습니다.",
     "Vendor": "모델 제공업체",
     "Region": "지역",
@@ -7835,6 +7838,7 @@
     "Internet": "인터넷",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Pinggy를 통해 인터넷으로 연결합니다. 트래픽은 타사 서버를 거칩니다.",
     "Connect your mobile device to the same WiFi as this computer.": "모바일 기기를 이 컴퓨터와 같은 WiFi에 연결하세요.",
+    "Choose WiFi or Internet to connect a mobile device.": "모바일 기기를 연결하려면 WiFi 또는 인터넷을 선택하세요.",
     "Local network address": "로컬 네트워크 주소",
     "Connection unavailable": "연결할 수 없음",
     "Establishing secure tunnel…": "보안 터널을 설정하는 중…",

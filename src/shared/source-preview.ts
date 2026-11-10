@@ -56,4 +56,4 @@ export type {
   SourcePreviewNavigationBlocked
 }
 
-export type SourceLinkMetadata = { title?: string; description?: string; image?: string }
+export type SourceLinkMetadata = { title?: string; description?: string; imageUrl?: string }

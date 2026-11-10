@@ -188,7 +188,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "Das Hilfsprogramm für Systemanmeldedaten konnte den Vorgang nicht abschließen. Prüfen Sie den Diagnosecode und starten Sie erneut.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "Das Hilfsprogramm für Systemanmeldedaten ist fehlgeschlagen. Der genaue Freigabe- oder Schlüsselstatus ist unbekannt.",
     "System credential access failed": "Zugriff auf Systemanmeldedaten fehlgeschlagen",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut.",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "Das Hilfsprogramm für Systemanmeldedaten hat keine Daten zurückgegeben. Möglicherweise wird es von Sicherheitssoftware blockiert. Lassen Sie Open-Science zu und starten Sie erneut.",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten."
   },
   "renderer": {
     "Connect {{provider}}": "{{provider}} verbinden",
@@ -5716,7 +5718,8 @@
     "Provider configuration changed. Your draft has not been saved.": "Die Anbieterkonfiguration wurde geändert. Ihr Entwurf wurde nicht gespeichert.",
     "Latest saved configuration": "Zuletzt gespeicherte Konfiguration",
     "Reapply my changes to the latest configuration": "Meine Änderungen auf die neueste Konfiguration anwenden",
-    "Execution completed. Check the Main Agent conversation to confirm it received the result.": "Ausführung abgeschlossen. Prüfen Sie in der Konversation mit dem Hauptagenten, ob das Ergebnis angekommen ist.",
+    "Result saved below; check the Main Agent conversation for receipt.": "Ergebnis unten gespeichert; den Empfang in der Konversation mit dem Hauptagenten prüfen.",
+    "Execution completed; check the Main Agent conversation for receipt.": "Ausführung abgeschlossen; den Empfang in der Konversation mit dem Hauptagenten prüfen.",
     "Saved result available below.": "Das gespeicherte Ergebnis ist unten verfügbar.",
     "Vendor": "Anbieter",
     "Region": "Region",
@@ -8003,6 +8006,7 @@
     "Internet": "Internet",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Verbindung über das Internet mit Pinggy. Der Datenverkehr läuft über einen Server eines Drittanbieters.",
     "Connect your mobile device to the same WiFi as this computer.": "Verbinden Sie Ihr Mobilgerät mit demselben WLAN wie diesen Computer.",
+    "Choose WiFi or Internet to connect a mobile device.": "Wählen Sie WLAN oder Internet, um ein Mobilgerät zu verbinden.",
     "Local network address": "Adresse im lokalen Netzwerk",
     "Connection unavailable": "Verbindung nicht verfügbar",
     "Establishing secure tunnel…": "Sicherer Tunnel wird aufgebaut…",

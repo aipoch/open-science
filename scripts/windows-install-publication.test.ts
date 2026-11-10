@@ -77,7 +77,9 @@ function action(
       '-InstallPath',
       f.install,
       '-StatePath',
-      f.state
+      f.state,
+      '-ReportPath',
+      join(f.root, `${operation}-evidence.json`)
     ],
     {
       encoding: 'utf16le',
@@ -180,6 +182,33 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
   }, 30_000)
 
   it.skipIf(process.env.OPEN_SCIENCE_INSTALL_PUBLICATION_NATIVE !== '1')(
+    'reports the conflicting publication destination without moving either directory',
+    () => {
+      const f = fixture()
+      setFixtureAcl(f.install)
+      expect(action(f, 'prepare').status).toBe(0)
+      const state = JSON.parse(readFileSync(f.state, 'utf8'))
+      expect(state.useMove).toBe(true)
+      copyFixture(f.payload, state.stage)
+      const destination = join(f.install, 'resources')
+      mkdirSync(destination)
+      writeFileSync(join(destination, 'keep.txt'), 'existing destination')
+
+      expect(action(f, 'publish').status).toBe(20)
+      const report = JSON.parse(readFileSync(join(f.root, 'publish-evidence.json'), 'utf8'))
+      expect(report.errors[0]).toMatchObject({
+        operation: 'validate-payload-destination',
+        path: destination
+      })
+      expect(readFileSync(join(destination, 'keep.txt'), 'utf8')).toBe('existing destination')
+      expect(readFileSync(join(state.stage, 'resources/backend/index.js'), 'utf8')).toBe(
+        'synthetic backend'
+      )
+      expect(action(f, 'cleanup').status).toBe(0)
+    },
+    30_000
+  )
+  it.skipIf(process.env.OPEN_SCIENCE_INSTALL_PUBLICATION_NATIVE !== '1')(
     'retries the remaining directory after a locked second directory fails publication',
     async () => {
       const f = fixture()
@@ -191,7 +220,8 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
       copyFixture(f.payload, state.stage)
 
       const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
-      const command = `$stream=[IO.File]::Open(${quote(join(state.stage, 'locales/en.pak'))},'Open','Read','Read'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -Action publish -InstallPath ${quote(f.install)} -StatePath ${quote(f.state)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+      const report = join(f.root, 'locked-publication.json')
+      const command = `$stream=[IO.File]::Open(${quote(join(state.stage, 'locales/en.pak'))},'Open','Read','Read'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -Action publish -InstallPath ${quote(f.install)} -StatePath ${quote(f.state)} -ReportPath ${quote(report)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
       const failed = spawnSync(
         powershell,
         [
@@ -204,6 +234,20 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
       )
       expect(failed.error).toBeUndefined()
       expect(failed.status).toBe(20)
+      const diagnostic = JSON.parse(readFileSync(report, 'utf8'))
+      expect(diagnostic).toMatchObject({ phase: 'publish-new-program-files', status: 'failed' })
+      expect(diagnostic.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: 'move-payload-directory',
+            path: join(state.stage, 'locales'),
+            // Directory.Move reports this held child as access denied, not sharing violation.
+            // Preserve the Windows evidence rather than inferring the code from the fixture.
+            windowsErrorCode: 5,
+            nativeErrorCode: null
+          })
+        ])
+      )
       expect(existsSync(join(f.install, 'resources/backend/index.js'))).toBe(true)
       expect(existsSync(join(state.stage, 'locales/en.pak'))).toBe(true)
 
@@ -304,6 +348,14 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
       'warning',
       'cancelled',
       'launch-failure',
+      'prepare-failure',
+      'cleanup-failure',
+      'tool-32',
+      'tool-33',
+      'visible-extract-failure',
+      'visible-copy-cancel',
+      'visible-copy-retry',
+      'unwritable-diagnostic',
       'long-source-copy',
       'universal-x64'
     ])(
@@ -387,7 +439,8 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         // Normal builds use the same archive and reject damaged headers at compile time.
         const manifestArchive = join(f.root, 'manifest.7z')
         writeFileSync(manifestArchive, readFileSync(archive))
-        if (mode === 'truncated') writeFileSync(archive, readFileSync(archive).subarray(0, 40))
+        if (['truncated', 'visible-extract-failure', 'unwritable-diagnostic'].includes(mode))
+          writeFileSync(archive, readFileSync(archive).subarray(0, 40))
         if (mode === 'corrupt') {
           const bytes = readFileSync(archive)
           bytes[40] ^= 0xff
@@ -411,7 +464,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           )
         }
         if (mode === 'launch-failure') writeFileSync(extractor, 'not an executable')
-        if (mode === 'warning' || mode === 'cancelled') {
+        if (['warning', 'cancelled', 'tool-32', 'tool-33'].includes(mode)) {
           const decoderSource = join(f.root, 'decoder.nsi')
           writeFileSync(
             decoderSource,
@@ -421,7 +474,8 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               'SilentInstall silent',
               'OutFile "' + extractor + '"',
               'Section',
-              'SetErrorLevel ' + (mode === 'warning' ? 1 : 255),
+              'SetErrorLevel ' +
+                ({ warning: 1, cancelled: 255, 'tool-32': 32, 'tool-33': 33 }[mode] ?? 1),
               'SectionEnd'
             ].join('\n')
           )
@@ -436,8 +490,15 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         const exe = join(f.root, 'fixture.exe')
         const resources = join(f.root, 'build')
         const hostLog = join(f.root, 'publication-host.txt')
+        if (mode === 'unwritable-diagnostic')
+          writeFileSync(join(f.root, 'logs'), 'preserve this file')
         mkdirSync(resources)
-        for (const file of ['prepare-windows-extraction.cjs', 'windows-extract-payload.ps1'])
+        for (const file of [
+          'prepare-windows-extraction.cjs',
+          'windows-extract-payload.ps1',
+          'windows-install-diagnostics.ps1',
+          'windows-install-diagnostics.nsh'
+        ])
           writeFileSync(join(resources, file), readFileSync(resolve('build', file)))
         writeFileSync(
           join(resources, 'windows-install-publication.ps1'),
@@ -446,24 +507,40 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
             `[IO.File]::AppendAllText('${hostLog.replaceAll("'", "''")}', [Environment]::Is64BitProcess.ToString() + [Environment]::NewLine)\n$handles =`
           )
         )
+        if (mode === 'cleanup-failure') {
+          const helperScript = join(resources, 'windows-install-publication.ps1')
+          writeFileSync(
+            helperScript,
+            readFileSync(helperScript, 'utf8').replace(
+              "[IO.Directory]::Delete(('\\\\?\\' + $stage), $true)",
+              "throw [IO.IOException]::new('Fixture staging cleanup failure')"
+            )
+          )
+        }
         writeFileSync(
           source,
           '\ufeff' +
             [
               'Unicode true',
               'RequestExecutionLevel user',
-              'SilentInstall silent',
+              `SilentInstall ${mode.startsWith('visible-') ? 'normal' : 'silent'}`,
+              'AutoCloseWindow true',
               `OutFile "${exe}"`,
               '!include LogicLib.nsh',
               `!define PROJECT_DIR "${f.root}"`,
               `!define APP_64 "${manifestArchive}"`,
               ...(mode === 'universal-x64' ? [`!define APP_ARM64 "${archive}"`] : []),
               `!define BUILD_RESOURCES_DIR "${resources}"`,
+              `!include "${resolve('build/windows-install-diagnostics.nsh')}"`,
               '!macro quitFailedUpdate',
               'FileOpen $0 "$EXEDIR\\failure.txt" w',
               'FileWriteUTF16LE $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
               'FileClose $0',
               'Call cleanupInstallPublication',
+              'Call showInstallPublicationFailure',
+              'FileOpen $0 "$EXEDIR\\notice.txt" w',
+              'FileWriteUTF16LE $0 "$publicationMessage"',
+              'FileClose $0',
               'SetErrorLevel 2',
               'Quit',
               '!macroend',
@@ -472,6 +549,14 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               'LangString appCannotBeClosed 1033 "Cannot replace files"',
               'Section',
               'InitPluginsDir',
+              `StrCpy $installDiagnosticDirectory "${join(f.root, 'logs')}"`,
+              ...(mode === 'prepare-failure'
+                ? [
+                    'FileOpen $0 "$PLUGINSDIR\\publication-state.json" w',
+                    'FileWrite $0 "existing state"',
+                    'FileClose $0'
+                  ]
+                : []),
               // Process architecture can be AMD64 under emulation on ARM64 Windows.
               'FileOpen $0 "$EXEDIR\\native-amd64.txt" w',
               '${If} ${IsNativeAMD64}',
@@ -500,8 +585,75 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         })
         writeFileSync(join(f.root, 'compile.log'), compile.stdout + compile.stderr)
         expect(compile.status, compile.stdout + compile.stderr).toBe(0)
-        const run =
-          mode === 'locked-root'
+        const observedDialogs = join(f.root, 'dialogs.json')
+        const run = mode.startsWith('visible-')
+          ? (() => {
+              const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+              const target = join(f.install, 'app.exe')
+              if (mode !== 'visible-extract-failure') writeFileSync(target, 'occupied original')
+              const observer = `Add-Type @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class PublicationDialogs {
+  static HashSet<IntPtr> Dismissed = new HashSet<IntPtr>();
+  public static List<string> Observed = new List<string>();
+  delegate bool Callback(IntPtr window, IntPtr value);
+  [DllImport("user32.dll")] static extern bool EnumWindows(Callback callback, IntPtr value);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr window, Callback callback, IntPtr value);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, uint message, IntPtr word, IntPtr data);
+  [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr window, int id);
+  public static void Act(uint process, bool retry, Action release) {
+    EnumWindows(delegate(IntPtr window, IntPtr unused) {
+      uint owner; GetWindowThreadProcessId(window, out owner);
+      if (owner != process) return true;
+      string text = "";
+      EnumChildWindows(window, delegate(IntPtr child, IntPtr ignored) {
+        var buffer = new StringBuilder(4096); GetWindowText(child, buffer, buffer.Capacity);
+        text += buffer.ToString() + "\\n"; return true;
+      }, IntPtr.Zero);
+      if (text.Contains("could not finish updating.")) {
+        var hasRetry = GetDlgItem(window, 4) != IntPtr.Zero;
+        var id = hasRetry ? (retry ? 4 : 2) : (GetDlgItem(window, 1) != IntPtr.Zero ? 1 : 2);
+        if (GetDlgItem(window, id) != IntPtr.Zero) {
+          if (Dismissed.Add(window)) Observed.Add(text);
+          if (hasRetry && retry) release();
+          PostMessage(window, 0x111, new IntPtr(id), IntPtr.Zero);
+        }
+      }
+      return true;
+    }, IntPtr.Zero);
+  }
+}
+'@
+$stream=$null
+${mode !== 'visible-extract-failure' ? `$stream=[IO.File]::Open(${quote(target)},'Open','Read','Read')` : ''}
+try {
+  $process=Start-Process -FilePath ${quote(exe)} -WindowStyle Hidden -PassThru
+  $timer=[Diagnostics.Stopwatch]::StartNew()
+  while (!$process.HasExited -and $timer.Elapsed.TotalSeconds -lt 50) {
+    [PublicationDialogs]::Act($process.Id,$${mode === 'visible-copy-retry' ? 'true' : 'false'},[Action]{ if ($stream) { $stream.Dispose() } })
+    Start-Sleep -Milliseconds 25
+  }
+  [IO.File]::WriteAllText(${quote(observedDialogs)},(ConvertTo-Json -InputObject @([PublicationDialogs]::Observed)))
+  if (!$process.HasExited) { $process.Kill(); throw 'Publication fixture did not exit' }
+  exit $process.ExitCode
+} finally { if ($stream) { $stream.Dispose() } }`
+              return spawnSync(
+                powershell,
+                [
+                  '-NoProfile',
+                  '-NonInteractive',
+                  '-EncodedCommand',
+                  Buffer.from(observer, 'utf16le').toString('base64')
+                ],
+                { encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+              )
+            })()
+          : mode === 'locked-root'
             ? (() => {
                 const target = join(f.install, 'app.exe')
                 writeFileSync(target, 'occupied original')
@@ -539,7 +691,8 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           'long-path',
           'long-copy-fallback',
           'long-source-copy',
-          'universal-x64'
+          'universal-x64',
+          'visible-copy-retry'
         ].includes(mode)
         expect(
           run.status,
@@ -548,6 +701,83 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
             : run.stdout + run.stderr
         ).toBe(success ? 0 : 2)
         expect(existsSync(join(f.root, 'success.txt'))).toBe(success)
+        const logDirectory = join(f.root, 'logs')
+        if (mode === 'unwritable-diagnostic') {
+          expect(readFileSync(logDirectory, 'utf8')).toBe('preserve this file')
+          const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+          expect(notice).toContain('extracting the new application files')
+          expect(notice).toContain('The diagnostic could not be saved.')
+          expect(notice).not.toContain('Diagnostic:')
+        } else if (!success) {
+          expect(existsSync(logDirectory)).toBe(true)
+          const logs = readdirSync(logDirectory)
+          expect(logs).toHaveLength(1)
+          const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')
+          expect(diagnostic).toContain('phase=')
+          expect(diagnostic).toContain('installationIncomplete')
+          if (mode === 'truncated' || mode === 'corrupt') {
+            expect(diagnostic).toContain('extract-new-program-files')
+            expect(diagnostic).toContain('7za')
+          }
+          if (
+            mode === 'launch-failure' &&
+            readFileSync(join(f.root, 'native-amd64.txt'), 'utf8') === 'true'
+          ) {
+            expect(diagnostic).toMatch(/"errorSource":\s*"powershell-extractor"/)
+            expect(diagnostic).toMatch(/"operation":\s*"start-extractor"/)
+            expect(diagnostic).toContain('7za.exe')
+            const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+            expect(notice).toContain('Error source: powershell-extractor; result: 1.')
+            expect(notice).not.toContain('Error source: 7za;')
+          }
+          if (mode === 'prepare-failure') {
+            expect(diagnostic).toContain('prepare-new-program-files')
+            expect(diagnostic).toContain('Publication state already exists')
+            // The attempted cleanup cannot deserialize this existing state. Its independent
+            // failure must not erase the original prepare error or replace its output.
+            expect(diagnostic).toContain('Temporary payload cleanup')
+            expect(diagnostic).toContain('read-publication-state')
+          }
+          if (mode === 'cleanup-failure') {
+            expect(diagnostic).toContain('cleanup-payload-staging')
+            expect(diagnostic).toContain('Fixture staging cleanup failure')
+          }
+          if (mode === 'tool-32' || mode === 'tool-33') {
+            expect(diagnostic).toMatch(new RegExp('"toolExitCode":\\s*' + mode.slice(5)))
+            const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+            expect(notice).toContain('extracting the new application files')
+            expect(notice).toContain(`Error source: 7za; result: ${mode.slice(5)}.`)
+            expect(notice).not.toContain('An application file is in use')
+            expect(notice).toContain('Installation is incomplete')
+          }
+          if (mode === 'locked-root' || mode === 'visible-copy-cancel') {
+            expect(diagnostic).toContain('robocopy-reported-win32')
+            expect(diagnostic).toContain('app.exe')
+            expect(diagnostic).toMatch(/"windowsErrorCode":\s*32/)
+            const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+            expect(notice).toContain(
+              'Windows reports that an application file or directory is in use.'
+            )
+            expect(notice).toContain('app.exe')
+          }
+        } else if (mode === 'visible-copy-retry') {
+          const logs = readdirSync(logDirectory)
+          expect(logs).toHaveLength(1)
+          const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')
+          expect(diagnostic).toContain('outcome=recovered')
+          expect(diagnostic).toContain('"installationIncomplete":  false')
+        } else {
+          expect(existsSync(logDirectory)).toBe(false)
+        }
+        if (mode.startsWith('visible-')) {
+          const dialogs = JSON.parse(readFileSync(observedDialogs, 'utf8'))
+          expect(dialogs).toHaveLength(1)
+          expect(dialogs[0]).toContain('Diagnostic:')
+          const log = readdirSync(logDirectory)[0]
+          expect(dialogs[0]).toContain(join(logDirectory, log))
+          expect(dialogs[0]).toContain('Installation is incomplete')
+          expect(dialogs[0]).not.toContain('Restoration of old files')
+        }
         if (mode === 'valid' && readFileSync(join(f.root, 'native-amd64.txt'), 'utf8') === 'true') {
           expect(readFileSync(hostLog, 'utf8').trim().split(/\r?\n/)).toEqual([
             'True',
@@ -555,9 +785,10 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
             'True'
           ])
         }
-        expect(
-          readdirSync(f.install).filter((name) => name.startsWith('.open-science-install-'))
-        ).toEqual([])
+        if (mode !== 'cleanup-failure')
+          expect(
+            readdirSync(f.install).filter((name) => name.startsWith('.open-science-install-'))
+          ).toEqual([])
         if (success)
           expect(readFileSync(join(f.install, 'resources/backend/index.js'), 'utf8')).toBe(
             'synthetic backend'

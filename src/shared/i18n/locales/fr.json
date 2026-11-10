@@ -189,7 +189,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "L’utilitaire d’accès aux identifiants système n’a pas pu terminer son opération. Vérifiez le code de diagnostic et relancez le démarrage.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "L’utilitaire d’accès aux identifiants système a échoué. L’état exact de l’autorisation ou de la clé est inconnu.",
     "System credential access failed": "Échec de l’accès aux identifiants système",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés. Relancez le démarrage après avoir résolu le problème d’autorisation."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés. Relancez le démarrage après avoir résolu le problème d’autorisation.",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "L’utilitaire d’accès aux identifiants système n’a renvoyé aucune donnée. Un logiciel de sécurité le bloque peut-être. Autorisez Open-Science, puis relancez le démarrage.",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
     "Connect {{provider}}": "Se connecter à {{provider}}",
@@ -5878,7 +5880,8 @@
     "Provider configuration changed. Your draft has not been saved.": "La configuration du fournisseur a changé. Votre brouillon n’a pas été enregistré.",
     "Latest saved configuration": "Dernière configuration enregistrée",
     "Reapply my changes to the latest configuration": "Réappliquer mes modifications à la dernière configuration",
-    "Execution completed. Check the Main Agent conversation to confirm it received the result.": "Exécution terminée. Consultez la conversation de l’agent principal pour confirmer qu’il a reçu le résultat.",
+    "Result saved below; check the Main Agent conversation for receipt.": "Résultat enregistré ci-dessous ; vérifiez sa réception dans la conversation avec l’Agent principal.",
+    "Execution completed; check the Main Agent conversation for receipt.": "Exécution terminée ; vérifiez la réception du résultat dans la conversation avec l’Agent principal.",
     "Saved result available below.": "Le résultat enregistré est disponible ci-dessous.",
     "Vendor": "Fournisseur",
     "Region": "Région",
@@ -8177,6 +8180,7 @@
     "Internet": "Internet",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Connexion via Internet grâce à Pinggy. Le trafic transite par un serveur tiers.",
     "Connect your mobile device to the same WiFi as this computer.": "Connectez votre appareil mobile au même réseau WiFi que cet ordinateur.",
+    "Choose WiFi or Internet to connect a mobile device.": "Choisissez WiFi ou Internet pour connecter un appareil mobile.",
     "Local network address": "Adresse du réseau local",
     "Connection unavailable": "Connexion indisponible",
     "Establishing secure tunnel…": "Établissement du tunnel sécurisé…",

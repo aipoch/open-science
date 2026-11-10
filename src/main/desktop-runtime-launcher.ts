@@ -23,6 +23,7 @@ import {
   terminateVerifiedLegacyRuntime,
   type LegacyTerminationDeps
 } from './legacy-service-termination'
+import { pruneBackendStartupLogs } from './backend-startup-log-retention'
 import { randomUUID } from 'node:crypto'
 import {
   backendStartupStatusSchema,
@@ -605,11 +606,10 @@ export async function startOrAttachDesktopBackend(options: {
   await Promise.all([access(options.command), access(options.entry)])
   const logs = join(options.configRoot, 'logs')
   await mkdir(logs, { recursive: true, mode: 0o700 })
-  const file = await open(
-    join(logs, `desktop-backend-${process.pid}-${Date.now()}.log`),
-    'wx',
-    0o600
-  )
+  const logName = `desktop-backend-${process.pid}-${Date.now()}.log`
+  const file = await open(join(logs, logName), 'wx', 0o600)
+  // Retention is best effort. Files that cannot be inspected are retried on a later launch.
+  void pruneBackendStartupLogs(logs, logName).catch(() => undefined)
   // The explicit config root must not make Node select a different credential profile.
   const attemptId = randomUUID()
   let credentialInventoryPath: string | undefined

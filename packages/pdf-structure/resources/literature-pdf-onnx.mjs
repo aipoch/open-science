@@ -14,6 +14,7 @@ import sharp from 'sharp'
 import { collectTableRules, findCaptionedNumericTableRegions } from './literature-pdf-graphics.mjs'
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation, isUprightText } from './literature-pdf-orientation.mjs'
+import { deduplicateTableDetections } from './literature-pdf-onnx-postprocess.mjs'
 
 const [pdfPath, assetDirectory, runtimeDirectory, pageList, outputDirectory, mode] =
   process.argv.slice(2)
@@ -165,6 +166,7 @@ try {
       await page.render({ canvas, canvasContext: context, viewport }).promise
       const png = await canvas.encode('png')
       const detection = await infer('detection', png, canvas.width, canvas.height)
+      detection.objects = deduplicateTableDetections(detection.objects)
       const textItems = content.items
         .filter((item) => 'str' in item && item.str.trim())
         .map((item) => {

@@ -39,7 +39,6 @@ const project = (
     callerRole: 'main',
     isControl: true,
     hasActiveControlInvocation: true,
-    hasWorkspace: true,
     allowsMethod: () => true,
     delegatedWorkReady: true,
     delegationAllowed: true,

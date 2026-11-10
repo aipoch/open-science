@@ -187,7 +187,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "システム認証情報ヘルパーが処理を完了できませんでした。診断コードを確認して起動を再試行してください。",
     "The system credential helper failed. The exact authorization or key status is unknown.": "システム認証情報ヘルパーが失敗しました。正確な許可または鍵の状態は不明です。",
     "System credential access failed": "システム認証情報へのアクセスに失敗しました",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。"
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "システム認証情報ヘルパーがデータを返しませんでした。セキュリティソフトウェアがブロックしている可能性があります。Open-Science を許可してから起動を再試行してください。",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
     "Connect {{provider}}": "{{provider}} に接続",
@@ -5562,7 +5564,8 @@
     "Provider configuration changed. Your draft has not been saved.": "プロバイダーの設定が変更されました。下書きは保存されていません。",
     "Latest saved configuration": "最新の保存済み設定",
     "Reapply my changes to the latest configuration": "自分の変更を最新の設定に再適用",
-    "Execution completed. Check the Main Agent conversation to confirm it received the result.": "実行が完了しました。メインエージェントの会話で結果を受信したことを確認してください。",
+    "Result saved below; check the Main Agent conversation for receipt.": "結果を下に保存しましたので、メインエージェントの会話で受信を確認してください。",
+    "Execution completed; check the Main Agent conversation for receipt.": "実行が完了しましたので、メインエージェントの会話で結果の受信を確認してください。",
     "Saved result available below.": "保存済みの結果を以下で確認できます。",
     "Vendor": "ベンダー",
     "Region": "リージョン",
@@ -7837,6 +7840,7 @@
     "Internet": "インターネット",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "Pinggy を使ってインターネット経由で接続します。通信はサードパーティのサーバーを経由します。",
     "Connect your mobile device to the same WiFi as this computer.": "モバイルデバイスをこのコンピューターと同じ WiFi に接続してください。",
+    "Choose WiFi or Internet to connect a mobile device.": "モバイルデバイスを接続するには、WiFi またはインターネットを選択してください。",
     "Local network address": "ローカルネットワークアドレス",
     "Connection unavailable": "接続できません",
     "Establishing secure tunnel…": "安全なトンネルを確立しています…",

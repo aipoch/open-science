@@ -187,7 +187,9 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "系統憑證輔助程式無法完成操作。請檢查診斷代碼並重試啟動。",
     "The system credential helper failed. The exact authorization or key status is unknown.": "系統憑證輔助程式失敗。無法確定具體的授權或金鑰狀態。",
     "System credential access failed": "系統憑證存取失敗",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。解決授權問題後，請重試啟動。"
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。解決授權問題後，請重試啟動。",
+    "The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.": "系統憑證輔助程式未傳回資料，可能遭安全軟體攔截。請允許 Open-Science 後重試啟動。",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。"
   },
   "renderer": {
     "Connect {{provider}}": "連接 {{provider}}",
@@ -5562,7 +5564,8 @@
     "Provider configuration changed. Your draft has not been saved.": "供應商設定已變更。您的草稿尚未儲存。",
     "Latest saved configuration": "最新儲存的設定",
     "Reapply my changes to the latest configuration": "將我的變更重新套用至最新設定",
-    "Execution completed. Check the Main Agent conversation to confirm it received the result.": "執行已完成。請查看主智能體對話，確認其是否已收到結果。",
+    "Result saved below; check the Main Agent conversation for receipt.": "結果已儲存於下方；請在主智能體對話中確認接收。",
+    "Execution completed; check the Main Agent conversation for receipt.": "執行已完成；請在主智能體對話中確認結果接收。",
     "Saved result available below.": "可在下方查看已儲存的結果。",
     "Vendor": "供應商",
     "Region": "地區",
@@ -7837,6 +7840,7 @@
     "Internet": "網際網路",
     "Connect over the internet through Pinggy. Traffic passes through a third-party server.": "透過 Pinggy 經網際網路連線。流量會經過第三方伺服器。",
     "Connect your mobile device to the same WiFi as this computer.": "請將行動裝置連接到與這台電腦相同的 WiFi。",
+    "Choose WiFi or Internet to connect a mobile device.": "選擇 WiFi 或網際網路以連接行動裝置。",
     "Local network address": "區域網路位址",
     "Connection unavailable": "無法連線",
     "Establishing secure tunnel…": "正在建立安全通道…",

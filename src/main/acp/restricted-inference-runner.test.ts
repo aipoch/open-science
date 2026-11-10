@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CODEX_SHARED_PROVIDER_ID, CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { listAgentFrameworks } from '../agent-framework/registry'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { codexFramework } from '../agent-framework/codex'
@@ -296,7 +297,8 @@ const event = (value: Partial<AcpRuntimeEvent>): AcpRuntimeEvent =>
 
 const makeRunner = async (
   resolved: ResolvedAgentBackend,
-  runtime: RuntimeHarnessOptions = {}
+  runtime: RuntimeHarnessOptions = {},
+  taskOnly = false
 ): Promise<{
   runner: RestrictedInferenceRunner
   resolveTarget: ReturnType<typeof vi.fn>
@@ -309,6 +311,7 @@ const makeRunner = async (
     appVersion: '0.11.0',
     configRoot: temporaryRoot,
     profileNamespace: 'test-inference',
+    taskOnly,
     resolveTarget,
     allowNativeCodexSubscription: true,
     createRuntime: (options) => {
@@ -333,6 +336,67 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it.each(listAgentFrameworks())(
+    'delivers only task instructions through the $id adapter',
+    async (framework) => {
+      const input = runInput({ target: target(framework.id) })
+      const presentation = new AcpSessionPresentationPolicy()
+      let options: AcpRuntimeOptions
+      const resolved = backend(framework, {
+        ...(framework.id === 'codex' ? { responsesTransportLease: codexToolLessBridgeLease() } : {})
+      })
+      const { runner } = await makeRunner(
+        resolved,
+        {
+          onRuntime: (value) => {
+            options = value
+          },
+          onCreateSession: async (prepared) => {
+            const role = options.sessionCapabilityPolicy?.role
+            expect(role).toBe('restricted-inference')
+            const context = {
+              framework,
+              role,
+              sessionOptions: prepared.sessionOptions,
+              backendSystemPromptAppends: prepared.systemPromptAppends,
+              persistentSystemPrompt: prepared.persistentSystemPrompt,
+              tooling: { artifacts: false, notebook: false, skillImport: false }
+            }
+            const setup = presentation.buildSessionSetup(context)
+            const prefix = presentation.buildTurnPromptPrefix({
+              ...context,
+              sessionSetupPromptPrefix: setup.promptPrefix
+            })
+            expect(setup.mcpServers ?? []).toEqual([])
+            expect([setup.persistentSystemPrompt, prefix].filter(Boolean)).toEqual([
+              input.systemPrompt
+            ])
+            if (framework.id === 'codex') {
+              const config = JSON.parse(prepared.env.CODEX_CONFIG!)
+              await expect(readFile(config.model_instructions_file, 'utf8')).resolves.toBe(
+                input.systemPrompt
+              )
+              expect(config.skills.include_instructions).toBe(false)
+            }
+            if (framework.id === 'claude-code')
+              expect(setup.metaArg._meta).toMatchObject({
+                systemPrompt: input.systemPrompt,
+                claudeCode: { options: { tools: [], mcpServers: {}, strictMcpConfig: true } }
+              })
+            if (framework.id === 'open-science-agent')
+              expect(prepared.args?.[1]).toContain(temporaryRoot!)
+          }
+        },
+        true
+      )
+      if (framework.id === 'pi') {
+        await writeFile(join(temporaryRoot!, 'models.json'), '{}')
+        resolved.args = ['--agent-dir', temporaryRoot!, '--session-dir', temporaryRoot!]
+      }
+      await runner.run(input)
+    }
+  )
+
   it('keeps OpenCode structured inference out of the forced-summary step', async () => {
     const { runner } = await makeRunner(backend(opencodeFramework), {
       events: [event({ role: 'assistant', text: '{"title":"Research"}' })],

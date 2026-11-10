@@ -69,10 +69,17 @@ const diagnosticMessage = (
       )
     case 'secret-exit-failed':
     case 'secret-signalled':
-    case 'secret-empty-response':
       return translate(
         'The system credential helper failed. The exact authorization or key status is unknown.'
       )
+    case 'secret-empty-response':
+    case 'secret-empty-plaintext':
+    case 'secret-write-failed':
+      return translate(
+        'The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.'
+      )
+    case 'secret-dpapi-failed':
+      return translate('Windows could not decrypt the existing credential key.')
     case 'inventory-failed':
       return inventoryMessage(diagnostic, translate)
     case 'profile-read-failed':
@@ -112,15 +119,28 @@ export const credentialRecoveryMessage = (
   const translate = i18n.t.bind(i18n)
   const inventoryFailure = error.reason === 'ciphertext-inventory-unavailable'
   const secretFailure = error.reason === 'native-secret-operation-failed'
+  // Windows DPAPI has no authorization prompt, so these failures get no authorization advice.
+  const promptlessSecretFailure =
+    secretFailure &&
+    [
+      'secret-empty-response',
+      'secret-empty-plaintext',
+      'secret-write-failed',
+      'secret-dpapi-failed'
+    ].includes(error.diagnostic?.code ?? '')
   const title = secretFailure
     ? translate('System credential access failed')
     : inventoryFailure
       ? translate('Startup data inspection failed')
       : translate('Credential storage needs recovery')
   const description = secretFailure
-    ? translate(
-        'Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.'
-      )
+    ? promptlessSecretFailure
+      ? translate(
+          'Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.'
+        )
+      : translate(
+          'Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.'
+        )
     : inventoryFailure
       ? translate(
           'Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.'

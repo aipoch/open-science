@@ -951,6 +951,33 @@ describe('AcpAgentConnectionAdapter', () => {
     agentConnection.close()
   })
 
+  it('does not dispatch filesystem requests on a tool-less connection', async () => {
+    const process = new FakeAgentProcess()
+    const agent = acp
+      .agent({ name: 'test-agent' })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const connectionHooks = { ...hooks(), toolLess: true }
+    const { close } = await openConnection(process, connectionHooks)
+    try {
+      const params = { sessionId: 'translation', path: join(tmpdir(), 'notes.txt') }
+      await expect(
+        agent.client.request(acp.methods.client.fs.readTextFile, params)
+      ).rejects.toMatchObject({ code: -32601 })
+      await expect(
+        agent.client.request(acp.methods.client.fs.writeTextFile, { ...params, content: '' })
+      ).rejects.toMatchObject({ code: -32601 })
+      expect(connectionHooks.filesystem.resolveSessionCwd).not.toHaveBeenCalled()
+    } finally {
+      await close()
+      agent.close()
+    }
+  })
+
   it('reads text files inside the session workspace', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'acp-connection-adapter-'))
     const filePath = join(workspace, 'notes.txt')

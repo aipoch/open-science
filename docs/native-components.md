@@ -216,6 +216,25 @@ publication never proceeds to successor launch. Cleanup targets only this instal
 stage; uncertain identities and interrupted older stages are preserved rather than swept by name.
 There is no user-data migration, new runtime state, persistent service or handoff-schema change.
 
+Old-program cleanup diagnostics travel from the bundled uninstaller through a fresh, explicit
+report path for each launch. These reports are evidence only: they do not authorize deletion or
+change cleanup success. Original file errors, deletion cancellation, attribute restoration and
+NSIS move-back outcomes remain separate. After the existing outer retry fails, the outer installer
+saves a text report under the current user's `LocalAppData/Open-Science/logs/installer/` and shows
+one native notice; silent runs only log and return failure. Manual uninstall saves the same
+diagnostics without adding retries. A log-write failure cannot stop recovery or change the original
+failure, and a missing child report must not reuse a preceding attempt's cause. Temporary reports
+stay inside the parent installer context; the persistent text is local and is not uploaded.
+
+Extraction reports distinguish script/process failures from actual 7-Zip exit codes and retain
+the failed operation and known path. Errors from draining other children remain separate from the
+original failure; the outer installer preserves that source and records its wrapper exit source.
+
+The notice uses the installer's product name and selected language (Simplified/Traditional Chinese,
+with English fallback). Its PowerShell resource retains a UTF-8 BOM for Windows PowerShell 5.1.
+Run `scripts/windows-program-cleanup.test.ts` with `NSIS_TEST_COMPILER` or `OPEN_SCIENCE_MAKENSIS`
+for real parent/child, persistent-lock, recovery-fault and single-notice coverage.
+
 Run `scripts/windows-install-publication.test.ts`, `scripts/windows-installer-extractor.test.ts` and
 the packaging/signing regressions. Set `OPEN_SCIENCE_MAKENSIS` to the real compiler and
 `OPEN_SCIENCE_7ZA` to the verified standalone tool for native extraction cases;

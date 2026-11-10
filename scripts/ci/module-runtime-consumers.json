@@ -123,6 +123,7 @@
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"
   ],
+  "resources/notebook/file_evidence_shadow.js": ["resources/notebook/file_evidence_worker.js"],
   "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
   "resources/find-overlay/index.html": [
     "resources/find-overlay/findOverlay.js",

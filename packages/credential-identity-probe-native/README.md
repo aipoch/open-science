@@ -112,6 +112,12 @@ Creation is explicit and serialized by the entry's credential bootstrap lease. S
 only on bounded private stdio pipes; failures are sanitized and never trigger a plaintext fallback.
 This does not change the metadata probe's read-only contract above.
 
+Exit 0 always means a non-empty secret was written and flushed. Failures use fixed exit codes:
+`2` invalid input, `3` Windows DPAPI failure (stdout holds only the decimal Windows error number),
+`4` the OS returned an empty secret, `5` the secret could not be written to stdout, and `1` any
+other failure. The Node cipher retries `4`, `5`, and an empty exit-0 response once for DPAPI
+operations; it never retries `3`.
+
 The Node cipher is pinned to Electron 43.7.5's
 [OSCrypt sync implementation](https://github.com/electron/electron/blob/v43.7.5/patches/chromium/revert_oscrypt_remove_sync_backend.patch).
 See [compatibility and persistent-state notes](../../docs/standalone-runtime.md#historical-compatibility-requiring-review)

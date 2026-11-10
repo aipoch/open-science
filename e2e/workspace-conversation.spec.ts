@@ -288,13 +288,16 @@ test('explains disabled revision navigation while a turn is running', async ({ a
     await expect(previous).toBeDisabled()
     const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
     const trigger = previous.locator('..')
-    // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
+    // Wait for the gated Agent to finish streaming before scrolling to the revision control.
+    // A later scroll dismisses the tooltip while the test is inspecting it.
+    await expect(
+      conversation.getByText('Queue gate lead-in chunk 3.', { exact: true })
+    ).toBeVisible()
+    // Release the active turn's scroll anchor with a reader-originated wheel gesture.
     await conversation.hover()
     await page.mouse.wheel(0, -100_000)
-    // The active-turn anchor can settle above zero; this scenario needs the revision control.
     await trigger.scrollIntoViewIfNeeded()
     await expect(trigger).toBeInViewport()
-    await trigger.hover()
     await trigger.focus()
     await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('revision-navigation-running.png') })

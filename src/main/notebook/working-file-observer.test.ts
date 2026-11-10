@@ -12,6 +12,7 @@ import {
   stat,
   symlink,
   unlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -150,6 +151,7 @@ describe('working-file evidence', () => {
     const orphanPool = join(projectRoot, 'blobs', `sha256-${orphanHash}`)
     const orphanPath = join(activity, 'blobs', `sha256-${orphanHash}`)
     await writeFile(orphanPool, orphanContent)
+    await utimes(orphanPool, new Date(0), new Date(0))
     await link(orphanPool, orphanPath)
     const owner = {
       receiptName: 'receipt-history-run.json',
@@ -3760,7 +3762,8 @@ describe('working-file evidence', () => {
       [{ runId: 'project-copied-run', fileEvidence: result.fileEvidence }]
     )
 
-    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toEqual([])
+    const poolName = 'sha256-' + createHash('sha256').update(content).digest('hex')
+    await expect(readFile(join(projectRoot, 'blobs', poolName), 'utf8')).resolves.toBe(content)
     await expect(readFile(activityBlob, 'utf8')).resolves.toBe(content)
   })
 

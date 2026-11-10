@@ -1183,13 +1183,27 @@ const buildNotebookToolContent = (
   ]
   const rawRecord = asRecord(raw)
   if (!definition.includeViewImages || rawRecord?.status !== 'completed') return content
+  if (rawRecord.viewImageError === 'evidence-unavailable') {
+    content.push({ type: 'text', text: 'host.viewImage could not prepare image evidence.' })
+  }
   const viewImages = rawRecord.viewImages
   if (viewImages === undefined) return content
   if (!Array.isArray(viewImages)) {
     throw new Error('repl_execute returned invalid transient image content.')
   }
-  const images = viewImages.map((candidate): Extract<NotebookToolContent, { type: 'image' }> => {
+  const attachments = viewImages.map((candidate): NotebookToolContent => {
     const image = asRecord(candidate)
+    if (image && Object.hasOwn(image, 'evidence')) {
+      if (
+        typeof image.evidence !== 'string' ||
+        !image.evidence.trim() ||
+        Object.hasOwn(image, 'data') ||
+        Object.hasOwn(image, 'mimeType')
+      ) {
+        throw new Error('repl_execute returned invalid transient image content.')
+      }
+      return { type: 'text', text: image.evidence }
+    }
     if (
       typeof image?.data !== 'string' ||
       image.data.length === 0 ||
@@ -1201,7 +1215,10 @@ const buildNotebookToolContent = (
     }
     return { type: 'image', data: image.data, mimeType: image.mimeType }
   })
-  content.push(...images)
+  if (attachments.some((block) => block.type !== attachments[0].type)) {
+    throw new Error('repl_execute returned invalid transient image content.')
+  }
+  content.push(...attachments)
   return content
 }
 

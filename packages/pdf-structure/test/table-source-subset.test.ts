@@ -573,6 +573,12 @@ it('does not discard an unknown cell field while comparing differently assembled
   expect(regions.deduplicateSourceOwnedTableSubsets(f.tables, f.tokens)).toEqual(f.tables)
 })
 
+it('keeps malformed optional parts metadata from crashing source-owned deduplication', () => {
+  const f = assembledEquivalentCandidates()
+  Object.assign(f.tables[0], { parts: {} })
+  expect(regions.deduplicateSourceOwnedTableSubsets(f.tables, f.tokens)).toEqual(f.tables)
+})
+
 it('retains conflicting rich text despite equal literals and distinct assembly routes', () => {
   const f = assembledEquivalentCandidates()
   for (const [candidate, table] of f.tables.entries()) {

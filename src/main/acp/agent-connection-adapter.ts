@@ -63,6 +63,7 @@ type AcpAgentConnectionHooks = Readonly<{
   ) => RequestPermissionResponse | Promise<RequestPermissionResponse>
   observeSessionUpdate: (notification: SessionNotification) => void
   observeClaudeSdkMessage: (message: Record<string, unknown>) => void
+  toolLess?: boolean
   filesystem: Readonly<{
     resolveSessionCwd: (sessionId: string) => string
     protectedReadRoots: () => readonly string[]
@@ -397,13 +398,10 @@ class AcpAgentConnectionAdapter {
         signal: abort.signal
       })
     }
-    const connection = acp
+    const client = acp
       .client({ name: 'open-science' })
       .onRequest(acp.methods.client.session.requestPermission, (context) =>
         hooks.requestPermission(context.params)
-      )
-      .onRequest(acp.methods.client.elicitation.create, (context) =>
-        hooks.createElicitation(context.params)
       )
       .onNotification(acp.methods.client.session.update, (context) =>
         hooks.observeSessionUpdate(context.params)
@@ -413,22 +411,29 @@ class AcpAgentConnectionAdapter {
         (params) => params as Record<string, unknown>,
         (context) => hooks.observeClaudeSdkMessage(context.params)
       )
-      .onRequest(acp.methods.client.fs.readTextFile, async (context) =>
-        readWorkspaceTextFile(
-          hooks.filesystem.resolveSessionCwd(context.params.sessionId),
-          context.params,
-          [...hooks.filesystem.protectedReadRoots()],
-          (await hooks.filesystem.listGrantedRoots?.()) ?? []
-        )
-      )
-      .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
-        writeWorkspaceTextFile(
-          hooks.filesystem.resolveSessionCwd(context.params.sessionId),
-          context.params,
-          (await hooks.filesystem.listGrantedRoots?.()) ?? []
-        )
-      )
-      .connect(stream)
+    const connection = (
+      hooks.toolLess
+        ? client
+        : client
+            .onRequest(acp.methods.client.elicitation.create, (context) =>
+              hooks.createElicitation(context.params)
+            )
+            .onRequest(acp.methods.client.fs.readTextFile, async (context) =>
+              readWorkspaceTextFile(
+                hooks.filesystem.resolveSessionCwd(context.params.sessionId),
+                context.params,
+                [...hooks.filesystem.protectedReadRoots()],
+                (await hooks.filesystem.listGrantedRoots?.()) ?? []
+              )
+            )
+            .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
+              writeWorkspaceTextFile(
+                hooks.filesystem.resolveSessionCwd(context.params.sessionId),
+                context.params,
+                (await hooks.filesystem.listGrantedRoots?.()) ?? []
+              )
+            )
+    ).connect(stream)
     void connection.closed.then(() => abort.abort())
     return connection
   }

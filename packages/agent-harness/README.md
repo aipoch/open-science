@@ -404,8 +404,10 @@ const session = await openAgentSession({
 
 Automatic compaction has one policy: use the current main model, preserve instructions and tool
 schemas, summarize the selected old prefix, and append a continuation-checkpoint instruction.
-The unchanged recent tail is not sent twice. Custom `transformContext` projections keep the full
-transformed summary input so filtering/redaction and balanced custom exchanges remain authoritative.
+The unchanged recent tail is not sent twice. With a custom `transformContext`, the summary receives
+the transformed messages of the selected prefix, so filtering/redaction remains authoritative; a
+projection that splits that prefix's tool exchanges, or removes all of it, falls back to the complete
+transformed request. Messages a transform adds outside the prefix are not summarized.
 There is no strategy selector or separate summary model. `configure()` changes the model for both
 main requests and future summaries. A new route does not inherit old cache hits.
 

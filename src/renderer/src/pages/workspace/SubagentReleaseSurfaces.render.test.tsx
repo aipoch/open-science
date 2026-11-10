@@ -263,7 +263,7 @@ describe('release-gate Subagent surfaces', () => {
     fireEvent.click(bar)
     expect(bar.getAttribute('aria-expanded')).toBe('true')
     const errorRow = screen.getByRole('button', { name: /Challenge assumptions, error/i })
-    expect(errorRow.className).toContain('border-border-300/15')
+    expect(within(errorRow).getByText('error').previousElementSibling?.tagName).toBe('svg')
     expect(within(errorRow).getByTitle('Challenge assumptions').className).toContain(
       'font-semibold'
     )
@@ -293,6 +293,28 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByTestId('subagents-bar')).toBeTruthy()
+  })
+
+  it('omits repeated agent identities but retains mixed identities and origin warnings', () => {
+    const session = createSession()
+    const { rerender } = renderSurface(<SubagentsBar session={session} permissions={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: '2 subagents, 1 running' }))
+    expect(screen.getByText('Main Agent')).toBeTruthy()
+    expect(screen.getByText('Risk Specialist')).toBeTruthy()
+
+    const uniform = structuredClone(session)
+    const child = uniform.conversationGraph!.frames.find(({ id }) => id === 'child-b')!
+    child.agentName = 'Main Agent'
+    child.originBindingState = 'legacy-unavailable'
+    delete child.originMessageId
+    Object.assign(uniform.runtimeContext!.delegatedWork!.records[1].attempts[0], {
+      resolvedAgent: { kind: 'main' }
+    })
+    rerender(<SubagentsBar session={uniform} permissions={[]} />)
+    expect(screen.queryByText('Main Agent')).toBeNull()
+    expect(screen.queryByText('Risk Specialist')).toBeNull()
+    expect(screen.getByText('Imported history may be incomplete')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Challenge assumptions, error' })).toBeTruthy()
   })
 
   it('keeps imported child history readable without counting it as current running work', () => {
@@ -432,10 +454,13 @@ describe('release-gate Subagent surfaces', () => {
     fireEvent.click(bar)
     expect(bar.getAttribute('aria-expanded')).toBe('true')
 
-    fireEvent.keyDown(document, { key: 'Escape' })
+    const row = screen.getByRole('button', { name: 'Evidence landscape, running' })
+    row.focus()
+    fireEvent.keyDown(row, { key: 'Escape' })
 
     expect(bar.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByLabelText('Subagents')).toBeNull()
+    expect(document.activeElement).toBe(bar)
   })
 
   it('shows a truncated single name with hover text and only a running icon', () => {
@@ -536,6 +561,24 @@ describe('release-gate Subagent surfaces', () => {
     expect((await screen.findByRole('tooltip')).textContent).toContain('Close Subagents preview')
   })
 
+  it('does not advertise a saved result when completion has no terminal message', () => {
+    const session = createSession()
+    session.conversationGraph!.frames.find(({ id }) => id === 'child-a')!.status = 'completed'
+    useSessionStore.setState({ sessions: [session] })
+    renderSurface(
+      <SubagentPreview
+        item={createSessionSubagentsPreviewItem('session-1', 'project-1', 'child-a')}
+      />
+    )
+    expect(
+      screen.getByText('Execution completed; check the Main Agent conversation for receipt.')
+    ).toBeTruthy()
+    expect(
+      screen.queryByText('Result saved below; check the Main Agent conversation for receipt.')
+    ).toBeNull()
+    expect(screen.queryByText('Saved result available below.')).toBeNull()
+  })
+
   it('selects another Frame through the shared Select without opening a second preview', () => {
     const item = {
       id: 'tool:session-1:subagents',
@@ -550,8 +593,12 @@ describe('release-gate Subagent surfaces', () => {
     const { rerender } = renderSurface(<SubagentPreview item={item} />)
     expect(screen.getByText('Provider turn failed')).toBeTruthy()
 
+    expect(within(screen.getByLabelText('Subagent Frame')).getByText('error')).toBeTruthy()
     fireEvent.click(screen.getByLabelText('Subagent Frame'))
-    fireEvent.click(screen.getByRole('option', { name: 'Evidence landscape' }))
+    const runningOption = screen.getByRole('option', { name: 'Evidence landscape, running' })
+    expect(within(runningOption).getByText('running')).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Challenge assumptions, error' })).toBeTruthy()
+    fireEvent.click(runningOption)
 
     expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
@@ -561,6 +608,7 @@ describe('release-gate Subagent surfaces', () => {
     if (updatedItem?.type !== 'tool') throw new Error('Expected the Subagents preview item')
     rerender(<SubagentPreview item={updatedItem} />)
 
+    expect(within(screen.getByLabelText('Subagent Frame')).getByText('running')).toBeTruthy()
     expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
     expect(screen.queryByText('Provider turn failed')).toBeNull()
   })
@@ -1251,11 +1299,9 @@ describe('release-gate Subagent surfaces', () => {
     })
 
     expect(screen.getByText('Durable child evidence')).toBeTruthy()
-    expect(screen.getByText('Saved result available below.')).toBeTruthy()
+    expect(screen.queryByText('Saved result available below.')).toBeNull()
     expect(
-      screen.getByText(
-        'Execution completed. Check the Main Agent conversation to confirm it received the result.'
-      )
+      screen.getByText('Result saved below; check the Main Agent conversation for receipt.')
     ).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
   })

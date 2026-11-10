@@ -89,9 +89,13 @@ export const nativeSecretDiagnosticSchema = z
       'secret-start-failed',
       'secret-exit-failed',
       'secret-signalled',
-      'secret-empty-response'
+      'secret-empty-response',
+      'secret-dpapi-failed',
+      'secret-empty-plaintext',
+      'secret-write-failed'
     ]),
     systemCode: systemCodeSchema.optional(),
+    osStatus: z.number().int().min(0).max(0xffffffff).optional(),
     exitCode: z.number().int().min(-0x80000000).max(0xffffffff).optional(),
     signal: z
       .enum([
