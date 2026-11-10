@@ -58,7 +58,7 @@ it('bounds selected log records, their views and expanded generations when readi
     detail: JSON.stringify({
       ...body,
       activityId: 'large',
-      evidenceId: Array.from({ length: 400 }, (_, i) => sha256(String(i))).join('')
+      evidenceId: Array.from({ length: 4000 }, (_, i) => sha256(String(i))).join('')
     })
   }
   await installLaneLogs(root, [{ key: lane, views: { [view]: rows }, records: [large, small] }])
@@ -84,6 +84,26 @@ it('bounds selected log records, their views and expanded generations when readi
   await expect(
     readLoggedEvidence(root, otherLane + '/activity-small/evidence.json', digest, 2048)
   ).rejects.toThrow(/read limit/)
+  const tinyLane = lane + '4'
+  const emptyView = sha256('[]')
+  const rawBytes = Buffer.from(JSON.stringify(body, null, 2) + '\n')
+  await installLaneLogs(root, [
+    {
+      key: tinyLane,
+      views: { [emptyView]: [] },
+      records: [{ ...small, pre: emptyView, post: emptyView }]
+    }
+  ])
+  expect((await stat(join(root, tinyLane, '.shadow-evidence', 'log.jsonl'))).size).toBeGreaterThan(
+    rawBytes.length
+  )
+  const tinyKey = tinyLane + '/activity-small/evidence.json'
+  await expect(readLoggedEvidence(root, tinyKey, digest, rawBytes.length)).resolves.toEqual(
+    rawBytes
+  )
+  await expect(readLoggedEvidence(root, tinyKey, digest, rawBytes.length - 1)).rejects.toThrow(
+    /read limit/
+  )
   const bombLane = lane + '3'
   await installLaneLogs(root, [
     {

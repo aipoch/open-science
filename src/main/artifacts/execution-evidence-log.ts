@@ -290,6 +290,12 @@ export async function collectLaneRecords(
     throw error
   }
   const budget = Math.min(maxBytes ?? limit, limit)
+  // Raw DEFLATE can slightly expand incompressible detail. Base64 uses four bytes
+  // per three, and up to 128 source hops carry IDs and hashes outside the projection.
+  const encodedBudget = Math.min(
+    limit,
+    128 * 1024 + 4 * Math.ceil((budget + Math.ceil(budget / 100) + 32) / 3)
+  )
   let remainingViews = maxBytes ?? expandedLimit
   const selected: Lane = { key: lane, views: Object.create(null), records: [] }
   const diskLane: Lane = { key: lane, views: Object.create(null), records: [] }
@@ -312,7 +318,7 @@ export async function collectLaneRecords(
     return viewRows(diskLane, key, depth, maxBytes ?? expandedLimit)
   }
   let size = 0
-  for await (const json of verifiedLogRecords(join(root, log), activities, budget, signal)) {
+  for await (const json of verifiedLogRecords(join(root, log), activities, encodedBudget, signal)) {
     const { projection, ...record } = diskRecord.parse(JSON.parse(json))
     if (!activities.has(record.activityId)) continue
     const detail = inflateRawSync(Buffer.from(projection, 'base64'), {
