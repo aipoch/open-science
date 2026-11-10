@@ -498,5 +498,6 @@
   },
   "consumerModules": ["session_persistence"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Portable evidence adds a persisted Notebook worker codec and log-backed reads for package import, provenance and dependency analysis. Run full CI until these cross-module filesystem contracts are reviewed."
 }

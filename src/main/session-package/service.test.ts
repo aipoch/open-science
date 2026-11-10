@@ -10,6 +10,7 @@ import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'no
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry, readPackageArchive } from './archive'
+import { readNotebookFileGenerations } from '../notebook/analysis-file-evidence'
 import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { remapStorageKey } from './native-snapshot'
 import { ProjectRepository } from '../projects/repository'
@@ -2938,6 +2939,14 @@ it.each(['root', 'frame'] as const)(
     ).toString()
     expect(sha256(sidecarText)).toBe(importedEvidence.checksum)
     const sidecar = JSON.parse(sidecarText)
+    expect(sidecar.relations.length).toBeGreaterThan(0)
+    expect(
+      await readNotebookFileGenerations(target.storageRoot, importedRun, { remaining: 1024 ** 2 })
+    ).toContainEqual({
+      path: sidecar.relations[0].relativePath,
+      checksum: sidecar.relations[0].generation.checksum,
+      relation: sidecar.relations[0].relation
+    })
     expect(sidecar.activityId).toBe(importedRun.runId)
     const importedRuns = await target.notebookRepository.readSessionRuns(
       imported.projectId,
