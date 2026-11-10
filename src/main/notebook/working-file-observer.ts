@@ -301,6 +301,7 @@ type EvidenceWorkerResult =
   | { ok: true; recoveredFileEvidence: ExecutionFileEvidenceSummary | null }
   | {
       ok: true
+      shadowError?: string
       generations: Array<{ path: string; generationId: string; checksum: string }>
       fileEvidence: ExecutionFileEvidenceSummary
     }
@@ -698,7 +699,10 @@ const runSerializedEvidenceWorker = async (
   evidenceMutationTail = tail
   try {
     await waitForEvidenceMutationTurn(previous, signal, timeoutMs)
-    return await worker(evidenceRoot, request, signal)
+    const result = await worker(evidenceRoot, request, signal)
+    if ('shadowError' in result && result.shadowError)
+      log.warn('Notebook shadow evidence write failed', { reason: result.shadowError })
+    return result
   } catch (error) {
     ensuredEvidenceProjects.clear()
     throw error

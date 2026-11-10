@@ -9,6 +9,7 @@ import {
   rm,
   symlink,
   unlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -110,6 +111,13 @@ describe('Compute evidence Project batch recovery with the real worker', () => {
     await begin('session-orphan', 'job-orphan')
     await writeFile(join(storageRoot, 'input.csv'), 'uncommitted orphan bytes')
     await publish('session-uncommitted', 'job-uncommitted')
+    const orphanName =
+      'sha256-' + createHash('sha256').update('uncommitted orphan bytes').digest('hex')
+    await utimes(
+      join(storageRoot, 'execution-file-evidence', projectId, 'blobs', orphanName),
+      new Date(0),
+      new Date(0)
+    )
     await writeFile(join(storageRoot, 'input.csv'), sharedBytes)
     const cancelled = await begin('session-cancelled', 'job-cancelled')
     cancelled.cancellation_status = 'cancelled'
