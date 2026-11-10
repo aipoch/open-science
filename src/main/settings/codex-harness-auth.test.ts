@@ -228,10 +228,12 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
       } else await expect(request).rejects.toThrow('could not be refreshed')
       if (resolveNativePath) expect(resolveNativePath).toHaveBeenCalledOnce()
       expect(resolveProxyEnvironment).toHaveBeenCalledOnce()
-      expect(JSON.parse(await readFile(join(home, 'probe.json'), 'utf8'))).toEqual({
+      const { cwd, ...probe } = JSON.parse(await readFile(join(home, 'probe.json'), 'utf8'))
+      // Windows may retain an 8.3 path in process.cwd(); compare directory identity on both sides.
+      expect(await realpath(cwd)).toBe(await realpath(home))
+      expect(probe).toEqual({
         params: { includeToken: false, refreshToken: true },
         home,
-        cwd: await realpath(home),
         envKey: null,
         config: null,
         accessOverride: null,
