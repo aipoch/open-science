@@ -1232,9 +1232,14 @@ const scanForOwnedDescendants = async (
 
           // Permission denied: check if this process could be a setuid descendant
           const pid = parseInt(pidStr, 10)
-          if (couldBeDescendant(pid)) {
-            hadRelevantPermissionDenied = true
+          if (!couldBeDescendant(pid)) continue
+          if (code === 'EACCES' || code === 'EPERM') {
+            // A kernel worker can start after the leader but cannot inherit its userspace marker.
+            // Require the kernel's status field; an ordinary task can choose a kworker-like name.
+            const status = readFileSync(`/proc/${pidStr}/status`, 'utf8')
+            if (/\nKthread:[ \t]+1\n/u.test(status)) continue
           }
+          hadRelevantPermissionDenied = true
         }
       }
       // An unreadable potential descendant makes absence of the marker inconclusive.
