@@ -1027,6 +1027,7 @@ describe('settings repository', () => {
     await repository.setReviewerModel(fixed)
     await repository.setSessionDetailsModel(fixed)
     await repository.setVisionModel(fixed)
+    await repository.setPromptOptimizationModel(fixed)
 
     const settings = await repository.deleteProvider('p1', 'inherit')
 
@@ -1034,6 +1035,7 @@ describe('settings repository', () => {
       providers: [],
       subagentModel: { mode: 'inherit' },
       reviewerModel: { mode: 'inherit' },
+      promptOptimizationModel: { mode: 'inherit' },
       sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
     })
     expect(settings.visionModel).toBeUndefined()
@@ -1041,6 +1043,7 @@ describe('settings repository', () => {
       providers: [],
       subagentModel: { mode: 'inherit' },
       reviewerModel: { mode: 'inherit' },
+      promptOptimizationModel: { mode: 'inherit' },
       sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
     })
   })
@@ -1055,11 +1058,43 @@ describe('settings repository', () => {
       reasoningEffort: 'high'
     })
 
+    await repository.setPromptOptimizationModel({
+      mode: 'fixed',
+      providerId: 'builtin-claude-shared',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'high'
+    })
+
     const settings = await repository.deleteProvider('builtin-claude-isolated', 'inherit')
 
     expect(settings.providers).toEqual([])
     expect(settings.reviewerModel).toEqual({ mode: 'inherit' })
+    expect(settings.promptOptimizationModel).toEqual({ mode: 'inherit' })
   })
+
+  it.each(['preserve', 'inherit'] as const)(
+    'preserves an unrelated optimization model when deleting a provider with %s',
+    async (handling) => {
+      const repository = new SettingsRepository(await createStorageRoot())
+      await repository.upsertProvider(provider())
+      await repository.upsertProvider(provider({ id: 'p2' }))
+      const fixed = {
+        mode: 'fixed' as const,
+        providerId: 'p2',
+        model: 'm',
+        reasoningEffort: 'high' as const
+      }
+      await repository.setPromptOptimizationModel(fixed)
+      expect((await repository.deleteProvider('p1', handling)).promptOptimizationModel).toEqual(
+        fixed
+      )
+      if (handling === 'preserve') {
+        expect((await repository.deleteProvider('p2', handling)).promptOptimizationModel).toEqual(
+          fixed
+        )
+      }
+    }
+  )
 
   it('ignores an active pointer that references an unknown provider', async () => {
     const repository = new SettingsRepository(await createStorageRoot())

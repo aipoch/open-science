@@ -116,6 +116,7 @@ import type {
   ResolveSkillDocumentRequest,
   ResolvedSkillDocument,
   ReviewerModelConfiguration,
+  PromptOptimizationModelConfiguration,
   SaveValidatedProviderResult,
   ScanRepoRequest,
   ScanRepoResult,
@@ -1062,6 +1063,13 @@ class SettingsService {
 
   async setReviewerModel(configuration: ReviewerModelConfiguration): Promise<SettingsSnapshot> {
     await this.scenarioModels.reviewer.set(configuration)
+    return this.getSettingsView()
+  }
+
+  async setPromptOptimizationModel(
+    configuration: PromptOptimizationModelConfiguration
+  ): Promise<SettingsSnapshot> {
+    await this.repository.setPromptOptimizationModel(configuration)
     return this.getSettingsView()
   }
 

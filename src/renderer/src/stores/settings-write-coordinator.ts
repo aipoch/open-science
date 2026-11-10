@@ -7,6 +7,7 @@ export type SettingsWriteKey =
   | 'agentFramework'
   | 'reasoningEffort'
   | 'reviewerModel'
+  | 'promptOptimizationModel'
   | 'sessionDetailsModel'
   | 'subagentModel'
   | 'visionModel'

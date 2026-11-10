@@ -1,5 +1,6 @@
 import type {
   ReviewerModelConfiguration,
+  PromptOptimizationModelConfiguration,
   SessionDetailsModelConfiguration,
   SubagentModelConfiguration,
   VisionModelConfiguration
@@ -15,6 +16,11 @@ type ReviewerModelValidator = (
   settings: StoredSettings,
   configuration: ReviewerModelConfiguration
 ) => ReviewerModelConfiguration | void
+
+type PromptOptimizationModelValidator = (
+  settings: StoredSettings,
+  configuration: PromptOptimizationModelConfiguration
+) => PromptOptimizationModelConfiguration | void
 
 type VisionModelValidator = (
   settings: StoredSettings,
@@ -40,6 +46,16 @@ const buildReviewerModelMutation =
     reviewerModel: structuredClone(validate?.(settings, configuration) ?? configuration)
   })
 
+const buildPromptOptimizationModelMutation =
+  (
+    configuration: PromptOptimizationModelConfiguration,
+    validate?: PromptOptimizationModelValidator
+  ) =>
+  (settings: StoredSettings): StoredSettings => ({
+    ...settings,
+    promptOptimizationModel: structuredClone(validate?.(settings, configuration) ?? configuration)
+  })
+
 const buildSessionDetailsModelMutation =
   (configuration: SessionDetailsModelConfiguration, validate?: SessionDetailsModelValidator) =>
   (settings: StoredSettings): StoredSettings => ({
@@ -61,12 +77,14 @@ const buildVisionModelMutation =
 
 export {
   buildReviewerModelMutation,
+  buildPromptOptimizationModelMutation,
   buildSessionDetailsModelMutation,
   buildSubagentModelMutation,
   buildVisionModelMutation
 }
 export type {
   ReviewerModelValidator,
+  PromptOptimizationModelValidator,
   SessionDetailsModelValidator,
   SubagentModelValidator,
   VisionModelValidator

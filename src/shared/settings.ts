@@ -498,6 +498,10 @@ export const DEFAULT_SUBAGENT_MODEL_CONFIGURATION: SubagentModelConfiguration = 
 // keeps an independent persisted policy and runtime admission path.
 export type ReviewerModelConfiguration = SubagentModelConfiguration
 
+// Prompt optimization uses the same provider/model policy shape as other fixed scenarios. Inherit
+// keeps existing installations on the active composer model until the user chooses a dedicated one.
+export type PromptOptimizationModelConfiguration = SubagentModelConfiguration
+
 export const DEFAULT_REVIEWER_MODEL_CONFIGURATION: ReviewerModelConfiguration = Object.freeze({
   mode: 'inherit'
 })
@@ -638,6 +642,7 @@ export type SettingsSnapshot = {
   reasoningEffort: ReasoningEffort
   subagentModel?: SubagentModelConfiguration
   reviewerModel?: ReviewerModelConfiguration
+  promptOptimizationModel?: PromptOptimizationModelConfiguration
   sessionDetailsModel?: SessionDetailsModelConfiguration
   visionModel?: VisionModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
@@ -694,6 +699,10 @@ export type SetSubagentModelRequest = {
 
 export type SetReviewerModelRequest = {
   configuration: ReviewerModelConfiguration
+}
+
+export type SetPromptOptimizationModelRequest = {
+  configuration: PromptOptimizationModelConfiguration
 }
 
 export type SetSessionDetailsModelRequest = {
@@ -1221,6 +1230,7 @@ export type SettingsWriteErrorCode =
   | 'agent-framework'
   | 'reasoning-effort'
   | 'reviewer-model'
+  | 'prompt-optimization-model'
   | 'session-details-model'
   | 'subagent-model'
   | 'vision-model'

@@ -52,8 +52,8 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
     ).resolves.toEqual([
-      { id: '0056_compute_kubernetes_workspace' },
-      { id: '0055_session_discussion_parent' }
+      { id: '0057_project_optimization_prompt' },
+      { id: '0056_compute_kubernetes_workspace' }
     ])
   })
 

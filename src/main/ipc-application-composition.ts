@@ -1,3 +1,5 @@
+import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
+import { PromptOptimizationService } from './projects/prompt-optimization'
 import { composeResearchFilm } from './composition/research-film'
 import { createLocalModelApi } from './local-models/owner'
 import { registerLocalModelIpcHandlers } from './desktop-surface-declarations'
@@ -330,6 +332,25 @@ export const createApplicationModules = async (
     settingsService: settingsBootstrap.settingsService,
     defaultOcrLanguages: () => defaultOcrLanguagesForLocale(localeOwner.snapshot().locale)
   })
+  const optimizationRunner = new RestrictedInferenceRunner({
+    appVersion: runtimeMetadata().version,
+    configRoot: sessionAuthority.configRoot,
+    profileNamespace: 'prompt-optimization',
+    allowNativeCodexSubscription: true,
+    resolveTarget: (target, context) =>
+      settingsBootstrap.settingsService.resolveExplicitAgentBackend(target, context)
+  })
+  await modules.add({ optimizationRunner }, ({ optimizationRunner: runner }) => ({
+    name: 'prompt-optimization',
+    capability: undefined,
+    start: () => runner.sweepStaleProfiles(),
+    dispose: () => runner.shutdown()
+  }))
+  const promptOptimization = new PromptOptimizationService({
+    getProject: (id) => sessionPackages.projectRepository.get(id),
+    resolveTarget: settingsBootstrap.resolveSessionAgentTarget,
+    runner: optimizationRunner
+  })
   const researchFilm = await composeResearchFilm({
     ...settingsBootstrap,
     ...sessionFoundation,
@@ -346,6 +367,7 @@ export const createApplicationModules = async (
   )
   declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const projectLifecycle = composeProjectLifecycle({
+    promptOptimization,
     applicationEvents,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,
