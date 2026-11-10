@@ -14,6 +14,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import {
+  createProjectMarketplacePreviewItem,
   createSessionReviewerPreviewItem,
   createSessionSubagentsPreviewItem,
   usePreviewWorkbenchStore
@@ -30,7 +31,6 @@ import {
 } from '@/stores/search-message-focus-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
-import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowDownIcon, ChevronRight } from 'lucide-react'
 import {
   Fragment,
@@ -1568,17 +1568,21 @@ const WorkspaceMessageScrollerImpl = ({
     [currentProjectId, currentSessionId, showMentionNotice]
   )
 
-  // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
+  // Reveal Skill details beside the conversation, warning when the Skill no longer exists.
   const onOpenSkillMention = useCallback(
     async (skillId: string, name: string): Promise<void> => {
+      const projectId = useNavigationStore.getState().activeProjectId
       const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
+      if (useNavigationStore.getState().activeProjectId !== projectId) return
 
       if (!detail) {
         showMentionNotice(`Skill "${name}" is no longer available.`)
         return
       }
 
-      useSettingsStore.getState().openSettingsToSkill(skillId)
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createProjectMarketplacePreviewItem(skillId))
     },
     [showMentionNotice]
   )

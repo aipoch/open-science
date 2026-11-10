@@ -313,16 +313,20 @@ describe('ConnectorsPanel (groups)', () => {
     expect(toolbar?.className).toContain('flex-wrap')
     expect(filter?.compareDocumentPosition(agentFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(agentFilter?.compareDocumentPosition(tagFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(tagFilter?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(addConnector?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(search?.parentElement?.className).toContain('min-w-48')
+    expect(search?.compareDocumentPosition(filter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(search?.compareDocumentPosition(addConnector!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(search?.closest('[data-testid="connectors-toolbar"]')).toBe(toolbar)
     expect(filter?.className).toContain('w-36')
     expect(agentFilter?.className).toContain('w-48')
     const actionBar = document.body.querySelector('[data-slot="connectors-action-bar"]')
     expect(actionBar?.className).toContain('flex-wrap')
-    const header = document.body.querySelector('[data-slot="connectors-header"]')
-    expect(header?.querySelector('h3')?.textContent).toContain('Installed')
-    expect(header?.querySelector('[data-slot="badge"]')?.textContent).toBe('4')
+    const header = document.body.querySelector('[data-slot="resource-catalog-header"]')
+    expect(header?.querySelector('h2')?.textContent).toBe('Connectors')
+    expect(header?.querySelector('[role=tab][aria-selected=true]')?.textContent).toContain(
+      'Installed'
+    )
+    expect(header?.querySelectorAll('[role=tab]')).toHaveLength(1)
+    expect(header?.textContent).toContain('4')
     expect(header?.contains(actionBar!)).toBe(true)
     expect(actionBar?.textContent).not.toContain('Manage')
     expect(toolbar?.contains(addConnector!)).toBe(false)
@@ -434,6 +438,9 @@ describe('ConnectorsPanel (groups)', () => {
     expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
       'Loading Connectors…'
     )
+    expect(
+      document.body.querySelector('[data-slot="resource-catalog-header"] h2')?.textContent
+    ).toBe('Connectors')
 
     await act(async () => rejectLoad?.(new Error('catalog unavailable')))
 
@@ -526,7 +533,7 @@ describe('ConnectorsPanel (groups)', () => {
     )
 
     const title = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('My MCP') && button.textContent?.includes('my-mcp')
+      (button) => button.textContent === 'My MCP'
     )
     act(() => title?.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'custom-server-uuid' })
@@ -1105,6 +1112,18 @@ it('selects Featured Connectors in place and offers access controls instead of d
   expect(select).not.toBeNull()
   act(() => select!.click())
   expect(
+    container.querySelector(
+      '[data-slot="resource-catalog-header"] [data-slot="resource-selection-bar"]'
+    )
+  ).not.toBeNull()
+  const checkbox = container.querySelector<HTMLInputElement>(
+    '[data-slot="settings-list-row"] input[type="checkbox"]'
+  )!
+  act(() => checkbox.click())
+  expect(checkbox.closest('[data-slot="settings-list-row"]')?.getAttribute('data-selected')).toBe(
+    'true'
+  )
+  expect(
     container.querySelectorAll('[data-slot="settings-list-row"] input[type="checkbox"]').length
   ).toBeGreaterThan(0)
   expect(container.querySelector('[data-slot="resource-assignment-trigger"]')).not.toBeNull()
@@ -1212,3 +1231,42 @@ it('removes targeted static credential recovery after a successful connection', 
     'Update the saved credential, then test the connection.'
   )
 })
+
+it.each(['Featured', 'Custom'])(
+  'selects the entire %s Connector card without opening details or configuration',
+  (group) => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(`[aria-label="Select multiple in ${group}"]`)!
+        .click()
+    )
+    const checkbox = container.querySelector<HTMLInputElement>(
+      '[data-slot="settings-list-row"] input[type="checkbox"]'
+    )!
+    const card = checkbox.closest('[data-slot="settings-list-row"]')!
+    expect(card.querySelector('[data-slot="resource-row-content"]')?.hasAttribute('inert')).toBe(
+      true
+    )
+    expect(card.textContent).not.toContain('View details')
+    expect(card.textContent).not.toContain('Configure')
+    act(() => checkbox.closest('label')!.click())
+    expect(checkbox.checked).toBe(true)
+    act(() => checkbox.closest('label')!.click())
+    expect(checkbox.checked).toBe(false)
+    expect(onNavigate).not.toHaveBeenCalled()
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')!.click())
+    expect(card.querySelector('[data-slot="resource-row-content"]')?.hasAttribute('inert')).toBe(
+      false
+    )
+    act(() =>
+      Array.from(
+        card.querySelectorAll<HTMLButtonElement>('[data-slot="resource-card-footer"] button')
+      )
+        .at(-1)!
+        .click()
+    )
+    expect(onNavigate).toHaveBeenCalledTimes(1)
+  }
+)

@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { SettingsEditorLeaveState } from './SettingsLayout'
+import { SettingsEditorActions, type SettingsEditorLeaveState } from './SettingsLayout'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { localizeConnectorError } from './connector-error-message'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
@@ -1564,8 +1564,8 @@ export function ConnectorAddForm({
           </InlineNotice>
         ) : null}
 
-        <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+        <SettingsEditorActions busy={submitting} className="flex justify-end">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
             {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
@@ -1581,7 +1581,7 @@ export function ConnectorAddForm({
                   ? t('Add and sign in')
                   : t('Add connector')}
           </Button>
-        </div>
+        </SettingsEditorActions>
       </div>
       {oauthSignInServer ? (
         <ConnectorOAuthSignInDialog

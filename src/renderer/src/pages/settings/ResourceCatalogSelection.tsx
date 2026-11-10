@@ -80,14 +80,16 @@ export const ResourceSelectionCheckbox = ({
   const { t } = useTranslation()
   if (!selection.groups.has(resource.group)) return null
   return (
-    <input
-      type="checkbox"
-      className="ml-2 size-4 shrink-0 accent-primary"
-      aria-label={t('Select {{name}}', { name: resource.name })}
-      checked={selection.ids.has(resource.id)}
-      disabled={selection.locked}
-      onChange={() => selection.toggleIds([resource.id])}
-    />
+    <label className="resource-card-selection">
+      <input
+        type="checkbox"
+        className="absolute right-4 top-4 size-4 accent-primary"
+        aria-label={t('Select {{name}}', { name: resource.name })}
+        checked={selection.ids.has(resource.id)}
+        disabled={selection.locked}
+        onChange={() => selection.toggleIds([resource.id])}
+      />
+    </label>
   )
 }
 
@@ -134,6 +136,7 @@ export const ResourceSelectionBar = ({
   const warningClass =
     'text-status-warning-foreground hover:bg-status-warning-surface hover:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface dark:hover:text-status-warning-dark-foreground'
   if (
+    !selection.groups.size &&
     !selected.length &&
     !busy &&
     !selection.error &&
@@ -147,7 +150,7 @@ export const ResourceSelectionBar = ({
       data-slot="resource-selection-bar"
       role="region"
       aria-label={t('Selected resources')}
-      className="sticky bottom-0 z-30 -mx-5 mt-4 border-t border-border bg-card px-5 py-3 shadow-sm"
+      className="-mx-5 -mb-3 mt-3 max-h-[40vh] overflow-y-auto border-t border-primary/20 bg-primary/5 px-5 py-3"
     >
       {selection.cleanupTargets.length > 0 ? (
         <ErrorNotice
@@ -229,7 +232,7 @@ export const ResourceSelectionBar = ({
         />
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <div className="mr-auto text-xs font-medium">
+          <div role="status" className="mr-3 text-sm font-semibold text-primary">
             {t('{{count}} selected', { count: selected.length })}
             {hidden > 0 ? (
               <p className="mt-0.5 text-xs font-normal text-muted-foreground">
@@ -254,8 +257,8 @@ export const ResourceSelectionBar = ({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  align="end"
-                  side="top"
+                  align="start"
+                  side="bottom"
                   className="flex w-72 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] flex-col gap-1 overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
                 >
                   {showSearch ? (
@@ -359,23 +362,18 @@ export const ResourceSelectionBar = ({
               ) : null}
             </>
           ) : null}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={busy}
-                  aria-label={t('Clear selection')}
-                  ref={clearTrigger}
-                  onClick={selection.clear}
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">{t('Clear selection')}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto shrink-0"
+            disabled={busy}
+            aria-label={t('Clear selection')}
+            ref={clearTrigger}
+            onClick={selection.clear}
+          >
+            <X className="size-4" aria-hidden="true" />
+            {t('Clear selection')}
+          </Button>
         </div>
       )}
     </div>

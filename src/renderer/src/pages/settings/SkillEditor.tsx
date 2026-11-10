@@ -30,7 +30,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SettingsIconAction, SettingsLoadNotice } from './SettingsLayout'
+import { SettingsEditorActions, SettingsIconAction, SettingsLoadNotice } from './SettingsLayout'
 
 type SkillEditorReference = SkillReference & { sizeBytes?: number }
 
@@ -766,7 +766,7 @@ const SkillEditor = ({
           </fieldset>
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 bg-card px-5 py-3">
+        <SettingsEditorActions busy={busy} className="flex shrink-0 justify-end bg-card px-5 py-3">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
             {tCommon('Cancel')}
           </Button>
@@ -776,9 +776,9 @@ const SkillEditor = ({
             disabled={!canSave || busy}
             aria-busy={saving || savingExternally}
           >
-            {saving ? t('Saving…') : initial.id ? t('Save') : t('Create skill')}
+            {saving ? t('Saving…') : initial.id ? t('Save changes') : t('Create skill')}
           </Button>
-        </div>
+        </SettingsEditorActions>
       </div>
     </TooltipProvider>
   )

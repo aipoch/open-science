@@ -311,7 +311,16 @@ const SettingsGlobalSearch = ({
 
   const panelLabelKey = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)
-    return entry?.labelKey ?? panel
+    return (
+      entry?.labelKey ??
+      (panel === 'skills'
+        ? 'Skills'
+        : panel === 'connectors'
+          ? 'Connectors'
+          : panel === 'specialists'
+            ? 'Specialists'
+            : panel)
+    )
   }
 
   const results = useMemo(() => {
@@ -348,6 +357,8 @@ const SettingsGlobalSearch = ({
       setIsOpen(false)
       setActiveIndex(0)
       cancelHighlightRef.current?.()
+      cancelHighlightRef.current = null
+      if (['skills', 'connectors', 'specialists'].includes(entry.panel)) return
       cancelHighlightRef.current = highlightNavigatedPanel(
         entry.panel,
         entry.skipAnchor ? undefined : entry.id

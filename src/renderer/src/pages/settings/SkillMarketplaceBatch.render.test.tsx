@@ -29,7 +29,6 @@ const render = async (expanded = true): Promise<void> => {
     root.render(
       <SkillMarketplaceBatchControls
         expanded={expanded}
-        heading={<h3>Marketplace</h3>}
         onOpen={open}
         onExit={exit}
         mode={undefined}
@@ -40,7 +39,14 @@ const render = async (expanded = true): Promise<void> => {
         onClearSelection={clear}
         onBusyChange={busy}
         onChanged={changed}
-      />
+      >
+        {(selectionBar, toolbarActions) => (
+          <>
+            {toolbarActions}
+            {selectionBar}
+          </>
+        )}
+      </SkillMarketplaceBatchControls>
     )
   )
 }
@@ -77,24 +83,12 @@ describe('Marketplace batch progress projection', () => {
   it('shows only a compact entry outside batch mode without stopping or losing the job', async () => {
     await render(false)
     expect(container.textContent).toContain('Batch manage0/2')
-    expect(container.querySelector('button')?.firstElementChild?.getAttribute('data-icon')).toBe(
-      'inline-start'
-    )
-    expect(container.querySelector('button')?.firstElementChild?.getAttribute('aria-hidden')).toBe(
-      'true'
-    )
     expect(container.querySelector('section')).toBeNull()
     await act(async () => container.querySelector('button')!.click())
     expect(open).toHaveBeenCalledOnce()
     await render(true)
     expect(container.textContent).toContain('Batch installation')
-    const back = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Back to Marketplace'
-    )!
-    expect(back.firstElementChild?.classList.contains('lucide-arrow-left')).toBe(true)
-    expect(back.firstElementChild?.getAttribute('data-icon')).toBe('inline-start')
-    expect(back.firstElementChild?.getAttribute('aria-hidden')).toBe('true')
-    await click('Back to Marketplace')
+    await click('Exit selection')
     expect(exit).toHaveBeenCalledOnce()
     await render(false)
     expect(stop).not.toHaveBeenCalled()
@@ -221,7 +215,7 @@ describe('Marketplace batch progress projection', () => {
     get.mockResolvedValue(null)
     await act(async () => vi.advanceTimersByTimeAsync(1000))
     expect(container.textContent).not.toContain('Could not load installation progress.')
-    expect(container.querySelector('section')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     expect(busy).toHaveBeenLastCalledWith(false)
     expect(start).not.toHaveBeenCalled()
   })
@@ -260,7 +254,7 @@ describe('Marketplace batch progress projection', () => {
       items: running.items.map((item) => ({ ...item, status: 'succeeded' }))
     })
     await render()
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).not.toBeNull()
     const done = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Done'
     )
@@ -268,9 +262,9 @@ describe('Marketplace batch progress projection', () => {
       'Batch complete'
     )
     await click('Done')
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     await act(async () => vi.advanceTimersByTimeAsync(10000))
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     expect(stop).not.toHaveBeenCalled()
     expect(start).not.toHaveBeenCalled()
     expect(changed).toHaveBeenCalledOnce()
