@@ -1,7 +1,7 @@
 'use strict'
 /* eslint-disable @typescript-eslint/no-require-imports -- Explicit source E2E preload. */
 const { join } = require('node:path')
-const { readFileSync } = require('node:fs')
+const { existsSync, readFileSync } = require('node:fs')
 const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
 if (!root) throw new Error('The Node runtime fixture requires an isolated source E2E profile.')
 if (process.versions.electron) {
@@ -13,10 +13,13 @@ if (process.versions.electron) {
     const { shell } = require('electron')
     const probe = { revealed: [], opened: [] }
     globalThis[Symbol.for('open-science.e2e.native-file-reveal')] = probe
-    shell.showItemInFolder = (path) => probe.revealed.push(path)
+    shell.showItemInFolder = (path) => {
+      if (!existsSync(path)) throw new Error('Failed to reveal path')
+      probe.revealed.push(path)
+    }
     shell.openPath = async (path) => {
       probe.opened.push(path)
-      return ''
+      return existsSync(path) ? '' : 'Failed to open path'
     }
   }
   if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {

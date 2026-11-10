@@ -64,7 +64,10 @@ export type OfficePreviewOpenRequest = OfficePreviewPresentation &
         versionId?: string
       }
     | ({ path: string } & (
-        { source: 'compute-output' } | { source: 'notebook-input' } | { source: 'literature' }
+        | { source: 'compute-output' }
+        | { source: 'notebook-input' }
+        | { source: 'literature' }
+        | { source: 'local' }
       ))
   )
 
@@ -74,7 +77,8 @@ export const getOfficeManagedPreviewRequest = (
   if (
     request.source === 'compute-output' ||
     request.source === 'notebook-input' ||
-    request.source === 'literature'
+    request.source === 'literature' ||
+    request.source === 'local'
   ) {
     return { source: request.source, path: request.path }
   }
@@ -216,7 +220,8 @@ export const isOfficePreviewOpenRequest = (value: unknown): value is OfficePrevi
     (request.attempt as number) >= 0 &&
     (request.source === 'compute-output' ||
     request.source === 'notebook-input' ||
-    request.source === 'literature'
+    request.source === 'literature' ||
+    request.source === 'local'
       ? isNonEmptyString(request.path)
       : (request.source === 'artifact' || request.source === 'upload') &&
         isNonEmptyString(request.projectId) &&

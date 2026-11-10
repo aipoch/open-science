@@ -29,6 +29,10 @@ import { useNearViewport } from './previews/useNearViewport'
 import {
   createSessionArtifactReferenceNormalizer,
   resolveMessageArtifactReference,
+  externalFilePath,
+  resolveRelativeReplyPath,
+  isNotebookDataPath,
+  unresolvedFileReference,
   resolveSessionDataFileReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
@@ -37,6 +41,7 @@ type SessionMessageMarkdownProps = {
   content: string
   isAnimating?: boolean
   artifacts: MessageArtifact[]
+  workspaceCwd?: string
   notebookReference?: NotebookSessionReference
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal: (artifact: MessageArtifact) => void
@@ -46,7 +51,11 @@ type SessionMessageMarkdownProps = {
 // changing Artifact metadata and preview handlers through that boundary without reparsing the text.
 const SessionArtifactContext = createContext<Pick<
   SessionMessageMarkdownProps,
-  'artifacts' | 'notebookReference' | 'onPreviewArtifact' | 'onPreviewArtifactModal'
+  | 'artifacts'
+  | 'workspaceCwd'
+  | 'notebookReference'
+  | 'onPreviewArtifact'
+  | 'onPreviewArtifactModal'
 > | null>(null)
 
 type SessionArtifactImageProps = {
@@ -267,6 +276,7 @@ const SessionMessageMarkdown = memo(
     content,
     isAnimating = false,
     artifacts,
+    workspaceCwd,
     notebookReference,
     onPreviewArtifact,
     onPreviewArtifactModal
@@ -292,22 +302,37 @@ const SessionMessageMarkdown = memo(
           const artifact = resolveMessageArtifactReference(href, artifacts)
           if (!artifact || artifact.kind !== 'managed-file') {
             const dataFile = resolveSessionDataFileReference(href, notebookReference?.dataRoot)
-            if (dataFile && notebookReference) {
+            const unresolved = unresolvedFileReference(href)
+            const path =
+              dataFile ??
+              externalFilePath(href) ??
+              resolveRelativeReplyPath(
+                unresolved,
+                context.workspaceCwd ?? notebookReference?.workspaceCwd,
+                notebookReference?.dataRoot
+              )
+
+            if (path)
               return (
                 <SessionDataFileLink
-                  key={JSON.stringify([
-                    notebookReference.projectId,
-                    notebookReference.sessionId,
-                    dataFile
-                  ])}
-                  path={dataFile}
-                  notebook={notebookReference}
+                  key={path}
+                  path={path}
+                  notebookSessionId={
+                    isNotebookDataPath(path, notebookReference?.dataRoot)
+                      ? notebookReference?.sessionId
+                      : undefined
+                  }
                   className={className}
                 >
                   {children}
                 </SessionDataFileLink>
               )
-            }
+            if (unresolved !== undefined)
+              return (
+                <span>
+                  {children} (<code>{unresolved}</code>)
+                </span>
+              )
             return (
               <SessionMessageLink
                 href={href}
@@ -373,11 +398,12 @@ const SessionMessageMarkdown = memo(
     const artifactContext = useMemo(
       () => ({
         artifacts,
+        workspaceCwd,
         notebookReference,
         onPreviewArtifact,
         onPreviewArtifactModal
       }),
-      [artifacts, notebookReference, onPreviewArtifact, onPreviewArtifactModal]
+      [artifacts, workspaceCwd, notebookReference, onPreviewArtifact, onPreviewArtifactModal]
     )
 
     return (

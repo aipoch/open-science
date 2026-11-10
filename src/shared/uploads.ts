@@ -79,8 +79,6 @@ export type BeginUploadTransferRequest = Omit<StageLocalUploadRequest, 'sourcePa
 // correct project bucket; falls back to DEFAULT_UPLOAD_PROJECT_ID when absent.
 export type StageLocalPathUploadRequest = Omit<StageLocalUploadRequest, 'size' | 'mimeType'> & {
   projectId?: string
-  // Chat links can import only files under this Notebook session’s data directory.
-  notebookSessionId?: string
 }
 
 export type AppendUploadTransferRequest = {

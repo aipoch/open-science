@@ -27,7 +27,6 @@ import {
   type UploadedAttachment
 } from '../../shared/uploads'
 import { validateLocalPath } from '../../shared/local-fs'
-import type { LocalFileStagingRequest } from './active-transfer-owner'
 import type { UploadRepository } from './repository'
 
 type UploadCaller = {
@@ -243,7 +242,7 @@ const createUploadCommandOwner = (
     return writer
   }
   const runLocalStaging = async (
-    invocation: ApplicationInvocation<readonly [LocalFileStagingRequest]>,
+    invocation: ApplicationInvocation<readonly [StageLocalUploadRequest]>,
     progressTarget: UploadProgressTarget,
     releaseOnCommit: boolean
   ): Promise<UploadedAttachment> => {

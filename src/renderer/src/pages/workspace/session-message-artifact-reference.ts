@@ -6,12 +6,15 @@ import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-ut
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
   resolvedProjectId?: string
+  referencePath?: string
   resolvedSessionId?: string
 }
 
 const ARTIFACT_REFERENCE_PATTERN = /^\{\{artifact:([^}\s]+)\}\}$/u
 const INTERNAL_ARTIFACT_REFERENCE_PREFIX = '/.open-science/artifact/'
 const INTERNAL_SESSION_DATA_REFERENCE_PREFIX = '/.open-science/notebook-data/'
+const LOCAL_REFERENCE_PREFIX = '/.open-science/local-file/'
+const UNRESOLVED_REFERENCE_PREFIX = '/.open-science/unresolved-file/'
 const EXTERNAL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/iu
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-z]:[\\/]/iu
 
@@ -28,75 +31,100 @@ const getPathName = (path: string): string => path.split(/[\\/]/u).at(-1) ?? pat
 const normalizeFileReference = (reference: string): string =>
   decodeReference(reference.trim()).replace(/^\.\//u, '')
 
-// Resolve lexically before Markdown/URL sanitization can erase a drive prefix, backslashes or
-// dot segments. Main repeats containment using canonical paths before reading any bytes.
-const containSessionDataPath = (path: string, dataRoot: string): string | undefined => {
-  const windows = WINDOWS_ABSOLUTE_PATH_PATTERN.test(dataRoot) || /^[\\/]{2}/u.test(dataRoot)
-  const normalize = (value: string): string => (windows ? value.replace(/\\/gu, '/') : value)
-  const root = normalize(dataRoot).replace(/\/+$/u, '')
-  const target = normalize(path)
-  const absolute = windows
-    ? /^(?:[a-z]:\/|\/\/[^/]+\/[^/]+\/)/iu.test(target)
-    : target.startsWith('/') && !target.startsWith('//')
-  const comparableRoot = windows ? root.toLowerCase() : root
-  const comparableTarget = windows ? target.toLowerCase() : target
-  if (
-    !absolute ||
-    !comparableTarget.startsWith(`${comparableRoot}/`) ||
-    target.endsWith('/') ||
-    target.split('/').some((segment) => segment === '.' || segment === '..') ||
-    // eslint-disable-next-line no-control-regex
-    /[\u0000-\u001f\u007f]/u.test(path) ||
-    (!windows && path.includes('\\')) ||
-    // Device namespaces, alternate streams and Win32 trailing-dot/space aliases are not files
-    // this surface can identify unambiguously.
-    (windows &&
-      (target.startsWith('//?/') ||
-        target.startsWith('//./') ||
-        target
-          .slice(WINDOWS_ABSOLUTE_PATH_PATTERN.test(target) ? 2 : 0)
-          .split('/')
-          .some((segment) => /[:<>"|?*]/u.test(segment) || /[. ]$/u.test(segment))))
-  )
-    return undefined
-  return path
-}
+const windowsPath = (path: string): boolean =>
+  WINDOWS_ABSOLUTE_PATH_PATTERN.test(path) || /^[\\/]{2}/u.test(path)
 
-const resolveSessionDataFileReference = (
-  reference: string | undefined,
-  dataRoot: string | undefined
-): string | undefined => {
-  if (!reference || !dataRoot) return undefined
-  const target = reference.trim()
-  const internal = target.startsWith(INTERNAL_SESSION_DATA_REFERENCE_PREFIX)
+const pathKey = (path: string): string =>
+  windowsPath(path) ? path.replace(/\\/gu, '/').toLowerCase() : path
+
+// Read the original file URL before URL parsers normalize dot segments or escaped separators.
+const absoluteFilePath = (reference: string, dataRoot?: string): string | undefined => {
+  let path: string
   try {
-    if (internal) {
-      return containSessionDataPath(
-        decodeURIComponent(target.slice(INTERNAL_SESSION_DATA_REFERENCE_PREFIX.length)),
-        dataRoot
-      )
-    }
-    if (/^file:/iu.test(target)) {
-      // Parse the authority without WHATWG URL, which normalizes traversal before validation.
-      const file = target.match(/^file:\/\/([^/]*)(\/.*)$/iu)
-      if (!file || /[?#\\]/u.test(target) || /%2f|%5c/iu.test(file[2])) return undefined
-      let path = decodeURIComponent(file[2])
+    if (/^file:/iu.test(reference)) {
+      const file = reference.match(/^file:\/\/([^/]*)(\/.*)$/iu)
+      if (!file || /[?#\\]/u.test(reference) || /%2f|%5c/iu.test(file[2])) return undefined
+      path = decodeURIComponent(file[2])
       if (file[1] && file[1].toLowerCase() !== 'localhost') {
-        if (!/^[\\/]{2}/u.test(dataRoot) || !/^[a-z\d._-]+$/iu.test(file[1])) return undefined
-        path = `//${file[1]}${path}`
-      } else if (
-        WINDOWS_ABSOLUTE_PATH_PATTERN.test(dataRoot) &&
+        if (!/^[a-z\d._-]+$/iu.test(file[1])) return undefined
+        path = `\\\\${file[1]}${path.replace(/\//gu, '\\')}`
+      } else if (path.startsWith('//')) return undefined
+      else if (
+        (!dataRoot || windowsPath(dataRoot)) &&
         WINDOWS_ABSOLUTE_PATH_PATTERN.test(path.slice(1))
-      ) {
+      )
         path = path.slice(1)
-      }
-      if (dataRoot.includes('\\')) path = path.replace(/\//gu, '\\')
-      return containSessionDataPath(path, dataRoot)
+    } else {
+      if (reference.startsWith('//') && !isNotebookDataPath(reference, dataRoot)) return undefined
+      path = decodeURIComponent(reference)
     }
-    return containSessionDataPath(decodeReference(target), dataRoot)
   } catch {
     return undefined
   }
+  const windows = windowsPath(path)
+  if (!windows && (!path.startsWith('/') || path.includes('\\'))) return undefined
+  const normalized = windows ? path.replace(/\\/gu, '/') : path
+  if (
+    normalized.endsWith('/') ||
+    normalized.split('/').some((part) => part === '..' || part === '.') ||
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f]/u.test(path) ||
+    (windows &&
+      (normalized.startsWith('//?/') ||
+        normalized.startsWith('//./') ||
+        normalized
+          .slice(WINDOWS_ABSOLUTE_PATH_PATTERN.test(path) ? 2 : 0)
+          .split('/')
+          .some((part) => /[:<>"|?*]/u.test(part) || /[. ]$/u.test(part))))
+  )
+    return undefined
+  return /^file:/iu.test(reference) && windows && dataRoot?.includes('\\')
+    ? path.replace(/\//gu, '\\')
+    : path
+}
+
+const isNotebookDataPath = (path: string, dataRoot?: string): boolean =>
+  !!dataRoot && pathKey(path).startsWith(`${pathKey(dataRoot).replace(/\/+$/u, '')}/`)
+
+const decodeLocalReference = (href: string | undefined, prefix: string): string | undefined =>
+  href?.startsWith(prefix) ? decodeReference(href.slice(prefix.length)) : undefined
+
+const resolveSessionDataFileReference = (
+  href: string | undefined,
+  root?: string
+): string | undefined => {
+  if (!href) return undefined
+  const path =
+    decodeLocalReference(href, INTERNAL_SESSION_DATA_REFERENCE_PREFIX) ??
+    absoluteFilePath(href, root)
+  return path && isNotebookDataPath(path, root) ? path : undefined
+}
+
+const externalFilePath = (href?: string): string | undefined =>
+  decodeLocalReference(href, LOCAL_REFERENCE_PREFIX)
+const unresolvedFileReference = (href?: string): string | undefined =>
+  decodeLocalReference(href, UNRESOLVED_REFERENCE_PREFIX)
+
+const resolveRelativeReplyPath = (
+  reference: string | undefined,
+  cwd?: string,
+  dataRoot?: string
+): string | undefined => {
+  if (
+    !reference ||
+    !/[\\/]/u.test(reference) ||
+    /^[\\/]/u.test(reference) ||
+    EXTERNAL_SCHEME_PATTERN.test(reference)
+  )
+    return undefined
+  const relative = reference.replace(/^\.\//u, '').replace(/\\/gu, '/')
+  if (relative.split('/').some((part) => !part || part === '..' || part === '.')) return undefined
+  const notebookData = relative.startsWith('data/') && !!dataRoot
+  const root = notebookData ? dataRoot : cwd
+  if (!root || (!root.startsWith('/') && !windowsPath(root))) return undefined
+  const child = notebookData ? relative.slice('data/'.length) : relative
+  const separator = root.includes('\\') ? '\\' : '/'
+  return root.replace(/[\\/]+$/u, '') + separator + child.replace(/\//gu, separator)
 }
 
 // Marked unescapes Markdown punctuation in link.href, including the first two UNC slashes and
@@ -112,11 +140,27 @@ const getLocalLinkReference = (link: Tokens.Link): string => {
   return WINDOWS_ABSOLUTE_PATH_PATTERN.test(raw) || raw.startsWith('\\\\') ? raw : link.href
 }
 
+// Tool records and an attached Artifact can describe the same physical file.
+const uniqueFile = (matches: readonly MessageArtifact[]): MessageArtifact | undefined => {
+  const first = matches[0]
+  if (!first || !matches.every((file) => pathKey(file.path) === pathKey(first.path)))
+    return undefined
+  return matches.find((file) => file.kind === 'managed-file') ?? first
+}
+
 const resolveMessageArtifactReference = (
   reference: string | undefined,
   artifacts: readonly MessageArtifact[]
 ): MessageArtifact | undefined => {
-  if (!reference || reference.startsWith(INTERNAL_SESSION_DATA_REFERENCE_PREFIX)) return undefined
+  if (
+    !reference ||
+    [
+      INTERNAL_SESSION_DATA_REFERENCE_PREFIX,
+      LOCAL_REFERENCE_PREFIX,
+      UNRESOLVED_REFERENCE_PREFIX
+    ].some((prefix) => reference.startsWith(prefix))
+  )
+    return undefined
 
   const normalizedReference = normalizeFileReference(reference)
   const artifactReference = normalizedReference.match(ARTIFACT_REFERENCE_PATTERN)?.[1]
@@ -135,23 +179,23 @@ const resolveMessageArtifactReference = (
   )
   if (identityMatch) return identityMatch
 
-  const pathMatch = artifacts.find((artifact) => artifact.path === normalizedReference)
-  if (pathMatch) return pathMatch
-
-  if (
-    (EXTERNAL_SCHEME_PATTERN.test(normalizedReference) &&
-      !WINDOWS_ABSOLUTE_PATH_PATTERN.test(normalizedReference)) ||
-    normalizedReference.startsWith('//')
-  ) {
-    return undefined
-  }
+  const path = absoluteFilePath(reference) ?? normalizedReference
+  const pathMatches = artifacts.filter(
+    (artifact) =>
+      pathKey(artifact.path) === pathKey(path) ||
+      (artifact.referencePath &&
+        /[\\/]/u.test(path) &&
+        artifact.referencePath.replace(/\\/gu, '/') === path.replace(/\\/gu, '/'))
+  )
+  if (pathMatches.length) return uniqueFile(pathMatches)
+  if (/[\\/]/u.test(path) || EXTERNAL_SCHEME_PATTERN.test(path)) return undefined
 
   const referenceName = getPathName(normalizedReference)
   const nameMatches = artifacts.filter(
     (artifact) =>
       getArtifactName(artifact) === referenceName || getPathName(artifact.path) === referenceName
   )
-  return nameMatches.length === 1 ? nameMatches[0] : undefined
+  return uniqueFile(nameMatches)
 }
 
 const escapeHtmlAttribute = (value: string): string =>
@@ -279,26 +323,33 @@ const transformInlineToken = (
     if (hasImageToken(link)) return token.raw
 
     const reference = getLocalLinkReference(link)
-    const dataFile =
+    const path =
       resolveSessionDataFileReference(reference, dataRoot) ??
-      (reference !== link.href ? resolveSessionDataFileReference(link.href, dataRoot) : undefined)
-    // A file URL may identify the exact managed path even when fileUrl metadata is absent.
-    // Never allow the basename fallback for this lookup.
-    const samePath = (candidate: string, path: string): boolean => {
-      const windows =
-        WINDOWS_ABSOLUTE_PATH_PATTERN.test(dataRoot ?? '') || /^[\\/]{2}/u.test(dataRoot ?? '')
-      return windows
-        ? candidate.replace(/\\/gu, '/').toLowerCase() === path.replace(/\\/gu, '/').toLowerCase()
-        : candidate === path
+      resolveSessionDataFileReference(link.href, dataRoot) ??
+      absoluteFilePath(reference, dataRoot)
+    const artifact = resolveMessageArtifactReference(reference, artifacts)
+    const encode = (value: string): string =>
+      encodeURIComponent(value).replace(/\(/gu, '%28').replace(/\)/gu, '%29')
+    let target: string
+    if (artifact?.kind === 'managed-file') {
+      target = INTERNAL_ARTIFACT_REFERENCE_PREFIX + encode(artifact.versionId ?? artifact.id)
+    } else {
+      const file = path ?? artifact?.path
+      if (file) {
+        const prefix = isNotebookDataPath(file, dataRoot)
+          ? INTERNAL_SESSION_DATA_REFERENCE_PREFIX
+          : LOCAL_REFERENCE_PREFIX
+        target = prefix + encode(file)
+      } else {
+        if (
+          EXTERNAL_SCHEME_PATTERN.test(reference) ||
+          /^[#?/]/u.test(reference) ||
+          reference.startsWith('\\')
+        )
+          return token.raw
+        target = UNRESOLVED_REFERENCE_PREFIX + encode(decodeReference(reference))
+      }
     }
-    const artifact = dataFile
-      ? artifacts.find((candidate) => samePath(candidate.path, dataFile))
-      : resolveMessageArtifactReference(reference, artifacts)
-    if (artifact?.kind !== 'managed-file' && !dataFile) return token.raw
-    const target =
-      artifact?.kind === 'managed-file'
-        ? `${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifact.versionId ?? artifact.id)}`
-        : `${INTERNAL_SESSION_DATA_REFERENCE_PREFIX}${encodeURIComponent(dataFile!).replace(/\(/gu, '%28').replace(/\)/gu, '%29')}`
     const label = link.tokens.map((child) => child.raw).join('')
     const title = link.title ? ` ${JSON.stringify(link.title)}` : ''
     return `[${label}](${target}${title})`
@@ -327,10 +378,7 @@ const normalizeSessionArtifactImages = (
     transformInlineMarkdown(markdown, artifacts, 'images')
   )
 
-// Streamdown drops bare filenames, artifact tokens, and file URLs. Managed artifacts use an inert
-// internal target; Notebook data file links carry their validated absolute path under a
-// separate prefix so basename artifact matching cannot claim them. The data resolver repeats the
-// root check before rendering import confirmation. Unresolved URLs stay with the sanitizer.
+// Preserve local destinations across Markdown sanitization so the renderer can route clicks.
 const normalizeSessionArtifactLinks = (
   content: string,
   artifacts: readonly MessageArtifact[],
@@ -400,10 +448,10 @@ const createSessionArtifactReferenceNormalizer = (): ((
   }
 
   return (content, artifacts, dataRoot) => {
-    // A Notebook root also enables native paths, including drive paths removed by sanitizers.
     if (
       !artifacts.some((artifact) => artifact.kind === 'managed-file') &&
-      (!dataRoot || (!content.includes('](') && !content.includes('<')))
+      !content.includes('](') &&
+      !content.includes('<')
     ) {
       return content
     }
@@ -449,6 +497,10 @@ export {
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,
   resolveMessageArtifactReference,
-  resolveSessionDataFileReference
+  resolveSessionDataFileReference,
+  externalFilePath,
+  resolveRelativeReplyPath,
+  isNotebookDataPath,
+  unresolvedFileReference
 }
 export type { MessageArtifact }

@@ -39,6 +39,7 @@ type PreviewItemBase = {
 export type PreviewFileItem = PreviewItemBase & {
   type: 'file'
   source?: PreviewFileSource
+  fromNotebookDataLink?: boolean
   path: string
   format: PreviewFileFormat
   name: string

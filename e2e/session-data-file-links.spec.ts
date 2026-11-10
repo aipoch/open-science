@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import { copyFile, mkdir, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -12,7 +12,7 @@ import { createProjectDbClient } from '../src/main/projects/prisma-client'
 
 test.use({ windowMode: 'normal' })
 
-test('asks before importing Notebook files and previews Chinese Word and Markdown bodies', async ({
+test('previews original Notebook documents and opens external files in the system', async ({
   app
 }, testInfo) => {
   test.skip(
@@ -21,7 +21,7 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
   )
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  const projectName = 'Notebook local report links'
+  const projectName = 'Notebook reports'
   const projectId = await createProject(page, projectName)
   const sessionId = 'local-report-links'
   // Use the active data root: the isolated profile can relocate it independently of config storage.
@@ -36,7 +36,10 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
   const directory = getNotebookDataRoot(dataRoot, projectId, sessionId)
   await mkdir(directory, { recursive: true })
   const wordName = '研究报告.docx'
-  const markdownName = '测试报告.md'
+  const markdownName = '分析摘要.md'
+  const externalPath = testInfo.outputPath('采样记录.csv')
+  await mkdir(dirname(externalPath), { recursive: true })
+  await writeFile(externalPath, 'External document')
   const wordPath = join(directory, wordName)
   const markdownPath = join(directory, markdownName)
   await copyFile(resolve('test/fixtures/docx-report.docx'), wordPath)
@@ -44,7 +47,7 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
   const session: PersistedChatSession = {
     id: sessionId,
     projectId,
-    title: 'Unregistered Chinese report files',
+    title: '查看分析结果',
     cwd: '',
     status: 'idle',
     createdAt: 1,
@@ -55,7 +58,7 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
         role: 'agent',
         // Exercise native drive/backslash paths on Windows and POSIX paths elsewhere. Angle
         // brackets preserve spaces in OS temp directories; the second link exercises file URIs.
-        content: `[${wordName}](<${wordPath}>)\n\n[打开报告](${pathToFileURL(markdownPath).href})`,
+        content: `本次分析的文件如下。\n\n- [${wordName}](<${wordPath}>)\n- [${markdownName}](${pathToFileURL(markdownPath).href})\n\n原始数据见[采样记录.csv](${pathToFileURL(externalPath).href})。`,
         status: 'complete',
         eventIds: [],
         createdAt: 1,
@@ -73,41 +76,23 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
   }
   await openProjectSession(page, projectName, session.title)
   const links = page.locator('[data-session-data-file-link]')
-  await expect(links).toHaveCount(2)
+  await expect(links).toHaveCount(3)
   const client = createProjectDbClient(dirname(dataRoot))
   const native = await app.observeNativeFileReveal()
   const uploadCount = (): Promise<number> => client.uploadFile.count({ where: { projectId } })
-  const dialog = page.getByRole('dialog', { name: 'Import file for preview', exact: true })
   try {
-    expect(await uploadCount()).toBe(0)
+    await links.filter({ hasText: '采样记录.csv' }).click()
+    await expect.poll(() => native.evaluate((probe) => probe.opened)).toEqual([externalPath])
+    await links
+      .filter({ hasText: '采样记录.csv' })
+      .locator('..')
+      .getByRole('button', { name: 'Show in folder' })
+      .click()
+    await expect.poll(() => native.evaluate((probe) => probe.revealed)).toEqual([externalPath])
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
+    await page.screenshot({ path: testInfo.outputPath('01-links.png') })
     await links.filter({ hasText: wordName }).click()
-    await expect(dialog).toBeVisible()
-    await expect(dialog).toContainText(
-      'This link points to a file in this conversation. Importing saves a copy in the project.'
-    )
-    await expect(
-      dialog.getByRole('button', { name: 'Import and preview', exact: true })
-    ).toBeEnabled()
-    await expect(page.getByRole('dialog', { name: 'Open external link?' })).toHaveCount(0)
-    expect(await uploadCount()).toBe(0)
-    await page.screenshot({ path: testInfo.outputPath('file-import-choice.png') })
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
-    await expect(dialog).toBeHidden()
-    expect(await uploadCount()).toBe(0)
-    await expect(page.locator('iframe[data-office-preview-frame]')).toHaveCount(0)
-
-    await links.filter({ hasText: wordName }).click()
-    // Real localFs IPC and backend validation run; the probe records only the terminal OS call.
-    await dialog.getByRole('button', { name: 'Show in folder', exact: true }).click()
-    await expect.poll(() => native.evaluate((probe) => probe.revealed)).toEqual([wordPath])
-    expect(await native.evaluate((probe) => probe.opened)).toEqual([])
-    expect(await uploadCount()).toBe(0)
-    await expect(dialog).toBeHidden()
-    await links.filter({ hasText: wordName }).click()
-    await expect(dialog).toBeVisible()
-    await dialog.getByRole('button', { name: 'Import and preview', exact: true }).click()
-    await expect(dialog).toBeHidden()
-    await expect.poll(uploadCount).toBe(1)
     const office = page.frameLocator('iframe[data-office-preview-frame]')
     // Assert real rendered document text, rather than only a ready host or successful import.
     await expect(office.locator('section.docx').first()).toBeVisible({ timeout: 90_000 })
@@ -115,17 +100,26 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
     await expect(
       office.getByText('本样例覆盖中文、长文本、表格、标题和列表的组合排版。', { exact: true })
     ).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('chinese-word-body.png') })
+    await page.screenshot({ path: testInfo.outputPath('02-preview.png') })
 
-    await links.filter({ hasText: '打开报告' }).click()
-    await expect(dialog).toBeVisible()
-    expect(await uploadCount()).toBe(1)
-    await dialog.getByRole('button', { name: 'Import and preview', exact: true }).click()
-    await expect(dialog).toBeHidden()
-    await expect.poll(uploadCount).toBe(2)
+    await unlink(externalPath)
+    const missing = links.filter({ hasText: '采样记录.csv' })
+    const paragraph = missing.locator('xpath=ancestor::p[1]')
+    const feedback = paragraph.getByRole('status')
+    await missing.click()
+    await expect(feedback).toHaveText('无法打开此文件。')
+    await page.screenshot({ path: testInfo.outputPath('03-missing.png') })
+    await expect(feedback).toBeEmpty({ timeout: 7000 })
+    await paragraph.getByRole('button', { name: '在文件夹中显示' }).click()
+    await expect(feedback).toHaveText('无法打开该文件夹。')
+    await page.screenshot({ path: testInfo.outputPath('04-folder.png') })
+    await writeFile(externalPath, 'Restored document')
+    await missing.click()
+    await expect(feedback).toBeEmpty({ timeout: 2000 })
+    await links.filter({ hasText: markdownName }).click()
     await expect(page.getByRole('dialog', { name: 'Open external link?' })).toHaveCount(0)
     await expect(page.getByText('预览测试成功', { exact: true })).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('chinese-markdown-body.png') })
+    expect(await uploadCount()).toBe(0)
   } finally {
     await native.dispose()
     await client.$disconnect()

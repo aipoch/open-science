@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent, getByRole } from '@testing-library/react'
+import { getByRole } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
-import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -63,142 +62,6 @@ describe('SessionMessageMarkdown local file links', () => {
     await act(async () => link?.click())
     await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
   }
-
-  const getImportDialog = (): HTMLElement =>
-    getByRole(document.body, 'dialog', { name: 'Import file for preview' })
-
-  const clickDialogButton = async (name: string): Promise<void> => {
-    const button = getByRole(getImportDialog(), 'button', { name })
-    await act(async () => button.click())
-  }
-
-  const createUpload = (name = '研究报告.docx'): UploadedAttachment => ({
-    id: 'upload-1',
-    versionId: 'upload-version-1',
-    versionNumber: 1,
-    sessionId: 'standalone-uploads',
-    name,
-    originalName: name,
-    path: `/managed/uploads/${name}`,
-    size: 1024
-  })
-
-  const renderFileLink = async (name = '研究报告.docx'): Promise<void> => {
-    await act(async () =>
-      root.render(
-        <SessionMessageMarkdown
-          content={`[${name}](${notebookReference.dataRoot}/${name})`}
-          artifacts={[]}
-          notebookReference={notebookReference}
-          onPreviewArtifact={vi.fn()}
-          onPreviewArtifactModal={vi.fn()}
-        />
-      )
-    )
-  }
-
-  it.each([
-    ['研究报告.docx', 'word'],
-    ['研究笔记.md', 'markdown']
-  ])(
-    'imports an unregistered session-data file only after confirming: %s',
-    async (name, format) => {
-      const path = `${notebookReference.dataRoot}/${name}`
-      stageLocalPath.mockResolvedValue(createUpload(name))
-      const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-      const props = {
-        content: `[${name}](${path})`,
-        artifacts: [],
-        notebookReference,
-        onPreviewArtifact: vi.fn(),
-        onPreviewArtifactModal: vi.fn()
-      }
-
-      // Keep the real Markdown parser and SessionMessageLink safety path: a raw Unicode path is
-      // URI-encoded by Markdown before reaching the link component.
-      await act(async () => root.render(<SessionMessageMarkdown {...props} />))
-      expect(container.textContent).toContain(name)
-      await clickMessageLink()
-
-      expect(getImportDialog().textContent).toContain(
-        'This link points to a file in this conversation. Importing saves a copy in the project.'
-      )
-      expect(getImportDialog().textContent).toContain(name)
-      expect(stageLocalPath).not.toHaveBeenCalled()
-      expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-      await clickDialogButton('Import and preview')
-
-      expect(
-        document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
-      ).toBeNull()
-      expect(stageLocalPath).toHaveBeenCalledWith({
-        transferId: expect.any(String),
-        projectId: 'project-1',
-        notebookSessionId: 'session-1',
-        sourcePath: path,
-        name
-      })
-      expect(usePreviewWorkbenchStore.getState()).toMatchObject({
-        panelState: 'open',
-        activeItemId: 'upload:upload-1',
-        items: [
-          expect.objectContaining({
-            sessionId: 'standalone-uploads',
-            type: 'file',
-            source: 'upload',
-            path: 'upload-version:project-1/standalone-uploads/upload-1/upload-version-1',
-            name,
-            format
-          })
-        ]
-      })
-      await clickMessageLink()
-      expect(stageLocalPath).toHaveBeenCalledTimes(1)
-      expect(document.body.querySelector('[data-session-data-file-dialog]')).toBeNull()
-      expect(open).not.toHaveBeenCalled()
-    }
-  )
-
-  it.each([
-    ['raw', '测试报告.md'],
-    ['encoded', '测试报告.md'],
-    ['encoded', 'literal%20.md']
-  ])('imports the DEV #1179 file URL through real Markdown: %s', async (encoding, name) => {
-    const sourcePath = `${notebookReference.dataRoot}/${name}`
-    const href = `file://${encoding === 'encoded' ? encodeURI(sourcePath) : sourcePath}`
-    stageLocalPath.mockResolvedValue(createUpload(name))
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
-    await act(async () =>
-      root.render(
-        <SessionMessageMarkdown
-          content={`[打开报告](${href})`}
-          artifacts={[]}
-          notebookReference={notebookReference}
-          onPreviewArtifact={vi.fn()}
-          onPreviewArtifactModal={vi.fn()}
-        />
-      )
-    )
-    expect(container.querySelector('[data-session-data-file-link]')?.textContent).toBe('打开报告')
-    await clickMessageLink()
-    expect(getImportDialog().textContent).toContain(name)
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-    await clickDialogButton('Import and preview')
-    expect(stageLocalPath).toHaveBeenCalledExactlyOnceWith({
-      transferId: expect.any(String),
-      projectId: 'project-1',
-      notebookSessionId: 'session-1',
-      sourcePath,
-      name
-    })
-    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
-      panelState: 'open',
-      activeItemId: 'upload:upload-1',
-      items: [expect.objectContaining({ source: 'upload', name, format: 'markdown' })]
-    })
-    expect(open).not.toHaveBeenCalled()
-  })
 
   it.each([
     [
@@ -266,7 +129,7 @@ describe('SessionMessageMarkdown local file links', () => {
         uploads: { stageLocalPath },
         localFs: { reveal }
       })
-      stageLocalPath.mockResolvedValue(createUpload(name))
+
       const onPreviewArtifact = vi.fn()
       const artifact: MessageArtifact = {
         id: 'unrelated',
@@ -292,305 +155,38 @@ describe('SessionMessageMarkdown local file links', () => {
       expect(container.querySelector('[data-session-data-file-link]')).not.toBeNull()
       expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
       await clickMessageLink()
-      expect(getImportDialog().textContent).toContain(name)
+      expect(usePreviewWorkbenchStore.getState().items).toEqual([
+        expect.objectContaining({ source: 'local', path: sourcePath })
+      ])
       expect(stageLocalPath).not.toHaveBeenCalled()
-      await clickDialogButton('Show in folder')
+      await act(async () => getByRole(container, 'button', { name: 'Show in folder' }).click())
       expect(reveal).toHaveBeenCalledExactlyOnceWith(sourcePath)
-      await clickMessageLink()
-      await clickDialogButton('Import and preview')
-      expect(stageLocalPath).toHaveBeenCalledExactlyOnceWith({
-        transferId: expect.any(String),
-        projectId: 'project-1',
-        notebookSessionId: 'session-1',
-        sourcePath,
-        name
-      })
       expect(onPreviewArtifact).not.toHaveBeenCalled()
     }
   )
 
   it.each([
-    ['C:\\Users\\research\\data', 'D:/Users/research/data/report.md'],
-    ['C:\\Users\\research\\data', 'C:/Users/research/data-copy/report.md'],
-    ['C:\\Users\\research\\data', 'C:/Users/research/data/../private/report.md'],
-    ['C:\\Users\\research\\data', 'C:\\Users\\research\\data\\%2e%2e\\private\\report.md'],
-    ['C:\\Users\\research\\data', 'file:///C:/Users/research/data/%2e%2e/private/report.md'],
-    ['C:\\Users\\research\\data', 'file:///C:/Users/research/data/%5cprivate/report.md'],
-    ['C:\\Users\\research\\data', 'C:/Users/research/data/report.md:secret'],
-    ['C:\\Users\\research\\data', 'C:/Users/research/data/report.md.'],
-    ['C:\\Users\\research\\data', 'C:/Users/research/data/%00report.md'],
-    ['\\\\server\\share\\data', 'file://other/share/data/report.md'],
-    ['\\\\server\\share\\data', 'file://server/other/data/report.md'],
-    ['\\\\server\\share\\data', '\\\\server\\share\\data\\..\\private\\report.md'],
-    ['C:\\Users\\research\\data', '\\\\?\\C:\\Users\\research\\data\\report.md']
-  ])(
-    'rejects cross-platform paths outside the exact Notebook root: %s → %s',
-    async (dataRoot, href) => {
-      const onPreviewArtifact = vi.fn()
-      await act(async () =>
-        root.render(
-          <SessionMessageMarkdown
-            content={`[Report](<${href}>)`}
-            artifacts={[]}
-            notebookReference={{ ...notebookReference, dataRoot }}
-            onPreviewArtifact={onPreviewArtifact}
-            onPreviewArtifactModal={vi.fn()}
-          />
-        )
-      )
-      expect(container.textContent).toContain('Report')
-      expect(container.querySelector('[data-session-data-file-link]')).toBeNull()
-      expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
-      expect(stageLocalPath).not.toHaveBeenCalled()
-      expect(onPreviewArtifact).not.toHaveBeenCalled()
-    }
-  )
-
-  it('imports a file URL instead of previewing an unrelated managed artifact with the same name', async () => {
-    const name = '测试报告.md'
-    const sourcePath = `${notebookReference.dataRoot}/${name}`
-    const artifact: MessageArtifact = {
-      id: 'other-version',
-      artifactId: 'other-artifact',
-      versionId: 'other-version',
-      isPublished: true,
-      kind: 'managed-file',
-      path: `/managed/other-session/${name}`,
-      fileUrl: `file:///managed/other-session/${name}`,
-      name,
-      mimeType: 'text/markdown',
-      size: 1024,
-      mtimeMs: 1710000000000
-    }
-    const onPreviewArtifact = vi.fn()
-    stageLocalPath.mockResolvedValue(createUpload(name))
+    ['linux', '/home/user/Downloads/report.md'],
+    ['darwin', '/Users/user/Downloads/report.md'],
+    ['win32', String.raw`C:\Users\user\Downloads\report.md`]
+  ])('opens external files in the default application on %s', async (platform, path) => {
+    const openPath = vi.fn().mockResolvedValue('')
+    vi.stubGlobal('api', { platform, localFs: { openPath, reveal } })
     await act(async () =>
       root.render(
         <SessionMessageMarkdown
-          content={`[打开报告](file://${sourcePath})`}
-          artifacts={[artifact]}
-          notebookReference={notebookReference}
-          onPreviewArtifact={onPreviewArtifact}
-          onPreviewArtifactModal={vi.fn()}
-        />
-      )
-    )
-    expect(container.querySelector('[data-session-data-file-link]')).not.toBeNull()
-    expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
-    await clickMessageLink()
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    expect(onPreviewArtifact).not.toHaveBeenCalled()
-    await clickDialogButton('Import and preview')
-    expect(stageLocalPath).toHaveBeenCalledWith(expect.objectContaining({ sourcePath, name }))
-    expect(onPreviewArtifact).not.toHaveBeenCalled()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([
-      expect.objectContaining({ source: 'upload', name, format: 'markdown' })
-    ])
-  })
-
-  it.each([
-    'file://remote/workspace/sessions/session-1/data/测试报告.md',
-    'file:///workspace/sessions/session-2/data/测试报告.md',
-    'file:///workspace/sessions/session-1/data/../private/测试报告.md',
-    'file:///workspace/sessions/session-1/data/%2e%2e/private/测试报告.md'
-  ])(
-    'does not offer import for a rejected file URL after real Markdown parsing: %s',
-    async (href) => {
-      await act(async () =>
-        root.render(
-          <SessionMessageMarkdown
-            content={`[打开报告](${href})`}
-            artifacts={[]}
-            notebookReference={notebookReference}
-            onPreviewArtifact={vi.fn()}
-            onPreviewArtifactModal={vi.fn()}
-          />
-        )
-      )
-      expect(container.textContent).toContain('打开报告')
-      expect(container.querySelector('[data-session-data-file-link]')).toBeNull()
-      expect(stageLocalPath).not.toHaveBeenCalled()
-      expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-    }
-  )
-
-  it('offers import for a file in the active frame dataRoot', async () => {
-    const frameRoot = `${notebookReference.notebookSessionRoot}/frames/frame-one`
-    const frameReference: NotebookSessionReference = {
-      ...notebookReference,
-      notebookSessionRoot: frameRoot,
-      dataRoot: `${frameRoot}/data`
-    }
-    const name = '子会话报告.docx'
-    const sourcePath = `${frameReference.dataRoot}/${name}`
-    stageLocalPath.mockResolvedValue(createUpload(name))
-    await act(async () =>
-      root.render(
-        <SessionMessageMarkdown
-          content={`[${name}](${sourcePath})`}
+          content={`[Report](<${path}>)`}
           artifacts={[]}
-          notebookReference={frameReference}
+          notebookReference={notebookReference}
           onPreviewArtifact={vi.fn()}
           onPreviewArtifactModal={vi.fn()}
         />
       )
     )
     await clickMessageLink()
-    expect(getImportDialog()).not.toBeNull()
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    await clickDialogButton('Import and preview')
-    expect(stageLocalPath).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourcePath,
-        projectId: 'project-1',
-        notebookSessionId: 'session-1'
-      })
-    )
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([
-      expect.objectContaining({ source: 'upload', name, format: 'word' })
-    ])
-  })
-
-  it.each([
-    '/workspace/sessions/session-2/data/研究报告.docx',
-    '/workspace/sessions/session-1/data-copy/研究报告.docx',
-    '/workspace/sessions/session-1/data/../private/研究报告.docx',
-    'https://tracking.example/研究报告.docx'
-  ])('retains external-link confirmation outside the session data root: %s', async (href) => {
-    const props = {
-      content: `[研究报告](${href})`,
-      artifacts: [],
-      notebookReference,
-      onPreviewArtifact: vi.fn(),
-      onPreviewArtifactModal: vi.fn()
-    }
-    await act(async () => root.render(<SessionMessageMarkdown {...props} />))
-    await clickMessageLink()
-
-    expect(
-      document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
-    ).not.toBeNull()
-    expect(stageLocalPath).not.toHaveBeenCalled()
+    expect(openPath).toHaveBeenCalledExactlyOnceWith(path)
+    await act(async () => getByRole(container, 'button', { name: 'Show in folder' }).click())
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(path)
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
-
-  it.each(['Cancel', 'Close'])('dismisses %s without importing or previewing', async (label) => {
-    await renderFileLink()
-    await clickMessageLink()
-    await clickDialogButton(label)
-
-    expect(document.body.querySelector('[data-session-data-file-dialog]')).toBeNull()
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    expect(reveal).not.toHaveBeenCalled()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-  })
-
-  it('dismisses Escape without importing or previewing', async () => {
-    await renderFileLink()
-    await clickMessageLink()
-    await act(async () => fireEvent.keyDown(getImportDialog(), { key: 'Escape' }))
-
-    expect(document.body.querySelector('[data-session-data-file-dialog]')).toBeNull()
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-  })
-
-  it('reveals the file without importing or activating a preview', async () => {
-    await renderFileLink()
-    await clickMessageLink()
-    await clickDialogButton('Show in folder')
-
-    expect(reveal).toHaveBeenCalledExactlyOnceWith(`${notebookReference.dataRoot}/研究报告.docx`)
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-  })
-
-  it('does not start a second import when confirmation is clicked twice', async () => {
-    const upload = Promise.withResolvers<UploadedAttachment>()
-    stageLocalPath.mockReturnValue(upload.promise)
-    await renderFileLink()
-    await clickMessageLink()
-    const button = getByRole(getImportDialog(), 'button', { name: 'Import and preview' })
-    await act(async () => {
-      button.click()
-      button.click()
-    })
-
-    expect(stageLocalPath).toHaveBeenCalledTimes(1)
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-    await act(async () => upload.resolve(createUpload()))
-    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
-  })
-
-  it('keeps an import failure in the dialog and allows a successful retry', async () => {
-    stageLocalPath
-      .mockRejectedValueOnce(new Error('File not found'))
-      .mockResolvedValueOnce(createUpload())
-    await renderFileLink()
-    await clickMessageLink()
-    await clickDialogButton('Import and preview')
-
-    expect(getByRole(getImportDialog(), 'alert').textContent).toContain('File not found')
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-    await clickDialogButton('Import and preview')
-
-    expect(stageLocalPath).toHaveBeenCalledTimes(2)
-    expect(document.body.querySelector('[data-session-data-file-dialog]')).toBeNull()
-    expect(document.body.querySelector('[role="alert"]')).toBeNull()
-    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
-  })
-
-  it('does not activate an import that finishes after the message is unmounted', async () => {
-    const upload = Promise.withResolvers<UploadedAttachment>()
-    stageLocalPath.mockReturnValue(upload.promise)
-    await renderFileLink()
-    await clickMessageLink()
-    await clickDialogButton('Import and preview')
-    await act(async () => root.render(null))
-    await act(async () => upload.resolve(createUpload()))
-
-    expect(stageLocalPath).toHaveBeenCalledTimes(1)
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-  })
-
-  it.each(['path', 'file URL', 'file URL without fileUrl metadata'])(
-    'keeps a registered managed artifact on its existing preview path: %s',
-    async (reference) => {
-      const artifact: MessageArtifact = {
-        id: 'version-1',
-        artifactId: 'artifact-1',
-        versionId: 'version-1',
-        isPublished: true,
-        kind: 'managed-file',
-        path: `${notebookReference.dataRoot}/研究报告.docx`,
-        fileUrl:
-          reference === 'file URL without fileUrl metadata'
-            ? undefined
-            : `file://${notebookReference.dataRoot}/研究报告.docx`,
-        name: '研究报告.docx',
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        size: 1024,
-        mtimeMs: 1710000000000,
-        resolvedProjectId: 'project-1',
-        resolvedSessionId: 'session-1'
-      }
-      const onPreviewArtifact = vi.fn()
-      const props = {
-        content: `[研究报告](${reference === 'path' ? artifact.path : `file://${artifact.path}`})`,
-        artifacts: [artifact],
-        notebookReference,
-        onPreviewArtifact,
-        onPreviewArtifactModal: vi.fn()
-      }
-      await act(async () => root.render(<SessionMessageMarkdown {...props} />))
-      await clickMessageLink()
-
-      expect(onPreviewArtifact).toHaveBeenCalledWith(artifact)
-      expect(stageLocalPath).not.toHaveBeenCalled()
-      expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-      expect(
-        document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
-      ).toBeNull()
-    }
-  )
 })

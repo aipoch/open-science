@@ -5,6 +5,7 @@ import {
   normalizeSessionArtifactImages,
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,
+  resolveRelativeReplyPath,
   resolveMessageArtifactReference,
   resolveSessionDataFileReference,
   type MessageArtifact
@@ -25,6 +26,14 @@ const createArtifact = (overrides: Partial<MessageArtifact> = {}): MessageArtifa
 })
 
 describe('session message artifact references', () => {
+  it('uses the Notebook data directory or conversation working directory for qualified relative paths', () => {
+    expect(resolveRelativeReplyPath('data/plot.csv', '/work', '/frame/data')).toBe(
+      '/frame/data/plot.csv'
+    )
+    expect(resolveRelativeReplyPath('a/report.csv', '/work')).toBe('/work/a/report.csv')
+    expect(resolveRelativeReplyPath('report.csv', '/work')).toBeUndefined()
+  })
+
   it('resolves explicit artifact ids and unique relative filenames', () => {
     const artifact = createArtifact()
 
@@ -51,6 +60,12 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('sin_curve.png', artifacts)).toBe(undefined)
   })
 
+  it('counts two records for the same file as one filename match', () => {
+    const artifact = createArtifact()
+    const working = { ...artifact, id: 'working', kind: 'workspace-file' as const }
+    expect(resolveMessageArtifactReference('sin_curve.png', [working, artifact])).toBe(artifact)
+  })
+
   it('resolves Windows absolute artifact paths before checking URL schemes', () => {
     const artifact = createArtifact({
       path: 'C:/managed/session/sin_curve.png',
@@ -60,7 +75,7 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('C:/managed/session/sin_curve.png', [artifact])).toBe(
       artifact
     )
-    expect(resolveMessageArtifactReference('C:/other/sin_curve.png', [artifact])).toBe(artifact)
+    expect(resolveMessageArtifactReference('C:/other/sin_curve.png', [artifact])).toBeUndefined()
     expect(
       normalizeSessionArtifactReferences(
         '![Curve](C:/managed/session/sin_curve.png)\n[Curve](C:/managed/session/sin_curve.png)',
@@ -234,13 +249,15 @@ describe('createSessionArtifactReferenceNormalizer', () => {
     }
   }
 
-  it('returns the input unchanged when there are no artifacts to rewrite', () => {
+  it('preserves unresolved filenames for display while streaming', () => {
     const incremental = createSessionArtifactReferenceNormalizer()
     const content = '![Curve](sin_curve.png)\n\n[Download](sin_curve.png)'
 
-    expect(incremental(content, [])).toBe(content)
+    const normalized =
+      '![Curve](sin_curve.png)\n\n[Download](/.open-science/unresolved-file/sin_curve.png)'
+    expect(incremental(content, [])).toBe(normalized)
     expect(incremental(`${content}\n\n![More](sin_curve.png)`, [])).toBe(
-      `${content}\n\n![More](sin_curve.png)`
+      `${normalized}\n\n![More](sin_curve.png)`
     )
   })
 
@@ -369,10 +386,7 @@ describe('Notebook data file URL normalization', () => {
   })
 
   it.each([
-    `file://remote${path}`,
     `file:///${path}`,
-    `file://${dataRoot}-copy/测试报告.md`,
-    'file:///Users/example/sessions/session-2/data/测试报告.md',
     `file://${dataRoot}/../private/测试报告.md`,
     `file://${dataRoot}/%2e%2e/private/测试报告.md`,
     `file://${dataRoot}/%5cprivate/测试报告.md`,
@@ -386,9 +400,11 @@ describe('Notebook data file URL normalization', () => {
     expect(normalizeSessionArtifactReferences(markdown, [], dataRoot)).toBe(markdown)
   })
 
-  it('requires the current Notebook data root', () => {
-    expect(normalizeSessionArtifactReferences(content, [])).toBe(content)
-    expect(normalizeSessionArtifactReferences(content, [], '/other/data')).toBe(content)
+  it('routes files outside the current Notebook to the system', () => {
+    expect(normalizeSessionArtifactReferences(content, [])).toContain('/.open-science/local-file/')
+    expect(normalizeSessionArtifactReferences(content, [], '/other/data')).toContain(
+      '/.open-science/local-file/'
+    )
   })
 
   it('keeps code and unresolved images intact', () => {
@@ -419,8 +435,7 @@ describe('Notebook data file URL normalization', () => {
     expect(resolveMessageArtifactReference(reference, [artifact])).toBeUndefined()
     expect(resolveSessionDataFileReference(reference, dataRoot)).toBe(path)
     expect(resolveSessionDataFileReference(reference, '/other/data')).toBeUndefined()
-    // The pre-existing absolute-path basename fallback is outside this file URL fix.
-    expect(resolveMessageArtifactReference(path, [artifact])).toBe(artifact)
+    expect(resolveMessageArtifactReference(path, [artifact])).toBeUndefined()
   })
 
   it('preserves exact managed-path matches without fileUrl metadata', () => {
@@ -472,7 +487,7 @@ describe('Notebook data file URL normalization', () => {
         normalizeSessionArtifactReferences(streamed, artifacts, dataRoot)
       )
     }
-    expect(normalize(streamed, artifacts, '/other/data')).toBe(streamed)
+    expect(normalize(streamed, artifacts, '/other/data')).toContain('/.open-science/local-file/')
     expect(normalize(streamed, artifacts, dataRoot)).toBe(
       normalizeSessionArtifactReferences(streamed, artifacts, dataRoot)
     )

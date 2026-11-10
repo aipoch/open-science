@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,8 +15,6 @@ import {
   waitForDataRootWriters
 } from '../storage/migration-state'
 import { createUploadCommandOwner } from './command-owner'
-import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
-import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { UploadRepository } from './repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
@@ -596,137 +594,6 @@ describe('upload command owner', () => {
       await expect(stat(attachment.path)).resolves.toMatchObject({ size: 17 })
     } finally {
       await client.$disconnect()
-    }
-  })
-
-  it('imports only ordinary files inside the linked Notebook session', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'notebook-upload-'))
-    temporaryRoots.push(root)
-    const data = join(root, 'notebooks', 'project-1', 'session-1', 'data')
-    await mkdir(data, { recursive: true })
-    const name = '研究报告.md'
-    const source = join(data, name)
-    await writeFile(source, '# 研究报告')
-    const other = join(root, 'notebooks', 'project-1', 'other', 'data')
-    await mkdir(other, { recursive: true })
-    await writeFile(join(other, name), 'other')
-    await symlink(other, join(data, 'linked'), 'junction')
-
-    const repository = new UploadRepository(root)
-    const owner = createUploadCommandOwner(repository)
-    const caller = createCaller(new ApplicationCallerLeaseRegistry(), 1)
-    const stage = (path: string): ReturnType<typeof owner.stageLocalPath> =>
-      owner.stageLocalPath(
-        invocationFor(caller, [
-          {
-            sourcePath: path,
-            name,
-            transferId: 'from-chat',
-            projectId: 'project-1',
-            notebookSessionId: 'session-1'
-          }
-        ])
-      )
-    await expect(stage(join(other, name))).rejects.toThrow('outside this Notebook')
-    await expect(stage(join(data, 'linked', name))).rejects.toThrow('outside this Notebook')
-    const result = await stage(source)
-    await expect(readFile(result.path, 'utf8')).resolves.toBe('# 研究报告')
-  })
-
-  it('imports root and frame data without authorizing other lane directories or symlink targets', async () => {
-    const temporaryRoot = await mkdtemp(join(tmpdir(), 'notebook-frame-upload-'))
-    temporaryRoots.push(temporaryRoot)
-    const storageRoot = join(temporaryRoot, 'frames', 'storage')
-    const projectId = 'project-1'
-    const sessionId = 'session-1'
-    const dataRoots = [
-      getNotebookDataRoot(storageRoot, projectId, sessionId),
-      getNotebookDataRoot(
-        storageRoot,
-        projectId,
-        sessionId,
-        createFrameNotebookLane(projectId, sessionId, 'frame-one')
-      ),
-      getNotebookDataRoot(
-        storageRoot,
-        projectId,
-        sessionId,
-        createFrameNotebookLane(projectId, sessionId, 'frame-two')
-      )
-    ]
-    const name = '研究报告.md'
-    for (const [index, data] of dataRoots.entries()) {
-      await mkdir(data, { recursive: true })
-      await writeFile(join(data, name), `lane-${index}`)
-    }
-    const invalidRoots = [
-      join(getNotebookSessionRoot(storageRoot, projectId, sessionId), 'frames'),
-      join(
-        getNotebookSessionRoot(storageRoot, projectId, sessionId),
-        'frames',
-        'frame-one',
-        'runtime'
-      ),
-      join(
-        getNotebookSessionRoot(storageRoot, projectId, sessionId),
-        'frames',
-        'unsafe frame',
-        'data'
-      ),
-      join(
-        getNotebookSessionRoot(storageRoot, projectId, sessionId),
-        'frames',
-        `root-frame-${sessionId}`,
-        'data'
-      ),
-      getNotebookDataRoot(
-        storageRoot,
-        projectId,
-        'session-2',
-        createFrameNotebookLane(projectId, 'session-2', 'frame-one')
-      ),
-      getNotebookDataRoot(
-        storageRoot,
-        'project-2',
-        sessionId,
-        createFrameNotebookLane('project-2', sessionId, 'frame-one')
-      )
-    ]
-    for (const data of invalidRoots) {
-      await mkdir(data, { recursive: true })
-      await writeFile(join(data, name), 'unrelated')
-    }
-    const owner = createUploadCommandOwner(new UploadRepository(storageRoot))
-    const caller = createCaller(new ApplicationCallerLeaseRegistry(), 1)
-    let sequence = 0
-    const stage = (sourcePath: string): ReturnType<typeof owner.stageLocalPath> =>
-      owner.stageLocalPath(
-        invocationFor(caller, [
-          {
-            sourcePath,
-            name,
-            transferId: `frame-import-${sequence++}`,
-            projectId,
-            notebookSessionId: sessionId
-          }
-        ])
-      )
-    for (const data of invalidRoots) {
-      await expect(stage(join(data, name))).rejects.toThrow()
-    }
-    // A valid lane may not follow a symlink to a different frame, root, Project or Session.
-    for (const [index, target] of [
-      dataRoots[0],
-      dataRoots[2],
-      ...invalidRoots.slice(-2)
-    ].entries()) {
-      const link = join(dataRoots[1], `linked-${index}`)
-      await symlink(target, link, 'junction')
-      await expect(stage(join(link, name))).rejects.toThrow('outside this Notebook')
-    }
-    for (const [index, data] of dataRoots.entries()) {
-      const result = await stage(join(data, name))
-      await expect(readFile(result.path, 'utf8')).resolves.toBe(`lane-${index}`)
     }
   })
 

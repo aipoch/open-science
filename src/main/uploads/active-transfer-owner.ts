@@ -1,9 +1,7 @@
 import { constants, createReadStream } from 'node:fs'
-import { lstat, mkdir, open, realpath, rm, type FileHandle } from 'node:fs/promises'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { mkdir, open, rm, type FileHandle } from 'node:fs/promises'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
-import { createFrameNotebookLane } from '../notebook/lane-identity'
 
 import {
   MAX_UPLOAD_CHUNK_BYTES,
@@ -12,7 +10,6 @@ import {
   formatUploadSizeLimit,
   type AppendUploadTransferRequest,
   type BeginUploadTransferRequest,
-  type StageLocalPathUploadRequest,
   type StageLocalUploadRequest,
   type UploadTransferProgress,
   type UploadTransferRequest,
@@ -27,9 +24,6 @@ import {
   moveToUniqueUploadFile,
   toSafeUploadFilename
 } from './storage-helpers'
-
-export type LocalFileStagingRequest = StageLocalUploadRequest &
-  Pick<StageLocalPathUploadRequest, 'notebookSessionId' | 'projectId'>
 
 type ActiveTransferOwnerOptions = {
   maxFileBytes?: number
@@ -240,7 +234,7 @@ class ActiveTransferOwner {
   // Streams an existing desktop file into managed staging without routing its bytes through the
   // renderer or a single IPC message. The temporary file is committed only after all bytes arrive.
   async stageLocalFile(
-    request: LocalFileStagingRequest,
+    request: StageLocalUploadRequest,
     onProgress?: (progress: UploadTransferProgress) => void
   ): Promise<UploadedAttachment> {
     const transferId = assertSafePathSegment(request.transferId)
@@ -274,61 +268,9 @@ class ActiveTransferOwner {
     this.activeLocalTransfers.set(transferId, localTransfer)
 
     try {
-      let sourcePath = request.sourcePath
-      if (request.notebookSessionId !== undefined) {
-        if (!request.projectId || !request.notebookSessionId)
-          throw new Error('Missing Notebook scope.')
-        const storageRoot = await realpath(this.storageRoot)
-        const sessionRoot = getNotebookSessionRoot(
-          this.storageRoot,
-          request.projectId,
-          request.notebookSessionId
-        )
-        const canonicalSessionRoot = getNotebookSessionRoot(
-          storageRoot,
-          request.projectId,
-          request.notebookSessionId
-        )
-        const requestedRelative = relative(sessionRoot, sourcePath)
-        const outsideStorageAlias =
-          isAbsolute(requestedRelative) ||
-          requestedRelative === '..' ||
-          requestedRelative.startsWith(`..${sep}`)
-        const segments = (
-          outsideStorageAlias ? relative(canonicalSessionRoot, sourcePath) : requestedRelative
-        ).split(sep)
-        // Identify the requested lane before following symlinks: a frame cannot import through a
-        // link into another frame's data, even when both belong to this conversation.
-        const lane =
-          segments[0] === 'frames' && segments[2] === 'data'
-            ? createFrameNotebookLane(request.projectId, request.notebookSessionId, segments[1])
-            : undefined
-        const dataRoot = getNotebookDataRoot(
-          storageRoot,
-          request.projectId,
-          request.notebookSessionId,
-          lane
-        )
-        sourcePath = await realpath(sourcePath)
-        const child = relative(dataRoot, sourcePath)
-        if (!child || isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`)) {
-          throw new Error('File is outside this Notebook session’s data directory.')
-        }
-      }
-      source = await open(sourcePath, constants.O_RDONLY | constants.O_NONBLOCK)
+      source = await open(request.sourcePath, constants.O_RDONLY | constants.O_NONBLOCK)
       const sourceInfo = await source.stat({ bigint: true })
 
-      if (request.notebookSessionId !== undefined) {
-        // Check the opened handle before copying, including a path replaced during open.
-        const current = await lstat(sourcePath, { bigint: true })
-        if (
-          current.dev !== sourceInfo.dev ||
-          current.ino !== sourceInfo.ino ||
-          (await realpath(sourcePath)) !== sourcePath
-        ) {
-          throw new Error('Notebook file changed before import.')
-        }
-      }
       if (!sourceInfo.isFile()) {
         throw new Error(`Upload source is not a file: ${originalName}`)
       }
@@ -347,12 +289,15 @@ class ActiveTransferOwner {
       if (localTransfer.cancelled) throw new Error(`Upload cancelled: ${originalName}`)
       output = await open(stagingPath, 'wx')
 
-      const sourceStream = (this.options.createLocalReadStream ?? createReadStream)(sourcePath, {
-        fd: source,
-        autoClose: false,
-        highWaterMark: MAX_UPLOAD_CHUNK_BYTES,
-        signal: localTransfer.abortController.signal
-      })
+      const sourceStream = (this.options.createLocalReadStream ?? createReadStream)(
+        request.sourcePath,
+        {
+          fd: source,
+          autoClose: false,
+          highWaterMark: MAX_UPLOAD_CHUNK_BYTES,
+          signal: localTransfer.abortController.signal
+        }
+      )
       for await (const chunk of sourceStream) {
         if (localTransfer.cancelled) throw new Error(`Upload cancelled: ${originalName}`)
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
