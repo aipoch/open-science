@@ -34,7 +34,10 @@ beforeEach(() => {
   root = createRoot(container)
   useSettingsStore.setState({
     notebookNetwork: DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-    setNotebookNetwork: vi.fn(async (settings) => settings)
+    setNotebookNetwork: vi.fn(async (settings) => {
+      useSettingsStore.setState({ notebookNetwork: settings })
+      return settings
+    })
   })
   ;(window as unknown as { api: unknown }).api = {
     platform: 'darwin',
@@ -61,27 +64,6 @@ describe('NotebookNetworkDomainsForm', () => {
     expect(container.textContent).not.toContain('Approved network destinations')
     expect(container.querySelector('[aria-label="Domain hostname"]')).toBeNull()
     expect(container.textContent).not.toContain('Approved addresses')
-  })
-
-  it('preserves independent link-preview permissions when saving exceptions', async () => {
-    const next = {
-      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      allowedDomains: ['preview.example'],
-      disabledOpenScienceDomainGroups: ['literature' as const],
-      trustedPrivateDestinations: [
-        { hostname: '::1', port: 8080, protocol: 'http' as const, approvedAddresses: [] }
-      ]
-    }
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    act(() => useSettingsStore.setState({ notebookNetwork: next }))
-    expect(container.textContent).toContain('HTTP://[::1]:8080')
-    expect(container.textContent).not.toContain('preview.example')
-    await act(async () => button('Save changes').click())
-    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
-      next,
-      next.allowedDomains,
-      next.trustedPrivateDestinations
-    )
   })
 
   it('shows localized status codes and applies successful Windows setup status', async () => {
@@ -212,19 +194,6 @@ describe('NotebookNetworkDomainsForm', () => {
     expect(container.textContent).not.toContain('Could not turn on protection.')
     expect(container.textContent).not.toContain('private backend details')
     expect(button('Turn off').disabled).toBe(false)
-  })
-
-  it('shows translated generic copy when saving fails', async () => {
-    useSettingsStore.setState({
-      setNotebookNetwork: vi.fn().mockRejectedValue(new Error('C:\\private\\backend.txt'))
-    })
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await flush()
-    await act(async () => button('Save changes').click())
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not save network rules. Reopen this page and try again.'
-    )
-    expect(container.textContent).not.toContain('backend.txt')
   })
 
   it('does not expose backend error prose', async () => {
@@ -385,183 +354,201 @@ it('does not replace completed setup with a late preparation status response', a
   }
 })
 
-describe('private service draft review', () => {
-  const rule = {
-    hostname: 'lab.internal.example',
-    port: 8443,
-    protocol: 'http' as const,
-    approvedAddresses: ['10.32.0.7']
-  }
-  const start = async (): Promise<void> => {
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await act(async () => button('Add service').click())
-    await typeInput(container.querySelector('#private-hostname')!, rule.hostname)
-    await typeInput(container.querySelector('#private-port')!, String(rule.port))
-  }
-  it('reviews the exact tuple, invalidates review after edits, and saves after confirmation', async () => {
-    window.api.settings.reviewNotebookPrivateDestination = vi
-      .fn()
-      .mockResolvedValue({ ok: true, destination: rule })
-    await start()
-    expect(button('Save changes').disabled).toBe(true)
-    await act(async () => button('Review service').click())
-    expect(container.textContent).not.toContain('Approved addresses')
-    expect(container.textContent).toContain('The rule takes effect after you save changes.')
-    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
-    await typeInput(container.querySelector('#private-port')!, '443')
-    expect(button('Add network exception')).toBeUndefined()
-    await typeInput(container.querySelector('#private-port')!, '8443')
-    await act(async () => button('Review service').click())
-    await act(async () => button('Add network exception').click())
-    expect(button('Save changes').disabled).toBe(false)
-    await act(async () => button('Save changes').click())
-    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
-      expect.objectContaining({ trustedPrivateDestinations: [rule] }),
-      [],
-      []
-    )
-  })
-  it('ignores late review responses after input changes or cancellation', async () => {
-    let resolve!: (value: { ok: true; destination: typeof rule }) => void
-    window.api.settings.reviewNotebookPrivateDestination = vi.fn().mockImplementation(
-      () =>
-        new Promise((done) => {
-          resolve = done
-        })
-    )
-    await start()
-    await act(async () => button('Review service').click())
-    await typeInput(container.querySelector('#private-hostname')!, 'other.internal.example')
-    await act(async () => resolve({ ok: true, destination: rule }))
-    expect(button('Add network exception')).toBeUndefined()
-    await act(async () => button('Review service').click())
-    await act(async () => button('Cancel').click())
-    await act(async () => resolve({ ok: true, destination: rule }))
-    expect(container.querySelector('#private-hostname')).toBeNull()
-    expect(container.textContent).not.toContain('10.32.0.7')
-    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
-  })
-  it('replaces only the reviewed port and advances the save baseline before removing it', async () => {
-    const otherPort = { ...rule, port: 443 }
-    const original = {
+const hostInput = (): HTMLInputElement => container.querySelector('form input')!
+it.each(['relaxed', 'strict'] as const)(
+  'ends an existing %s edit when saving returns a different mode',
+  async (mode) => {
+    const initial = {
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      trustedPrivateDestinations: [otherPort, rule]
+      mode,
+      strictWhitelist: [
+        {
+          id: 'strict-one',
+          hostnamePattern: 'strict.local',
+          protocol: 'http' as const,
+          port: 80,
+          origin: 'manual' as const
+        }
+      ],
+      trustedPrivateDestinations: [
+        {
+          id: 'manual-one',
+          hostname: 'relaxed.local',
+          protocol: 'http' as const,
+          port: 80,
+          approvedAddresses: []
+        }
+      ]
     }
-    const updatedRule = { ...rule, approvedAddresses: ['10.32.0.8'] }
-    const saved = {
-      ...original,
-      allowedDomains: ['concurrent.example.org'],
-      trustedPrivateDestinations: [otherPort, updatedRule]
-    }
-    const save = vi
-      .fn()
-      .mockResolvedValueOnce(saved)
-      .mockResolvedValueOnce({
-        ...saved,
-        trustedPrivateDestinations: [otherPort]
+    const nextMode = mode === 'relaxed' ? 'strict' : 'relaxed'
+    useSettingsStore.setState({
+      notebookNetwork: initial,
+      // The settings owner merges the edit with the other window's mode change.
+      setNotebookNetwork: vi.fn(async (next) => {
+        const result = { ...next, mode: nextMode }
+        useSettingsStore.setState({ notebookNetwork: result })
+        return result
       })
-    useSettingsStore.setState({ notebookNetwork: original, setNotebookNetwork: save })
-    window.api.settings.reviewNotebookPrivateDestination = vi
-      .fn()
-      .mockResolvedValue({ ok: true, destination: updatedRule })
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    const row = [...container.querySelectorAll('li')].find((item) =>
-      item.textContent?.includes(`${rule.hostname}:${rule.port}`)
-    )!
-    await act(async () => row.querySelector<HTMLButtonElement>('button')!.click())
-    expect(container.querySelector<HTMLInputElement>('#private-hostname')!.value).toBe(
-      rule.hostname
-    )
-    expect(container.querySelector<HTMLInputElement>('#private-port')!.value).toBe('8443')
-    await act(async () =>
-      [...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find((item) => !item.disabled && item.textContent?.trim() === 'Review service')!
-        .click()
-    )
-    expect(window.api.settings.reviewNotebookPrivateDestination).toHaveBeenCalledExactlyOnceWith({
-      hostname: rule.hostname,
-      port: rule.port,
-      protocol: 'http'
     })
-    expect(save).not.toHaveBeenCalled()
-    await act(async () => button('Add network exception').click())
-    // A concurrent public-domain grant must not replace the editor's original baseline.
-    act(() =>
-      useSettingsStore.setState({
-        notebookNetwork: { ...original, allowedDomains: saved.allowedDomains }
-      })
-    )
-    await act(async () => button('Save changes').click())
-    expect(save).toHaveBeenNthCalledWith(
-      1,
-      { ...original, trustedPrivateDestinations: [otherPort, updatedRule] },
-      original.allowedDomains,
-      original.trustedPrivateDestinations
-    )
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          `[aria-label="Remove http://${rule.hostname}:${rule.port}"]`
-        )!
-        .click()
-    )
-    await act(async () => button('Save changes').click())
-    expect(save).toHaveBeenNthCalledWith(
-      2,
-      { ...saved, trustedPrivateDestinations: [otherPort] },
-      saved.allowedDomains,
-      saved.trustedPrivateDestinations
-    )
-    expect(container.textContent).toContain(`${otherPort.hostname}:${otherPort.port}`)
-    expect(container.textContent).not.toContain(`${rule.hostname}:${rule.port}`)
-    expect(container.textContent).toContain('No unsaved changes')
-  })
-  it('unifies manual and persistent approval exceptions, and revokes with a current baseline', async () => {
-    const grant = {
-      id: 'grant-global',
-      hostname: '::1',
-      protocol: 'https' as const,
-      port: 80,
-      approvedAddresses: [],
-      scope: 'project' as const,
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      recordId: 'record-1',
-      createdAt: 1
-    }
-    const original = {
-      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      trustedPrivateDestinations: [rule],
-      destinationGrants: [grant]
-    }
-    const save = vi.fn().mockResolvedValue(original)
-    useSettingsStore.setState({ notebookNetwork: original, setNotebookNetwork: save })
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    expect(container.textContent).toContain('HTTP://lab.internal.example:8443')
-    expect(container.textContent).toContain('HTTPS://[::1]:80')
-    expect(container.textContent).toContain('Project: project-1')
-    expect(container.textContent).toContain('All projects')
-    expect(container.textContent).not.toContain('Approved addresses')
-    expect(container.textContent).not.toContain('Approved network destinations')
-    expect(container.textContent).not.toContain('No trusted unsafe networks.')
-    await act(async () => button('Revoke').click())
-    expect(save).toHaveBeenCalledWith(
-      original,
-      original.allowedDomains,
-      original.trustedPrivateDestinations,
-      [grant.id]
+    await act(async () => button('Edit').click())
+    await act(async () =>
+      useSettingsStore.setState({ notebookNetwork: { ...initial, mode: nextMode } })
     )
+    await typeInput(hostInput(), 'changed.local')
+    await act(async () => hostInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
+    expect(container.querySelector('form')).toBeNull()
+    expect(container.querySelector(`[role="radio"][aria-checked="true"]`)?.textContent).toBe(
+      nextMode === 'strict' ? 'Strict' : 'Relaxed'
+    )
+    const saved = useSettingsStore.getState().notebookNetwork
+    if (mode === 'relaxed') expect(saved.strictWhitelist).toEqual(initial.strictWhitelist)
+    else expect(saved.trustedPrivateDestinations).toEqual(initial.trustedPrivateDestinations)
+  }
+)
+
+it('saves valid existing fields on blur, retains the editor, and never saves invalid input', async () => {
+  useSettingsStore.setState({
+    notebookNetwork: {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [
+        {
+          id: 'manual-one',
+          hostname: 'localhost',
+          protocol: 'http',
+          port: 80,
+          approvedAddresses: []
+        }
+      ]
+    }
   })
-  it('enrolls pending text, private reviews and saves in the shared leave guard', async () => {
-    const change = vi.fn()
-    await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))
-    expect(change).toHaveBeenLastCalledWith({ dirty: false, busy: false })
-    window.api.settings.reviewNotebookPrivateDestination = vi.fn()
-    await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))
-    await act(async () => button('Add service').click())
-    await typeInput(container.querySelector('#private-hostname')!, 'pending.example')
-    expect(change).toHaveBeenLastCalledWith({ dirty: true, busy: false })
-    await act(async () => button('Cancel').click())
-    expect(change).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Edit').click())
+  await typeInput(hostInput(), 'research.local')
+  await act(async () => hostInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
+  expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations?.[0]).toMatchObject(
+    {
+      id: 'manual-one',
+      hostname: 'research.local'
+    }
+  )
+  expect(container.querySelector('form')).not.toBeNull()
+  await typeInput(hostInput(), 'not a host')
+  await act(async () => hostInput().dispatchEvent(new FocusEvent('focusout', { bubbles: true })))
+  expect(
+    useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations?.[0]?.hostname
+  ).toBe('research.local')
+  expect(button('Done').type).toBe('button')
+  await act(async () => button('Done').click())
+  expect(container.querySelector('form')).toBeNull()
+  expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledOnce()
+})
+it('opens a form below the toolbar and immediately saves an exact address with the same Confirm button', async () => {
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  expect(container.querySelector('form')).toBeNull()
+  const add = button('Add address')
+  await act(async () => add.click())
+  expect(button('Confirm')).toBe(add)
+  expect(
+    container.querySelector('form')!.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_PRECEDING
+  ).toBeTruthy()
+  await typeInput(hostInput(), 'localhost')
+  await act(async () => button('Confirm').click())
+  expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+    expect.objectContaining({
+      trustedPrivateDestinations: [
+        expect.objectContaining({ hostname: 'localhost', protocol: 'http', port: 80 })
+      ]
+    }),
+    [],
+    [],
+    undefined,
+    expect.anything()
+  )
+  expect(container.querySelector('form')).toBeNull()
+  expect(container.textContent).toContain('Manual')
+  expect(container.textContent).not.toContain('Save changes')
+})
+it('preserves the form on save failure without exposing backend details', async () => {
+  useSettingsStore.setState({
+    setNotebookNetwork: vi.fn().mockRejectedValue(new Error('secret backend path'))
   })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Add address').click())
+  await typeInput(hostInput(), 'localhost')
+  await act(async () => button('Confirm').click())
+  expect(container.querySelector('form')).not.toBeNull()
+  expect(container.textContent).toContain('Could not save network rules.')
+  expect(container.textContent).not.toContain('secret backend path')
+})
+it('creates a logical group and a manual strict rule without an origin field', async () => {
+  useSettingsStore.setState({
+    notebookNetwork: {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'strict',
+      strictWhitelist: [],
+      strictWhitelistGroups: []
+    }
+  })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Add rule').click())
+  await typeInput(hostInput(), '*.example.org')
+  const select = container.querySelector('select[aria-label="Group"]') as HTMLSelectElement
+  await act(async () => {
+    select.value = '__new__'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  await typeInput(
+    [...container.querySelectorAll('form input')].at(-1) as HTMLInputElement,
+    'My research'
+  )
+  await act(async () => button('Confirm').click())
+  const saved = useSettingsStore.getState().notebookNetwork
+  expect(saved.strictWhitelistGroups?.[0]?.name).toBe('My research')
+  expect(saved.strictWhitelist?.[0]).toMatchObject({
+    hostnamePattern: '*.example.org',
+    origin: 'manual',
+    groupId: saved.strictWhitelistGroups?.[0]?.id
+  })
+  expect(container.textContent).not.toContain('Added from')
+  expect(container.textContent).not.toContain('Restore built-ins')
+})
+it('shows relaxed search only above ten entries and keeps it visible while filtering', async () => {
+  const rules = Array.from({ length: 11 }, (_, index) => ({
+    hostname: `host${index}.example`,
+    protocol: 'http' as const,
+    port: 80,
+    approvedAddresses: []
+  }))
+  useSettingsStore.setState({
+    notebookNetwork: { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, trustedPrivateDestinations: rules }
+  })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  const search = container.querySelector(
+    'input[aria-label="Search network addresses"]'
+  ) as HTMLInputElement
+  await typeInput(search, 'host10')
+  expect(container.querySelector('input[aria-label="Search network addresses"]')).not.toBeNull()
+  await act(async () => button('Delete').click())
+  expect(container.querySelector('input[aria-label="Search network addresses"]')).toBeNull()
+  expect(container.textContent).toContain('host0.example')
+})
+it('keeps mode explanations collapsed and guards a pending edit on leave', async () => {
+  const change = vi.fn()
+  await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))
+  expect(container.querySelector('details')?.open).toBe(false)
+  await act(async () => button('Add address').click())
+  expect(change).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+  await act(async () => button('Cancel').click())
+  expect(change).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+})
+
+it('switches modes while discarding an incomplete new address', async () => {
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Add address').click())
+  await typeInput(hostInput(), 'unfinished address')
+  await act(async () => button('Strict').click())
+  expect(container.querySelector('form')).toBeNull()
+  expect(useSettingsStore.getState().notebookNetwork.mode).toBe('strict')
+  expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations ?? []).toEqual([])
 })

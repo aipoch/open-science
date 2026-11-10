@@ -64,6 +64,7 @@ const NetworkPanel = ({
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
+  const strictNetwork = useSettingsStore((state) => state.notebookNetwork?.mode === 'strict')
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery,
@@ -302,18 +303,28 @@ const NetworkPanel = ({
       {!isConfiguring && notebookNetworkAvailable ? (
         <SettingsSection
           title={t('Notebook network access')}
-          description={t(
-            'HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.'
-          )}
+          description={
+            strictNetwork
+              ? t(
+                  'Only matching protocol, hostname or IP, and port are allowed. Unlisted destinations are blocked and cannot request authorization.'
+                )
+              : t(
+                  'HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.'
+                )
+          }
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
         >
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-foreground">{t('Trusted unsafe networks')}</p>
+                <p className="text-sm text-foreground">
+                  {strictNetwork ? t('Strict whitelist') : t('Trusted unsafe networks')}
+                </p>
                 <p className="text-xs text-muted-foreground">
-                  {t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
+                  {strictNetwork
+                    ? t('Edit allowed destinations and organize them into groups.')
+                    : t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
                 </p>
               </div>
               <Button

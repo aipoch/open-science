@@ -1,3 +1,13 @@
+export type NotebookNetworkMode = 'relaxed' | 'strict'
+export type NotebookWhitelistGroup = Readonly<{ id: string; name: string }>
+export type NotebookStrictWhitelistEntry =
+  import('@aipoch/notebook-network-sandbox/network-address').StrictNetworkRule &
+    Readonly<{
+      id: string
+      groupId?: string
+      origin: 'builtin' | 'manual'
+    }>
+
 export const OPEN_SCIENCE_DOMAIN_GROUP_IDS = [
   'packageRegistries',
   'nih',
@@ -16,6 +26,7 @@ export type OpenScienceDomainGroup = Readonly<{
 }>
 
 export type TrustedPrivateDestination = Readonly<{
+  id?: string
   hostname: string
   port: number
   protocol?: 'http' | 'https'
@@ -35,6 +46,10 @@ export type PrivateDestinationReview =
   | Readonly<{ ok: false; reason: 'invalid' | 'ineligible' | 'dns' }>
 
 export type NotebookNetworkSettings = Readonly<{
+  mode?: NotebookNetworkMode
+  strictWhitelistVersion?: 1
+  strictWhitelist?: readonly NotebookStrictWhitelistEntry[]
+  strictWhitelistGroups?: readonly NotebookWhitelistGroup[]
   destinationGrants?: readonly import('./network-destination-grants').NetworkDestinationGrant[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
@@ -43,6 +58,8 @@ export type NotebookNetworkSettings = Readonly<{
 }>
 
 export type NotebookNetworkPolicy = Readonly<{
+  mode?: NotebookNetworkMode
+  strictWhitelist?: readonly NotebookStrictWhitelistEntry[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains: readonly string[]
@@ -56,3 +73,8 @@ export {
   isNetworkIpLiteral,
   requiresNetworkException
 } from '@aipoch/notebook-network-sandbox/network-address'
+
+export const trustedDestinationId = (rule: TrustedPrivateDestination): string =>
+  rule.id ??
+  rule.managedGrantId ??
+  `manual:${rule.protocol ?? 'https'}://${rule.hostname}:${rule.port}`

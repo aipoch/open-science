@@ -1,3 +1,4 @@
+import { normalizeStrictWhitelist, normalizeWhitelistGroups } from './notebook-network-strict'
 import { normalizeNetworkDestinationGrants } from './network-destination-grants'
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import {
@@ -66,6 +67,7 @@ export type NotebookNetworkStatus = Readonly<{
   )
 
 export const DEFAULT_NOTEBOOK_NETWORK_SETTINGS: NotebookNetworkSettings = Object.freeze({
+  mode: 'relaxed',
   allowedDomains: [],
   disabledOpenScienceDomainGroups: [],
   disabledOpenScienceDomains: []
@@ -337,6 +339,14 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
     : []
 
   return {
+    mode: record.mode === 'strict' ? 'strict' : 'relaxed',
+    ...(record.strictWhitelistVersion === 1 ? { strictWhitelistVersion: 1 as const } : {}),
+    ...(Array.isArray(record.strictWhitelist)
+      ? { strictWhitelist: normalizeStrictWhitelist(record.strictWhitelist) }
+      : {}),
+    ...(Array.isArray(record.strictWhitelistGroups)
+      ? { strictWhitelistGroups: normalizeWhitelistGroups(record.strictWhitelistGroups) }
+      : {}),
     ...(Array.isArray(record.destinationGrants)
       ? {
           destinationGrants: normalizeNetworkDestinationGrants(record.destinationGrants).filter(
@@ -395,7 +405,9 @@ const buildLinkPreviewDomainPolicy = (settings: NotebookNetworkSettings): Notebo
 export const buildNotebookNetworkPolicy = (
   settings: NotebookNetworkSettings
 ): NotebookNetworkPolicy => ({
-  ...(settings.trustedPrivateDestinations?.length
+  mode: settings.mode ?? 'relaxed',
+  ...(settings.mode === 'strict' ? { strictWhitelist: settings.strictWhitelist ?? [] } : {}),
+  ...(settings.mode !== 'strict' && settings.trustedPrivateDestinations?.length
     ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
     : {}),
   allowedDomains: [],
@@ -412,14 +424,16 @@ export const normalizeTrustedPrivateDestinations = (
 ): TrustedPrivateDestination[] => {
   if (!Array.isArray(value)) return []
   const entries = new Map<string, TrustedPrivateDestination>()
+  const ids = new Set<string>()
   for (const item of value) {
     if (!item || typeof item !== 'object') continue
-    const { hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
+    const { id, hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
     const hostValue = typeof hostname === 'string' ? normalizeNetworkHostname(hostname) : undefined
     const host = hostValue ? { ok: true as const, hostname: hostValue } : undefined
     const hasManagedId = typeof managedGrantId === 'string' && managedGrantId.length > 0
     const hasManagedSource = source === 'global-destination-grant'
     if (
+      (id !== undefined && (typeof id !== 'string' || !id.trim())) ||
       !host?.ok ||
       (protocol !== undefined && protocol !== 'http' && protocol !== 'https') ||
       !Number.isInteger(port) ||
@@ -434,8 +448,10 @@ export const normalizeTrustedPrivateDestinations = (
     if (!requiresNetworkException(host.hostname, protocol)) continue
     const key = `${protocol ?? 'https'}://${formatNetworkHostname(host.hostname)}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
-    if (entries.has(key)) return []
+    if (entries.has(key) || (id !== undefined && ids.has(id))) return []
+    if (id !== undefined) ids.add(id)
     entries.set(key, {
+      ...(id !== undefined ? { id } : {}),
       hostname: host.hostname,
       port,
       ...(protocol !== undefined ? { protocol } : {}),
