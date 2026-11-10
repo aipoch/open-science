@@ -1425,7 +1425,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       const auth =
         request.socket.localAddress === options.host
           ? authenticateRequest(request, url, options.token)
-          : { ok: false, queryToken: false }
+          : { ok: false, queryToken: false, localBearer: false }
       let authorized = auth.ok
       let externalAuthorization: ExternalWebAccessAuthorization | undefined
       if (!authorized && options.externalAccess) {
@@ -1621,6 +1621,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           return
         }
         const callerContext = createWebCallerContext(clientId, {
+          authorities:
+            auth.localBearer && channel === 'sessions:import-package'
+              ? ['import-local-package-path']
+              : [],
           ...(externalAuthorization
             ? {
                 location: 'remote' as const,

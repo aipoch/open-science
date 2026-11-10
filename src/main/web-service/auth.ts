@@ -91,12 +91,6 @@ const cookieToken = (request: IncomingMessage): string | undefined => {
   return undefined
 }
 
-const requestToken = (request: IncomingMessage, url: URL): string | undefined => {
-  const auth = request.headers.authorization
-  if (auth?.startsWith('Bearer ')) return auth.slice(7)
-  return url.searchParams.get('token') ?? cookieToken(request)
-}
-
 const isLoopbackHost = (host: string | undefined): boolean => {
   if (!host) return false
   const name = host.replace(/:\d+$/, '').toLowerCase()
@@ -122,13 +116,20 @@ const authenticateRequest = (
   request: IncomingMessage,
   url: URL,
   token: string
-): { ok: boolean; queryToken: boolean } => ({
-  ok:
+): { ok: boolean; queryToken: boolean; localBearer: boolean } => {
+  const authorization = request.headers.authorization
+  const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined
+  const query = url.searchParams.get('token') ?? undefined
+  const ok =
     isLoopbackHost(request.headers.host) &&
     isAllowedOrigin(request) &&
-    safeEqual(requestToken(request, url), token),
-  queryToken: safeEqual(url.searchParams.get('token') ?? undefined, token)
-})
+    safeEqual(bearer ?? query ?? cookieToken(request), token)
+  return {
+    ok,
+    queryToken: safeEqual(query, token),
+    localBearer: ok && bearer !== undefined && request.headers.origin === undefined
+  }
+}
 
 const persistAuthCookie = (response: ServerResponse, token: string): void => {
   response.setHeader(
