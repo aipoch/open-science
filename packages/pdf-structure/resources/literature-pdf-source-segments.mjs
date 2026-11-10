@@ -23,9 +23,10 @@ const sameRect = (a, b) =>
   a.every((v, i) => Number.isFinite(v) && Math.abs(v - b[i]) < 1e-6)
 const sourceKey = (source) => `${source.pageNumber}:${source.index}`
 const sameOrigin = (a, b) => sourceKey(a) === sourceKey(b) && a.text === b.text
+const arrayOrEmpty = (value) => (Array.isArray(value) ? value : [])
 const tableCells = (table) => [
-  ...(table.cells ?? []).map((cell) => ({ cell, table })),
-  ...(table.parts ?? []).flatMap(tableCells)
+  ...arrayOrEmpty(table.cells).map((cell) => ({ cell, table })),
+  ...arrayOrEmpty(table.parts).flatMap(tableCells)
 ]
 
 const sourceCarriers = (token) =>
@@ -37,9 +38,9 @@ const sourceCarriers = (token) =>
     token.sourceToken?.pageNumber !== undefined ? token.sourceToken : undefined
   ].filter(Boolean)
 const cellOrigins = (cell) => [
-  ...(cell.sourceItems ?? []),
-  ...(cell.sourceSegments ?? []),
-  ...(cell.sourceTokens ?? []).flatMap(sourceCarriers)
+  ...arrayOrEmpty(cell.sourceItems),
+  ...arrayOrEmpty(cell.sourceSegments),
+  ...arrayOrEmpty(cell.sourceTokens).flatMap(sourceCarriers)
 ]
 const containsRect = (outer, inner) =>
   outer?.length === 4 &&
@@ -280,12 +281,12 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
     [
       item.sourceItem,
       item.sourceSegment,
-      ...(item.sourceItems ?? []),
-      ...(item.sourceSegments ?? []),
+      ...arrayOrEmpty(item.sourceItems),
+      ...arrayOrEmpty(item.sourceSegments),
       item.sourceToken?.sourceItem,
       item.sourceToken?.sourceSegment,
-      ...(item.sourceToken?.sourceItems ?? []),
-      ...(item.sourceToken?.sourceSegments ?? []),
+      ...arrayOrEmpty(item.sourceToken?.sourceItems),
+      ...arrayOrEmpty(item.sourceToken?.sourceSegments),
       item.sourceToken?.pageNumber !== undefined ? item.sourceToken : undefined
     ].filter(Boolean)
   const wholeOnly = (item) =>
@@ -296,9 +297,9 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
     !item.sourceToken?.sourceSegments &&
     !item.sourceToken?.sourceItems
   const claims = (cell) => [
-    ...(cell.sourceItems ?? []),
-    ...(cell.sourceSegments ?? []),
-    ...(cell.sourceTokens ?? []).flatMap(carriers)
+    ...arrayOrEmpty(cell.sourceItems),
+    ...arrayOrEmpty(cell.sourceSegments),
+    ...arrayOrEmpty(cell.sourceTokens).flatMap(carriers)
   ]
   const overlaps = (a, b) =>
     a?.length === 4 &&
@@ -750,7 +751,7 @@ export function refineMeasuredAssignedNumericSegments(table, tokens, observation
 export function attachMeasuredTableSourceSegments(table, tokens) {
   if (!tokens.some((token) => token.sourceSegment)) return
   const cells = tableCells(table).map(({ cell }) => cell)
-  const regions = cells.flatMap((cell) => cell.sourceRects ?? [])
+  const regions = cells.flatMap((cell) => arrayOrEmpty(cell.sourceRects))
   const plans = cells.map((cell) => {
     if (
       cell.sourceSegments ||
@@ -808,17 +809,17 @@ export function attachMeasuredTableSourceSegments(table, tokens) {
   )
   // A retained whole-item owner elsewhere also competes with every child range.
   for (const cell of cells)
-    for (const segment of cell.sourceSegments ?? []) claims.push({ cell, segment })
+    for (const segment of arrayOrEmpty(cell.sourceSegments)) claims.push({ cell, segment })
   for (const cell of cells) {
     if (plans.some((plan) => plan?.cell === cell)) continue
     for (const origin of [
-      ...(cell.sourceItems ?? []),
-      ...(cell.sourceTokens ?? []).flatMap((token) =>
+      ...arrayOrEmpty(cell.sourceItems),
+      ...arrayOrEmpty(cell.sourceTokens).flatMap((token) =>
         [token.sourceItem, token.sourceToken].filter(Boolean)
       )
     ])
       claims.push({ cell, segment: { ...origin, start: 0, end: origin.text.length } })
-    for (const token of cell.sourceTokens ?? [])
+    for (const token of arrayOrEmpty(cell.sourceTokens))
       if (token.sourceSegment) claims.push({ cell, segment: token.sourceSegment })
   }
   for (const plan of plans) {

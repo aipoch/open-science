@@ -3440,6 +3440,94 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
         return { rect, graphicsCount: nearbyGraphics.length, issue: undefined }
     }
   }
+  // Some composite figures describe the panels as "(left)" and "(right)"
+  // rather than using lettered headings.  The right panel can be text-heavy,
+  // so it has no image row for the raster-panel proof above.  Require a
+  // visible right-panel heading and multiple numbered lines in the same band;
+  // this keeps ordinary prose beside a single-panel figure out of the crop.
+  if (/(?:^|\s)\(left\)/iu.test(captionText) && /(?:^|\s)\(right\)/iu.test(captionText)) {
+    const current = figure.rect
+    const rightLines = (page.lines ?? [])
+      .filter(
+        (line) =>
+          line.y + line.height > current[1] - 4 &&
+          line.y < current[3] + 4 &&
+          line.x > current[0] + (current[2] - current[0]) * 0.45
+      )
+      .sort((a, b) => a.y - b.y)
+    const numbered = rightLines.filter((line) => /^\s*\d{1,2}\s+\S/u.test(line.text))
+    const firstNumbered = numbered[0]
+    const heading =
+      firstNumbered &&
+      rightLines.find(
+        (line) =>
+          !/^\s*\d{1,2}\s+\S/u.test(line.text) &&
+          line.y < firstNumbered.y &&
+          firstNumbered.y - (line.y + line.height) <= Math.max(24, firstNumbered.height * 3) &&
+          Math.abs(line.x - firstNumbered.x) <= Math.max(12, firstNumbered.height * 1.5) &&
+          line.text.trim().length >= 3
+      )
+    if (heading && numbered.length >= 2) {
+      const panelLeft = heading.x - 8
+      const panelLines = rightLines.filter((line) => line.x >= panelLeft)
+      const panelBottom = Math.max(
+        heading.y + heading.height,
+        ...numbered.map((line) => line.y + line.height)
+      )
+      const panelRight = Math.max(...panelLines.map((line) => line.x + line.width), current[2])
+      const panelRect = [panelLeft, heading.y - 4, panelRight, panelBottom + 4]
+      const competing =
+        candidates.some(
+          (candidate) =>
+            candidate !== caption &&
+            candidate.page === caption.page &&
+            intersection(candidate.rect, panelRect) > 0
+        ) || tableRects.some((table) => intersection(table, panelRect) > 0)
+      if (
+        !competing &&
+        panelRect[2] > current[2] + 20 &&
+        panelRect[3] < caption.rect[1] &&
+        panelLines.length >= numbered.length + 1
+      ) {
+        const rightGraphics = page.graphicsBounds
+          .map((graphic) => {
+            const normalizedRect = graphic.paintedNormalizedRect ?? graphic.normalizedRect
+            if (
+              !Array.isArray(normalizedRect) ||
+              normalizedRect.length !== 4 ||
+              !normalizedRect.every(Number.isFinite)
+            )
+              return undefined
+            return normalizedRect.map(
+              (value, index) => value * (index % 2 ? page.height : page.width)
+            )
+          })
+          .filter(
+            (rect) =>
+              rect &&
+              rect[2] > panelRect[0] &&
+              rect[0] < panelRect[2] &&
+              rect[3] > panelRect[1] &&
+              rect[1] < panelRect[3]
+          )
+        return {
+          rect: union([
+            current,
+            panelRect,
+            ...panelLines.map((line) => [
+              line.x,
+              line.y,
+              line.x + line.width,
+              line.y + line.height
+            ]),
+            ...rightGraphics
+          ]),
+          graphicsCount: rightGraphics.length,
+          issue: undefined
+        }
+      }
+    }
+  }
   const panelTitleEvidence = page.lines?.some(
     (line) =>
       line.y < caption.rect[1] &&
