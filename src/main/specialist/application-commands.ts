@@ -12,7 +12,10 @@ import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   type SpecialistPackageInstallRequest,
   type SpecialistPackageCandidatePreview,
-  type SpecialistPackageInstallResult
+  type SpecialistPackageInstallResult,
+  type SpecialistDeleteRequest,
+  type SpecialistDeletePreview,
+  type SpecialistDeleteResult
 } from '@aipoch/specialists'
 import {
   type BeginUploadTransferRequest,
@@ -29,7 +32,11 @@ import type {
   GetMarketplaceReleaseRequest,
   ListMarketplaceRequest,
   MarketplaceSnapshot,
-  MarketplaceSpecialistRelease
+  MarketplaceSpecialistRelease,
+  PrepareMarketplaceInstallRequest,
+  MarketplaceInstallPreview,
+  MarketplaceInstallRequest,
+  MarketplaceInstallResult
 } from '../../shared/specialist-marketplace'
 import {
   defineApplicationCommand,
@@ -48,9 +55,21 @@ import type { SessionSpecialistReconfiguration } from './session-reconfiguration
 
 type Dependencies = {
   service: Pick<SpecialistService, 'listForSettingsSnapshot' | 'update' | 'setEnabled'>
-  packages: Pick<SpecialistPackageService, 'preview' | 'install' | 'cancel' | 'dispose' | 'report'>
+  packages: Pick<
+    SpecialistPackageService,
+    | 'preview'
+    | 'install'
+    | 'cancel'
+    | 'dispose'
+    | 'report'
+    | 'previewSpecialistDelete'
+    | 'deleteSpecialist'
+  >
   uploads: UploadCommandOwner
-  marketplace: Pick<MarketplaceService, 'list' | 'getRelease'> &
+  marketplace: Pick<
+    MarketplaceService,
+    'list' | 'getRelease' | 'prepareInstall' | 'install' | 'cancel'
+  > &
     Partial<Pick<MarketplaceService, 'installedSpecialistProvenance'>>
   sessionReconfiguration: Pick<SessionSpecialistReconfiguration, 'requestSwitch'>
   onProfilesChanged: () => void
@@ -115,6 +134,21 @@ export type SpecialistApplicationOwner = {
     invocation: ApplicationInvocation<readonly [SpecialistPackageInstallRequest]>
   ) => Promise<SpecialistPackageInstallResult>
   cancel: (invocation: ApplicationInvocation<readonly [SpecialistPackageInstallRequest]>) => void
+  prepareMarketplaceInstall: (
+    invocation: ApplicationInvocation<readonly [PrepareMarketplaceInstallRequest]>
+  ) => Promise<MarketplaceInstallPreview>
+  installMarketplace: (
+    invocation: ApplicationInvocation<readonly [MarketplaceInstallRequest]>
+  ) => Promise<MarketplaceInstallResult>
+  cancelMarketplaceCandidate: (
+    invocation: ApplicationInvocation<readonly [{ candidateToken: string }]>
+  ) => Promise<void>
+  previewDelete: (
+    invocation: ApplicationInvocation<readonly [{ id: string }]>
+  ) => Promise<SpecialistDeletePreview>
+  delete: (
+    invocation: ApplicationInvocation<readonly [SpecialistDeleteRequest]>
+  ) => Promise<SpecialistDeleteResult>
   desktop: SpecialistDesktopCommands
   dispose: () => void
 }
@@ -192,7 +226,58 @@ export const createSpecialistApplicationOwner = ({
     if (caller.disposed) throw new Error('Specialist import caller expired.')
   }
 
+  // Candidate ownership is identical on Electron and Web. A result arriving after the
+  // caller expires must not leave a usable package behind.
+  const owned = async <T>(
+    invocation: ApplicationInvocation<readonly unknown[]>,
+    work: (id: number) => Promise<T>
+  ): Promise<T> => {
+    const caller = callerFor(invocation)
+    refreshExpiry(caller)
+    try {
+      const result = await work(caller.ownerId)
+      invocation.callerLease.signal.throwIfAborted()
+      if (!invocation.callerLease.isCurrent())
+        throw new Error('Specialist caller is no longer current.')
+      assertActive(caller)
+      return result
+    } finally {
+      if (
+        caller.disposed ||
+        !invocation.callerLease.isCurrent() ||
+        invocation.callerLease.signal.aborted
+      ) {
+        disposeMarketplace(caller.ownerId)
+        packages.dispose(caller.ownerId)
+      }
+    }
+  }
+
   return {
+    prepareMarketplaceInstall: (invocation) =>
+      owned(invocation, (id) =>
+        marketplace.prepareInstall(invocation.args[0], id, (progress) => {
+          if (
+            invocation.callerContext.surface === 'electron' &&
+            invocation.callerLease.isCurrent() &&
+            !invocation.callerLease.signal.aborted
+          )
+            desktop.reportProgress(invocation.callerContext.clientId, progress)
+        })
+      ),
+    installMarketplace: (invocation) =>
+      owned(invocation, (id) => marketplace.install(invocation.args[0], id)),
+    cancelMarketplaceCandidate: (invocation) =>
+      owned(invocation, async (id) => {
+        marketplace.cancel(candidateRequest.parse(invocation.args[0]).candidateToken, id)
+      }),
+    previewDelete: (invocation) =>
+      owned(invocation, () =>
+        packages.previewSpecialistDelete(
+          z.object({ id: z.string() }).strict().parse(invocation.args[0])
+        )
+      ),
+    delete: (invocation) => owned(invocation, () => packages.deleteSpecialist(invocation.args[0])),
     desktop: createSpecialistDesktopCommands(desktop, (invocation) => {
       const caller = callerFor(invocation)
       refreshExpiry(caller)
@@ -374,6 +459,25 @@ const command = <const Name extends string, Args extends readonly unknown[], Res
   name: Name
 ): ApplicationCommand<Name, Args, Result> => defineApplicationCommand<Name, Args, Result>(name)
 const commands = [
+  command<
+    'specialist:marketplace-install-prepare',
+    readonly [PrepareMarketplaceInstallRequest],
+    MarketplaceInstallPreview
+  >('specialist:marketplace-install-prepare'),
+  command<
+    'specialist:marketplace-install',
+    readonly [MarketplaceInstallRequest],
+    MarketplaceInstallResult
+  >('specialist:marketplace-install'),
+  command<'specialist:marketplace-candidate-cancel', readonly [{ candidateToken: string }], void>(
+    'specialist:marketplace-candidate-cancel'
+  ),
+  command<'specialist:delete-preview', readonly [{ id: string }], SpecialistDeletePreview>(
+    'specialist:delete-preview'
+  ),
+  command<'specialist:delete', readonly [SpecialistDeleteRequest], SpecialistDeleteResult>(
+    'specialist:delete'
+  ),
   command<'specialist:list', readonly [], Awaited<ReturnType<SpecialistApplicationOwner['list']>>>(
     'specialist:list'
   ),
@@ -436,6 +540,13 @@ export const registerSpecialistApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(specialistApplicationCommandGroup, {
+      'specialist:marketplace-install-prepare': (invocation) =>
+        owner.prepareMarketplaceInstall(invocation),
+      'specialist:marketplace-install': (invocation) => owner.installMarketplace(invocation),
+      'specialist:marketplace-candidate-cancel': (invocation) =>
+        owner.cancelMarketplaceCandidate(invocation),
+      'specialist:delete-preview': (invocation) => owner.previewDelete(invocation),
+      'specialist:delete': (invocation) => owner.delete(invocation),
       'specialist:list': () => owner.list(),
       'specialist:update': ({ args }) => owner.update(args[0]),
       'specialist:set-enabled': ({ args }) => owner.setEnabled(args[0]),
