@@ -159,6 +159,43 @@ describe('SessionMessageMarkdown local file links', () => {
     }
   )
 
+  it('offers import for a file in the active frame dataRoot', async () => {
+    const frameRoot = `${notebookReference.notebookSessionRoot}/frames/frame-one`
+    const frameReference: NotebookSessionReference = {
+      ...notebookReference,
+      notebookSessionRoot: frameRoot,
+      dataRoot: `${frameRoot}/data`
+    }
+    const name = '子会话报告.docx'
+    const sourcePath = `${frameReference.dataRoot}/${name}`
+    stageLocalPath.mockResolvedValue(createUpload(name))
+    await act(async () =>
+      root.render(
+        <SessionMessageMarkdown
+          content={`[${name}](${sourcePath})`}
+          artifacts={[]}
+          notebookReference={frameReference}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    )
+    await clickMessageLink()
+    expect(getImportDialog()).not.toBeNull()
+    expect(stageLocalPath).not.toHaveBeenCalled()
+    await clickDialogButton('Import and preview')
+    expect(stageLocalPath).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePath,
+        projectId: 'project-1',
+        notebookSessionId: 'session-1'
+      })
+    )
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([
+      expect.objectContaining({ source: 'upload', name, format: 'word' })
+    ])
+  })
+
   it.each([
     '/workspace/sessions/session-2/data/研究报告.docx',
     '/workspace/sessions/session-1/data-copy/研究报告.docx',

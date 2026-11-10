@@ -2,7 +2,8 @@ import { constants, createReadStream } from 'node:fs'
 import { lstat, mkdir, open, realpath, rm, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { getNotebookDataRoot } from '../notebook/repository'
+import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
 
 import {
   MAX_UPLOAD_CHUNK_BYTES,
@@ -277,10 +278,36 @@ class ActiveTransferOwner {
       if (request.notebookSessionId !== undefined) {
         if (!request.projectId || !request.notebookSessionId)
           throw new Error('Missing Notebook scope.')
-        const dataRoot = getNotebookDataRoot(
-          await realpath(this.storageRoot),
+        const storageRoot = await realpath(this.storageRoot)
+        const sessionRoot = getNotebookSessionRoot(
+          this.storageRoot,
           request.projectId,
           request.notebookSessionId
+        )
+        const canonicalSessionRoot = getNotebookSessionRoot(
+          storageRoot,
+          request.projectId,
+          request.notebookSessionId
+        )
+        const requestedRelative = relative(sessionRoot, sourcePath)
+        const outsideStorageAlias =
+          isAbsolute(requestedRelative) ||
+          requestedRelative === '..' ||
+          requestedRelative.startsWith(`..${sep}`)
+        const segments = (
+          outsideStorageAlias ? relative(canonicalSessionRoot, sourcePath) : requestedRelative
+        ).split(sep)
+        // Identify the requested lane before following symlinks: a frame cannot import through a
+        // link into another frame's data, even when both belong to this conversation.
+        const lane =
+          segments[0] === 'frames' && segments[2] === 'data'
+            ? createFrameNotebookLane(request.projectId, request.notebookSessionId, segments[1])
+            : undefined
+        const dataRoot = getNotebookDataRoot(
+          storageRoot,
+          request.projectId,
+          request.notebookSessionId,
+          lane
         )
         sourcePath = await realpath(sourcePath)
         const child = relative(dataRoot, sourcePath)
