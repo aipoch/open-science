@@ -28,49 +28,88 @@ const getPathName = (path: string): string => path.split(/[\\/]/u).at(-1) ?? pat
 const normalizeFileReference = (reference: string): string =>
   decodeReference(reference.trim()).replace(/^\.\//u, '')
 
-// Only a current Notebook's data directory can turn an otherwise unresolved absolute link into
-// an import action. Main repeats containment against canonical paths before reading any bytes.
+// Resolve lexically before Markdown/URL sanitization can erase a drive prefix, backslashes or
+// dot segments. Main repeats containment using canonical paths before reading any bytes.
+const containSessionDataPath = (path: string, dataRoot: string): string | undefined => {
+  const windows = WINDOWS_ABSOLUTE_PATH_PATTERN.test(dataRoot) || /^[\\/]{2}/u.test(dataRoot)
+  const normalize = (value: string): string => (windows ? value.replace(/\\/gu, '/') : value)
+  const root = normalize(dataRoot).replace(/\/+$/u, '')
+  const target = normalize(path)
+  const absolute = windows
+    ? /^(?:[a-z]:\/|\/\/[^/]+\/[^/]+\/)/iu.test(target)
+    : target.startsWith('/') && !target.startsWith('//')
+  const comparableRoot = windows ? root.toLowerCase() : root
+  const comparableTarget = windows ? target.toLowerCase() : target
+  if (
+    !absolute ||
+    !comparableTarget.startsWith(`${comparableRoot}/`) ||
+    target.endsWith('/') ||
+    target.split('/').some((segment) => segment === '.' || segment === '..') ||
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f]/u.test(path) ||
+    (!windows && path.includes('\\')) ||
+    // Device namespaces, alternate streams and Win32 trailing-dot/space aliases are not files
+    // this surface can identify unambiguously.
+    (windows &&
+      (target.startsWith('//?/') ||
+        target.startsWith('//./') ||
+        target
+          .slice(WINDOWS_ABSOLUTE_PATH_PATTERN.test(target) ? 2 : 0)
+          .split('/')
+          .some((segment) => /[:<>"|?*]/u.test(segment) || /[. ]$/u.test(segment))))
+  )
+    return undefined
+  return path
+}
+
 const resolveSessionDataFileReference = (
   reference: string | undefined,
   dataRoot: string | undefined
 ): string | undefined => {
   if (!reference || !dataRoot) return undefined
   const target = reference.trim()
-  const path = decodeReference(
-    target.startsWith(INTERNAL_SESSION_DATA_REFERENCE_PREFIX)
-      ? target.slice(INTERNAL_SESSION_DATA_REFERENCE_PREFIX.length)
-      : target
-  )
-  const root = dataRoot.replace(/\/+$/u, '')
-  if (
-    !root.startsWith('/') ||
-    root.startsWith('//') ||
-    !path.startsWith(`${root}/`) ||
-    path.split('/').some((segment) => segment === '..') ||
-    // eslint-disable-next-line no-control-regex
-    /[\\\u0000-\u001f]/u.test(path) ||
-    path.endsWith('/')
-  ) {
-    return undefined
-  }
-  return path
-}
-
-// Read the URL path without WHATWG URL normalization, which would erase dot segments before
-// containment checks. Only hostless POSIX file URLs participate; other URLs stay with the sanitizer.
-const resolveSessionDataFileUrlReference = (
-  reference: string,
-  dataRoot: string | undefined
-): string | undefined => {
-  if (!/^file:\/\/\/(?!\/)/iu.test(reference) || /[?#]/u.test(reference)) return undefined
+  const internal = target.startsWith(INTERNAL_SESSION_DATA_REFERENCE_PREFIX)
   try {
-    const path = reference.slice('file://'.length)
-    // Reject malformed encodings; the shared reference resolver performs the single decode.
-    decodeURIComponent(path)
-    return resolveSessionDataFileReference(path, dataRoot)
+    if (internal) {
+      return containSessionDataPath(
+        decodeURIComponent(target.slice(INTERNAL_SESSION_DATA_REFERENCE_PREFIX.length)),
+        dataRoot
+      )
+    }
+    if (/^file:/iu.test(target)) {
+      // Parse the authority without WHATWG URL, which normalizes traversal before validation.
+      const file = target.match(/^file:\/\/([^/]*)(\/.*)$/iu)
+      if (!file || /[?#\\]/u.test(target) || /%2f|%5c/iu.test(file[2])) return undefined
+      let path = decodeURIComponent(file[2])
+      if (file[1] && file[1].toLowerCase() !== 'localhost') {
+        if (!/^[\\/]{2}/u.test(dataRoot) || !/^[a-z\d._-]+$/iu.test(file[1])) return undefined
+        path = `//${file[1]}${path}`
+      } else if (
+        WINDOWS_ABSOLUTE_PATH_PATTERN.test(dataRoot) &&
+        WINDOWS_ABSOLUTE_PATH_PATTERN.test(path.slice(1))
+      ) {
+        path = path.slice(1)
+      }
+      if (dataRoot.includes('\\')) path = path.replace(/\//gu, '\\')
+      return containSessionDataPath(path, dataRoot)
+    }
+    return containSessionDataPath(decodeReference(target), dataRoot)
   } catch {
     return undefined
   }
+}
+
+// Marked unescapes Markdown punctuation in link.href, including the first two UNC slashes and
+// Windows separators before underscores/parentheses. Recover the native destination from its
+// source token before handing it to the single URI-decoding boundary above.
+const getLocalLinkReference = (link: Tokens.Link): string => {
+  const destination = link.raw.match(/\]\((.*)\)$/u)?.[1]
+  if (!destination) return link.href
+  let raw = destination.trim()
+  if (link.title)
+    raw = raw.replace(/\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))$/u, '')
+  if (raw.startsWith('<') && raw.endsWith('>')) raw = raw.slice(1, -1)
+  return WINDOWS_ABSOLUTE_PATH_PATTERN.test(raw) || raw.startsWith('\\\\') ? raw : link.href
 }
 
 const resolveMessageArtifactReference = (
@@ -239,12 +278,22 @@ const transformInlineToken = (
     // Keep any other linked image atomic so custom link and image buttons can never nest.
     if (hasImageToken(link)) return token.raw
 
-    const dataFile = resolveSessionDataFileUrlReference(link.href, dataRoot)
+    const reference = getLocalLinkReference(link)
+    const dataFile =
+      resolveSessionDataFileReference(reference, dataRoot) ??
+      (reference !== link.href ? resolveSessionDataFileReference(link.href, dataRoot) : undefined)
     // A file URL may identify the exact managed path even when fileUrl metadata is absent.
     // Never allow the basename fallback for this lookup.
-    const artifact =
-      resolveMessageArtifactReference(link.href, artifacts) ??
-      (dataFile ? artifacts.find((candidate) => candidate.path === dataFile) : undefined)
+    const samePath = (candidate: string, path: string): boolean => {
+      const windows =
+        WINDOWS_ABSOLUTE_PATH_PATTERN.test(dataRoot ?? '') || /^[\\/]{2}/u.test(dataRoot ?? '')
+      return windows
+        ? candidate.replace(/\\/gu, '/').toLowerCase() === path.replace(/\\/gu, '/').toLowerCase()
+        : candidate === path
+    }
+    const artifact = dataFile
+      ? artifacts.find((candidate) => samePath(candidate.path, dataFile))
+      : resolveMessageArtifactReference(reference, artifacts)
     if (artifact?.kind !== 'managed-file' && !dataFile) return token.raw
     const target =
       artifact?.kind === 'managed-file'
@@ -279,7 +328,7 @@ const normalizeSessionArtifactImages = (
   )
 
 // Streamdown drops bare filenames, artifact tokens, and file URLs. Managed artifacts use an inert
-// internal target; hostless Notebook data file URLs carry their validated absolute path under a
+// internal target; Notebook data file links carry their validated absolute path under a
 // separate prefix so basename artifact matching cannot claim them. The data resolver repeats the
 // root check before rendering import confirmation. Unresolved URLs stay with the sanitizer.
 const normalizeSessionArtifactLinks = (
@@ -351,10 +400,10 @@ const createSessionArtifactReferenceNormalizer = (): ((
   }
 
   return (content, artifacts, dataRoot) => {
-    // Skip tokenization when neither managed artifacts nor Notebook file URLs can rewrite a link.
+    // A Notebook root also enables native paths, including drive paths removed by sanitizers.
     if (
       !artifacts.some((artifact) => artifact.kind === 'managed-file') &&
-      (!dataRoot || !/file:/iu.test(content))
+      (!dataRoot || (!content.includes('](') && !content.includes('<')))
     ) {
       return content
     }

@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { test } from './fixtures/electron-app'
 import { createProject, openProjectSession } from './certification/helpers'
@@ -14,7 +15,6 @@ test.use({ windowMode: 'normal' })
 test('asks before importing Notebook files and previews Chinese Word and Markdown bodies', async ({
   app
 }, testInfo) => {
-  test.skip(process.platform === 'win32', 'This fallback accepts POSIX Notebook paths.')
   test.skip(
     Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'The native shell probe is installed by the source Electron fixture preload.'
@@ -37,8 +37,10 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
   await mkdir(directory, { recursive: true })
   const wordName = '研究报告.docx'
   const markdownName = '测试报告.md'
-  await copyFile(resolve('test/fixtures/docx-report.docx'), join(directory, wordName))
-  await writeFile(join(directory, markdownName), '预览测试成功\n', 'utf8')
+  const wordPath = join(directory, wordName)
+  const markdownPath = join(directory, markdownName)
+  await copyFile(resolve('test/fixtures/docx-report.docx'), wordPath)
+  await writeFile(markdownPath, '预览测试成功\n', 'utf8')
   const session: PersistedChatSession = {
     id: sessionId,
     projectId,
@@ -51,7 +53,9 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
       {
         id: 'report-answer',
         role: 'agent',
-        content: `[${wordName}](${join(directory, wordName)})\n\n[打开报告](file://${join(directory, markdownName)})`,
+        // Exercise native drive/backslash paths on Windows and POSIX paths elsewhere. Angle
+        // brackets preserve spaces in OS temp directories; the second link exercises file URIs.
+        content: `[${wordName}](<${wordPath}>)\n\n[打开报告](${pathToFileURL(markdownPath).href})`,
         status: 'complete',
         eventIds: [],
         createdAt: 1,
@@ -95,9 +99,7 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
     await links.filter({ hasText: wordName }).click()
     // Real localFs IPC and backend validation run; the probe records only the terminal OS call.
     await dialog.getByRole('button', { name: 'Show in folder', exact: true }).click()
-    await expect
-      .poll(() => native.evaluate((probe) => probe.revealed))
-      .toEqual([join(directory, wordName)])
+    await expect.poll(() => native.evaluate((probe) => probe.revealed)).toEqual([wordPath])
     expect(await native.evaluate((probe) => probe.opened)).toEqual([])
     expect(await uploadCount()).toBe(0)
     await expect(dialog).toBeHidden()

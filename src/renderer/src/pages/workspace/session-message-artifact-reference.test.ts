@@ -345,7 +345,7 @@ describe('Notebook data file URL normalization', () => {
   const internalReference = (value: string): string =>
     `/.open-science/notebook-data/${encodeURIComponent(value).replace(/\(/gu, '%28').replace(/\)/gu, '%29')}`
 
-  it.each([`file://${path}`, `file://${encodeURI(path)}`])(
+  it.each([`file://${path}`, `file://${encodeURI(path)}`, `file://localhost${path}`])(
     'normalizes the DEV #1179 hostless file URL before sanitization: %s',
     (href) => {
       expect(normalizeSessionArtifactReferences(`[打开报告](${href})`, [], dataRoot)).toBe(
@@ -370,7 +370,6 @@ describe('Notebook data file URL normalization', () => {
 
   it.each([
     `file://remote${path}`,
-    `file://localhost${path}`,
     `file:///${path}`,
     `file://${dataRoot}-copy/测试报告.md`,
     'file:///Users/example/sessions/session-2/data/测试报告.md',
@@ -429,6 +428,38 @@ describe('Notebook data file URL normalization', () => {
     expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
       '[打开报告](/.open-science/artifact/version-1)'
     )
+  })
+
+  it.each([
+    [
+      'C:\\Users\\example\\data',
+      'file:///c:/users/example/data/report.md',
+      'C:\\Users\\example\\data\\report.md'
+    ],
+    [
+      'C:\\Users\\example\\data',
+      'c:/users/example/data/report.md',
+      'C:\\Users\\example\\data\\report.md'
+    ],
+    [
+      '\\\\server\\share\\data',
+      'file://SERVER/share/data/report.md',
+      '\\\\server\\share\\data\\report.md'
+    ]
+  ])(
+    'matches registered Windows paths across slash style and drive case: %s',
+    (root, href, artifactPath) => {
+      const artifact = createArtifact({ path: artifactPath, fileUrl: undefined, name: 'report.md' })
+      expect(normalizeSessionArtifactReferences(`[Report](${href})`, [artifact], root)).toBe(
+        '[Report](/.open-science/artifact/version-1)'
+      )
+    }
+  )
+
+  it('does not reinterpret a drive-shaped segment under a POSIX root', () => {
+    expect(
+      normalizeSessionArtifactReferences('[Report](file:///C:/data/report.md)', [], '/C:/data')
+    ).toBe(`[Report](${internalReference('/C:/data/report.md')})`)
   })
 
   it('keeps streaming normalization consistent and invalidates cached roots', () => {

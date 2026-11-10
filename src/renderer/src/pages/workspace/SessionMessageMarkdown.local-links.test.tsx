@@ -200,6 +200,152 @@ describe('SessionMessageMarkdown local file links', () => {
     expect(open).not.toHaveBeenCalled()
   })
 
+  it.each([
+    [
+      '/Users/research/data',
+      '/Users/research/data/测试%20报告.md',
+      '/Users/research/data/测试 报告.md'
+    ],
+    [
+      'C:\\Users\\research\\data',
+      'C:\\Users\\research\\data\\测试%20报告.md',
+      'C:\\Users\\research\\data\\测试 报告.md'
+    ],
+    [
+      'C:\\Users\\research\\data',
+      'C:/Users/research/data/测试%20报告.md',
+      'C:/Users/research/data/测试 报告.md'
+    ],
+    [
+      'C:\\Users\\research\\data',
+      'file:///C:/Users/research/data/测试%20报告.md',
+      'C:\\Users\\research\\data\\测试 报告.md'
+    ],
+    [
+      'C:\\Users\\research\\data',
+      'c:/users/RESEARCH/data/测试%2520报告.md',
+      'c:/users/RESEARCH/data/测试%20报告.md'
+    ],
+    [
+      'C:\\Users\\research\\data',
+      'C:\\Users\\research\\data\\_report_(1).md',
+      'C:\\Users\\research\\data\\_report_(1).md'
+    ],
+    [
+      '\\\\server\\share\\data',
+      '\\\\server\\share\\data\\测试%20报告.md',
+      '\\\\server\\share\\data\\测试 报告.md'
+    ],
+    [
+      '\\\\server\\share\\data',
+      '//server/share/data/测试%20报告.md',
+      '//server/share/data/测试 报告.md'
+    ],
+    [
+      '\\\\server\\share\\data',
+      'file://server/share/data/测试%20报告.md',
+      '\\\\server\\share\\data\\测试 报告.md'
+    ],
+    [
+      String.raw`C:\Users\research\data`,
+      String.raw`C:\\Users\\research\\data\\report.md`,
+      String.raw`C:\Users\research\data\report.md`
+    ],
+    [
+      String.raw`\\server\share\data`,
+      String.raw`\\\\server\\share\\data\\report.md`,
+      String.raw`\\server\share\data\report.md`
+    ]
+  ])(
+    'preserves cross-platform source identity through real Markdown: %s → %s',
+    async (dataRoot, href, sourcePath) => {
+      const name = sourcePath.split(/[\\/]/u).at(-1)!
+      const notebook = { ...notebookReference, dataRoot }
+      vi.stubGlobal('api', {
+        platform: dataRoot.startsWith('/Users/') ? 'darwin' : 'win32',
+        uploads: { stageLocalPath },
+        localFs: { reveal }
+      })
+      stageLocalPath.mockResolvedValue(createUpload(name))
+      const onPreviewArtifact = vi.fn()
+      const artifact: MessageArtifact = {
+        id: 'unrelated',
+        artifactId: 'unrelated',
+        kind: 'managed-file',
+        path: `/managed/elsewhere/${name}`,
+        name,
+        mimeType: 'text/markdown',
+        size: 1,
+        mtimeMs: 1
+      }
+      await act(async () =>
+        root.render(
+          <SessionMessageMarkdown
+            content={`[打开报告](<${href}> "Local report")`}
+            artifacts={[artifact]}
+            notebookReference={notebook}
+            onPreviewArtifact={onPreviewArtifact}
+            onPreviewArtifactModal={vi.fn()}
+          />
+        )
+      )
+      expect(container.querySelector('[data-session-data-file-link]')).not.toBeNull()
+      expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
+      await clickMessageLink()
+      expect(getImportDialog().textContent).toContain(name)
+      expect(stageLocalPath).not.toHaveBeenCalled()
+      await clickDialogButton('Show in folder')
+      expect(reveal).toHaveBeenCalledExactlyOnceWith(sourcePath)
+      await clickMessageLink()
+      await clickDialogButton('Import and preview')
+      expect(stageLocalPath).toHaveBeenCalledExactlyOnceWith({
+        transferId: expect.any(String),
+        projectId: 'project-1',
+        notebookSessionId: 'session-1',
+        sourcePath,
+        name
+      })
+      expect(onPreviewArtifact).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['C:\\Users\\research\\data', 'D:/Users/research/data/report.md'],
+    ['C:\\Users\\research\\data', 'C:/Users/research/data-copy/report.md'],
+    ['C:\\Users\\research\\data', 'C:/Users/research/data/../private/report.md'],
+    ['C:\\Users\\research\\data', 'C:\\Users\\research\\data\\%2e%2e\\private\\report.md'],
+    ['C:\\Users\\research\\data', 'file:///C:/Users/research/data/%2e%2e/private/report.md'],
+    ['C:\\Users\\research\\data', 'file:///C:/Users/research/data/%5cprivate/report.md'],
+    ['C:\\Users\\research\\data', 'C:/Users/research/data/report.md:secret'],
+    ['C:\\Users\\research\\data', 'C:/Users/research/data/report.md.'],
+    ['C:\\Users\\research\\data', 'C:/Users/research/data/%00report.md'],
+    ['\\\\server\\share\\data', 'file://other/share/data/report.md'],
+    ['\\\\server\\share\\data', 'file://server/other/data/report.md'],
+    ['\\\\server\\share\\data', '\\\\server\\share\\data\\..\\private\\report.md'],
+    ['C:\\Users\\research\\data', '\\\\?\\C:\\Users\\research\\data\\report.md']
+  ])(
+    'rejects cross-platform paths outside the exact Notebook root: %s → %s',
+    async (dataRoot, href) => {
+      const onPreviewArtifact = vi.fn()
+      await act(async () =>
+        root.render(
+          <SessionMessageMarkdown
+            content={`[Report](<${href}>)`}
+            artifacts={[]}
+            notebookReference={{ ...notebookReference, dataRoot }}
+            onPreviewArtifact={onPreviewArtifact}
+            onPreviewArtifactModal={vi.fn()}
+          />
+        )
+      )
+      expect(container.textContent).toContain('Report')
+      expect(container.querySelector('[data-session-data-file-link]')).toBeNull()
+      expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
+      expect(stageLocalPath).not.toHaveBeenCalled()
+      expect(onPreviewArtifact).not.toHaveBeenCalled()
+    }
+  )
+
   it('imports a file URL instead of previewing an unrelated managed artifact with the same name', async () => {
     const name = '测试报告.md'
     const sourcePath = `${notebookReference.dataRoot}/${name}`

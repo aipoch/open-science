@@ -40,7 +40,7 @@ export const SessionDataFileLink = ({
   const [busy, setBusy] = useState<'import' | 'reveal'>()
   const stage = window.api.uploads?.stageLocalPath
   const [failure, setFailure] = useState<string>()
-  const name = path.split('/').at(-1)!
+  const name = path.split(/[\\/]/u).at(-1)!
   const canReveal =
     typeof window.api.localFs?.reveal === 'function' &&
     validateLocalPath(path, window.api.platform) === undefined
