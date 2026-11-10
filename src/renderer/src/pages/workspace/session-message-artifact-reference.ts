@@ -27,6 +27,29 @@ const getPathName = (path: string): string => path.split(/[\\/]/u).at(-1) ?? pat
 const normalizeFileReference = (reference: string): string =>
   decodeReference(reference.trim()).replace(/^\.\//u, '')
 
+// Only a current Notebook's data directory can turn an otherwise unresolved absolute link into
+// an import action. Main repeats containment against canonical paths before reading any bytes.
+const resolveSessionDataFileReference = (
+  reference: string | undefined,
+  dataRoot: string | undefined
+): string | undefined => {
+  if (!reference || !dataRoot) return undefined
+  const path = decodeReference(reference.trim())
+  const root = dataRoot.replace(/\/+$/u, '')
+  if (
+    !root.startsWith('/') ||
+    root.startsWith('//') ||
+    !path.startsWith(`${root}/`) ||
+    path.split('/').some((segment) => segment === '..') ||
+    // eslint-disable-next-line no-control-regex
+    /[\\\u0000-\u001f]/u.test(path) ||
+    path.endsWith('/')
+  ) {
+    return undefined
+  }
+  return path
+}
+
 const resolveMessageArtifactReference = (
   reference: string | undefined,
   artifacts: readonly MessageArtifact[]
@@ -326,6 +349,7 @@ export {
   normalizeSessionArtifactImages,
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,
-  resolveMessageArtifactReference
+  resolveMessageArtifactReference,
+  resolveSessionDataFileReference
 }
 export type { MessageArtifact }

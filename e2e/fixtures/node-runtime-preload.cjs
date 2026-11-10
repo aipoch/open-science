@@ -7,6 +7,18 @@ if (!root) throw new Error('The Node runtime fixture requires an isolated source
 if (process.versions.electron) {
   const { app } = require('electron')
   if (app.isPackaged) throw new Error('Source fixture cannot run packaged.')
+  if (process.env.OPEN_SCIENCE_E2E_NATIVE_FILE_REVEAL_PROBE === '1') {
+    // Install before application startup can bind shell methods. No native file manager or
+    // default application is launched by this opt-in source acceptance probe.
+    const { shell } = require('electron')
+    const probe = { revealed: [], opened: [] }
+    globalThis[Symbol.for('open-science.e2e.native-file-reveal')] = probe
+    shell.showItemInFolder = (path) => probe.revealed.push(path)
+    shell.openPath = async (path) => {
+      probe.opened.push(path)
+      return ''
+    }
+  }
   if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
     const { BrowserWindow, dialog } = require('electron')
     BrowserWindow.prototype.show = () => {}

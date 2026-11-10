@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -595,6 +595,40 @@ describe('upload command owner', () => {
     } finally {
       await client.$disconnect()
     }
+  })
+
+  it('imports only ordinary files inside the linked Notebook session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-upload-'))
+    temporaryRoots.push(root)
+    const data = join(root, 'notebooks', 'project-1', 'session-1', 'data')
+    await mkdir(data, { recursive: true })
+    const name = '研究报告.md'
+    const source = join(data, name)
+    await writeFile(source, '# 研究报告')
+    const other = join(root, 'notebooks', 'project-1', 'other', 'data')
+    await mkdir(other, { recursive: true })
+    await writeFile(join(other, name), 'other')
+    await symlink(other, join(data, 'linked'), 'junction')
+
+    const repository = new UploadRepository(root)
+    const owner = createUploadCommandOwner(repository)
+    const caller = createCaller(new ApplicationCallerLeaseRegistry(), 1)
+    const stage = (path: string): ReturnType<typeof owner.stageLocalPath> =>
+      owner.stageLocalPath(
+        invocationFor(caller, [
+          {
+            sourcePath: path,
+            name,
+            transferId: 'from-chat',
+            projectId: 'project-1',
+            notebookSessionId: 'session-1'
+          }
+        ])
+      )
+    await expect(stage(join(other, name))).rejects.toThrow('outside this Notebook')
+    await expect(stage(join(data, 'linked', name))).rejects.toThrow('outside this Notebook')
+    const result = await stage(source)
+    await expect(readFile(result.path, 'utf8')).resolves.toBe('# 研究报告')
   })
 
   it.each([0, 2])('rejects standalone publication returning %i attachments', async (count) => {

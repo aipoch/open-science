@@ -6,7 +6,6 @@ import {
   type AppendUploadTransferRequest,
   type BeginUploadTransferRequest,
   type DeleteUploadRequest,
-  type StageLocalUploadRequest,
   type UploadTransferProgress,
   type UploadTransferRequest,
   type UploadTransferStatus,
@@ -15,7 +14,7 @@ import {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { isDataRootMissing } from '../storage/path-presence'
 import { ContentRepository } from '../storage/content-repository'
-import { ActiveTransferOwner } from './active-transfer-owner'
+import { ActiveTransferOwner, type LocalFileStagingRequest } from './active-transfer-owner'
 import { LegacyRecoveryOwner, type LegacyUploadUpgradeOptions } from './legacy-recovery-owner'
 import { ManagedUploadResolver, type ResolvedManagedUpload } from './managed-upload-resolver'
 import {
@@ -103,7 +102,7 @@ class UploadRepository {
   }
 
   async stageLocalFile(
-    request: StageLocalUploadRequest,
+    request: LocalFileStagingRequest,
     onProgress?: (progress: UploadTransferProgress) => void
   ): Promise<UploadedAttachment> {
     return this.transferOwner.stageLocalFile(request, onProgress)

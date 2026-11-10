@@ -13,8 +13,10 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 
 import { ArtifactPreview } from './artifact-preview'
+import { SessionDataFileLink } from './SessionDataFileLink'
 import {
   getArtifactName,
   getArtifactPreviewFormat,
@@ -27,6 +29,7 @@ import { useNearViewport } from './previews/useNearViewport'
 import {
   createSessionArtifactReferenceNormalizer,
   resolveMessageArtifactReference,
+  resolveSessionDataFileReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
 
@@ -34,6 +37,7 @@ type SessionMessageMarkdownProps = {
   content: string
   isAnimating?: boolean
   artifacts: MessageArtifact[]
+  notebookReference?: NotebookSessionReference
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal: (artifact: MessageArtifact) => void
 }
@@ -42,7 +46,7 @@ type SessionMessageMarkdownProps = {
 // changing Artifact metadata and preview handlers through that boundary without reparsing the text.
 const SessionArtifactContext = createContext<Pick<
   SessionMessageMarkdownProps,
-  'artifacts' | 'onPreviewArtifact' | 'onPreviewArtifactModal'
+  'artifacts' | 'notebookReference' | 'onPreviewArtifact' | 'onPreviewArtifactModal'
 > | null>(null)
 
 type SessionArtifactImageProps = {
@@ -263,6 +267,7 @@ const SessionMessageMarkdown = memo(
     content,
     isAnimating = false,
     artifacts,
+    notebookReference,
     onPreviewArtifact,
     onPreviewArtifactModal
   }: SessionMessageMarkdownProps): React.JSX.Element => {
@@ -283,9 +288,26 @@ const SessionMessageMarkdown = memo(
         }: SessionMessageLinkComponentProps) {
           const context = useContext(SessionArtifactContext)
           if (!context) return null
-          const { artifacts, onPreviewArtifact } = context
+          const { artifacts, notebookReference, onPreviewArtifact } = context
           const artifact = resolveMessageArtifactReference(href, artifacts)
           if (!artifact || artifact.kind !== 'managed-file') {
+            const dataFile = resolveSessionDataFileReference(href, notebookReference?.dataRoot)
+            if (dataFile && notebookReference) {
+              return (
+                <SessionDataFileLink
+                  key={JSON.stringify([
+                    notebookReference.projectId,
+                    notebookReference.sessionId,
+                    dataFile
+                  ])}
+                  path={dataFile}
+                  notebook={notebookReference}
+                  className={className}
+                >
+                  {children}
+                </SessionDataFileLink>
+              )
+            }
             return (
               <SessionMessageLink
                 href={href}
@@ -349,8 +371,13 @@ const SessionMessageMarkdown = memo(
       []
     )
     const artifactContext = useMemo(
-      () => ({ artifacts, onPreviewArtifact, onPreviewArtifactModal }),
-      [artifacts, onPreviewArtifact, onPreviewArtifactModal]
+      () => ({
+        artifacts,
+        notebookReference,
+        onPreviewArtifact,
+        onPreviewArtifactModal
+      }),
+      [artifacts, notebookReference, onPreviewArtifact, onPreviewArtifactModal]
     )
 
     return (

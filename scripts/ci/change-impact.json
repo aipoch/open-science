@@ -470,6 +470,7 @@
         "e2e/workspace-conversation.spec.ts",
         "e2e/workspace-files.spec.ts",
         "e2e/markdown-publication-policy.spec.ts",
+        "e2e/session-data-file-links.spec.ts",
         "e2e/office-spreadsheet-search.spec.ts",
         "e2e/fixtures/pptx.ts"
       ],

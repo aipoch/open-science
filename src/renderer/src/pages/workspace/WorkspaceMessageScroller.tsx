@@ -1903,6 +1903,7 @@ const WorkspaceMessageScrollerImpl = ({
                       ? 'pt-2'
                       : undefined,
                     projectId: currentProjectId,
+                    notebookReference,
                     isPackageSession: Boolean(activeSession?.packageOrigin),
                     deletedDiscussionSourceId: activeSession?.deletedDiscussionSourceId,
                     onPreviewArtifact,
@@ -2516,6 +2517,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.notebookReference ? resolveProjectId(previous.notebookReference) : undefined) ===
     (next.notebookReference ? resolveProjectId(next.notebookReference) : undefined) &&
   previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
+  previous.notebookReference?.dataRoot === next.notebookReference?.dataRoot &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 
 const WorkspaceMessageScroller = memo((props: WorkspaceMessageScrollerProps) => {

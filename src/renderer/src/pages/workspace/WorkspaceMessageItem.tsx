@@ -32,6 +32,7 @@ import type { AcpTurnTokenUsage } from '../../../../shared/acp-usage-contract'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { resolvePdfPreparationScope } from '../../../../shared/pdf-preparation-scope'
 import type {
   LiteratureReference,
@@ -134,6 +135,7 @@ type ReviewerCorrectionState = 'waiting' | 'responding' | 'completed' | 'failed'
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   projectId?: string
+  notebookReference?: NotebookSessionReference
   isPackageSession?: boolean
   deletedDiscussionSourceId?: string
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -1321,6 +1323,7 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   projectId,
+  notebookReference,
   isPackageSession = false,
   deletedDiscussionSourceId,
   onPreviewArtifact,
@@ -1956,6 +1959,7 @@ const WorkspaceMessageItemImpl = ({
                       content={assistantPresentation.content}
                       isAnimating={isAssistantPresenting}
                       artifacts={artifacts}
+                      notebookReference={notebookReference}
                       onPreviewArtifact={onPreviewArtifact}
                       onPreviewArtifactModal={onPreviewArtifactModal}
                     />
@@ -1965,6 +1969,7 @@ const WorkspaceMessageItemImpl = ({
                     content={assistantPresentation.content}
                     isAnimating={isAssistantPresenting}
                     artifacts={artifacts}
+                    notebookReference={notebookReference}
                     onPreviewArtifact={onPreviewArtifact}
                     onPreviewArtifactModal={onPreviewArtifactModal}
                   />
@@ -2081,6 +2086,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.projectId === next.projectId &&
+  previous.notebookReference === next.notebookReference &&
   previous.deletedDiscussionSourceId === next.deletedDiscussionSourceId &&
   (previous.isPackageSession ?? false) === (next.isPackageSession ?? false) &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
