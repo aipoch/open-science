@@ -15,6 +15,7 @@ import {
   selectProjectSessionReviewSnapshot,
   useReviewStore
 } from '@/stores/review-store'
+import { workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -32,7 +33,9 @@ import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/
 
 const LibraryPreview = lazy(() => import('./LibraryPreview'))
 const MarketplacePreview = lazy(() =>
-  import('../../home/UseCaseCarousel').then((module) => ({ default: module.UseCaseCarousel }))
+  import('../../marketplace/SharingMarketplacePage').then((module) => ({
+    default: module.SharingMarketplacePage
+  }))
 )
 const SessionReplayPreview = lazy(() =>
   import('../SessionReplayPreview').then((module) => ({ default: module.SessionReplayPreview }))
@@ -362,8 +365,9 @@ export const PreviewToolContent = ({
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <MarketplacePreview
             key={activeProjectId ?? 'no-active-project'}
-            variant="marketplace"
-            compact
+            embedded
+            skillDetailRequest={item.skillDetailRequest}
+            previewScope={workbenchPreviewGuardScope(activeProjectId, item.id)}
           />
         </div>
       </Suspense>

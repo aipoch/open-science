@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SpecialistMarketplace } from './SpecialistMarketplace'
-import { resetMarketplaceStoreForTests } from '../../stores/marketplace-store'
+import { SpecialistMarketplace, type SpecialistMarketplaceView } from './SpecialistMarketplace'
+import { resetMarketplaceStoreForTests, useMarketplaceStore } from '../../stores/marketplace-store'
 import { useSpecialistStore } from '../../stores/specialist-store'
 import type { MarketplaceSnapshot } from '../../../../shared/specialist-marketplace'
 import type { SpecialistListItem } from '../../../../shared/specialist'
@@ -14,6 +14,24 @@ import type { SpecialistListItem } from '../../../../shared/specialist'
 
 let container: HTMLDivElement
 let root: Root
+
+const openFilter = async (): Promise<void> => {
+  await act(async () => {
+    fireEvent.keyDown(container.querySelector('[aria-label="Filter Marketplace Specialists"]')!, {
+      key: 'Enter'
+    })
+  })
+}
+const filterOption = (label: string): HTMLElement =>
+  Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((option) =>
+    option.textContent?.startsWith(label)
+  )!
+const selectFilter = async (label: string): Promise<void> => {
+  await openFilter()
+  await act(async () => {
+    fireEvent.click(filterOption(label))
+  })
+}
 
 const deferred = <Value,>(): {
   promise: Promise<Value>
@@ -83,6 +101,7 @@ const release = {
 }
 
 beforeEach(() => {
+  HTMLElement.prototype.scrollIntoView = vi.fn()
   // The Marketplace snapshot is module-level store state shared across renders; each case starts
   // from a pristine store so view-entry behavior (loading vs instant stale content) is hermetic.
   resetMarketplaceStoreForTests()
@@ -166,15 +185,11 @@ describe('Specialist Marketplace settings', () => {
       root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={onNavigate} />)
     })
 
-    expect(container.querySelector('h2')?.textContent).toBe('Marketplace')
-    expect(container.textContent).toContain(
-      'Browse and install Specialists from configured sources.'
-    )
-    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(container.querySelector('h2')?.textContent).toBe('Specialists')
+    expect(container.querySelector('[role="tablist"]')).not.toBeNull()
     expect(container.textContent).toContain('Example Specialist')
-    expect(container.textContent).toContain('Example Publisher / v1.0.0')
-    expect(container.textContent).toContain('Author: Example Author')
-    expect(container.textContent).toContain('Community')
+    expect(container.textContent).toContain('Example Publisher')
+    expect(container.textContent).not.toContain('Author: Example Author')
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
 
     const listing = Array.from(container.querySelectorAll('button')).find((button) =>
@@ -193,7 +208,79 @@ describe('Specialist Marketplace settings', () => {
     })
   })
 
-  it('filters Marketplace cards with trust and update chips', async () => {
+  it('starts a card installation once with default and required capabilities', async () => {
+    const onNavigate = vi.fn()
+    const prepared =
+      deferred<Awaited<ReturnType<typeof window.api.specialist.prepareMarketplaceInstall>>>()
+    window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue({
+      ...release,
+      defaultSkillIds: ['analysis'],
+      defaultConnectorIds: ['optional'],
+      connectors: [
+        { id: 'required', displayName: 'Required', required: true },
+        { id: 'optional', displayName: 'Optional', required: false }
+      ]
+    })
+    window.api.specialist.prepareMarketplaceInstall = vi.fn().mockReturnValue(prepared.promise)
+    window.api.specialist.installMarketplace = vi.fn().mockResolvedValue({
+      status: 'installed',
+      specialist: { id: 'example-specialist' }
+    })
+    await act(async () =>
+      root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={onNavigate} />)
+    )
+    const card = container.querySelector('li.resource-marketplace-card')!
+    const button = [...card.querySelectorAll('button')].find(
+      (item) => item.textContent === 'Install'
+    )!
+    expect(
+      [...card.querySelectorAll('button')].some((item) => item.textContent === 'View details')
+    ).toBe(true)
+    await act(async () => fireEvent.click(button))
+    const requestedView: SpecialistMarketplaceView = onNavigate.mock.calls[0][0]
+    expect(requestedView).toMatchObject({ kind: 'marketplace-release', installRequested: true })
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <SpecialistMarketplace view={requestedView} onNavigate={onNavigate} />
+        </StrictMode>
+      )
+    )
+    expect(window.api.specialist.prepareMarketplaceInstall).toHaveBeenCalledExactlyOnceWith({
+      sourceId: 'github-example',
+      specialistId: 'example-specialist',
+      version: '1.0.0',
+      selectedSkillIds: ['analysis'],
+      selectedConnectorIds: ['optional', 'required']
+    })
+    expect(container.textContent).toContain('Installing…')
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <SpecialistMarketplace view={requestedView} onNavigate={onNavigate} />
+        </StrictMode>
+      )
+    )
+    expect(window.api.specialist.prepareMarketplaceInstall).toHaveBeenCalledTimes(1)
+    window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
+      ...snapshot,
+      specialists: [{ ...snapshot.specialists[0], installedVersion: '1.0.0' }]
+    })
+    await act(async () =>
+      prepared.resolve({
+        release,
+        package: { candidateToken: 'card-candidate', diagnostics: [], installable: true }
+      } as Awaited<ReturnType<typeof window.api.specialist.prepareMarketplaceInstall>>)
+    )
+    expect(window.api.specialist.installMarketplace).toHaveBeenCalledExactlyOnceWith({
+      candidateToken: 'card-candidate',
+      skillConflictResolutions: []
+    })
+    expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'list' })
+    expect(useMarketplaceStore.getState().snapshot?.specialists[0].installedVersion).toBe('1.0.0')
+  })
+
+  it('filters Marketplace cards with trust and update filters', async () => {
     window.api.specialist.listMarketplace = vi.fn().mockResolvedValue({
       sources: [
         snapshot.sources[0],
@@ -231,61 +318,41 @@ describe('Specialist Marketplace settings', () => {
       root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
     })
 
-    // Cards render as a responsive grid, and chip counts cover the whole catalog rather than
-    // the current search result.
     expect(container.querySelector('ul.grid')).not.toBeNull()
-    const chip = (label: string): HTMLButtonElement =>
-      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="group"] button')).find(
-        (button) => button.textContent?.includes(label)
-      )!
-    expect(chip('All').textContent).toContain('2')
-    expect(chip('Official').textContent).toContain('1')
-    expect(chip('Community').textContent).toContain('1')
-    expect(chip('Updates available').textContent).toContain('1')
-    expect(chip('All').getAttribute('aria-pressed')).toBe('true')
+    await openFilter()
+    expect(filterOption('All').textContent).toContain('2')
+    expect(filterOption('Official').textContent).toContain('1')
+    expect(filterOption('Community').textContent).toContain('1')
+    expect(filterOption('Updates available').textContent).toContain('1')
+    await act(async () => {
+      fireEvent.click(filterOption('All'))
+    })
     expect(container.textContent).toContain('Example Specialist')
     expect(container.textContent).toContain('Official Specialist')
     expect(container.textContent).toContain('Update available')
 
-    await act(async () => {
-      fireEvent.click(chip('Official'))
-    })
-    expect(chip('Official').getAttribute('aria-pressed')).toBe('true')
+    await selectFilter('Official')
     expect(container.textContent).not.toContain('Example Specialist')
     expect(container.textContent).toContain('Official Specialist')
 
-    await act(async () => {
-      fireEvent.click(chip('Updates available'))
-    })
+    await selectFilter('Updates available')
     expect(container.textContent).not.toContain('Example Specialist')
     expect(container.textContent).toContain('Official Specialist')
 
-    await act(async () => {
-      fireEvent.click(chip('All'))
-    })
+    await selectFilter('All')
     expect(container.textContent).toContain('Example Specialist')
     expect(container.textContent).toContain('Official Specialist')
   })
 
-  it('offers a way back when a filter leaves no Specialists, and hides the empty updates chip', async () => {
+  it('offers a way back when a filter leaves no Specialists, and hides the empty updates option', async () => {
     await act(async () => {
       root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
     })
 
-    // Nothing installed and nothing outdated: the updates chip would always be empty, so the
-    // catalog stays without it.
-    expect(
-      Array.from(container.querySelectorAll('[role="group"] button')).some((button) =>
-        button.textContent?.includes('Updates available')
-      )
-    ).toBe(false)
-
+    await openFilter()
+    expect(filterOption('Updates available')).toBeUndefined()
     await act(async () => {
-      fireEvent.click(
-        Array.from(container.querySelectorAll('[role="group"] button')).find((button) =>
-          button.textContent?.includes('Official')
-        )!
-      )
+      fireEvent.click(filterOption('Official'))
     })
     expect(container.textContent).toContain('No Specialists match this filter.')
     expect(container.textContent).not.toContain('Example Specialist')
@@ -311,9 +378,7 @@ describe('Specialist Marketplace settings', () => {
       root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
     })
 
-    const refreshButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Refresh Marketplace"]'
-    )
+    const refreshButton = container.querySelector<HTMLButtonElement>('[aria-label="Refresh"]')
     await act(async () => {
       fireEvent.click(refreshButton!)
       await Promise.resolve()
@@ -397,26 +462,37 @@ describe('Specialist Marketplace settings', () => {
       )
     })
 
-    const input = container.querySelector<HTMLInputElement>('#marketplace-repository')!
-    fireEvent.change(input, { target: { value: 'https://github.com/example/marketplace' } })
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('#marketplace-repository')).toBeNull()
+    expect(container.textContent).toContain('Example Specialist')
     await act(async () => {
       fireEvent.click(
-        Array.from(container.querySelectorAll('button')).find((button) =>
-          button.textContent?.includes('Inspect source')
+        Array.from(dialog.querySelectorAll('button')).find(
+          (button) => button.textContent === 'Add source'
         )!
       )
     })
-
-    expect(container.textContent).toContain('Signing key fingerprint')
-    expect(container.textContent).toContain('a'.repeat(64))
-
+    const input = dialog.querySelector<HTMLInputElement>('#marketplace-repository')!
+    expect(document.activeElement).toBe(input)
     await act(async () => {
-      fireEvent.click(
-        Array.from(container.querySelectorAll('button')).find((button) =>
-          button.textContent?.includes('Trust and add source')
-        )!
-      )
+      fireEvent.change(input, { target: { value: 'https://github.com/example/marketplace' } })
+      fireEvent.submit(dialog.querySelector('form')!)
     })
+    expect(dialog.textContent).toContain('Signing key fingerprint')
+    expect(dialog.textContent).toContain('a'.repeat(64))
+    await act(async () => {
+      fireEvent.change(input, {
+        target: { value: 'https://github.com/example/marketplace/tree/main' }
+      })
+    })
+    expect(dialog.textContent).not.toContain('Trust and add source')
+    expect(window.api.specialist.cancelMarketplaceCandidate).toHaveBeenCalledWith({
+      candidateToken: 'candidate'
+    })
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!))
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!))
+    expect(dialog.querySelector('form')).toBeNull()
+    expect(document.activeElement?.textContent).toBe('Add source')
     expect(window.api.specialist.addMarketplaceSource).toHaveBeenCalledWith({
       candidateToken: 'candidate'
     })
@@ -450,7 +526,7 @@ describe('Specialist Marketplace settings', () => {
       )
     })
 
-    const remove = container.querySelector<HTMLButtonElement>(
+    const remove = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Remove Example Marketplace"]'
     )
     expect(remove?.getAttribute('data-state')).toBe('closed')
@@ -491,7 +567,7 @@ describe('Specialist Marketplace settings', () => {
     expect(container.textContent).toContain('Installed')
     fireEvent.click(
       Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent?.trim() === 'Manage'
+        (button) => button.textContent?.trim() === 'View details'
       )!
     )
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'example-specialist' })
@@ -526,6 +602,7 @@ describe('Specialist Marketplace settings', () => {
       )
     })
 
+    expect(window.api.specialist.prepareMarketplaceInstall).not.toHaveBeenCalled()
     expect(container.textContent).toContain('0 of 1 included')
     expect(container.textContent).toContain('Publisher: Example Publisher')
     expect(container.textContent).toContain('Author: Example Author')
@@ -560,15 +637,18 @@ describe('Specialist Marketplace settings', () => {
         <SpecialistMarketplace view={{ kind: 'marketplace-sources' }} onNavigate={vi.fn()} />
       )
     })
-    const input = container.querySelector<HTMLInputElement>('#marketplace-repository')!
-    fireEvent.change(input, { target: { value: 'https://github.com/example/marketplace' } })
-    const findButton = (label: string): HTMLButtonElement =>
-      Array.from(container.querySelectorAll('button')).find((item) =>
-        item.textContent?.includes(label)
-      )!
-    expect(findButton('Inspect source').disabled).toBe(true)
-    // "Trust and add source" only renders after a successful inspection, which the disabled
-    // Inspect control makes unreachable in this surface.
+    expect(
+      [
+        ...container.querySelectorAll<HTMLButtonElement>('li.resource-marketplace-card button')
+      ].find((button) => button.textContent === 'Install')?.disabled
+    ).toBe(true)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('#marketplace-repository')).toBeNull()
+    expect(
+      Array.from(dialog.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Add source'
+      )?.disabled
+    ).toBe(true)
 
     await act(async () => {
       root.render(
@@ -648,72 +728,78 @@ describe('Specialist Marketplace settings', () => {
     expect(container.textContent).toContain('Example Specialist')
   })
 
-  it('pauses an update only when replacing local changes needs confirmation', async () => {
-    const onNavigate = vi.fn()
-    window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue(release)
-    window.api.specialist.prepareMarketplaceInstall = vi.fn().mockResolvedValue({
-      release: {},
-      package: {
-        candidateToken: 'update-candidate',
-        diagnostics: [],
-        installable: true,
-        overwrite: {
-          id: 'example-specialist',
-          target: 'custom',
-          currentVersion: '1.0.0',
-          incomingVersion: '2.0.0',
-          modifiedSinceImport: true,
-          hasImportBaseline: true
-        }
-      }
-    })
-    window.api.specialist.installMarketplace = vi.fn().mockResolvedValue({
-      status: 'installed',
-      specialist: { id: 'example-specialist' }
-    })
-
-    await act(async () => {
-      root.render(
-        <SpecialistMarketplace
-          view={{
-            kind: 'marketplace-release',
-            sourceId: 'github-example',
+  it.each([false, true])(
+    'preserves update confirmation with card installation %s',
+    async (installRequested) => {
+      const onNavigate = vi.fn()
+      window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue(release)
+      window.api.specialist.prepareMarketplaceInstall = vi.fn().mockResolvedValue({
+        release: {},
+        package: {
+          candidateToken: 'update-candidate',
+          diagnostics: [],
+          installable: true,
+          overwrite: {
             id: 'example-specialist',
-            version: '2.0.0',
-            installedVersion: '1.0.0',
-            updateAvailable: true
-          }}
-          onNavigate={onNavigate}
-        />
-      )
-    })
-    await act(async () => {
-      fireEvent.click(
-        Array.from(container.querySelectorAll('button')).find((button) =>
-          button.textContent?.includes('Update Specialist')
-        )!
-      )
-    })
-    expect(window.api.specialist.installMarketplace).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('Package verified')
-    expect(container.textContent).toContain('Resolve the items below')
-    expect(container.textContent).toContain('Update from v1.0.0 to v2.0.0')
-    expect(container.textContent).toContain('Local changes')
-    expect(container.textContent).not.toContain('Back to Marketplace')
-    await act(async () => {
-      fireEvent.click(
-        Array.from(container.querySelectorAll('button')).find((button) =>
-          button.textContent?.includes('Replace local changes')
-        )!
-      )
-    })
-    expect(window.api.specialist.installMarketplace).toHaveBeenCalledWith({
-      candidateToken: 'update-candidate',
-      confirmOverwrite: true,
-      skillConflictResolutions: []
-    })
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
-  })
+            target: 'custom',
+            currentVersion: '1.0.0',
+            incomingVersion: '2.0.0',
+            modifiedSinceImport: true,
+            hasImportBaseline: true
+          }
+        }
+      })
+      window.api.specialist.installMarketplace = vi.fn().mockResolvedValue({
+        status: 'installed',
+        specialist: { id: 'example-specialist' }
+      })
+
+      await act(async () => {
+        root.render(
+          <SpecialistMarketplace
+            view={{
+              kind: 'marketplace-release',
+              sourceId: 'github-example',
+              id: 'example-specialist',
+              version: '2.0.0',
+              installedVersion: '1.0.0',
+              updateAvailable: true,
+              installRequested
+            }}
+            onNavigate={onNavigate}
+          />
+        )
+      })
+      if (!installRequested) {
+        await act(async () => {
+          fireEvent.click(
+            [...container.querySelectorAll('button')].find((button) =>
+              button.textContent?.includes('Update Specialist')
+            )!
+          )
+        })
+      }
+      expect(window.api.specialist.installMarketplace).not.toHaveBeenCalled()
+      expect(container.textContent).toContain('Package verified')
+      expect(container.textContent).toContain('Resolve the items below')
+      expect(container.textContent).toContain('Update from v1.0.0 to v2.0.0')
+      expect(container.textContent).toContain('Local changes')
+      expect(container.textContent).not.toContain('Back to Marketplace')
+      await act(async () => {
+        fireEvent.click(
+          Array.from(container.querySelectorAll('button')).find((button) =>
+            button.textContent?.includes('Replace local changes')
+          )!
+        )
+      })
+      expect(window.api.specialist.installMarketplace).toHaveBeenCalledWith({
+        candidateToken: 'update-candidate',
+        confirmOverwrite: true,
+        skillConflictResolutions: []
+      })
+      expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+    }
+  )
 
   it('discards a prepared candidate when capability selections change', async () => {
     const releaseWithSkill = {

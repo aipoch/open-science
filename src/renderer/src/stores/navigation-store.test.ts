@@ -81,6 +81,13 @@ beforeEach(() => {
 })
 
 describe('navigation store', () => {
+  it('defaults Resource Center to Skills while preserving explicit Use Cases navigation', () => {
+    useNavigationStore.getState().openResourceCenter('user')
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({ resource: 'skills' })
+    useNavigationStore.getState().openMarketplace('user')
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({ resource: 'marketplace' })
+  })
+
   it('returns the latest marketplace filters to the same project without changing its conversation', () => {
     useSessionStore.getState().hydrateSessions([createSession({ id: 'selected' })])
     useSessionStore.setState({ selectedSessionId: 'selected' })

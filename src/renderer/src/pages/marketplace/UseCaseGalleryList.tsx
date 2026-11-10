@@ -1,23 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  GalleryHorizontalEnd,
   ArrowUpRight,
   Check,
   LoaderCircle,
   RefreshCw,
-  Search,
-  GalleryHorizontalEnd
+  Search
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
+import { ResourceCatalogHeader, ResourceCatalogToolbar } from './ResourceCenterModeTabs'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { cn } from '@/lib/utils'
 import type { MarketplaceListSnapshot } from '@/stores/navigation-store'
@@ -178,50 +172,24 @@ export const UseCaseGalleryList = ({
   }
 
   return (
-    <div className="@container flex min-h-0 flex-1 flex-col">
-      <header
-        className={cn('shrink-0', compact ? 'border-b border-border' : 'px-4 pb-3 pt-6 sm:px-6')}
-      >
-        <div
-          className={cn(
-            compact ? 'flex flex-col' : 'flex flex-wrap items-center justify-between gap-4'
-          )}
-        >
-          <div
-            className={cn(
-              'min-w-0',
-              compact ? 'flex h-12 items-center justify-between gap-2 px-4' : 'flex-1'
-            )}
-          >
-            <h2
-              className={cn(
-                'flex min-w-0 items-center gap-2 font-semibold text-text-000',
-                compact ? 'text-sm' : 'text-xl tracking-tight @min-[640px]:text-2xl'
-              )}
-            >
-              <GalleryHorizontalEnd
-                className={cn('shrink-0', compact ? 'size-4 text-muted-foreground' : 'size-5')}
-                aria-hidden="true"
-              />
-              {compact ? (
-                <Select defaultValue="use-cases">
-                  <SelectTrigger
-                    aria-label={t('Resource type')}
-                    className="-ml-1 h-8 w-auto min-w-0 gap-1 border-transparent bg-transparent px-1 font-semibold"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    <SelectItem value="use-cases">{t('Use Case Gallery')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                t('Use Case Gallery')
-              )}
-            </h2>
-            {onOpenMarketplace ? (
+    <div
+      className="@container flex min-h-0 flex-1 flex-col"
+      role="region"
+      aria-label={t('Use Cases')}
+      aria-description={t(
+        'Discover shared research examples and import them to start your own work.'
+      )}
+    >
+      <div className="shrink-0">
+        <ResourceCatalogHeader
+          className="static m-0"
+          icon={GalleryHorizontalEnd}
+          title={t('Use Cases')}
+          actions={
+            onOpenMarketplace ? (
               <Button
-                size="xs"
+                variant="outline"
+                size="sm"
                 onClick={() =>
                   onOpenMarketplace({
                     search,
@@ -233,67 +201,64 @@ export const UseCaseGalleryList = ({
                 aria-label={t('View in case library')}
                 title={t('View in case library')}
               >
-                {t('View in case library')}
                 <ArrowUpRight aria-hidden="true" />
+                {t('View in case library')}
               </Button>
-            ) : (
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t('Discover shared research examples and import them to start your own work.')}
-              </p>
-            )}
-          </div>
-          <div
-            className={cn(
-              'flex items-center gap-2',
-              compact ? 'mx-4 mb-2' : 'w-full @min-[640px]:w-auto'
-            )}
-          >
-            <div className={cn('relative min-w-0 flex-1', !compact && '@min-[640px]:w-64')}>
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-200"
-                aria-hidden="true"
-              />
-              <Input
-                className={cn('pl-9', compact ? 'h-8 text-xs' : 'bg-bg-200')}
-                aria-label={t('Search examples')}
-                placeholder={t('Search examples')}
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value)
-                  resetList()
-                }}
-              />
-            </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0"
-              aria-label={t('Refresh examples')}
-              title={t('Refresh examples')}
-              aria-busy={refreshing}
-              disabled={refreshing}
-              onClick={onRefresh}
-            >
-              {refreshCompletion !== null && !refreshing ? (
-                <Check className="size-4" aria-hidden="true" />
-              ) : (
-                <RefreshCw
-                  className={cn(
-                    'size-4',
-                    refreshing &&
-                      'animate-spin [animation-duration:600ms] motion-reduce:animate-none'
+            ) : undefined
+          }
+          toolbar={
+            <ResourceCatalogToolbar
+              search={
+                <div className="relative min-w-0">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    className="h-8 pl-8"
+                    aria-label={t('Search examples')}
+                    placeholder={t('Search examples')}
+                    value={search}
+                    onChange={(event) => {
+                      setSearch(event.target.value)
+                      resetList()
+                    }}
+                  />
+                </div>
+              }
+              trailing={
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  className="shrink-0"
+                  aria-label={t('Refresh examples')}
+                  title={t('Refresh examples')}
+                  aria-busy={refreshing}
+                  disabled={refreshing}
+                  onClick={onRefresh}
+                >
+                  {refreshCompletion !== null && !refreshing ? (
+                    <Check className="size-4" aria-hidden="true" />
+                  ) : (
+                    <RefreshCw
+                      className={cn(
+                        'size-4',
+                        refreshing &&
+                          'animate-spin [animation-duration:600ms] motion-reduce:animate-none'
+                      )}
+                      aria-hidden="true"
+                    />
                   )}
-                  aria-hidden="true"
-                />
-              )}
-            </Button>
-          </div>
-        </div>
+                </Button>
+              }
+            />
+          }
+        />
         {/* Keep categories discoverable without taking vertical space from the case list. */}
         <div
           role="group"
           aria-label={t('Category')}
-          className={cn('flex overflow-x-auto', compact ? 'gap-x-5 px-4' : 'mt-6 gap-2 pb-1')}
+          className="flex gap-2 overflow-x-auto px-5 pt-4"
         >
           {[['', t('All categories')], ...categories].map(([key, label]) => (
             <button
@@ -301,17 +266,10 @@ export const UseCaseGalleryList = ({
               type="button"
               aria-pressed={activeCategory === key}
               className={cn(
-                'shrink-0 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                compact
-                  ? 'h-9 border-b-2 border-transparent text-xs hover:text-foreground'
-                  : 'rounded-md px-3 py-1.5 text-sm',
+                'shrink-0 cursor-pointer whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                 activeCategory === key
-                  ? compact
-                    ? 'border-primary font-medium text-foreground'
-                    : 'bg-bg-300 font-medium text-text-000'
-                  : compact
-                    ? 'text-muted-foreground'
-                    : 'text-text-200 hover:bg-bg-200 hover:text-text-000'
+                  ? 'bg-muted font-medium text-foreground'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
               onClick={() => {
                 setCategory(key)
@@ -322,10 +280,10 @@ export const UseCaseGalleryList = ({
             </button>
           ))}
         </div>
-      </header>
+      </div>
       <div
         ref={viewportRef}
-        className={cn('min-h-0 flex-1 overflow-y-auto p-4', !compact && 'sm:p-6')}
+        className={cn('min-h-0 flex-1 overflow-y-auto p-4', !compact && 'p-5')}
         data-use-case-browser-scroll
       >
         {/* Keep sparse search results at the same card width as a full row, including narrow panels. */}

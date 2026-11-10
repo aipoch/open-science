@@ -387,12 +387,13 @@ const createProjectLibraryPreviewItem = (
   ...(libraryScopeRequest ? { libraryScopeRequest } : {})
 })
 
-const createProjectMarketplacePreviewItem = (): PreviewToolItem => ({
+const createProjectMarketplacePreviewItem = (skillId?: string): PreviewToolItem => ({
   id: PROJECT_MARKETPLACE_PREVIEW_ID,
   sessionId: '__project_marketplace__',
   type: 'tool',
   toolKind: 'marketplace',
-  title: 'Resource center'
+  title: 'Resource center',
+  ...(skillId ? { skillDetailRequest: { skillId } } : {})
 })
 
 const createProjectComputePreviewItem = (): PreviewToolItem => ({

@@ -178,7 +178,7 @@ describe('SkillDetailView', () => {
         await Promise.resolve()
       })
 
-      const badge = localContainer.querySelector('span.rounded-full')
+      const badge = localContainer.querySelector('[data-slot="resource-detail-source"]')
       expect(badge?.textContent).toBe(label)
 
       act(() => localRoot.unmount())

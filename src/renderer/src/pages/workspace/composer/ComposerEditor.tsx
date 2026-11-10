@@ -11,7 +11,10 @@ import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { constrainMessageClipboard, readMessageClipboard } from './message-clipboard'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import {
+  createProjectMarketplacePreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
 import { createPreviewFileItemFromMention } from '../preview-file-item'
@@ -603,6 +606,16 @@ export const ComposerEditor = ({
       if (!pastedTextId) return
       event.preventDefault()
       onLocatePastedText?.(pastedTextId)
+      return
+    }
+    const skillChip = (event.target as HTMLElement).closest?.('[data-mention-type="skill"]')
+    if (root && skillChip && root.contains(skillChip)) {
+      const skillId = skillChip.getAttribute('data-skill-id')
+      if (!skillId) return
+      event.preventDefault()
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createProjectMarketplacePreviewItem(skillId))
       return
     }
     const sessionChip = (event.target as HTMLElement).closest?.(

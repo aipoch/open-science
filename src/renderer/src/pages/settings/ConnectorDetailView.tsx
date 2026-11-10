@@ -1,3 +1,4 @@
+import { ResourceDetailHeader } from '../marketplace/ResourceDetailLayout'
 import { connectorDescription, connectorToolDescription } from './connector-copy'
 import { ErrorNotice } from '@/components/error-notice'
 import { ArrowUpRight, ChevronRight } from 'lucide-react'
@@ -167,26 +168,11 @@ const ConnectorDetailView = ({
 
   return (
     <div className="p-5">
-      {/* Header: icon + name + Featured badge, then description below. */}
-      <div className="flex items-start gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <ConnectorGlyph size={28} />
-          <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-base font-semibold text-foreground">
-              {detail.displayName}
-            </h1>
-            <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              {t('Featured')}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {detail.description ? (
-        <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">
-          {connectorDescription(detail, t)}
-        </p>
-      ) : null}
+      <ResourceDetailHeader
+        identity={<ConnectorGlyph size={40} />}
+        name={detail.displayName}
+        description={detail.description ? connectorDescription(detail, t) : undefined}
+      />
 
       {id === 'literature' && onManageCredentials ? (
         <Button

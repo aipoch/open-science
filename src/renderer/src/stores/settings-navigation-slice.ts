@@ -7,6 +7,7 @@ import {
   type SettingsRoute
 } from '@/lib/settings-navigation'
 import { rememberSettingsReturnFocusTarget } from './settings-return-focus'
+import { useNavigationStore, type ResourceCenterIntent } from './navigation-store'
 
 export type SettingsNavigationIntent = Readonly<{
   requestId: number
@@ -63,20 +64,38 @@ export const createSettingsNavigationSlice = ({
     })
   }
 
+  const openResource = (route: SettingsRoute, intent: ResourceCenterIntent): void => {
+    if (getState().isSettingsOpen) {
+      // The mounted Settings owner must resolve its dirty/busy leave guard first.
+      openTo(route)
+      return
+    }
+    setState({ pendingSettingsIntent: undefined })
+    useNavigationStore.getState().openResourceCenter('user', intent)
+  }
+
   return {
     openSettings: () => {
       rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
       setState({ isSettingsOpen: true })
     },
 
-    openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
+    openSettingsToPanel: (panel) => {
+      if (panel === 'skills' || panel === 'specialists' || panel === 'connectors') {
+        openResource(settingsPanelRoute(panel), { resource: panel })
+        return
+      }
+      openTo(settingsPanelRoute(panel))
+    },
     openSettingsToProvider: (providerId, model) =>
       openTo({
         panel: 'model',
         view: { kind: 'list', recoveryProviderId: providerId, recoveryModel: model }
       }),
-    openSettingsToConnector: (id) =>
-      openTo({ panel: 'connectors', view: { kind: 'list', recoveryConnectorId: id } }),
+    openSettingsToConnector: (id) => {
+      const view = { kind: 'list' as const, recoveryConnectorId: id }
+      openResource({ panel: 'connectors', view }, { resource: 'connectors', view })
+    },
     openSettingsToClassification: () =>
       openTo({ panel: 'model', view: { kind: 'classification' } }),
     openSettingsToOpenAlex: () =>
@@ -88,11 +107,19 @@ export const createSettingsNavigationSlice = ({
         pendingSettingsIntent: undefined
       }),
 
-    openSettingsToSkill: (skillId) =>
-      openTo({ panel: 'skills', view: { kind: 'detail', id: skillId } }),
+    openSettingsToSkill: (skillId) => {
+      openResource(
+        { panel: 'skills', view: { kind: 'detail', id: skillId } },
+        { resource: 'skills', skillId }
+      )
+    },
 
-    openSettingsToSpecialist: (specialistId) =>
-      openTo({ panel: 'specialists', view: { kind: 'edit', id: specialistId } }),
+    openSettingsToSpecialist: (specialistId) => {
+      openResource(
+        { panel: 'specialists', view: { kind: 'edit', id: specialistId } },
+        { resource: 'specialists', specialistId }
+      )
+    },
 
     openSettingsToCompute: () => openTo({ panel: 'compute', view: { kind: 'list' } }),
 

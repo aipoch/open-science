@@ -1452,3 +1452,45 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     }
   }
 }
+
+/* Installed resources share a responsive grid and a stable management footer. */
+@layer components {
+  .resource-installed-grid {
+    @apply grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3;
+  }
+
+  .resource-installed-card {
+    @apply relative flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground transition-colors hover:border-foreground/20 focus-within:border-foreground/20 motion-reduce:transition-none;
+  }
+
+  .resource-installed-card[data-selecting='true']
+    [data-slot='resource-row-content']
+    > :first-child {
+    @apply pr-6;
+  }
+
+  .resource-card-selection {
+    @apply absolute inset-0 z-10 cursor-pointer rounded-[inherit] focus-within:ring-2 focus-within:ring-ring has-[:disabled]:cursor-default;
+  }
+
+  .resource-installed-actions {
+    @apply mt-auto flex min-h-11 flex-wrap items-center gap-2 border-t border-border pt-3;
+  }
+}
+
+/* Card identities use the catalog size without changing avatars in other surfaces. */
+@layer utilities {
+  .resource-installed-card[data-selected='true'],
+  .resource-marketplace-card[data-selected='true'] {
+    @apply border-primary bg-primary/5 ring-1 ring-primary/20;
+  }
+
+  .resource-installed-card [data-appearance-state],
+  .resource-installed-card [data-avatar-size] {
+    @apply size-10;
+  }
+
+  .resource-installed-card [data-specialist-icon] {
+    @apply size-5;
+  }
+}

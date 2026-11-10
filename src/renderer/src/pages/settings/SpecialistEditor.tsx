@@ -30,6 +30,7 @@ import {
   type SpecialistFieldError
 } from '@aipoch/specialists'
 import { type SpecialistView } from '../../../../shared/specialist'
+import { SettingsEditorActions } from './SettingsLayout'
 import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, SPECIALIST_COLOR_OPTIONS } from './specialist-icons'
 import { APP_ICON_GROUPS, APP_ICONS, DEFAULT_APP_ICON } from '@/components/app-icons/registry'
@@ -654,8 +655,7 @@ const SpecialistEditor = ({
           </section>
         ) : null}
 
-        {/* Footer actions */}
-        <div className="mt-6 flex justify-end gap-2">
+        <SettingsEditorActions busy={isSaving || isReloading} className="mt-6 flex justify-end">
           <Button
             type="button"
             variant="ghost"
@@ -664,14 +664,15 @@ const SpecialistEditor = ({
               clearDraft()
               onCancel()
             }}
-            disabled={isSaving}
+            disabled={isSaving || isReloading}
           >
             {editSpecialist?.setupPending ? t('Configure later') : t('Cancel')}
           </Button>
           <Button
             type="button"
             onClick={() => void handleSave()}
-            disabled={isSaving || !form.name.trim() || hasConflict}
+            disabled={isSaving || isReloading || !form.name.trim() || hasConflict}
+            aria-busy={isSaving}
           >
             {isSaving
               ? isEdit
@@ -681,7 +682,7 @@ const SpecialistEditor = ({
                 ? t('Save changes')
                 : t('Create specialist')}
           </Button>
-        </div>
+        </SettingsEditorActions>
       </div>
     </div>
   )
