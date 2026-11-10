@@ -2364,7 +2364,52 @@ const deleteProject = (request) => {
   return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
+const publishImportedPool = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const project = dirname(pool.path)
+  const marker = join(project, shadow.projectMarker)
+  if (!entryExists(marker)) {
+    writeExclusiveFile(marker, '')
+    syncDirectoryPath(project)
+  } else if (!lstatSync(marker).isFile() || lstatSync(marker).size !== 0) {
+    throw new Error('Invalid evidence pool activation marker.')
+  }
+  let bytes = blobPoolBytes(pool)
+  if (!Number.isSafeInteger(request.maxEvidenceBytes) || bytes > request.maxEvidenceBytes)
+    throw new Error('Imported execution evidence exceeds the project budget.')
+  const additions = []
+  for (const entry of readdirSync('.', { withFileTypes: true })) {
+    if (!entry.isFile() || !BLOB_NAME.test(entry.name))
+      throw new Error('Invalid imported pool object.')
+    const size = lstatSync(entry.name).size
+    const target = join(pool.path, entry.name)
+    if (entryExists(target)) {
+      if (!lstatSync(target).isFile()) throw new Error('Invalid existing evidence pool object.')
+      verifyBlob(target, size, entry.name.slice(7))
+    } else {
+      bytes += size
+      if (bytes > request.maxEvidenceBytes)
+        throw new Error('Imported execution evidence exceeds the project budget.')
+      verifyBlob(entry.name, size, entry.name.slice(7))
+      additions.push(entry.name)
+    }
+  }
+  for (const name of additions) {
+    const fd = openSync(name, constants.O_RDWR | constants.O_NOFOLLOW)
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(name, join(pool.path, name))
+  }
+  syncDirectoryPath(pool.path)
+  return { ok: true, poolPublished: true }
+}
+
 const operationHandlers = new Map([
+  ['publish-imported-pool', publishImportedPool],
   ['compact-history', compactHistory],
   ['begin', begin],
   ['ensure-capture', ensureCapture],

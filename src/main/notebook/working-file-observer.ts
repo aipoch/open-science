@@ -274,6 +274,11 @@ type EvidenceWorkerEnsureProjectRequest = {
   projectName: string
 }
 type EvidenceWorkerRequest =
+  | (EvidenceWorkerBlobPoolBinding & {
+      operation: 'publish-imported-pool'
+      expectedRootIdentity: FileIdentity
+      maxEvidenceBytes: number
+    })
   | EvidenceWorkerBeginRequest
   | EvidenceWorkerHistoryRequest
   | EvidenceWorkerEnsureCaptureRequest
@@ -313,6 +318,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
+  | { ok: true; poolPublished: true }
   | { ok: true; maintainedFiles: number }
 
 type ActiveEvidenceCapture = {
@@ -709,8 +715,37 @@ const runSerializedEvidenceWorker = async (
   } finally {
     if (request.operation === 'delete-project') ensuredEvidenceProjects.clear()
     release()
-    if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
+    void tail.then(() => {
+      if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
+    })
   }
+}
+
+// The import journal owns fresh lane directories. Only the project worker may add
+// verified content to an existing pool; rollback must never claim that directory.
+export async function publishImportedEvidencePool(
+  storageRoot: string,
+  projectId: string,
+  stagedRoot: string,
+  signal?: AbortSignal
+): Promise<void> {
+  await ensureWorkingFileEvidenceProject(storageRoot, projectId)
+  const source = await secureEvidenceRoot(storageRoot, stagedRoot, false)
+  const prefix = EXECUTION_FILE_EVIDENCE_DIR + '/' + projectId + '/blobs'
+  const pool = await secureEvidenceRoot(storageRoot, join(storageRoot, prefix))
+  await runSerializedEvidenceWorker(
+    runEvidenceWorker,
+    source.path,
+    {
+      operation: 'publish-imported-pool',
+      expectedRootIdentity: source.identity,
+      blobRoot: pool.path,
+      expectedBlobRootIdentity: pool.identity,
+      blobStorageKeyPrefix: prefix,
+      maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes
+    },
+    signal
+  )
 }
 
 const evidenceReaders = new Map<string, number>()

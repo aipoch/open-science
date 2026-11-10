@@ -274,7 +274,7 @@ export const sessionPackageManifestSchema = z
     format: z.literal('open-science-session'),
     // content-dedupe lets logical inventory entries share one content-addressed object path.
     requiredFeatures: z
-      .array(z.enum(['literature', 'ro-crate', 'content-dedupe', 'research-film']))
+      .array(z.enum(['literature', 'ro-crate', 'content-dedupe', 'research-film', 'log-evidence']))
       .max(4)
       .optional(),
     schemaVersion: z.literal(1),
@@ -322,6 +322,7 @@ export const sessionPackageReceiptSchema = packageOriginSchema
     schemaVersion: z.literal(1),
     projectId: identity,
     sessionId: identity,
+    nativeLogOrigin: z.literal(true).optional(),
     // Source graph/runtime IDs are opaque (including composite separators); only remapped
     // destination IDs become filesystem identities and must satisfy the path-safe schema.
     identities: z.record(z.string().min(1).max(4096), identity),

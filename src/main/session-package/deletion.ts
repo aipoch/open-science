@@ -85,6 +85,13 @@ export class SessionPackageDeletion {
     add('artifacts', session.projectId, session.id)
     for (const file of receipt.files) {
       const [kind, projectId, sessionId] = file.localStorageKey.split('/')
+      if (
+        kind === 'execution-file-evidence' &&
+        projectId === session.projectId &&
+        sessionId === 'blobs' &&
+        /^execution-file-evidence\/[^/]+\/blobs\/sha256-[a-f0-9]{64}$/u.test(file.localStorageKey)
+      )
+        continue
       add(kind, projectId, sessionId)
     }
     // Retained upstream origins may have no included file bytes, but have their own read-only
@@ -374,8 +381,14 @@ export class SessionPackageDeletion {
         )
           continue
         if (!project.isDirectory()) return undefined
-        for (const sessionId of await readdir(join(notebooks, project.name)))
+        for (const sessionId of await readdir(join(notebooks, project.name))) {
+          if (
+            rootName === 'execution-file-evidence' &&
+            ['blobs', '.shadow-evidence-v1'].includes(sessionId)
+          )
+            continue
           if (project.name !== journal.projectId || !ownedScopes.has(sessionId)) return undefined
+        }
       }
     }
     const removals: Removal[] = []

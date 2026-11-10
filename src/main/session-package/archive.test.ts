@@ -13,11 +13,90 @@ import { SessionPackageService } from './service'
 import { withPackageTransfer } from './transfer'
 import { withFileIoPacing } from '../file-io-pacing'
 import { packageInventoryEntrySchema } from '../../shared/session-package'
+import {
+  compactLaneViews,
+  indexPortableEvidence,
+  portableEvidenceSchema,
+  remapLogEvidence,
+  type PortableEvidence
+} from './log-evidence'
 import { executionEvidenceSchema, readExecutionEvidence } from './execution-evidence'
 import * as storageUsage from '../storage/usage'
 import { sha256 } from '../artifacts/provenance-canonical'
 
 const directories: string[] = []
+
+it('verifies source sidecars and view identities before mapping log evidence', () => {
+  const path = 'data/result.csv'
+  const checksum = sha256('data')
+  const rows: [string, string, number][] = [[path, checksum, 4]]
+  const view = sha256(JSON.stringify(rows))
+  const prefix = 'execution-file-evidence/project/session'
+  const original = {
+    version: 1,
+    activityId: 'run',
+    evidenceId: 'evidence-run',
+    activityKind: 'notebook-run',
+    relations: [
+      {
+        generation: {
+          generationId: 'gen',
+          relativePath: path,
+          checksum,
+          sizeBytes: 4,
+          contentStorageKey: prefix + '/activity-run/blobs/sha256-' + checksum,
+          capturedAt: 'now'
+        }
+      }
+    ]
+  }
+  const hash = sha256(JSON.stringify(original, null, 2) + '\n')
+  const detail = JSON.stringify({ ...original, relations: [{ generation: [0, 0, 'gen', 'now'] }] })
+  const lane: PortableEvidence[number] = {
+    key: prefix,
+    views: { [view]: rows },
+    records: [{ version: 1, activityId: 'run', checksum: hash, pre: view, post: view, detail }]
+  }
+  expect(indexPortableEvidence([lane]).size).toBe(1)
+  const bad = structuredClone(lane)
+  bad.records[0].checksum = '0'.repeat(64)
+  expect(() => indexPortableEvidence([bad])).toThrow()
+  expect(() =>
+    indexPortableEvidence([
+      { ...lane, views: { [view]: { base: view, removed: [], changed: [] } } }
+    ])
+  ).toThrow()
+  expect(
+    portableEvidenceSchema.safeParse([
+      { ...lane, views: { [view]: [[...rows[0], 'generation-id']] } }
+    ]).success
+  ).toBe(false)
+  expect(() =>
+    remapLogEvidence(
+      [lane],
+      { run: 'next', 'evidence-run': 'next-evidence', gen: 'next-gen' },
+      sha256('manifest'),
+      (value) => value,
+      () => prefix
+    )
+  ).toThrow()
+  const other = structuredClone(lane)
+  const secondRows = Array.from({ length: 10 }, (_, i): [string, string, number] => [
+    'data/' + i,
+    checksum,
+    4
+  ])
+  const second = sha256(JSON.stringify(secondRows))
+  const thirdRows = secondRows.slice(1)
+  const third = sha256(JSON.stringify(thirdRows))
+  other.views = { [second]: secondRows, [third]: thirdRows }
+  other.records[0] = { ...other.records[0], pre: second, post: third }
+  expect(compactLaneViews(other).views[third]).toEqual({
+    base: second,
+    changed: [],
+    removed: ['data/0']
+  })
+})
 
 it('rejects cumulative expansion before creating an entry that exceeds free space', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'science-package-expansion-space-'))

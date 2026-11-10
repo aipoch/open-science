@@ -549,6 +549,10 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
       // A user-selected installation ancestor may belong to an unrelated ESM project.
       await writeFile(join(packageRoot, 'package.json'), '{"type":"module"}')
       await writeFile(join(source, 'package.json'), '{"type":"commonjs"}')
+      await copyFile(
+        join(workerPath, '..', 'file_evidence_codec.mjs'),
+        join(notebook, 'file_evidence_codec.mjs')
+      )
       await copyFile(workerPath, join(notebook, 'file_evidence_worker.js'))
       await copyFile(
         join(workerPath, '..', 'file_evidence_shadow.js'),
