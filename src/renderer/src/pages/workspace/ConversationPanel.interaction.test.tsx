@@ -9713,6 +9713,29 @@ describe('ConversationPanel unified failure notices', () => {
     expect(action('report')).not.toBeNull()
   })
 
+  it('opens Model settings from a localized image annotation failure without clearing the draft', async () => {
+    const { i18next } = await import('../../i18n')
+    try {
+      await act(async () => i18next.changeLanguage('zh-Hans'))
+      const error = i18next.t(
+        "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+      )
+      const openSettingsToPanel = vi.fn()
+      useSettingsStore.setState({ openSettingsToPanel })
+      renderPanel({
+        view: { actionError: error },
+        composer: { view: { error, doc: docFromText('Keep my annotation draft') } }
+      })
+      const settings = action('open-provider-settings')
+      expect(settings?.textContent).toContain(i18next.t('Model settings'))
+      act(() => settings!.click())
+      expect(openSettingsToPanel).toHaveBeenCalledWith('model')
+      expect(getComposerEditor().textContent).toBe('Keep my annotation draft')
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
+  })
+
   it.each([
     ['configuration/vision-model', 'open-provider-settings', 'model'],
     ['configuration/codex-cli', 'open-agent-settings', 'agent'],
