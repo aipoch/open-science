@@ -140,7 +140,7 @@ export function ResearchVideoButton({
         ? blocked
         : undefined
   }
-  const settingsButton = modelSettingsAvailable ? (
+  const renderSettingsButton = (label?: string): React.JSX.Element => (
     <button
       type="button"
       className="cursor-pointer rounded-sm text-left text-primary underline underline-offset-2 focus-visible:outline-ring"
@@ -149,9 +149,9 @@ export function ResearchVideoButton({
         setOpen(false)
       }}
     >
-      {blocked}
+      {label}
     </button>
-  ) : undefined
+  )
   const desktop = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true'
   useEffect(() => {
     live.current = true
@@ -475,13 +475,15 @@ export function ResearchVideoButton({
                   inline
                   level="warning"
                   content={
-                    settingsButton && status.preflightError === missingModel ? (
+                    modelSettingsAvailable && status.preflightError === missingModel ? (
                       <Trans
                         i18nKey="<chooseModel>Select a model</chooseModel> in Settings before generating a research film."
-                        components={{ chooseModel: settingsButton }}
+                        components={{ chooseModel: renderSettingsButton() }}
                       />
+                    ) : modelSettingsAvailable ? (
+                      renderSettingsButton(blocked)
                     ) : (
-                      (settingsButton ?? blocked)
+                      blocked
                     )
                   }
                 />

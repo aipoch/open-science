@@ -403,6 +403,9 @@ it('opens model settings from the missing-model warning without starting a film'
   })
   status = { preflightError: 'Select a model in Settings before generating a research film.' }
   await click('生成研究短片')
+  expect(document.querySelector('[data-notice-level="warning"]')?.textContent).toBe(
+    '生成研究短片前，请在设置中选择模型。'
+  )
   await click('选择模型')
   await act(async () => vi.advanceTimersByTimeAsync(1))
   expect(document.querySelector('[role="dialog"]')).toBeNull()
