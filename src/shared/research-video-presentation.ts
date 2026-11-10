@@ -1,3 +1,4 @@
+import type { LocalModelSnapshot } from './local-models'
 import { z } from 'zod'
 import { sanitizeExportFilename } from './conversation-export'
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
@@ -12,6 +13,10 @@ export const researchVideoPresentationRequestSchema = z
 export type ResearchVideoPresentationRequest = z.infer<
   typeof researchVideoPresentationRequestSchema
 >
+export const researchVideoStartRequestSchema = researchVideoPresentationRequestSchema.extend({
+  installNarration: z.boolean().optional()
+})
+export type ResearchVideoStartRequest = z.infer<typeof researchVideoStartRequestSchema>
 export const researchVideoStatusRequestSchema = researchVideoPresentationRequestSchema.extend({
   checkReadiness: z.boolean().optional()
 })
@@ -24,6 +29,7 @@ export type ResearchVideoPresentation = {
   duration: number
 }
 export type ResearchVideoPresentationStatus = {
+  narrationDownload?: LocalModelSnapshot
   generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
   progress?: ResearchVideoProgress
   result?: ResearchVideoPresentation

@@ -5,13 +5,15 @@ import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   researchVideoPresentationRequestSchema,
   researchVideoStatusRequestSchema,
+  researchVideoStartRequestSchema,
+  type ResearchVideoStartRequest,
   type ResearchVideoStatusRequest,
   type ResearchVideoPresentationRequest,
   type ResearchVideoPresentationStatus
 } from '../../shared/research-video-presentation'
 import type { ResearchVideoStep } from '@aipoch/research-film/contracts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { LocalModelOwner } from '../local-models/owner'
+import type { LocalModelOwner, createLocalModelOwner } from '../local-models/owner'
 import type { createResearchVideoGenerator } from '@aipoch/research-film'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 import { generateResearchFilm, type ResearchFilmAuthor } from '@aipoch/research-film'
@@ -28,7 +30,7 @@ import {
 
 export type ResearchVideoPresentationOwner = {
   status(request: ResearchVideoStatusRequest): Promise<ResearchVideoPresentationStatus>
-  start(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
+  start(request: ResearchVideoStartRequest): Promise<ResearchVideoPresentationStatus>
   remove(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
   cancel(request: ResearchVideoPresentationRequest): void
   close(): Promise<void>
@@ -39,7 +41,10 @@ export function createResearchVideoPresentationOwner(options: {
   dataRoot(): string
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
   checkReadiness?: () => Promise<void>
-  models: LocalModelOwner
+  models: Pick<
+    ReturnType<typeof createLocalModelOwner>,
+    'acquireUse' | 'getSnapshot' | 'installForUse'
+  >
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
@@ -51,6 +56,7 @@ export function createResearchVideoPresentationOwner(options: {
   ) => Promise<ResearchVideoPresentationStatus['result']>
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
+  let installingKey: string | undefined
   let removing = false
   let closed = false
   let operationRevision = 0
@@ -87,6 +93,7 @@ export function createResearchVideoPresentationOwner(options: {
     const session = await options.loadSession(request.projectId, request.sessionId)
     const block = researchVideoGenerationBlock(session, request)
     if (block === 'unavailable') return { generationBlock: block }
+    if (installingKey === key) state.narrationDownload = await options.models.getSnapshot()
     if (block) state.generationBlock = block
     if (checkReadiness && !block && !active && !closed && !removing) {
       const probe = Symbol()
@@ -128,6 +135,7 @@ export function createResearchVideoPresentationOwner(options: {
     request: ResearchVideoPresentationRequest,
     key: string,
     signal: AbortSignal,
+    installNarration: boolean,
     prepared: () => void
   ): Promise<void> => {
     const startedAt = Date.now()
@@ -169,10 +177,28 @@ export function createResearchVideoPresentationOwner(options: {
       await stageResearchVideoSessionImages(source, session, options.dataRoot(), undefined, signal)
       await options.checkReadiness?.()
       signal.throwIfAborted()
+      if (installNarration) {
+        installingKey = key
+        states.delete(key)
+        prepared()
+        const snapshot = await options.models.installForUse(signal)
+        signal.throwIfAborted()
+        if (snapshot.availability !== 'ready' || snapshot.updateAvailable) {
+          states.set(key, { error: 'Narration installation did not finish. Retry to continue.' })
+          return
+        }
+        const scope = { ...request, branchId: source.provenance.branchId }
+        const latest = await options.loadSession(scope.projectId, scope.sessionId)
+        if (researchVideoGenerationBlock(latest, scope))
+          throw new Error('Research session is unavailable.')
+        await options.checkReadiness?.()
+        signal.throwIfAborted()
+      }
       lease = await options.models.acquireUse()
       signal.throwIfAborted()
       const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
       if (!model) throw new Error('Install the research narration model before generating.')
+      installingKey = undefined
       admitted = true
       report({ phase: 'preparing' })
       prepared()
@@ -235,6 +261,7 @@ export function createResearchVideoPresentationOwner(options: {
             }
       )
     } finally {
+      installingKey = undefined
       prepared()
       measure('finished')
       log.info('generation timing', {
@@ -250,10 +277,9 @@ export function createResearchVideoPresentationOwner(options: {
   }
   return {
     status,
-    async start(
-      rawRequest: ResearchVideoPresentationRequest
-    ): Promise<ResearchVideoPresentationStatus> {
-      const request = researchVideoPresentationRequestSchema.parse(rawRequest),
+    async start(rawRequest: ResearchVideoStartRequest): Promise<ResearchVideoPresentationStatus> {
+      const { installNarration = false, ...request } =
+          researchVideoStartRequestSchema.parse(rawRequest),
         key = scopeKey(request)
       if (removing) throw new Error('Research film deletion is in progress.')
       if (closed) throw new Error('Research presentation generation is closed.')
@@ -272,9 +298,15 @@ export function createResearchVideoPresentationOwner(options: {
       })
       const operation = options.lifecycle
         ? options.lifecycle.run(request.projectId, request.sessionId, (signal) =>
-            run(request, key, AbortSignal.any([signal, controller.signal]), finishPreparation)
+            run(
+              request,
+              key,
+              AbortSignal.any([signal, controller.signal]),
+              installNarration,
+              finishPreparation
+            )
           )
-        : run(request, key, controller.signal, finishPreparation)
+        : run(request, key, controller.signal, installNarration, finishPreparation)
       const done = operation
         .catch((error) => {
           states.set(key, { error: error instanceof Error ? error.message : String(error) })
