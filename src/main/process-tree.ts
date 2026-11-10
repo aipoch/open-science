@@ -1233,6 +1233,7 @@ const scanForOwnedDescendants = async (
           // Permission denied: check if this process could be a setuid descendant
           const pid = parseInt(pidStr, 10)
           if (couldBeDescendant(pid)) {
+            console.error('proof: unreadable candidate', pid, code, startTimeMap.get(pid), spawnedAt, leaderBirthToken)
             hadRelevantPermissionDenied = true
           }
         }
@@ -1356,10 +1357,10 @@ const terminateRecordedPosixTree = async (
   captureTrackedDescendants(tracker, initial)
   const beforeTerm = await collectPosixProcessTable()
   if (!beforeTerm.complete || !samePosixIdentity(leader, beforeTerm.processes.get(leader.pid)))
-    return { reaped: false }
+    throw new Error('proof: terminate stage 17')
   captureTrackedDescendants(tracker, beforeTerm)
   const identities = [...tracker.identities.values()]
-  if (identities.some(({ birthToken }) => birthToken === undefined)) return { reaped: false }
+  if (identities.some(({ birthToken }) => birthToken === undefined)) throw new Error('proof: terminate stage 20')
   const descendants = identities.filter(({ pid }) => pid !== leader.pid)
   const exactProcessesGone = (): boolean =>
     !isProcessGroupAlive(leader.pid) &&
@@ -1368,12 +1369,12 @@ const terminateRecordedPosixTree = async (
       return current ? !samePosixIdentity(identity, current) : !isProcessAlive(identity.pid)
     })
   const gracefulSignal = signal ?? 'SIGTERM'
-  if (!signalRecordedPosixGroup(leader, gracefulSignal)) return { reaped: false }
+  if (!signalRecordedPosixGroup(leader, gracefulSignal)) throw new Error('proof: terminate stage 29')
   signalRecordedPosixProcesses(descendants, gracefulSignal)
   if (await waitUntil(exactProcessesGone, TERMINATE_GRACE_MS)) return { reaped: true }
 
   const beforeForce = await collectPosixProcessTable()
-  if (!beforeForce.complete) return { reaped: false }
+  if (!beforeForce.complete) throw new Error('proof: terminate stage 34')
   const survivingLeader = beforeForce.processes.get(leader.pid)
   // A leaderless/reused group is not an ownership handle. Preserve the receipt instead of
   // escalating against a group that may now belong to an unrelated process epoch.
@@ -1384,12 +1385,12 @@ const terminateRecordedPosixTree = async (
       survivingLeader.pgid !== leader.pid ||
       survivingLeader.sid !== leader.pid)
   )
-    return { reaped: false }
+    throw new Error('proof: terminate stage 45')
   log?.error(
     `recorded process tree ${leader.pid} did not exit after ${gracefulSignal}; escalating exact identities to SIGKILL`
   )
   if (samePosixIdentity(leader, survivingLeader) && !signalRecordedPosixGroup(leader, 'SIGKILL'))
-    return { reaped: false }
+    throw new Error('proof: terminate stage 50')
   signalRecordedPosixProcesses(
     descendants.filter((identity) =>
       samePosixIdentity(identity, beforeForce.processes.get(identity.pid))
@@ -1421,11 +1422,11 @@ export const proveRecordedPosixLeaderGone = async (
   log?: ProcessTreeLogger,
   options?: { terminateLive?: boolean }
 ): Promise<PosixLeaderRecoveryOutcome> => {
-  if (process.platform !== 'linux' && process.platform !== 'darwin') return 'blocked'
-  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return 'blocked'
+  if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('proof: snapshot stage 82')
+  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) throw new Error('proof: snapshot stage 83')
   // Without a recorded birth token any pid match would be a guess, and pid absence alone cannot
   // rule out a descendant that outlived the leader. Retain the receipt instead.
-  if (leader.birthToken === undefined) return 'blocked'
+  if (leader.birthToken === undefined) throw new Error('proof: snapshot stage 86')
   const recorded: PosixProcessIdentity = {
     pid: leader.pid,
     ppid: 0,
@@ -1437,14 +1438,14 @@ export const proveRecordedPosixLeaderGone = async (
   }
   const snapshot = await collectPosixProcessTable()
   // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
-  if (!snapshot.complete) return 'blocked'
+  if (!snapshot.complete) throw new Error('proof: snapshot stage 98')
   if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
     // The leader pid is absent or reused by an unrelated process. This is cold recovery: the tree
     // disappeared outside of our control. Before declaring the tree gone, verify the owned group
     // (kill -0 against -pid) is also absent. If the group is still alive but the leader is gone,
     // the numeric group id may have been reused — never signal a group that cannot be tied back
     // to the recorded identity. (Mirrors notebook shell-ownership.)
-    if (isProcessGroupAlive(leader.pid)) return 'blocked'
+    if (isProcessGroupAlive(leader.pid)) throw new Error('proof: snapshot stage 105')
 
     // Leader and its original group are both gone. If we have an ownership marker, scan the process
     // table for any descendants that may have escaped to a new session but still carry the marker.
@@ -1463,9 +1464,9 @@ export const proveRecordedPosixLeaderGone = async (
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker, spawnedAt, leader.birthToken)
       // undefined means incomplete scan (permission denied for same-UID process, binding failed)
-      if (descendants === undefined) return 'blocked'
+      if (descendants === undefined) throw new Error('proof: snapshot stage 124')
       // Found descendants with marker → definitely blocked
-      if (descendants.length > 0) return 'blocked'
+      if (descendants.length > 0) throw new Error('proof: snapshot stage 126')
       // Complete same-UID scan with no marker found → sufficient proof per documented contract
     }
 
@@ -1473,21 +1474,21 @@ export const proveRecordedPosixLeaderGone = async (
     return 'gone'
   }
   // Admission checks may inspect retained historical evidence, but must never signal a live tree.
-  if (options?.terminateLive === false) return 'blocked'
+  if (options?.terminateLive === false) throw new Error('proof: snapshot stage 134')
   // The exact recorded leader is still alive. Before signaling, verify it is still a process
   // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group
   // id we recorded may have been reused by an unrelated group; fail closed in that case.
   const liveLeader = snapshot.processes.get(leader.pid)
   if (!liveLeader || liveLeader.pgid !== leader.pid) {
     // Leader exists but is no longer a group leader, or pgid was reused. Cannot safely signal.
-    return 'blocked'
+    throw new Error('proof: snapshot stage 141')
   }
   // Its detached group is still addressable by the persisted id, so terminate it and require
   // confirmed exit before releasing ownership.
   const result = await terminateRecordedPosixTree(recorded, snapshot, signal, log)
-  if (!result.reaped) return 'blocked'
+  if (!result.reaped) throw new Error('proof: snapshot stage 146')
   const confirmation = await collectPosixProcessTable()
-  if (!confirmation.complete || isProcessGroupAlive(leader.pid)) return 'blocked'
+  if (!confirmation.complete || isProcessGroupAlive(leader.pid)) throw new Error('proof: snapshot stage 148')
   // Leader and group are confirmed gone. Before returning 'gone', scan for escaped descendants
   // that may have daemonized into a new session before teardown but still carry the marker.
   // In the live-teardown path (we actively signaled the group), a clean marker scan after
@@ -1495,8 +1496,8 @@ export const proveRecordedPosixLeaderGone = async (
   // marked descendants remain visible.
   if (marker) {
     const descendants = await scanForOwnedDescendants(marker, spawnedAt, leader.birthToken)
-    if (descendants === undefined) return 'blocked' // incomplete scan
-    if (descendants.length > 0) return 'blocked' // found escaped descendants
+    if (descendants === undefined) throw new Error('proof: snapshot stage 156') // incomplete scan
+    if (descendants.length > 0) throw new Error('proof: snapshot stage 157') // found escaped descendants
     // Clean scan after live teardown: sufficient proof
   }
   // No marker or clean scan: leader confirmation as final check

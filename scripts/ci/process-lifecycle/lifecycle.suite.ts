@@ -365,8 +365,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     const name = recovery ? 'agent-recovery' : 'agent-stop'
     it(
       name,
-      () =>
-        scenario(name, async ({ root, observer }) => {
+      async () => {
+        const repetitions = recovery ? 120 : 1
+        for (let index = 0; index < repetitions; index++) {
+        await scenario(index === repetitions - 1 ? name : name + index, async ({ root, observer }) => {
           const descendant = await fixture(root, 'setInterval(() => {}, 1000)', 'descendant')
           const target = await fixture(
             root,
@@ -392,8 +394,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
           if (recovery) await new DelegatedProcessOwnership(root).recover(scope, true)
           else expect(await terminateProcessTree(child)).toMatchObject({ reaped: true })
           await observer.checkpoint('agent-tree-stopped')
-        }),
-      30000
+        })
+        }
+      },
+      240000
     )
   }
 
