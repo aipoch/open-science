@@ -2336,6 +2336,7 @@ const WorkspaceMessageScrollerImpl = ({
             <MessageScrollerButton
               ref={handleScrollToFirstMessageButtonRef}
               direction="start"
+              behavior="instant"
               onClick={() => {
                 const firstMessage = conversationItems.find((item) => item.type === 'message')
                 if (firstMessage?.type === 'message') {
