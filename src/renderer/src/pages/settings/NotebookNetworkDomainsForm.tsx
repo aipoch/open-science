@@ -150,7 +150,10 @@ const NotebookNetworkDomainsForm = ({
 
   return (
     <div className="space-y-6 p-5">
-      <section aria-label={t('Notebook network protection')}>
+      <section
+        aria-label={t('Notebook network protection')}
+        hidden={status.kind === 'ready' && window.api.platform !== 'win32'}
+      >
         <div className="rounded-xl border border-border bg-bg-10 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1 basis-60">

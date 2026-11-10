@@ -16,6 +16,10 @@ for (const mode of ['Relaxed', 'Strict'] as const) {
     const page = await app.configureFakeAgent()
     const settings = await openSettingsPage(page, 'Network')
     await settings.getByRole('button', { name: 'Manage access', exact: true }).click()
+    if (process.platform !== 'win32')
+      await expect(
+        settings.getByRole('region', { name: 'Notebook network protection', exact: true })
+      ).toBeHidden()
     if (mode === 'Strict')
       await settings.getByRole('radio', { name: 'Strict', exact: true }).click()
     const add = settings.getByRole('button', {
