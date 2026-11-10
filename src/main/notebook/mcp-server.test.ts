@@ -2182,7 +2182,7 @@ describe('bash_execute tool', () => {
     expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
     expect(tool?.description).toContain('earlier commands are never replayed')
     expect(tool?.description).toContain('resets state')
-    expect(tool?.description).toContain('idle reclamation (15 minutes')
+    expect(tool?.description).toContain('idle reclamation resets state')
   })
 
   it.each(['5.1', '7.6'] as const)(

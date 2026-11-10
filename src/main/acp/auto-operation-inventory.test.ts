@@ -176,7 +176,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: interpreter descriptions now explain idle reclamation and volatile variables.
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          'b39005e1a4aba3a936751982329fd0764eeba621a8ee47d0dcfc90bc9c0ea16f',
+          '40c4edee0775cde34095c02aee02764a465792fb657ed62a40b64dcf666b1718',
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
