@@ -11,6 +11,7 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 
 const ARTIFACT_REFERENCE_PATTERN = /^\{\{artifact:([^}\s]+)\}\}$/u
 const INTERNAL_ARTIFACT_REFERENCE_PREFIX = '/.open-science/artifact/'
+const INTERNAL_SESSION_DATA_REFERENCE_PREFIX = '/.open-science/notebook-data/'
 const EXTERNAL_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/iu
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-z]:[\\/]/iu
 
@@ -34,7 +35,12 @@ const resolveSessionDataFileReference = (
   dataRoot: string | undefined
 ): string | undefined => {
   if (!reference || !dataRoot) return undefined
-  const path = decodeReference(reference.trim())
+  const target = reference.trim()
+  const path = decodeReference(
+    target.startsWith(INTERNAL_SESSION_DATA_REFERENCE_PREFIX)
+      ? target.slice(INTERNAL_SESSION_DATA_REFERENCE_PREFIX.length)
+      : target
+  )
   const root = dataRoot.replace(/\/+$/u, '')
   if (
     !root.startsWith('/') ||
@@ -50,11 +56,28 @@ const resolveSessionDataFileReference = (
   return path
 }
 
+// Read the URL path without WHATWG URL normalization, which would erase dot segments before
+// containment checks. Only hostless POSIX file URLs participate; other URLs stay with the sanitizer.
+const resolveSessionDataFileUrlReference = (
+  reference: string,
+  dataRoot: string | undefined
+): string | undefined => {
+  if (!/^file:\/\/\/(?!\/)/iu.test(reference) || /[?#]/u.test(reference)) return undefined
+  try {
+    const path = reference.slice('file://'.length)
+    // Reject malformed encodings; the shared reference resolver performs the single decode.
+    decodeURIComponent(path)
+    return resolveSessionDataFileReference(path, dataRoot)
+  } catch {
+    return undefined
+  }
+}
+
 const resolveMessageArtifactReference = (
   reference: string | undefined,
   artifacts: readonly MessageArtifact[]
 ): MessageArtifact | undefined => {
-  if (!reference) return undefined
+  if (!reference || reference.startsWith(INTERNAL_SESSION_DATA_REFERENCE_PREFIX)) return undefined
 
   const normalizedReference = normalizeFileReference(reference)
   const artifactReference = normalizedReference.match(ARTIFACT_REFERENCE_PATTERN)?.[1]
@@ -175,7 +198,8 @@ const hasImageToken = (token: Token): boolean =>
 const transformTokenChildren = (
   token: Token,
   artifacts: readonly MessageArtifact[],
-  mode: ArtifactTransformMode
+  mode: ArtifactTransformMode,
+  dataRoot?: string
 ): string => {
   const children = getTokenChildren(token)
   if (children.length === 0) return token.raw
@@ -186,7 +210,7 @@ const transformTokenChildren = (
     const childStart = token.raw.indexOf(child.raw, cursor)
     if (childStart === -1) return token.raw
     output += token.raw.slice(cursor, childStart)
-    output += transformInlineToken(child, artifacts, mode)
+    output += transformInlineToken(child, artifacts, mode, dataRoot)
     cursor = childStart + child.raw.length
   }
   return output + token.raw.slice(cursor)
@@ -195,7 +219,8 @@ const transformTokenChildren = (
 const transformInlineToken = (
   token: Token,
   artifacts: readonly MessageArtifact[],
-  mode: ArtifactTransformMode
+  mode: ArtifactTransformMode,
+  dataRoot?: string
 ): string => {
   if (token.type === 'image') {
     return mode !== 'links'
@@ -214,24 +239,33 @@ const transformInlineToken = (
     // Keep any other linked image atomic so custom link and image buttons can never nest.
     if (hasImageToken(link)) return token.raw
 
-    const artifact = resolveMessageArtifactReference(link.href, artifacts)
-    if (artifact?.kind !== 'managed-file') return token.raw
-    const artifactRef = artifact.versionId ?? artifact.id
+    const dataFile = resolveSessionDataFileUrlReference(link.href, dataRoot)
+    // A file URL may identify the exact managed path even when fileUrl metadata is absent.
+    // Never allow the basename fallback for this lookup.
+    const artifact =
+      resolveMessageArtifactReference(link.href, artifacts) ??
+      (dataFile ? artifacts.find((candidate) => candidate.path === dataFile) : undefined)
+    if (artifact?.kind !== 'managed-file' && !dataFile) return token.raw
+    const target =
+      artifact?.kind === 'managed-file'
+        ? `${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifact.versionId ?? artifact.id)}`
+        : `${INTERNAL_SESSION_DATA_REFERENCE_PREFIX}${encodeURIComponent(dataFile!).replace(/\(/gu, '%28').replace(/\)/gu, '%29')}`
     const label = link.tokens.map((child) => child.raw).join('')
     const title = link.title ? ` ${JSON.stringify(link.title)}` : ''
-    return `[${label}](${INTERNAL_ARTIFACT_REFERENCE_PREFIX}${encodeURIComponent(artifactRef)}${title})`
+    return `[${label}](${target}${title})`
   }
 
-  return transformTokenChildren(token, artifacts, mode)
+  return transformTokenChildren(token, artifacts, mode, dataRoot)
 }
 
 const transformInlineMarkdown = (
   markdown: string,
   artifacts: readonly MessageArtifact[],
-  mode: ArtifactTransformMode
+  mode: ArtifactTransformMode,
+  dataRoot?: string
 ): string =>
   Lexer.lexInline(markdown)
-    .map((token) => transformInlineToken(token, artifacts, mode))
+    .map((token) => transformInlineToken(token, artifacts, mode, dataRoot))
     .join('')
 
 // Converts only images that resolve to a managed artifact attached to this message. Remote and
@@ -244,35 +278,40 @@ const normalizeSessionArtifactImages = (
     transformInlineMarkdown(markdown, artifacts, 'images')
   )
 
-// Rewrites only links already proven to reference a same-message managed artifact. Streamdown's
-// security sanitizer intentionally drops bare filenames, artifact tokens, and file URLs; an
-// internal root-relative target preserves the Markdown label while keeping the destination inert.
+// Streamdown drops bare filenames, artifact tokens, and file URLs. Managed artifacts use an inert
+// internal target; hostless Notebook data file URLs carry their validated absolute path under a
+// separate prefix so basename artifact matching cannot claim them. The data resolver repeats the
+// root check before rendering import confirmation. Unresolved URLs stay with the sanitizer.
 const normalizeSessionArtifactLinks = (
   content: string,
-  artifacts: readonly MessageArtifact[]
+  artifacts: readonly MessageArtifact[],
+  dataRoot?: string
 ): string =>
   transformMarkdownOutsideCode(content, (markdown) =>
-    transformInlineMarkdown(markdown, artifacts, 'links')
+    transformInlineMarkdown(markdown, artifacts, 'links', dataRoot)
   )
 
 const normalizeSessionArtifactReferences = (
   content: string,
-  artifacts: readonly MessageArtifact[]
+  artifacts: readonly MessageArtifact[],
+  dataRoot?: string
 ): string =>
   transformMarkdownOutsideCode(content, (markdown) =>
-    transformInlineMarkdown(markdown, artifacts, 'all')
+    transformInlineMarkdown(markdown, artifacts, 'all', dataRoot)
   )
 
 // Incremental `normalizeSessionArtifactReferences` for append-only streaming, mirroring
 // `createAgentMarkdownNormalizer`. The transform splits safely at any newline where the fence
 // tracker sits outside a fence (a closed fence also resets `fenceBlockquoteDepth` to its initial
 // state), so a growing message reprocesses only the tail past the last such boundary. Anything
-// else — edits, replacement, a new artifacts array — falls back to a full pass.
+// else — edits, replacement, a new artifacts array or Notebook data root — runs a full pass.
 const createSessionArtifactReferenceNormalizer = (): ((
   content: string,
-  artifacts: readonly MessageArtifact[]
+  artifacts: readonly MessageArtifact[],
+  dataRoot?: string
 ) => string) => {
   let cachedArtifacts: readonly MessageArtifact[] | null = null
+  let cachedDataRoot: string | undefined
   let cachedInput: string | null = null
   let cachedOutput = ''
   // Invariant: boundaryOutput === normalizeSessionArtifactReferences(cachedInput.slice(0, boundary), cachedArtifacts).
@@ -311,33 +350,44 @@ const createSessionArtifactReferenceNormalizer = (): ((
     }
   }
 
-  return (content, artifacts) => {
-    // Only managed-file artifacts can rewrite a reference; without one every token passes
-    // through untouched, so skip the lexing entirely.
-    if (!artifacts.some((artifact) => artifact.kind === 'managed-file')) return content
-    if (content === cachedInput && artifacts === cachedArtifacts) return cachedOutput
+  return (content, artifacts, dataRoot) => {
+    // Skip tokenization when neither managed artifacts nor Notebook file URLs can rewrite a link.
+    if (
+      !artifacts.some((artifact) => artifact.kind === 'managed-file') &&
+      (!dataRoot || !/file:/iu.test(content))
+    ) {
+      return content
+    }
+    if (content === cachedInput && artifacts === cachedArtifacts && dataRoot === cachedDataRoot) {
+      return cachedOutput
+    }
 
     const isAppend =
-      artifacts === cachedArtifacts && cachedInput !== null && content.startsWith(cachedInput)
+      artifacts === cachedArtifacts &&
+      dataRoot === cachedDataRoot &&
+      cachedInput !== null &&
+      content.startsWith(cachedInput)
     if (!isAppend) resetScan()
 
     const previousBoundary = boundary
     const output = isAppend
       ? boundaryOutput +
-        normalizeSessionArtifactReferences(content.slice(previousBoundary), artifacts)
-      : normalizeSessionArtifactReferences(content, artifacts)
+        normalizeSessionArtifactReferences(content.slice(previousBoundary), artifacts, dataRoot)
+      : normalizeSessionArtifactReferences(content, artifacts, dataRoot)
 
     const nextBoundary = advanceBoundary(content)
     if (nextBoundary > previousBoundary) {
       // Extend the cached prefix without reprocessing it; both split points are fence-closed.
       boundaryOutput += normalizeSessionArtifactReferences(
         content.slice(previousBoundary, nextBoundary),
-        artifacts
+        artifacts,
+        dataRoot
       )
       boundary = nextBoundary
     }
 
     cachedArtifacts = artifacts
+    cachedDataRoot = dataRoot
     cachedInput = content
     cachedOutput = output
     return output

@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import { copyFile, mkdir } from 'node:fs/promises'
+import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
 import { test } from './fixtures/electron-app'
@@ -36,9 +36,9 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
   const directory = getNotebookDataRoot(dataRoot, projectId, sessionId)
   await mkdir(directory, { recursive: true })
   const wordName = '研究报告.docx'
-  const markdownName = '研究笔记.md'
+  const markdownName = '测试报告.md'
   await copyFile(resolve('test/fixtures/docx-report.docx'), join(directory, wordName))
-  await copyFile(resolve('test/fixtures/docx-report.md'), join(directory, markdownName))
+  await writeFile(join(directory, markdownName), '预览测试成功\n', 'utf8')
   const session: PersistedChatSession = {
     id: sessionId,
     projectId,
@@ -51,7 +51,7 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
       {
         id: 'report-answer',
         role: 'agent',
-        content: `[${wordName}](${join(directory, wordName)})\n\n[${markdownName}](${join(directory, markdownName)})`,
+        content: `[${wordName}](${join(directory, wordName)})\n\n[打开报告](file://${join(directory, markdownName)})`,
         status: 'complete',
         eventIds: [],
         createdAt: 1,
@@ -115,17 +115,14 @@ test('asks before importing Notebook files and previews Chinese Word and Markdow
     ).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('chinese-word-body.png') })
 
-    await links.filter({ hasText: markdownName }).click()
+    await links.filter({ hasText: '打开报告' }).click()
     await expect(dialog).toBeVisible()
     expect(await uploadCount()).toBe(1)
     await dialog.getByRole('button', { name: 'Import and preview', exact: true }).click()
     await expect(dialog).toBeHidden()
     await expect.poll(uploadCount).toBe(2)
     await expect(page.getByRole('dialog', { name: 'Open external link?' })).toHaveCount(0)
-    await expect(page.getByRole('heading', { name: '神经信号研究报告', exact: true })).toBeVisible()
-    await expect(
-      page.getByText('本样例覆盖中文、长文本、表格、标题和列表的组合排版。', { exact: true })
-    ).toBeVisible()
+    await expect(page.getByText('预览测试成功', { exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('chinese-markdown-body.png') })
   } finally {
     await native.dispose()

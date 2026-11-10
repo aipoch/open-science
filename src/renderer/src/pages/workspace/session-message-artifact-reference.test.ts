@@ -6,6 +6,7 @@ import {
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,
   resolveMessageArtifactReference,
+  resolveSessionDataFileReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
 
@@ -334,5 +335,115 @@ describe('createSessionArtifactReferenceNormalizer', () => {
     const incremental = createSessionArtifactReferenceNormalizer()
     expect(incremental('', [createArtifact()])).toBe('')
     expectAppendStreamMatchesFull(['![Curve](sin_curve.png)', '\n\nDone.'])
+  })
+})
+
+describe('Notebook data file URL normalization', () => {
+  const dataRoot = '/Users/example/sessions/session-1/data'
+  const path = `${dataRoot}/测试报告.md`
+  const content = `[打开报告](file://${path})`
+  const internalReference = (value: string): string =>
+    `/.open-science/notebook-data/${encodeURIComponent(value).replace(/\(/gu, '%28').replace(/\)/gu, '%29')}`
+
+  it.each([`file://${path}`, `file://${encodeURI(path)}`])(
+    'normalizes the DEV #1179 hostless file URL before sanitization: %s',
+    (href) => {
+      expect(normalizeSessionArtifactReferences(`[打开报告](${href})`, [], dataRoot)).toBe(
+        `[打开报告](${internalReference(path)})`
+      )
+    }
+  )
+
+  it('preserves formatting, titles and Markdown-sensitive path characters', () => {
+    const href = `file://${dataRoot}/测试%20报告_(1)%23%3F%25.md`
+    expect(normalizeSessionArtifactReferences(`[**打开报告**](${href} "报告")`, [], dataRoot)).toBe(
+      `[**打开报告**](${internalReference(`${dataRoot}/测试 报告_(1)#?%.md`)} "报告")`
+    )
+  })
+
+  it('decodes file URL paths once, preserving encoded characters in real filenames', () => {
+    const href = `file://${dataRoot}/%252e%252e%252ftest.md`
+    expect(normalizeSessionArtifactReferences(`[Report](${href})`, [], dataRoot)).toBe(
+      `[Report](${internalReference(`${dataRoot}/%2e%2e%2ftest.md`)})`
+    )
+  })
+
+  it.each([
+    `file://remote${path}`,
+    `file://localhost${path}`,
+    `file:///${path}`,
+    `file://${dataRoot}-copy/测试报告.md`,
+    'file:///Users/example/sessions/session-2/data/测试报告.md',
+    `file://${dataRoot}/../private/测试报告.md`,
+    `file://${dataRoot}/%2e%2e/private/测试报告.md`,
+    `file://${dataRoot}/%5cprivate/测试报告.md`,
+    `file://${dataRoot}/%00测试报告.md`,
+    `file://${dataRoot}/%E0%A4%A.md`,
+    `file://${path}?download=1`,
+    `file://${path}#heading`,
+    `file://${dataRoot}/`
+  ])('leaves unsafe or unsupported URLs to the sanitizer: %s', (href) => {
+    const markdown = `[打开报告](${href})`
+    expect(normalizeSessionArtifactReferences(markdown, [], dataRoot)).toBe(markdown)
+  })
+
+  it('requires the current Notebook data root', () => {
+    expect(normalizeSessionArtifactReferences(content, [])).toBe(content)
+    expect(normalizeSessionArtifactReferences(content, [], '/other/data')).toBe(content)
+  })
+
+  it('keeps code and unresolved images intact', () => {
+    const markdown = [
+      `\`${content}\``,
+      '```md',
+      content,
+      '```',
+      `    ${content}`,
+      `![报告](file://${path})`
+    ].join('\n')
+    expect(normalizeSessionArtifactReferences(markdown, [], dataRoot)).toBe(markdown)
+  })
+
+  it('prioritizes a registered managed artifact over Notebook data import', () => {
+    const artifact = createArtifact({ path, fileUrl: `file://${path}` })
+    expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
+      '[打开报告](/.open-science/artifact/version-1)'
+    )
+  })
+
+  it('keeps a normalized file URL separate from an unrelated same-name artifact', () => {
+    const artifact = createArtifact({ path: '/other/测试报告.md', name: '测试报告.md' })
+    const reference = internalReference(path)
+    expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
+      `[打开报告](${reference})`
+    )
+    expect(resolveMessageArtifactReference(reference, [artifact])).toBeUndefined()
+    expect(resolveSessionDataFileReference(reference, dataRoot)).toBe(path)
+    expect(resolveSessionDataFileReference(reference, '/other/data')).toBeUndefined()
+    // The pre-existing absolute-path basename fallback is outside this file URL fix.
+    expect(resolveMessageArtifactReference(path, [artifact])).toBe(artifact)
+  })
+
+  it('preserves exact managed-path matches without fileUrl metadata', () => {
+    const artifact = createArtifact({ path, fileUrl: undefined, name: '测试报告.md' })
+    expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
+      '[打开报告](/.open-science/artifact/version-1)'
+    )
+  })
+
+  it('keeps streaming normalization consistent and invalidates cached roots', () => {
+    const normalize = createSessionArtifactReferenceNormalizer()
+    const artifacts: MessageArtifact[] = []
+    let streamed = ''
+    for (const chunk of ['Start.\n\n[打开', `报告](file://${path})`, '\n\nDone.']) {
+      streamed += chunk
+      expect(normalize(streamed, artifacts, dataRoot)).toBe(
+        normalizeSessionArtifactReferences(streamed, artifacts, dataRoot)
+      )
+    }
+    expect(normalize(streamed, artifacts, '/other/data')).toBe(streamed)
+    expect(normalize(streamed, artifacts, dataRoot)).toBe(
+      normalizeSessionArtifactReferences(streamed, artifacts, dataRoot)
+    )
   })
 })

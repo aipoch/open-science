@@ -274,8 +274,8 @@ const SessionMessageMarkdown = memo(
     // Append-only streaming reprocesses just the trailing block instead of the full message.
     const [normalizeArtifactReferences] = useState(() => createSessionArtifactReferenceNormalizer())
     const normalizedContent = useMemo(
-      () => normalizeArtifactReferences(content, artifacts),
-      [normalizeArtifactReferences, artifacts, content]
+      () => normalizeArtifactReferences(content, artifacts, notebookReference?.dataRoot),
+      [normalizeArtifactReferences, artifacts, content, notebookReference?.dataRoot]
     )
     const components = useMemo<Components>(
       () => ({

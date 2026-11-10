@@ -159,6 +159,115 @@ describe('SessionMessageMarkdown local file links', () => {
     }
   )
 
+  it.each([
+    ['raw', '测试报告.md'],
+    ['encoded', '测试报告.md'],
+    ['encoded', 'literal%20.md']
+  ])('imports the DEV #1179 file URL through real Markdown: %s', async (encoding, name) => {
+    const sourcePath = `${notebookReference.dataRoot}/${name}`
+    const href = `file://${encoding === 'encoded' ? encodeURI(sourcePath) : sourcePath}`
+    stageLocalPath.mockResolvedValue(createUpload(name))
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    await act(async () =>
+      root.render(
+        <SessionMessageMarkdown
+          content={`[打开报告](${href})`}
+          artifacts={[]}
+          notebookReference={notebookReference}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[data-session-data-file-link]')?.textContent).toBe('打开报告')
+    await clickMessageLink()
+    expect(getImportDialog().textContent).toContain(name)
+    expect(stageLocalPath).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    await clickDialogButton('Import and preview')
+    expect(stageLocalPath).toHaveBeenCalledExactlyOnceWith({
+      transferId: expect.any(String),
+      projectId: 'project-1',
+      notebookSessionId: 'session-1',
+      sourcePath,
+      name
+    })
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      panelState: 'open',
+      activeItemId: 'upload:upload-1',
+      items: [expect.objectContaining({ source: 'upload', name, format: 'markdown' })]
+    })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('imports a file URL instead of previewing an unrelated managed artifact with the same name', async () => {
+    const name = '测试报告.md'
+    const sourcePath = `${notebookReference.dataRoot}/${name}`
+    const artifact: MessageArtifact = {
+      id: 'other-version',
+      artifactId: 'other-artifact',
+      versionId: 'other-version',
+      isPublished: true,
+      kind: 'managed-file',
+      path: `/managed/other-session/${name}`,
+      fileUrl: `file:///managed/other-session/${name}`,
+      name,
+      mimeType: 'text/markdown',
+      size: 1024,
+      mtimeMs: 1710000000000
+    }
+    const onPreviewArtifact = vi.fn()
+    stageLocalPath.mockResolvedValue(createUpload(name))
+    await act(async () =>
+      root.render(
+        <SessionMessageMarkdown
+          content={`[打开报告](file://${sourcePath})`}
+          artifacts={[artifact]}
+          notebookReference={notebookReference}
+          onPreviewArtifact={onPreviewArtifact}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[data-session-data-file-link]')).not.toBeNull()
+    expect(container.querySelector('[data-session-artifact-link]')).toBeNull()
+    await clickMessageLink()
+    expect(stageLocalPath).not.toHaveBeenCalled()
+    expect(onPreviewArtifact).not.toHaveBeenCalled()
+    await clickDialogButton('Import and preview')
+    expect(stageLocalPath).toHaveBeenCalledWith(expect.objectContaining({ sourcePath, name }))
+    expect(onPreviewArtifact).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([
+      expect.objectContaining({ source: 'upload', name, format: 'markdown' })
+    ])
+  })
+
+  it.each([
+    'file://remote/workspace/sessions/session-1/data/测试报告.md',
+    'file:///workspace/sessions/session-2/data/测试报告.md',
+    'file:///workspace/sessions/session-1/data/../private/测试报告.md',
+    'file:///workspace/sessions/session-1/data/%2e%2e/private/测试报告.md'
+  ])(
+    'does not offer import for a rejected file URL after real Markdown parsing: %s',
+    async (href) => {
+      await act(async () =>
+        root.render(
+          <SessionMessageMarkdown
+            content={`[打开报告](${href})`}
+            artifacts={[]}
+            notebookReference={notebookReference}
+            onPreviewArtifact={vi.fn()}
+            onPreviewArtifactModal={vi.fn()}
+          />
+        )
+      )
+      expect(container.textContent).toContain('打开报告')
+      expect(container.querySelector('[data-session-data-file-link]')).toBeNull()
+      expect(stageLocalPath).not.toHaveBeenCalled()
+      expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    }
+  )
+
   it('offers import for a file in the active frame dataRoot', async () => {
     const frameRoot = `${notebookReference.notebookSessionRoot}/frames/frame-one`
     const frameReference: NotebookSessionReference = {
@@ -298,37 +407,44 @@ describe('SessionMessageMarkdown local file links', () => {
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
-  it('keeps a registered managed artifact on its existing preview path', async () => {
-    const artifact: MessageArtifact = {
-      id: 'version-1',
-      artifactId: 'artifact-1',
-      versionId: 'version-1',
-      isPublished: true,
-      kind: 'managed-file',
-      path: `${notebookReference.dataRoot}/研究报告.docx`,
-      name: '研究报告.docx',
-      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      size: 1024,
-      mtimeMs: 1710000000000,
-      resolvedProjectId: 'project-1',
-      resolvedSessionId: 'session-1'
-    }
-    const onPreviewArtifact = vi.fn()
-    const props = {
-      content: `[研究报告](${artifact.path})`,
-      artifacts: [artifact],
-      notebookReference,
-      onPreviewArtifact,
-      onPreviewArtifactModal: vi.fn()
-    }
-    await act(async () => root.render(<SessionMessageMarkdown {...props} />))
-    await clickMessageLink()
+  it.each(['path', 'file URL', 'file URL without fileUrl metadata'])(
+    'keeps a registered managed artifact on its existing preview path: %s',
+    async (reference) => {
+      const artifact: MessageArtifact = {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1',
+        isPublished: true,
+        kind: 'managed-file',
+        path: `${notebookReference.dataRoot}/研究报告.docx`,
+        fileUrl:
+          reference === 'file URL without fileUrl metadata'
+            ? undefined
+            : `file://${notebookReference.dataRoot}/研究报告.docx`,
+        name: '研究报告.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size: 1024,
+        mtimeMs: 1710000000000,
+        resolvedProjectId: 'project-1',
+        resolvedSessionId: 'session-1'
+      }
+      const onPreviewArtifact = vi.fn()
+      const props = {
+        content: `[研究报告](${reference === 'path' ? artifact.path : `file://${artifact.path}`})`,
+        artifacts: [artifact],
+        notebookReference,
+        onPreviewArtifact,
+        onPreviewArtifactModal: vi.fn()
+      }
+      await act(async () => root.render(<SessionMessageMarkdown {...props} />))
+      await clickMessageLink()
 
-    expect(onPreviewArtifact).toHaveBeenCalledWith(artifact)
-    expect(stageLocalPath).not.toHaveBeenCalled()
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
-    expect(
-      document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
-    ).toBeNull()
-  })
+      expect(onPreviewArtifact).toHaveBeenCalledWith(artifact)
+      expect(stageLocalPath).not.toHaveBeenCalled()
+      expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+      expect(
+        document.body.querySelector('[role="dialog"][aria-label="Open external link?"]')
+      ).toBeNull()
+    }
+  )
 })
