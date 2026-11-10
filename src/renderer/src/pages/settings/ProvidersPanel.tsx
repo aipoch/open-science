@@ -134,6 +134,7 @@ const ProvidersPanel = ({
   const subagentModel = useSettingsStore((state) => state.subagentModel)
   const reviewerModel = useSettingsStore((state) => state.reviewerModel)
   const sessionDetailsModel = useSettingsStore((state) => state.sessionDetailsModel)
+  const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
   const visionModel = useSettingsStore((state) => state.visionModel)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const saveProvider = useSettingsStore((state) => state.saveProvider)
@@ -461,12 +462,24 @@ const ProvidersPanel = ({
           removedProviderIds.has(sessionDetailsModel.providerId)
             ? [{ id: 'session-details' as const, label: t('Session details') }]
             : []),
+          ...(promptOptimizationModel.mode === 'fixed' &&
+          removedProviderIds.has(promptOptimizationModel.providerId)
+            ? [{ id: 'prompt-optimization' as const, label: t('Prompt optimization') }]
+            : []),
           ...(visionModel && removedProviderIds.has(visionModel.providerId)
             ? [{ id: 'vision' as const, label: t('Vision') }]
             : [])
         ]
       : []
-  }, [providerPendingDeletion, subagentModel, reviewerModel, sessionDetailsModel, visionModel, t])
+  }, [
+    providerPendingDeletion,
+    subagentModel,
+    reviewerModel,
+    sessionDetailsModel,
+    promptOptimizationModel,
+    visionModel,
+    t
+  ])
   const dialogAffectedScenarios =
     useRetainedDialogValue(providerPendingDeletion ? affectedScenarios : undefined) ?? []
 

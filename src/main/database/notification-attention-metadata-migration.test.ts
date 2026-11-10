@@ -116,7 +116,6 @@ describe('notification attention metadata migration', () => {
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
-'0057_project_optimization_prompt',
         '0057_project_optimization_prompt'
       ],
       from: '0006_database_domain_constraints',

@@ -10191,6 +10191,78 @@ describe('prompt optimization admission', () => {
     expect(submit).not.toHaveBeenCalled()
   })
 
+  it.each(['select', 'paste', 'drop'] as const)(
+    'resets optimization when files are added by %s, including while a request is pending',
+    async (method) => {
+      let finish!: (result: { text: string }) => void
+      window.api.projects = {
+        optimizePrompt: vi.fn(
+          () =>
+            new Promise<{ text: string }>((resolve) => {
+              finish = resolve
+            })
+        ),
+        recordOptimizationEvent: vi.fn(async () => {})
+      } as unknown as typeof window.api.projects
+      let doc = docFromText('Original')
+      const render = (): void =>
+        renderPanel({
+          view: {
+            activeSession: {
+              id: 'attachment-session',
+              projectId: 'project',
+              title: 'Session',
+              cwd: '/workspace',
+              status: 'idle',
+              messages: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          },
+          composer: {
+            view: { doc },
+            actions: {
+              changeDoc: (next) => {
+                doc = next
+                render()
+              }
+            }
+          },
+          agentControls: {
+            modelConfiguration: { providerId: 'session', model: 'model', reasoningEffort: 'high' }
+          }
+        })
+      const button = (label: string): HTMLButtonElement | null =>
+        container.querySelector(`button[aria-label="${label}"]`)
+      const attach = (): void => {
+        const files = [new File(['data'], 'data.csv', { type: 'text/csv' })]
+        if (method === 'paste') dispatchPaste(files)
+        else if (method === 'drop') dispatchDrag('drop', ['Files'], files)
+        else {
+          const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+          Object.defineProperty(input, 'files', { configurable: true, value: files })
+          act(() => {
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+          })
+        }
+      }
+      render()
+      act(() => button('Optimize question')!.click())
+      await act(async () => finish({ text: 'Improved' }))
+      expect(button('Undo optimization')).not.toBeNull()
+      attach()
+      expect(button('Undo optimization')).toBeNull()
+      expect(button('Optimize question')).not.toBeNull()
+      expect(doc).toEqual(docFromText('Improved'))
+      act(() => button('Optimize question')!.click())
+      attach()
+      await act(async () => finish({ text: 'Obsolete result' }))
+      expect(doc).toEqual(docFromText('Improved'))
+      expect(button('Undo optimization')).toBeNull()
+      expect(button('Optimize question')).not.toBeNull()
+    }
+  )
+
   it('keeps undo after a rejected send and clears it only after acceptance', async () => {
     const recordOptimizationEvent = vi.fn(async () => {})
     window.api.projects = {

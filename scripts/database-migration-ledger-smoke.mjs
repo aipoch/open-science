@@ -231,7 +231,7 @@ const EXPECTED_MIGRATION_LEDGER = [
   },
   {
     id: '0057_project_optimization_prompt',
-    checksum: 'd8b291cbed15cb8265b28fd2493b994bdc125aa20463ba18620d0d38b9e81ef3'
+    checksum: '226fb954f1b09aeab18527a4562a9a0f5551145edf5259e57513f73c8dbb150e'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

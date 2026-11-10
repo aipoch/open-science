@@ -83,6 +83,8 @@ export function usePromptOptimization(options: Options): OptimizationState {
   }, [scope])
   // Observe user actions, not programmatic clearing/restoration during send preparation.
   const edited = (): void => {
+    // Attachment edits can change the draft without changing the text document.
+    current.current = { ...current.current, revision: current.current.revision + 1 }
     setPrevious(undefined)
     setNotice(undefined)
     if (!successful.current || successful.current.edited) return

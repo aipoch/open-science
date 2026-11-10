@@ -190,6 +190,7 @@ describe('ProvidersPanel: provider removal impact', () => {
       subagentModel: fixed,
       reviewerModel: fixed,
       sessionDetailsModel: fixed,
+      promptOptimizationModel: fixed,
       visionModel: fixed,
       deleteProvider: deleteProvider as never
     })
@@ -206,6 +207,7 @@ describe('ProvidersPanel: provider removal impact', () => {
     expect(dialog?.textContent).toContain('Reviewer')
     expect(dialog?.textContent).toContain('Session details')
     expect(dialog?.textContent).toContain('Vision')
+    expect(dialog?.textContent).toContain('Prompt optimization')
     expect(deleteProvider).not.toHaveBeenCalled()
     expect(dialog?.textContent).toContain('Cancel')
     expect(dialog?.textContent).toContain('Keep unavailable')

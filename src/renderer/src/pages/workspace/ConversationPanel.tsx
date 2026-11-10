@@ -1580,6 +1580,12 @@ const ConversationPanel = ({
     </>
   )
 
+  const handleStageAttachmentFiles = (files: File[]): void => {
+    if (files.length === 0) return
+    promptOptimization.edited()
+    onStageAttachmentFiles(files)
+  }
+
   // Converts the hidden file input selection into the shared staging callback.
   const handleAttachmentInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const files = Array.from(event.target.files ?? [])
@@ -1588,7 +1594,7 @@ const ConversationPanel = ({
     event.target.value = ''
 
     if (files.length > 0) {
-      onStageAttachmentFiles(files)
+      handleStageAttachmentFiles(files)
     }
   }
 
@@ -1601,7 +1607,7 @@ const ConversationPanel = ({
     if (files.length === 0) return
 
     event.preventDefault()
-    onStageAttachmentFiles(files)
+    handleStageAttachmentFiles(files)
   }
 
   const handleRemoveAttachment = (attachment: (typeof attachments)[number]): void => {
@@ -1613,7 +1619,7 @@ const ConversationPanel = ({
   }
 
   const handleCancelAttachmentTransfer = (transfer: (typeof attachmentTransfers)[number]): void => {
-    if (transfer.pastedTextId) promptOptimization.edited()
+    promptOptimization.edited()
     onCancelAttachmentTransfer(transfer)
     if (transfer.pastedTextId) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -1651,7 +1657,7 @@ const ConversationPanel = ({
         projectName={sessionImport?.projectName ?? t('Project')}
         canImport={sessionImport?.canImport ?? false}
         canAttach={canEditDraft && !isUploadingAttachments && !ordinaryComposerBlocked}
-        onFiles={onStageAttachmentFiles}
+        onFiles={handleStageAttachmentFiles}
         data-testid="workspace-file-drop-zone"
         className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
         data-session-id={activeSession?.id ?? ''}

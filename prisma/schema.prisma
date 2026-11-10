@@ -24,7 +24,6 @@ model Project {
   description          String                @default("")
   agentContext         String                @default("")
   optimizationPrompt   String                @default("")
-  optimizationPromptScope String             @default("current")
   sessionDefaults      String                @default("{}")
   isExample            Boolean               @default(false)
   pinned               Boolean               @default(false)

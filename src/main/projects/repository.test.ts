@@ -260,8 +260,7 @@ describe('project repository', () => {
         name: 'Trimmed',
         description: '',
         agentContext: '',
-        optimizationPrompt: '',
-        optimizationPromptScope: 'current'
+        optimizationPrompt: ''
       }
     })
   })
@@ -514,8 +513,7 @@ describe('project repository', () => {
         name: 'Research',
         description: '',
         agentContext: 'Always cite DOIs.',
-        optimizationPrompt: '',
-        optimizationPromptScope: 'current'
+        optimizationPrompt: ''
       }
     })
   })
@@ -575,10 +573,10 @@ describe('project repository', () => {
     })
   })
 
-  it('persists the optimization prompt scope when pinning in the same update', async () => {
+  it('persists the optimization prompt when pinning in the same update', async () => {
     const { client, executeRaw, project } = createMockClient({
       findUnique: () =>
-        Promise.resolve(createRow({ pinned: true, optimizationPromptScope: 'all' })),
+        Promise.resolve(createRow({ pinned: true, optimizationPrompt: 'Keep it concise.' })),
       updateMany: () => Promise.resolve({ count: 1 })
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
@@ -586,7 +584,7 @@ describe('project repository', () => {
     await repository.update({
       id: 'project-1',
       pinned: true,
-      optimizationPromptScope: 'all',
+      optimizationPrompt: 'Keep it concise.',
       expectedUpdatedAt: 1710000000100
     })
 
@@ -599,7 +597,7 @@ describe('project repository', () => {
       },
       data: {
         pinned: true,
-        optimizationPromptScope: 'all',
+        optimizationPrompt: 'Keep it concise.',
         updatedAt: expect.any(Date)
       }
     })

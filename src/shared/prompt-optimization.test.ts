@@ -3,12 +3,26 @@ import {
   optimizePromptRequestSchema,
   optimizationEventSchema,
   resolveOptimizationPrompt,
-  DEFAULT_OPTIMIZATION_PROMPT,
-  type OptimizationPromptProject
+  DEFAULT_OPTIMIZATION_PROMPT
 } from './prompt-optimization'
 import { createProjectRequestSchema, updateProjectRequestSchema } from './projects'
 
 describe('project optimization prompt', () => {
+  it('rejects the removed scope field on project writes', () => {
+    expect(
+      createProjectRequestSchema.safeParse({
+        name: 'Biology',
+        optimizationPromptScope: 'all'
+      }).success
+    ).toBe(false)
+    expect(
+      updateProjectRequestSchema.safeParse({
+        id: 'biology',
+        expectedUpdatedAt: 1,
+        optimizationPromptScope: 'current'
+      }).success
+    ).toBe(false)
+  })
   it('rejects requests without a composer model selection rather than falling back globally', () => {
     expect(
       optimizePromptRequestSchema.safeParse({ projectId: 'project', input: 'Help' }).success
@@ -39,27 +53,16 @@ describe('project optimization prompt', () => {
   })
 
   it('uses only the current-project prompt and then the built-in default', () => {
-    const allProjects: OptimizationPromptProject[] = [
-      {
-        id: 'global',
-        optimizationPrompt: 'Use the global template.',
-        optimizationPromptScope: 'all'
-      },
-      {
-        id: 'current',
-        optimizationPrompt: 'Use the current template.',
-        optimizationPromptScope: 'current'
-      }
-    ]
-
-    expect(resolveOptimizationPrompt(allProjects[1])).toBe('Use the current template.')
     expect(
-      resolveOptimizationPrompt({
-        id: 'other',
-        optimizationPrompt: '',
-        optimizationPromptScope: 'current'
-      })
-    ).toBe(DEFAULT_OPTIMIZATION_PROMPT)
+      resolveOptimizationPrompt({ id: 'current', optimizationPrompt: 'Use the current template.' })
+    ).toBe('Use the current template.')
+    expect(resolveOptimizationPrompt({ id: 'other', optimizationPrompt: '' })).toBe(
+      DEFAULT_OPTIMIZATION_PROMPT
+    )
+    expect(resolveOptimizationPrompt({ id: 'other', optimizationPrompt: '  ' })).toBe(
+      DEFAULT_OPTIMIZATION_PROMPT
+    )
+    expect(resolveOptimizationPrompt(undefined)).toBe(DEFAULT_OPTIMIZATION_PROMPT)
     expect(DEFAULT_OPTIMIZATION_PROMPT).toBe(
       "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
     )

@@ -77,7 +77,6 @@ const toProject = (row: PrismaProject): Project => ({
   // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
   ...(row.agentContext ? { agentContext: row.agentContext } : {}),
   ...(row.optimizationPrompt ? { optimizationPrompt: row.optimizationPrompt } : {}),
-  ...(row.optimizationPromptScope === 'all' ? { optimizationPromptScope: 'all' as const } : {}),
   sessionDefaults: decodeProjectSessionDefaults(row.sessionDefaults),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
@@ -153,8 +152,7 @@ class ProjectRepository {
         name,
         description: request.description?.trim() ?? '',
         agentContext: request.agentContext?.trim() ?? '',
-        optimizationPrompt: request.optimizationPrompt?.trim() ?? '',
-        optimizationPromptScope: request.optimizationPromptScope ?? 'current'
+        optimizationPrompt: request.optimizationPrompt?.trim() ?? ''
       }
     })
 
@@ -169,7 +167,6 @@ class ProjectRepository {
       description?: string
       agentContext?: string
       optimizationPrompt?: string
-      optimizationPromptScope?: 'current' | 'all'
       sessionDefaults?: string
       pinned?: boolean
       updatedAt?: Date
@@ -197,10 +194,6 @@ class ProjectRepository {
       data.optimizationPrompt = request.optimizationPrompt.trim()
     }
 
-    if (request.optimizationPromptScope !== undefined) {
-      data.optimizationPromptScope = request.optimizationPromptScope
-    }
-
     if (request.sessionDefaults !== undefined) {
       data.sessionDefaults = JSON.stringify(
         projectSessionDefaultsSchema.parse(request.sessionDefaults)
@@ -219,7 +212,6 @@ class ProjectRepository {
       request.description === undefined &&
       request.agentContext === undefined &&
       request.optimizationPrompt === undefined &&
-      request.optimizationPromptScope === undefined &&
       request.sessionDefaults === undefined
     ) {
       // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin

@@ -1,6 +1,5 @@
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { PromptOptimizationService } from './projects/prompt-optimization'
-import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { composeResearchFilm } from './composition/research-film'
 import { createLocalModelApi } from './local-models/owner'
 import { registerLocalModelIpcHandlers } from './desktop-surface-declarations'

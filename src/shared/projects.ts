@@ -2,8 +2,7 @@ import {
   cancelPromptOptimizationRequestSchema,
   optimizePromptRequestSchema,
   optimizePromptResultSchema,
-  optimizationEventSchema,
-  optimizationPromptScopeSchema
+  optimizationEventSchema
 } from './prompt-optimization'
 import { z } from 'zod'
 
@@ -28,7 +27,6 @@ export const projectSchema = z
     // into every agent session's system prompt.
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
-    optimizationPromptScope: optimizationPromptScopeSchema.optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
@@ -48,8 +46,7 @@ export const createProjectRequestSchema = z
     name: z.string().max(PROJECT_NAME_MAX_LENGTH),
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     agentContext: z.string().max(16000).optional(),
-    optimizationPrompt: z.string().max(16000).optional(),
-    optimizationPromptScope: optimizationPromptScopeSchema.optional()
+    optimizationPrompt: z.string().max(16000).optional()
   })
   .strict()
 
@@ -61,7 +58,6 @@ export const updateProjectRequestSchema = z
     expectedUpdatedAt: z.number().int().positive(),
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
-    optimizationPromptScope: optimizationPromptScopeSchema.optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     pinned: z.boolean().optional()
   })

@@ -187,6 +187,19 @@ describe('composer prompt optimization', () => {
     expect(docToText(result.current.doc)).toBe('Edited improved')
     unmount()
   })
+  it('discards an in-flight result after an edit that leaves text unchanged', async () => {
+    const { result, request, unmount } = harness()
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    act(() => result.current.optimization.edited())
+    await act(async () => request.resolve({ text: 'Obsolete' }))
+    expect(docToText(result.current.doc)).toBe('Original')
+    expect(result.current.optimization.canUndo).toBe(false)
+    expect(result.current.optimization.pending).toBe(false)
+    unmount()
+  })
+
   it('discards results even if the user edits away and back to the original input', async () => {
     const { result, request, unmount } = harness()
     act(() => {

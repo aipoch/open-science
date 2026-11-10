@@ -363,7 +363,6 @@ describe('agent memory project scope migration', () => {
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
-'0057_project_optimization_prompt',
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

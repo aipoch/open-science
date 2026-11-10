@@ -656,6 +656,12 @@ class SettingsRepository {
             reasoningEffort: settings.sessionDetailsModel.reasoningEffort
           }
         }
+        if (
+          settings.promptOptimizationModel?.mode === 'fixed' &&
+          removedIds.has(settings.promptOptimizationModel.providerId)
+        ) {
+          next.promptOptimizationModel = { mode: 'inherit' }
+        }
         if (settings.visionModel && removedIds.has(settings.visionModel.providerId)) {
           delete next.visionModel
         }

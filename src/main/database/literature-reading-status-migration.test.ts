@@ -63,7 +63,6 @@ it('upgrades the 0050 schema with unread defaults while preserving items, relati
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
-'0057_project_optimization_prompt',
       currentMigrationId
     ]
   })
@@ -150,7 +149,6 @@ it('rolls back the added column and ledger entry if migration verification fails
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
-'0057_project_optimization_prompt',
       currentMigrationId
     ]
   })

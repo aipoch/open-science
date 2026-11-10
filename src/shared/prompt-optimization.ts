@@ -6,12 +6,9 @@ export const PROMPT_OPTIMIZATION_OUTPUT_LIMIT = 32000
 export const DEFAULT_OPTIMIZATION_PROMPT =
   "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
 
-export const optimizationPromptScopeSchema = z.enum(['current', 'all'])
-export type OptimizationPromptScope = z.infer<typeof optimizationPromptScopeSchema>
 export type OptimizationPromptProject = Readonly<{
   id: string
   optimizationPrompt?: string
-  optimizationPromptScope?: OptimizationPromptScope
   updatedAt?: number
 }>
 
