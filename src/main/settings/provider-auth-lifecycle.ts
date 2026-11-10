@@ -34,6 +34,7 @@ import {
   type ClaudeSharedAuthControllerPort,
   type ClaudeSharedAuthStatus
 } from './claude-shared-auth'
+import { readCodexHarnessConnection } from './codex-harness-auth'
 import { encryptKey, isCredentialStorageAvailable, maskKey, tryDecryptKey } from './crypto'
 import { getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import {
@@ -76,6 +77,9 @@ class ProviderAuthLifecycleOwner {
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
   private accountMutationTail: Promise<void> = Promise.resolve()
   private codexIsolatedLoginGeneration = 0
+  private codexHarnessCredentials = new AbortController()
+  private codexSignInPending = false
+  private codexCredentialHolds = 0
   private claudeSharedAuthStatusCache: { authenticated: boolean; checkedAt: number } | undefined
   private claudeSharedAuthStatusGeneration = 0
   private claudeSharedAuthStatusPromise:
@@ -139,6 +143,66 @@ class ProviderAuthLifecycleOwner {
     return result
   }
 
+  quiesceCodexHarnessCredentials(): { settled: Promise<void>; release: () => void } {
+    this.codexCredentialHolds++
+    let released = false
+    return {
+      settled: this.accountMutationTail,
+      release: () => {
+        if (!released) this.codexCredentialHolds--
+        released = true
+      }
+    }
+  }
+
+  private revokeCodexHarnessCredentials(): void {
+    this.codexHarnessCredentials.abort()
+    this.codexHarnessCredentials = new AbortController()
+  }
+
+  bindCodexHarnessConnection(providerId: string, type: StoredProvider['type'], revision?: number) {
+    const generation = this.codexHarnessCredentials.signal
+    let boundAccount: string | undefined
+    let boundEndpoint: string | undefined
+    return (requestSignal: AbortSignal) => {
+      const signal = AbortSignal.any([requestSignal, generation])
+      return this.serializeAccountMutation(async () => {
+        signal.throwIfAborted()
+        const settings = await this.repository.getSettings()
+        const provider = settings.providers.find(({ id }) => id === providerId)
+        if (
+          this.codexCredentialHolds > 0 ||
+          this.codexSignInPending ||
+          !provider ||
+          !isCodexSubscriptionProvider(provider.type) ||
+          provider.type !== type ||
+          (provider.configRevision ?? 0) !== revision ||
+          provider.disconnectedAt !== undefined
+        ) {
+          throw new Error('The Codex subscription connection is no longer available.')
+        }
+        const connection = await readCodexHarnessConnection(
+          {
+            storageRoot: this.options.storageRoot,
+            nativePath: settings.codex?.nativePath,
+            transport: resolveEffectiveCodexSubscriptionTransport(provider),
+            resolveProxyEnvironment: this.options.resolveCodexProxyEnvironment
+          },
+          signal
+        )
+        signal.throwIfAborted()
+        if (
+          boundAccount &&
+          (boundAccount !== connection.accountId || boundEndpoint !== connection.endpoint)
+        )
+          throw new Error('The Codex subscription connection changed. Reconnect the session.')
+        boundEndpoint = connection.endpoint
+        boundAccount = connection.accountId
+        return connection
+      })
+    }
+  }
+
   private async loadClaudeIsolatedToken(): Promise<string | undefined> {
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
@@ -170,6 +234,7 @@ class ProviderAuthLifecycleOwner {
     if (isCodexSubscriptionProvider(request.type)) this.codexIsolatedLoginGeneration += 1
     const reimport = request.type === 'codex-shared' && request.reimportCodexAuthentication === true
     if (request.type === 'codex-shared' && (existing?.codexAuthMode !== 'imported' || reimport)) {
+      this.revokeCodexHarnessCredentials()
       await this.codexAuth.cancelLogin()
       await importCodexAuthentication(
         this.options.userCodexDir,
@@ -177,6 +242,7 @@ class ProviderAuthLifecycleOwner {
       )
       if (reimport) onAuthenticationReimported()
     } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
+      this.revokeCodexHarnessCredentials()
       if (existing) await this.codexAuth.cancelLogin()
       const codexHome = codexSubscriptionStorageDir(this.options.storageRoot)
       await clearImportedCodexProviderRoute(codexHome)
@@ -193,6 +259,7 @@ class ProviderAuthLifecycleOwner {
 
   async cleanupProviderBeforeDelete(id: string): Promise<void> {
     if (isCodexSubscriptionProviderId(id)) {
+      this.revokeCodexHarnessCredentials()
       this.codexIsolatedLoginGeneration += 1
       await this.codexAuth.cancelLogin()
       const codexHome = codexSubscriptionStorageDir(this.options.storageRoot)
@@ -215,8 +282,11 @@ class ProviderAuthLifecycleOwner {
   }
 
   async dispose(): Promise<void> {
+    this.codexCredentialHolds++
+    this.codexHarnessCredentials.abort()
     this.codexIsolatedLoginGeneration += 1
     await Promise.all([
+      this.accountMutationTail,
       Promise.resolve().then(() => this.codexAuth.cancelLogin()),
       Promise.resolve().then(() => this.claudeIsolatedAuth.cancelLogin()),
       Promise.resolve().then(() => this.claudeSharedAuth.cancelLogin())
@@ -224,8 +294,27 @@ class ProviderAuthLifecycleOwner {
   }
 
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {
+    if (this.codexSignInPending)
+      return { ok: false, category: 'unknown', message: 'A Codex sign-in is already in progress.' }
     const loginGeneration = ++this.codexIsolatedLoginGeneration
-    const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
+    this.revokeCodexHarnessCredentials()
+    this.codexSignInPending = true
+    let result: ValidateProviderResult
+    try {
+      // Let a cancelled credential refresh finish closing its writer before Codex starts login.
+      await this.accountMutationTail
+      if (loginGeneration !== this.codexIsolatedLoginGeneration)
+        return {
+          ok: false,
+          category: 'unknown',
+          applied: false,
+          message: 'Codex sign-in cancelled.'
+        }
+      result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
+    } finally {
+      this.codexSignInPending = false
+      this.revokeCodexHarnessCredentials()
+    }
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(
       (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
@@ -260,6 +349,7 @@ class ProviderAuthLifecycleOwner {
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
+    this.revokeCodexHarnessCredentials()
     this.codexIsolatedLoginGeneration += 1
     const settings = await this.repository.getSettings()
     const provider = settings.providers.find(

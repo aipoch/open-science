@@ -13,7 +13,7 @@ import {
   type Json
 } from '@aipoch/agent-harness'
 import { createChatCompletionsModel } from '@aipoch/agent-harness/chat-completions'
-import { createResponsesModel } from '@aipoch/agent-harness/responses'
+import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/responses'
 import { createMessagesModel } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
@@ -420,6 +420,21 @@ export function createHarnessAcpAgent(directory: string): {
             const status = await entry.session.prompt(blocks).catch(async (error: unknown) => {
               await entry.flush()
               if (!entry.cancelled) assertKnown(await entry.session.inspect())
+              if (
+                error instanceof ResponsesError &&
+                [
+                  'http',
+                  'insufficient_quota',
+                  'rate_limit_exceeded',
+                  'model_not_found',
+                  'authentication_error'
+                ].includes(error.code)
+              )
+                throw new acp.RequestError(-32603, error.message, {
+                  errorName: 'APIError',
+                  errorKind: error.code === 'http' ? 'provider-error' : error.code,
+                  ...(error.status === undefined ? {} : { status: error.status })
+                })
               throw error
             })
             await entry.flush()

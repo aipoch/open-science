@@ -635,6 +635,31 @@ describe('ProviderStep', () => {
     await selectOption('Codex authentication', 'Sign in with Open-Science')
   }
 
+  it.each(['Import existing Codex sign-in', 'Sign in with Open-Science'])(
+    'offers %s with the built-in Agent',
+    async (mode) => {
+      useSettingsStore.setState({
+        agentFrameworkId: 'open-science-agent',
+        agentFrameworks: [
+          {
+            id: 'open-science-agent',
+            displayName: 'Open-Science Agent',
+            supportedApiTypes: ['responses', 'messages', 'chat-completions'],
+            supportsSkills: true
+          }
+        ]
+      })
+      await renderStep()
+      await selectOption('Provider type', 'Codex subscription')
+      if (mode === 'Sign in with Open-Science') await switchToIsolatedSignIn()
+      expect(container.querySelector('[aria-label="Codex authentication"]')?.textContent).toContain(
+        mode
+      )
+      expect(container.querySelector('[aria-label="API key"]')).toBeNull()
+      expect(container.querySelector('[aria-label="Base URL"]')).toBeNull()
+    }
+  )
+
   it('runs the isolated Codex sign-in then advances', async () => {
     const persistProvider = vi.fn().mockResolvedValue('builtin-codex-isolated')
     const loginIsolatedCodex = vi

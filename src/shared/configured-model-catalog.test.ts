@@ -31,6 +31,31 @@ const provider = (
 })
 
 describe('configured model catalog', () => {
+  it.each([
+    { type: 'codex-shared', codexAuthMode: undefined },
+    { type: 'codex-isolated', codexAuthMode: 'imported' },
+    { type: 'codex-isolated', codexAuthMode: 'isolated' }
+  ] as const)('offers $type/$codexAuthMode in primary and fixed-model catalogs', (auth) => {
+    const entries = buildConfiguredModelCatalog({
+      providers: [
+        provider('builtin-codex-subscription', ['gpt-5.5'], {
+          ...auth,
+          apiEndpoints: [],
+          hasKey: false
+        })
+      ],
+      frameworkId: 'open-science-agent',
+      frameworkEndpoints: ['responses', 'chat-completions', 'messages']
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      providerId: 'builtin-codex-subscription',
+      model: 'gpt-5.5',
+      selectable: true,
+      supportsImageInput: true
+    })
+  })
+
   it('keeps same-named models distinct by compound provider identity', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [provider('first', ['shared']), provider('second', ['shared'])],

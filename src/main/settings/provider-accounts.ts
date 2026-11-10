@@ -131,7 +131,15 @@ class ProviderAccountsModule {
   }
 
   quiesceAuthentication(): ReturnType<XaiProviderAccountOwner['quiesce']> {
-    return this.xai.quiesce()
+    const xai = this.xai.quiesce()
+    const codex = this.auth.quiesceCodexHarnessCredentials()
+    return {
+      settled: Promise.all([xai.settled, codex.settled]).then(() => undefined),
+      release: () => {
+        codex.release()
+        xai.release()
+      }
+    }
   }
 
   async prepareBootstrapCodex(): Promise<void> {
@@ -530,6 +538,16 @@ class ProviderAccountsModule {
   async logoutXaiOAuth(): Promise<void> {
     this.advanceProviderValidationGeneration(XAI_SUBSCRIPTION_PROVIDER_ID)
     await this.xai.logout()
+  }
+
+  bindCodexHarnessConnection(
+    target: ProviderRuntimeTarget
+  ): ReturnType<ProviderAuthLifecycleOwner['bindCodexHarnessConnection']> {
+    return this.auth.bindCodexHarnessConnection(
+      target.providerId,
+      target.providerType,
+      target.configRevision
+    )
   }
 
   getXaiOAuthAccessToken(forceRefresh = false): Promise<string> {

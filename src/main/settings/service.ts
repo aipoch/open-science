@@ -664,6 +664,7 @@ class SettingsService {
       storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
+      bindCodexHarnessConnection: (target) => this.providers.bindCodexHarnessConnection(target),
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
     this.detachSkillDiagnostics = attachSkillDiagnostics()

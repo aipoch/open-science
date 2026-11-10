@@ -223,12 +223,12 @@ const ProvidersPanel = ({
     }
   }, [cancelXaiOAuthLogin])
 
-  // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
-  // active one. Hide claude-isolated and claude-shared from non-claude-code frameworks (same rule as codex).
+  // Subscription accounts stay visible for the frameworks that own their authentication transport.
   const visibleProviders = providers.filter((provider) => {
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
-    if (isCodexSubscriptionProvider(provider.type)) return agentFrameworkId === 'codex'
+    if (isCodexSubscriptionProvider(provider.type))
+      return agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
 
     return true
   })

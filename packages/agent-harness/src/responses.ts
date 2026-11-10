@@ -25,7 +25,15 @@ export type ResponsesModelOptions = {
 }
 export class ResponsesError extends Error {
   constructor(
-    public readonly code: 'http' | 'network' | 'protocol' | 'limit',
+    public readonly code:
+      | 'http'
+      | 'network'
+      | 'protocol'
+      | 'limit'
+      | 'insufficient_quota'
+      | 'rate_limit_exceeded'
+      | 'model_not_found'
+      | 'authentication_error',
     public readonly status?: number
   ) {
     super(status === undefined ? `Responses ${code} error` : `Responses HTTP ${status}`)
@@ -289,7 +297,40 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
           }
           continue
         }
-        if (type === 'response.failed') return fail()
+        if (type === 'response.failed' || type === 'error') {
+          const detail = object(
+            type === 'response.failed' ? object(event.response).error : (event.error ?? event)
+          )
+          // Only known codes cross the adapter boundary; provider prose can contain private data.
+          const codes = [detail.code, detail.type]
+          if (
+            codes.some((code) =>
+              [
+                'insufficient_quota',
+                'quota_exceeded',
+                'usage_limit_reached',
+                'subscription_sharing_usage_limit_exceeded',
+                'billing_error'
+              ].includes(String(code))
+            )
+          )
+            throw new ResponsesError('insufficient_quota')
+          if (
+            codes.some((code) => ['rate_limit_exceeded', 'rate_limit_error'].includes(String(code)))
+          )
+            throw new ResponsesError('rate_limit_exceeded', 429)
+          if (codes.some((code) => ['model_not_found', 'model_unavailable'].includes(String(code))))
+            throw new ResponsesError('model_not_found', 404)
+          if (
+            codes.some((code) =>
+              ['authentication_error', 'invalid_api_key', 'unauthorized', 'token_expired'].includes(
+                String(code)
+              )
+            )
+          )
+            throw new ResponsesError('authentication_error', 401)
+          return fail()
+        }
       }
       if (!finish) return fail()
       const finalCalls: ToolCall[] = []

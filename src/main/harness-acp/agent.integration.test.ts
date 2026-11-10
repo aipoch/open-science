@@ -16,6 +16,8 @@ import { AgentMcpHttpHost } from '../acp/mcp-http-host'
 import { HARNESS_INVOCATION, HARNESS_RECEIPT_METHOD, receiptResponseSchema } from './tool-receipts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { collectPromptFailureFacts } from '../acp/prompt-error'
+import { classifyFailure } from '../../shared/failure/classify'
 import { harnessTurnAdapter } from '../acp/harness-turn-adapter'
 import { toAcpRuntimeEvent } from '../acp/runtime-events'
 
@@ -1108,3 +1110,53 @@ it('rejects model-disabled media before provider I/O and allows a subsequent tex
   await prompt(f.connection, sessionId)
   expect(model.requests).toHaveLength(1)
 })
+
+it.each([
+  ['response.failed', 'usage_limit_reached', 'configuration/billing'],
+  ['error', 'subscription_sharing_usage_limit_exceeded', 'configuration/billing'],
+  ['error', 'rate_limit_exceeded', 'service/rate-limited'],
+  ['response.failed', 'model_unavailable', 'configuration/model-unavailable'],
+  ['error', 'authentication_error', 'configuration/auth-failed']
+] as const)(
+  'classifies Responses %s/%s without leaking prose or executing partial tools',
+  async (type, code, reason) => {
+    const managed = await mcpServer()
+    const model = await modelServer((body, response) => {
+      const tool = (body.tools as unknown as { name: string }[])[0].name
+      const error = { code, message: 'private account and token must not escape' }
+      response.end(
+        [
+          {
+            type: 'response.output_item.done',
+            item: {
+              type: 'function_call',
+              call_id: 'partial',
+              name: tool,
+              arguments: '{"value":1}'
+            }
+          },
+          type === 'response.failed' ? { type, response: { error } } : { type, ...error }
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join('')
+      )
+    })
+    const f = await fixture(model.endpoint.replace('/chat/completions', '/responses'))
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [managed.config]
+    })
+    const failure = await prompt(f.connection, sessionId).then(
+      () => {
+        throw new Error('expected model failure')
+      },
+      (error: unknown) => error
+    )
+    expect(failure).toMatchObject({ data: { errorName: 'APIError' } })
+    expect(classifyFailure(collectPromptFailureFacts(failure)).reason).toBe(reason)
+    expect(JSON.stringify(failure)).not.toContain('private account')
+    expect((failure as Error).message).not.toContain('private account')
+    expect(managed.calls).toEqual([])
+    expect(f.approvals).toEqual([])
+  }
+)

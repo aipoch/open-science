@@ -1957,10 +1957,13 @@ describe('ProviderAccountsModule', () => {
     expect(done).toHaveBeenCalledOnce()
   })
 
-  it('preserves the authentication quit lease through the account facade', () => {
+  it('drains credential writes and releases both authentication owners after a cancelled quit', async () => {
     const lease = { settled: Promise.resolve(), release: vi.fn() }
     vi.mocked(xaiOAuth.quiesce).mockReturnValue(lease)
-    expect(module.quiesceAuthentication()).toBe(lease)
+    const combined = module.quiesceAuthentication()
+    await combined.settled
+    combined.release()
+    expect(lease.release).toHaveBeenCalledOnce()
     expect(xaiOAuth.quiesce).toHaveBeenCalledOnce()
   })
 

@@ -455,7 +455,9 @@ const ProviderStep = ({
             errors={showProviderErrors ? formErrors : undefined}
             disabled={isSaving}
             encryptionAvailable={encryptionAvailable}
-            showCodexSubscriptions={agentFrameworkId === 'codex'}
+            showCodexSubscriptions={
+              agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
+            }
             showClaudeIsolated={agentFrameworkId === 'claude-code'}
             defaultCustomApiEndpoint={customApiEndpoint}
             framework={activeFramework}
