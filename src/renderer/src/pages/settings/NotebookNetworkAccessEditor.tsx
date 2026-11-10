@@ -16,12 +16,62 @@ import {
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectStore } from '@/stores/project-store'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
 import type { NetworkEditorLeaveState } from './NotebookNetworkDomainsForm'
 
 type Editor = { base: NotebookNetworkSettings; id?: string; original?: TrustedPrivateDestination }
 const selectClass = 'h-9 w-full rounded-md border border-input bg-background px-2 text-sm'
+
+function NetworkAddressDeleteButton({
+  hostname,
+  address,
+  disabled,
+  onConfirm
+}: {
+  hostname: string
+  address: string
+  disabled: boolean
+  onConfirm: () => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="destructive"
+          disabled={disabled}
+          aria-label={t('Remove {{domain}}', { domain: hostname })}
+        >
+          {t('Delete')}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 space-y-3 p-3" aria-label={t('Delete address?')}>
+        <p className="text-sm font-medium">{t('Delete address?')}</p>
+        <code className="block break-all text-xs text-muted-foreground">{address}</code>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+            {t('Cancel')}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={disabled}
+            onClick={() => {
+              setOpen(false)
+              onConfirm()
+            }}
+          >
+            {t('Delete')}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export function NotebookNetworkAccessEditor({
   onLeaveStateChange
@@ -568,14 +618,12 @@ export function NotebookNetworkAccessEditor({
                       >
                         {t('Edit')}
                       </Button>
-                      <Button
-                        variant="ghost"
+                      <NetworkAddressDeleteButton
+                        hostname={rule.hostnamePattern}
+                        address={`${rule.protocol}://${rule.hostnamePattern}:${rule.port}`}
                         disabled={busy || !!editor}
-                        onClick={() => removeStrictRule(rule.id)}
-                        aria-label={t('Remove {{domain}}', { domain: rule.hostnamePattern })}
-                      >
-                        {t('Delete')}
-                      </Button>
+                        onConfirm={() => removeStrictRule(rule.id)}
+                      />
                     </div>
                   )}
                 </div>
@@ -604,10 +652,11 @@ export function NotebookNetworkAccessEditor({
                       >
                         {t('Edit')}
                       </Button>
-                      <Button
-                        variant="ghost"
+                      <NetworkAddressDeleteButton
+                        hostname={rule.hostname}
+                        address={`${rule.protocol ?? 'https'}://${formatNetworkHostname(rule.hostname)}:${rule.port}`}
                         disabled={busy || !!editor}
-                        onClick={() =>
+                        onConfirm={() =>
                           void commit(
                             {
                               ...settings,
@@ -618,10 +667,7 @@ export function NotebookNetworkAccessEditor({
                             settings
                           )
                         }
-                        aria-label={t('Remove {{domain}}', { domain: rule.hostname })}
-                      >
-                        {t('Delete')}
-                      </Button>
+                      />
                     </div>
                   )}
                 </div>

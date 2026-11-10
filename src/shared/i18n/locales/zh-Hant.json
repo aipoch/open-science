@@ -190,6 +190,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。解決授權問題後，請重試啟動。"
   },
   "renderer": {
+    "Delete address?": "刪除位址？",
     "Connect {{provider}}": "連接 {{provider}}",
     "Connect the account before adding this configuration.": "新增此設定前，請先連接帳號。",
     "Details and possible scenarios": "詳細資訊與可能情境",

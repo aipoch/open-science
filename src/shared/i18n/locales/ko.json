@@ -190,6 +190,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다. 승인 문제를 해결한 후 시작을 다시 시도하세요."
   },
   "renderer": {
+    "Delete address?": "주소를 삭제하시겠습니까?",
     "Connect {{provider}}": "{{provider}} 연결",
     "Connect the account before adding this configuration.": "이 구성을 추가하기 전에 계정을 연결하세요.",
     "Details and possible scenarios": "세부 정보 및 가능한 사용 상황",

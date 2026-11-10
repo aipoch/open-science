@@ -517,6 +517,53 @@ it('creates a logical group and a manual strict rule without an origin field', a
   expect(container.textContent).not.toContain('Added from')
   expect(container.textContent).not.toContain('Restore built-ins')
 })
+const deleteConfirmation = (): HTMLElement | null =>
+  document.body.querySelector('[role="dialog"][aria-label="Delete address?"]')
+const confirmationButton = (label: string): HTMLButtonElement =>
+  [...deleteConfirmation()!.querySelectorAll('button')].find((item) => item.textContent === label)!
+
+it.each(['relaxed', 'strict'] as const)(
+  'requires confirmation before deleting a %s address',
+  async (mode) => {
+    useSettingsStore.setState({
+      notebookNetwork: {
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        mode,
+        strictWhitelist: [
+          {
+            id: 'one',
+            hostnamePattern: 'research.local',
+            protocol: 'http',
+            port: 80,
+            origin: 'manual'
+          }
+        ],
+        trustedPrivateDestinations: [
+          {
+            id: 'one',
+            hostname: 'research.local',
+            protocol: 'http',
+            port: 80,
+            approvedAddresses: []
+          }
+        ]
+      }
+    })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => button('Delete').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+    expect(deleteConfirmation()?.textContent).toContain('http://research.local:80')
+    await act(async () => confirmationButton('Cancel').click())
+    expect(deleteConfirmation()).toBeNull()
+    expect(container.textContent).toContain('research.local')
+    await act(async () => button('Delete').click())
+    await act(async () => confirmationButton('Delete').click())
+    expect(deleteConfirmation()).toBeNull()
+    const saved = useSettingsStore.getState().notebookNetwork
+    expect(mode === 'strict' ? saved.strictWhitelist : saved.trustedPrivateDestinations).toEqual([])
+  }
+)
+
 it('shows relaxed search only above ten entries and keeps it visible while filtering', async () => {
   const rules = Array.from({ length: 11 }, (_, index) => ({
     hostname: `host${index}.example`,
@@ -534,6 +581,7 @@ it('shows relaxed search only above ten entries and keeps it visible while filte
   await typeInput(search, 'host10')
   expect(container.querySelector('input[aria-label="Search network addresses"]')).not.toBeNull()
   await act(async () => button('Delete').click())
+  await act(async () => confirmationButton('Delete').click())
   expect(container.querySelector('input[aria-label="Search network addresses"]')).toBeNull()
   expect(container.textContent).toContain('host0.example')
 })
