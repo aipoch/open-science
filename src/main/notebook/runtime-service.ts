@@ -1,3 +1,4 @@
+import { withDataRootWrite } from '../storage/migration-state'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
@@ -2487,6 +2488,60 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.packageOperations.inspect(request)
     )
+  }
+
+  // Sessionless Python helpers share Notebook's policy and logical environment lock. The caller
+  // resolves account identity before entering; the callback owns its child until it has closed.
+  async assertPythonExecutionAllowed(
+    environment: string | undefined,
+    python: string
+  ): Promise<void> {
+    await this.ensureRecovered()
+    const root = getRuntimeRoot(this.options.dataRoot)
+    if (environment) {
+      const prefix = envPrefix(root, environment, this.options.platform)
+      this.assertPrefixRecoverable(prefix)
+      if (environment === DEFAULT_PY_ENV && (await this.isDefaultEnvDisabled('python', root)))
+        throw new Error('RUNTIME_DISABLED')
+    }
+    const enablement = await this.resolveRuntimeEnablement('python')
+    let identity = python
+    try {
+      identity = realpathSync(python)
+    } catch {
+      /* Missing interpreters fail at launch. */
+    }
+    if (enablement?.enabled[identity] === false || enablement?.enabled[python] === false)
+      throw new Error('RUNTIME_DISABLED')
+    if (
+      environment &&
+      (this.repairPolicy.requirement('python', environment).required ||
+        this.environmentOperations.isRepairBlocked(
+          this.repairPolicy.blockKey('python', environment)
+        ))
+    )
+      throw new Error('RUNTIME_REPAIR_REQUIRED')
+  }
+
+  withPythonExecution<T>(
+    target: Readonly<{ runtimeRoot: string; python: string; environment?: string }>,
+    operation: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return withDataRootWrite(async () => {
+      signal?.throwIfAborted()
+      if (target.runtimeRoot !== getRuntimeRoot(this.options.dataRoot))
+        throw new Error('RUNTIME_STALE')
+      const execute = async (): Promise<T> => {
+        signal?.throwIfAborted()
+        await this.assertPythonExecutionAllowed(target.environment, target.python)
+        signal?.throwIfAborted()
+        return operation()
+      }
+      return target.environment
+        ? this.environmentOperations.runShared('execution', target.environment, execute, signal)
+        : execute()
+    })
   }
 
   // Installs packages into the shared global environments (never inside a session/kernel). Resolves

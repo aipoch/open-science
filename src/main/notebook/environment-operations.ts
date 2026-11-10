@@ -206,9 +206,10 @@ export class NotebookEnvironmentOperations {
   runShared<T>(
     kind: Extract<EnvironmentOperationKind, 'execution' | 'inspection'>,
     environment: string,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    signal?: AbortSignal
   ): Promise<T> {
-    return this.withLease(kind, environment, 'shared', operation)
+    return this.withLease(kind, environment, 'shared', operation, signal)
   }
 
   async acquireBindingLease(environment: string): Promise<EnvironmentLease> {

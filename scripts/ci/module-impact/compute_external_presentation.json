@@ -7,9 +7,12 @@
     "src/renderer/src/components/ComputeJobOutputs.tsx",
     "src/renderer/src/components/StagedResourceCleanupButton.tsx",
     "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
+    "src/renderer/src/pages/settings/ComputePythonEnvironmentControl.render.test.tsx",
+    "src/renderer/src/pages/settings/ComputePythonEnvironmentControl.tsx",
     "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
     "src/renderer/src/pages/settings/RayCredentials.tsx",
-    "src/renderer/src/pages/settings/use-compute-account.ts"
+    "src/renderer/src/pages/settings/use-compute-account.ts",
+    "src/renderer/src/pages/settings/use-compute-python-environment.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ComputeJobOutputs.tsx",
@@ -20,7 +23,7 @@
   ],
   "consumerModules": ["workspace_job_presentation", "settings_credentials_presentation"],
   "testFiles": {
-    "owner": [],
+    "owner": ["src/renderer/src/pages/settings/ComputePythonEnvironmentControl.render.test.tsx"],
     "contract": [
       "src/renderer/src/components/JobDetailModal.render.test.tsx",
       "src/renderer/src/pages/settings/ComputePanel.render.test.tsx",

@@ -2021,3 +2021,26 @@ describe('settings repository: Local Shell runtime', () => {
     })
   })
 })
+
+it('persists Modal source changes atomically alongside unrelated preferences', async () => {
+  const root = await createStorageRoot()
+  const repository = new SettingsRepository(root)
+  await Promise.all([
+    repository.setComputePythonRuntime('modal', {
+      kind: 'custom',
+      pythonPath: '/missing/venv/bin/python'
+    }),
+    repository.setNotificationsEnabled(false),
+    repository.setComputePythonRuntime('hugging-face', { kind: 'custom', pythonPath: '/hf/python' })
+  ])
+  const restored = await new SettingsRepository(root).getSettings()
+  expect(restored.huggingFaceRuntime).toEqual({ kind: 'custom', pythonPath: '/hf/python' })
+  expect(restored.modalRuntime).toEqual({ kind: 'custom', pythonPath: '/missing/venv/bin/python' })
+  expect(restored.notificationsEnabled).toBe(false)
+  await repository.setComputePythonRuntime('modal', { kind: 'managed' })
+  expect((await repository.getSettings()).modalRuntime).toEqual({ kind: 'managed' })
+  expect((await repository.getSettings()).huggingFaceRuntime).toEqual({
+    kind: 'custom',
+    pythonPath: '/hf/python'
+  })
+})

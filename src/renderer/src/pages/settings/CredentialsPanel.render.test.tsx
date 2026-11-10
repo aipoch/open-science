@@ -340,6 +340,11 @@ describe('CredentialsPanel', () => {
       .mockResolvedValue({ provider: 'hugging-face', state: 'pending', source: 'local' })
     Object.assign(window.api, {
       compute: {
+        getComputePythonRuntime: vi.fn(async () => ({
+          selection: { kind: 'managed' },
+          revision: 0,
+          candidates: []
+        })),
         accountStatus,
         disconnectAccount,
         connectAccount,
@@ -360,7 +365,10 @@ describe('CredentialsPanel', () => {
     await act(async () => screen.getByRole('button', { name: 'Connect' }).click())
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Connect in browser' }))
     await act(async () => screen.getByRole('button', { name: 'Connect in browser' }).click())
-    expect(connectAccount).toHaveBeenCalledWith('hugging-face')
+    expect(connectAccount).toHaveBeenCalledWith(
+      'hugging-face',
+      expect.objectContaining({ operationId: expect.any(String), revision: 0 })
+    )
     expect(screen.getByText('ABCD-EFGH')).toBeTruthy()
     const writeText = vi.fn().mockResolvedValue(undefined)
     const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
@@ -378,7 +386,10 @@ describe('CredentialsPanel', () => {
     })
     await act(async () => screen.getByRole('button', { name: 'Cancel' }).click())
     await act(async () => finishPoll(pending))
-    expect(cancelAccountConnection).toHaveBeenCalledWith('hugging-face')
+    expect(cancelAccountConnection).toHaveBeenCalledWith(
+      'hugging-face',
+      expect.objectContaining({ operationId: expect.any(String), revision: 0 })
+    )
     expect(screen.queryByText('ABCD-EFGH')).toBeNull()
     await act(async () => screen.getByRole('button', { name: 'Connect' }).click())
     await act(async () => screen.getByRole('button', { name: 'Use local sign-in' }).click())
@@ -386,6 +397,7 @@ describe('CredentialsPanel', () => {
       'Checking…'
     )
     expect(screen.queryByRole('button', { name: 'Copy code' })).toBeNull()
+    cancelAccountConnection.mockResolvedValue(connected)
     accountStatus.mockResolvedValueOnce(connected)
     await act(async () => {
       window.dispatchEvent(new Event('focus'))
@@ -417,6 +429,11 @@ describe('CredentialsPanel', () => {
     const useLocalAccount = vi.fn().mockResolvedValue({ ...current, reason: 'authorization' })
     Object.assign(window.api, {
       compute: {
+        getComputePythonRuntime: vi.fn(async () => ({
+          selection: { kind: 'managed' },
+          revision: 0,
+          candidates: []
+        })),
         accountStatus: vi.fn().mockResolvedValue(current),
         useLocalAccount,
         connectAccount,
@@ -441,7 +458,10 @@ describe('CredentialsPanel', () => {
     expect(useLocalAccount).toHaveBeenCalledTimes(2)
     act(() => dialog.getByRole('button', { name: 'Connect in browser' }).click())
     await act(async () => dialog.getByRole('button', { name: 'Close' }).click())
-    expect(cancelAccountConnection).toHaveBeenCalledOnce()
+    expect(cancelAccountConnection).toHaveBeenLastCalledWith(
+      'modal',
+      expect.objectContaining({ operationId: expect.any(String), revision: 0 })
+    )
     await act(async () => finish({ ...current, state: 'pending', userCode: 'LATE-CODE' }))
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(screen.getByRole('status').textContent).toContain('lab')
@@ -454,7 +474,10 @@ describe('CredentialsPanel', () => {
       window.dispatchEvent(new Event('focus'))
     })
     expect(screen.queryByRole('alertdialog')).toBeNull()
-    expect(cancelAccountConnection).toHaveBeenCalledOnce()
+    expect(cancelAccountConnection).toHaveBeenLastCalledWith(
+      'modal',
+      expect.objectContaining({ operationId: expect.any(String), revision: 0 })
+    )
   })
 
   it('manages Ray tokens by Dashboard address without reading their material into an editor', async () => {

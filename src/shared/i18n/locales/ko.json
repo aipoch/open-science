@@ -7960,8 +7960,6 @@
     "Authorization was not completed": "승인이 완료되지 않음",
     "Authorization timed out": "승인 시간 초과",
     "Authorization cancelled": "승인 취소됨",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "호스트 Python 환경에 {{packageName}} 패키지를 설치하거나 {{variable}} 환경 변수를 설정하세요.",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "기기 로그인을 지원하는 {{packageName}} 패키지를 설치하거나 {{variable}} 환경 변수를 설정하세요.",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "각 토큰은 게이트웨이 경로를 포함한 해당 대시보드 URL에만 사용됩니다.",
     "Dashboard access tokens": "대시보드 토큰",
     "Add access token": "토큰 추가",
@@ -7969,6 +7967,20 @@
     "No saved tokens.": "저장된 토큰이 없습니다.",
     "Use HTTPS or a loopback IP address with HTTP.": "HTTPS를 사용하세요. HTTP는 루프백 IP 주소에서만 사용할 수 있습니다.",
     "Stop sending the saved token to {{endpoint}}?": "저장된 토큰을 {{endpoint}} 주소로 보내지 않을까요?",
-    "Paste a valid Ray access token without spaces or line breaks.": "공백이나 줄 바꿈이 없는 유효한 Ray 액세스 토큰을 붙여넣으세요."
+    "Paste a valid Ray access token without spaces or line breaks.": "공백이나 줄 바꿈이 없는 유효한 Ray 액세스 토큰을 붙여넣으세요.",
+    "Open-Science (recommended)": "Open-Science(권장)",
+    "Preparing {{provider}}…": "{{provider}} 준비 중…",
+    "Checking environment…": "환경 확인 중…",
+    "Use another environment": "다른 환경 사용",
+    "This Python environment is disabled. Choose another environment or enable it in Runtimes.": "이 Python 환경은 비활성화되어 있습니다. 다른 환경을 선택하거나 런타임 설정에서 활성화하세요.",
+    "This Python environment needs recovery. Review it in Runtimes or choose another environment.": "이 Python 환경은 복구가 필요합니다. 런타임 설정에서 확인하거나 다른 환경을 선택하세요.",
+    "Could not prepare {{provider}} support. Retry or choose another environment.": "{{provider}} 지원을 준비하지 못했습니다. 다시 시도하거나 다른 환경을 선택하세요.",
+    "Could not save the Python environment. Try again.": "Python 환경을 저장하지 못했습니다. 다시 시도하세요.",
+    "The Python environment changed. Choose it again.": "Python 환경이 변경되었습니다. 다시 선택하세요.",
+    "Preparation cancelled.": "준비가 취소되었습니다.",
+    "{{provider}} is not available in this environment. Choose another environment or use Open-Science.": "이 환경에서 {{provider}} 사용을 지원하지 않습니다. 다른 환경을 선택하거나 Open-Science를 사용하세요.",
+    "Python environment": "Python 환경",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "로컬 로그인 정보를 찾을 수 없습니다. 브라우저에서 로그인하세요."
   }
 }

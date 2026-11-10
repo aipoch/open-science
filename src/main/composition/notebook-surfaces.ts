@@ -1,3 +1,5 @@
+import { configureComputePythonRuntimes } from '../compute/compute-python-runtime'
+import { computeAccounts } from '../compute/compute-account-service'
 import {
   createOfficePreviewCommands,
   type OfficePreviewCommands
@@ -111,6 +113,17 @@ export async function composeNotebookSurfaces({
     notebookRunResultDelivery: backgroundResults.notebookRunResultDelivery,
     markNotebookResultAuthorityReady: backgroundResults.markNotebookResultAuthorityReady,
     declareElectronAdapter
+  })
+  configureComputePythonRuntimes({
+    runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
+    getSelection: (provider) => settingsBootstrap.settingsService.getComputePythonRuntime(provider),
+    saveSelection: (provider, selection) =>
+      settingsBootstrap.settingsService.setComputePythonRuntime(provider, selection),
+    listPython: () => runtimeWorkflows.listPythonEnvironments(),
+    defaultReady: async () => (await notebookEnvironmentLifecycle.status()).pythonReady,
+    provision: (operationId) => notebookEnvironmentLifecycle.provision('python', operationId),
+    runtime: notebookRuntime.notebookService,
+    commit: (provider, commit) => computeAccounts.commitRuntimeSelection(provider, commit)
   })
   composition.phase('notebook-provisioner')
   return { officePreviewCommands, runtimeWorkflows, notebookEnvironmentLifecycle }

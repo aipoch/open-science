@@ -365,6 +365,7 @@ describe('Settings backend ownership architecture', () => {
       'setCodeBuddyInfo',
       'setCodexInfo',
       'setComputeBookmarks',
+      'setComputePythonRuntime',
       'setConnectorAutoAllow',
       'setConnectorDisabled',
       'setConversationSkillImportEnabled',
@@ -498,7 +499,7 @@ describe('Settings backend ownership architecture', () => {
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
-        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
+        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getComputePythonRuntime getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWslSetupStatus getWsl2BashPreviewStatus hasActiveInstall holdInstallAdmission quiesceAuthentication
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
@@ -515,7 +516,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
-        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
@@ -682,9 +683,11 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenMask',
       'githubTokenRef',
       'grantedLocalRoots',
+      'huggingFaceRuntime',
       'legacyDataMovePromptDismissedAt',
       'localShellRuntime',
       'localePreference',
+      'modalRuntime',
       'networkProxy',
       'notebookFolderRestrictionEnabled',
       'notebookManualInterpreters',

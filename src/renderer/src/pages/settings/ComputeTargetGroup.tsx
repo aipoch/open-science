@@ -198,9 +198,11 @@ export function ComputeTargetGroup<T extends { providerId: string; displayName: 
   const websiteLabel =
     group.website && t('Open the {{appName}} website', { appName: group.website.name })
   const provider = computeAccountProviderForBackend(backend)
-  const account = useComputeAccount(local ? provider : undefined)
   const [connectingForAdd, setConnectingForAdd] = useState(false)
-  const showAccountStatus = Boolean(provider && local && computeAccountActionsAvailable())
+  const configured = targets.length > 0
+  const account = useComputeAccount(local ? provider : undefined, configured)
+  const accountAvailable = Boolean(provider && local && computeAccountActionsAvailable())
+  const showAccountStatus = accountAvailable && configured
   const connected = account.status?.state === 'connected' && !account.error
   const canVerify =
     local &&
@@ -256,15 +258,13 @@ export function ComputeTargetGroup<T extends { providerId: string; displayName: 
         local && (
           <ComputeAddButton
             label={t(computeTargetAddLabels[backend])}
-            disabled={Boolean(
-              provider && (!showAccountStatus || (!account.status && !account.error))
-            )}
+            disabled={Boolean(provider && !accountAvailable)}
             onClick={() => (provider && !connected ? setConnectingForAdd(true) : newTarget())}
           />
         )
       }
     >
-      {showAccountStatus && provider && (
+      {accountAvailable && provider && (
         <ComputeAccountDialog
           description={t(COMPUTE_ACCOUNT_CONNECTION_REQUIRED)}
           provider={provider}

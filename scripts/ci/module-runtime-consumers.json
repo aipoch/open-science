@@ -283,5 +283,7 @@
   ],
   "resources/compute-modal.py": ["src/main/compute/modal-sdk.ts"],
   "resources/compute-hf-auth.py": ["src/main/compute/compute-account-hf.ts"],
-  "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"]
+  "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"],
+  "resources/compute-hf-check.py": ["src/main/compute/compute-python-runtime.ts"],
+  "resources/compute-modal-check.py": ["src/main/compute/compute-python-runtime.ts"]
 }

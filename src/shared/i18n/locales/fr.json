@@ -8304,8 +8304,6 @@
     "Authorization was not completed": "Autorisation non terminée",
     "Authorization timed out": "Délai d’autorisation dépassé",
     "Authorization cancelled": "Autorisation annulée",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "Installez {{packageName}} dans l’environnement Python de l’hôte ou définissez {{variable}}.",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "Installez {{packageName}} avec la prise en charge de la connexion sur appareil ou définissez {{variable}}.",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "Chaque jeton est utilisé uniquement pour l’URL de son tableau de bord, chemin de la passerelle compris.",
     "Dashboard access tokens": "Jetons du tableau de bord",
     "Add access token": "Ajouter un jeton",
@@ -8313,6 +8311,20 @@
     "No saved tokens.": "Aucun jeton enregistré.",
     "Use HTTPS or a loopback IP address with HTTP.": "Utilisez HTTPS ou une adresse IP de bouclage avec HTTP.",
     "Stop sending the saved token to {{endpoint}}?": "Ne plus envoyer le jeton enregistré à {{endpoint}} ?",
-    "Paste a valid Ray access token without spaces or line breaks.": "Collez un jeton d’accès Ray valide, sans espace ni saut de ligne."
+    "Paste a valid Ray access token without spaces or line breaks.": "Collez un jeton d’accès Ray valide, sans espace ni saut de ligne.",
+    "Open-Science (recommended)": "Open-Science (recommandé)",
+    "Preparing {{provider}}…": "Préparation de {{provider}}…",
+    "Checking environment…": "Vérification de l’environnement…",
+    "Use another environment": "Utiliser un autre environnement",
+    "This Python environment is disabled. Choose another environment or enable it in Runtimes.": "Cet environnement Python est désactivé. Choisissez un autre environnement ou activez-le dans les paramètres d’exécution.",
+    "This Python environment needs recovery. Review it in Runtimes or choose another environment.": "Cet environnement Python nécessite une récupération. Consultez les paramètres d’exécution ou choisissez un autre environnement.",
+    "Could not prepare {{provider}} support. Retry or choose another environment.": "Impossible de préparer la prise en charge de {{provider}}. Réessayez ou choisissez un autre environnement.",
+    "Could not save the Python environment. Try again.": "Impossible d’enregistrer l’environnement Python. Réessayez.",
+    "The Python environment changed. Choose it again.": "L’environnement Python a changé. Sélectionnez-le à nouveau.",
+    "Preparation cancelled.": "Préparation annulée.",
+    "{{provider}} is not available in this environment. Choose another environment or use Open-Science.": "{{provider}} n’est pas disponible dans cet environnement. Choisissez un autre environnement ou utilisez Open-Science.",
+    "Python environment": "Environnement Python",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "Aucune connexion locale trouvée. Connectez-vous dans le navigateur."
   }
 }

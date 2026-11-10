@@ -7131,6 +7131,16 @@ describe('Connection editor shared leave protection', () => {
     }))
     const update = vi.fn(async () => undefined)
     Object.assign(window.api.compute, {
+      getComputePythonRuntime: vi.fn(async () => ({
+        selection: { kind: 'managed' },
+        revision: 0,
+        candidates: []
+      })),
+      cancelAccountConnection: vi.fn(async () => ({
+        provider: 'hugging-face',
+        state: 'connected',
+        source: 'local'
+      })),
       accountStatus: vi.fn(async (provider: string) => ({ provider, state: 'connected' })),
       useLocalAccount: signIn,
       createHostedTarget: create,
@@ -7140,6 +7150,8 @@ describe('Connection editor shared leave protection', () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Compute')!.click())
     await click('Add Hugging Face Jobs target')
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+    await click('Use local sign-in')
     expect(document.querySelector('[aria-label="Back to compute"]')).not.toBeNull()
     const field = (name: string): HTMLInputElement =>
       document.querySelector(`input[name="${name}"]`)!
@@ -7152,7 +7164,10 @@ describe('Connection editor shared leave protection', () => {
     await click('Save')
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
     await click('Use local sign-in')
-    expect(signIn).toHaveBeenCalledWith('hugging-face')
+    expect(signIn).toHaveBeenCalledWith(
+      'hugging-face',
+      expect.objectContaining({ operationId: expect.any(String), revision: 0 })
+    )
     expect(field('bucket').value).toBe(config.bucket)
     await click('Save')
     expect(create).toHaveBeenLastCalledWith(config)
@@ -7172,6 +7187,9 @@ describe('Connection editor shared leave protection', () => {
       flavor: 't4-small'
     })
     expect(document.querySelector('input[name="flavor"]')).toBeNull()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
   })
   it.each(['Connectors', 'Compute'] as const)(
     'protects %s drafts through panel, breadcrumb, back and close',

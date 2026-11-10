@@ -8129,8 +8129,6 @@
     "Authorization was not completed": "Autorisierung nicht abgeschlossen",
     "Authorization timed out": "Zeitlimit für die Autorisierung überschritten",
     "Authorization cancelled": "Autorisierung abgebrochen",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "Installieren Sie {{packageName}} in der Python-Umgebung des Hosts oder setzen Sie {{variable}}.",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "Installieren Sie {{packageName}} mit Unterstützung für die Geräteanmeldung oder setzen Sie {{variable}}.",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "Jedes Token gilt nur für die zugehörige Dashboard-URL einschließlich des Gateway-Pfads.",
     "Dashboard access tokens": "Dashboard-Tokens",
     "Add access token": "Token hinzufügen",
@@ -8138,6 +8136,20 @@
     "No saved tokens.": "Keine gespeicherten Tokens.",
     "Use HTTPS or a loopback IP address with HTTP.": "Verwenden Sie HTTPS oder eine Loopback-IP-Adresse mit HTTP.",
     "Stop sending the saved token to {{endpoint}}?": "Das gespeicherte Token nicht mehr an {{endpoint}} senden?",
-    "Paste a valid Ray access token without spaces or line breaks.": "Fügen Sie ein gültiges Ray-Zugriffstoken ohne Leerzeichen oder Zeilenumbrüche ein."
+    "Paste a valid Ray access token without spaces or line breaks.": "Fügen Sie ein gültiges Ray-Zugriffstoken ohne Leerzeichen oder Zeilenumbrüche ein.",
+    "Open-Science (recommended)": "Open-Science (empfohlen)",
+    "Preparing {{provider}}…": "{{provider}} wird vorbereitet…",
+    "Checking environment…": "Umgebung wird geprüft…",
+    "Use another environment": "Andere Umgebung verwenden",
+    "This Python environment is disabled. Choose another environment or enable it in Runtimes.": "Diese Python-Umgebung ist deaktiviert. Wählen Sie eine andere Umgebung oder aktivieren Sie sie unter Laufzeitumgebungen.",
+    "This Python environment needs recovery. Review it in Runtimes or choose another environment.": "Diese Python-Umgebung muss wiederhergestellt werden. Prüfen Sie sie unter Laufzeitumgebungen oder wählen Sie eine andere Umgebung.",
+    "Could not prepare {{provider}} support. Retry or choose another environment.": "{{provider}}-Unterstützung konnte nicht vorbereitet werden. Versuchen Sie es erneut oder wählen Sie eine andere Umgebung.",
+    "Could not save the Python environment. Try again.": "Die Python-Umgebung konnte nicht gespeichert werden. Versuchen Sie es erneut.",
+    "The Python environment changed. Choose it again.": "Die Python-Umgebung hat sich geändert. Wählen Sie sie erneut aus.",
+    "Preparation cancelled.": "Vorbereitung abgebrochen.",
+    "{{provider}} is not available in this environment. Choose another environment or use Open-Science.": "{{provider}} ist in dieser Umgebung nicht verfügbar. Wählen Sie eine andere Umgebung oder verwenden Sie Open-Science.",
+    "Python environment": "Python-Umgebung",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "Keine lokale Anmeldung gefunden. Melden Sie sich im Browser an."
   }
 }

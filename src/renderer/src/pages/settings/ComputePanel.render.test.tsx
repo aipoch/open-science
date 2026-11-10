@@ -247,6 +247,11 @@ describe('ComputePanel', () => {
   it('resumes adding only after sign-in and keeps the group open on cancel', async () => {
     const onNavigate = vi.fn()
     Object.assign(window.api.compute, {
+      getComputePythonRuntime: vi.fn(async () => ({
+        selection: { kind: 'managed' },
+        revision: 0,
+        candidates: []
+      })),
       accountStatus: async (provider: string) => ({ provider, state: 'disconnected' }),
       useLocalAccount: async (provider: string) => ({
         provider,

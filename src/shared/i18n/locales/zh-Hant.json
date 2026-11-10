@@ -7962,8 +7962,6 @@
     "Authorization was not completed": "授權尚未完成",
     "Authorization timed out": "授權逾時",
     "Authorization cancelled": "授權已取消",
-    "Install {{packageName}} in the host Python environment or set {{variable}}.": "請在主機的 Python 環境中安裝 {{packageName}}，或設定 {{variable}}。",
-    "Install {{packageName}} with device sign-in support or set {{variable}}.": "請安裝支援裝置登入的 {{packageName}}，或設定 {{variable}}。",
     "Each access token is used only for its Dashboard URL, including the gateway path.": "權杖依完整的 Dashboard 位址比對，包含閘道路徑。",
     "Dashboard access tokens": "Dashboard 權杖",
     "Add access token": "新增權杖",
@@ -7971,6 +7969,20 @@
     "No saved tokens.": "尚未儲存權杖。",
     "Use HTTPS or a loopback IP address with HTTP.": "請使用 HTTPS；HTTP 僅支援回送 IP 位址。",
     "Stop sending the saved token to {{endpoint}}?": "停止向 {{endpoint}} 傳送已儲存的權杖？",
-    "Paste a valid Ray access token without spaces or line breaks.": "請貼上有效的 Ray 存取權杖，內容不可包含空格或換行字元。"
+    "Paste a valid Ray access token without spaces or line breaks.": "請貼上有效的 Ray 存取權杖，內容不可包含空格或換行字元。",
+    "Open-Science (recommended)": "Open-Science（建議）",
+    "Preparing {{provider}}…": "正在準備 {{provider}}…",
+    "Checking environment…": "正在檢查環境…",
+    "Use another environment": "使用其他環境",
+    "This Python environment is disabled. Choose another environment or enable it in Runtimes.": "此 Python 環境已停用。請選擇其他環境，或在執行階段設定中啟用。",
+    "This Python environment needs recovery. Review it in Runtimes or choose another environment.": "此 Python 環境需要復原。請在執行階段設定中查看，或選擇其他環境。",
+    "Could not prepare {{provider}} support. Retry or choose another environment.": "無法準備 {{provider}} 支援。請重試或選擇其他環境。",
+    "Could not save the Python environment. Try again.": "無法儲存 Python 環境。請重試。",
+    "The Python environment changed. Choose it again.": "Python 環境已變更。請重新選擇。",
+    "Preparation cancelled.": "準備已取消。",
+    "{{provider}} is not available in this environment. Choose another environment or use Open-Science.": "此環境中無法使用 {{provider}}。請選擇其他環境或使用 Open-Science。",
+    "Python environment": "Python 環境",
+    "{{name}} · Python {{version}}": "{{name}} · Python {{version}}",
+    "No local sign-in found. Connect in browser to sign in.": "找不到本機登入憑證。請透過瀏覽器登入。"
   }
 }

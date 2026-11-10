@@ -1030,6 +1030,16 @@ class SettingsRepository {
   }
 
   // Applies one catalog change to the latest persisted paths inside the write queue.
+  async setComputePythonRuntime(
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider,
+    selection: import('../../shared/compute-python-runtime').ComputePythonSelection
+  ): Promise<void> {
+    await this.mutate((settings) => ({
+      ...settings,
+      [provider === 'modal' ? 'modalRuntime' : 'huggingFaceRuntime']: selection
+    }))
+  }
+
   async setManualInterpreters(
     language: NotebookLanguage,
     update: (current: string[]) => string[]

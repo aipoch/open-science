@@ -1,3 +1,7 @@
+import {
+  computeAccountOperationSchema,
+  computePythonSelectSchema
+} from '../../shared/compute-python-runtime'
 import { computeAccountProviders } from '../../shared/compute-accounts'
 import { kubernetesTargetConfigSchema } from './kubernetes-target-catalog'
 import { hostedTargetConfigSchema } from './hosted-target-catalog'
@@ -164,9 +168,23 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:create-kubernetes-target': z.tuple([kubernetesTargetConfigSchema]),
   'compute:list-hosted-targets': z.tuple([]),
   'compute:account-status': z.tuple([z.enum(computeAccountProviders), z.boolean().optional()]),
-  'compute:connect-account': z.tuple([z.enum(computeAccountProviders)]),
-  'compute:use-local-account': z.tuple([z.enum(computeAccountProviders)]),
-  'compute:cancel-account-connection': z.tuple([z.enum(computeAccountProviders)]),
+  'compute:python-runtime:get': z.tuple([z.enum(computeAccountProviders)]),
+  'compute:python-runtime:select': z.tuple([
+    z.enum(computeAccountProviders),
+    computePythonSelectSchema
+  ]),
+  'compute:connect-account': z.tuple([
+    z.enum(computeAccountProviders),
+    computeAccountOperationSchema.optional()
+  ]),
+  'compute:use-local-account': z.tuple([
+    z.enum(computeAccountProviders),
+    computeAccountOperationSchema.optional()
+  ]),
+  'compute:cancel-account-connection': z.tuple([
+    z.enum(computeAccountProviders),
+    computeAccountOperationSchema.optional()
+  ]),
   'compute:disconnect-account': z.tuple([z.enum(computeAccountProviders)]),
   'compute:list-ray-tokens': z.tuple([]),
   'compute:set-ray-token': z.tuple([z.string().min(1).max(2048), z.string().min(1).max(16384)]),
@@ -279,10 +297,20 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:account-status', (_event, provider, force) =>
     handlers.accountStatus(provider, force)
   )
-  handleComputeIpc('compute:connect-account', (_event, value) => handlers.connectAccount(value))
-  handleComputeIpc('compute:use-local-account', (_event, value) => handlers.useLocalAccount(value))
-  handleComputeIpc('compute:cancel-account-connection', (_event, value) =>
-    handlers.cancelAccountConnection(value)
+  handleComputeIpc('compute:python-runtime:get', (_event, provider) =>
+    handlers.getComputePythonRuntime(provider)
+  )
+  handleComputeIpc('compute:python-runtime:select', (_event, provider, request) =>
+    handlers.selectComputePythonRuntime(provider, request)
+  )
+  handleComputeIpc('compute:connect-account', (_event, value, context) =>
+    handlers.connectAccount(value, context)
+  )
+  handleComputeIpc('compute:use-local-account', (_event, value, context) =>
+    handlers.useLocalAccount(value, context)
+  )
+  handleComputeIpc('compute:cancel-account-connection', (_event, value, context) =>
+    handlers.cancelAccountConnection(value, context)
   )
   handleComputeIpc('compute:disconnect-account', (_event, value) =>
     handlers.disconnectAccount(value)

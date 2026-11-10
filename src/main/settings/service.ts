@@ -743,6 +743,20 @@ class SettingsService {
     return this.notebookRuntimeSettings.setAgentEnvironmentCreationEnabled(enabled)
   }
 
+  async getComputePythonRuntime(
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider
+  ): Promise<import('../../shared/compute-python-runtime').ComputePythonSelection | undefined> {
+    const settings = await this.repository.getSettings()
+    return provider === 'modal' ? settings.modalRuntime : settings.huggingFaceRuntime
+  }
+
+  setComputePythonRuntime(
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider,
+    selection: import('../../shared/compute-python-runtime').ComputePythonSelection
+  ): Promise<void> {
+    return this.repository.setComputePythonRuntime(provider, selection)
+  }
+
   async getManualInterpreters(language: NotebookLanguage): Promise<string[]> {
     return (await this.notebookRuntimeSettings.getSnapshot(language)).manualInterpreters
   }
