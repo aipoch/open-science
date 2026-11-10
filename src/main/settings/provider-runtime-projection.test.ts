@@ -297,7 +297,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])(
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'])(
     'resolves %s for API and pinned subscription targets across frameworks',
     (model) => {
       const owner = new ProviderRuntimeProjectionOwner()
