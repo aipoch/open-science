@@ -183,7 +183,7 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
       'aria-invalid',
       'false'
     )
-    await settings.getByRole('combobox', { name: 'Protocol', exact: true }).click()
+    await settings.getByRole('combobox', { name: 'Network protocol', exact: true }).click()
     await page.getByRole('listbox').screenshot({ path: testInfo.outputPath('protocol-select.png') })
     await page.getByRole('option', { name: 'HTTP', exact: true }).click()
     await settings.getByLabel('Hostname, IP or pattern', { exact: true }).fill('localhost')

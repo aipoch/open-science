@@ -190,6 +190,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。解决授权问题后，请重试启动。"
   },
   "renderer": {
+    "Network protocol": "协议",
     "Delete address?": "删除地址？",
     "Connect {{provider}}": "连接 {{provider}}",
     "Connect the account before adding this configuration.": "添加此配置前，请先连接账号。",

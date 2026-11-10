@@ -191,6 +191,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut."
   },
   "renderer": {
+    "Network protocol": "Protokoll",
     "Delete address?": "Adresse löschen?",
     "Connect {{provider}}": "{{provider}} verbinden",
     "Connect the account before adding this configuration.": "Verbinden Sie Ihr Konto, bevor Sie diese Konfiguration hinzufügen.",

@@ -336,7 +336,7 @@ export function NotebookNetworkAccessEditor({
     >
       <fieldset disabled={busy} className="grid grid-cols-[6rem_minmax(0,1fr)_5rem] gap-3">
         <label className="space-y-1 text-xs">
-          {t('Protocol')}
+          {t('Network protocol')}
           <Select
             value={protocol}
             disabled={busy}
@@ -347,7 +347,7 @@ export function NotebookNetworkAccessEditor({
                 setPort(next === 'https' ? '443' : '80')
             }}
           >
-            <SelectTrigger aria-label={t('Protocol')}>
+            <SelectTrigger aria-label={t('Network protocol')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

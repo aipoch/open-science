@@ -516,7 +516,7 @@ it('creates a logical group and a manual strict rule without an origin field', a
     )!
     await act(async () => option.click())
   }
-  await selectOption('Protocol', 'HTTP')
+  await selectOption('Network protocol', 'HTTP')
   await selectOption('Group', 'New group…')
   await typeInput(
     [...container.querySelectorAll('form input')].at(-1) as HTMLInputElement,

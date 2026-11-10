@@ -192,6 +192,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés. Relancez le démarrage après avoir résolu le problème d’autorisation."
   },
   "renderer": {
+    "Network protocol": "Protocole",
     "Delete address?": "Supprimer cette adresse ?",
     "Connect {{provider}}": "Se connecter à {{provider}}",
     "Connect the account before adding this configuration.": "Connectez votre compte avant d’ajouter cette configuration.",

@@ -193,6 +193,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск."
   },
   "renderer": {
+    "Network protocol": "Протокол",
     "Delete address?": "Удалить адрес?",
     "Connect {{provider}}": "Подключение к {{provider}}",
     "Connect the account before adding this configuration.": "Подключите учётную запись перед добавлением этой конфигурации.",
