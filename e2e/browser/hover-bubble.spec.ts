@@ -10,10 +10,7 @@ test('keeps usage avatars compact inside installed resource cards', async ({ pag
     await expect(identity.locator('svg')).toHaveCSS(dimension, '20px')
     await expect(usage).toHaveCSS(dimension, '20px')
     await expect(usage.locator('svg')).toHaveCSS(dimension, '12px')
-    await expect(card.locator('[data-slot="skill-usage-main-avatar"]')).toHaveCSS(
-      dimension,
-      '20px'
-    )
+    await expect(card.locator('[data-slot="skill-usage-main-avatar"]')).toHaveCSS(dimension, '20px')
   }
 })
 
