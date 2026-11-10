@@ -62,7 +62,8 @@ export class SessionPackageDeletion {
   async prepare(
     session: PersistedChatSession,
     receipt: SessionPackageReceipt,
-    originSessionIds: string[]
+    originSessionIds: string[],
+    logSessionIds: string[]
   ): Promise<void> {
     if (
       !(session.packageOrigin ?? session.forkOrigin) ||
@@ -94,6 +95,7 @@ export class SessionPackageDeletion {
         continue
       add(kind, projectId, sessionId)
     }
+    for (const id of logSessionIds) add('execution-file-evidence', session.projectId, id)
     // Retained upstream origins may have no included file bytes, but have their own read-only
     // Artifact marker. Recovery verifies every durable claim before deleting anything.
     for (const id of originSessionIds) add('artifacts', session.projectId, id)
@@ -387,6 +389,31 @@ export class SessionPackageDeletion {
             ['blobs', '.shadow-evidence-v1'].includes(sessionId)
           )
             continue
+          if (
+            rootName === 'execution-file-evidence' &&
+            /^\.ownership-[a-zA-Z0-9-]+$/u.test(sessionId)
+          ) {
+            const ownerKey = rootName + '/.project-ownership-' + project.name + '.json'
+            if (!(await exists(join(this.options.storageRoot, ownerKey)))) return undefined
+            await assertPackageSourcePath(this.options.storageRoot, ownerKey)
+            const owner = z
+              .object({
+                schemaVersion: z.literal(1),
+                phase: z.literal('owned'),
+                projectName: z.literal(project.name),
+                ownershipToken: uuid
+              })
+              .safeParse(await readPackageJson(join(this.options.storageRoot, ownerKey)))
+            const path = join(notebooks, project.name, sessionId)
+            const info = await lstat(path)
+            if (
+              owner.success &&
+              sessionId === '.ownership-' + owner.data.ownershipToken &&
+              info.isFile() &&
+              info.size === 0
+            )
+              continue
+          }
           if (project.name !== journal.projectId || !ownedScopes.has(sessionId)) return undefined
         }
       }

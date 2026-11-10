@@ -19,7 +19,8 @@
     "src/main/windows-process-query.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
-    "packages/safe-file-publisher-native/index.cjs"
+    "packages/safe-file-publisher-native/index.cjs",
+    "resources/notebook/file_evidence_worker.js"
   ],
   "packages/safe-file-publisher-native/index.cjs": [
     "src/main/uploads/atomic-no-replace-publisher.ts",

@@ -12,7 +12,8 @@ import type {
 } from '../../shared/research-video-presentation'
 import {
   withWorkingFileEvidenceRead,
-  updateImportedEvidencePool
+  updateImportedEvidencePool,
+  releaseImportedEvidenceProject
 } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import {
@@ -516,7 +517,7 @@ export class SessionPackageService {
       await this.deletion.prepareRetained(session)
       return
     }
-    await this.deletion.prepare(session, receipt, origin.originSessionIds)
+    await this.deletion.prepare(session, receipt, origin.originSessionIds, origin.logSessionIds)
   }
 
   private serialize<Result>(work: () => Promise<Result>, signal?: AbortSignal): Promise<Result> {
@@ -1960,7 +1961,12 @@ export class SessionPackageService {
         const root = this.options.storageRoot
         const parent = join(root, entry.scope, projectId)
         if (entry.scope === 'execution-file-evidence')
-          await ensureWorkingFileEvidenceProject(root, projectId)
+          await ensureWorkingFileEvidenceProject(
+            root,
+            projectId,
+            undefined,
+            records.logEvidence ? operationId : undefined
+          )
         else await mkdir(parent, { recursive: true })
         await assertPackageSourcePath(root, `${entry.scope}/${projectId}`)
         const directory = join(parent, entry.sessionId)
@@ -2315,6 +2321,7 @@ export class SessionPackageService {
     pdfNotes?: PackagePdfNotes
     researchFilms?: PackageResearchFilms
     originSessionIds: string[]
+    logSessionIds: string[]
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
     const root = join(this.options.storageRoot, 'artifacts', safe.projectId, safe.sessionId)
@@ -2362,6 +2369,11 @@ export class SessionPackageService {
       literature: records.literature,
       pdfNotes: records.pdfNotes,
       researchFilms: records.researchFilms,
+      logSessionIds: [
+        ...new Set(
+          (records.logEvidence ?? []).map((lane) => receipt.identities[lane.key.split('/')[2]])
+        )
+      ],
       originSessionIds: records.tables.FileOriginSession.map(
         (row) => receipt.identities[String(row.sessionId)]
       )
@@ -2418,6 +2430,11 @@ export class SessionPackageService {
         )
         if (receipt)
           await updateImportedEvidencePool('rollback-imported-pool', root, journal.projectId, pool)
+        if (
+          journal.retryPlanName &&
+          journal.directories.some((entry) => entry.scope === 'execution-file-evidence')
+        )
+          await releaseImportedEvidenceProject(root, journal.projectId, operation)
       }
     })
   }

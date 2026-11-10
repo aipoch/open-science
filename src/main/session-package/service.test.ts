@@ -213,6 +213,16 @@ it('activates project accounting for imported logs with no generation objects', 
   try {
     const archive = join(source.storageRoot, 'empty.science')
     await exporter.exportTo(scope, archive)
+    const evidenceRoot = join(target.storageRoot, 'execution-file-evidence')
+    const beforeCommit = vi
+      .spyOn(target.client, '$transaction')
+      .mockRejectedValueOnce(new Error('failed empty pool import'))
+    try {
+      await expect(importer.importFrom(archive)).rejects.toThrow('failed empty pool import')
+    } finally {
+      beforeCommit.mockRestore()
+    }
+    expect(await readdir(evidenceRoot)).toEqual([])
     const interrupted = new SessionPackageService({
       storageRoot: target.storageRoot,
       getClient: async () => target.client,
@@ -232,6 +242,20 @@ it('activates project accounting for imported logs with no generation objects', 
     const first = JSON.parse(await readFile(join(retries, allocation), 'utf8'))
     await importer.recover()
     expect(await readdir(retries)).toEqual([])
+    const { SessionProjectionRepository } = await import('../session-persistence/projection')
+    const sessions = new SessionRepository(
+      target.storageRoot,
+      {},
+      new SessionProjectionRepository(async () => target.client)
+    )
+    const prior = await sessions.loadSession(first.projectId, first.sessionId)
+    await importer.prepareSessionDeletion(prior!)
+    await sessions.deleteSession(first.projectId, first.sessionId)
+    await importer.recover({ collectDeletedPackages: true })
+    await expect(stat(join(evidenceRoot, first.projectId, first.sessionId))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(await stat(join(evidenceRoot, first.projectId, 'blobs'))).toBeDefined()
     const imported = await importer.importFrom(archive)
     expect(imported.sessionId).not.toBe(first.sessionId)
     const project = join(target.storageRoot, 'execution-file-evidence', imported.projectId)

@@ -181,12 +181,22 @@ const writeExclusiveFile = (name, contents) => {
     closeSync(descriptor)
   }
 }
-const publishExclusiveFile = (name, contents) => {
+const publishExclusiveFile = (name, contents, withoutLinks = false) => {
   const temporaryName = `.publish-${randomUUID()}.tmp`
   try {
     writeExclusiveFile(temporaryName, contents)
-    linkSync(temporaryName, name)
-    rmSync(temporaryName, { force: true })
+    if (withoutLinks) {
+      // The unpacked worker and standalone backend both ship this Node-API binary.
+      require('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node').publishNoReplace(
+        process.cwd(),
+        '',
+        temporaryName,
+        name
+      )
+    } else {
+      linkSync(temporaryName, name)
+      rmSync(temporaryName)
+    }
     syncDirectory()
   } finally {
     rmSync(temporaryName, { force: true })
@@ -622,11 +632,14 @@ const ensureProject = (request) => {
           schemaVersion: 1,
           phase: 'prepared',
           projectName,
-          ownershipToken: randomUUID()
+          ownershipToken: request.importOperationId
+            ? assertSafeName(request.importOperationId)
+            : randomUUID()
         },
         null,
         2
-      )}\n`
+      )}\n`,
+      Boolean(request.importOperationId)
     )
   }
   const receipt = readProjectOwnership(projectName)
@@ -2298,6 +2311,8 @@ const deleteProject = (request) => {
     return { ok: true, removedProjectEntries: 0 }
   }
   let receipt = readProjectOwnership(projectName)
+  if (request.importOperationId && receipt.ownershipToken !== request.importOperationId)
+    return { ok: true, removedProjectEntries: 0 }
   if (receipt.phase === 'prepared') {
     ensureProject(request)
     receipt = readProjectOwnership(projectName)
@@ -2320,6 +2335,18 @@ const deleteProject = (request) => {
     }
     if (projectIdentity) {
       verifyProjectMarker(projectName, receipt.ownershipToken)
+      if (request.importOperationId) {
+        for (const entry of readdirSync(projectName, { withFileTypes: true })) {
+          if (entry.name === ownershipFile(receipt.ownershipToken)) continue
+          if (
+            entry.name === 'blobs' &&
+            entry.isDirectory() &&
+            !readdirSync(join(projectName, entry.name)).length
+          )
+            continue
+          return { ok: true, removedProjectEntries: 0 }
+        }
+      }
       renameSync(projectName, tombstoneName)
       syncDirectory()
       const renamedIdentity = entryIdentity(tombstoneName)
@@ -2386,6 +2413,18 @@ const rollbackImportedPool = (request) => {
       renameSync(path, name)
     }
   }
+  const marker = join(dirname(pool.path), shadow.projectMarker)
+  if (
+    receipt.activation &&
+    entryExists(marker) &&
+    quarantineFingerprint(lstatSync(marker)) === receipt.activation &&
+    !marks.live.size &&
+    !readdirSync(pool.path).length &&
+    !shadow.projectBytes(pool)
+  ) {
+    rmSync(marker)
+    syncDirectoryPath(dirname(pool.path))
+  }
   syncDirectoryPath(pool.path)
   syncDirectory()
   return { ok: true, poolPublished: false }
@@ -2424,9 +2463,16 @@ const publishImportedPool = (request) => {
     }
   }
   // Persist ownership before the first move so a partial batch is recoverable after restart.
-  if (additions.length) replaceJson(importPoolReceipt, { pool: pool.identity, additions })
+  const stagedMarker = '.import-pool-activation'
+  if (activate) writeExclusiveFile(stagedMarker, '')
+  if (activate || additions.length)
+    replaceJson(importPoolReceipt, {
+      pool: pool.identity,
+      additions,
+      ...(activate ? { activation: quarantineFingerprint(lstatSync(stagedMarker)) } : {})
+    })
   if (activate) {
-    writeExclusiveFile(marker, '')
+    renameSync(stagedMarker, marker)
     syncDirectoryPath(project)
   }
   for (const { name } of additions) {

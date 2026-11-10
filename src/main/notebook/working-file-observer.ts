@@ -265,11 +265,13 @@ type EvidenceWorkerCleanupRequest = EvidenceWorkerBlobPoolBinding & {
 }
 type EvidenceWorkerDeleteProjectRequest = {
   operation: 'delete-project'
+  importOperationId?: string
   expectedRootIdentity: FileIdentity
   projectName: string
 }
 type EvidenceWorkerEnsureProjectRequest = {
   operation: 'ensure-project'
+  importOperationId?: string
   expectedRootIdentity: FileIdentity
   projectName: string
 }
@@ -828,7 +830,8 @@ export const maintainWorkingFileEvidence = (
 const ensureWorkingFileEvidenceProject = async (
   storageRoot: string,
   projectId: string,
-  worker: typeof runEvidenceWorker = runEvidenceWorker
+  worker: typeof runEvidenceWorker = runEvidenceWorker,
+  importOperationId?: string
 ): Promise<void> => {
   if (!SAFE_ACTIVITY_ID.test(projectId))
     throw new Error('Unsafe Execution file-evidence Project ID.')
@@ -842,6 +845,7 @@ const ensureWorkingFileEvidenceProject = async (
   if (existing) return existing
   const ensuring = runSerializedEvidenceWorker(worker, evidenceRoot.path, {
     operation: 'ensure-project',
+    importOperationId,
     expectedRootIdentity: evidenceRoot.identity,
     projectName: projectId
   }).then((result) => {
@@ -885,7 +889,8 @@ const projectEvidenceScope = (
 const deleteFileEvidenceProjectAtRoot = async (
   storageRoot: string,
   evidenceDirectory: string,
-  projectId: string
+  projectId: string,
+  importOperationId?: string
 ): Promise<void> => {
   const root = await secureEvidenceRoot(storageRoot, join(storageRoot, evidenceDirectory))
   const result = await runSerializedEvidenceWorker(
@@ -893,6 +898,7 @@ const deleteFileEvidenceProjectAtRoot = async (
     root.path,
     {
       operation: 'delete-project',
+      importOperationId,
       expectedRootIdentity: root.identity,
       projectName: projectId
     },
@@ -903,6 +909,13 @@ const deleteFileEvidenceProjectAtRoot = async (
     throw new Error('File-evidence Project deletion returned an invalid result.')
   }
 }
+
+export const releaseImportedEvidenceProject = (
+  storageRoot: string,
+  projectId: string,
+  operation: string
+): Promise<void> =>
+  deleteFileEvidenceProjectAtRoot(storageRoot, EXECUTION_FILE_EVIDENCE_DIR, projectId, operation)
 
 const deleteWorkingFileEvidenceProject = async (
   storageRoot: string,
