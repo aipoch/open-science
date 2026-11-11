@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { format, stripVTControlCharacters } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { initializeApplicationDiagnostics, reportApplicationStartupFailure } from './startup'
@@ -18,7 +19,11 @@ describe('application startup diagnostics integration', () => {
     'applies console format %s before emitting startup records',
     async (consoleFormat) => {
       logDir = await mkdtemp(join(tmpdir(), 'os-startup-console-'))
-      const mirror = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      const output: string[] = []
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        output.push(chunk.toString())
+        return true
+      })
       const diagnostics = initializeApplicationDiagnostics({
         logDir,
         runId: 'console-startup',
@@ -31,14 +36,16 @@ describe('application startup diagnostics integration', () => {
         nodeVersion: '24.0.0'
       })
       await diagnostics.flush()
-      const lines = (await readFile(join(logDir, 'main.log'), 'utf8')).trimEnd().split('\n')
-      expect(mirror).toHaveBeenCalledTimes(lines.length)
-      for (const [index, line] of lines.entries()) {
-        if (consoleFormat === 'json') expect(mirror.mock.calls[index]).toEqual([line])
-        else {
+      const jsonl = await readFile(join(logDir, 'main.log'), 'utf8')
+      const lines = jsonl.trimEnd().split('\n')
+      expect(output).toHaveLength(lines.length)
+      if (consoleFormat === 'json') expect(output.join('')).toBe(jsonl)
+      else {
+        const expected = lines.map((line) => {
           const record = JSON.parse(line)
-          expect(mirror.mock.calls[index]).toEqual([`[${record.scope}] ${record.msg}`, record.data])
-        }
+          return `${format(`[${record.scope}] ${record.msg}`, record.data)}\n`
+        })
+        expect(output.map(stripVTControlCharacters)).toEqual(expected)
       }
     }
   )
