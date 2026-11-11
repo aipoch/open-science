@@ -67,7 +67,9 @@ it.skipIf(process.platform !== 'win32').each([
         const wrapped = windowsLaunch({
           ...invocation,
           command: '',
-          filesystem: invocation.filesystem,
+          // This fixture launches only absolute Node paths. Granting every toolchain inherited
+          // from the CI runner's PATH measures unrelated ACL preparation before it can start.
+          filesystem: { ...invocation.filesystem, optionalReadOnlyRoots: [] },
           gatewayPort: 61200,
           gatewayCredentials: { username: 'offline', password: 'offline' },
           hostPath: config.windowsHostPath,
@@ -142,7 +144,7 @@ it.skipIf(process.platform !== 'win32').each([
       console.error('[DEBUG-kernel-recovery] first result', failed)
       console.error('[DEBUG-kernel-recovery] fixture files', await readdir(root))
       if (failed) {
-        expect(failed.status).toBe('failed')
+        expect(failed.status, failed.stderr).toBe('failed')
         expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
       }
       if (protectedMode && !crashAdmission) {
@@ -183,7 +185,9 @@ it.skipIf(process.platform !== 'win32').each([
           /* Already reaped by the native job. */
         }
       }
-      await executor.shutdown()
+      const shutdown = await executor.shutdown()
+      console.error('[DEBUG-kernel-recovery] shutdown', shutdown)
+      expect(shutdown).toEqual({ reaped: true })
       await rm(root, { recursive: true, force: true })
     }
   }
