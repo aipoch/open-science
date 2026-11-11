@@ -145,11 +145,9 @@ type IdleTimerHandle = unknown
 type ScheduleIdleTimer = (fn: () => void, ms: number) => IdleTimerHandle
 type CancelIdleTimer = (handle: IdleTimerHandle) => void
 
-// Idle-shutdown is OFF by default: a notebook kernel is a PERSISTENT namespace (the agent is told to
-// reuse variables across cells), so silently dropping it after a pause — then respawning a fresh,
-// empty namespace on the next cell — makes a long analysis fail unpredictably. Reclaiming an idle
-// kernel is opt-in via OPEN_SCIENCE_KERNEL_IDLE_MS (a positive ms value); 0 / unset keeps kernels
-// alive until an explicit shutdown/restart or session teardown.
+// The executor-level request timer is off by default. Application composition explicitly disables
+// it and uses NotebookIdleReclamation, which also protects model turns and background activity.
+// Direct executor consumers can still opt into this legacy timer via OPEN_SCIENCE_KERNEL_IDLE_MS.
 const DEFAULT_IDLE_MS = 0
 const DEFAULT_CANCELLATION_GRACE_MS = 2_000
 const DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS = 5_000
@@ -208,10 +206,9 @@ const createBoundedKernelOutput = (onLimit: (error: Error) => void): Transform =
   })
 }
 
-// Resolves the idle window: an explicit option wins, then OPEN_SCIENCE_KERNEL_IDLE_MS (a positive ms
-// value opts INTO idle reclaim), else DEFAULT_IDLE_MS (0 = disabled). A value <= 0 disables idle
-// shutdown, so kernels persist until an explicit teardown — see DEFAULT_IDLE_MS for why that is the
-// default.
+// Resolves the request-level idle window: explicit option, then OPEN_SCIENCE_KERNEL_IDLE_MS,
+// then DEFAULT_IDLE_MS. Non-positive values disable this timer; application session-aware
+// reclamation remains independent of it.
 const resolveIdleTimeoutMs = (configured?: number): number => {
   if (configured !== undefined) return configured
   const raw = Number(process.env.OPEN_SCIENCE_KERNEL_IDLE_MS)
@@ -542,6 +539,18 @@ const helperInitializationError = (
 // NotebookExecutionResult (mapLoopOutputs). The python/r data loops and the repl control loop coexist
 // as independent processes; the requested kind never triggers a restart of another.
 class NotebookKernelExecutor implements NotebookExecutor {
+  idleProcesses(): ReturnType<NonNullable<NotebookExecutor['idleProcesses']>> {
+    return Array.from(this.procs.values(), (proc) => ({
+      identity: proc,
+      processKey: proc.key,
+      release: async () => {
+        if (this.procs.get(proc.key) !== proc || !proc.alive || proc.pending) return false
+        await this.terminate(proc.kind, proc.env)
+        return true
+      }
+    }))
+  }
+
   private readonly procs = new Map<ProcessKey, ProcState>()
   // In-flight process-tree teardowns, keyed by the process key of the proc being reaped. A dropped
   // proc's tree is killed asynchronously; ensureProc awaits any pending teardown for a key before

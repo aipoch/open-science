@@ -52,7 +52,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Guidance only applies when using open-science-notebook tools.',
   'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
-  'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
+  'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle interpreters lose variables after 15 minutes or excess idle capacity; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
   'Use the call forms in `repl_execute`; batch known independent operations when safe.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
@@ -273,7 +273,7 @@ const REPL_EXECUTE_DOC = [
   'Images: `await host.viewImage({ path: "plot.png" })` or `{ versionId: "..." }`, never a string.',
   'Main/root agents: `await host.delegate({ name: "Check", task: "Self-contained assignment" }, { wait: true })`. Omit profile to inherit the parent; "Main Agent" is not a profile. Other profiles: exact id/name from host.agents.list(). Options/results: `host.help(\'delegate\')`. Delegate agents cannot delegate.',
   'Foreground for results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate and read-only calls. Save runId; query/cancel via background_run, without frequent polling. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
-  'Restored conversation history does not restore variables after app/process restart. Reconstruct values from verified history/files; never probe old variable names or replay side-effecting calls. Within a live process, globals persist; top-level return/await and redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Restored conversation history does not restore variables after restart/idle reclamation. Reconstruct values from verified history/files; never probe old variable names or replay side-effecting calls. Live globals persist; top-level return/await and redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -299,7 +299,7 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change, or idle reclamation resets state; earlier commands are never replayed. TEMP/TMP may be deleted. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',

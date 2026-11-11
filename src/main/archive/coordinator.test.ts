@@ -42,12 +42,14 @@ describe('ArchiveCoordinator', () => {
       )
       // Compute holds this admission while an approval is pending, before creating its job row.
       const releasePending = coordinator.admitSessionWork(project.id, session.id)
+      await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(true)
       const remove = vi.fn(async () => undefined)
       await expect(
         coordinator.withSessionRecoveryDeletion(project.id, session.id, remove)
       ).rejects.toThrow('Wait for Session work')
       expect(remove).not.toHaveBeenCalled()
       releasePending()
+      await expect(coordinator.isSessionBusy(project.id, session.id)).resolves.toBe(false)
 
       const started = Promise.withResolvers<void>()
       const finish = Promise.withResolvers<void>()

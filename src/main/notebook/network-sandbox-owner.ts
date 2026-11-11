@@ -23,7 +23,8 @@ import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
-import { assertProcessTreeSupport } from '../process-tree'
+import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
+import { defaultSpawn } from './environment-process'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { managedSkillReadRoots } from './managed-skill-read-roots'
 import {
@@ -119,6 +120,43 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+export const runRAccessProbe = async (
+  invocation: NotebookSandboxedSpawn,
+  cwd: string,
+  timeoutMs = 60_000
+): Promise<{ stdout: string; stderr: string }> => {
+  const result = await defaultSpawn(
+    invocation.executable,
+    [...invocation.args],
+    invocation.env,
+    undefined,
+    undefined,
+    false,
+    cwd,
+    { timeoutMs },
+    async (child) => {
+      if (await invocation.confirmProcessTreeTermination?.().catch(() => false))
+        return { reaped: true }
+      // The native owner must reap its Job and restore temporary ACLs before exiting.
+      // execFile's timeout kills that owner before it can publish cleanup evidence.
+      if (await invocation.requestProcessTreeTermination?.().catch(() => false))
+        return { reaped: true }
+      const outcome = await terminateProcessTree(child)
+      return invocation.confirmProcessTreeTermination ? { reaped: false } : outcome
+    },
+    process.platform,
+    invocation.confirmProcessTreeTermination
+  )
+  if (result.code !== 0)
+    throw Object.assign(
+      new Error(
+        `R runtime verification exited with code ${result.code}.\n${result.stderr.slice(-4096)}`
+      ),
+      { code: result.code, stdout: result.stdout, stderr: result.stderr }
+    )
+  return result
+}
 
 const annotateRTemporaryDirectoryError = (text: string): string =>
   text.includes("Fatal error: 'R_TempDir' contains space")
@@ -1778,19 +1816,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           }
         } else {
           probeMayHaveStarted = true
-          const { stdout } = await promisify(execFile)(
-            invocation.executable,
-            [...invocation.args],
-            {
-              cwd,
-              env: invocation.env,
-              // This bounds the native host, including ACL preparation and rollback, rather
-              // than only R execution. Live kernels can make directory propagation exceed 20s.
-              timeout: 60_000,
-              windowsHide: true,
-              maxBuffer: 1024 * 1024
-            }
-          )
+          const { stdout } = await runRAccessProbe(invocation, cwd)
           if (!stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
             throw new Error('R runtime verification did not complete.')
         }

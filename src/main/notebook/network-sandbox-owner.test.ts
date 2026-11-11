@@ -99,6 +99,7 @@ vi.mock('@aipoch/notebook-network-sandbox', async (importOriginal) => ({
 import {
   NotebookNetworkSandboxOwner,
   commandLine,
+  runRAccessProbe,
   type NotebookNetworkDecision
 } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
@@ -2929,6 +2930,42 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
 })
 
 describe('R startup authorization admission', () => {
+  it('lets a timed-out R probe owner publish cleanup proof before exiting', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-probe-timeout-'))
+    fixtureDirectories.push(root)
+    const request = join(root, 'terminate')
+    const proof = join(root, 'reaped')
+    const requestTermination = vi.fn(async () => {
+      await writeFile(request, '')
+      await vi.waitFor(() => expect(existsSync(proof)).toBe(true), { timeout: 5_000 })
+      return true
+    })
+    await expect(
+      runRAccessProbe(
+        {
+          executable: process.execPath,
+          args: [
+            '-e',
+            `const fs = require('node:fs'); setInterval(() => {
+            if (fs.existsSync(${JSON.stringify(request)})) {
+              fs.writeFileSync(${JSON.stringify(proof)}, 'reaped'); process.exit(1)
+            }
+          }, 10)`
+          ],
+          env: process.env,
+          requestProcessTreeTermination: requestTermination,
+          confirmProcessTreeTermination: async () => existsSync(proof),
+          annotateStderr: (value) => value,
+          cleanup: backend.cleanup
+        },
+        root,
+        500
+      )
+    ).rejects.toMatchObject({ code: 'PACKAGE_OPERATION_TIMEOUT' })
+    expect(requestTermination).toHaveBeenCalledOnce()
+    expect(existsSync(proof)).toBe(true)
+  })
+
   it('keeps the original verification failure and cleanup when diagnostic logging throws', async () => {
     backend.wrap.mockResolvedValueOnce({
       argv: [process.execPath, '-e', 'process.exit(77)'],
@@ -3216,7 +3253,7 @@ describe('R startup authorization admission', () => {
       const cwd = backend.wrap.mock.calls[0]![0].cwd as string
       fixtureDirectories.push(cwd)
       expect(existsSync(cwd)).toBe(true)
-      expect(confirm).toHaveBeenCalledOnce()
+      expect(confirm).toHaveBeenCalled()
       expect(backend.cleanup).toHaveBeenCalledWith({
         processesTerminated: false,
         confirmTermination: confirm

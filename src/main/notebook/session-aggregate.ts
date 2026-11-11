@@ -193,6 +193,11 @@ export type NotebookSessionExecutor<
   shutdown: () => Promise<{ reaped: boolean }>
   restart?: () => Promise<void>
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
+  idleProcesses?: () => Array<{
+    identity: object
+    processKey: string
+    release: () => Promise<boolean>
+  }>
 }
 
 export type NotebookSessionExecutorGeneration = symbol
@@ -601,6 +606,10 @@ export class NotebookSessionAggregate<
 
   kernelProcessKeys(): string[] {
     return Array.from(this.kernelStatuses.keys())
+  }
+
+  idleProcesses(): ReturnType<NonNullable<NotebookSessionExecutor['idleProcesses']>> {
+    return this.executorValue.idleProcesses?.() ?? []
   }
 
   setKernelStatus(processKey: string, status: NotebookKernelMetadata['lastKnownStatus']): void {

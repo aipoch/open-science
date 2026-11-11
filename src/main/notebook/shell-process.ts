@@ -5,6 +5,7 @@ import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { ShellCellSession } from './shell-cell-session'
+import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
 
@@ -69,6 +70,7 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
 type NotebookShellProcess = {
+  idleProcesses?: () => Array<IdleInterpreter & { laneKey?: string }>
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
   prepareEnvironment?(
     request: Pick<
@@ -1105,6 +1107,25 @@ const runShellCommand = (
 // Each lane owns a live interpreter; runShellCommand remains the one-shot spawn/cleanup owner.
 class NotebookShellProcessAdapter implements NotebookShellProcess {
   private readonly sessions = new Map<string, ShellCellSession>()
+  idleProcesses(): Array<IdleInterpreter & { laneKey?: string }> {
+    return [...this.sessions]
+      .filter(([, session]) => session.isLive)
+      .map(([key, session]) => ({
+        identity: session,
+        projectId: session.identity.projectId,
+        sessionId: session.identity.sessionId,
+        laneKey: session.identity.laneKey,
+        group: 'shell',
+        lastUsedAt: session.lastUsedAt,
+        release: async (stillIdle) => {
+          if (!stillIdle() || this.sessions.get(key) !== session) return false
+          const result = await session.shutdown()
+          if (!result.reaped) throw new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE)
+          if (this.sessions.get(key) === session) this.sessions.delete(key)
+          return true
+        }
+      }))
+  }
   constructor(
     private readonly platform: NodeJS.Platform = process.platform,
     private readonly processSandbox?: NotebookProcessSandbox,
