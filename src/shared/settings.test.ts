@@ -183,7 +183,7 @@ describe('provider endpoint compatibility', () => {
     const claude = { id: 'claude-code' as const, supportedApiTypes: ['messages'] as const }
     const opencode = {
       id: 'opencode' as const,
-      supportedApiTypes: ['messages', 'chat-completions'] as const
+      supportedApiTypes: ['chat-completions', 'messages'] as const
     }
 
     for (const type of ['codex-shared', 'codex-isolated'] as const) {

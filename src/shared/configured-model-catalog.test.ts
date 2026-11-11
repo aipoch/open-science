@@ -144,7 +144,7 @@ describe('configured model catalog', () => {
         })
       ],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['messages', 'chat-completions']
+      frameworkEndpoints: ['chat-completions', 'messages']
     })
 
     expect(
@@ -162,7 +162,7 @@ describe('configured model catalog', () => {
 
   it.each([
     { frameworkId: 'claude-code', frameworkEndpoints: ['messages'] },
-    { frameworkId: 'opencode', frameworkEndpoints: ['messages', 'chat-completions'] },
+    { frameworkId: 'opencode', frameworkEndpoints: ['chat-completions', 'messages'] },
     { frameworkId: 'codex', frameworkEndpoints: ['responses'] }
   ] as const)('offers the new Ark vision models to $frameworkId', (framework) => {
     const models = [
