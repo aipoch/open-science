@@ -1311,6 +1311,9 @@ jobs:
             # coverage; the shared npm-tool matrix is reserved for full validation.
             npx vitest run packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts --testNamePattern "imports from Node|rejects a .* package config|retains readable .* workspace package|executes .* at the requested workspace"
             if ($LASTEXITCODE -ne 0) { throw 'Protected Windows Notebook runtime regression failed.' }
+            $env:OPEN_SCIENCE_TEST_WINDOWS_SANDBOX = '1'
+            npx vitest run src/main/notebook/kernel-startup-retry.integration.test.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Protected Windows kernel recovery regression failed.' }
           }
       - name: Test Windows path portability
         id: windows_path

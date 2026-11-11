@@ -101,7 +101,10 @@
     "paths": ["src/main/notebook/"]
   },
   "windows_sandbox": {
-    "tests": ["packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts"],
+    "tests": [
+      "packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts",
+      "src/main/notebook/kernel-startup-retry.integration.test.ts"
+    ],
     "paths": [
       "packages/notebook-network-sandbox/",
       "packages/process-tree-native/",
