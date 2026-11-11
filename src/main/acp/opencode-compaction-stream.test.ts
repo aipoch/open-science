@@ -29,21 +29,26 @@ const nativePart = (
 const fixture = (
   messages: AnyMessage[],
   fetchImpl: typeof fetch,
-  resolveSessionCwd = (): string => '/workspace'
+  resolveSessionCwd = (): string => '/workspace',
+  keepOpen = false
 ): {
   stream: Stream
   abort: AbortController
   read: () => Promise<AnyMessage[]>
   outgoing: AnyMessage[]
+  send: (message: AnyMessage) => void
+  end: () => void
 } => {
   const abort = new AbortController()
   const outgoing: AnyMessage[] = []
+  let source!: ReadableStreamDefaultController<AnyMessage>
   const stream = createOpenCodeCompactionStream(
     {
       readable: new ReadableStream({
         start(controller) {
+          source = controller
           messages.forEach((message) => controller.enqueue(message))
-          controller.close()
+          if (!keepOpen) controller.close()
         }
       }),
       writable: new WritableStream({
@@ -68,10 +73,96 @@ const fixture = (
       result.push(next.value)
     }
   }
-  return { stream, abort, read, outgoing }
+  return {
+    stream,
+    abort,
+    read,
+    outgoing,
+    send: (message) => source.enqueue(message),
+    end: () => source.close()
+  }
 }
 
 describe('OpenCode 1.x compaction stream', () => {
+  it.each(['lookup', 'retry'])(
+    'interrupts %s on Stop and preserves the native cancelled response',
+    async (phase) => {
+      const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+        if (phase === 'retry' && fetchImpl.mock.calls.length === 1)
+          return new Response(null, { status: 500 })
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+            once: true
+          })
+        })
+      })
+      const test = fixture([], fetchImpl, undefined, true)
+      const writer = test.stream.writable.getWriter()
+      await writer.write({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'session/prompt',
+        params: { sessionId: 's', prompt: [] }
+      })
+      const reading = test.read()
+      test.send(chunk('s', 'slow'))
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(phase === 'lookup' ? 1 : 2))
+      await writer.write({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 's' } })
+      test.send(chunk('s', 'queued'))
+      const cancelled: AnyMessage = { jsonrpc: '2.0', id: 1, result: { stopReason: 'cancelled' } }
+      test.send(cancelled)
+      test.end()
+      expect(await reading).toEqual([cancelled])
+      expect(fetchImpl).toHaveBeenCalledTimes(phase === 'lookup' ? 1 : 2)
+    }
+  )
+
+  it('does not report success if the Agent ignores Stop after output was withheld', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const test = fixture([], fetchImpl, undefined, true)
+    const writer = test.stream.writable.getWriter()
+    await writer.write({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/prompt',
+      params: { sessionId: 's', prompt: [] }
+    })
+    await writer.write({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 's' } })
+    test.send(chunk('s', 'withheld'))
+    test.send(response)
+    test.end()
+    expect(await test.read()).toMatchObject([{ id: 1, error: { code: -32603 } }])
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('does not cancel another session lookup when Stop targets a different session', async () => {
+    let finishLookup!: (response: Response) => void
+    let lookupSignal: AbortSignal | null | undefined
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+      lookupSignal = init?.signal
+      return new Promise<Response>((resolve) => {
+        finishLookup = resolve
+      })
+    })
+    const test = fixture([], fetchImpl, undefined, true)
+    const writer = test.stream.writable.getWriter()
+    await writer.write({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/prompt',
+      params: { sessionId: 's', prompt: [] }
+    })
+    const reading = test.read()
+    test.send(chunk('s', 'm'))
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+    await writer.write({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 'other' } })
+    expect(lookupSignal?.aborted).toBe(false)
+    finishLookup(native('s', 'm', false))
+    test.send(response)
+    test.end()
+    expect(await reading).toEqual([chunk('s', 'm'), response])
+  })
+
   it('does not let a later prompt claim an unowned chunk while its lookup is pending', async () => {
     const lookupStarted = Promise.withResolvers<void>()
     const lookup = Promise.withResolvers<Response>()
