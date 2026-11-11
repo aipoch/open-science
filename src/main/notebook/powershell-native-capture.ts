@@ -44,6 +44,8 @@ const compileNativeCapture = String.raw`& { param($source)
       $target = $call.CommandElements[0].Extent.Text
     } else { continue }
     $test = '$ErrorActionPreference -eq ''Stop'' -and {0} -is [string] -and $ExecutionContext.InvokeCommand.GetCommand({0}, ''All'') -is [System.Management.Automation.ApplicationInfo]' -f $target
+    # Respect a preference the caller has explicitly locked.
+    $test += ' -and !($ExecutionContext.SessionState.PSVariable.Get(''ErrorActionPreference'').Options -band [Management.Automation.ScopedItemOptions]''ReadOnly, Constant'')'
     $original = $assignment.Extent.Text
     $capture = $original
     if ($pipeline.Count -eq 2) {
@@ -54,7 +56,7 @@ const compileNativeCapture = String.raw`& { param($source)
     $pref = '$ExecutionContext.SessionState.PSVariable.Get(''ErrorActionPreference'').Value'
     # Restoring the preference sets $? to true. Ignore marks the statement unsuccessful for a
     # real native failure without emitting another diagnostic or adding to the error history.
-    $restore = $pref + ' = ''Stop''; if ($LASTEXITCODE -ne 0) { Microsoft.PowerShell.Utility\Write-Error ''Native command failed'' -ErrorAction Ignore }'
+    $restore = $pref + ' = ''Stop''; if ($global:LASTEXITCODE -ne 0) { Microsoft.PowerShell.Utility\Write-Error ''Native command failed'' -ErrorAction Ignore }'
     $replacement = 'if (' + $test + ') { try { ' + $pref + ' = ''Continue''; ' + $capture + ' } finally { ' + $restore + ' } } else { ' + $original + ' }'
     $source = $source.Remove($assignment.Extent.StartOffset, $original.Length).Insert($assignment.Extent.StartOffset, $replacement)
   }

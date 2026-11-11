@@ -207,6 +207,29 @@ $raw = shadow.cmd 2>$null
           )
           expect(shadowed).toMatchObject({ exitCode: 1, stdout: '' })
           expect(shadowed.stderr).toContain('missing-file')
+          const localExit = await execute(
+            `& {
+  $local:LASTEXITCODE = 71
+  $value = cmd.exe /d /c 'echo sample' 2>$null
+  [Console]::Write("$?|$LASTEXITCODE|$value;")
+  $local:LASTEXITCODE = 0
+  $value = cmd.exe /d /c 'exit /b 7' 2>$null
+  [Console]::Write("$?|$LASTEXITCODE|$global:LASTEXITCODE")
+}`
+          )
+          expect(localExit).toMatchObject({
+            exitCode: 7,
+            stdout: 'True|71|sample;False|0|7',
+            stderr: ''
+          })
+          const readOnly = await execute(
+            `& {
+  Set-Variable ErrorActionPreference Stop -Option ReadOnly
+  $value = cmd.exe /d /c 'echo sample' 2>$null
+  [Console]::Write($value)
+}`
+          )
+          expect(readOnly).toMatchObject({ exitCode: 0, stdout: 'sample', stderr: '' })
           const failed = await execute('Get-Item ./missing-file; [Console]::Write("continued")')
           expect(failed).toMatchObject({ exitCode: 1, stdout: '' })
           expect(failed.stderr).toContain('missing-file')
