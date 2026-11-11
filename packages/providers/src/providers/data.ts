@@ -2,6 +2,9 @@ import type { OfficialVendor } from './types'
 
 // The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
 // conservative so a vendor's unrelated model types do not appear in the composer.
+// Output limits are per vendor and model. Sources (2026-11-11): models.dev/api.json,
+// openrouter.ai/api/v1/models (top_provider.max_completion_tokens), router.requesty.ai/v1/models
+// (max_output_tokens), and the vendors' published limits. Omit unknown or dynamically routed limits.
 const definitions: readonly OfficialVendor[] = [
   {
     id: 'openai',
@@ -76,13 +79,13 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
     models: [
-      { id: 'claude-opus-5', contextWindow: 1_000_000 },
+      { id: 'claude-opus-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-opus-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       // https://platform.claude.com/docs/en/models/fable-5-2/overview
       { id: 'claude-fable-5-2', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
-      { id: 'claude-fable-5-1', contextWindow: 1_000_000 },
-      { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
-      { id: 'claude-sonnet-5', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5-1', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      { id: 'claude-opus-4-8', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      { id: 'claude-sonnet-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-sonnet-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       // https://platform.claude.com/docs/en/models/haiku-5-5/overview
       { id: 'claude-haiku-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
@@ -141,8 +144,8 @@ const definitions: readonly OfficialVendor[] = [
     // Keep this curated: the account catalog can also contain Deep Research SKUs with different
     // request semantics, while this provider entry is for the two core text models.
     models: [
-      { id: 'apodex-1.1', contextWindow: 262_144 },
-      { id: 'apodex-1.1-mini', contextWindow: 262_144 }
+      { id: 'apodex-1.1', contextWindow: 262_144, maxOutputTokens: 262_144 },
+      { id: 'apodex-1.1-mini', contextWindow: 262_144, maxOutputTokens: 262_144 }
     ]
   },
   {
@@ -220,16 +223,19 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'deepseek-v4-flash-0731',
         contextWindow: 1_000_000,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       },
       {
         id: 'deepseek-v4-pro',
         contextWindow: 1_000_000,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       },
       {
         id: 'deepseek-v4-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       }
     ],
@@ -264,29 +270,34 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.8-max',
         contextWindow: 983_616,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
         id: 'qwen3.8-max-preview',
         contextWindow: 983_616,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
-      { id: 'qwen3.7-max', contextWindow: 1_000_000 },
-      { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
-      { id: 'qwen3.6-flash', contextWindow: 1_000_000 },
+      { id: 'qwen3.7-max', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
+      { id: 'qwen3.7-plus', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
+      { id: 'qwen3.6-flash', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
       {
         id: 'glm-5.2',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       },
       {
         id: 'deepseek-v4-pro',
         contextWindow: 1_000_000,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       },
       {
         id: 'deepseek-v4-flash-0731',
         contextWindow: 1_000_000,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       }
     ],
@@ -322,23 +333,26 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'glm-5.3',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'glm-5.3-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'glm-5.2',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['none', 'high', 'max'] }
       },
-      { id: 'glm-5.1', contextWindow: 200_000 },
-      { id: 'glm-5', contextWindow: 200_000 },
-      { id: 'glm-5v-turbo', contextWindow: 200_000 },
-      { id: 'glm-5-turbo', contextWindow: 200_000 },
-      { id: 'glm-4.5-air', contextWindow: 128_000 }
+      { id: 'glm-5.1', contextWindow: 200_000, maxOutputTokens: 131_072 },
+      { id: 'glm-5', contextWindow: 200_000, maxOutputTokens: 131_072 },
+      { id: 'glm-5v-turbo', contextWindow: 200_000, maxOutputTokens: 131_072 },
+      { id: 'glm-5-turbo', contextWindow: 200_000, maxOutputTokens: 131_072 },
+      { id: 'glm-4.5-air', contextWindow: 128_000, maxOutputTokens: 98_304 }
     ],
     // GLM usually marks vision variants with a `v` after the major version (e.g. glm-5v-turbo), but
     // GLM-5.3-Flash is also natively multimodal without that marker.
@@ -377,21 +391,24 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'glm-5.3',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'glm-5.3-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'glm-5.2',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['none', 'high', 'max'] }
       },
       { id: 'glm-5.1', contextWindow: 200_000 },
       { id: 'glm-5', contextWindow: 200_000 },
-      { id: 'glm-5-turbo', contextWindow: 200_000 }
+      { id: 'glm-5-turbo', contextWindow: 200_000, maxOutputTokens: 131_072 }
     ],
     multimodal: { multimodalModels: ['glm-5.3-flash'] }
   },
@@ -408,20 +425,22 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.kimi.com/console',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: [
-      { id: 'kimi-k3', contextWindow: 1_000_000 },
+      { id: 'kimi-k3', contextWindow: 1_000_000, maxOutputTokens: 1_048_576 },
       // https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
       {
         id: 'kimi-k3.1-pro',
         contextWindow: 1_048_576,
+        maxOutputTokens: 1_048_576,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'kimi-k3.1-pro-highspeed',
         contextWindow: 1_048_576,
+        maxOutputTokens: 1_048_576,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
-      { id: 'kimi-k2.7-code', contextWindow: 256_000 },
-      { id: 'kimi-k2.6', contextWindow: 256_000 },
+      { id: 'kimi-k2.7-code', contextWindow: 256_000, maxOutputTokens: 262_144 },
+      { id: 'kimi-k2.6', contextWindow: 256_000, maxOutputTokens: 262_144 },
       { id: 'kimi-k2.5', contextWindow: 256_000 }
     ],
     // Vision arrives with the k3 generation; older k2.x chat models are text-only.
@@ -445,8 +464,8 @@ const definitions: readonly OfficialVendor[] = [
         contextWindow: 1_000_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
-      { id: 'kimi-for-coding', contextWindow: 1_048_576 },
-      { id: 'kimi-for-coding-highspeed', contextWindow: 256_000 }
+      { id: 'kimi-for-coding', contextWindow: 1_048_576, maxOutputTokens: 32_768 },
+      { id: 'kimi-for-coding-highspeed', contextWindow: 256_000, maxOutputTokens: 32_768 }
     ],
     // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
     multimodal: { multimodalModels: ['kimi-k3', 'kimi-for-coding'] }
@@ -570,15 +589,16 @@ const definitions: readonly OfficialVendor[] = [
     // step-router-v1 auto-switches between deepseek-v4-pro and step-3.7-flash; step-3.5-flash-2603 is
     // the high-frequency-agent build. Step 5 Preview leads as the recommended flagship default.
     models: [
-      { id: 'step-5-preview', contextWindow: 1_000_000 },
-      { id: 'step-3.7-flash', contextWindow: 262_144 },
-      { id: 'step-3.5-flash', contextWindow: 262_144 },
+      { id: 'step-5-preview', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
+      { id: 'step-3.7-flash', contextWindow: 262_144, maxOutputTokens: 256_000 },
+      { id: 'step-3.5-flash', contextWindow: 262_144, maxOutputTokens: 256_000 },
       {
         id: 'step-3.5-flash-2603',
         contextWindow: 262_144,
+        maxOutputTokens: 256_000,
         reasoningEffort: { supported: true, values: ['low', 'high'] }
       },
-      { id: 'step-router-v1', contextWindow: 262_144 }
+      { id: 'step-router-v1', contextWindow: 262_144, maxOutputTokens: 256_000 }
     ],
     // Step 5 Preview and step-3.7-flash are multimodal; the agent/code builds are text-only.
     multimodal: { multimodalModels: ['step-5-preview', 'step-3.7-flash'] }
@@ -595,11 +615,11 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: [
-      { id: 'mimo-v2.6-pro', contextWindow: 1_000_000 },
-      { id: 'mimo-v2.6-flash', contextWindow: 1_000_000 },
-      { id: 'mimo-v2.6-pro-ultraspeed', contextWindow: 1_000_000 },
-      { id: 'mimo-v2.5-pro', contextWindow: 1_000_000 },
-      { id: 'mimo-v2.5', contextWindow: 1_000_000 }
+      { id: 'mimo-v2.6-pro', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
+      { id: 'mimo-v2.6-flash', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
+      { id: 'mimo-v2.6-pro-ultraspeed', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
+      { id: 'mimo-v2.5-pro', contextWindow: 1_000_000, maxOutputTokens: 131_072 },
+      { id: 'mimo-v2.5', contextWindow: 1_000_000, maxOutputTokens: 131_072 }
     ],
     // V2.6 supports image input on both APIs; keep capabilities scoped to the documented ids.
     // https://mimo.mi.com/docs/en-US/news/latest/v2-6
@@ -638,9 +658,9 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     models: [
-      { id: 'sensenova-6.8-flash-lite', contextWindow: 262_144 },
+      { id: 'sensenova-6.8-flash-lite', contextWindow: 262_144, maxOutputTokens: 65_536 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000, apiEndpoint: 'chat-completions' },
-      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
       { id: 'glm-5.2', contextWindow: 1_000_000, apiEndpoint: 'chat-completions' },
       { id: 'kimi-k3', contextWindow: 1_000_000, apiEndpoint: 'chat-completions' },
       // Preserve pinned selections without silently migrating them to a different model.
@@ -767,13 +787,13 @@ const definitions: readonly OfficialVendor[] = [
     chatCompletionsBaseUrl: 'https://api.lkeap.cloud.tencent.com/coding/v3',
     apiKeyUrl: 'https://console.cloud.tencent.com/tokenhub/codingplan',
     models: [
-      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000 },
-      { id: 'minimax-m2.7', contextWindow: 204_800 },
-      { id: 'glm-5', contextWindow: 200_000 },
+      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'minimax-m2.7', contextWindow: 204_800, maxOutputTokens: 128_000 },
+      { id: 'glm-5', contextWindow: 200_000, maxOutputTokens: 16_384 },
       { id: 'glm-5.1', contextWindow: 200_000 },
-      { id: 'glm-5.2', contextWindow: 1_000_000 },
-      { id: 'hy3', contextWindow: 256_000 }
+      { id: 'glm-5.2', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      { id: 'hy3', contextWindow: 256_000, maxOutputTokens: 128_000 }
     ]
   },
   {
@@ -788,10 +808,10 @@ const definitions: readonly OfficialVendor[] = [
     chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/plan/v3',
     apiKeyUrl: 'https://console.intl.cloud.tencent.com/tokenhub/tokenplan',
     models: [
-      { id: 'glm-5.2', contextWindow: 1_000_000 },
-      { id: 'kimi-k2.6', contextWindow: 256_000 },
-      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000 },
+      { id: 'glm-5.2', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      { id: 'kimi-k2.6', contextWindow: 256_000, maxOutputTokens: 256_000 },
+      { id: 'deepseek-v4-pro-202606', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'deepseek-v4-flash-202605', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       { id: 'minimax-m3', contextWindow: 1_000_000 }
     ],
     multimodal: { multimodalModels: ['kimi-k2.6'] }
@@ -896,6 +916,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'minimax-m3',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
@@ -914,12 +935,14 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.8-max',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       {
         id: 'qwen3.8-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
@@ -932,6 +955,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.7-plus',
         contextWindow: 1_000_000,
+        maxOutputTokens: 65_536,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
@@ -1029,36 +1053,42 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'claude-fable-5-1',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-fable-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-5-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-sonnet-5-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-sonnet-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
@@ -1149,35 +1179,50 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'claude-opus-4-8',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-4-7',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'claude-opus-4-6',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'max'] }
       },
       {
         id: 'claude-opus-4-5',
         contextWindow: 200_000,
+        maxOutputTokens: 64_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] }
       },
       {
         id: 'claude-sonnet-4-6',
         contextWindow: 1_000_000,
+        maxOutputTokens: 64_000,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'max'] }
       },
-      { id: 'claude-sonnet-4-5', contextWindow: 1_000_000, apiEndpoint: 'messages' },
-      { id: 'claude-haiku-4-5', contextWindow: 200_000, apiEndpoint: 'messages' },
+      {
+        id: 'claude-sonnet-4-5',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 64_000,
+        apiEndpoint: 'messages'
+      },
+      {
+        id: 'claude-haiku-4-5',
+        contextWindow: 200_000,
+        maxOutputTokens: 64_000,
+        apiEndpoint: 'messages'
+      },
       {
         id: 'grok-4.5',
         contextWindow: 500_000,
@@ -1206,6 +1251,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.8-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
@@ -1224,6 +1270,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'qwen3.5-plus',
         contextWindow: 262_144,
+        maxOutputTokens: 65_536,
         apiEndpoint: 'messages',
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
@@ -1345,36 +1392,43 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'anthropic/claude-opus-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-opus-5.5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-sonnet-5.5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-fable-5.1',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-opus-4.8',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-sonnet-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-haiku-4.5',
         contextWindow: 200_000,
+        maxOutputTokens: 64_000,
         reasoningEffort: { supported: false }
       },
       // OpenAI
@@ -1384,31 +1438,37 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'openai/gpt-6.1-sol',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'openai/gpt-6.1-sol-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'openai/gpt-6-astra',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'openai/gpt-6-astra-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'openai/gpt-6-luna',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-6-luna-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       // These profiles are baked from OpenRouter's public model reasoning metadata. Where a model
@@ -1416,127 +1476,152 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'openai/gpt-5.6-terra-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-5.6-terra',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-5.6-sol-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-5.6-sol',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-5.6-luna-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-5.6-luna',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-5.5-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['medium', 'high', 'xhigh'] }
       },
       {
         id: 'openai/gpt-5.5',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'openai/gpt-5.3-codex',
         contextWindow: 400_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'xhigh'] }
       },
       // Other top-ranked vendors on OpenRouter
       {
         id: 'x-ai/grok-4.7',
         contextWindow: 500_000,
+        maxOutputTokens: 450_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'deepseek/deepseek-v4.1-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 943_718,
         reasoningEffort: { supported: true, values: ['none', 'low', 'high', 'max'] }
       },
       {
         id: 'z-ai/glm-5.3',
         contextWindow: 1_048_576,
+        maxOutputTokens: 943_718,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'z-ai/glm-5.3-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'qwen/qwen3.8-max-0902',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'minimax/minimax-m3',
         contextWindow: 1_048_576,
+        maxOutputTokens: 512_000,
         reasoningEffort: { supported: false }
       },
       {
         id: 'xiaomi/mimo-v2.6-pro',
         contextWindow: 1_050_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: false }
       },
       {
         id: 'xiaomi/mimo-v2.6-flash',
         contextWindow: 1_050_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: false }
       },
       {
         id: 'google/gemini-3.1-pro-preview',
         contextWindow: 1_048_576,
+        maxOutputTokens: 65_536,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] }
       },
       {
         id: 'google/gemini-3.6-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 65_536,
         reasoningEffort: { supported: true, values: ['minimal', 'low', 'medium', 'high'] }
       },
       {
         id: 'google/gemini-3.5-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 65_536,
         reasoningEffort: { supported: true, values: ['minimal', 'low', 'medium', 'high'] }
       },
       {
         id: 'x-ai/grok-4.5',
         contextWindow: 500_000,
+        maxOutputTokens: 450_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] }
       },
       {
         id: 'deepseek/deepseek-v4-pro',
         contextWindow: 1_048_576,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['none', 'high', 'xhigh'] }
       },
       {
         id: 'z-ai/glm-5.2',
         contextWindow: 1_048_576,
+        maxOutputTokens: 943_718,
         reasoningEffort: { supported: true, values: ['none', 'high', 'xhigh'] }
       },
       {
         id: 'moonshotai/kimi-k3',
         contextWindow: 1_048_576,
+        maxOutputTokens: 943_718,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'qwen/qwen3.7-max',
         contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['none', 'high'] }
       },
       // Free, tool-capable entries from https://openrouter.ai/api/v1/models (2026-09-13).
@@ -1550,6 +1635,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'google/gemma-4-31b-it:free',
         contextWindow: 262_144,
+        maxOutputTokens: 32_768,
         reasoningEffort: { supported: false }
       }
     ],
@@ -1616,6 +1702,7 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'anthropic/claude-sonnet-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       // https://docs.requesty.ai/features/reasoning: OpenAI max maps to high and none to low.
@@ -1624,31 +1711,37 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'anthropic/claude-sonnet-5-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'max'] }
       },
       {
         id: 'anthropic/claude-fable-5.1',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'max'] }
       },
       {
         id: 'openai/gpt-6.1-sol',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'openai/gpt-6-astra',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'openai/gpt-6-luna',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'google/gemini-3.6-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 65_535,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] }
       },
       {
@@ -1659,61 +1752,73 @@ const definitions: readonly OfficialVendor[] = [
       {
         id: 'deepseek/deepseek-v4.1-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 384_000,
         reasoningEffort: { supported: false }
       },
       {
         id: 'zai/glm-5.3',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: false }
       },
       {
         id: 'zai/glm-5.3-flash',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: false }
       },
       {
         id: 'xiaomi/mimo-v2.6-pro',
         contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: false }
       },
       {
         id: 'xiaomi/mimo-v2.6-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
         reasoningEffort: { supported: false }
       },
       {
         id: 'anthropic/claude-opus-5-5',
         contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'anthropic/claude-haiku-4-5',
         contextWindow: 200_000,
+        maxOutputTokens: 64_000,
         reasoningEffort: { supported: false }
       },
       {
         id: 'openai/gpt-5.5',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['none', 'low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'openai/gpt-5.4',
         contextWindow: 1_050_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'openai/gpt-5.4-mini',
         contextWindow: 400_000,
+        maxOutputTokens: 128_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh'] }
       },
       {
         id: 'google/gemini-3.1-pro-preview',
         contextWindow: 1_048_576,
+        maxOutputTokens: 65_535,
         reasoningEffort: { supported: false }
       },
       {
         id: 'google/gemini-3.5-flash',
         contextWindow: 1_048_576,
+        maxOutputTokens: 65_535,
         reasoningEffort: { supported: false }
       },
       { id: 'xai/grok-4.6', contextWindow: 500_000, reasoningEffort: { supported: false } }
