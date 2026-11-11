@@ -36,7 +36,8 @@ import {
   preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
-  providerValidationTargetMatches,
+  providerValidationTargetApplies,
+  providerValidationRoute,
   requiresChatCompletionsBridge,
   resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
@@ -228,10 +229,11 @@ const ProviderList = ({
             : undefined
           const providerRoutes = providerEndpoints(provider)
           const effectiveModel =
-            activeModel ??
+            (isActiveSource ? activeModel : undefined) ??
             provider.model ??
             (provider.vendorId ? defaultVendorModel(provider.vendorId, provider.region) : undefined)
           const activeValidationTarget = {
+            ...providerValidationRoute(provider, agentFrameworkId),
             model: effectiveModel,
             endpoint: preferredEndpoint(
               providerRoutes,
@@ -245,9 +247,8 @@ const ProviderList = ({
           }
           // A passing test shows a green check. Suppressed while a test is in flight.
           const validationMatchesActiveTarget =
-            !isActiveSource ||
             provider.lastValidatedTarget === undefined ||
-            providerValidationTargetMatches(provider.lastValidatedTarget, activeValidationTarget)
+            providerValidationTargetApplies(provider.lastValidatedTarget, activeValidationTarget)
           const isVerified =
             !failure &&
             !isBusy &&

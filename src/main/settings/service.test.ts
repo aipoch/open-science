@@ -44,6 +44,18 @@ import { SkillCatalogModule } from '../skills/catalog'
 import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
+// Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('./provider-acp-validation', () => ({
+  ProviderAcpValidator: class {
+    validate = vi.fn(async () => ({
+      ok: false,
+      category: 'unknown',
+      message: 'test runtime unavailable'
+    }))
+    dispose = vi.fn(async () => undefined)
+  }
+}))
+
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,

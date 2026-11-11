@@ -1,3 +1,4 @@
+import { providerValidationRoute } from './settings'
 import {
   type ModelProtocol,
   type OfficialVendorId,
@@ -148,7 +149,14 @@ export const buildConfiguredModelCatalog = (
           ? DEFAULT_ENDPOINT_ORDER
           : input.frameworkEndpoints
     )
-    if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
+    if (
+      providerValidationFailed(provider, {
+        model,
+        endpoint: validationEndpoint,
+        ...providerValidationRoute({ ...provider, apiEndpoints }, input.frameworkId)
+      })
+    )
+      return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
     return [
       Object.freeze({
