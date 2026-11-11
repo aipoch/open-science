@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
+  cp,
   link,
   mkdir,
   mkdtemp,
@@ -1226,6 +1227,42 @@ describe('NodeVersionFileOperator', () => {
     ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
     await expect(readFile(join(outsideRoot, 'project-1'))).rejects.toMatchObject({ code: 'ENOENT' })
     await rm(outsideRoot, { recursive: true, force: true })
+  })
+
+  it('rejects an aliased root replaced by a different directory at the same path', async () => {
+    const { NodeVersionFileOperator } = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const physical = join(cleanupRoot, 'physical')
+    const alias = join(cleanupRoot, 'selected')
+    await mkdir(physical)
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const operator = new NodeVersionFileOperator({ storageRoot: alias })
+    const input = {
+      operationId: 'operation-root-replacement',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(input)
+    const content = Buffer.from('same immutable content')
+    const stored = await operator.publishImmutable({ ...input, plannedFile, content })
+    const previous = join(cleanupRoot, 'previous')
+    await renameFile(physical, previous)
+    await expect(operator.publishImmutable({ ...input, plannedFile, content })).rejects.toThrow()
+    await expect(readdir(physical)).rejects.toMatchObject({ code: 'ENOENT' })
+    // Even matching bytes in a new directory do not preserve the configured root's identity.
+    await cp(previous, physical, { recursive: true })
+    await expect(
+      operator.openImmutable(stored.storageRef, stored).then((lease) => lease.close())
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    await expect(
+      operator.publishImmutable({ ...input, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
   })
 
   it('rejects a storage root replaced with a symbolic link after initialization', async () => {

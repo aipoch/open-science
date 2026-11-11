@@ -337,7 +337,10 @@ const errorChainHasCode = (error: unknown, expectedCode: string): boolean => {
 
 class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecovery {
   private readonly fileSystem: VersionFileSystem
-  private readonly rootAlias?: string
+  private readonly rootAlias?: {
+    path: string
+    identity: Pick<BigIntStats, 'dev' | 'ino' | 'birthtimeNs'>
+  }
 
   constructor(private readonly options: NodeVersionFileOperatorOptions) {
     if (!options.storageRoot) throw new Error('Version file storage root is required.')
@@ -345,8 +348,13 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     // directory alias once; later retargeting must not redirect immutable reads or publications.
     // Keep the caller's logical path untouched (settings and migration receipts retain it).
     if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      this.rootAlias = options.storageRoot
-      this.options = { ...options, storageRoot: realpathSync(options.storageRoot) }
+      // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
+      const storageRoot = realpathSync.native(options.storageRoot)
+      this.rootAlias = {
+        path: options.storageRoot,
+        identity: lstatSync(storageRoot, { bigint: true })
+      }
+      this.options = { ...options, storageRoot }
     }
     this.fileSystem = {
       link: options.fileSystem?.link ?? link,
@@ -1320,7 +1328,9 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   private async prepareStorageParent(storageRef: string): Promise<StorageParentSnapshot> {
-    await this.fileSystem.mkdir(this.options.storageRoot, { recursive: true })
+    if (!this.rootAlias) {
+      await this.fileSystem.mkdir(this.options.storageRoot, { recursive: true })
+    }
     await this.verifyStorageRoot()
     const parentSegments = storageRef.split('/').slice(0, -1)
     let currentPath = resolve(this.options.storageRoot)
@@ -1426,16 +1436,19 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   private async verifyStorageRoot(): Promise<void> {
+    const rootStats = await this.fileSystem.lstat(this.options.storageRoot, { bigint: true })
     if (
       this.rootAlias &&
-      (await this.fileSystem.realpath(this.rootAlias)) !== this.options.storageRoot
+      ((await this.fileSystem.realpath(this.rootAlias.path)) !== this.options.storageRoot ||
+        rootStats.dev !== this.rootAlias.identity.dev ||
+        rootStats.ino !== this.rootAlias.identity.ino ||
+        rootStats.birthtimeNs !== this.rootAlias.identity.birthtimeNs)
     ) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',
         'Immutable version storage root alias changed after initialization.'
       )
     }
-    const rootStats = await this.fileSystem.lstat(this.options.storageRoot)
     if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
       throw new VersionFileOperatorError(
         'INTEGRITY_FAILED',

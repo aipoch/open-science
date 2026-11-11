@@ -108,6 +108,23 @@ describe('PlanContextFileStore', () => {
     expect(await readdir(other)).toEqual([])
   })
 
+  it('rejects an aliased root replaced by a different directory at the same path', async () => {
+    const root = await temporaryRoot()
+    const physical = join(root, 'physical')
+    const alias = join(root, 'selected')
+    await mkdir(physical)
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const store = new PlanContextFileStore({
+      storageRoot: alias,
+      readCurrent: async () => projection()
+    })
+    await store.refresh('project-1', 'session-1')
+    await rename(physical, join(root, 'previous'))
+    await mkdir(physical)
+    await expect(store.refresh('project-1', 'session-1')).rejects.toThrow('root alias changed')
+    expect(await readdir(physical)).toEqual([])
+  })
+
   it('writes the complete selected projection as pretty JSON with platform publication permissions', async () => {
     const root = await temporaryRoot()
     const current = projection()

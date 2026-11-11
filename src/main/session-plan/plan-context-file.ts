@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { constants, lstatSync, realpathSync } from 'node:fs'
+import { constants, lstatSync, realpathSync, type BigIntStats } from 'node:fs'
 import { chmod, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
@@ -112,14 +112,22 @@ const tombstone: PlanContextFile = { schemaVersion: 1, active: false }
 
 export class PlanContextFileStore {
   private readonly lanes = new Map<string, Promise<void>>()
-  private readonly rootAlias?: string
+  private readonly rootAlias?: {
+    path: string
+    identity: Pick<BigIntStats, 'dev' | 'ino' | 'birthtimeNs'>
+  }
 
   constructor(private readonly options: PlanContextFileStoreOptions) {
     // Match immutable file storage: accept the configured directory alias at construction,
     // then keep all descendant and replacement checks anchored to its original physical root.
     if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      this.rootAlias = options.storageRoot
-      this.options = { ...options, storageRoot: realpathSync(options.storageRoot) }
+      // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
+      const storageRoot = realpathSync.native(options.storageRoot)
+      this.rootAlias = {
+        path: options.storageRoot,
+        identity: lstatSync(storageRoot, { bigint: true })
+      }
+      this.options = { ...options, storageRoot }
     }
   }
 
@@ -202,8 +210,16 @@ export class PlanContextFileStore {
   }
 
   private async ensureContextDirectory(projectId: string, sessionId: string): Promise<string> {
-    if (this.rootAlias && (await realpath(this.rootAlias)) !== this.options.storageRoot) {
-      throw new Error('Session Plan storage root alias changed after initialization.')
+    if (this.rootAlias) {
+      const rootStats = await lstat(this.options.storageRoot, { bigint: true })
+      if (
+        (await realpath(this.rootAlias.path)) !== this.options.storageRoot ||
+        rootStats.dev !== this.rootAlias.identity.dev ||
+        rootStats.ino !== this.rootAlias.identity.ino ||
+        rootStats.birthtimeNs !== this.rootAlias.identity.birthtimeNs
+      ) {
+        throw new Error('Session Plan storage root alias changed after initialization.')
+      }
     }
     const storageRoot = resolve(this.options.storageRoot)
     await assertDirectory(storageRoot, 'Storage root')
