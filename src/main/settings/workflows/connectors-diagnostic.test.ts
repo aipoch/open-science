@@ -171,6 +171,14 @@ it.each(['timeout', 'cancelled'] as const)(
        setInterval(() => {}, 1000)`
     ])
     const controller = new AbortController()
+    const deadline = new AbortController()
+    using timer =
+      reason === 'timeout'
+        ? vi.spyOn(AbortSignal, 'timeout').mockImplementationOnce((ms) => {
+            expect(ms).toBe(10_000)
+            return deadline.signal
+          })
+        : undefined
     const pending = workflow.testCustomServer({ id: 'fixture' }, controller.signal)
     let pid: number | undefined
     try {
@@ -182,6 +190,10 @@ it.each(['timeout', 'cancelled'] as const)(
         { timeout: 5_000 }
       )
       if (reason === 'cancelled') controller.abort()
+      else {
+        expect(timer).toHaveBeenCalledOnce()
+        deadline.abort(new DOMException('Timed out', 'TimeoutError'))
+      }
       await expect(pending).resolves.toMatchObject({
         success: false,
         stage: 'handshake',

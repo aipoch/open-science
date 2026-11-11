@@ -39,6 +39,14 @@ import { PdfTranslationWriter } from '../src/writer.js'
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { TestCallerRegistry } from './support/callers.js'
 
+function expectSamePixels(actual: Uint8ClampedArray, expected: Uint8ClampedArray): void {
+  if (!Buffer.from(actual).equals(Buffer.from(expected))) {
+    expect(actual.length).toBe(expected.length)
+    const index = actual.findIndex((value, offset) => value !== expected[offset])
+    expect(actual[index], `RGBA byte ${index}`).toBe(expected[index])
+  }
+}
+
 it.each([
   'plus',
   'minus',
@@ -480,7 +488,7 @@ it.each(['empty', 'painted', 'inherited', 'single-page', 'unchanged', 'retained'
           await value.render({ canvas: null, canvasContext: context as never, viewport }).promise
           return context.getImageData(0, index === 2 ? 0 : 110, 300, index === 2 ? 300 : 190).data
         }
-        expect(await pixels(targetPage)).toEqual(await pixels(sourcePage))
+        expectSamePixels(await pixels(targetPage), await pixels(sourcePage))
       }
     } finally {
       for (const task of tasks) await task.destroy()
@@ -3404,7 +3412,7 @@ describe('translated PDF writer', () => {
               26
             ).data
           }
-          expect(await pixels(after)).toEqual(await pixels(before))
+          expectSamePixels(await pixels(after), await pixels(before))
         }
         if (kind === 'partial') {
           const suffixItem = items.find((i) => i.str.includes('。'))!

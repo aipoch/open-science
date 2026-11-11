@@ -2,7 +2,7 @@ import { readPdfTranslationCases } from '../../../../../../../test/fixtures/pdf-
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { renderHook, waitFor, act, cleanup } from '@testing-library/react'
+import { renderHook, waitFor as waitForResult, act, cleanup } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {
@@ -28,6 +28,10 @@ import {
   type PdfTranslationPdfRequest,
   type PdfTranslationRecordLayoutRequest
 } from '../../../../../../shared/pdf-translation'
+// Hook state changes have no DOM mutation to wake Testing Library's polling observer.
+const waitFor: typeof waitForResult = (callback, options) =>
+  waitForResult(callback, { interval: 10, ...options })
+
 const { getDocument, operators } = vi.hoisted(() => ({ getDocument: vi.fn(), operators: {} }))
 vi.mock('../pdfjs', () => ({ pdfjsLib: { getDocument, OPS: operators } }))
 afterEach(() => {

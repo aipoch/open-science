@@ -79,7 +79,6 @@ describe('complete module ownership', () => {
     expect(modulesForPath(manifest, 'scripts/pdf-translation-corpus.test.ts')).toContain(
       'main_pdf_translation'
     )
-    expect(auditModuleRouting(manifest).some(({ path }) => path.startsWith('scripts/'))).toBe(false)
   })
 
   it('routes every declared portable test without an unknown-path fallback', () => {

@@ -321,6 +321,11 @@ const loaderBindingsIn = (scope: Node, inherited: LoaderBindings): LoaderBinding
   }
   return { requireAliases: aliases, specifiers, wrappers }
 }
+const needsLoaderBindings = (node: Node): true | undefined =>
+  node.kind === SyntaxKind.ImportKeyword || (isIdentifier(node) && node.text === 'require')
+    ? true
+    : forEachChild(node, needsLoaderBindings)
+
 const fileImportCache = new Map<string, readonly ImportReference[]>()
 const importsFrom = (path: string, source?: string): readonly ImportReference[] => {
   const useFileCache = source === undefined
@@ -331,8 +336,10 @@ const importsFrom = (path: string, source?: string): readonly ImportReference[] 
   const resolvedSource = source ?? readSource(path)
   const references: ImportReference[] = []
   const sourceFile = sourceFileFor(path, resolvedSource)
+  const resolveLoaders = needsLoaderBindings(sourceFile)
   const visit = (node: Node, inherited: LoaderBindings): void => {
-    const bindings = isLoaderScope(node) ? loaderBindingsIn(node, inherited) : inherited
+    const bindings =
+      resolveLoaders && isLoaderScope(node) ? loaderBindingsIn(node, inherited) : inherited
     if (
       (isImportDeclaration(node) || isExportDeclaration(node)) &&
       node.moduleSpecifier &&

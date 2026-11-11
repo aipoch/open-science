@@ -1,3 +1,4 @@
+import { registerDatabaseFixture } from '../database/migrated-database.test-support'
 import { createKubernetesJobRuntime } from './kubernetes-job-runtime'
 import { MODAL_CREATION_UNCONFIRMED } from './modal-job-journal'
 import { createComputeExecution } from '@aipoch/compute/node'
@@ -7,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { createProjectDbClient } from '../projects/prisma-client'
 import { ComputeJobRepository } from './job-repository'
 
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
@@ -17,6 +18,8 @@ import { ComputeHostRepository } from './repository'
 
 // Exercises ComputeJobRepository against the current application schema in a real SQLite database.
 // Schema migration behavior is owned by src/main/database/migration-service.test.ts.
+
+const openDatabase = registerDatabaseFixture()
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -53,9 +56,8 @@ afterEach(async () => {
 describe('ComputeJob repository (SQLite integration)', () => {
   it('resumes an approved Kubernetes workspace after a lost response and a host restart', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-workspace-restart-'))
-    let client = createProjectDbClient(storageRoot)
+    let client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const owner = { jobId: 'job', projectId: 'p', sessionId: 's', providerId: 'cluster' }
     let metadata: Record<string, unknown>
     let created = false
@@ -169,9 +171,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('recovers a lost Kubernetes launch response and cancels the original UID without resubmitting', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-launch-recovery-'))
-    let client = createProjectDbClient(storageRoot)
+    let client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     let claim: Record<string, unknown> | undefined
     let launched: Record<string, unknown> | undefined
     let launches = 0
@@ -252,9 +253,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('retains a partially published Kubernetes job until its owner explicitly abandons cleanup', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-partial-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const owner = await repo.createApprovedKubernetesJob(
       {
@@ -323,9 +323,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('recovers the encrypted hosted launch fence across SQLite reopen and isolates SSH scans', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'hf-launch-fence-'))
-    let client = createProjectDbClient(storageRoot)
+    let client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     let repo = makeJobRepository(client)
     const job = await repo.createApprovedHuggingFaceJob(
       {
@@ -376,9 +375,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('recovers the encrypted Ray package fence across SQLite reopen and isolates SSH scans', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'ray-launch-fence-'))
-    let client = createProjectDbClient(storageRoot)
+    let client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     let repo = makeJobRepository(client)
     const job = await repo.createApprovedRayJob(
       {
@@ -432,9 +430,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('assigns mixed-backend cancellation claims only to their execution owner after reopening SQLite', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-cancel-owners-'))
-    let client = createProjectDbClient(storageRoot)
+    let client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const modes = [
       'kubernetes',
       'hugging_face_jobs',
@@ -491,9 +488,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('requires operator resolution for an unconfirmed Modal create after SQLite restart', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'modal-create-receipt-'))
-    let client = createProjectDbClient(storageRoot)
+    let client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     let repo = makeJobRepository(client)
     const target = {
       appName: 'lab',
@@ -551,9 +547,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   })
   it('confirms legacy Modal staging only while the original pre-launch volume is still bound', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'modal-legacy-cleanup-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const job = await repo.createApprovedModalJob(
       {
@@ -611,9 +606,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('PERF-04 returns status without decrypting historical payloads', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'concurrency-projection-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const cipher = testCipher()
     const repo = new ComputeJobRepository(async () => client, protectedFields(cipher))
     const hosts = new ComputeHostRepository(async () => client)
@@ -653,9 +647,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('lists project overview jobs using active and recent-terminal visibility rules newest-first', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-job-overview-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const since = new Date('2026-09-05T12:00:00.000Z')
 
@@ -725,9 +718,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('bounds the project overview to the newest 200 jobs', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-job-overview-limit-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     await client.computeJob.createMany({
@@ -756,9 +748,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('persists credential conflicts reported while dispatching a migrated job', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-credential-conflict-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const hostRepository = new ComputeHostRepository(() => Promise.resolve(client))
     const jobRepository = makeJobRepository(client)
@@ -795,10 +786,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('round-trips CRUD', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-
-    await migrateApplicationDatabase(client)
 
     const repo = makeJobRepository(client)
     const fileEvidence = {
@@ -913,9 +902,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('does not downgrade an immutable file-evidence reference from a stale update', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-immutable-evidence-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const repo = makeJobRepository(client)
     const immutableEvidence = {
@@ -986,9 +974,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('does not persist Compute Job execution secrets as plaintext', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-secret-persistence-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(() => Promise.resolve(client), protectedFields())
     const intentSecret = 'intent-token-regression-value'
@@ -1056,9 +1043,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('continues to read legacy plaintext Compute Job rows without rewriting them', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-legacy-plaintext-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     await client.computeJob.create({
       data: {
@@ -1087,9 +1073,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('does not mistake a legacy plaintext protection prefix for ciphertext', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-legacy-prefix-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const legacyCommand = 'open-science:protected:v1:not-ciphertext'
     await client.computeJob.create({
@@ -1115,9 +1100,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('does not silently persist plaintext after runtime encryption fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-encryption-failure-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(
       () => Promise.resolve(client),
@@ -1169,9 +1153,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('rejects invalid JSON container shapes before protecting them', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-invalid-protected-json-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(() => Promise.resolve(client), protectedFields())
 
@@ -1193,9 +1176,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('allows plaintext persistence when secure storage is unavailable', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-unprotected-fallback-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(
       () => Promise.resolve(client),
@@ -1238,9 +1220,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('fails safely when protected job data cannot be decrypted', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-unreadable-protection-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
 
     const writer = new ComputeJobRepository(() => Promise.resolve(client), protectedFields())
     await writer.create({
@@ -1281,10 +1262,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('findNonTerminalByProvider returns only jobs for the given provider', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-provider-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-
-    await migrateApplicationDatabase(client)
 
     const repo = makeJobRepository(client)
 
@@ -1321,10 +1300,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('round-trips the 4 new Phase 3b columns (harvestError, leftOnRemote, notifiedAt, notificationConsumedAt)', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3b-columns-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-
-    await migrateApplicationDatabase(client)
 
     const repo = makeJobRepository(client)
 
@@ -1389,9 +1366,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('allows only one concurrent notification claim', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notification-claim-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
     await repo.create({
       id: 'job-claim',
@@ -1422,10 +1398,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('findTerminalUnharvested returns terminal jobs with null harvestedAt, excludes already-harvested and non-terminal', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-unharvested-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-
-    await migrateApplicationDatabase(client)
 
     const repo = makeJobRepository(client)
 
@@ -1519,10 +1493,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('does not recover harvest for jobs whose remote directory was cleaned', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-cleaned-unharvested-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     for (const disposition of ['cleaned', 'abandoned'] as const) {
@@ -1555,10 +1528,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('blocks Host identity changes while a harvested Job still needs remote cleanup', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-cleanup-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     await repo.create({
       id: 'job-harvested-pending-cleanup',
@@ -1582,10 +1554,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('findPendingNotifications returns jobs with notifiedAt set and notificationConsumedAt null', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-notif-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     const mkJob = async (id: string, sessionId: string): Promise<void> => {
@@ -1637,9 +1608,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('keeps notified non-terminal rows out of the pending analysis seam', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-terminal-guard-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     await repo.create({
@@ -1675,9 +1645,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('classifies valid encrypted active handles after decryption', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-encrypted-integrity-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const workdir = '/remote/jobs/encrypted-active'
 
@@ -1715,9 +1684,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('reports encrypted projection failures without exposing ciphertext', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-decrypt-failure-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const healthyRepo = makeJobRepository(client)
     const workdir = '/remote/jobs/decrypt-failure'
     await healthyRepo.create({
@@ -1796,9 +1764,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('reports raw persistence incompatibilities without hiding unknown statuses', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-integrity-scan-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
     const create = async (id: string): Promise<void> => {
       await repo.create({
@@ -1881,10 +1848,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('markNotificationsConsumed sets notificationConsumedAt and is idempotent', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-mark-consumed-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     await repo.create({
@@ -1916,9 +1882,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('persists and validates automatic-analysis transitions for a notified Job batch', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-analysis-state-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     for (const id of ['job-success', 'job-failed']) {
@@ -2001,10 +1966,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('rejects a mixed-session, missing, or unnotified consumption batch atomically', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-consume-owner-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const createJob = async (id: string, sessionId: string): Promise<void> => {
       await repo.create({
@@ -2045,10 +2009,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('countNonTerminalByProvider counts active jobs across all sessions', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-count-provider-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     // Create jobs for provider-a in different sessions
@@ -2117,10 +2080,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('countNonTerminalBySession counts active jobs across all providers', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-count-session-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     // Create jobs for session-1 on different providers
@@ -2189,10 +2151,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('countQueuedJobs returns accurate global queued job count', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-count-queued-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     // Initially no queued jobs
@@ -2260,10 +2221,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
   it('findQueuedJobs returns jobs in createdAt ascending order', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-find-queued-'))
 
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     // Create jobs with deliberate timing
@@ -2337,9 +2297,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('blocks admission and deletes rows and notifications by owner scope', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-owner-delete-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const create = (
       id: string,
@@ -2402,9 +2361,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('keeps a historical Job as a Host blocker until remote cleanup is settled', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-host-delete-blocker-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
 
     await repo.create({
@@ -2450,9 +2408,8 @@ describe('ComputeJob repository (SQLite integration)', () => {
 
   it('returns every Session job without a list limit', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-session-list-'))
-    const client = createProjectDbClient(storageRoot)
+    const client = await openDatabase(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
     const repo = makeJobRepository(client)
     const jobCount = 20
 

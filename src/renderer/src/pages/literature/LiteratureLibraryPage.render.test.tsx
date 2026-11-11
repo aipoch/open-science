@@ -10381,7 +10381,7 @@ describe('LiteratureLibraryPage', () => {
       await screen.findByText('Reference 0')
     })
 
-    it('resizes pages and clears the previous page selection', async () => {
+    it('clears selection when resizing and reuses filtered results when paging back', async () => {
       fireEvent.click(screen.getByLabelText('References per page'))
       fireEvent.click(screen.getByRole('option', { name: '50' }))
 
@@ -10424,9 +10424,7 @@ describe('LiteratureLibraryPage', () => {
       await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
       expect(screen.queryByText(/ selected$/)).toBeNull()
       expect(screen.getByText('1–25')).not.toBeNull()
-    })
 
-    it('pages ordered results, selects only the current page and reuses cached pages', async () => {
       fireEvent.click(screen.getByLabelText('Select all references'))
       expect(screen.getByText('25 selected')).not.toBeNull()
       fireEvent.click(
@@ -10495,7 +10493,7 @@ describe('LiteratureLibraryPage', () => {
       expect(await screen.findByText('Alphabetical result')).not.toBeNull()
       expect(screen.queryByRole('button', { name: 'Page 2' })).toBeNull()
       expect(screen.queryByText('Reference 25')).toBeNull()
-    })
+    }, 30_000)
   })
 
   it('starts a page request and shows its loading state in the pagination click', async () => {
