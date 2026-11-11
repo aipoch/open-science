@@ -259,9 +259,14 @@ for (const theme of ['Light', 'Dark'] as const) {
     expect(bounds!.width).toBeLessThanOrEqual(193)
     await strict.click()
     await expect(panel).toBeVisible()
+    await expect(strict).toBeChecked()
+    await expect(relaxed).not.toBeChecked()
     await expect(settings.getByText('Current: Relaxed', { exact: true })).toBeVisible()
     expect(await active()).toBe('relaxed')
-    await page.screenshot({ path: testInfo.outputPath('pending-strict.png') })
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath('pending-strict.png')
+    })
     await panel.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(relaxed).toBeFocused()
     await strict.click()
@@ -283,7 +288,10 @@ for (const theme of ['Light', 'Dark'] as const) {
     await expect(panel).toHaveCount(0)
     await expect(settings.getByText('Current: Strict', { exact: true })).toBeVisible()
     expect(await active()).toBe('strict')
-    await page.screenshot({ path: testInfo.outputPath('confirmed-strict.png') })
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath('confirmed-strict.png')
+    })
     await strict.press('Home')
     expect(await active()).toBe('strict')
     await expect(panel.getByText('Network access will expand.', { exact: true })).toBeVisible()
@@ -298,7 +306,10 @@ for (const theme of ['Light', 'Dark'] as const) {
       exact: true
     })
     await expect(germanPanel).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('compact-german.png') })
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath('compact-german.png')
+    })
     expect(await germanPanel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
     const clipped = await germanPanel
       .locator('button')

@@ -505,7 +505,10 @@ export function NotebookNetworkAccessEditor({
           </p>
         </div>
         <div className="flex max-w-full flex-wrap items-center gap-3">
-          <span className="text-xs font-medium" role="status">
+          <span
+            className={`rounded-md border px-2 py-1 text-xs font-medium ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
+            role="status"
+          >
             {strict ? t('Current: Strict') : t('Current: Relaxed')}
           </span>
           <div
@@ -524,7 +527,7 @@ export function NotebookNetworkAccessEditor({
                 aria-checked={selectedMode === mode}
                 tabIndex={selectedMode === mode ? 0 : -1}
                 disabled={busy}
-                className={`min-w-0 rounded-md border px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? (pendingMode ? 'border-dashed border-primary bg-primary/10' : 'border-transparent bg-primary/15') : 'border-transparent'}`}
+                className={`min-w-0 rounded-md border px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? `${mode === 'strict' ? 'notebook-network-strict' : 'notebook-network-relaxed'} ${pendingMode ? 'border-dashed' : ''}` : 'border-transparent'}`}
                 onKeyDown={(event) => {
                   if (
                     ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(
@@ -558,7 +561,7 @@ export function NotebookNetworkAccessEditor({
         <section
           aria-label={t('Confirm network mode change')}
           aria-busy={switching}
-          className="space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-4"
+          className={`space-y-3 rounded-xl border p-4 ${pendingMode === 'strict' ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
         >
           <div className="flex flex-wrap items-center gap-3">
             <h4 className="text-sm font-medium">
@@ -612,10 +615,10 @@ export function NotebookNetworkAccessEditor({
       ) : null}
       <details
         key={strict ? 'strict' : 'relaxed'}
-        className="group rounded-xl border border-primary/20 bg-primary/5 p-4"
+        className={`group rounded-xl border p-4 ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
       >
         <summary className="flex cursor-pointer list-none items-center gap-3 text-sm font-medium">
-          <Check className="size-4 text-primary" aria-hidden="true" />
+          <Check className="size-4" aria-hidden="true" />
           {strict ? t('How Strict mode works') : t('How Relaxed mode works')}
           <ChevronRight
             aria-hidden="true"

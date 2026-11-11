@@ -366,7 +366,10 @@ const NetworkPanel = ({
           title={t('Notebook network access')}
           action={
             <span
-              className="inline-flex rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium"
+              className={cn(
+                'inline-flex rounded-md border px-2 py-1 text-xs font-medium',
+                strictNetwork ? 'notebook-network-strict' : 'notebook-network-relaxed'
+              )}
               role="status"
             >
               {strictNetwork ? t('Strict mode') : t('Relaxed mode')}
@@ -374,10 +377,8 @@ const NetworkPanel = ({
           }
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
-          className="rounded-xl border border-border bg-card px-4 pt-4"
-          contentClassName="mt-1"
         >
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-border rounded-xl border border-border px-4">
             {notebookRows.map(({ icon: Icon, title, description, manage }, index) => (
               <li key={index} className="flex flex-wrap items-center gap-3 py-4">
                 <span

@@ -589,6 +589,14 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --ring: oklch(0.66 0.1 184);
 }
 
+@utility notebook-network-relaxed {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200;
+}
+
+@utility notebook-network-strict {
+  @apply border-indigo-200 bg-indigo-50 text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-200;
+}
+
 /* Keyboard focus must remain visible in forced colors and appear without a transition. */
 @utility keyboard-focus {
   outline: 2px solid var(--ring);

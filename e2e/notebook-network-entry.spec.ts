@@ -15,6 +15,9 @@ for (const theme of ['Light', 'Dark'] as const) {
     const entry = settings.getByRole('region', { name: 'Notebook network access', exact: true })
     const manage = entry.getByRole('button', { name: 'Manage access', exact: true })
     await expect(entry.getByText('Relaxed mode', { exact: true })).toBeVisible()
+    const relaxedColor = await entry
+      .getByText('Relaxed mode', { exact: true })
+      .evaluate((element) => getComputedStyle(element).color)
     await expect(entry.getByText('0 saved addresses', { exact: true })).toBeVisible()
     await expect(entry.locator('li')).toHaveCount(3)
     await expect(entry.getByRole('button')).toHaveCount(1)
@@ -51,6 +54,13 @@ for (const theme of ['Light', 'Dark'] as const) {
         await expect(entry).not.toContainText('saved address')
       }
       await expect(entry.getByText(`${mode} mode`, { exact: true })).toBeVisible()
+      if (mode === 'Strict') {
+        expect(
+          await entry
+            .getByText('Strict mode', { exact: true })
+            .evaluate((element) => getComputedStyle(element).color)
+        ).not.toBe(relaxedColor)
+      }
       for (const width of [1024, 640]) {
         await page.setViewportSize({ width, height: 874 })
         await entry.scrollIntoViewIfNeeded()
@@ -84,5 +94,32 @@ for (const theme of ['Light', 'Dark'] as const) {
       }
     }
     await settings.getByRole('button', { name: 'Close settings' }).click()
+    const runtimes = await openSettingsPage(page, 'Runtimes')
+    const protection = runtimes.getByTestId('notebook-network-protection-banner')
+    await expect(
+      protection.getByRole('heading', {
+        name: 'Notebook network protection',
+        level: 3,
+        exact: true
+      })
+    ).toBeVisible()
+    await expect(protection.getByText('Network protection on', { exact: true })).toBeVisible()
+    for (const width of [1024, 640]) {
+      await page.setViewportSize({ width, height: 874 })
+      await protection.scrollIntoViewIfNeeded()
+      await expect(protection.getByRole('button', { name: 'Network settings' })).toBeVisible()
+      expect(
+        await protection.evaluate((element) => element.scrollWidth > element.clientWidth + 1)
+      ).toBe(false)
+      await protection.screenshot({
+        animations: 'disabled',
+        path: testInfo.outputPath(`runtime-protection-${width}.png`)
+      })
+    }
+    await protection.getByRole('button', { name: 'Network settings' }).click()
+    await expect(
+      runtimes.getByRole('radiogroup', { name: 'Select a network mode to confirm' })
+    ).toBeVisible()
+    await runtimes.getByRole('button', { name: 'Close settings' }).click()
   })
 }

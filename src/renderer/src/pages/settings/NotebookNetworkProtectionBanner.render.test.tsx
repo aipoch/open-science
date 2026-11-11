@@ -43,7 +43,7 @@ describe('NotebookNetworkProtectionBanner', () => {
     )
     expect(
       container
-        .querySelector('[data-testid="notebook-network-protection-banner"]')
+        .querySelector('[data-testid="notebook-network-protection-banner"] [data-notice-inline]')
         ?.getAttribute('data-notice-inline')
     ).toBe('true')
 
