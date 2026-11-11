@@ -137,8 +137,8 @@ These fixtures do not certify installed upgrades, OS reboot, real provider proto
 quit/persistence UI; those retain their existing dedicated validation paths.
 
 Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
-(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into eleven isolated Mac test jobs:
-functional, workspace, presentation (browser/visual/accessibility), delegation, six ordinary
+(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into twelve isolated Mac test jobs:
+functional, two workspace shards, presentation (browser/visual/accessibility), delegation, six ordinary
 supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
 fail-fast is disabled so every group can report its own failures. Capacity is selected from the
 same regression command with `@capacity`, while ordinary shards exclude that tag. No tests are

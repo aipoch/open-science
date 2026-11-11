@@ -41,8 +41,7 @@ async function openDialog(page: Page, name: string): Promise<void> {
       .getByRole('checkbox', { name: 'Select Audit trashed reference', exact: true })
       .check()
     if (name === 'library-restore') {
-      const actions = page.getByRole('button', { name: 'More actions', exact: true }).first()
-      if ((await actions.getAttribute('aria-expanded')) !== 'true') await actions.click()
+      await page.getByRole('button', { name: 'More actions', exact: true }).first().click()
       await page.getByRole('button', { name: 'Restore', exact: true }).click()
     } else {
       await page.getByRole('button', { name: 'More actions', exact: true }).last().click()
@@ -70,7 +69,7 @@ async function openDialog(page: Page, name: string): Promise<void> {
     await page.getByRole('menuitem', { name: 'Delete category', exact: true }).click()
   } else if (name === 'skill-conflict') {
     await page.getByRole('textbox', { name: 'Skill body' }).fill('My edited draft')
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
   } else if (name.startsWith('attachment')) {
     await page.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' }).click()
     await page
@@ -97,7 +96,9 @@ for (const name of cases) {
     const dialog =
       name === 'library-restore'
         ? page.getByRole('alertdialog', { name: 'Restore', exact: true })
-        : page.locator('[role=dialog],[role=alertdialog]').last()
+        : name === 'marketplace'
+          ? page.getByRole('alertdialog', { name: 'Remove “Audit Marketplace”?' })
+          : page.locator('[role=dialog],[role=alertdialog]').last()
     await expect(dialog).toBeVisible()
     await dialog.evaluate(async (el) => {
       await Promise.all(el.getAnimations().map((a) => a.finished))
@@ -166,7 +167,9 @@ for (const name of cases) {
     const dialog =
       name === 'library-restore'
         ? page.getByRole('alertdialog', { name: 'Restore', exact: true })
-        : page.locator('[role=dialog],[role=alertdialog]').last()
+        : name === 'marketplace'
+          ? page.getByRole('alertdialog', { name: 'Remove “Audit Marketplace”?' })
+          : page.locator('[role=dialog],[role=alertdialog]').last()
     await expect(dialog).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
