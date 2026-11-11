@@ -1823,6 +1823,7 @@ const hasDropOverlay = (): boolean =>
   container.textContent?.includes('Drop files to attach') ?? false
 
 beforeEach(() => {
+  useWorkspaceOperationErrors.setState({ contextResets: {} })
   useWorkspaceElicitationFailures.setState({ failures: {} })
   vi.stubGlobal(
     'matchMedia',
@@ -1874,6 +1875,58 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   container.remove()
+})
+
+describe('ConversationPanel context reset notice', () => {
+  const session: ChatSession = {
+    id: 'context-reset',
+    projectId: 'project-a',
+    title: 'Context reset',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const notice = 'Continuing in a new context using your saved conversation history.'
+
+  it('expires after six seconds, stays dismissed on return, and allows a later reset', () => {
+    vi.useFakeTimers()
+    useWorkspaceOperationErrors.setState({ contextResets: { [session.id]: true } })
+    renderPanel({ view: { activeSession: session } })
+    act(() => vi.advanceTimersByTime(5999))
+    expect(container.textContent).toContain(notice)
+    renderPanel({ view: { activeSession: { ...session } } })
+    act(() => vi.advanceTimersByTime(1))
+    expect(container.textContent).not.toContain(notice)
+    expect(useWorkspaceOperationErrors.getState().contextResets[session.id]).toBeUndefined()
+
+    renderPanel()
+    renderPanel({ view: { activeSession: session } })
+    expect(container.textContent).not.toContain(notice)
+    act(() => {
+      useWorkspaceOperationErrors.setState({ contextResets: { [session.id]: true } })
+    })
+    expect(container.textContent).toContain(notice)
+    act(() => vi.advanceTimersByTime(6000))
+    expect(container.textContent).not.toContain(notice)
+  })
+
+  it('cancels the previous session timer and expires only the displayed session notice', () => {
+    vi.useFakeTimers()
+    const otherSession = { ...session, id: 'other-context-reset' }
+    useWorkspaceOperationErrors.setState({
+      contextResets: { [session.id]: true, [otherSession.id]: true }
+    })
+    renderPanel({ view: { activeSession: session } })
+    act(() => vi.advanceTimersByTime(3000))
+    renderPanel({ view: { activeSession: otherSession } })
+    act(() => vi.advanceTimersByTime(3000))
+    expect(container.textContent).toContain(notice)
+    act(() => vi.advanceTimersByTime(3000))
+    expect(container.textContent).not.toContain(notice)
+    expect(useWorkspaceOperationErrors.getState().contextResets).toEqual({ [session.id]: true })
+  })
 })
 
 describe('ConversationPanel Specialist reconfigure recovery', () => {
