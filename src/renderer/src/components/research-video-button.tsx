@@ -21,7 +21,6 @@ import {
 import { Trans, useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
-import { DiagnosticDetails } from './diagnostic-details'
 import { DownloadProgressLine } from './DownloadProgressLine'
 import { ResearchVideoProgressLine } from './research-video-progress'
 import { localModelDownloadProgress, type LocalModelSnapshot } from '../../../shared/local-models'
@@ -42,6 +41,47 @@ const missingRuntime =
 
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
+
+function FilmErrorNotice({
+  summary,
+  detail
+}: {
+  summary: string
+  detail: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  return (
+    <>
+      <ErrorNotice
+        inline
+        tone="amber"
+        role="alert"
+        title={summary}
+        diagnosticsLabel={t('Details')}
+        errorCode={detail}
+        className="[&_pre]:max-h-40 [&_pre]:overflow-auto [&_pre]:overscroll-contain [&_pre]:select-text"
+        secondaryButton={{
+          variant: 'ghost',
+          label: copyStatus === 'copied' ? t('Copied') : t('Copy error'),
+          onClick: async () => {
+            try {
+              await navigator.clipboard.writeText(detail)
+              setCopyStatus('copied')
+            } catch {
+              setCopyStatus('failed')
+            }
+          }
+        }}
+      />
+      {copyStatus === 'failed' && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t('Could not copy details. Select the text and copy it manually.')}
+        </p>
+      )}
+    </>
+  )
+}
 
 export function ResearchVideoButton({
   renderTrigger,
@@ -134,6 +174,9 @@ export function ResearchVideoButton({
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
     : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
+  const diagnostic = blocked
+    ? !busy && !status.generationBlock && !knownPreflight && preflight
+    : failure
   const modelSettingsAvailable =
     !status.generationBlock &&
     status.preflightError &&
@@ -497,7 +540,7 @@ export function ResearchVideoButton({
         >
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`} data-workflow-body>
             <div className="space-y-4" data-workflow-content>
-              {blocked && !busy && (
+              {blocked && !busy && !diagnostic && (
                 <ErrorNotice
                   inline
                   level="warning"
@@ -513,25 +556,18 @@ export function ResearchVideoButton({
                       blocked
                     )
                   }
-                >
-                  {!status.generationBlock && !knownPreflight && (
-                    <DiagnosticDetails detail={preflight} copyable />
-                  )}
-                </ErrorNotice>
+                />
               )}
-              {!blocked && failure && (
-                <ErrorNotice
-                  inline
-                  tone="amber"
-                  role="alert"
-                  description={
-                    Object.hasOwn(filmErrors, failure)
-                      ? filmErrors[failure]
+              {diagnostic && (
+                <FilmErrorNotice
+                  key={diagnostic}
+                  detail={diagnostic}
+                  summary={
+                    Object.hasOwn(filmErrors, diagnostic)
+                      ? filmErrors[diagnostic]
                       : t('Research video failed')
                   }
-                >
-                  <DiagnosticDetails key={failure} detail={failure} copyable />
-                </ErrorNotice>
+                />
               )}
               {status.result && (
                 <section className="space-y-4" aria-label={t('Research film ready')}>

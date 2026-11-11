@@ -110,10 +110,16 @@ it('keeps raw generation errors in collapsed details and copies the full message
   const details = document.querySelector('dialog details, [role="dialog"] details')!
   expect(details.hasAttribute('open')).toBe(false)
   expect(document.querySelector('[role="alert"]')?.textContent).not.toContain(error)
+  const copy = Array.from(document.querySelectorAll('button')).find(
+    (button) => button.textContent === 'Copy error'
+  )!
+  expect(copy.closest('details')).toBeNull()
+  await click('Copy error')
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(error)
+  expect(copy.textContent).toBe('Copied')
+  expect(details.hasAttribute('open')).toBe(false)
   await act(async () => details.querySelector('summary')!.click())
   expect(details.querySelector('pre')?.textContent).toBe(error)
-  await click('Copy')
-  expect(writeText).toHaveBeenCalledWith(error)
 })
 
 it('keeps the trigger in a loading state until the initial presentation status is known', async () => {
