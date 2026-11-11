@@ -526,13 +526,33 @@
   }
 
   F.verdict = (box, p) => {
-    const v = el(
-      `verdict ${p.tone}`,
-      `${p.tone === 'good' ? '✓' : p.tone === 'bad' ? '✕' : '•'} `,
-      h('span', { html: md(p.text) })
-    )
+    const text = h('span', { html: md(p.text) })
+    const viewport = p.reading ? el('verdict-viewport', text) : null
+    const mark = p.tone === 'good' ? '✓' : p.tone === 'bad' ? '✕' : '•'
+    const v = el(`verdict ${p.tone}`, mark + ' ', viewport ?? text)
     put(box, v)
-    return (t) => show(v, seg(t, p.t_in, p.t_in + 0.45, ease.outBack), 10, 1.4)
+    let measuredWidth = -1
+    let pages = 1
+    if (viewport) v.classList.add('reading')
+    return (t) => {
+      if (viewport) {
+        // Measure only while visible. CSS columns preserve word wrapping and inline formatting
+        // across pages, including when seeking backwards or rendering a portrait frame.
+        if (measuredWidth !== viewport.clientWidth) {
+          measuredWidth = viewport.clientWidth
+          viewport.classList.remove('paged')
+          viewport.classList.toggle(
+            'paged',
+            text.offsetHeight > 3 * parseFloat(getComputedStyle(text).lineHeight) + 1
+          )
+          pages = Math.max(1, Math.round(viewport.scrollWidth / Math.max(1, measuredWidth)))
+        }
+        const elapsed = p.reading.offset + t - p.t_in
+        const page = Math.min(pages - 1, Math.floor((elapsed * pages) / p.reading.duration))
+        viewport.scrollLeft = page * viewport.clientWidth
+      }
+      show(v, seg(t, p.t_in, p.t_in + 0.45, ease.outBack), 10, 1.4)
+    }
   }
 
   F.illustration = (box, p) => {

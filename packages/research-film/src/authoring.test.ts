@@ -7,7 +7,7 @@ import {
   createResearchFilmAuthor,
   generateResearchFilm
 } from './authoring.js'
-import type { VideoPanel } from './timeline.js'
+import { buildVideoTimeline, type VideoPanel } from './timeline.js'
 import { parseResearchVideoScreenplay } from './screenplay.js'
 import { ResearchFilmOutputLimitError } from './authoring-correction.js'
 
@@ -63,6 +63,37 @@ it('uses the default comparison reveal for malformed timing while preserving con
   expect(fallback.right).not.toHaveProperty('at')
   expect(parse({ title: 'After', at: '0' }).right?.at).toBe('0')
   expect(() => parse({ at: 'after the first line' })).toThrow()
+})
+
+it('preserves a long verdict and gives its remaining pages time before the next narration', () => {
+  const text = 'The measured difference remains uncertain. '.repeat(8) + '不能据此得出因果结论。'
+  const scenes = [
+    ...spec.scenes,
+    {
+      ...spec.scenes[0],
+      id: 'result',
+      role: 'result',
+      panels: [{ type: 'verdict', text, tone: 'muted', until: '0.end' }]
+    },
+    { ...spec.scenes[0], id: 'outro', role: 'outro', panels: [{ type: 'end_card' }] }
+  ]
+  const parsed = parseResearchVideoScreenplay(JSON.stringify({ ...spec, scenes }), 1)
+  expect(parsed.scenes[1].panels[0].text).toBe(text)
+  const timeline = buildVideoTimeline(parsed, {}, true)
+  const [, result, outro] = timeline.scenes
+  const [first, continuation] = result.panels
+  expect(first.t_out).toBe(result.lines[0].t1)
+  expect(continuation.t_in).toBeGreaterThan(first.t_out!)
+  expect(continuation).toMatchObject({
+    text,
+    t_out: result.dur,
+    reading: { offset: first.t_out! - first.t_in }
+  })
+  expect(outro.start).toBeCloseTo(result.start + result.dur, 3)
+  expect(timeline.captions['16x9'].at(-1)!.words[0][1]).toBeCloseTo(
+    outro.start + outro.lines[0].t0,
+    3
+  )
 })
 
 it.each([false, true])(
