@@ -38,7 +38,7 @@ function cycles(graph: Graph): string[] {
   return [...found].sort()
 }
 
-function hostGraphs(overrides: Record<string, string> = {}): {
+function hostGraphs(overrides?: Record<string, string>): {
   structural: Graph
   runtimeModules: Graph
   consumerModules: Graph
@@ -54,7 +54,7 @@ function hostGraphs(overrides: Record<string, string> = {}): {
   )
   const contents = new Map<string, string>()
   const read = (path: string): string | undefined => {
-    if (Object.hasOwn(overrides, path)) return overrides[path]
+    if (overrides && Object.hasOwn(overrides, path)) return overrides[path]
     if (!files.has(path)) return undefined
     if (!contents.has(path)) contents.set(path, readFileSync(resolve(projectRoot, path), 'utf8'))
     return contents.get(path)
@@ -83,7 +83,14 @@ function hostGraphs(overrides: Record<string, string> = {}): {
   const structural: Graph = new Map()
   const boundaryEdges: Graph = new Map()
   const runtimeModules: Graph = new Map()
-  for (const path of production) {
+  // The synthetic boundary cases only assert outgoing edges from the overridden sources.
+  const roots = overrides
+    ? Object.keys(overrides).filter((path) => production.has(path))
+    : [...production]
+  const inspectFoundation = createDependencyReader({ files, read }, runtimeEdges, {
+    staticOnly: true
+  })
+  for (const path of roots) {
     boundaryEdges.set(path, structuralReader.dependencies(path).paths)
     structural.set(
       path,
@@ -122,13 +129,10 @@ function hostGraphs(overrides: Record<string, string> = {}): {
               )
           : []
       }),
-      ...[...production]
+      ...roots
         .filter((path) => dependencyLayer(path) === 'foundation')
         .flatMap((path) => {
-          const inspect = createDependencyReader({ files, read }, runtimeEdges, {
-            staticOnly: true
-          })
-          return inspect(path, new Set()).complete
+          return inspectFoundation(path, new Set()).complete
             ? []
             : [`${path}: pure foundation has opaque dependencies`]
         })
