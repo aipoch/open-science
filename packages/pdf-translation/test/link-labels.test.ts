@@ -1803,3 +1803,32 @@ it('handles long failed address, citation and caption suffixes', () => {
     text: 'b'
   })
 })
+
+it('maps a linked parenthetical author prefix through its complete unchanged year identity', () => {
+  const source = 'Prior work (Morris et al., 2021) establishes the result.'
+  const target = '此前的工作（Morris等，2021年）确立了这一结果。'
+  const label = '(Morris et al.,'
+  expect(translatedPdfLinkFragment(source, target, label, source.indexOf(label))).toEqual({
+    start: target.indexOf('（'),
+    text: '（Morris等，'
+  })
+  expect(translatedPdfLinkFragment(target, source, '（Morris等，', target.indexOf('（'))).toEqual({
+    start: source.indexOf('('),
+    text: label
+  })
+})
+it.each(['year', 'author', 'bracket', 'missing-close', 'extra-occurrence'])(
+  'does not guess a changed parenthetical citation identity: %s',
+  (change) => {
+    const source = 'Prior work (Morris et al., 2021) establishes the result.'
+    let target = '已有工作（Morris等，2021）确立了这一结果。'
+    if (change === 'year') target = target.replace('2021', '2022')
+    if (change === 'author') target = target.replace('Morris', 'Quinn')
+    if (change === 'bracket') target = target.replace('）', '］')
+    if (change === 'missing-close') target = target.replace('）', '')
+    if (change === 'extra-occurrence') target += '（Morris等，2021）'
+    expect(
+      translatedPdfLinkFragment(source, target, '(Morris et al.,', source.indexOf('('))
+    ).toBeNull()
+  }
+)

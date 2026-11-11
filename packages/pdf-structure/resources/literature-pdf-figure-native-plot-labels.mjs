@@ -1610,7 +1610,12 @@ function nativePageProgramPhase(
           tag = a[0]
           if (
             !(tag === 'Artifact' && (a[1] === null || a[1] === undefined)) &&
-            !(['P', 'Span'].includes(tag) && Number.isSafeInteger(a[1]) && a[1] >= 0)
+            !(['P', 'Span'].includes(tag) && Number.isSafeInteger(a[1]) && a[1] >= 0) &&
+            !(
+              cropMode === normalWholeCellMode &&
+              tag === 'Span' &&
+              (a[1] === null || a[1] === undefined)
+            )
           )
             return
         }
@@ -1840,9 +1845,18 @@ function nativePageProgramPhase(
               m
             ),
             advance = box([x, y, x + advanceWidth, y + size], m)
+          // An empty-outline or render-certified skipped space paints no ink,
+          // even if its positioning point falls just outside a cell clip.
+          // Its native advance and complete program still participate.
+          const unpaintedWhitespace =
+            g.unicode === ' ' &&
+            (rendererSkipped || b.every((n) => n === 0)) &&
+            ink[0] === ink[2] &&
+            ink[1] === ink[3]
           if (
             !finite(ink, 4) ||
             (!inside(physicalClip, ink) &&
+              !unpaintedWhitespace &&
               !printedFace?.outside(state.clip) &&
               !(cropOnly && valid(physicalClip)))
           )
@@ -1923,17 +1937,21 @@ function nativePageProgramPhase(
             !(
               (['CA', 'ca'].includes(e[0]) && Number.isFinite(e[1]) && e[1] >= 0 && e[1] <= 1) ||
               (e[0] === 'SMask' && e[1] === false) ||
-              ((normalRaster || recovery?.nested || recovery?.rasterOperation(i)) &&
+              ((normalRaster ||
+                cropMode === normalWholeCellMode ||
+                recovery?.nested ||
+                recovery?.rasterOperation(i)) &&
                 e[0] === 'BM' &&
                 e[1] === 'source-over') ||
-              (printedFace && printedFaceStateEntry(e))
+              (printedFace && printedFaceStateEntry(e)) ||
+              (cropMode === normalWholeCellMode && normalWholeCellStrokeEntry(e))
             )
         )
       )
         return
       for (const e of a[0]) {
         if (e[0] === 'ca') typedFillAlpha = e[1]
-        if (printedFace && e[0] === 'ML') miterLimit = e[1]
+        if ((printedFace || cropMode === normalWholeCellMode) && e[0] === 'ML') miterLimit = e[1]
       }
     } else if (op === OPS.setFillColorN && (cropOnly || uncoloredPixel)) {
       const pattern = patternStates?.get(i)
@@ -2336,7 +2354,21 @@ export function nativeSingleClosingTablePixelEvidenceData(handle, page, tokens, 
 
 // Fixed whole-cell contract, not a switch that drops foreign evidence. Every
 // exterior glyph remains literal/font/clip bound and available to the caller.
+const normalWholeCellMode = Symbol('normal-compositing-whole-cell')
+const normalWholeCellStrokeEntry = (e) =>
+  Array.isArray(e) &&
+  e.length === 2 &&
+  ((['LC', 'LJ'].includes(e[0]) && [0, 1, 2].includes(e[1])) ||
+    (e[0] === 'LW' && Number.isFinite(e[1]) && e[1] > 0) ||
+    (e[0] === 'ML' && Number.isFinite(e[1]) && e[1] >= 1))
+export function nativeNormalCompositingWholeCellInkPacket(page, tokens, context, cell) {
+  if (!normalRasterProgramAllowed(context, normalWholeCellMode)) return
+  return wholeCellInkPacket(page, tokens, context, cell, normalWholeCellMode)
+}
 export function nativeWholeCellInkPacket(page, tokens, context, cell) {
+  return wholeCellInkPacket(page, tokens, context, cell)
+}
+function wholeCellInkPacket(page, tokens, context, cell, purpose) {
   if (
     !cell ||
     cell.sourceSegments?.length ||
@@ -2372,7 +2404,23 @@ export function nativeWholeCellInkPacket(page, tokens, context, cell) {
       return
     claims.add(o.index)
   }
-  return nativePagePacketCore(page, tokens, context, false, claims, false, true)
+  return nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    purpose === normalWholeCellMode,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    purpose
+  )
 }
 
 // A fraction relation may span several predicted cells. Retain every foreign
@@ -5625,6 +5673,7 @@ function normalRasterProgramAllowed(context, purpose) {
             e.length !== 2 ||
             !(
               (e[0] === 'BM' && e[1] === 'source-over') ||
+              (purpose === normalWholeCellMode && normalWholeCellStrokeEntry(e)) ||
               (['CA', 'ca'].includes(e[0]) &&
                 (e[1] === 1 || (isForeignCaptionRasterPurpose(purpose) && e[1] === 0))) ||
               (isForeignCaptionRasterPurpose(purpose) && e[0] === 'SMask' && e[1] === false)
@@ -5636,6 +5685,10 @@ function normalRasterProgramAllowed(context, purpose) {
       op === OPS.beginMarkedContentProps &&
       !(
         (a?.length === 2 && a[0] === 'Artifact' && a[1] === undefined) ||
+        (purpose === normalWholeCellMode &&
+          a?.length === 2 &&
+          a[0] === 'Span' &&
+          (a[1] === null || a[1] === undefined)) ||
         (a?.length === 2 && ['P', 'Span'].includes(a[0]) && Number.isSafeInteger(a[1]) && a[1] >= 0)
       )
     )

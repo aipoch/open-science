@@ -68,6 +68,30 @@ it.each([1, 1.5])(
   }
 )
 
+it('keeps a tall vector packet separate when its caption uses several native words', () => {
+  const f = fixture()
+  f.page.graphicsBounds[1].normalizedRect[1] = 20 / 800
+  const original = f.tokens.pop()
+  f.tokens.push(
+    {
+      ...original,
+      text: 'Fig. 2:',
+      sourceItem: { pageNumber: 1, index: 1, text: 'Fig. 2:' },
+      rect: [310, 380, 350, 390]
+    },
+    {
+      ...original,
+      text: 'Three response panels.',
+      sourceItem: { pageNumber: 1, index: 2, text: 'Three response panels.' },
+      rect: [355, 380, 550, 390]
+    }
+  )
+  expect(strip(f)).toBeUndefined()
+  expect(associateFigures(f.page, f.captions, [], [], [], f.tokens)[0].rect).toEqual([
+    70, 60, 270, 195
+  ])
+})
+
 it('uses the two source columns even when both lie beyond the page midpoint', () => {
   const f = fixture()
   f.page.width = 1200
@@ -169,4 +193,16 @@ it.each([
 it('keeps existing calls without native source tokens compatible', () => {
   const f = fixture()
   expect(nativeCaptionedRasterVectorStrip(f.page, f.captions[0], f.captions, [])?.rect[2]).toBe(550)
+})
+
+it('keeps a neighboring vector packet with separate raised plot labels outside the raster', () => {
+  const f = fixture()
+  f.page.graphicsBounds.push(
+    ...[0, 1].map((n) => ({
+      kind: 'path',
+      operationIndex: 1 + n,
+      normalizedRect: [(350 + n * 60) / 600, 35 / 800, (360 + n * 60) / 600, 45 / 800]
+    }))
+  )
+  expect(strip(f)).toBeUndefined()
 })

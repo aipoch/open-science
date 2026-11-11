@@ -5,7 +5,10 @@ import { types } from 'node:util'
 import { intersection, union, area } from './literature-pdf-page-geometry.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.mjs'
-import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import {
+  collectClosedFigureFrames,
+  collectOriginalRasterHeaderFrames
+} from './literature-pdf-graphics.mjs'
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
 import { verifyNativeDualApiCertificate } from './literature-pdf-native-dual-api-certificate.mjs'
 import {
@@ -27,6 +30,7 @@ const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const letters = (s) => Array.from(s.normalize('NFD')).filter((c) => !/\s/u.test(c))
 const pixelCropMode = Symbol('complete Form pixel crop'),
   pixelCrops = new WeakMap()
+const originalRasterHeaderMode = Symbol('original raster header source')
 const expand = (r, n) => r.map((v, i) => v + (i < 2 ? -n : n))
 const nonwhite = (color, alpha) =>
   alpha > 0 && /^#[a-f0-9]{6}$/iu.test(color) && color.toLowerCase() !== '#ffffff'
@@ -50,7 +54,8 @@ const box = (r, m) => {
 // captioned vector body without interpreting its glyph ink. Outside glyphs
 // still need their complete loaded outlines before excluding adjacent prose.
 function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
-  const pixels = mode === pixelCropMode
+  const originalHeaders = mode === originalRasterHeaderMode,
+    pixels = mode === pixelCropMode || originalHeaders
   const o = context?.operators,
     v = context?.viewport,
     raw = context?.content?.items
@@ -84,16 +89,18 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
     paint.set(g.operationIndex, { ...g, rect })
   }
   const outsidePaint = []
-  const clips = pixels
-    ? {
-        images: [],
-        paths: new Map(),
-        texts: new Map(),
-        frames: new Map(),
-        isolatedGroups: new Map()
-      }
-    : undefined
-  if (clips) collectClosedFigureFrames(o, v, clips)
+  const clips = originalHeaders
+    ? collectOriginalRasterHeaderFrames(o, v)
+    : pixels
+      ? {
+          images: [],
+          paths: new Map(),
+          texts: new Map(),
+          frames: new Map(),
+          isolatedGroups: new Map()
+        }
+      : undefined
+  if (clips && !originalHeaders) collectClosedFigureFrames(o, v, clips)
   if (
     clips &&
     (clips.invalidIsolatedGroups ||
@@ -347,7 +354,36 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
         (form && intersection(form.rect, g.rect) <= 0)
       )
         return
-      if (form) form.paint.push(g)
+      if (form && originalHeaders) {
+        const visible =
+          op === OPS.paintImageXObject ||
+          ([
+            OPS.fill,
+            OPS.eoFill,
+            OPS.fillStroke,
+            OPS.eoFillStroke,
+            OPS.closeFillStroke,
+            OPS.closeEOFillStroke
+          ].includes(a[0]) &&
+            nonwhite(state.fillColor, state.fillAlpha)) ||
+          ([
+            OPS.stroke,
+            OPS.closeStroke,
+            OPS.fillStroke,
+            OPS.eoFillStroke,
+            OPS.closeFillStroke,
+            OPS.closeEOFillStroke
+          ].includes(a[0]) &&
+            nonwhite(state.strokeColor, state.strokeAlpha))
+        const entry = clips.paths.get(i),
+          physical =
+            op === OPS.constructPath &&
+            entry &&
+            nativeFigurePathPaint({ o, v, finite, valid, box, strokeMargins: new Map() }, i, entry)
+        if (op === OPS.constructPath && (!physical || !valid(physical.rect) || !valid(entry.clip)))
+          return
+        form.paint.push({ ...g, visible, ...(physical ? { rect: physical.rect } : {}) })
+      } else if (form) form.paint.push(g)
       else {
         let physical
         if (pixels && op === OPS.constructPath && [OPS.fill, OPS.eoFill].includes(a[0])) {
@@ -389,12 +425,16 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
       paint.delete(i)
     } else if (op === OPS.setFillRGBColor || op === OPS.setStrokeRGBColor) {
       state[op === OPS.setFillRGBColor ? 'fillColor' : 'strokeColor'] = a?.[0]
+    } else if (originalHeaders && op === OPS.beginMarkedContent) {
+      if (!form || a?.length !== 1 || a[0]?.name !== 'Artifact' || marked >= 32) return
+      marked++
     } else if (op === OPS.beginMarkedContentProps) {
       if (
         !form ||
         !(
           (a?.[0] === 'P' && Number.isInteger(a[1]) && a[1] >= 0) ||
-          (a?.[0] === 'Span' && a[1] == null)
+          (a?.[0] === 'Span' &&
+            (a[1] == null || (originalHeaders && Number.isSafeInteger(a[1]) && a[1] >= 0)))
         )
       )
         return
@@ -513,7 +553,8 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
         )
     if (
       (!valid(token.rect) && !(r.width === 0 && part.every((p) => p.glyph.width === 0))) ||
-      ((exactPair ||
+      ((originalHeaders ||
+        exactPair ||
         !pixels ||
         !part[0].form ||
         part.some((p) => p.charSpacing !== undefined && p.charSpacing !== 0)) &&
@@ -599,6 +640,12 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
       p.matrix
     )
   }
+  if (originalHeaders) {
+    // Original retention still needs every visible native glyph, including
+    // exterior advances whose outlines can enter the newly owned header band.
+    if (glyphs.some((g) => !ink(g) || !valid(g.clip))) return
+    for (const record of records) record.ink = union(record.part.map(ink))
+  }
   // Whitespace is omitted only from source-string comparison. A loaded space
   // can still paint ink, so every outside glyph must remain disjoint as well.
   for (const g of glyphs) {
@@ -638,12 +685,34 @@ function captionedFormProgram(page, tokens, context, mode, literalCertificate) {
     raster,
     ...(pixels
       ? {
+          ...(originalHeaders
+            ? {
+                glyphInk: glyphs.map((g) => ({
+                  origin: g.origin,
+                  rect: ink(g),
+                  visible: g.visible,
+                  opaque: g.opaque
+                }))
+              }
+            : {}),
           type3Glyphs: glyphs.filter((g) => g.form && g.glyph.operatorListId != null),
           outsideGlyphs: glyphs
             .filter((g) => !g.form)
             .map((g) => ({ rect: ink(g), visible: g.visible }))
         }
       : {})
+  }
+}
+
+// This private-purpose observation can select whole original source items;
+// it cannot create the WeakMap certificate used by pixel or native drawing.
+export function nativeOriginalRasterHeaderInk(page, tokens, context) {
+  try {
+    const program = captionedFormProgram(page, tokens, context, originalRasterHeaderMode)
+    if (!program || program.type3Glyphs.length) return
+    return program
+  } catch {
+    return
   }
 }
 

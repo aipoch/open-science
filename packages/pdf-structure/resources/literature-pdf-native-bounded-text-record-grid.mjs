@@ -10,7 +10,10 @@ import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { nativeWhitespaceGaps } from './literature-pdf-symbol-text.mjs'
 import { collectTableRules } from './literature-pdf-graphics.mjs'
-import { proveNativeCompleteRuledSourcePacket } from './literature-pdf-native-leaf-record-repair.mjs'
+import {
+  proveNativeCompleteRuledSourcePacket,
+  proveNativeSegmentedRuleSourcePacket
+} from './literature-pdf-native-leaf-record-repair.mjs'
 
 const finiteItem = (i) =>
   i.horizontal !== false &&
@@ -1667,7 +1670,132 @@ export function recoverNativePairedTextCaption(table, tokens, captions, rules, a
     ?.continuationCaption
 }
 
-export function recoverNativeOrdinalWrappedRecordGrid(table, tokens, captions, rules) {
+// Continuation pages can begin with a numbered record rather than a header.
+// Repeated native three-piece rails prove all lanes and each complete record;
+// the model's merged ordinal/name column grants no source ownership.
+function continuedOrdinalRecords(table, tokens, captions, rules, context) {
+  const crop = table.cropRect,
+    p = pageNumber(table)
+  if (!context || table.readingRotation || !crop?.every(Number.isFinite)) return
+  if (captions.some((c) => c.page === p && c.rect[1] < crop[3] && c.rect[3] > crop[1])) return
+  const source = tokens.filter(
+      (i) =>
+        i.text?.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.rect[1] < crop[3] &&
+        i.rect[3] > crop[1]
+    ),
+    em = source[0]?.height
+  if (
+    !(em > 0) ||
+    source.some(
+      (i) =>
+        !finiteItem(i) ||
+        i.horizontal !== true ||
+        Math.abs(i.height - em) > em * 0.02 ||
+        i.rect[0] < crop[0] ||
+        i.rect[2] > crop[2]
+    )
+  )
+    return
+  const bands = [
+    ...Map.groupBy(
+      rules.filter((r) => r[1] === r[3] && r[1] > crop[1] && r[1] < crop[3]),
+      (r) => r[1]
+    ).values()
+  ]
+    .map((b) => b.sort((a, b) => a[0] - b[0]))
+    .sort((a, b) => a[0][1] - b[0][1])
+  if (bands.length < 5 || bands.length > 25 || bands.some((b) => b.length !== 3)) return
+  const first = bands[0],
+    cuts = [crop[0], (first[0][2] + first[1][0]) / 2, (first[1][2] + first[2][0]) / 2, crop[2]],
+    lane = (i) => cuts.slice(1).findIndex((x, c) => i.rect[0] >= cuts[c] && i.rect[2] <= x)
+  if (
+    bands.some((b) =>
+      b.some(
+        (r, c) =>
+          Math.abs(r[0] - first[c][0]) > em * 0.08 ||
+          Math.abs(r[2] - first[c][2]) > em * 0.08 ||
+          (c && Math.abs(r[0] - b[c - 1][2]) > em * 0.08)
+      )
+    ) ||
+    Math.abs(first[0][0] - crop[0]) > em ||
+    Math.abs(first[2][2] - crop[2]) > em ||
+    source.some((i) => lane(i) < 0)
+  )
+    return
+  const groups = bands
+      .slice(1)
+      .map((b, n) => source.filter((i) => i.baseline > bands[n][0][1] && i.baseline < b[0][1])),
+    numbers = []
+  for (const [n, g] of groups.entries()) {
+    const ordinal = g.filter((i) => lane(i) === 0),
+      names = g.filter((i) => lane(i) === 1),
+      values = g.filter((i) => lane(i) === 2),
+      top = bands[n][0][1],
+      bottom = bands[n + 1][0][1]
+    if (
+      ordinal.length !== 1 ||
+      !/^[1-9]\d*$/u.test(ordinal[0].text.trim()) ||
+      !names.length ||
+      !values.length ||
+      !names.some((i) => /\p{L}/u.test(i.text)) ||
+      !values.some((i) => /\p{L}/u.test(i.text)) ||
+      [names, values].some(
+        (l) => Math.abs(Math.min(...l.map((i) => i.baseline)) - ordinal[0].baseline) > em * 0.02
+      ) ||
+      ordinal[0].baseline - top < em * 0.85 ||
+      ordinal[0].baseline - top > em * 1.1 ||
+      g.some(
+        (i) =>
+          i.rect[1] < top - em * 0.1 ||
+          i.rect[3] >= bottom ||
+          Math.abs(i.baseline - i.rect[3]) > em * 0.02
+      ) ||
+      [names, values].some((l) => l.some((i) => Math.abs(i.rect[0] - l[0].rect[0]) > em * 0.02))
+    )
+      return
+    numbers.push(Number(ordinal[0].text))
+  }
+  const packet = proveNativeSegmentedRuleSourcePacket(source, rules, context, crop)
+  if (
+    numbers[0] === 1 ||
+    numbers.some((n, i) => i && n !== numbers[i - 1] + 1) ||
+    !hasUniqueRecordTokens(source, groups) ||
+    !packet ||
+    groups.some((g, n) =>
+      g.some((i) => {
+        const ink = packet.ink.get(i),
+          top = bands[n][0][1],
+          bottom = bands[n + 1][0][1]
+        return !ink || ink[1] < top || ink[3] > bottom
+      })
+    )
+  )
+    return
+  return {
+    cropRect: crop,
+    rows: groups.map((g) => [
+      crop[0],
+      Math.min(...g.map((i) => i.rect[1])),
+      crop[2],
+      Math.max(...g.map((i) => i.rect[3]))
+    ]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], crop[1], x, crop[3]]),
+    spans: [],
+    headerRows: [],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true,
+    repair: 'native-ruled-ordinal-continuation-recovered'
+  }
+}
+
+export function recoverNativeOrdinalWrappedRecordGrid(table, tokens, captions, rules, context) {
+  const continuation = continuedOrdinalRecords(table, tokens, captions, rules, context)
+  if (continuation) return continuation
+
   // Malformed present page fonts cannot silently disappear through rectangle
   // comparisons before the whole native source owner has been established.
   if (

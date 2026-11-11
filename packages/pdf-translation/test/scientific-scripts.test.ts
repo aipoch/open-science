@@ -15,6 +15,188 @@ import {
   type ScientificScriptMarker
 } from '../resources/scientific-scripts.mjs'
 
+it.each([
+  'valid',
+  'flat',
+  'missing-lower',
+  'foreign-object',
+  'far-factor',
+  'far-index',
+  'misaligned-body',
+  'raised-index',
+  'different-index-size',
+  'changed-target',
+  'extra-target',
+  'identifier-suffix',
+  'invalid-bounds'
+] as const)('keeps a complete native indexed product: %s', (fault) => {
+  const source = 'Use aijbkl.',
+    translation = '使用 aijbkl。',
+    offset = source.indexOf('aijbkl'),
+    markers: ScientificScriptMarker[] = [
+      {
+        label: 'a',
+        sourceOffset: offset,
+        sourceIndices: [10],
+        scale: 1,
+        rise: 0,
+        bounds: [100, 98, 105, 105]
+      },
+      {
+        label: 'ij',
+        sourceOffset: offset + 1,
+        sourceIndices: [11],
+        scale: 0.7,
+        rise: -1.5,
+        bounds: [105.4, 98.5, 111.4, 103]
+      },
+      {
+        label: 'b',
+        sourceOffset: offset + 3,
+        sourceIndices: [12],
+        scale: 1,
+        rise: 0,
+        bounds: [112, 98, 117, 105]
+      },
+      {
+        label: 'kl',
+        sourceOffset: offset + 4,
+        sourceIndices: [13],
+        scale: 0.7,
+        rise: -1.5,
+        bounds: [117.4, 98.5, 124.4, 103]
+      }
+    ]
+  if (fault === 'flat')
+    for (const marker of markers) {
+      marker.scale = 1
+      marker.rise = 0
+    }
+  if (fault === 'missing-lower') markers.pop()
+  if (fault === 'foreign-object') markers[2].sourceIndices = [14]
+  if (fault === 'far-factor')
+    for (const marker of markers.slice(2))
+      marker.bounds = marker.bounds!.map((v, i) => v + (i % 2 === 0 ? 20 : 0)) as [
+        number,
+        number,
+        number,
+        number
+      ]
+  if (fault === 'far-index') markers[1].bounds = [120, 98.5, 126, 103]
+  if (fault === 'misaligned-body') markers[2].rise = 2
+  if (fault === 'raised-index') markers[1].rise = 1.5
+  if (fault === 'different-index-size') markers[3].scale = 0.6
+  if (fault === 'invalid-bounds') markers[1].bounds = [106, 98.5, 105, 103]
+  const target =
+    fault === 'changed-target'
+      ? '使用 aijbkm。'
+      : fault === 'extra-target'
+        ? translation + ' aijbkl'
+        : fault === 'identifier-suffix'
+          ? translation.replace('aijbkl', 'aijbkl_')
+          : translation
+  expect(resolveNestedScriptGroups(source, target, markers)).toEqual(
+    fault === 'valid'
+      ? [
+          {
+            sourceOffset: offset,
+            targetOffset: translation.indexOf('aijbkl'),
+            label: 'aijbkl',
+            sourceIndices: [10, 11, 12, 13],
+            baselineIndex: 10,
+            indexedProduct: true
+          }
+        ]
+      : []
+  )
+})
+
+it.each(['valid', 'missing', 'extra', 'changed'] as const)(
+  'preserves both native lowered factors or the complete source product: %s',
+  async (fault) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.HelveticaOblique),
+      page = pdf.addPage([612, 792]),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'indexed-product', surface: 'electron' }),
+      source = 'Value aijbkl is stable.',
+      translation =
+        fault === 'missing'
+          ? '结果保持稳定。'
+          : fault === 'extra'
+            ? '结果 aijbkl aijbkl 保持稳定。'
+            : fault === 'changed'
+              ? '结果 aijbkm 保持稳定。'
+              : '结果 aijbkl 保持稳定。'
+    page.drawText('Value ', { font, size: 12, x: 40, y: 700 })
+    let x = 40 + font.widthOfTextAtSize('Value ', 12)
+    for (const [text, size, y] of [
+      ['a', 12, 700],
+      ['ij', 8, 698.2],
+      ['b', 12, 700],
+      ['kl', 8, 698.2]
+    ] as const) {
+      page.drawText(text, { font, size, x, y })
+      x += font.widthOfTextAtSize(text, size) + 0.2
+    }
+    page.drawText(' is stable.', { font, size: 12, x, y: 700 })
+    page.drawText('Unchanged nearby label.', { font, size: 10, x: 400, y: 650 })
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const bytes = await new PdfTranslationWriter(() => resolve('resources/worker.mjs')).generate(
+        {
+          id: 'indexed-product',
+          data: await pdf.save(),
+          pages: [{ width: 612, height: 792 }],
+          preserveUnsupported: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 40 / 612, y: 78 / 792, width: 400 / 612, height: 20 / 792 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      task = getDocument({ data: bytes!, useSystemFonts: true })
+      const document = await task.promise,
+        items = (await (await document.getPage(1)).getTextContent()).items.filter(
+          (i) => 'str' in i
+        ),
+        factors = ['a', 'ij', 'b', 'kl'].map((label) => items.find((i) => i.str === label)!)
+      expect(
+        items
+          .filter((i) => i.transform[5] > 680)
+          .map((i) => i.str)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe((fault === 'valid' ? translation : source).replace(/\s/gu, ''))
+      expect(factors.every(Boolean)).toBe(true)
+      for (const [base, lower] of [
+        [factors[0], factors[1]],
+        [factors[2], factors[3]]
+      ]) {
+        expect(base.transform[3]).toBeCloseTo(12, 3)
+        expect(lower.transform[3]).toBeCloseTo(8, 3)
+        expect(lower.transform[5] - base.transform[5]).toBeCloseTo(-1.8, 2)
+      }
+      expect(factors[0].transform[5]).toBeCloseTo(factors[2].transform[5], 3)
+      expect(items.find((item) => item.str === 'Unchanged nearby label.')!.transform).toEqual([
+        10, 0, 0, 10, 400, 650
+      ])
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
+
 it.each(
   readPdfTranslationCases<{
     name: string
@@ -2278,3 +2460,417 @@ it.each(
     }
   }
 )
+
+it.each([
+  ['f N', 100, 10, false],
+  ['plain body prose', 100, 10, true],
+  ['f N', 110, 10, true],
+  ['f N', 100, 7, true]
+] as const)(
+  'distinguishes a complete body math product from neighboring fraction tiers: %s',
+  (text, baseline, fontSize, fraction) => {
+    const items: FractionItem[] = [
+      { i: 0, text, baseline, fontSize, bounds: [40, 97, 54, 108] },
+      { i: 1, text: '4', baseline: 103.6, fontSize: 7, bounds: [55, 102, 59, 109] },
+      { i: 2, text: '+', baseline: 97.5, fontSize: 7, bounds: [54, 96, 60, 103] }
+    ]
+    expect(resolveInlineFractions(items, 100, 10).map((v) => v.label)).toEqual(
+      fraction ? ['4/(+)'] : []
+    )
+  }
+)
+
+it('retains genuine numeric fraction candidates after a native product', () => {
+  const items: FractionItem[] = [
+    { i: 0, text: 'f N', fontSize: 10, baseline: 100, bounds: [40, 97, 54, 108] },
+    { i: 1, text: '1', fontSize: 7, baseline: 103.6, bounds: [55, 102, 59, 109] },
+    { i: 2, text: '2', fontSize: 7, baseline: 97.5, bounds: [54, 96, 60, 103] }
+  ]
+  expect(resolveInlineFractions(items, 100, 10).map((fraction) => fraction.label)).toEqual(['1/2'])
+})
+
+it('preserves a real ruled numeric fraction following an ordinary native product', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([240, 200])
+  page.drawText('Product', { font, size: 10, x: 40, y: 150 })
+  page.drawText('f N', { font, size: 10, x: 80, y: 150 })
+  page.drawText('1', { font, size: 7, x: 95, y: 153.6 })
+  page.drawText('2', { font, size: 7, x: 95, y: 147.5 })
+  page.drawText('term.', { font, size: 10, x: 106, y: 150 })
+  page.drawLine({ start: { x: 94.5, y: 152.7 }, end: { x: 99, y: 152.7 }, thickness: 0.2 })
+  const data = await pdf.save(),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'numeric-product-fraction', surface: 'electron' }),
+    writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+  let task: ReturnType<typeof getDocument> | undefined
+  try {
+    const out = await writer.generate(
+      {
+        id: 'numeric-product-fraction',
+        data,
+        pages: [{ width: 240, height: 200 }],
+        units: [
+          {
+            source: 'Product f N 1/2 term.',
+            translation: '乘积 f N 1/2 项。',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 240, y: 38 / 200, width: 100 / 240, height: 20 / 200 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    task = getDocument({ data: out!, useSystemFonts: true })
+    const doc = await task.promise,
+      items = (await (await doc.getPage(1)).getTextContent()).items.filter((i) => 'str' in i)
+    expect(items.map((i) => i.str).join('')).toContain('乘积')
+    const numerator = items.find((i) => i.str === '1')!,
+      denominator = items.find((i) => i.str === '2')!
+    expect(numerator).toBeDefined()
+    expect(denominator).toBeDefined()
+    expect(numerator.transform[5]).toBeGreaterThan(denominator.transform[5])
+    expect(numerator.transform[4]).toBeCloseTo(denominator.transform[4], 1)
+  } finally {
+    await task?.destroy()
+    caller.release()
+    registry.dispose()
+  }
+})
+
+it.each([
+  'valid',
+  'opening-only',
+  'surrogate-prefix',
+  'missing-inner',
+  'missing-operator',
+  'duplicate-marker',
+  'foreign-index',
+  'wrong-source',
+  'partial-opening',
+  'native-alias',
+  'changed-target',
+  'extra-target',
+  'missing-target',
+  'target-space',
+  'target-suffix',
+  'source-prefix',
+  'source-duplicate',
+  'flat-inner',
+  'flat-outer',
+  'wrong-scale',
+  'wrong-inner-position',
+  'wrong-outer-position',
+  'distant',
+  'other-column',
+  'unmatched-parentheses',
+  'invalid-bounds',
+  'nonfinite',
+  'source-math-prefix',
+  'source-math-suffix',
+  'target-math-prefix',
+  'target-math-suffix'
+] as const)('keeps a whole native parenthesized differential: %s', (fault) => {
+  const source =
+      (fault === 'surrogate-prefix' ? '😀 ' : '') +
+      (fault === 'source-prefix'
+        ? 'Use A= (∂x)λ.'
+        : fault === 'opening-only'
+          ? 'Use (∂x)λ.'
+          : 'Use = (∂x)λ.'),
+    offset = source.indexOf(fault === 'opening-only' ? '(' : '= ('),
+    opening = fault === 'opening-only' ? '(' : '= (',
+    operator = offset + opening.length,
+    markers: ScientificScriptMarker[] = [
+      {
+        label: opening,
+        sourceOffset: offset,
+        sourceIndices: [10],
+        scale: 1,
+        rise: 0,
+        bounds: [100, 100, 115, 110]
+      },
+      {
+        label: '∂',
+        sourceOffset: operator,
+        sourceIndices: [11],
+        scale: 1,
+        rise: 0,
+        bounds: [116, 102, 121, 109]
+      },
+      {
+        label: 'x',
+        sourceOffset: operator + 1,
+        sourceIndices: [12],
+        scale: 0.7,
+        rise: -1.5,
+        bounds: [121.3, 100.5, 125, 105]
+      },
+      {
+        label: ')',
+        sourceOffset: operator + 2,
+        sourceIndices: [13],
+        scale: 1,
+        rise: 0,
+        bounds: [126, 100, 128, 110]
+      },
+      {
+        label: 'λ',
+        sourceOffset: operator + 3,
+        sourceIndices: [14],
+        scale: 0.7,
+        rise: 3.5,
+        bounds: [129, 104.5, 133, 109]
+      }
+    ]
+  let admitted = source,
+    target = '使用 ' + opening + '∂x)λ。'
+  if (fault === 'surrogate-prefix') target = '😀' + target
+  if (fault === 'missing-inner') markers.splice(2, 1)
+  if (fault === 'missing-operator') markers.splice(1, 1)
+  if (fault === 'duplicate-marker') markers.push({ ...markers[2], sourceIndices: [15] })
+  if (fault === 'foreign-index') markers[2].sourceIndices = [20]
+  if (fault === 'wrong-source') markers[2].label = 'y'
+  if (fault === 'partial-opening') {
+    markers[0].label = 'Use = ('
+    markers[0].sourceOffset = 0
+  }
+  if (fault === 'native-alias') markers[4].label = 'µ'
+  if (fault === 'changed-target') target = target.replace('λ', 'ρ')
+  if (fault === 'extra-target') target += opening + '∂x)λ'
+  if (fault === 'missing-target') target = '使用导数。'
+  if (fault === 'target-space') target = target.replace('= (', '=\u00a0(')
+  if (fault === 'target-suffix') target = target.replace('λ。', 'λ_。')
+  if (fault === 'source-duplicate') admitted += ' = (∂x)λ'
+  if (fault === 'flat-inner') markers[2].rise = 0
+  if (fault === 'flat-outer') markers[4].rise = 0
+  if (fault === 'wrong-scale') markers[4].scale = 0.6
+  if (fault === 'wrong-inner-position') markers[2].bounds = [121.3, 105, 125, 109.5]
+  if (fault === 'wrong-outer-position') markers[4].bounds = [129, 100, 133, 104]
+  if (fault === 'distant') markers[4].bounds = [150, 104.5, 154, 109]
+  if (fault === 'other-column') markers[1].bounds = [200, 102, 205, 109]
+  if (fault === 'unmatched-parentheses') markers[3].bounds = [126, 102, 128, 112]
+  if (fault === 'invalid-bounds') markers[4].bounds = [133, 104.5, 129, 109]
+  if (fault === 'nonfinite') markers[2].rise = NaN
+  if (fault === 'source-math-prefix') {
+    admitted = source.slice(0, offset) + '𝑨' + source.slice(offset)
+    for (const marker of markers) marker.sourceOffset += 2
+  }
+  if (fault === 'source-math-suffix') admitted = source.replace('λ.', 'λ𝑨.')
+  if (fault === 'target-math-prefix') target = target.replace(opening, '𝑨' + opening)
+  if (fault === 'target-math-suffix') target = target.replace('λ。', 'λ𝑨。')
+  const groups = resolveNestedScriptGroups(admitted, target, markers)
+  expect(groups).toEqual(
+    ['valid', 'opening-only', 'surrogate-prefix'].includes(fault)
+      ? [
+          {
+            sourceOffset: offset,
+            targetOffset: target.indexOf(opening),
+            label: opening + '∂x)λ',
+            sourceIndices: [10, 11, 12, 13, 14],
+            baselineIndex: 10,
+            nativeScriptGroup: true
+          }
+        ]
+      : []
+  )
+})
+
+it.each([
+  'valid',
+  'greek-pair',
+  'surrogate-prefix',
+  'two-spaces',
+  'tab',
+  'newline',
+  'nbsp',
+  'missing-base',
+  'missing-raised',
+  'duplicate-marker',
+  'foreign-index',
+  'wrong-source',
+  'borrowed-prefix',
+  'body-sized',
+  'lowered',
+  'same-center',
+  'far',
+  'other-row',
+  'invalid-bounds',
+  'nonfinite',
+  'source-suffix',
+  'target-suffix',
+  'changed-target',
+  'missing-target',
+  'extra-target',
+  'source-duplicate',
+  'collapsed-target',
+  'source-math-prefix',
+  'source-math-suffix',
+  'target-math-prefix',
+  'target-math-suffix'
+] as const)('keeps an exact spaced native tensor: %s', (fault) => {
+  const suffix = fault === 'greek-pair' ? 'ρσ' : 'ρs',
+    prefix = fault === 'surrogate-prefix' ? '😀 ' : '',
+    gap =
+      fault === 'two-spaces'
+        ? '  '
+        : fault === 'tab'
+          ? '\t'
+          : fault === 'newline'
+            ? '\n'
+            : fault === 'nbsp'
+              ? '\u00a0'
+              : ' ',
+    source = prefix + 'Use T' + gap + suffix + (fault === 'source-suffix' ? '_' : '.'),
+    offset = source.indexOf('T'),
+    markers: ScientificScriptMarker[] = [
+      {
+        label: 'T',
+        sourceOffset: offset,
+        sourceIndices: [20],
+        scale: 1,
+        rise: 0,
+        bounds: [100, 100, 107, 107]
+      },
+      {
+        label: suffix,
+        sourceOffset: offset + 1 + gap.length,
+        sourceIndices: [21],
+        scale: 0.7,
+        rise: 3.5,
+        bounds: [107.5, 102, 115.5, 106.5]
+      }
+    ]
+  let admitted = source,
+    target = prefix + '使用 T ' + suffix + '。'
+  if (fault === 'missing-base') markers.shift()
+  if (fault === 'missing-raised') markers.pop()
+  if (fault === 'duplicate-marker') markers.push({ ...markers[1], sourceIndices: [22] })
+  if (fault === 'foreign-index') markers[1].sourceIndices = [23]
+  if (fault === 'wrong-source') markers[1].label = 'ρt'
+  if (fault === 'borrowed-prefix') {
+    markers[0].sourceOffset = offset - 1
+    markers[0].label = ' T'
+  }
+  if (fault === 'body-sized') markers[1].scale = 1
+  if (fault === 'lowered') markers[1].rise = -1.5
+  if (fault === 'same-center') markers[1].bounds = [107.5, 101, 115.5, 106]
+  if (fault === 'far') markers[1].bounds = [120, 102, 128, 106.5]
+  if (fault === 'other-row') markers[1].bounds = [107.5, 115, 115.5, 119.5]
+  if (fault === 'invalid-bounds') markers[1].bounds = [115.5, 102, 107.5, 106.5]
+  if (fault === 'nonfinite') markers[0].scale = Infinity
+  if (fault === 'target-suffix') target = target.replace('。', '_。')
+  if (fault === 'changed-target') target = target.replace(suffix, 'ρt')
+  if (fault === 'missing-target') target = '张量。'
+  if (fault === 'extra-target') target += 'T ' + suffix
+  if (fault === 'source-duplicate') admitted += ' T ' + suffix
+  if (fault === 'collapsed-target') target = target.replace('T ', 'T')
+  if (fault === 'source-math-prefix') {
+    admitted = source.slice(0, offset) + '𝑨' + source.slice(offset)
+    for (const marker of markers) marker.sourceOffset += 2
+  }
+  if (fault === 'source-math-suffix') admitted = source.replace(suffix + '.', suffix + '𝑨.')
+  if (fault === 'target-math-prefix') target = target.replace('T ', '𝑨T ')
+  if (fault === 'target-math-suffix') target = target.replace(suffix + '。', suffix + '𝑨。')
+  expect(resolveNestedScriptGroups(admitted, target, markers)).toEqual(
+    ['valid', 'greek-pair', 'surrogate-prefix'].includes(fault)
+      ? [
+          {
+            sourceOffset: offset,
+            targetOffset: target.indexOf('T'),
+            label: 'T ' + suffix,
+            sourceIndices: [20, 21],
+            baselineIndex: 20,
+            nativeScriptGroup: true
+          }
+        ]
+      : []
+  )
+})
+
+it.each([
+  'valid',
+  'missing-operator',
+  'wrong-operator',
+  'missing-lower',
+  'wrong-lower',
+  'foreign-index',
+  'flat-lower',
+  'large-lower',
+  'distant-operator',
+  'distant-base',
+  'wrong-row',
+  'changed-target',
+  'extra-target',
+  'target-suffix',
+  'borrowed-word'
+] as const)('keeps the whole native differential tensor prefix: %s', (fault) => {
+  const source = fault === 'borrowed-word' ? 'Use AρT ρσ.' : 'Use ∇ρT ρσ.',
+    offset = source.indexOf(fault === 'borrowed-word' ? 'Aρ' : '∇'),
+    markers: ScientificScriptMarker[] = [
+      {
+        label: fault === 'borrowed-word' ? 'A' : '∇',
+        sourceOffset: offset,
+        sourceIndices: [30],
+        scale: 1,
+        rise: 0,
+        bounds: [87, 100, 94, 107]
+      },
+      {
+        label: 'ρ',
+        sourceOffset: offset + 1,
+        sourceIndices: [31],
+        scale: 0.7,
+        rise: -1.5,
+        bounds: [94.5, 98, 99, 102.5]
+      },
+      {
+        label: 'T',
+        sourceOffset: offset + 2,
+        sourceIndices: [32],
+        scale: 1,
+        rise: 0,
+        bounds: [100, 100, 107, 107]
+      },
+      {
+        label: 'ρσ',
+        sourceOffset: offset + 4,
+        sourceIndices: [33],
+        scale: 0.7,
+        rise: 3.5,
+        bounds: [107.5, 102, 115.5, 106.5]
+      }
+    ]
+  let target = '使用 ∇ρT ρσ。'
+  if (fault === 'missing-operator') markers.shift()
+  if (fault === 'wrong-operator') markers[0].label = '∂'
+  if (fault === 'missing-lower') markers.splice(1, 1)
+  if (fault === 'wrong-lower') markers[1].label = 'σ'
+  if (fault === 'foreign-index') markers[1].sourceIndices = [40]
+  if (fault === 'flat-lower') markers[1].rise = 0
+  if (fault === 'large-lower') markers[1].scale = 1
+  if (fault === 'distant-operator') markers[0].bounds = [70, 100, 77, 107]
+  if (fault === 'distant-base') markers[2].bounds = [103, 100, 110, 107]
+  if (fault === 'wrong-row') markers[0].bounds = [87, 104, 94, 111]
+  if (fault === 'changed-target') target = target.replace('∇ρ', '∇σ')
+  if (fault === 'extra-target') target += '∇ρT ρσ'
+  if (fault === 'target-suffix') target = target.replace('。', '_。')
+  expect(resolveNestedScriptGroups(source, target, markers)).toEqual(
+    fault === 'valid'
+      ? [
+          {
+            sourceOffset: offset,
+            targetOffset: target.indexOf('∇'),
+            label: '∇ρT ρσ',
+            sourceIndices: [30, 31, 32, 33],
+            baselineIndex: 32,
+            nativeScriptGroup: true
+          }
+        ]
+      : []
+  )
+})

@@ -6,6 +6,7 @@ import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
 import { isDeepStrictEqual as sameNativeHeader } from 'node:util'
 import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.mjs'
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
+import { nativeOriginalRasterHeaderInk } from './literature-pdf-figure-native-captioned-form.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import {
   nativePageTextPacketInventory,
@@ -16,6 +17,356 @@ import {
   nativeRecoveryOwnValues
 } from './literature-pdf-native-figure-recovery-profile.mjs'
 const nativeVectorFigureLabelCertificates = new WeakMap()
+
+// A repeated pair of column titles belongs to a complete raster comparison,
+// not to prose. This grants only an original crop and whole source retention;
+// the ordinary glyph/paint packet contracts are deliberately unchanged.
+function repeatedRasterPanelHeaders(page, figure, captions, tables, tokens, foreignOwns, context) {
+  try {
+    const finite = (a, n) =>
+        (Array.isArray(a) || ArrayBuffer.isView(a)) &&
+        a.length === n &&
+        Array.from(a).every(Number.isFinite),
+      valid = (r) => finite(r, 4) && r[0] < r[2] && r[1] < r[3],
+      inside = (a, b) => b.every((x, n) => (n < 2 ? x >= a[n] - 1e-6 : x <= a[n] + 1e-6)),
+      compact = (s) => s.replace(/\s/gu, ''),
+      o = context?.operators,
+      v = context?.viewport,
+      rect = figure?.rect,
+      caption = figure?.caption
+    if (
+      figure?.reason !== 'native-raster-composite-grid' ||
+      !valid(rect) ||
+      !valid(caption?.rect) ||
+      page?.rotation !== 0 ||
+      page.invalidGraphicsBounds !== 0 ||
+      !Number.isSafeInteger(page.pageNumber) ||
+      page.pageNumber < 1 ||
+      context?.pageNumber !== page.pageNumber ||
+      caption.page !== page.pageNumber ||
+      !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '') ||
+      ![
+        captions,
+        tables,
+        tokens,
+        page.graphicsBounds,
+        context.graphicsBounds,
+        context.content?.items,
+        o?.fnArray,
+        o?.argsArray
+      ].every(Array.isArray) ||
+      !sameNativeHeader(page.graphicsBounds, context.graphicsBounds) ||
+      !sameNativeHeader(v?.transform, [1, 0, 0, -1, 0, page.height]) ||
+      v.scale !== 1 ||
+      v.rotation !== 0 ||
+      v.width !== page.width ||
+      v.height !== page.height ||
+      o.fnArray.length !== o.argsArray.length ||
+      o.fnArray.length > 20000 ||
+      captions.filter((c) => c === caption).length !== 1 ||
+      !caption.lines?.every((s) => typeof s === 'string') ||
+      !inside([0, 0, page.width, page.height], rect) ||
+      typeof foreignOwns !== 'function'
+    )
+      return
+    const labels = tokens
+      .filter(
+        (t) =>
+          t.text?.trim() &&
+          valid(t.rect) &&
+          t.rect[3] <= rect[1] &&
+          t.rect[0] >= rect[0] &&
+          t.rect[2] <= rect[2] &&
+          rect[1] - t.rect[3] <= t.height * 2
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      labels.length < 5 ||
+      labels.length > 9 ||
+      labels.length % 2 !== 1 ||
+      !proveNativeUniqueWholeFonts(labels, tokens)
+    )
+      return
+    const em = labels[0].height,
+      captionFonts = tokens.filter((t) => valid(t.rect) && inside(caption.rect, t.rect))
+    if (
+      !(em > 0) ||
+      !Number.isFinite(em) ||
+      !captionFonts.length ||
+      compact(captionFonts.map((t) => t.text).join('')) !== compact(caption.lines.join('')) ||
+      em < Math.max(...captionFonts.map((t) => t.height)) * 0.7 ||
+      em > Math.max(...captionFonts.map((t) => t.height)) * 1.3 ||
+      caption.rect[1] < rect[3] ||
+      caption.rect[1] - rect[3] > em * 5
+    )
+      return
+    const nativeRows = context.content.items.flatMap((r, index) =>
+      r.str?.trim() ? [{ r, index }] : []
+    )
+    const boxes = []
+    for (const [i, t] of labels.entries()) {
+      const origin = t.sourceItem,
+        raw = context.content.items[origin?.index],
+        style = context.content.styles?.[raw?.fontName]
+      if (
+        !origin ||
+        origin.pageNumber !== page.pageNumber ||
+        raw?.str !== t.text ||
+        nativeRows[i]?.index !== origin.index ||
+        t.text !== t.text.trim() ||
+        !/^[A-Za-z]+(?: [A-Za-z]+)?$/u.test(t.text) ||
+        t.text.length > 32 ||
+        t.horizontal !== true ||
+        !finite(raw.transform, 6) ||
+        raw.transform[0] <= 0 ||
+        raw.transform[0] !== raw.transform[3] ||
+        raw.transform[1] !== 0 ||
+        raw.transform[2] !== 0 ||
+        ![raw.width, raw.height].every((n) => Number.isFinite(n) && n > 0) ||
+        !style ||
+        style.vertical !== false ||
+        !Number.isFinite(style.ascent) ||
+        !Number.isFinite(style.descent) ||
+        style.ascent <= 0 ||
+        style.ascent > 1.5 ||
+        style.descent > 0 ||
+        style.descent < -0.5 ||
+        t.fontAscent !== style.ascent ||
+        t.fontDescent !== style.descent ||
+        Math.abs(t.height - em) > em * 0.05 ||
+        Math.abs(t.baseline - labels[0].baseline) > em * 0.05 ||
+        raw.fontName !== nativeRows[0].r.fontName ||
+        (i && t.rect[0] <= labels[i - 1].rect[2]) ||
+        (i > 2 && t.text !== labels[1 + ((i - 1) % 2)].text)
+      )
+        return
+      const measured = tableTextToken(raw, v, 0),
+        ink = nativeFigureLabelBounds(raw, style, v)
+      if (
+        !valid(ink) ||
+        !valid(t.nativeLabelRect) ||
+        !ink.every((x, n) => Math.abs(x - t.nativeLabelRect[n]) < 1e-6) ||
+        !measured.rect.every((x, n) => Math.abs(x - t.rect[n]) < 1e-6)
+      )
+        return
+      boxes.push(
+        union([
+          t.rect,
+          ink,
+          [t.rect[0], t.rect[1], t.rect[2], t.baseline - style.descent * t.height]
+        ])
+      )
+    }
+    if (
+      labels[0].text === labels[1].text ||
+      labels[0].text === labels[2].text ||
+      labels[1].text === labels[2].text
+    )
+      return
+    const extension = [rect[0], Math.min(...boxes.map((r) => r[1])), rect[2], rect[1]]
+    if (
+      !valid(extension) ||
+      boxes.some((b) => b[3] > rect[1]) ||
+      foreignOwns(extension) ||
+      captions.some((c) => c.page === page.pageNumber && intersection(c.rect, extension) > 0) ||
+      tables.some((r) => !valid(r) || intersection(r, extension) > 0) ||
+      tokens.some(
+        (t) =>
+          t.text?.trim() &&
+          (!valid(t.rect) || (!labels.includes(t) && intersection(t.rect, extension) > 0))
+      )
+    )
+      return
+    const evidence = { images: [], paths: new Map(), texts: new Map(), frames: new Map() }
+    collectClosedFigureFrames(o, v, evidence)
+    for (const g of page.graphicsBounds) {
+      if (
+        !['image', 'path'].includes(g.kind) ||
+        !valid(g.normalizedRect) ||
+        g.normalizedRect.some((n) => n < 0 || n > 1)
+      )
+        return
+    }
+    const graphics = page.graphicsBounds.filter((g) => g.kind === 'image')
+    if (graphics.length !== evidence.images.length || graphics.length !== labels.length * 3) return
+    const ids = new Set(),
+      images = []
+    for (const g of graphics) {
+      const matches = evidence.images.filter((image) => image.operationIndex === g.operationIndex),
+        coarse = g.normalizedRect?.map((x, n) => x * (n % 2 ? page.height : page.width))
+      if (
+        !Number.isSafeInteger(g.operationIndex) ||
+        ids.has(g.operationIndex) ||
+        !/^[a-f0-9]{64}$/u.test(g.imageHash ?? '') ||
+        !valid(coarse) ||
+        matches.length !== 1 ||
+        !valid(matches[0].rect) ||
+        !inside(coarse, matches[0].rect) ||
+        intersection(matches[0].rect, rect) / area(matches[0].rect) < 0.75 ||
+        matches[0].rect[2] - matches[0].rect[0] < em * 4 ||
+        matches[0].rect[3] - matches[0].rect[1] < em * 4
+      )
+        return
+      ids.add(g.operationIndex)
+      images.push(matches[0])
+    }
+    const rows = []
+    for (const image of images.toSorted((a, b) => a.rect[1] - b.rect[1])) {
+      const row = rows.find(
+        (r) => Math.abs(r[0].rect[1] + r[0].rect[3] - image.rect[1] - image.rect[3]) < em
+      )
+      if (row) row.push(image)
+      else rows.push([image])
+    }
+    if (rows.length !== 3 || rows.some((r) => r.length !== labels.length)) return
+    for (const row of rows) row.sort((a, b) => a.rect[0] - b.rect[0])
+    for (const [r, row] of rows.entries())
+      for (const [c, image] of row.entries()) {
+        const b = image.rect,
+          first = rows[0][c].rect,
+          t = labels[c],
+          center = (b[0] + b[2]) / 2
+        if (
+          Math.abs(center - (first[0] + first[2]) / 2) > em / 2 ||
+          Math.abs((t.rect[0] + t.rect[2]) / 2 - center) > em / 2 ||
+          t.rect[0] < b[0] ||
+          t.rect[2] > b[2] ||
+          row.filter(
+            (g) =>
+              (t.rect[0] + t.rect[2]) / 2 > g.rect[0] && (t.rect[0] + t.rect[2]) / 2 < g.rect[2]
+          ).length !== 1 ||
+          (r && b[1] < rows[r - 1][c].rect[3] - em * 0.15)
+        )
+          return
+      }
+    const program = nativeOriginalRasterHeaderInk(page, tokens, context)
+    if (!program) return
+    const selected = program.records.filter((r) =>
+      labels.some((t) => t.sourceItem.index === r.index)
+    )
+    if (
+      selected.length !== labels.length ||
+      selected.some(
+        (r, i) =>
+          !valid(r.ink) ||
+          !inside(boxes[i], r.ink) ||
+          r.part.some((g) => !g.visible || !inside(g.clip, r.ink))
+      )
+    )
+      return
+    const origins = new Set(selected.flatMap((r) => r.part.map((p) => p.origin)))
+    if (
+      program.glyphInk.some(
+        (g) => g.visible && !origins.has(g.origin) && intersection(g.rect, extension) > 0
+      ) ||
+      selected.some((r) => r.part.some((g) => !g.opaque)) ||
+      [...program.outsidePaint, ...program.forms.flatMap((f) => f.paint)].some(
+        (g) => g.visible && intersection(g.rect, extension) > 0
+      )
+    )
+      return
+    // The same complete native program closes the partially intersecting
+    // footer row. Expand its original crop without claiming those independent
+    // source owners: ordinary per-label translation remains available.
+    const lastImageBottom = Math.max(...rows[2].map((r) => r.rect[3])),
+      footer = program.records.filter(
+        (r) =>
+          r.form === selected[0].form &&
+          r.token.rect[0] >= rect[0] &&
+          r.token.rect[2] <= rect[2] &&
+          r.token.rect[1] >= lastImageBottom &&
+          r.token.rect[1] < rect[3] &&
+          r.token.rect[3] >= rect[3] - em &&
+          r.token.rect[1] < caption.rect[1]
+      )
+    if (
+      footer.length < 2 ||
+      footer.length > 4 ||
+      Math.max(...footer.map((r) => r.token.baseline)) -
+        Math.min(...footer.map((r) => r.token.baseline)) >
+        em * 0.25
+    )
+      return
+    const footerBoxes = []
+    for (const r of footer) {
+      const t = tokens.find((t) => t.sourceItem.index === r.index),
+        style = context.content.styles[r.r.fontName]
+      if (
+        !t ||
+        !/^[A-Za-z]+$/u.test(t.text) ||
+        t.text.length > 32 ||
+        r.r.fontName !== nativeRows[0].r.fontName ||
+        !finite(r.r.transform, 6) ||
+        r.r.transform[0] <= 0 ||
+        r.r.transform[0] !== r.r.transform[3] ||
+        r.r.transform[1] !== 0 ||
+        r.r.transform[2] !== 0 ||
+        Math.abs(t.height - em) > em * 0.05 ||
+        !valid(r.ink) ||
+        !valid(r.label) ||
+        r.part.some((g) => !g.visible || !g.opaque || !inside(g.clip, r.ink)) ||
+        !Number.isFinite(style?.descent)
+      )
+        return
+      const b = union([
+        t.rect,
+        r.label,
+        r.ink,
+        [t.rect[0], t.rect[1], t.rect[2], t.baseline - style.descent * t.height]
+      ])
+      if (!inside(selected[0].form.rect, b) || b[3] >= caption.rect[1]) return
+      footerBoxes.push(b)
+    }
+    const bottom = [rect[0], rect[3], rect[2], Math.max(...footerBoxes.map((b) => b[3]))],
+      footerOrigins = new Set(footer.flatMap((r) => r.part.map((p) => p.origin)))
+    if (
+      !valid(bottom) ||
+      foreignOwns(bottom) ||
+      tables.some((r) => intersection(r, bottom) > 0) ||
+      captions.some((c) => c.page === page.pageNumber && intersection(c.rect, bottom) > 0) ||
+      footerBoxes.some((b, i) => footerBoxes.some((a, j) => i !== j && intersection(a, b) > 0)) ||
+      program.glyphInk.some(
+        (g) => g.visible && !footerOrigins.has(g.origin) && intersection(g.rect, bottom) > 0
+      ) ||
+      [...program.outsidePaint, ...program.forms.flatMap((f) => f.paint)].some(
+        (g) => g.visible && intersection(g.rect, bottom) > 0
+      )
+    )
+      return
+    boxes.push(...footerBoxes)
+    // Retaining the labels must not certify a still clipped side of a raster.
+    // Exact native image canvases, rather than a fixed margin, bound this crop.
+    const complete = union([rect, ...boxes, ...images.map((i) => i.rect)]),
+      bands = [
+        [complete[0], complete[1], complete[2], rect[1]],
+        [complete[0], rect[3], complete[2], complete[3]],
+        [complete[0], rect[1], rect[0], rect[3]],
+        [rect[2], rect[1], complete[2], rect[3]]
+      ].filter(valid),
+      added = (r) => intersection(r, complete) > intersection(r, rect) + 1e-6
+    if (
+      !inside([0, 0, page.width, page.height], complete) ||
+      images.some((i) => !inside(selected[0].form.rect, i.rect)) ||
+      bands.some(
+        (b) =>
+          foreignOwns(b) ||
+          tables.some((r) => intersection(r, b) > 0) ||
+          captions.some((c) => c.page === page.pageNumber && intersection(c.rect, b) > 0)
+      ) ||
+      program.glyphInk.some(
+        (g) => g.visible && !origins.has(g.origin) && !footerOrigins.has(g.origin) && added(g.rect)
+      ) ||
+      [...program.outsidePaint, ...program.forms.flatMap((f) => f.paint)].some(
+        (g) => g.visible && !(g.kind === 'image' && ids.has(g.operationIndex)) && added(g.rect)
+      )
+    )
+      return
+    boxes.push(...images.map((i) => i.rect))
+    return { rects: boxes, sourceItems: labels.map((t) => ({ ...t.sourceItem })) }
+  } catch {
+    return
+  }
+}
 
 // The same proved margin exclusion must reach face association and completion.
 // Otherwise a later label pass can reattach the printed page number. An explicit
@@ -99,6 +450,16 @@ export function nativeOwnedRasterColumnHeadings(
   foreignOwns,
   operatorContext
 ) {
+  const repeated = repeatedRasterPanelHeaders(
+    page,
+    figure,
+    captions,
+    tables,
+    tokens,
+    foreignOwns,
+    operatorContext
+  )
+  if (repeated) return repeated
   const valid = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
   const inside = (a, b) => b.every((v, n) => (n < 2 ? v >= a[n] - 1e-6 : v <= a[n] + 1e-6))
