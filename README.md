@@ -47,19 +47,18 @@
 
 When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
 
-### 💡 AIPOCH Open-Science v1.2.0 updates
+### 💡 AIPOCH Open-Science v1.2.1 updates
 
-_November 9, 2026_
+_November 10, 2026_
 
-- **Remote compute**: Run approved jobs on user-connected Kubernetes, Hugging Face Jobs, Modal, or Ray alongside SSH and Slurm, with per-job approval and collection recovery after restarts.
-- **Built-in agent**: The standalone Open-Science Agent is now the default for new setups; Claude Code, OpenCode, Codex, CodeBuddy, and Pi remain available.
-- **Faster macOS updates**: Download only changed blocks of the app image, with automatic full-download fallback.
-- **Step discussions**: Ask from imported `.science` research or a replay step to open a child conversation linked to that step; the import stays read-only.
-- **Source previews**: Hover over a source link to see its destination domain, with title and description metadata for approved HTTPS sources.
-- **Workspace improvements**: A simpler sidebar, a prominent "Fork to continue" action, and a stable reading position when sending from an earlier turn.
-- **Reliability fixes**: macOS update checks verify the running app, Windows names file blockers and keeps the input above the taskbar, and fixed-layout PDF translation retains successful pages when one fails.
+- **Unified Resource Center**: Manage skills, connectors, and specialists — and their Marketplace — from one place, with consistent cards, filters, and detail views.
+- **Prompt optimization**: Refine the current project's scientific prompt right from the composer, with review, edit, and undo; save custom templates in Project settings.
+- **Built-in Agent upgrades**: Use Codex subscription accounts, select Claude Fable 5.2, and receive longer answers that respect each provider's output limits.
+- **Cloud compute sign-in**: Modal and Hugging Face prepare a compatible Python runtime before browser authorization, and account verification respects your network proxy.
+- **Faster long exports**: Notebook and Compute histories store evidence once, so exporting long research sessions no longer stalls or balloons.
+- **Reliability fixes**: Windows updates recover more cleanly, answered questions no longer stall before continuing, and idle interpreters free their memory automatically.
 
-[View the full v1.2.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
+[View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />

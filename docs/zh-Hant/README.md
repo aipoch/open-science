@@ -49,19 +49,18 @@
 
 想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
 
-### 💡 AIPOCH Open-Science v1.2.0 更新
+### 💡 AIPOCH Open-Science v1.2.1 更新
 
-_2026 年 11 月 9 日_
+_2026 年 11 月 10 日_
 
-- **遠端運算**：除 SSH、Slurm 外，可在自行連接的 Kubernetes、Hugging Face Jobs、Modal 或 Ray 目標執行任務，支援逐項核准與重新啟動後恢復結果收集。
-- **內建智能體**：獨立的 Open-Science Agent 成為新安裝的預設智能體；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可選用。
-- **更快的 macOS 更新**：只下載應用程式映像中變更的區塊，必要時自動改用完整下載。
-- **步驟討論**：從匯入的 `.science` 研究或重播步驟提問，開啟連結至該步驟的子會話；匯入記錄仍保持唯讀。
-- **來源預覽**：將游標停在來源連結上可查看目標網域；經核准的 HTTPS 來源還可顯示標題和描述。
-- **工作區改進**：簡化側邊欄，突出「分叉以繼續」，從較早回合傳送訊息時維持閱讀位置。
-- **可靠性修正**：macOS 更新檢查驗證執行中的應用程式；Windows 顯示佔用檔案，並避免工作列遮住輸入區；固定版面 PDF 翻譯在單頁失敗時保留成功頁面。
+- **統一的 Resource Center**：在同一處管理 Skills、Connectors 與 Specialists 及其 Marketplace，並提供一致的卡片、篩選器與詳細檢視。
+- **提示詞最佳化**：直接在編輯器中精修目前專案的科學提示詞，支援檢閱、編輯與復原；可在專案設定中儲存自訂範本。
+- **內建智能體升級**：可使用 Codex 訂閱帳戶、選擇 Claude Fable 5.2，並獲得尊重各供應商輸出上限的完整長回答。
+- **雲端運算登入**：Modal 與 Hugging Face 會在瀏覽器授權前先準備相容的 Python 執行階段，帳戶驗證也遵循網路代理。
+- **更快的長篇匯出**：Notebook 與 Compute 歷程只儲存一次證據，匯出長研究工作階段不再停滯或膨脹。
+- **可靠性修正**：Windows 更新復原更乾淨，已回答的提問在接續前不再停滯，閒置直譯器自動釋放記憶體。
 
-[查看 v1.2.0 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
+[查看 v1.2.1 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
