@@ -862,6 +862,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
       scrollbar-color: color-mix(in srgb, var(--border) 60%, transparent) transparent;
     }
 
+    .scrollbar-auto-hide:not(.scrollbar-message)::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--border) 60%, transparent);
+    }
+
     /* ScrollBar's forceMount does not force its Thumb: Radix's separate Thumb Presence
        still requires hasThumb, so a mounted thumb remains an overflow signal. */
     .scrollbar-auto-hide:not(.scrollbar-message)
