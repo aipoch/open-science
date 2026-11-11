@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  재현 가능한 과학을 위한 AI 연구 워크벤치 — 오픈 소스, 로컬 우선, 모델 독립형.
+  AIPOCH Open-Science는 재현 가능한 과학 연구를 위한 로컬 우선 오픈 소스 AI 연구 워크벤치로, 모델을 유연하게 선택할 수 있습니다. 선택한 작업을 휴대 가능한 <code>.science</code> 패키지로 내보내 다른 사람이 연구 기록을 살펴볼 수 있게 하세요.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science .science 패키지 생성 데모" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">YouTube에서 보기: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,10 +53,6 @@
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-[AIPOCH Open-Science](https://aipoch.com/open-science)는 오픈 소스 AI 연구 워크벤치입니다. 질문 하나, 논문 한 편, 데이터 파일 하나로 시작할 수 있습니다. 알고 싶은 내용을 자신의 말로 설명하고 AI 에이전트와 함께 근거를 살펴보거나 데이터를 분석하거나 차트를 만들어 보세요.
-
-결과가 어떻게 나왔는지 궁금하다면 기록된 입력, 코드, 실행 이력을 확인하세요. 작업 내용을 공유하려면 대화 분기, 파일 버전, Notebook 기록, 검증 근거 중 포함할 항목을 선택해 `.science` 패키지로 내보내세요.
-
 ### 💡 AIPOCH Open-Science v1.2.1 업데이트
 
 _2026년 11월 11일_
@@ -62,10 +66,6 @@ _2026년 11월 11일_
 - **안정성 개선**: Windows 업데이트 복구, 질문 응답 후 진행, 세션 전환 중 연구 영상 생성을 개선했습니다. 세션 활동이 15분 동안 없으면 유휴 인터프리터를 회수합니다.
 
 [v1.2.1 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
-</p>
 
 ## 🚀 빠른 시작
 

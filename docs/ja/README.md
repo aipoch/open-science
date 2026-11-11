@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  再現可能な科学のための AI 研究ワークベンチ — オープンソース、ローカルファースト、モデル非依存。
+  AIPOCH Open-Science は、再現可能な科学研究のための、ローカル優先でオープンソース、モデルを柔軟に選べる AI 研究ワークベンチです。選択した研究内容を持ち運び可能な <code>.science</code> パッケージとして書き出し、研究記録を他の人が確認できるようにします。
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science の .science パッケージ作成デモ" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">YouTube で見る: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,10 +53,6 @@
 
 > このドキュメントは英語版 `README.md` の翻訳です。内容に相違がある場合は、[英語版](../../README.md)が優先されます。
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) は、オープンソースの AI 研究ワークベンチです。一つの疑問や一本の論文、一つのデータファイルから始められます。知りたいことを自分の言葉で伝え、AI エージェントと一緒に根拠を調べたり、データを分析したり、グラフを作ったりできます。
-
-結果がどのように得られたかを知りたいときは、記録されている入力、コード、実行履歴を確認できます。作業内容を共有するときは、会話の分岐、ファイルのバージョン、Notebook の記録、検証の根拠のうち、含めたいものを選んで `.science` パッケージとしてエクスポートできます。
-
 ### 💡 AIPOCH Open-Science v1.2.1 の更新
 
 _2026 年 11 月 11 日_
@@ -62,10 +66,6 @@ _2026 年 11 月 11 日_
 - **信頼性の改善**：Windows 更新の復旧、質問への回答後の続行、セッション切り替え中の研究動画生成を改善しました。セッションが 15 分間操作されないと、アイドル状態のインタープリターを解放します。
 
 [v1.2.1 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />
-</p>
 
 ## 🚀 クイックスタート
 
