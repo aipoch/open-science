@@ -316,6 +316,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'reviewer:run',
   'artifacts:finalize-run',
   'artifacts:resolve-version-descriptors',
+  'managed-file-versions:inspect',
   'preview-resources:acquire',
   'preview-resources:release'
 ])
