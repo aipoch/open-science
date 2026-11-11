@@ -3305,6 +3305,27 @@ describe('startWebHttpServer', () => {
     })
     expect(localResponse.status).toBe(200)
     expect(localInvoke).toHaveBeenCalledOnce()
+    for (const [headers, authorities] of [
+      [{ authorization: 'Bearer local-token' }, ['import-local-package-path']],
+      [{ cookie: 'open_science_web_token=local-token' }, []],
+      [{ authorization: 'Bearer local-token', origin: `http://127.0.0.1:${server.port}` }, []]
+    ] as const) {
+      const imported = await fetch(rpcUrl('sessions:import-package'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          args: [{ projectName: 'New' }, '/backups/session.science', { nonInteractive: true }]
+        })
+      })
+      expect(imported.status).toBe(200)
+      expect(localInvoke).toHaveBeenLastCalledWith(
+        'sessions:import-package',
+        expect.objectContaining({
+          callerContext: expect.objectContaining({ authorities })
+        })
+      )
+    }
     expect(rpc.invoke).not.toHaveBeenCalled()
   })
 
@@ -4646,7 +4667,7 @@ describe('startWebHttpServer', () => {
     }
   })
 
-  it('streams an acquired artifact and always releases its capability', async () => {
+  it.each([false, true])('serves artifacts with failed release: %s', async (releaseFails) => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
     await writeFile(join(staticRoot, 'index.html'), '<!doctype html>')
@@ -4676,6 +4697,11 @@ describe('startWebHttpServer', () => {
       }),
       releaseArtifact: vi.fn().mockResolvedValue(undefined)
     }
+    if (releaseFails) {
+      tasks.releaseArtifact.mockRejectedValueOnce(
+        Object.assign(new Error('Capability release failed.'), { code: 'EIO' })
+      )
+    }
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
       port: 0,
@@ -4702,10 +4728,17 @@ describe('startWebHttpServer', () => {
       `http://127.0.0.1:${server.port}/api/v1/artifacts/artifact-1/content`,
       { headers: { authorization: 'Bearer test-token' } }
     )
+    expect(download.status).toBe(200)
     expect(await download.text()).toBe('artifact bytes')
     expect(download.headers.get('content-disposition')).toContain('report.txt')
     expect(tasks.acquireArtifact).toHaveBeenCalledWith('artifact-1')
     expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-1')
+    expect(tasks.releaseArtifact).toHaveBeenCalledOnce()
+    const nextResponse = await fetch(`http://127.0.0.1:${server.port}/api/bootstrap`, {
+      headers: { authorization: 'Bearer test-token' }
+    })
+    expect(nextResponse.status).toBe(200)
+    expect(await nextResponse.json()).toMatchObject({ appName: 'Open-Science' })
   })
 
   it('cancels the artifact stream and releases its capability when the client disconnects', async () => {

@@ -39,7 +39,6 @@ export function Fixture(): React.JSX.Element {
       >
         <SkillMarketplaceBatchControls
           expanded
-          heading={<h2 className="text-sm font-semibold">Skill Marketplace</h2>}
           onOpen={noop}
           onExit={noop}
           mode={undefined}
@@ -51,8 +50,11 @@ export function Fixture(): React.JSX.Element {
           onBusyChange={noop}
           onChanged={noop}
         >
-          {() => (
-            <p className="p-5 text-sm text-muted-foreground">literature-review · data-analysis</p>
+          {(selectionBar) => (
+            <div>
+              {selectionBar}
+              <p className="p-5 text-sm text-muted-foreground">literature-review · data-analysis</p>
+            </div>
           )}
         </SkillMarketplaceBatchControls>
       </section>

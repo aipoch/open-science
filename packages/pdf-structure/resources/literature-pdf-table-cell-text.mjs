@@ -2646,6 +2646,194 @@ export function recoverNativeMidRowNarrativeTail({
   return true
 }
 
+// A long prose source run can continue below a predicted row while retaining
+// the same cell's left edge. Admit it only when the owner is unique and the
+// gap is free of rules or competing baseline content.
+export function recoverNativeProseContinuation({
+  items,
+  cells,
+  rows,
+  rules,
+  assignments,
+  repairs
+}) {
+  const horizontalRule = (rule) => Math.abs(rule[3] - rule[1]) < 0.05
+  const candidates = []
+  for (const item of items.filter(
+    (candidate) => !assignments.has(candidate) && candidate.horizontal
+  )) {
+    if (item.text.trim().length < 40 || !/\p{L}/u.test(item.text)) continue
+    for (const cell of cells) {
+      if (
+        cell.rowSpan !== 1 ||
+        cell.colSpan !== 1 ||
+        item.rect[0] < cell.rect[0] - 0.5 ||
+        item.rect[2] > cell.rect[2] + 0.5 ||
+        item.rect[1] < cell.rect[1] - item.height * 0.2 ||
+        item.rect[3] > cell.rect[3] + item.height * 0.5
+      )
+        continue
+      const prefixes = items
+        .filter(
+          (prefix) =>
+            assignments.get(prefix) === cell &&
+            prefix.horizontal &&
+            prefix.text.trim().length >= 24 &&
+            /\p{L}/u.test(prefix.text) &&
+            Math.abs(prefix.rect[0] - item.rect[0]) <= item.height * 0.35 &&
+            prefix.rect[3] <= item.rect[1] + item.height * 0.2 &&
+            item.rect[1] - prefix.rect[3] >= -item.height * 0.2 &&
+            item.rect[1] - prefix.rect[3] <= item.height * 1.5
+        )
+        .sort((a, b) => a.rect[3] - b.rect[3])
+      if (!prefixes.length) continue
+      const prefix = prefixes.at(-1)
+      if (
+        rules.some(
+          (rule) =>
+            horizontalRule(rule) &&
+            rule[1] >= prefix.rect[3] - item.height * 0.2 &&
+            rule[1] <= item.rect[1] + item.height * 0.2 &&
+            rule[0] < item.rect[2] &&
+            rule[2] > item.rect[0]
+        )
+      )
+        continue
+      const competing = items.some(
+        (other) =>
+          other !== item &&
+          other.horizontal &&
+          assignments.has(other) &&
+          assignments.get(other) !== cell &&
+          Math.abs(other.baseline - item.baseline) <= item.height * 0.35 &&
+          other.rect[0] < item.rect[2] &&
+          other.rect[2] > item.rect[0]
+      )
+      if (!competing) candidates.push({ item, cell })
+    }
+  }
+  if (candidates.length !== 1) return false
+  const { item, cell } = candidates[0]
+  assignments.set(item, cell)
+  cell.rect[3] = Math.max(cell.rect[3], item.rect[3])
+  if (rows[cell.row]) rows[cell.row].rect[3] = Math.max(rows[cell.row].rect[3], item.rect[3])
+  repairs.push('prose-continuation-recovered')
+  return true
+}
+
+// Native math glyphs can straddle a predicted row edge while remaining part
+// of an already-owned formula. Recover only short math fragments that stay in
+// one leaf cell's horizontal lane, align with an owned math baseline, and have
+// a unique owner. Ordinary prose and standalone formula bands remain untouched.
+export function recoverNativeMathCellFragments({
+  items,
+  cells,
+  rules,
+  assignments,
+  repairs,
+  recordGrid
+}) {
+  if (recordGrid || cells.some((cell) => cell.origin !== 'model-grid')) return 0
+  if (!items.some((item) => assignments.has(item) && /^(?:√|∑)$/u.test(item.text.trim()))) return 0
+  const mathFragment = (text) => {
+    const value = text.trim()
+    return (
+      /^[\p{L}\d+\-=−≤≥√∑πτP]+$/u.test(value) &&
+      value.length <= 3 &&
+      (!/^[A-Z]+$/u.test(value) || /^[LP]$/u.test(value))
+    )
+  }
+  const unassignedMath = items.filter(
+    (candidate) =>
+      !assignments.has(candidate) && candidate.horizontal && mathFragment(candidate.text)
+  )
+  const candidates = []
+  for (const item of unassignedMath) {
+    for (const cell of cells) {
+      if (cell.rowSpan !== 1 || cell.colSpan !== 1 || cell.column <= 0) continue
+      const h = Math.max(item.height, 1)
+      if (
+        item.rect[0] < cell.rect[0] - 0.5 ||
+        item.rect[2] > cell.rect[2] + 0.5 ||
+        item.rect[3] < cell.rect[1] - h ||
+        item.rect[1] > cell.rect[3] + h
+      )
+        continue
+      const siblings = unassignedMath.some((other) => {
+        if (other === item) return false
+        if (other.rect[0] < cell.rect[0] - 0.5 || other.rect[2] > cell.rect[2] + 0.5) return false
+        if (other.rect[3] < cell.rect[1] - h || other.rect[1] > cell.rect[3] + h) return false
+        const horizontalGap = Math.max(
+          0,
+          item.rect[0] - other.rect[2],
+          other.rect[0] - item.rect[2]
+        )
+        const verticalGap = Math.max(0, item.rect[1] - other.rect[3], other.rect[1] - item.rect[3])
+        return horizontalGap <= h * 2 && verticalGap <= h * 1.5
+      })
+      if (!siblings) continue
+      const owned = items.filter(
+        (anchor) =>
+          assignments.get(anchor) === cell &&
+          anchor.horizontal &&
+          mathFragment(anchor.text) &&
+          (() => {
+            const horizontalGap = Math.max(
+              0,
+              item.rect[0] - anchor.rect[2],
+              anchor.rect[0] - item.rect[2]
+            )
+            const verticalGap = Math.max(
+              0,
+              item.rect[1] - anchor.rect[3],
+              anchor.rect[1] - item.rect[3]
+            )
+            return (
+              Math.abs(anchor.baseline - item.baseline) <= Math.max(h * 0.6, anchor.height * 0.6) ||
+              (horizontalGap <= h * 6 && verticalGap <= h * 1.5)
+            )
+          })()
+      )
+      if (!owned.length) continue
+      if (
+        (item.text.trim() === 'L' &&
+          !owned.some((anchor) => ['√', '≤'].includes(anchor.text.trim()))) ||
+        (item.text.trim() === 'P' &&
+          !owned.some((anchor) => ['τ', '=', 'T'].includes(anchor.text.trim())))
+      )
+        continue
+      if (
+        rules.some(
+          (rule) =>
+            Math.abs(rule[3] - rule[1]) < 0.05 &&
+            rule[0] < item.rect[2] &&
+            rule[2] > item.rect[0] &&
+            ((rule[1] > cell.rect[3] && rule[1] < item.rect[1]) ||
+              (rule[1] < cell.rect[1] && rule[1] > item.rect[3]))
+        )
+      )
+        continue
+      candidates.push({ item, cell })
+    }
+  }
+  if (!candidates.length) return 0
+  const byItem = new Map()
+  for (const candidate of candidates) {
+    const owners = byItem.get(candidate.item) ?? []
+    owners.push(candidate.cell)
+    byItem.set(candidate.item, owners)
+  }
+  let recovered = 0
+  for (const [item, owners] of byItem) {
+    if (owners.length !== 1) continue
+    const cell = owners[0]
+    assignments.set(item, cell)
+    recovered += 1
+  }
+  if (recovered) repairs.push('native-math-fragments-recovered')
+  return recovered
+}
+
 // Recover a final task-line that falls immediately below the last assigned
 // line in a native narrative cell.  Some benchmark figures put a short
 // `tNN–NN ...`/`tNN ...` line below the model's last wrapped sentence.  The
@@ -3136,7 +3324,7 @@ export function recoverUnassignedCompleteSourceRows({
   ambiguousAssignments,
   repairs
 }) {
-  if (columnRects.length < 3) return 0
+  if (columnRects.length < 2) return 0
   const heights = items
     .filter((item) => item.horizontal && Number.isFinite(item.height) && item.height > 0)
     .map((item) => item.height)
@@ -3388,7 +3576,7 @@ export function recoverUnassignedInsertedParameterRows({
 }) {
   if (
     columnRects.length !== 3 ||
-    !captions.some((caption) => /\bparameter(?:s)?\b/i.test(caption.lines?.[0] ?? ''))
+    !captions.some((caption) => /\b(?:hyper)?parameter(?:s)?\b/i.test(caption.lines?.[0] ?? ''))
   )
     return 0
   const heights = items
@@ -3410,8 +3598,13 @@ export function recoverUnassignedInsertedParameterRows({
       )
     )
   }
-  const numeric = (text) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?(?:%|[A-Za-z]{1,3})?$/u.test(text.trim())
-  const parameter = (text) => /^[A-Za-z][A-Za-z0-9_.-]*$/.test(text.trim())
+  const parameter = (text) => /^[A-Za-z][A-Za-z0-9_. -]*$/.test(text.trim())
+  const numericValue = (text) => {
+    const value = text.trim()
+    const unit = value.match(/[A-Za-z]{1,3}$/u)
+    const core = (unit ? value.slice(0, -unit[0].length) : value).trimEnd()
+    return /(?=.*\d)^[<>≤≥−+\x2d\d\s.,()\x5b\x5d%±–—\x2f<>=]+$/u.test(core)
+  }
   const groups = []
   for (const item of items
     .filter(
@@ -3419,24 +3612,58 @@ export function recoverUnassignedInsertedParameterRows({
     )
     .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
     const group = groups.at(-1)
-    if (group && Math.abs(group.baseline - item.baseline) <= height * 0.35) {
+    const verticalBand =
+      group &&
+      Number.isFinite(item.rect?.[1]) &&
+      Number.isFinite(item.rect?.[3]) &&
+      item.rect[1] <= group.bottom + height * 0.25 &&
+      item.rect[3] >= group.top - height * 0.25
+    if (
+      group &&
+      (Math.abs(group.baseline - item.baseline) <= height * 0.35 ||
+        (verticalBand && Math.abs(group.baseline - item.baseline) <= height * 0.9))
+    ) {
       group.items.push(item)
       group.baseline = (group.baseline + item.baseline) / 2
-    } else groups.push({ baseline: item.baseline, items: [item] })
+      group.top = Math.min(group.top, item.rect[1])
+      group.bottom = Math.max(group.bottom, item.rect[3])
+    } else
+      groups.push({
+        baseline: item.baseline,
+        items: [item],
+        top: item.rect[1],
+        bottom: item.rect[3]
+      })
   }
   let recovered = 0
   for (const group of groups) {
-    if (group.items.length !== 3) continue
-    const source = group.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
-    const columns = source.map((item) => {
+    const lanes = Array.from({ length: 3 }, () => [])
+    for (const item of group.items) {
       const center = (item.rect[0] + item.rect[2]) / 2
-      return columnRects.findIndex((column) => center >= column[0] && center <= column[2])
-    })
+      const columns = columnRects
+        .map((candidate, index) => (center >= candidate[0] && center <= candidate[2] ? index : -1))
+        .filter((index) => index >= 0)
+      if (columns.length !== 1) {
+        lanes.length = 0
+        break
+      }
+      lanes[columns[0]].push(item)
+    }
+    if (lanes.length !== 3) continue
+    if (lanes[0].length !== 1 || !lanes[1].length || !lanes[2].length) continue
+    const source = lanes.flat().sort((a, b) => a.rect[0] - b.rect[0])
+    const laneText = (lane) =>
+      lane
+        .map((item) => item.text.trim())
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+    const parameterText = laneText(lanes[0])
+    const valueText = laneText(lanes[1])
+    const descriptionText = laneText(lanes[2])
     if (
-      columns.join(',') !== '0,1,2' ||
-      !parameter(source[0].text) ||
-      !numeric(source[1].text) ||
-      !/\p{L}/u.test(source[2].text) ||
+      !parameter(parameterText) ||
+      !numericValue(valueText) ||
+      !/\p{L}/u.test(descriptionText) ||
       source.some((item) => Math.abs(item.baseline - group.baseline) > height * 0.4)
     )
       continue
@@ -3482,10 +3709,12 @@ export function recoverUnassignedInsertedParameterRows({
       items: []
     }))
     cells.push(...inserted)
-    source.forEach((item, column) => {
-      assignments.set(item, inserted[column])
-      ambiguousAssignments?.delete(item)
-    })
+    lanes.forEach((lane, column) =>
+      lane.forEach((item) => {
+        assignments.set(item, inserted[column])
+        ambiguousAssignments?.delete(item)
+      })
+    )
     repairs.push('unassigned-parameter-row-inserted')
     recovered += 1
   }
@@ -4072,6 +4301,112 @@ export function populateTableCellText({
         continue
       splitWideRuns.push({ original: item, parts, repair: 'native-measured-header-run-split' })
       continue
+    }
+    const whitespaceBoundaries = new Set()
+    let nonspace = 0
+    for (const word of item.text.trim().split(/\s+/u).slice(0, -1)) {
+      nonspace += Array.from(word).length
+      whitespaceBoundaries.add(nonspace)
+    }
+    // A large native TJ gap can separate cells while ordinary spaces stay
+    // inside one value. Measure complete leaves before the legacy word path;
+    // character proportions cannot distinguish a unit from the next column.
+    const observed = measuredRuns.filter(
+      (run) =>
+        run.text === item.text &&
+        Array.isArray(run.rect) &&
+        run.rect.length === 4 &&
+        run.rect.every((n, axis) => Number.isFinite(n) && n === item.rect[axis])
+    )
+    const run = observed.length === 1 ? observed[0] : undefined,
+      source = item.sourceItem,
+      boundaries = new Set()
+    let glyphCount = 0
+    for (const literal of Array.isArray(run?.literalGlyphs) ? run.literalGlyphs : []) {
+      glyphCount += typeof literal === 'string' ? Array.from(literal).length : 0
+      boundaries.add(glyphCount)
+    }
+    const validRun =
+        run &&
+        Array.isArray(run.gaps) &&
+        Array.isArray(run.glyphRuns) &&
+        run.glyphRuns.every((n) => Number.isInteger(n) && n >= 0) &&
+        Array.isArray(run.literalGlyphs) &&
+        run.literalGlyphs.every((s) => typeof s === 'string' && s) &&
+        run.gaps.every(
+          (gap, index) =>
+            gap &&
+            Number.isInteger(gap.index) &&
+            boundaries.has(gap.index) &&
+            whitespaceBoundaries.has(gap.index) &&
+            gap.index > 0 &&
+            gap.index < run.glyphRuns.length &&
+            Number.isFinite(gap.left) &&
+            Number.isFinite(gap.right) &&
+            gap.left < gap.right &&
+            gap.left >= item.rect[0] &&
+            gap.right <= item.rect[2] &&
+            (!index ||
+              (gap.index > run.gaps[index - 1].index && gap.left > run.gaps[index - 1].right))
+        ),
+      measured = validRun && splitNativeMeasuredFields(item, [run], item.height)
+    if (
+      validRun &&
+      source &&
+      source.text === item.text &&
+      Number.isSafeInteger(source.pageNumber) &&
+      source.pageNumber > 0 &&
+      Number.isSafeInteger(source.index) &&
+      source.index >= 0 &&
+      !item.sourceSegment &&
+      !item.sourceToken &&
+      !item.sourceItems &&
+      !item.sourceSegments &&
+      pageItems.filter(
+        (t) =>
+          t.sourceItem?.pageNumber === source.pageNumber && t.sourceItem?.index === source.index
+      ).length === 1 &&
+      run?.baseline === item.baseline &&
+      run.height === item.height &&
+      run.rect.length === 4 &&
+      run.horizontal !== false &&
+      measured?.length >= 2 &&
+      measured.length === slots.length
+    ) {
+      const parts = measured.map((part) => {
+        const owners = cells.filter((cell) =>
+          part.rect.every((n, axis) => (axis < 2 ? n >= cell.rect[axis] : n <= cell.rect[axis]))
+        )
+        return { item: part, owner: owners.length === 1 ? owners[0] : undefined }
+      })
+      if (
+        parts.every(
+          ({ item: part, owner }, index) =>
+            owner &&
+            owner === slots[index] &&
+            owner.row === slots[0].row &&
+            part.rect.every(Number.isFinite) &&
+            (!index ||
+              (owner.column === slots[index - 1].column + 1 &&
+                Math.abs(owner.rect[0] - slots[index - 1].rect[2]) < 1e-6)) &&
+            !pageItems.some(
+              (other) =>
+                other !== item &&
+                intersect(other.rect, owner.rect) > 1e-6 &&
+                (other.horizontal !== true ||
+                  !Number.isFinite(other.height) ||
+                  !Number.isFinite(other.baseline) ||
+                  Math.abs(other.height - item.height) > 0.02 ||
+                  (other.rect[1] < item.rect[3] &&
+                    other.rect[3] > item.rect[1] &&
+                    Math.abs(other.baseline - item.baseline) > 0.02))
+            ) &&
+            !pageItems.some((other) => other !== item && intersect(other.rect, part.rect) > 1e-6)
+        )
+      ) {
+        splitWideRuns.push({ original: item, parts, repair: 'native-measured-body-run-split' })
+        continue
+      }
     }
     if (
       slots.length < 2 ||
@@ -5238,6 +5573,12 @@ export function populateTableCellText({
       if (
         !recordGrid.ownedTokens.has(item) &&
         !(
+          splitSourceItems.includes(item) &&
+          forcedCells.has(item) &&
+          item.sourceToken &&
+          recordGrid.ownedTokens.has(item.sourceToken)
+        ) &&
+        !(
           anchor &&
           recordGrid.ownedTokens.has(anchor) &&
           (isAdjacentTableScript(item, anchor) || nativeRadicals.has(item))
@@ -5271,6 +5612,7 @@ export function populateTableCellText({
       repairs.push('multi-glyph-script-recovered')
     }
   }
+  recoverNativeMathCellFragments({ items, cells, rules, assignments, repairs, recordGrid })
   // A captionless continuation can be rasterized upright only after the page
   // is rotated. Its source boxes may still straddle two predicted columns by
   // a fraction of a glyph, leaving otherwise unambiguous numeric fragments
@@ -5438,6 +5780,7 @@ export function populateTableCellText({
     bottom,
     repairs
   })
+  recoverNativeProseContinuation({ items, cells, rows, rules, assignments, repairs })
   recoverNativeTerminalTaskTail({
     items,
     cells,

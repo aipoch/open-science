@@ -10,7 +10,9 @@ export type {
   LiteratureIndexStore,
   LiteratureIndexCandidate,
   IndexOptions,
-  TextExtraction
+  TextExtraction,
+  PdfTextCoverage,
+  PageTextLayout
 } from './ports.js'
 export { LiteratureReader } from './reader.js'
 export type { ReadingOptions, ReadDocumentResult, SearchDocumentsResult } from './reader.js'

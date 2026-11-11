@@ -45,6 +45,7 @@ const activeWorkbenchGuardScope = (state: PreviewWorkbenchStoreData): string | u
   workbenchPreviewGuardScope(state.activeProjectId, state.activeItemId)
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 export const PROJECT_LIBRARY_PREVIEW_ID = 'tool:project:library'
+export const PROJECT_MARKETPLACE_PREVIEW_ID = 'tool:project:marketplace'
 export const PROJECT_COMPUTE_PREVIEW_ID = 'tool:project:compute'
 export const sideChatTabId = (sessionId: string): string => `tool:side-chat:${sessionId}`
 
@@ -384,6 +385,15 @@ const createProjectLibraryPreviewItem = (
   toolKind: 'library',
   title: 'Library',
   ...(libraryScopeRequest ? { libraryScopeRequest } : {})
+})
+
+const createProjectMarketplacePreviewItem = (skillId?: string): PreviewToolItem => ({
+  id: PROJECT_MARKETPLACE_PREVIEW_ID,
+  sessionId: '__project_marketplace__',
+  type: 'tool',
+  toolKind: 'marketplace',
+  title: 'Resource center',
+  ...(skillId ? { skillDetailRequest: { skillId } } : {})
 })
 
 const createProjectComputePreviewItem = (): PreviewToolItem => ({
@@ -974,6 +984,7 @@ export {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
   createProjectLibraryPreviewItem,
+  createProjectMarketplacePreviewItem,
   createProjectComputePreviewItem,
   createSessionPlanPreviewItem,
   createSessionSubagentsPreviewItem,

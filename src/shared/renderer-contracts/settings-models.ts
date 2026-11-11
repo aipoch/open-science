@@ -9,6 +9,7 @@ import type {
   XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
   InstallCodeBuddyRequest,
+  InstallPiRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
@@ -16,6 +17,7 @@ import type {
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
   SetReviewerModelRequest,
+  SetPromptOptimizationModelRequest,
   SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
@@ -91,6 +93,10 @@ export const settingsInstallClaudeContracts = {
   'settings.installCodeBuddy': callable<
     (request: InstallCodeBuddyRequest) => Promise<ClaudeInstallResult>
   >()('settings', ['settings:install-codebuddy', LOCAL]),
+  'settings.installPi': callable<(request: InstallPiRequest) => Promise<ClaudeInstallResult>>()(
+    'settings',
+    ['settings:install-pi', LOCAL]
+  ),
   'settings.installCodex': callable<
     (request: InstallCodexRequest) => Promise<ClaudeInstallResult>
   >()('settings', ['settings:install-codex', LOCAL]),
@@ -167,6 +173,12 @@ export const settingsSetReviewerModelContracts = {
   >()('settings', ['settings:set-session-details-model'])
 } as const
 
+export const settingsSetPromptOptimizationModelContracts = {
+  'settings.setPromptOptimizationModel': callable<
+    (request: SetPromptOptimizationModelRequest) => Promise<SettingsSnapshot>
+  >()('settings', ['settings:set-prompt-optimization-model'])
+} as const
+
 export const settingsSetSubagentModelContracts = {
   'settings.setSubagentModel': callable<
     (request: SetSubagentModelRequest) => Promise<SettingsSnapshot>
@@ -183,6 +195,10 @@ export const settingsSetVisionModelContracts = {
   ]),
   'settings.uninstallCodeBuddy': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:uninstall-codebuddy',
+    LOCAL
+  ]),
+  'settings.uninstallPi': callable<() => Promise<SettingsSnapshot>>()('settings', [
+    'settings:uninstall-pi',
     LOCAL
   ]),
   'settings.uninstallCodex': callable<() => Promise<SettingsSnapshot>>()('settings', [

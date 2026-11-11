@@ -91,6 +91,25 @@ const inferredSearchRow = (overrides: Partial<ToolActivity> = {}): ToolActivity 
   })
 
 describe('groupConversationItems', () => {
+  it('retains Pi discovery beside web search in either order', () => {
+    const discovery = createActivity({
+      id: 'discovery',
+      providerToolName: 'tool_search',
+      title: "tool_search 'pubmed'",
+      toolKind: 'search'
+    })
+    const web = createActivity({ id: 'web', providerToolName: 'WebSearch', title: 'Web search' })
+    for (const activities of [
+      [discovery, web],
+      [web, discovery]
+    ]) {
+      expect(getRenderableActivityEntries(activities)).toHaveLength(2)
+      expect(isSearchActivity(discovery, activities, activities.indexOf(discovery))).toBe(false)
+      expect(formatActivityGroupTitle(activities)).toContain('a tool search')
+      expect(formatActivityGroupTitle(activities)).toContain('a search')
+    }
+  })
+
   it('collapses consecutive activities into a single group', () => {
     const grouped = groupConversationItems([
       activityItem(createActivity({ id: 'a1', sortIndex: 1 })),
@@ -444,6 +463,52 @@ describe('formatActivityGroupPresentationTitle', () => {
         new Map([['run-1', notebookRun]])
       )
     ).toBe('Running')
+  })
+
+  it('keeps a mixed Notebook group neutral when only one run fails', () => {
+    const completed = notebook({
+      id: 'completed-run',
+      executionInvocationId: 'completed-invocation',
+      rawOutput: {
+        runId: 'completed-run',
+        executionInvocationId: 'completed-invocation',
+        status: 'completed'
+      }
+    })
+    const failed = notebook({
+      id: 'failed-run',
+      executionInvocationId: 'failed-invocation',
+      rawOutput: {
+        runId: 'failed-run',
+        executionInvocationId: 'failed-invocation',
+        status: 'failed'
+      }
+    })
+
+    expect(formatActivityGroupPresentationTitle([completed, failed], undefined, undefined)).toBe(
+      '2 Notebook runs'
+    )
+  })
+
+  it('keeps an all-completed Notebook group labeled as completed', () => {
+    const completed = (id: string): ToolActivity =>
+      notebook({
+        id,
+        executionInvocationId: `${id}-invocation`,
+        rawOutput: {
+          runId: id,
+          executionInvocationId: `${id}-invocation`,
+          status: 'completed'
+        }
+      })
+
+    expect(
+      formatActivityGroupPresentationTitle(
+        [completed('completed-run-1'), completed('completed-run-2')],
+        undefined,
+        undefined
+      )
+    ).toBe('Completed 2 Notebook runs')
   })
 
   it('reuses the tool row display name and follows the current execution', () => {

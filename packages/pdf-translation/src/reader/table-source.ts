@@ -1,7 +1,7 @@
-import { verifiedPdfStructureRegions } from './structure-regions.js'
+import { verifiedPdfTableRegions, structureRegionContains } from './structure-regions.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 import { nativePartialNavigation } from './native-source-geometry.js'
-import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFPageProxy, getDocument } from 'pdfjs-dist'
 import type { TextItem, TextStyle } from 'pdfjs-dist/types/src/display/api.js'
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
@@ -265,6 +265,16 @@ function nativeRect(
     : undefined
 }
 
+// Preserve maximal canonical numeric script literals already emitted by the
+// native layout. This detects loss only; it neither infers a script from runs
+// nor changes the original source or the existing scientific-number keeper.
+function canonicalScriptLiterals(text: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const literal of text.match(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎]+/gu) ?? [])
+    counts.set(literal, (counts.get(literal) ?? 0) + 1)
+  return counts
+}
+
 function normalizeSourceText(text: string): string {
   return text.replace(/\s+/gu, '')
 }
@@ -372,12 +382,18 @@ function partitionCellText(cellText: string, origins: readonly string[]): string
   return solutions.length === 1 ? solutions[0] : undefined
 }
 
+const tableRetention = new WeakMap<PdfTranslationExtraction, () => boolean>()
+export function isCurrentPdfTableSources(extraction: PdfTranslationExtraction): boolean {
+  return tableRetention.get(extraction)?.() ?? true
+}
+
 /** Before publication only. Invalid provenance fails closed; known structural conflicts retain native units. */
 export async function applyCachedPdfTableSources({
   extraction,
   document,
   sourceId,
   sourceIdentity,
+  nativeDocumentFactory,
   signal,
   readCached
 }: {
@@ -385,6 +401,7 @@ export async function applyCachedPdfTableSources({
   document: Document
   sourceId: string
   sourceIdentity: PdfTranslationSourceIdentity
+  nativeDocumentFactory?: typeof getDocument
   signal: AbortSignal
   readCached: (
     request: Readonly<{ sourceId: string; page: number }>
@@ -453,6 +470,8 @@ export async function applyCachedPdfTableSources({
         string,
         {
           tableKey: string
+          row: number
+          rowSpan: number
           replacementIndex: number
           nativeRect: Rect
           originText: string
@@ -675,6 +694,7 @@ export async function applyCachedPdfTableSources({
     const pages = new Map<
       number,
       {
+        proxy: PDFPageProxy
         viewport: Viewport
         rotation: number
         content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -695,7 +715,7 @@ export async function applyCachedPdfTableSources({
         const viewport = proxy.getViewport({ scale: 1 }),
           content = await getPdfTranslationTextContent(proxy)
         current()
-        page = { viewport, content, rotation: proxy.rotate }
+        page = { proxy, viewport, content, rotation: proxy.rotate }
         pages.set(origin.pageNumber, page)
       }
       const expected = result?.pages.find((p) => p.page === origin.pageNumber),
@@ -913,7 +933,7 @@ export async function applyCachedPdfTableSources({
                 const viewport = proxy.getViewport({ scale: 1 }),
                   content = await getPdfTranslationTextContent(proxy)
                 current()
-                page = { viewport, content, rotation: proxy.rotate }
+                page = { proxy, viewport, content, rotation: proxy.rotate }
                 pages.set(origin.pageNumber, page)
               }
               const expectedPage = result.pages.find((p) => p.page === origin.pageNumber)
@@ -1235,6 +1255,8 @@ export async function applyCachedPdfTableSources({
             } of primaryClaims)
               claims.set(key, {
                 tableKey,
+                row: cell.row,
+                rowSpan: cell.rowSpan,
                 replacementIndex,
                 nativeRect: originalRect,
                 originText,
@@ -1295,6 +1317,10 @@ export async function applyCachedPdfTableSources({
     // otherwise valid plan that cannot replace whole original units may fall
     // back by component; invalid provenance still returns before this point.
     const incompleteTables = new Set(boundaryConflicts)
+    const canonicalByTable = new Map<
+      string,
+      { literals: Map<string, number>; replacements: Set<number> }
+    >()
     for (const unit of source.units) {
       const keys = unit.fragments.flatMap((fragment) =>
         fragment.items.map((item) => `${fragment.pageNumber}:${item.index}`)
@@ -1302,8 +1328,32 @@ export async function applyCachedPdfTableSources({
       const claimed = keys.filter((key) => claims.has(key))
       if (!claimed.length) continue
       const tableKeys = new Set(claimed.map((key) => claims.get(key)!.tableKey))
+      if (claimed.length === keys.length && tableKeys.size === 1) {
+        const literals = canonicalScriptLiterals(unit.source)
+        if (literals.size) {
+          const key = [...tableKeys][0]
+          let required = canonicalByTable.get(key)
+          if (!required) {
+            required = { literals: new Map(), replacements: new Set() }
+            canonicalByTable.set(key, required)
+          }
+          for (const [literal, count] of literals)
+            required.literals.set(literal, (required.literals.get(literal) ?? 0) + count)
+          for (const item of claimed) required.replacements.add(claims.get(item)!.replacementIndex)
+        }
+      }
       if (claimed.length !== keys.length || tableKeys.size !== 1)
         for (const key of tableKeys) incompleteTables.add(key)
+    }
+    for (const [key, required] of canonicalByTable) {
+      const represented = new Map<string, number>()
+      for (const index of required.replacements)
+        for (const [literal, count] of canonicalScriptLiterals(replacements[index].source))
+          represented.set(literal, (represented.get(literal) ?? 0) + count)
+      if (
+        [...required.literals].some(([literal, count]) => (represented.get(literal) ?? 0) < count)
+      )
+        incompleteTables.add(key)
     }
     if (incompleteTables.size) {
       let expanded = true
@@ -1348,6 +1398,64 @@ export async function applyCachedPdfTableSources({
       for (const unit of incompleteUnits) blockedUnits.add(unit.id)
     }
     if (!replacements.length && !blockedUnits.size) return retainOriginal()
+    const regionProof = await verifiedPdfTableRegions(
+      source,
+      results.flatMap((result) =>
+        result.elements.flatMap((element) => {
+          const tables =
+            element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+          const key = (part: number): string => `${result.extractionId}:${element.id}:${part}`
+          // A grouped preview can include prose between its parts. New manifests
+          // preserve each original crop and prove it only against that part's owners.
+          // Legacy manifests retain their existing whole-element crop checks.
+          const groups = element.tableParts?.every((part) => part.regions)
+            ? element.tableParts.map((part, index) => ({
+                regions: part.regions!,
+                keys: new Set([key(index)])
+              }))
+            : [{ regions: element.regions, keys: new Set(tables.map((_, part) => key(part))) }]
+          return groups.map(({ regions, keys }) => ({
+            regions,
+            owners: new Set(
+              [...claims].filter(([, claim]) => keys.has(claim.tableKey)).map(([key]) => key)
+            )
+          }))
+        })
+      ),
+      pages,
+      results.flatMap((result) =>
+        result.elements.flatMap((element) => element.caption?.regions ?? [])
+      ),
+      { document, nativeDocumentFactory, sourceIdentity: identity, signal }
+    )
+    current()
+    if (!regionProof.current()) return retainOriginal()
+    const originalRegions = regionProof.regions
+    const leadingTables = new Set<string>()
+    for (const key of new Set([...claims.values()].map((claim) => claim.tableKey))) {
+      const entries = [...claims].filter(([, claim]) => claim.tableKey === key),
+        first = entries.filter(([, claim]) => claim.row === 0),
+        later = entries.filter(([, claim]) => claim.row > 0)
+      // This proves a separate leading native band, not semantic header status.
+      // A spanning, split or interleaved first row cannot retain this position.
+      if (
+        first.length &&
+        later.length &&
+        first.every(
+          ([origin, claim]) =>
+            claim.rowSpan === 1 &&
+            !claim.split &&
+            !claim.measured &&
+            later.every(
+              ([other, next]) =>
+                origin.split(':')[0] === other.split(':')[0] &&
+                claim.nativeRect.y + claim.nativeRect.height <= next.nativeRect.y + 1e-6
+            )
+        )
+      )
+        leadingTables.add(key)
+    }
+    const retainedReplacements = new Map<number, { id: string; tableKey: string }>()
     for (const unit of source.units) {
       const keys = unit.fragments.flatMap((f) => f.items.map((i) => `${f.pageNumber}:${i.index}`))
       const claimed = keys.filter((key) => claims.has(key))
@@ -1357,7 +1465,53 @@ export async function applyCachedPdfTableSources({
         new Set(claimed.map((key) => claims.get(key)?.tableKey)).size !== 1
       )
         return retainOriginal()
+      const index = claims.get(keys[0])!.replacementIndex,
+        replacement = replacements[index],
+        replacementKeys = replacement.fragments.flatMap((f) =>
+          f.items.map((i) => `${f.pageNumber}:${i.index}`)
+        )
+      // Do not replace an unchanged, already protected leading formula with a
+      // smaller cell crop or move it behind prose when no complete verified
+      // table crop already preserves it. Claims still prove crop ownership;
+      // only this redundant replacement is omitted.
+      if (
+        unit.sourceOnly &&
+        unit.preserve === 'formula' &&
+        !unit.fragments.every((f) =>
+          originalRegions.some((r) =>
+            structureRegionContains(
+              { page: r.pageNumber, ...r.rect },
+              { page: f.pageNumber, ...f.rect }
+            )
+          )
+        ) &&
+        unit.source === replacement.source &&
+        leadingTables.has(claims.get(keys[0])!.tableKey) &&
+        keys.every(
+          (key) => claims.get(key)!.row === 0 && claims.get(key)!.replacementIndex === index
+        ) &&
+        keys.length === replacementKeys.length &&
+        keys.every((key, at) => key === replacementKeys[at])
+      ) {
+        retainedReplacements.set(index, { id: unit.id, tableKey: claims.get(keys[0])!.tableKey })
+        continue
+      }
       removed.add(unit.id)
+    }
+    // Retain the leading row atomically. Keeping only its formula cells would
+    // move them ahead of ordinary header cells that still follow the table plan.
+    for (const [index, retained] of retainedReplacements) {
+      if (
+        [...claims.values()].some(
+          (claim) =>
+            claim.tableKey === retained.tableKey &&
+            claim.row === 0 &&
+            !retainedReplacements.has(claim.replacementIndex)
+        )
+      ) {
+        retainedReplacements.delete(index)
+        removed.add(retained.id)
+      }
     }
     current()
     let coverage = extraction.coverage
@@ -1414,32 +1568,8 @@ export async function applyCachedPdfTableSources({
         ])
       })
     }
-    const originalRegions = verifiedPdfStructureRegions(
-      source,
-      results.flatMap((result) =>
-        result.elements.flatMap((element) => {
-          const tables =
-            element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
-          const keys = new Set(
-            tables.map((_, part) => `${result.extractionId}:${element.id}:${part}`)
-          )
-          return [
-            {
-              regions: element.regions,
-              owners: new Set(
-                [...claims].filter(([, claim]) => keys.has(claim.tableKey)).map(([key]) => key)
-              )
-            }
-          ]
-        })
-      ),
-      pages,
-      results.flatMap((result) =>
-        result.elements.flatMap((element) => element.caption?.regions ?? [])
-      )
-    )
     // Exact owners were consumed once above; only whole units move, so no text can disappear.
-    return Object.freeze({
+    const result = Object.freeze({
       ...extraction,
       coverage,
       source: createPdfTranslationSource({
@@ -1453,10 +1583,13 @@ export async function applyCachedPdfTableSources({
             .map((unit) =>
               unreliableMathUnits.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
             ),
-          ...replacements
+          ...replacements.filter((_, index) => !retainedReplacements.has(index))
         ]
       })
     })
+    if (!regionProof.current()) return retainOriginal()
+    tableRetention.set(result, regionProof.current)
+    return result
   } catch {
     signal.throwIfAborted()
     return retainOriginal()

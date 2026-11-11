@@ -205,8 +205,9 @@ export async function composeComputeAdmission({
   computeJobActivityRef.current = jobRepository
   const sessionEnabledComputeHostsOwner = new SessionEnabledComputeHostsOwner({
     registry: hostsRegistry,
-    hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
-    listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
+    hostExists: async (providerId) => !!(await hostRepository.getComputeTarget(providerId)),
+    listHostIds: async () =>
+      (await hostRepository.listComputeTargets()).map((host) => host.providerId),
     sessionAuthority: sessionPersistenceCoordinator,
     projectSessionConcurrencyLimit: async (sessionId, limit) => {
       const concurrencyManager = computeIpcModule.handlers.concurrencyManager
@@ -263,12 +264,18 @@ export async function composeComputeAdmission({
     onFinalJobObserved: async (_context, _providerId, snapshot) => {
       const job = await jobRepository.get(snapshot.job_id)
       if (!job) return 'pending'
-      const host = await hostRepository.get(job.provider_id).catch(() => null)
+      const host = await hostRepository.getComputeTarget(job.provider_id).catch(() => null)
       const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
       return computeJobResultDelivery.observeResult({
         ...summary,
-        status: snapshot.status,
-        cancellation_status: snapshot.cancellation_status,
+        status: snapshot.status === 'cancelled' ? 'failed' : snapshot.status,
+        cancellation_status:
+          snapshot.status === 'cancelled' ? 'cancelled' : snapshot.cancellation?.status,
+        cancellation_error:
+          snapshot.cancellation?.status === 'failed' ? snapshot.cancellation.error : undefined,
+        error_code:
+          snapshot.error?.code ?? (snapshot.status === 'cancelled' ? 'job_cancelled' : undefined),
+        error_message: snapshot.error?.message,
         exit_code: snapshot.exit_code,
         stdout_tail: snapshot.stdout_tail,
         stderr_tail: snapshot.stderr_tail,

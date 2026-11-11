@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 describe('Compute Job operation migration', () => {
-  it('replays an unledgered operation suffix without rewriting ComputeJob', async () => {
+  it('replays an unledgered operation suffix with the later Compute schema additions', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-operation-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -40,7 +40,11 @@ describe('Compute Job operation migration', () => {
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
     )
     expect(
-      computeJobSqlAfter.replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
+      computeJobSqlAfter
+        .replace(/,\s*"kubernetesWorkspace" TEXT/u, '')
+        .replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
+        .replace(/,\s*"errorMessage" TEXT/u, '')
+        .replace(", 'job_cancelled', 'job_status_unavailable'", '')
     ).toBe(computeJobSqlBefore)
     expect(computeJobSqlAfter).toContain('"executionMode" TEXT NOT NULL DEFAULT')
     await expect(
@@ -48,8 +52,8 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
     ).resolves.toEqual([
-      { id: '0051_literature_reading_status' },
-      { id: '0050_literature_translation' }
+      { id: '0057_project_optimization_prompt' },
+      { id: '0056_compute_kubernetes_workspace' }
     ])
   })
 
@@ -76,6 +80,8 @@ describe('Compute Job operation migration', () => {
       'kind',
       'phase',
       'outcome',
+      'errorCode',
+      'errorMessage',
       'revision',
       'attemptCount',
       'eligibleAt',

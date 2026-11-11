@@ -6,6 +6,7 @@ import {
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
   generatedPrismaIncludes,
+  inlineDesktopDependencyMaps,
   isBackendRuntimeDependency,
   isElectronPackage,
   prismaEngineFilenames
@@ -14,6 +15,11 @@ import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'nod
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
+import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import {
+  assertPrivateDependencyChain,
+  stageDesktopDependencyChain
+} from './desktop-dependency-chains.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const { values } = parseArgs({ options: { desktop: { type: 'boolean', default: false } } })
@@ -36,28 +42,13 @@ await cp(backend, join(stage, 'out/backend'), {
   // Dependency analysis is consumed above; it is not a runtime or diagnostic source map.
   filter: (path) => !values.desktop || path !== join(backend, 'dependencies.json')
 })
+// Pi dependencies are downloaded only after an explicit runtime install.
+await cp(join(root, 'out/pi-bootstrap'), join(stage, 'out/pi-bootstrap'), { recursive: true })
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
 })
-const localTranslation = manifest.dependencies['@huggingface/transformers']
-  ? await (
-      await import('./build-backend.mjs')
-    ).buildLocalTranslationWorker(root, join(stage, 'resources/pdf-translation-local'))
-  : undefined
-if (localTranslation) {
-  if (
-    metadata.some((meta) =>
-      Object.values(meta.outputs).some((output) =>
-        output.imports.some(
-          (item) => item.external && item.path.startsWith('@huggingface/transformers')
-        )
-      )
-    )
-  )
-    throw new Error('Transformers has a backend consumer outside the local translation worker.')
-}
 const platformDirectory = { darwin: 'mac', win32: 'win', linux: 'linux' }[process.platform]
 const micromamba = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
 await cp(
@@ -91,6 +82,7 @@ await cp(join(root, 'packages/open-science/README.md'), join(stage, 'README.md')
 await cp(join(root, 'packages/open-science/CLI.md'), join(stage, 'CLI.md'))
 
 const installed = new Map()
+const privateDependencies = new Set()
 async function packageDirectory(name, from) {
   let directory = from
   while (true) {
@@ -107,10 +99,7 @@ async function packageDirectory(name, from) {
   }
 }
 async function copyDependency(name, from, destinationParent = stage) {
-  if (localTranslation && name === '@huggingface/transformers')
-    throw new Error(
-      'Transformers has another runtime consumer; retain its external dependency closure.'
-    )
+  assertPrivateDependencyChain(name, privateDependencies)
   if (forbidden(name)) throw new Error(`Standalone dependency closure includes ${name}`)
   if (bundledDependencies.has(name))
     throw new Error(
@@ -124,20 +113,31 @@ async function copyDependency(name, from, destinationParent = stage) {
   if (!atRoot) destination = join(stage, 'node_modules', name)
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
-  const desktopIncludes = values.desktop
-    ? createDesktopDependencyFilter(pkg, { localTranslationWasm: Boolean(localTranslation) })
+  const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
+  const chain = values.desktop
+    ? await stageDesktopDependencyChain(pkg, source, destination)
     : undefined
-  await cp(source, destination, {
-    recursive: true,
-    dereference: true,
-    filter: async (path) => {
-      const file = relative(source, path)
-      return (
-        backendDependencyIncludes(pkg, file) &&
-        (!desktopIncludes || desktopIncludes(file, (await stat(path)).isDirectory()))
+  if (chain) {
+    for (const dependency of chain) privateDependencies.add(dependency)
+    for (const path of installed.keys())
+      assertPrivateDependencyChain(
+        path.split(`${sep}node_modules${sep}`).at(-1).split(sep).join('/'),
+        privateDependencies
       )
-    }
-  })
+  }
+  if (!chain && !(values.desktop && (await stageDesktopPdfLib(pkg, source, destination))))
+    await cp(source, destination, {
+      recursive: true,
+      dereference: true,
+      filter: async (path) => {
+        const file = relative(source, path)
+        return (
+          backendDependencyIncludes(pkg, file) &&
+          (!desktopIncludes || desktopIncludes(file, (await stat(path)).isDirectory()))
+        )
+      }
+    })
+  if (values.desktop) await inlineDesktopDependencyMaps(pkg, destination)
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
     delete pkg.scripts
@@ -145,6 +145,7 @@ async function copyDependency(name, from, destinationParent = stage) {
     await writeFile(join(destination, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
   }
   for (const dependency of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
+    if (chain?.has(dependency)) continue
     if (!isBackendRuntimeDependency(dependency, name)) continue
     try {
       await copyDependency(dependency, source, destination)
@@ -174,16 +175,9 @@ async function copyDependency(name, from, destinationParent = stage) {
 }
 const dependencies = {}
 for (const name of dependencyRoots) {
-  if (localTranslation && name === '@huggingface/transformers') continue
   if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
-}
-if (localTranslation) {
-  for (const name of localTranslation.dependencies) {
-    await copyDependency(name, localTranslation.directory)
-    dependencies[name] = installed.get(join(stage, 'node_modules', name))
-  }
 }
 // This HTTP implementation is a direct standalone dependency, independent of incidental hoisting.
 await copyDependency('undici', root)
@@ -235,14 +229,6 @@ const assertNoBuildIntermediates = async (directory) => {
 }
 await assertNoBuildIntermediates(join(stage, 'node_modules'))
 const nativeRequire = createRequire(join(stage, 'package.json'))
-// GPU providers are pruned only on Linux x64; its native binding must still load.
-// Do not add a gate on other targets: ONNX 1.24.3 ships no Darwin x64 binding.
-if (
-  process.platform === 'linux' &&
-  process.arch === 'x64' &&
-  (!localTranslation || installed.has(join(stage, 'node_modules/onnxruntime-node')))
-)
-  nativeRequire('onnxruntime-node')
 for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
   nativeRequire(name)
 for (const path of Object.values(nativeRequire('@aipoch/credential-identity-probe-native')))

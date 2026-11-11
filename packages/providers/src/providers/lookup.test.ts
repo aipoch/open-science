@@ -84,7 +84,7 @@ describe('provider registry', () => {
     })
   })
 
-  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])(
+  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'])(
     'offers %s with its published capabilities and preserves the default',
     (model) => {
       expect(getVendorModelIds('anthropic')).toContain(model)
@@ -572,7 +572,8 @@ describe('provider registry', () => {
   it('offers GLM-4.5-Air through the official Zhipu provider', () => {
     expect(getOfficialVendor('zhipu')?.models).toContainEqual({
       id: 'glm-4.5-air',
-      contextWindow: 128_000
+      contextWindow: 128_000,
+      maxOutputTokens: 98_304
     })
   })
 
@@ -580,6 +581,7 @@ describe('provider registry', () => {
     expect(getOfficialVendor('zhipu')?.models).toContainEqual({
       id: 'glm-5.3',
       contextWindow: 1_000_000,
+      maxOutputTokens: 131_072,
       reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
     })
   })
@@ -588,6 +590,7 @@ describe('provider registry', () => {
     const expected = {
       id: 'glm-5.3-flash',
       contextWindow: 1_000_000,
+      maxOutputTokens: 131_072,
       reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
     }
 
@@ -1043,14 +1046,18 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
 
     expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
+      'hy4',
       'hy4-preview',
       'glm-5.3',
       'glm-5.3-flash',
       'kimi-k3',
+      'deepseek/deepseek-flash',
+      'deepseek-v4.1-flash',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
       'minimax-m3'
     ])
+    expect(getVendorModelContextWindow('tencent', 'hy4')).toBe(1_000_000)
     expect(getVendorModelContextWindow('tencent', 'hy4-preview')).toBe(1_000_000)
     expect(getVendorModelContextWindow('tencent', 'kimi-k3')).toBe(1_048_576)
     expect(isVendorModelResponsesSupported('tencent', 'glm-5.3')).toBe(true)
@@ -1058,6 +1065,22 @@ describe('provider registry', () => {
     expect(isVendorModelResponsesSupported('tencent', 'deepseek-v4-pro')).toBe(true)
     expect(isVendorModelResponsesSupported('tencent', 'minimax-m3')).toBe(true)
     expect(isVendorModelResponsesSupported('tencent', 'hy4-preview')).toBe(true)
+    expect(resolveVendorModelApiEndpoints('tencent', 'hy4')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
+    expect(isVendorModelMultimodal('tencent', 'hy4')).toBe(true)
+    for (const model of ['glm-5.3-flash', 'deepseek/deepseek-flash', 'deepseek-v4.1-flash']) {
+      expect(getVendorModelContextWindow('tencent', model)).toBe(1_000_000)
+      expect(isVendorModelResponsesSupported('tencent', model)).toBe(true)
+      expect(isVendorModelMultimodal('tencent', model)).toBe(true)
+    }
+    expect(isVendorModelMultimodal('tencent', 'kimi-k3')).toBe(true)
+    expect(isVendorModelMultimodal('tencent', 'minimax-m3')).toBe(true)
+    for (const model of ['glm-5.3', 'deepseek-v4-flash', 'deepseek-v4-pro']) {
+      expect(isVendorModelMultimodal('tencent', model)).toBe(false)
+    }
     expect(isVendorModelMultimodal('tencent', 'hy4-preview')).toBe(false)
     expect(getVendorModelReasoningCapability('tencent', 'hy4-preview')).toEqual({
       supported: false
@@ -1153,8 +1176,8 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('apodex')).toBeUndefined()
     expect(usesVendorMessagesApiKeyHeader('apodex')).toBe(true)
     expect(getOfficialVendor('apodex')?.models).toEqual([
-      { id: 'apodex-1.1', contextWindow: 262_144 },
-      { id: 'apodex-1.1-mini', contextWindow: 262_144 }
+      { id: 'apodex-1.1', contextWindow: 262_144, maxOutputTokens: 262_144 },
+      { id: 'apodex-1.1-mini', contextWindow: 262_144, maxOutputTokens: 262_144 }
     ])
 
     expect(isVendorModelMultimodal('apodex', 'apodex-1.1')).toBe(false)
@@ -1531,11 +1554,18 @@ describe('provider registry', () => {
       expect(isVendorModelResponsesSupported('volcengine', 'doubao-seed-2-1-pro-260628')).toBe(true)
     })
 
-    it('returns true for every bundled DeepSeek V4 model', () => {
+    it('keeps DeepSeek Responses support limited to the documented model ids', () => {
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(false)
-      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
-      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-flash')).toBe(true)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(false)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(
+        false
+      )
+      expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-flash')).toEqual([
+        'messages',
+        'chat-completions'
+      ])
       expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-pro')).toEqual([
         'messages',
         'chat-completions',

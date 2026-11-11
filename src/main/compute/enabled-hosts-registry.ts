@@ -1,3 +1,4 @@
+import { isComputeProviderId } from '../../shared/compute'
 import type { SessionComputeHostAccess } from './session-compute-host-access'
 
 // Derived runtime projection mapping Session id to enabled and selected Compute Host ids. Durable
@@ -28,9 +29,7 @@ export class EnabledComputeHostsRegistry {
   }
 
   setAccess(sessionId: string, access: SessionComputeHostAccess): void {
-    const enabledProviderIds = access.enabledProviderIds.filter(
-      (id) => typeof id === 'string' && id.startsWith('ssh:') && id.length > 4
-    )
+    const enabledProviderIds = access.enabledProviderIds.filter((id) => isComputeProviderId(id))
     const enabledProviderIdSet = new Set(enabledProviderIds)
     const selectedProviderIds = access.selectedProviderIds.filter((id) =>
       enabledProviderIdSet.has(id)

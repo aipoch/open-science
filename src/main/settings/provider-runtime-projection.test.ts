@@ -17,6 +17,50 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each([
+    { type: 'codex-shared', codexAuthMode: undefined },
+    { type: 'codex-isolated', codexAuthMode: 'imported' },
+    { type: 'codex-isolated', codexAuthMode: 'isolated' }
+  ] as const)('projects $type/$codexAuthMode through the built-in subscription route', (auth) => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-codex-subscription',
+      name: 'Codex subscription',
+      ...auth
+    }
+    const framework = getAgentFramework('open-science-agent')
+    const target = owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
+    expect(target.frameworkCompatible).toBe(true)
+    expect(target.effectiveModel).toBeTruthy()
+    expect(target.apiEndpoints).toEqual(['responses'])
+    expect(target.provider).toMatchObject({
+      model: target.effectiveModel,
+      apiEndpoints: ['responses']
+    })
+    expect(
+      owner.resolveRuntimeTarget(provider, { kind: 'configured' }, getAgentFramework('codex'))
+        .effectiveModel
+    ).toBeUndefined()
+    const catalog = owner.resolveRuntimeModelCatalog(provider, framework)
+    expect(catalog.length).toBeGreaterThan(0)
+    expect(
+      catalog.every((entry) => entry.frameworkCompatible && entry.apiEndpoints[0] === 'responses')
+    ).toBe(true)
+    const fixed = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: target.effectiveModel! },
+      framework
+    )
+    expect(fixed.effectiveModel).toBe(target.effectiveModel)
+    expect(() =>
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'unavailable-model' },
+        framework
+      )
+    ).toThrow(/not available/)
+  })
+
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'offers only the base DeepSeek model and rejects removed selections for %s',
     (frameworkId) => {
@@ -686,7 +730,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping native Responses', () => {
+  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping Flash aliases on Chat Completions', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
       id: 'deepseek',
@@ -695,7 +739,19 @@ describe('ProviderRuntimeProjectionOwner', () => {
       name: 'DeepSeek'
     }
 
-    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'deepseek-flash' },
+        getAgentFramework('codex')
+      )
+    ).toMatchObject({
+      apiEndpoints: ['messages', 'chat-completions', 'responses'],
+      needsNativeResponsesCompatibility: true,
+      provider: { supportsImageInput: true, model: 'deepseek-flash' }
+    })
+
+    for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
       expect(
         owner.resolveRuntimeTarget(
           provider,
@@ -703,57 +759,67 @@ describe('ProviderRuntimeProjectionOwner', () => {
           getAgentFramework('codex')
         )
       ).toMatchObject({
-        apiEndpoints: ['messages', 'chat-completions', 'responses'],
-        needsNativeResponsesCompatibility: true,
+        apiEndpoints: ['messages', 'chat-completions'],
+        needsNativeResponsesCompatibility: false,
         provider: { supportsImageInput: true, model }
       })
     }
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 
-  it('projects regional Tencent Hy4 across every supported framework', () => {
-    const owner = new ProviderRuntimeProjectionOwner()
-    const provider: StoredProvider = {
-      id: 'tencent-tokenhub',
-      type: 'official',
-      vendorId: 'tencent',
-      region: 'international',
-      name: 'Tencent TokenHub'
-    }
+  it.each([
+    ['hy4', true],
+    ['glm-5.3-flash', true],
+    ['deepseek/deepseek-flash', true],
+    ['deepseek-v4.1-flash', true],
+    ['minimax-m3', true],
+    ['hy4-preview', false]
+  ] as const)(
+    'projects regional Tencent %s across every supported framework',
+    (model, supportsImageInput) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'tencent-tokenhub',
+        type: 'official',
+        vendorId: 'tencent',
+        region: 'international',
+        name: 'Tencent TokenHub'
+      }
 
-    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+      for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+        expect(
+          owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
+        ).toMatchObject({
+          effectiveModel: model,
+          apiEndpoints: ['messages', 'chat-completions', 'responses'],
+          frameworkCompatible: true,
+          provider: {
+            vendorId: 'tencent',
+            baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
+            chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
+            model,
+            contextWindow: 1_000_000,
+            supportsImageInput
+          }
+        })
+      }
+
       expect(
         owner.resolveRuntimeTarget(
           provider,
-          { kind: 'required', model: 'hy4-preview' },
-          getAgentFramework(frameworkId)
+          { kind: 'required', model },
+          getAgentFramework('codex')
         )
       ).toMatchObject({
-        effectiveModel: 'hy4-preview',
-        apiEndpoints: ['messages', 'chat-completions', 'responses'],
-        frameworkCompatible: true,
-        provider: {
-          vendorId: 'tencent',
-          baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
-          chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
-          model: 'hy4-preview',
-          contextWindow: 1_000_000,
-          supportsImageInput: false
-        }
+        needsChatResponsesToChatCompletionsBridge: false,
+        needsNativeResponsesCompatibility: true
       })
     }
-
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'hy4-preview' },
-        getAgentFramework('codex')
-      )
-    ).toMatchObject({
-      needsChatResponsesToChatCompletionsBridge: false,
-      needsNativeResponsesCompatibility: true
-    })
-  })
+  )
 
   it.each([
     {

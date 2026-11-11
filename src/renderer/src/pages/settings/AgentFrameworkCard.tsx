@@ -41,6 +41,8 @@ type AgentFrameworkCardProps = {
   version?: string
   versionDetail?: string
   updateAvailable?: boolean
+  // Refresh the app-compatible pinned release without claiming a newer upstream version exists.
+  canUpdate?: boolean
   updateHint?: string
   // Resolved runtime/adapter path; its presence also gates the Uninstall control.
   path?: string
@@ -106,6 +108,7 @@ const AgentFrameworkCard = ({
   version,
   versionDetail,
   updateAvailable = false,
+  canUpdate = false,
   updateHint,
   path,
   sourceLabel,
@@ -297,12 +300,12 @@ const AgentFrameworkCard = ({
           </div>
           {/* Actions live outside the selection gesture: clicks here must not switch frameworks.
               Ready runtimes may offer Update alongside Uninstall. */}
-          {!ready || showUninstall || updateAvailable ? (
+          {!ready || showUninstall || updateAvailable || canUpdate ? (
             <div
               className="ml-auto flex shrink-0 items-center gap-2"
               onClick={(event) => event.stopPropagation()}
             >
-              {ready && updateAvailable ? (
+              {ready && (updateAvailable || canUpdate) ? (
                 <AgentInstallSourceMenu
                   name={name}
                   intent="update"
@@ -360,7 +363,9 @@ const AgentFrameworkCard = ({
                 <div
                   role="progressbar"
                   aria-label={
-                    updateRequired || updateAvailable ? t('Update progress') : t('Install progress')
+                    updateRequired || updateAvailable || (canUpdate && ready)
+                      ? t('Update progress')
+                      : t('Install progress')
                   }
                   aria-valuemin={0}
                   aria-valuemax={100}

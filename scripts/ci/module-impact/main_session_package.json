@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "scripts/inspect-session-fork-snapshots.mjs",
+    "scripts/inspect-session-fork-snapshots.test.ts",
     "src/main/session-package/archive.test.ts",
     "src/main/session-package/archive.ts",
     "src/main/session-package/capacity.ts",
@@ -71,7 +73,10 @@
     "src/main/session-package/use-case-catalog.ts",
     "src/main/session-package/use-case-catalog.test.ts",
     "src/main/session-package/use-case-download.ts",
-    "src/main/session-package/use-case-download.test.ts"
+    "src/main/session-package/use-case-download.test.ts",
+    "src/main/session-package/research-films.ts",
+    "src/main/session-package/research-films-contract.ts",
+    "src/main/session-package/research-films.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -85,11 +90,14 @@
     "src/main/session-package/browser-import.ts",
     "src/main/session-package/browser-import-protocol.ts",
     "src/main/session-package/literature-source.ts",
-    "src/main/session-package/use-case-catalog.ts"
+    "src/main/session-package/use-case-catalog.ts",
+    "src/main/session-package/research-films.ts",
+    "src/main/session-package/research-films-contract.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "scripts/inspect-session-fork-snapshots.test.ts",
       "src/main/session-package/archive.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/desktop.test.ts",
@@ -119,7 +127,8 @@
       "src/main/session-package/materialize.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/use-case-catalog.test.ts",
-      "src/main/session-package/use-case-download.test.ts"
+      "src/main/session-package/use-case-download.test.ts",
+      "src/main/session-package/research-films.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

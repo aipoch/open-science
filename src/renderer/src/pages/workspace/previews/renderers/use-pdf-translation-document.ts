@@ -653,6 +653,56 @@ async function verifiedNativePrefixInk(
   )
 }
 
+// A saved native link can split a merged final run. Prove every visible
+// prefix with unchanged ink before accepting the finer PDF.js item boundaries.
+async function verifiedNativeLinkPrefix(
+  before: TextItem[],
+  after: TextItem[],
+  original: TextContent,
+  target: TextContent,
+  originalPage: PDFPageProxy,
+  targetPage: PDFPageProxy,
+  delta: readonly number[]
+): Promise<boolean> {
+  if (!before.length || before.length !== after.length) return false
+  for (let index = 0; index < before.length; index++) {
+    const source = before[index],
+      moved = after[index],
+      sourceStyle = original.styles?.[source.fontName],
+      targetStyle = target.styles?.[moved.fontName],
+      suffix = source.str.slice(moved.str.length)
+    if (
+      !moved.str.trim() ||
+      ![source.width, moved.width].every((width) => Number.isFinite(width) && width > 0) ||
+      (index < before.length - 1
+        ? source.str !== moved.str || Math.abs(source.width - moved.width) >= 0.001
+        : !source.str.startsWith(moved.str) ||
+          !/^(?:\s|[,.;:)\]](?:\s|$))/u.test(suffix) ||
+          moved.width >= source.width) ||
+      !sourceStyle ||
+      !targetStyle ||
+      sourceStyle.fontFamily !== targetStyle.fontFamily ||
+      targetStyle.vertical ||
+      !(['ascent', 'descent'] as const).every(
+        (key) => Math.abs(sourceStyle[key] - targetStyle[key]) < 0.001
+      ) ||
+      source.transform[0] <= 0 ||
+      source.transform[3] <= 0 ||
+      source.transform[1] !== 0 ||
+      source.transform[2] !== 0 ||
+      !source.transform
+        .slice(0, 4)
+        .every((value, i) => Math.abs(value - moved.transform[i]) < 0.001) ||
+      ![4, 5].every(
+        (axis) => Math.abs(moved.transform[axis] - source.transform[axis] - delta[axis - 4]) < 0.05
+      ) ||
+      !(await verifiedNativePrefixInk(source, moved, originalPage, targetPage, sourceStyle))
+    )
+      return false
+  }
+  return true
+}
+
 type PdfTranslationRenderUnit = Readonly<{
   source: string
   fragments: PdfTranslationResults['source']['units'][number]['fragments']
@@ -833,7 +883,7 @@ export function usePdfTranslationDocument(
     originalPages?: {
       original: PDFDocumentProxy
       source: PdfTranslationResults['source']
-      pageNumbers: readonly number[]
+      reasons: ReadonlyMap<number, Pick<PdfTranslationLayoutFailure, 'code' | 'phase'>>
     }
   }>({})
   const generationClock = useRef(0)
@@ -945,10 +995,10 @@ export function usePdfTranslationDocument(
     const runResults = selected
     if (!runResults || !snapshot) return
     const sourceUnits = runResults.source.units.filter((unit) => !unit.sourceOnly)
-    const originalPages = new Set(
+    const originalPages = new Map(
       request.originalPages?.original === original &&
         request.originalPages.source === runResults.source
-        ? request.originalPages.pageNumbers
+        ? request.originalPages.reasons
         : []
     )
     // Preserve joined paragraphs as a whole, including their other pages.
@@ -956,10 +1006,11 @@ export function usePdfTranslationDocument(
     do {
       expanded = false
       for (const unit of sourceUnits) {
-        if (!unit.fragments.some((fragment) => originalPages.has(fragment.pageNumber))) continue
+        const retained = unit.fragments.find((fragment) => originalPages.has(fragment.pageNumber))
+        if (!retained) continue
         for (const fragment of unit.fragments)
           if (!originalPages.has(fragment.pageNumber)) {
-            originalPages.add(fragment.pageNumber)
+            originalPages.set(fragment.pageNumber, originalPages.get(retained.pageNumber)!)
             expanded = true
           }
       }
@@ -1163,8 +1214,7 @@ export function usePdfTranslationDocument(
           for (const { unit } of generatedUnits)
             if (preservedIds.has(unit.id))
               nativeFailures[unit.id] = {
-                code: 'validation-failed',
-                phase: 'verification',
+                ...originalPages.get(unit.fragments[0].pageNumber)!,
                 pageNumbers: [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))],
                 fragmentCount: unit.fragments.length
               }
@@ -1740,7 +1790,11 @@ export function usePdfTranslationDocument(
               const unitIndex = units.indexOf(unit),
                 translation = runSnapshot.units[unitIndex].translation
               const located = (rect: readonly number[], token: string, offset: number): boolean => {
-                const linked = linkedItems(text, rect)
+                const hit = linkedItems(text, rect),
+                  linked =
+                    hit.length > 1 && /^[,，]$/u.test(textKey(hit.at(-1)!.str))
+                      ? hit.slice(0, -1)
+                      : hit
                 if (!linked.length || textKey(linked.map((item) => item.str).join('')) !== token)
                   return false
                 const first = linked[0],
@@ -1765,67 +1819,98 @@ export function usePdfTranslationDocument(
                   )
                 if (owners.length !== 1) return false
                 const owner = owners[0],
-                  row = text.items
-                    .flatMap((item) => {
-                      if (
-                        !('str' in item) ||
-                        !item.str.trim() ||
-                        item.transform[0] <= 0 ||
-                        item.transform[1] !== 0 ||
-                        item.transform[2] !== 0
-                      )
-                        return []
-                      return within(item, owner) ? [item] : []
-                    })
-                    .sort((a, b) =>
+                  candidates = text.items.flatMap((item) => {
+                    if (
+                      !('str' in item) ||
+                      !item.str.trim() ||
+                      item.transform[0] <= 0 ||
+                      item.transform[1] !== 0 ||
+                      item.transform[2] !== 0
+                    )
+                      return []
+                    return within(item, owner) ? [item] : []
+                  }),
+                  local = candidates
+                    .filter(
+                      (item) =>
+                        Math.abs(item.transform[5] - first.transform[5]) <=
+                        Math.min(item.transform[0], first.transform[0]) * 0.3
+                    )
+                    .sort((a, b) => a.transform[4] - b.transform[4]),
+                  rows = [
+                    local,
+                    [...candidates].sort((a, b) =>
                       Math.abs(a.transform[5] - b.transform[5]) >
                       Math.max(a.transform[0], b.transform[0]) * 0.3
                         ? b.transform[5] - a.transform[5]
                         : a.transform[4] - b.transform[4]
                     )
-                let cursor = 0
-                const spans = row.map((item) => {
-                    const start = cursor
-                    cursor += textKey(item.str).length
-                    return { item, start, end: cursor }
-                  }),
-                  line = textKey(row.map((item) => item.str).join('')),
-                  actual = spans.filter((span) => linked.includes(span.item)),
-                  full = translatedPdfBracketedReference(unit.source, translation, token, offset)
-                if (actual.length !== linked.length || !full) return false
-                const block = textKey(full.targetBlock.text),
-                  blockStart =
-                    actual[0].start -
-                    textKey(translation.slice(full.targetBlock.start, full.start)).length
-                if (
-                  blockStart < 0 ||
-                  line.slice(blockStart, blockStart + block.length) !== block ||
-                  actual.at(-1)!.end - actual[0].start !== token.length
-                )
-                  return false
-                const parts = spans.filter(
-                  (span) => span.start < blockStart + block.length && span.end > blockStart
-                )
-                return parts.every((part, index) => {
-                  if (!index) return true
-                  const previous = parts[index - 1].item,
-                    size = Math.max(part.item.transform[0], previous.transform[0]),
-                    rise = previous.transform[5] - part.item.transform[5],
-                    gap = part.item.transform[4] - previous.transform[4] - previous.width
-                  if (Math.abs(rise) <= size * 0.3)
-                    return gap >= -first.transform[0] * 0.05 && gap <= first.transform[0] * 0.5
-                  // A full native citation may wrap at a comma. Keep it in
-                  // this one owned region and prove adjacent row-end/start
-                  // geometry; no intervening text may enter the exact block.
-                  return (
-                    rise >= size * 0.65 &&
-                    rise <= size * 1.6 &&
-                    /[,，[［]$/u.test(textKey(previous.str)) &&
-                    /^[\d\]］]/u.test(textKey(part.item.str)) &&
-                    previous.transform[4] + previous.width >=
-                      (owner.rect.x + owner.rect.width) * target.width - size * 3 &&
-                    Math.abs(part.item.transform[4] - owner.rect.x * target.width) <= size * 0.5
+                  ]
+                // Anchor a single-row citation to its own digits. A pairwise
+                // font-size comparator can place unrelated lowered math inside it.
+                return rows.some((row, rowIndex) => {
+                  let cursor = 0
+                  const spans = row.map((item) => {
+                      const start = cursor
+                      cursor += textKey(item.str).length
+                      return { item, start, end: cursor }
+                    }),
+                    line = textKey(row.map((item) => item.str).join('')),
+                    actual = spans.filter((span) => linked.includes(span.item)),
+                    full = translatedPdfBracketedReference(unit.source, translation, token, offset)
+                  if (actual.length !== linked.length || !full) return false
+                  const block = textKey(full.targetBlock.text),
+                    blockStart =
+                      actual[0].start -
+                      textKey(translation.slice(full.targetBlock.start, full.start)).length
+                  if (
+                    blockStart < 0 ||
+                    line.slice(blockStart, blockStart + block.length) !== block ||
+                    actual.at(-1)!.end - actual[0].start !== token.length
                   )
+                    return false
+                  const parts = spans.filter(
+                    (span) => span.start < blockStart + block.length && span.end > blockStart
+                  )
+                  // A preserved hit area can also cover the following comma.
+                  // It must belong to this exact closed vector, never nearby prose.
+                  if (hit.some((item) => !parts.some((part) => part.item === item))) return false
+                  if (
+                    rowIndex === 0 &&
+                    candidates.some(
+                      (item) =>
+                        !local.includes(item) &&
+                        parts.some(
+                          ({ item: part }) =>
+                            Math.abs(item.transform[5] - part.transform[5]) <
+                              Math.max(item.transform[0], part.transform[0]) * 0.65 &&
+                            item.transform[4] < part.transform[4] + part.width &&
+                            item.transform[4] + item.width > part.transform[4]
+                        )
+                    )
+                  )
+                    return false
+                  return parts.every((part, index) => {
+                    if (!index) return true
+                    const previous = parts[index - 1].item,
+                      size = Math.max(part.item.transform[0], previous.transform[0]),
+                      rise = previous.transform[5] - part.item.transform[5],
+                      gap = part.item.transform[4] - previous.transform[4] - previous.width
+                    if (Math.abs(rise) <= size * 0.3)
+                      return gap >= -first.transform[0] * 0.05 && gap <= first.transform[0] * 0.5
+                    // A full native citation may wrap at a comma. Keep it in
+                    // this one owned region and prove adjacent row-end/start
+                    // geometry; no intervening text may enter the exact block.
+                    return (
+                      rise >= size * 0.65 &&
+                      rise <= size * 1.6 &&
+                      /[,，[［]$/u.test(textKey(previous.str)) &&
+                      /^[\d\]］]/u.test(textKey(part.item.str)) &&
+                      previous.transform[4] + previous.width >=
+                        (owner.rect.x + owner.rect.width) * target.width - size * 3 &&
+                      Math.abs(part.item.transform[4] - owner.rect.x * target.width) <= size * 0.5
+                    )
+                  })
                 })
               }
               const claimed = unit.fragments
@@ -1867,6 +1952,7 @@ export function usePdfTranslationDocument(
                       cursor > nativeSource.targetBlock.start
                     )
                   }),
+                  digitOwners = new Set<TextItem>(),
                   // One merged native line can contain the same complete
                   // citation twice. Prove all linked blocks in that run together;
                   // the full helper keeps their occurrence and numeric ordinals.
@@ -1899,7 +1985,29 @@ export function usePdfTranslationDocument(
                         )
                       )
                     })
-                    return sharedRun
+                    const selected =
+                      sharedRun ||
+                      [...block[0].matchAll(/\d+/gu)].map((part) => part[0]).join(',') ===
+                        [...nativeSource.targetBlock.text.matchAll(/\d+/gu)]
+                          .map((part) => part[0])
+                          .join(',')
+                    if (selected) {
+                      let cursor = 0
+                      for (const item of sourceItems) {
+                        const start = cursor
+                        cursor += 'str' in item ? item.str.length : 0
+                        if (
+                          'str' in item &&
+                          nativeDigits.some(
+                            (digit) =>
+                              start < proof.targetBlock.start + digit.index + digit[0].length &&
+                              cursor > proof.targetBlock.start + digit.index
+                          )
+                        )
+                          digitOwners.add(item)
+                      }
+                    }
+                    return selected
                       ? [...block[0].matchAll(/\d+/gu)].map((token) => ({
                           label: token[0],
                           offset: block.index + token.index,
@@ -1911,14 +2019,22 @@ export function usePdfTranslationDocument(
                     .flatMap((candidate, position) => {
                       if (
                         !linkedItems(originalText!, candidate.rect, true).some((item) =>
-                          owned.includes(item)
+                          digitOwners.has(item)
                         )
                       )
                         return []
-                      const label = linkedText(text, targetAnnotations[position].rect),
-                        targetItems = linkedItems(text, targetAnnotations[position].rect),
+                      const targetItems = linkedItems(text, targetAnnotations[position].rect),
+                        label = textKey(
+                          (targetItems.length > 1 &&
+                          /^[,，]$/u.test(textKey(targetItems.at(-1)!.str))
+                            ? targetItems.slice(0, -1)
+                            : targetItems
+                          )
+                            .map((item) => item.str)
+                            .join('')
+                        ),
                         sourceItem = linkedItems(originalText!, candidate.rect, true).find((item) =>
-                          owned.includes(item)
+                          digitOwners.has(item)
                         )!
                       return tokens.some(
                         (token) =>
@@ -2190,6 +2306,51 @@ export function usePdfTranslationDocument(
                   (start >= labelStart && sourceOffset <= labelStart + sourceLabel.length)
                 )
               })
+            const prefixBefore = linkedItems(originalText, annotation.rect, true),
+              prefixAfter = linkedItems(text, moved.rect),
+              prefixOwners =
+                originalExactLabel &&
+                originalExactLabel !== sourceLabel &&
+                sourceLabel === label &&
+                textKey(prefixAfter.map((item) => item.str).join('')) === label &&
+                sourceLabel.startsWith(originalExactLabel) &&
+                prefixBefore.length > 0 &&
+                prefixBefore.length === prefixAfter.length &&
+                Math.abs(prefixBefore[0].transform[4] - annotation.rect[0]) <= 1 &&
+                Math.abs(
+                  prefixBefore.at(-1)!.transform[4] + prefixAfter.at(-1)!.width - annotation.rect[2]
+                ) <= 1 &&
+                originalRun.startsWith(sourceLabel) &&
+                originalRun.split(sourceLabel).length === 2
+                  ? units.filter(
+                      (unit, unitIndex) =>
+                        !unchanged(unitIndex) &&
+                        textKey(unit.source).split(sourceLabel).length === 2 &&
+                        textKey(runSnapshot.units[unitIndex].translation).split(label).length ===
+                          2 &&
+                        unit.fragments.every((fragment) => fragment.pageNumber === number) &&
+                        prefixBefore.every((item) =>
+                          unit.fragments.some((fragment) =>
+                            fragment.items.some(
+                              (claimed) =>
+                                originalText!.items[claimed.index] === item &&
+                                claimed.text === item.str
+                            )
+                          )
+                        )
+                    )
+                  : [],
+              verifiedPrefix =
+                prefixOwners.length === 1 &&
+                (await verifiedNativeLinkPrefix(
+                  prefixBefore,
+                  prefixAfter,
+                  originalText,
+                  text,
+                  sourcePage,
+                  translatedPage,
+                  [moved.rect[0] - annotation.rect[0], moved.rect[1] - annotation.rect[1]]
+                ))
             const literalLabel = (
               nativeUriLabel ||
               linkedItems(text, moved.rect)
@@ -2696,6 +2857,7 @@ export function usePdfTranslationDocument(
                 (originalExactLabel
                   ? originalExactLabel.normalize('NFKC') !== sourceLabel.normalize('NFKC') &&
                     !partialSourceLabel &&
+                    !verifiedPrefix &&
                     !repeatedNumericLabel
                   : (referenceNumber.test(sourceLabel)
                       ? numericOccurrences !== 1
@@ -2716,6 +2878,7 @@ export function usePdfTranslationDocument(
                 (!verifiedUri || uriOwners.includes(unit)) &&
                 (!verifiedCollective || collectiveOwners.includes(unit)) &&
                 (!verifiedRepeatedDated || repeatedDatedOwners.includes(unit)) &&
+                (!verifiedPrefix || prefixOwners.includes(unit)) &&
                 (!nativeBracketedSources.length || bracketedOwners.includes(unit)) &&
                 textKey(unit.source).includes(sourceLabel) &&
                 textKey(runSnapshot.units[unitIndex].translation).includes(label) &&
@@ -3659,13 +3822,18 @@ export function usePdfTranslationDocument(
         // the original source, then run the same independent verification again.
         // Each page can enter this fallback only once for this source; errors in
         // already-preserved content remain explicit instead of looping forever.
+        const generationFailure = pdfGenerationFailure(error)
+        const failedPage = validating
+          ? validationPage
+          : generationFailure.pageLocal
+            ? generationFailure.pageNumber
+            : undefined
         if (
-          validating &&
           !useArtifact &&
-          validationPage !== undefined &&
-          validationPage >= 1 &&
-          validationPage <= original.numPages &&
-          !originalPages.has(validationPage)
+          failedPage !== undefined &&
+          failedPage >= 1 &&
+          failedPage <= original.numPages &&
+          !originalPages.has(failedPage)
         ) {
           setRequest({
             ...request,
@@ -3673,7 +3841,15 @@ export function usePdfTranslationDocument(
             originalPages: {
               original,
               source: runResults.source,
-              pageNumbers: [...originalPages, validationPage]
+              reasons: new Map(originalPages).set(
+                failedPage,
+                validating
+                  ? { code: 'validation-failed', phase: 'verification' }
+                  : {
+                      code: generationFailure.code as PdfTranslationLayoutFailure['code'],
+                      phase: 'generation'
+                    }
+              )
             }
           })
           return
@@ -3746,12 +3922,17 @@ export function usePdfTranslationDocument(
     }
   }, [admitted, original, artifact, beforeReady, request, useArtifact, selected, snapshot])
   // Batch at page boundaries, never cancel a running generation for incoming paragraphs.
-  // Keep errors explicit so a failed rebuild cannot turn into an automatic retry loop.
+  // A failed early snapshot may be superseded once translation stops. Only
+  // different ready-page content can retry automatically; unchanged errors stay explicit.
   const latestSnapshot = useMemo(
     () => (results ? partialPdfSnapshot(results) : undefined),
     [results]
   )
   useEffect(() => {
+    const recoverNewResults =
+      state.status === 'error' &&
+      !translating &&
+      ['timeout', 'worker-failed'].includes(state.failure.code)
     if (
       !admitted ||
       artifact ||
@@ -3759,8 +3940,7 @@ export function usePdfTranslationDocument(
       !selected ||
       !snapshot ||
       !latestSnapshot ||
-      state.status !== 'ready' ||
-      !canDisplay
+      (!(state.status === 'ready' && canDisplay) && !recoverNewResults)
     )
       return
     const readyPages = new Set(latestSnapshot.readyPages)
@@ -3787,7 +3967,8 @@ export function usePdfTranslationDocument(
     selected,
     snapshot,
     latestSnapshot,
-    state.status,
+    state,
+    translating,
     canDisplay,
     displayed
   ])

@@ -117,7 +117,9 @@ const recoveryCopy = (
         'Open-Science could not safely record the installation. No new installation command was started.'
       )
     case 'wsl_network_mode_unsupported':
-      return t('Set WSL networkingMode to mirrored, shut down WSL, then check again.')
+      return t(
+        'WSL2 Bash requires Windows 11 22H2 or later with mirrored networking. On older Windows, use PowerShell. On supported Windows, enable mirrored networking and restart WSL, then check again.'
+      )
     case 'wsl_workspace_path_unsupported':
     case 'wsl_workspace_unreachable':
     case 'wsl_workspace_not_local':

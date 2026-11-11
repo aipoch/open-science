@@ -67,7 +67,11 @@ export type ChatSession = Omit<
   elicitationEditDrafts?: Record<string, ElicitationEditDraft>
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
+  // Renderer presentation only: this new conversation has not submitted its first prompt.
+  firstPromptDraft?: boolean
   isPending?: boolean
+  // Renderer-only: creation was cancelled or rejected before the first prompt was dispatched.
+  pendingRetryable?: true
   // Renderer-only identity of the durable seed while the optimistic Session is being prepared.
   pendingBindingSessionId?: string
   // Transient presentation hint returned from Main's durable WSL setup binding. It carries no

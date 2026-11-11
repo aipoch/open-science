@@ -18,6 +18,25 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
           // PDF text runs may combine a separator with the following base.
           // Its adjacent upper/lower scripts still belong to that single letter.
           (/^(?:[,;]\s*)?[A-Za-z\p{Script=Greek}]$/u.test(base.text.trim()) ||
+            // A native product run can own a raised index above its lowered
+            // sign. Numeric tiers remain fraction candidates: geometry alone
+            // cannot distinguish those from division after a product.
+            (/^[A-Za-z\p{Script=Greek}](?: [A-Za-z\p{Script=Greek}]){1,3}$/u.test(
+              base.text.trim()
+            ) &&
+              /^\d{1,3}$/u.test(numerator.text.trim()) &&
+              items.some(
+                (lower) =>
+                  lower.i === numerator.i + 1 &&
+                  /^[+−-]$/u.test(lower.text.trim()) &&
+                  Math.abs(lower.fontSize - numerator.fontSize) < bodyFont * 0.05 &&
+                  bodyBaseline - lower.baseline >= bodyFont * 0.2 &&
+                  bodyBaseline - lower.baseline <= bodyFont * 0.7 &&
+                  Math.abs(
+                    lower.bounds[0] + lower.bounds[2] - numerator.bounds[0] - numerator.bounds[2]
+                  ) <
+                    bodyFont * 0.6
+              )) ||
             // A norm's closing delimiter also owns adjacent upper/lower scripts.
             // Require its matching opener and a native variable between them;
             // a lone vertical bar beside a real fraction is not enough.

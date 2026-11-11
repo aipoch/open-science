@@ -71,6 +71,32 @@ describe('PdfAnnotation persistence', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('checks the active turn immediately before inserting a mark and rolls back rejection', async () => {
+    await expect(
+      repository.create(request, () => {
+        throw new Error('cancelled')
+      })
+    ).rejects.toThrow('cancelled')
+    expect(await client.pdfAnnotation.count()).toBe(0)
+    expect(await client.pdfAnnotationSourceBinding.count()).toBe(0)
+    const created = await repository.create({
+      ...request,
+      sessionId: undefined,
+      createdInSessionId: 'session-1'
+    })
+    expect(created.sessionId).toBe('session-1')
+    expect(
+      (
+        await repository.create({
+          ...request,
+          sessionId: undefined,
+          createdInSessionId: 'session-1'
+        })
+      ).id
+    ).toBe(created.id)
+    expect(await client.pdfAnnotation.count()).toBe(1)
+  })
+
   it('preserves creation provenance when a different Session restores or retries a shared note', async () => {
     const original = await repository.create(request)
     await repository.delete({ ...scope, sessionId: 'session-2', id: original.id })

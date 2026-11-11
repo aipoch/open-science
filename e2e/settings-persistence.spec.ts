@@ -5,7 +5,7 @@ import { test } from './fixtures/electron-app'
 import {
   openSettingsPage,
   selectLanguage,
-  openGeneralSettings,
+  openAppearanceSettings,
   setTheme
 } from './fixtures/settings-preferences'
 import { createProjectViaUi } from './fixtures/project'
@@ -50,7 +50,7 @@ test('persists the selected theme after closing settings and relaunching', async
   page = await app.restart()
   await expect(page.locator('html')).toHaveClass(/dark/)
   await expect(page.getByRole('button', { name: /^Theme:/ })).toHaveCount(0)
-  const settings = await openGeneralSettings(page)
+  const settings = await openAppearanceSettings(page)
   await expect(
     settings.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', { name: 'Dark' })
   ).toBeChecked()

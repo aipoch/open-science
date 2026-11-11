@@ -75,7 +75,8 @@ for (const name of plan.builds) {
   await run('npm', ['install', '--no-audit', '--no-fund'], source, name + '-install')
   await run('npm', ['run', 'build'], source, name + '-build')
   await run('npm', ['run', 'typecheck'], source, name + '-typecheck')
-  if (plan.tests.includes(name)) await run('npm', ['test'], source, name + '-test')
+  const sourceTests = plan.tests.includes(name) && !process.argv.includes('--skip-tests')
+  if (sourceTests) await run('npm', ['test'], source, name + '-test')
   // Pack the declared package, never temporary file: dependency coordinates.
   await writeFile(join(source, 'package.json'), JSON.stringify(manifest, null, 2))
   const output = await run(
@@ -89,7 +90,7 @@ for (const name of plan.builds) {
   console.log(
     name +
       ': isolated source install, build, types and npm pack passed' +
-      (plan.tests.includes(name) ? '; tests passed' : '; prerequisite tests not selected')
+      (sourceTests ? '; tests passed' : '; source tests not selected')
   )
 }
 const consumer = join(isolated, 'consumer')

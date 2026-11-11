@@ -36,12 +36,26 @@ import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
+import { harnessConfigSchema } from '../harness-acp/config'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import { SkillMarketplaceService } from '../skill-marketplace/service'
+import { ProviderTransportOwner } from './provider-transport-owner'
 import { SkillCatalogModule } from '../skills/catalog'
 import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
+// Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('./provider-acp-validation', () => ({
+  ProviderAcpValidator: class {
+    validate = vi.fn(async () => ({
+      ok: false,
+      category: 'unknown',
+      message: 'test runtime unavailable'
+    }))
+    dispose = vi.fn(async () => undefined)
+  }
+}))
+
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -345,6 +359,280 @@ afterEach(async () => {
   vi.unstubAllEnvs()
   await makeTreeWritable(storageRoot)
   await rm(storageRoot, { recursive: true, force: true })
+})
+
+describe('SettingsService: harness session ownership', () => {
+  it.each(['imported', 'isolated'] as const)(
+    'uses the %s Codex sign-in for a built-in Agent and fences the old connection after reauthentication',
+    async (mode) => {
+      const userCodexDir = join(storageRoot, 'no-user-codex')
+      const ownedHome = codexSubscriptionStorageDir(storageRoot)
+      let account = 'account-one'
+      const storeLogin = async (directory: string): Promise<void> => {
+        const payload = Buffer.from(
+          JSON.stringify({
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            'https://api.openai.com/auth': { chatgpt_account_id: account }
+          })
+        ).toString('base64url')
+        const jwt = `header.${payload}.signature`
+        await mkdir(directory, { recursive: true })
+        await writeFile(
+          join(directory, 'auth.json'),
+          JSON.stringify({
+            auth_mode: 'chatgpt',
+            tokens: {
+              access_token: jwt,
+              id_token: jwt,
+              account_id: account,
+              refresh_token: 'refresh'
+            },
+            last_refresh: new Date().toISOString()
+          })
+        )
+      }
+      const service = createService(undefined, {
+        userCodexDir,
+        codexAuth: {
+          getStatus: vi.fn(),
+          loginIsolated: async () => {
+            await storeLogin(ownedHome)
+            return { mode: 'isolated', supported: true, authenticated: true }
+          },
+          cancelLogin: vi.fn(),
+          logoutIsolated: vi.fn()
+        }
+      })
+      const upstream = vi.spyOn(mockedNet, 'fetch').mockImplementation(async (_url, init) => {
+        const headers = new Headers(init.headers)
+        expect(headers.get('ChatGPT-Account-Id')).toBe(account)
+        expect(headers.get('authorization')).toMatch(/^Bearer header\./)
+        expect(JSON.parse(init.body)).not.toHaveProperty('max_output_tokens')
+        return new Response('data: {"type":"response.completed","response":{}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      })
+      const backends: Awaited<ReturnType<typeof resolveActiveBackend>>[] = []
+      const open = async () => {
+        const backend = await resolveActiveBackend(service, {
+          includeSkillAndConnectorContext: false
+        })
+        backends.push(backend)
+        const config = harnessConfigSchema.parse(
+          backend.authentication?._meta?.['open-science-agent']
+        )
+        return () =>
+          fetch(config.endpoint, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${config.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: config.model,
+              stream: true,
+              store: false,
+              input: [],
+              max_output_tokens: 128
+            })
+          })
+      }
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        const type = mode === 'imported' ? 'codex-shared' : 'codex-isolated'
+        if (mode === 'imported') await storeLogin(userCodexDir)
+        await service.upsertProvider({ type })
+        if (mode === 'isolated') expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        else {
+          // A fresh imported live token needs no ACP adapter or native runtime for validation.
+          expect(
+            (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+          ).toBe(true)
+          expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(true)
+        }
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        const first = await open()
+        expect(await (await first()).text()).toContain('response.completed')
+        if (mode === 'imported') {
+          await rm(join(userCodexDir, 'auth.json'))
+          await expect(
+            service.upsertProvider({ type, reimportCodexAuthentication: true })
+          ).rejects.toThrow('file-backed Codex credential')
+          expect(await (await first()).text()).toContain('response.completed')
+          expect(upstream).toHaveBeenCalledTimes(2)
+          upstream.mockClear()
+          // Keep the successful-switch assertions identical for both authentication flows.
+          await first()
+        }
+        account = 'account-two'
+        if (mode === 'imported') {
+          await storeLogin(userCodexDir)
+          await service.upsertProvider({ type, reimportCodexAuthentication: true })
+        } else {
+          expect((await service.logoutIsolatedCodex()).ok).toBe(true)
+          expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        }
+        const stale = await first()
+        expect(stale.ok).toBe(false)
+        await stale.body?.cancel()
+        expect(upstream).toHaveBeenCalledTimes(1)
+        const second = await open()
+        expect(await (await second()).text()).toContain('response.completed')
+        expect(upstream).toHaveBeenCalledTimes(2)
+      } finally {
+        await Promise.all(backends.map((backend) => backend.providerTransportLease?.release()))
+        upstream.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it.each(['api-key', 'gateway', 'websocket'] as const)(
+    'keeps %s profiles available to native Codex but unavailable to the built-in Agent',
+    async (kind) => {
+      const status = vi.fn(async () => ({
+        mode: 'isolated' as const,
+        supported: true,
+        authenticated: true
+      }))
+      const service = createService(undefined, {
+        codexAuth: {
+          getStatus: status,
+          loginIsolated: status,
+          logoutIsolated: status,
+          cancelLogin: vi.fn()
+        }
+      })
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        await service.upsertProvider({
+          type: 'codex-isolated',
+          codexTransport: kind === 'websocket' ? 'websocket' : 'auto'
+        })
+        const home = codexSubscriptionStorageDir(storageRoot)
+        const token = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify(
+            kind === 'api-key'
+              ? { auth_mode: 'apikey', OPENAI_API_KEY: 'private-key' }
+              : {
+                  auth_mode: 'chatgpt',
+                  last_refresh: new Date().toISOString(),
+                  tokens: {
+                    access_token: token,
+                    id_token: token,
+                    refresh_token: 'refresh',
+                    account_id: 'account-one'
+                  }
+                }
+          )
+        )
+        if (kind === 'gateway')
+          await writeFile(
+            join(home, 'config.toml'),
+            'model_provider = "gateway"\n[model_providers.gateway]\nbase_url = "https://gateway.example/v1"\nwire_api = "responses"\n'
+          )
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        const validatedAt = (await repository.getSettings()).providers[0].lastValidatedAt
+        status.mockClear()
+        await repository.setAgentFramework('open-science-agent')
+        expect(
+          await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+        ).toMatchObject({
+          ok: false,
+          frameworkIncompatible: true
+        })
+        expect((await repository.getSettings()).providers[0].lastValidatedAt).toBe(validatedAt)
+        expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+        expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(false)
+        expect((await service.getPreflight()).activeProviderReady).toBe(false)
+        await expect(
+          resolveActiveBackend(service, { includeSkillAndConnectorContext: false })
+        ).rejects.toThrow()
+        expect(status).not.toHaveBeenCalled()
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        expect(status).toHaveBeenCalledOnce()
+      } finally {
+        await service.dispose()
+      }
+    }
+  )
+
+  it('binds account edits and service shutdown to live harness sessions', async () => {
+    const releases: ReturnType<typeof vi.fn>[] = []
+    type TransportWithXai = {
+      getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+    }
+    let getXaiOAuthAccessTokenCallback: TransportWithXai['getXaiOAuthAccessToken']
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const getXaiOAuthAccessToken = vi
+      .spyOn(ProviderAccountsModule.prototype, 'getXaiOAuthAccessToken')
+      .mockResolvedValue('xai-token')
+    const acquire = vi
+      .spyOn(ProviderTransportOwner.prototype, 'acquireHarness')
+      .mockImplementation(async function (this: TransportWithXai, target) {
+        getXaiOAuthAccessTokenCallback = this.getXaiOAuthAccessToken
+        const release = vi.fn(async () => undefined)
+        releases.push(release)
+        return {
+          route: {
+            id: String(releases.length),
+            providerId: target.providerId,
+            configRevision: target.configRevision!,
+            model: target.effectiveModel!,
+            protocol: 'chat-completions'
+          },
+          connection: { baseUrl: 'http://127.0.0.1:1234', token: 'fixture' },
+          release
+        }
+      })
+    const service = createService()
+    try {
+      await repository.upsertProvider({
+        id: 'open-science-agent',
+        type: 'custom',
+        name: 'Harness',
+        baseUrl: 'https://fixture.invalid',
+        model: 'm',
+        apiEndpoints: ['chat-completions']
+      })
+      const request = { providerId: 'open-science-agent', model: 'm', maxSteps: 3 }
+      const session = await service.openHarnessSession(request, new AbortController().signal)
+      expect(getXaiOAuthAccessTokenCallback).toBeTypeOf('function')
+      await getXaiOAuthAccessTokenCallback!(true)
+      expect(getXaiOAuthAccessToken).toHaveBeenCalledWith(true)
+      await service.upsertProvider({
+        id: 'open-science-agent',
+        type: 'custom',
+        name: 'Changed',
+        baseUrl: 'https://new.invalid',
+        key: 'fixture-key',
+        model: 'm',
+        apiEndpoints: ['chat-completions']
+      })
+      expect(session.signal.aborted).toBe(true)
+      await session.dispose()
+      const next = await service.openHarnessSession(request, new AbortController().signal)
+      await service.dispose()
+      expect(next.signal.aborted).toBe(true)
+      for (const release of releases) expect(release).toHaveBeenCalledTimes(1)
+      await expect(
+        service.openHarnessSession(request, new AbortController().signal)
+      ).rejects.toThrow('disposed')
+    } finally {
+      await service.dispose()
+      acquire.mockRestore()
+      getXaiOAuthAccessToken.mockRestore()
+    }
+  })
 })
 
 describe('SettingsService: Marketplace installation projection', () => {
@@ -2159,6 +2447,7 @@ describe('SettingsService: validation', () => {
   })
 
   it('probes the route the active framework drives for a multi-route provider', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
     const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
     vi.stubGlobal('fetch', fetchMock)
@@ -2441,7 +2730,18 @@ describe('SettingsService: validation', () => {
 })
 
 describe('SettingsService: preflight & spawn config', () => {
+  it('uses the built-in framework until the user selects another', async () => {
+    const service = createService()
+    for (const expected of ['open-science-agent', 'claude-code'] as const) {
+      if (expected === 'claude-code') await service.setAgentFramework(expected)
+      expect((await service.getSettingsView()).agentFrameworkId).toBe(expected)
+      expect((await service.getPreflight()).agentFrameworkId).toBe(expected)
+      expect((await service.captureActiveAgentBackendSelection()).frameworkId).toBe(expected)
+    }
+  })
+
   it('gates on a detected claude and a validated active provider', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
 
@@ -2471,6 +2771,8 @@ describe('SettingsService: preflight & spawn config', () => {
       opencodeReady: false,
       codexReady: false,
       codebuddyReady: false,
+      piReady: false,
+      openScienceAgentReady: true,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true,
@@ -2578,6 +2880,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('shares one in-flight shared Claude status check across concurrent preflights', async () => {
+    await repository.setAgentFramework('claude-code')
     let resolveStatus:
       ((status: { supported: boolean; authenticated: boolean }) => void) | undefined
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
@@ -2616,6 +2919,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('does not cache a shared Claude status that resolves after login invalidation', async () => {
+    await repository.setAgentFramework('claude-code')
     let resolveStaleStatus:
       ((status: { supported: boolean; authenticated: boolean }) => void) | undefined
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
@@ -2655,6 +2959,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('invalidates a stale shared Claude status after browser login', async () => {
+    await repository.setAgentFramework('claude-code')
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
       getStatus: vi
         .fn()
@@ -2684,6 +2989,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('reuses an explicit shared Claude status check in the next preflight', async () => {
+    await repository.setAgentFramework('claude-code')
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
       getStatus: vi.fn().mockResolvedValue({ supported: true, authenticated: true }),
       loginShared: vi.fn(),
@@ -2711,6 +3017,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('does not reuse an authenticated shared Claude cache after app disconnect', async () => {
+    await repository.setAgentFramework('claude-code')
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
       getStatus: vi
         .fn()
@@ -2742,6 +3049,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('does not report claude ready when the recorded binary exists but fails --version', async () => {
+    await repository.setAgentFramework('claude-code')
     // Executable-but-corrupt runtime: execPath is a real file (X_OK passes) yet `--version` fails.
     // Preflight must validate via --version like the env check, so this must NOT pass as ready.
     const service = createService({ found: false })
@@ -3966,6 +4274,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
 
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4002,6 +4311,7 @@ describe('SettingsService: preflight & spawn config', () => {
   })
 
   it('does not inject WebFetch preflight settings into isolated Claude sessions', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
     const { encryptKey, maskKey } = await import('./crypto.js')
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4101,6 +4411,7 @@ describe('SettingsService: official vendors', () => {
   })
 
   it('builds spawn env from the registry base URL and the active model', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
@@ -4225,6 +4536,7 @@ describe('SettingsService: official vendors', () => {
   })
 
   it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
@@ -4383,24 +4695,21 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek flash through the native Responses route under Codex', async () => {
+  it('probes DeepSeek flash aliases through the Chat Completions route under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
-    const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
+    const fetchMock = vi.fn().mockResolvedValue(validBridgeToolCallResponse())
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await service.validateProvider({
       draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds', model: 'deepseek-v4-flash' }
     })
-
     expect(result).toMatchObject({ ok: true, category: 'ok' })
-    // deepseek-v4-flash supports the native Responses API, so the probe must hit /responses with
-    // the namespace compatibility contract instead of the Chat Completions bridge.
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       model: 'deepseek-v4-flash',
       stream: true,
-      tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
+      tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
     })
   })
 
@@ -4947,6 +5256,7 @@ describe('SettingsService: skills', () => {
   })
 
   it('prepares disabled source documents without granting Main or mutating stored settings', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = await createSkillService()
 
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -5013,6 +5323,7 @@ describe('SettingsService: skills', () => {
   })
 
   it('keeps the shared Claude profile private while exposing only canonical Skill identities', async () => {
+    await repository.setAgentFramework('claude-code')
     const userClaudeDir = join(storageRoot, 'shared-claude')
     const userSkillDir = join(userClaudeDir, 'skills', 'os-user-owned')
     const userConnectorDir = join(userClaudeDir, 'skills', 'mcp-pubmed')
@@ -5108,6 +5419,7 @@ describe('SettingsService: skills', () => {
   })
 
   it('injects the selected shared Claude model context window into the spawn config', async () => {
+    await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-8' })
@@ -5478,6 +5790,21 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('keeps the reversible authentication barrier behind the settings facade', async () => {
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const lease = { settled: Promise.resolve(), release: vi.fn() }
+    const quiesce = vi
+      .spyOn(ProviderAccountsModule.prototype, 'quiesceAuthentication')
+      .mockReturnValue(lease)
+    const service = createService()
+    try {
+      expect(service.quiesceAuthentication()).toBe(lease)
+      expect(quiesce).toHaveBeenCalledOnce()
+    } finally {
+      quiesce.mockRestore()
+      await service.dispose()
+    }
+  })
   it('drains authentication cleanup before reporting an installation disposal failure', async () => {
     const { AgentRuntimeManager } = await import('./agent-runtime-manager')
     const { ProviderAccountsModule } = await import('./provider-accounts')
@@ -5778,6 +6105,7 @@ describe('detectClaude hardening', () => {
 
 describe('checkEnvironment', () => {
   it('keeps a cached executable that still runs when a GUI PATH cannot rediscover it', async () => {
+    await repository.setAgentFramework('claude-code')
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const service = new SettingsService({
       repository,
@@ -5800,6 +6128,7 @@ describe('checkEnvironment', () => {
   })
 
   it('does not overwrite a healthy recorded executable with a freshly detected PATH entry', async () => {
+    await repository.setAgentFramework('claude-code')
     // Pinned platform is 'linux', so use posix literals; a host join() would splice a win32 drive
     // letter into PATH and be mis-split on ':' by the posix delimiter.
     const other = '/other-bin/claude'
@@ -5827,6 +6156,7 @@ describe('checkEnvironment', () => {
   })
 
   it('re-detects when the recorded executable no longer reports a version', async () => {
+    await repository.setAgentFramework('claude-code')
     // Pinned platform is 'linux', so use posix literals (see the note above about PATH splitting).
     const stale = '/stale/claude'
     const found = '/found-bin/claude'
@@ -5864,6 +6194,7 @@ describe('checkEnvironment', () => {
 
     const agentRows = result.checks.filter((check) => check.id === 'agent')
     expect(agentRows.map((row) => row.label)).toEqual([
+      'Open-Science Agent runtime',
       'Claude Code runtime',
       'OpenCode runtime',
       'Codex native CLI',
@@ -5871,6 +6202,7 @@ describe('checkEnvironment', () => {
       'CodeBuddy runtime'
     ])
     expect(agentRows.map((row) => row.status)).toEqual([
+      'passed',
       'passed',
       'passed',
       'warning',
@@ -5910,6 +6242,7 @@ describe('checkEnvironment', () => {
 
     const agentRows = result.checks.filter((check) => check.id === 'agent')
     expect(agentRows.map((row) => `${row.label}:${row.status}`)).toEqual([
+      'Open-Science Agent runtime:passed',
       'Claude Code runtime:passed',
       'OpenCode runtime:failed',
       'Codex native CLI:warning',
@@ -5936,7 +6269,9 @@ describe('SettingsService: managed-runtime flags', () => {
       { id: 'claude-code', supportsDelegatedWork: true },
       { id: 'opencode', supportsDelegatedWork: true },
       { id: 'codex', supportsDelegatedWork: true },
-      { id: 'codebuddy', supportsDelegatedWork: true }
+      { id: 'codebuddy', supportsDelegatedWork: true },
+      { id: 'pi', supportsDelegatedWork: true },
+      { id: 'open-science-agent', supportsDelegatedWork: true }
     ])
   })
 
@@ -6722,7 +7057,7 @@ describe('SettingsService: Reviewer model', () => {
 
     expect(admission.model).toBe('reviewer-model')
     expect(admission.fixedTarget).toEqual({
-      frameworkId: 'claude-code',
+      frameworkId: 'open-science-agent',
       providerId: provider.id,
       model: { kind: 'required', id: 'reviewer-model' },
       reasoningEffort: 'high'
@@ -6884,7 +7219,7 @@ describe('SettingsService: Vision model', () => {
       visionModel: configuration
     })
     await expect(service.admitVisionModel()).resolves.toEqual({
-      frameworkId: 'claude-code',
+      frameworkId: 'open-science-agent',
       providerId: configuration.providerId,
       model: { kind: 'required', id: 'vision-model' },
       reasoningEffort: 'high',
@@ -8809,6 +9144,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('logoutClaudeShared disconnects locally without logging out the global CLI profile', async () => {
+    await repository.setAgentFramework('claude-code')
     const globalLogout = vi.fn().mockResolvedValue({ supported: true, authenticated: false })
     const auth = { ...sharedAuth(), logoutShared: globalLogout }
     const service = createService(undefined, {

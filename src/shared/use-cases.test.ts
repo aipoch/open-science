@@ -30,3 +30,22 @@ it('rejects traversal, duplicate identities and invalid archive metadata', () =>
   ])
     expect(() => parseUseCases(value)).toThrow()
 })
+
+it('preserves published categories and introduction assets for in-app browsing', () => {
+  expect(
+    parseUseCases([
+      {
+        ...item,
+        catalog: 'Science',
+        catalog_name: 'science',
+        introduction: { file_name: 'Research intro.md' }
+      }
+    ])[0]
+  ).toMatchObject({
+    category: 'Science',
+    categoryKey: 'science',
+    introductionUrl:
+      'https://statics.aipoch.com/open-science/usecases/gold-vs-bitcoin/Research%20intro.md'
+  })
+  expect(() => parseUseCases([{ ...item, introduction: { file_name: '../private.md' } }])).toThrow()
+})

@@ -2,7 +2,7 @@
   "name": "open-science",
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
-  "version": "1.0.5",
+  "version": "1.2.1",
   "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
@@ -29,8 +29,8 @@
     "test:specialist-recovery": "vitest run src/main/acp/specialist-switch-recovery.integration.test.ts src/main/acp/runtime.test.ts src/main/acp/approved-handoff-outcome.integration.test.ts src/main/agents/claude-code-handoff.test.ts src/main/agents/production-completion-handoff.test.ts src/main/agents/completion-handoff-lifecycle.test.ts src/main/specialist/session-reconfiguration.test.ts src/renderer/src/pages/workspace/workspace-session-controller.test.ts src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx --maxWorkers=1",
     "test:e2e:journey": "playwright test e2e/brand-storage.spec.ts e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/windows-window-system.spec.ts e2e/wsl-setup-conversation.spec.ts e2e/session-package.spec.ts e2e/session-package-drop.spec.ts e2e/session-fork.spec.ts e2e/session-diagnostics.spec.ts e2e/specialist-marketplace-redirect.spec.ts e2e/home-use-cases.spec.ts",
     "test:e2e:wsl-setup": "playwright test e2e/wsl-setup-conversation.spec.ts",
-    "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/message-tool-layout-stability.spec.ts e2e/message-tool-collapse-scroll.spec.ts e2e/workspace-project-switcher.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts e2e/office-spreadsheet-search.spec.ts",
-    "test:e2e:regressions": "playwright test e2e/desktop-composer-draft-restart.spec.ts e2e/desktop-runtime-lifetime.spec.ts e2e/desktop-runtime-backpressure.spec.ts e2e/desktop-runtime-event-delivery.spec.ts e2e/desktop-runtime-recovery.spec.ts e2e/desktop-runtime-restart.spec.ts e2e/desktop-runtime-preview-recovery.spec.ts e2e/desktop-runtime-stop.spec.ts e2e/pdf-annotations.spec.ts e2e/pdf-translation-pair.spec.ts e2e/pdf-translation-preparation.spec.ts e2e/pdf-translation-recovery.spec.ts e2e/pdf-notebook-capacity.spec.ts e2e/background-result-delivery.spec.ts e2e/renderer-startup-dependencies.spec.ts e2e/interaction-restart.spec.ts e2e/interrupted-turn-recovery.spec.ts e2e/resume-agent-recovery.spec.ts e2e/specialist-switch-recovery.spec.ts e2e/session-plan-recovery.spec.ts e2e/auto-review-stop-resume.spec.ts e2e/provider-connection-validation.spec.ts e2e/global-search.spec.ts e2e/search-file-navigation.spec.ts e2e/transcript-capacity.spec.ts e2e/session-residency-capacity.spec.ts e2e/compute-execution-mode.spec.ts e2e/find-overlay.spec.ts e2e/literature-client-sync.spec.ts e2e/journal-attributes.spec.ts e2e/literature-smart-collections.spec.ts e2e/session-client-consistency.spec.ts e2e/runtime-writer-browser.spec.ts e2e/mermaid-block.spec.ts e2e/highlight-style-isolation.spec.ts e2e/message-queue-presentation-gate.spec.ts e2e/mobile-message-handoff.spec.ts e2e/message-scroll-anchor.spec.ts e2e/message-scroll-reanchor.spec.ts e2e/message-scroll-release.spec.ts e2e/message-tool-order.spec.ts e2e/preview-context-menu.spec.ts e2e/source-preview-storage.spec.ts e2e/reproducibility-preview.spec.ts e2e/skill-permission-card.spec.ts e2e/window-presentation.spec.ts e2e/ux-quality.spec.ts e2e/side-chat-admission.spec.ts e2e/artifact-task-lifecycle.spec.ts e2e/artifact-resume-finalization.spec.ts e2e/replay-stage.spec.ts e2e/session-replay.spec.ts e2e/session-replay-concurrency.spec.ts e2e/session-replay-navigation.spec.ts e2e/session-replay-notebook.spec.ts e2e/session-turn-outcome.spec.ts e2e/pdf-translation-editions.spec.ts e2e/pdf-workspace-translation.spec.ts e2e/pdf-translation-local.spec.ts e2e/pdf-translation-performance.spec.ts e2e/runtime-approval.spec.ts e2e/session-wait-status.spec.ts e2e/settings-error-transport.spec.ts e2e/desktop-runtime-startup.spec.ts e2e/desktop-runtime-native-relaunch.spec.ts e2e/runtime-update-ui-acceptance.spec.ts e2e/local-service-lifecycle.spec.ts",
+    "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/message-tool-layout-stability.spec.ts e2e/message-tool-collapse-scroll.spec.ts e2e/workspace-project-switcher.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts e2e/office-spreadsheet-search.spec.ts e2e/markdown-publication-policy.spec.ts e2e/session-data-file-links.spec.ts",
+    "test:e2e:regressions": "playwright test e2e/prompt-optimization.spec.ts e2e/desktop-composer-draft-restart.spec.ts e2e/desktop-runtime-lifetime.spec.ts e2e/desktop-runtime-backpressure.spec.ts e2e/desktop-runtime-event-delivery.spec.ts e2e/desktop-runtime-recovery.spec.ts e2e/desktop-runtime-restart.spec.ts e2e/desktop-runtime-preview-recovery.spec.ts e2e/desktop-runtime-stop.spec.ts e2e/opencode-first-turn-stop.spec.ts e2e/opencode-classification-close.spec.ts e2e/session-storage-recovery.spec.ts e2e/pdf-annotations.spec.ts e2e/pdf-translation-pair.spec.ts e2e/pdf-translation-preparation.spec.ts e2e/pdf-translation-recovery.spec.ts e2e/pdf-notebook-capacity.spec.ts e2e/background-result-delivery.spec.ts e2e/renderer-startup-dependencies.spec.ts e2e/interaction-restart.spec.ts e2e/interrupted-turn-recovery.spec.ts e2e/resume-agent-recovery.spec.ts e2e/specialist-switch-recovery.spec.ts e2e/session-plan-recovery.spec.ts e2e/auto-review-stop-resume.spec.ts e2e/provider-connection-validation.spec.ts e2e/global-search.spec.ts e2e/search-file-navigation.spec.ts e2e/transcript-capacity.spec.ts e2e/session-residency-capacity.spec.ts e2e/compute-execution-mode.spec.ts e2e/find-overlay.spec.ts e2e/literature-client-sync.spec.ts e2e/journal-attributes.spec.ts e2e/literature-smart-collections.spec.ts e2e/session-client-consistency.spec.ts e2e/runtime-writer-browser.spec.ts e2e/mermaid-block.spec.ts e2e/highlight-style-isolation.spec.ts e2e/message-queue-presentation-gate.spec.ts e2e/mobile-message-handoff.spec.ts e2e/message-scroll-anchor.spec.ts e2e/message-scroll-reanchor.spec.ts e2e/message-scroll-release.spec.ts e2e/message-tool-order.spec.ts e2e/preview-context-menu.spec.ts e2e/source-preview-storage.spec.ts e2e/reproducibility-preview.spec.ts e2e/skill-permission-card.spec.ts e2e/window-presentation.spec.ts e2e/ux-quality.spec.ts e2e/side-chat-admission.spec.ts e2e/artifact-task-lifecycle.spec.ts e2e/artifact-resume-finalization.spec.ts e2e/replay-stage.spec.ts e2e/session-replay.spec.ts e2e/session-replay-concurrency.spec.ts e2e/session-replay-navigation.spec.ts e2e/session-replay-notebook.spec.ts e2e/session-turn-outcome.spec.ts e2e/pdf-translation-editions.spec.ts e2e/pdf-workspace-translation.spec.ts e2e/pdf-translation-local.spec.ts e2e/pdf-translation-performance.spec.ts e2e/runtime-approval.spec.ts e2e/network-destination-approval.spec.ts e2e/pi-harness.spec.ts e2e/builtin-harness.spec.ts e2e/session-wait-status.spec.ts e2e/settings-error-transport.spec.ts e2e/desktop-runtime-startup.spec.ts e2e/desktop-runtime-native-relaunch.spec.ts e2e/runtime-update-ui-acceptance.spec.ts e2e/local-service-lifecycle.spec.ts",
     "test:e2e:delegation": "playwright test e2e/subagent-model-release-gate.spec.ts e2e/subagent-release-gate.spec.ts e2e/delegation-resume.spec.ts e2e/delegation-cold-recovery.spec.ts",
     "test:e2e:accessibility": "playwright test e2e/accessibility.spec.ts",
     "test:e2e:accessibility:signal": "node scripts/ci/run-accessibility-e2e.mjs",
@@ -77,9 +77,9 @@
     "build:backend": "npm run build:packages && npm run build:backend:compiled",
     "stage:backend": "npm run build:packages -- --clean && npm run build:backend:compiled && npm run build:web:compiled && node scripts/stage-backend.mjs",
     "pack:backend": "npm run stage:backend && npm pack ./out/standalone --pack-destination out",
-    "build:backend-native": "node scripts/native-components.mjs",
+    "build:backend-native": "node --disable-warning=UNDICI-EHPA scripts/native-components.mjs",
     "build:native-source": "node scripts/produce-native-components.mjs build",
-    "stage:node-runtime": "node scripts/stage-node-runtime.mjs",
+    "stage:node-runtime": "node --disable-warning=UNDICI-EHPA scripts/stage-node-runtime.mjs",
     "publish:npm-release": "node scripts/publish-npm-release.mjs",
     "stage:npm-release": "node scripts/stage-npm-release.mjs",
     "test:npm-installed": "node scripts/test-npm-installed.mjs",
@@ -101,12 +101,12 @@
     "build:notebook-analysis": "node scripts/build-dev-packages.mjs --packages=notebook-syntax,notebook-code-risk,notebook-analysis",
     "check:notebook-packages": "node scripts/check-notebook-packages.mjs",
     "build:packages:dev": "npm run build:packages",
-    "build:backend:dev": "node scripts/build-notebook-host.mjs && npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs",
+    "build:backend:dev": "node scripts/build-pi-acp.mjs && node scripts/build-notebook-host.mjs && npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs",
     "build:literature-packages": "node scripts/build-dev-packages.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "typecheck:compiled": "npm run typecheck:node:compiled && npm run typecheck:web:compiled",
     "build:web:compiled": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
-    "build:backend:compiled": "npm run build:backend-native && node scripts/build-backend.mjs",
+    "build:backend:compiled": "node scripts/build-pi-acp.mjs && npm run build:backend-native && node scripts/build-backend.mjs",
     "check:packages": "node scripts/check-packages.mjs",
     "check:package-isolation": "node scripts/check-package-isolation.mjs",
     "build:environment": "node scripts/build-dev-packages.mjs --packages=environment",
@@ -121,7 +121,11 @@
     "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
     "check:test-impact-package": "node scripts/check-test-impact-package.mjs",
-    "check:providers-package": "node scripts/check-providers-package.mjs"
+    "check:providers-package": "node scripts/check-providers-package.mjs",
+    "build:ocr": "node scripts/ocr/build.mjs",
+    "check:agent-harness-package": "node scripts/check-agent-harness-package.mjs",
+    "harness:smoke": "npm run build:packages && node scripts/agent-harness-smoke.mjs",
+    "check:agent-harness-standalone": "node scripts/agent-harness-acceptance.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -136,7 +140,6 @@
     "@bokuweb/zstd-wasm": "^0.0.27",
     "@electron-toolkit/utils": "^4.0.0",
     "@embedpdf/pdfium": "2.15.1",
-    "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@napi-rs/canvas": "0.1.100",
     "@peculiar/x509": "2.1.0",
@@ -150,6 +153,7 @@
     "fflate": "0.8.3",
     "fontkit": "2.0.4",
     "i18next": "^25.10.10",
+    "ipaddr.js": "1.9.1",
     "js-tiktoken": "^1.0.21",
     "js-yaml": "^4.1.0",
     "marked": "^17.0.6",
@@ -169,7 +173,7 @@
     "tiktoken": "1.0.22",
     "undici": "6.29.1",
     "ws": "^8.22.0",
-    "zod": "^4.6.5",
+    "zod": "^4.6.6",
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client",
     "@aipoch/diagnostics": "file:packages/diagnostics",
     "@aipoch/pdf-structure": "file:packages/pdf-structure",
@@ -190,24 +194,33 @@
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
     "@aipoch/literature-reading": "file:packages/literature-reading",
-    "@aipoch/providers": "file:packages/providers"
+    "@aipoch/providers": "file:packages/providers",
+    "@aipoch/research-film": "file:packages/research-film",
+    "@aipoch/agent-harness": "file:packages/agent-harness"
   },
   "overrides": {
-    "@huggingface/transformers": {
-      "sharp": "$sharp"
-    },
-    "onnxruntime-node@1.24.3": {
-      "adm-zip": "0.6.1"
-    },
     "@file-viewer/core@3.0.3": {
-      "dompurify": "3.4.16"
+      "dompurify": "3.4.17"
     },
     "@prisma/config@6.19.3": {
       "deepmerge-ts": "8.0.2"
+    },
+    "@tailwindcss/typography": {
+      "postcss-selector-parser": "^6.1.5"
     }
   },
   "devDependencies": {
     "@aiden0z/pptx-renderer": "1.2.4",
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/chi_tra": "1.0.0",
+    "@tesseract.js-data/deu": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/fra": "1.0.0",
+    "@tesseract.js-data/jpn": "1.0.0",
+    "@tesseract.js-data/kor": "1.0.0",
+    "@tesseract.js-data/rus": "1.0.0",
+    "@tesseract.js-data/spa": "1.0.0",
+    "tesseract.js": "6.0.1",
     "@anthropic-ai/claude-agent-sdk": "0.3.232",
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
@@ -235,14 +248,14 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "3dmol": "^2.5.5",
     "axe-core": "^4.12.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "decode-named-character-reference": "^1.3.0",
     "docx-preview": "0.4.0",
-    "electron": "^43.7.5",
+    "electron": "^43.8.1",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "esbuild": "0.25.12",
@@ -277,8 +290,8 @@
     "typescript": "^5.9.3",
     "typescript-native": "npm:typescript@7.0.2",
     "unified": "^11.0.5",
-    "vite": "^7.2.6",
-    "vitest": "^4.1.11",
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12",
     "zustand": "^5.0.14",
     "@aipoch/test-impact": "file:packages/test-impact"
   }

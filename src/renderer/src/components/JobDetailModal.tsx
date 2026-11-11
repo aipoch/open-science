@@ -5,7 +5,9 @@ import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
+import { isComputeJobCancelled } from '@aipoch/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { StagedResourceCleanupButton } from '@/components/StagedResourceCleanupButton'
 import { Button } from '@/components/ui/button'
 import {
   dialogOverlayClassName,
@@ -14,6 +16,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn, formatByteSize } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
+import { ComputeJobOutputs } from '@/components/ComputeJobOutputs'
 import { JobTerminalOutput } from './JobTerminalOutput'
 import { ErrorNotice } from './error-notice'
 import { formatDuration, isJobElapsedLive, jobElapsedMs } from './remote-job-badge-utils'
@@ -88,6 +91,7 @@ function SessionJobsList({
                     <JobStatusBadge
                       status={job.status}
                       cancellationStatus={job.cancellation_status}
+                      errorCode={job.error_code}
                     />
                   </div>
                 </div>
@@ -117,15 +121,28 @@ type ActiveTab = 'stdout' | 'stderr'
 type JobDetailViewProps = {
   job: JobSummary
   onBack: () => void
+  onOpened: () => void
   onOpenFileBrowser: (path: string, providerId: string) => void
 }
 
-function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): React.JSX.Element {
+function JobDetailView({
+  job,
+  onBack,
+  onOpened,
+  onOpenFileBrowser
+}: JobDetailViewProps): React.JSX.Element {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<ActiveTab>('stdout')
 
   // Pull latest data from the store on every render (store subscribes to compute:job-updated).
   const latestJob = useSessionJobStore((s) => s.jobsById.get(job.job_id)) ?? job
+  const { remote_workdir: workdir, execution_mode: mode, provider_id: providerId } = latestJob
+  const sshWorkdir =
+    providerId.startsWith('ssh:') &&
+    providerId.length > 4 &&
+    (mode === undefined || mode === 'direct_ssh' || mode === 'slurm')
+      ? workdir
+      : undefined
   const hydrateJobs = useSessionJobStore((s) => s.hydrate)
   const loadError = useSessionJobStore((s) => s.loadErrorBySession.get(job.session_id))
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -151,11 +168,21 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
   const isRunning = isJobElapsedLive(latestJob)
+  const isCancelled = isComputeJobCancelled(latestJob)
   const isActive =
-    latestJob.status === 'queued' ||
-    latestJob.status === 'submitted' ||
-    latestJob.status === 'running'
+    !isCancelled &&
+    (latestJob.status === 'queued' ||
+      latestJob.status === 'submitted' ||
+      latestJob.status === 'running')
   const isCancelling = latestJob.cancellation_status === 'cancelling'
+  const isStatusUnavailable =
+    latestJob.status === 'error' && latestJob.error_code === 'job_status_unavailable'
+  const hasCancellationFailure =
+    latestJob.cancellation_status === 'failed' && (isActive || isStatusUnavailable)
+  const cancellationFailureTitle =
+    latestJob.cancellation_error?.code === 'cancel_confirmation_failed'
+      ? t('Unable to confirm cancellation')
+      : t('Cancellation failed')
   const cancelJob = useCallback(async (): Promise<void> => {
     if (!latestJob.project_id) return
     setIsCancellingRequest(true)
@@ -253,7 +280,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         >
           {t('Refresh')}
         </Button>
-        {isActive && latestJob.cancellation_status !== 'cancelled' ? (
+        {isActive ? (
           <Button
             type="button"
             variant="outline"
@@ -265,9 +292,23 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
             {isCancelling || isCancellingRequest ? t('Cancelling') : t('Cancel')}
           </Button>
         ) : null}
+        {latestJob.manualStagedCleanup && latestJob.project_id && (
+          <StagedResourceCleanupButton
+            key={latestJob.job_id}
+            scope={{
+              jobId: latestJob.job_id,
+              providerId,
+              projectId: latestJob.project_id,
+              sessionId: latestJob.session_id
+            }}
+            resource={latestJob.manualStagedCleanup}
+            onCleaned={() => void refreshJob()}
+          />
+        )}
         <JobStatusBadge
           status={latestJob.status}
           cancellationStatus={latestJob.cancellation_status}
+          errorCode={latestJob.error_code}
         />
       </div>
 
@@ -280,7 +321,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         <MetaRow
           label={t('Execution result')}
           value={
-            latestJob.cancellation_status === 'cancelled'
+            isCancelled
               ? t('Cancelled')
               : latestJob.cancellation_status === 'cancelling'
                 ? t('Cancelling')
@@ -303,7 +344,9 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
           label={t('Result collection')}
           value={
             latestJob.harvested_at === undefined
-              ? t('Results pending')
+              ? isCancelled || latestJob.status === 'error'
+                ? t('Not collected')
+                : t('Results pending')
               : latestJob.harvest_error
                 ? t('Collection finished with errors')
                 : t('Results collected')
@@ -322,7 +365,9 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
                     ? t('Analyzing')
                     : latestJob.result_delivery_path
                       ? t('Managed by result delivery')
-                      : t('Waiting')
+                      : isCancelled || latestJob.status === 'error'
+                        ? t('Not scheduled')
+                        : t('Waiting')
           }
         />
         <MetaRow
@@ -332,13 +377,8 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         <MetaRow label={t('Runtime', { context: 'duration' })} value={runtimeDisplay()} />
         <MetaRow
           label={t('Remote workdir')}
-          value={latestJob.remote_workdir ?? '—'}
-          isLink={!!latestJob.remote_workdir}
-          onLinkClick={
-            latestJob.remote_workdir
-              ? () => onOpenFileBrowser(latestJob.remote_workdir!, latestJob.provider_id)
-              : undefined
-          }
+          value={workdir ?? '—'}
+          onLinkClick={sshWorkdir ? () => onOpenFileBrowser(sshWorkdir, providerId) : undefined}
         />
         {/* Job ID spans full width (design.md: mono, break-all) */}
         <div className="col-span-2 flex items-baseline gap-2 border-b border-border px-4 py-1.5">
@@ -402,6 +442,52 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       ) : null}
 
+      {isStatusUnavailable || hasCancellationFailure ? (
+        <div
+          role="alert"
+          className="flex justify-center border-b border-border p-5"
+          data-testid={isStatusUnavailable ? 'job-status-unavailable' : 'job-cancellation-failed'}
+        >
+          <ErrorNotice
+            icon={TriangleAlert}
+            tone={isStatusUnavailable ? 'red' : 'amber'}
+            title={isStatusUnavailable ? t('Unable to get job status') : cancellationFailureTitle}
+            description={
+              isStatusUnavailable
+                ? t(
+                    'The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.'
+                  )
+                : t('The cancellation attempt ended. The job is still being tracked.')
+            }
+            content={
+              isStatusUnavailable && hasCancellationFailure ? (
+                <p>{cancellationFailureTitle}</p>
+              ) : undefined
+            }
+            errorCode={
+              isStatusUnavailable
+                ? [
+                    latestJob.error_message,
+                    hasCancellationFailure ? latestJob.cancellation_error?.message : undefined
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n') || undefined
+                : latestJob.cancellation_error?.message
+            }
+            diagnosticsLabel={t('Diagnostics')}
+            primaryButton={
+              isActive
+                ? {
+                    label: t('Retry'),
+                    onClick: () => void cancelJob(),
+                    loading: isCancellingRequest
+                  }
+                : undefined
+            }
+          />
+        </div>
+      ) : null}
+
       {loadError ? (
         <div role="alert" className="flex justify-center border-b border-border p-5">
           <ErrorNotice
@@ -417,7 +503,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       ) : null}
 
-      {latestJob.last_poll_error ? (
+      {latestJob.last_poll_error && !isStatusUnavailable ? (
         <div className="border-b border-border p-3 text-sm" role="status">
           {latestJob.last_poll_error.startsWith('slurm_pending')
             ? t('Waiting in the Slurm queue.')
@@ -469,6 +555,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
           {t('Unable to retry collection. Refresh the job and check the connection.')}
         </p>
       ) : null}
+      <ComputeJobOutputs job={latestJob} onOpened={onOpened} />
       {latestJob.left_on_remote?.length ? (
         <details className="border-b border-border p-3 text-sm">
           <summary>{t('Files left on remote')}</summary>
@@ -515,15 +602,14 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 type MetaRowProps = {
   label: string
   value: string
-  isLink?: boolean
   onLinkClick?: () => void
 }
 
-function MetaRow({ label, value, isLink, onLinkClick }: MetaRowProps): React.JSX.Element {
+function MetaRow({ label, value, onLinkClick }: MetaRowProps): React.JSX.Element {
   return (
     <div className="flex items-baseline gap-2 border-b border-border px-4 py-1.5">
       <span className="min-w-[54px] shrink-0 text-[11px] text-muted-foreground">{label}</span>
-      {isLink && onLinkClick ? (
+      {onLinkClick ? (
         <button
           type="button"
           className="flex items-center gap-1 text-[12.5px] text-secondary-foreground hover:underline"
@@ -660,6 +746,7 @@ export function JobDetailModal({
               <JobDetailView
                 job={view.job}
                 onBack={handleBack}
+                onOpened={onClose}
                 onOpenFileBrowser={handleOpenFileBrowser}
               />
             )}

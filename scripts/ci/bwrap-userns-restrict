@@ -1,0 +1,41 @@
+# This profile allows bubblewrap to create the namespaces required by the
+# Linux isolation checks while stripping capabilities from sandbox children.
+abi <abi/5.0>,
+
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(attach_disconnected,mediate_deleted) {
+  allow capability,
+  allow file rwlkm /{**,},
+  allow network,
+  allow unix,
+  allow ptrace,
+  allow signal,
+  allow mqueue,
+  allow io_uring,
+  allow userns,
+  allow mount,
+  allow umount,
+  allow pivot_root,
+  allow dbus,
+  allow pix /** -> &bwrap//&unpriv_bwrap,
+  include if exists <local/bwrap-userns-restrict>
+}
+
+profile unpriv_bwrap flags=(attach_disconnected,mediate_deleted) {
+  allow file rwlkm /{**,},
+  allow network,
+  allow unix,
+  allow ptrace,
+  allow signal,
+  allow mqueue,
+  allow io_uring,
+  allow userns,
+  allow mount,
+  allow umount,
+  allow pivot_root,
+  allow dbus,
+  allow pix /** -> &unpriv_bwrap,
+  audit deny capability,
+  include if exists <local/unpriv_bwrap>
+}

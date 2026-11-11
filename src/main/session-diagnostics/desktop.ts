@@ -45,7 +45,13 @@ const safeId = (id: unknown): id is string =>
   typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id)
 const validRequest = (request: SessionDiagnosticRequest): boolean =>
   Boolean(
-    request && safeId(request.projectId) && safeId(request.sessionId) && safeId(request.operationId)
+    request &&
+    safeId(request.operationId) &&
+    (request.scope === 'application'
+      ? request.projectId === undefined && request.sessionId === undefined
+      : (request.scope === undefined || request.scope === 'session') &&
+        safeId(request.projectId) &&
+        safeId(request.sessionId))
   )
 
 // Only module-owned messages and recognized operating-system codes reach export reports.
@@ -122,8 +128,8 @@ const assertNewDestination = async (path: string, sources: Sources): Promise<voi
   throw new DiagnosticError('The selected file already exists. Choose a new filename.')
 }
 
-const filename = ({ projectId, sessionId }: SessionDiagnosticRequest): string =>
-  `${projectId}-${sessionId}-${new Date().toISOString().replace(/[-:]/g, '').replace('.', '')}.tar.gz`
+const filename = (request: SessionDiagnosticRequest): string =>
+  `${request.scope === 'application' ? 'application' : `${request.projectId}-${request.sessionId}`}-${new Date().toISOString().replace(/[-:]/g, '').replace('.', '')}.tar.gz`
 
 const abortableDestination = async (
   destination: Promise<string | undefined>,
@@ -274,8 +280,12 @@ export const createSessionDiagnosticsDesktop = (
       const workerResult = await runWorker(
         {
           ...sources,
-          projectId: request.projectId,
-          sessionId: request.sessionId,
+          ...(request.scope === 'application'
+            ? { scope: 'application' as const }
+            : {
+                projectId: request.projectId,
+                sessionId: request.sessionId
+              }),
           action,
           directory,
           ...(action === 'export'

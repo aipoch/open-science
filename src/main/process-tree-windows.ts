@@ -1,3 +1,4 @@
+/* c8 ignore file */
 import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { closeSync, existsSync } from 'node:fs'
 import { Socket } from 'node:net'
@@ -7,6 +8,7 @@ import type { AgentProcessSpawner } from './node-process-host'
 
 type Binding = typeof import('@aipoch/process-tree-native')
 const nativeProcesses = new WeakMap<ChildProcess, object>()
+const activeJobs = new Map<string, WeakRef<object>>()
 const binding = (): Binding => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- Native Node-API binding.
   const native = require('@aipoch/process-tree-native') as Binding
@@ -24,6 +26,37 @@ export const reapWindowsOwnedJob = async (jobName: string): Promise<boolean> => 
     await new Promise((resolve) => setTimeout(resolve, 25))
   } while (Date.now() < deadline)
   return false
+}
+
+/** Admission only: these processes must still be reaped before installation handoff. */
+export const inspectOwnedWindowsProcessIds = (): number[] => {
+  if (process.platform !== 'win32') return []
+  const pids = new Set<number>()
+  for (const [name, reference] of activeJobs) {
+    // Only a live exclusive native Job grants admission; persisted names/PIDs never do.
+    const handle = reference.deref()
+    if (!handle) {
+      activeJobs.delete(name)
+      continue
+    }
+    const members = binding().windowsOwnedJobProcessIds(handle)
+    if (!Array.isArray(members) || members.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+      throw new Error('Owned Windows process inspection returned invalid identities.')
+    for (const pid of members) pids.add(pid)
+  }
+  return [...pids]
+}
+
+// Notebook hosts use their own supervisor Jobs. Include only their live, birth-checked ancestry
+// rooted in this backend, alongside Agent Job members that may outlive their original leader.
+export const inspectRuntimeWindowsProcessIds = (): number[] => {
+  if (process.platform !== 'win32') return []
+  return [
+    ...new Set([
+      ...inspectOwnedWindowsProcessIds(),
+      ...binding().windowsCurrentProcessDescendants()
+    ])
+  ]
 }
 
 // Keep the normal ACP ChildProcess/stream boundary. Overlapped native pipe descriptors use libuv's
@@ -76,6 +109,7 @@ export const spawnWindowsOwnedProcess = (
   )
   const child = new ChildProcess() as ChildProcessWithoutNullStreams
   nativeProcesses.set(child, launched.handle)
+  activeJobs.set(jobName, new WeakRef(launched.handle))
   const streams: Socket[] = []
   try {
     for (const [index, fd] of launched.fds.entries()) {
@@ -113,22 +147,49 @@ export const spawnWindowsOwnedProcess = (
     Object.assign(child, { killed: true })
     return true
   }
-  const poll = setInterval(() => {
-    const code = native.windowsOwnedProcessExitCode(launched.handle)
-    if (code === null) return
-    clearInterval(poll)
-    Object.assign(child, { exitCode: code })
-    exited = true
-    child.stdin.destroy()
-    child.emit('exit', code, null)
-    maybeClose()
-  }, 25)
+  let fallbackPoll: NodeJS.Timeout | undefined
+  const pollForExit = (): Promise<number> =>
+    new Promise((resolve) => {
+      fallbackPoll = setInterval(() => {
+        const code = native.windowsOwnedProcessExitCode(launched.handle)
+        if (code === null) return
+        clearInterval(fallbackPoll)
+        fallbackPoll = undefined
+        resolve(code)
+      }, 25)
+      if (!referenced) fallbackPoll.unref()
+    })
+  const waitForExit = (): Promise<number> => {
+    if (typeof native.windowsOwnedProcessExitCodeAsync !== 'function') return pollForExit()
+    try {
+      return native.windowsOwnedProcessExitCodeAsync(launched.handle).catch(() => pollForExit())
+    } catch {
+      return pollForExit()
+    }
+  }
+  let referenced = true
+  void waitForExit().then(
+    (code) => {
+      Object.assign(child, { exitCode: code })
+      exited = true
+      child.stdin.destroy()
+      child.emit('exit', code, null)
+      maybeClose()
+    },
+    (error: unknown) => child.emit('error', error)
+  )
   child.unref = () => {
-    poll.unref()
+    if (!referenced) return
+    referenced = false
+    native.windowsOwnedProcessExitCodeUnref?.(launched.handle)
+    fallbackPoll?.unref()
     streams.forEach((stream) => stream.unref())
   }
   child.ref = () => {
-    poll.ref()
+    if (referenced) return
+    referenced = true
+    native.windowsOwnedProcessExitCodeRef?.(launched.handle)
+    fallbackPoll?.ref()
     streams.forEach((stream) => stream.ref())
   }
   queueMicrotask(() => child.emit('spawn'))

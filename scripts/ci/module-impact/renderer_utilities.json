@@ -415,7 +415,6 @@
       "src/renderer/src/pages/workspace/SessionBackgroundActivity.test.tsx",
       "src/renderer/src/pages/workspace/SessionHoverPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx",
-      "src/renderer/src/pages/workspace/SessionInterruptedBanner.test.tsx",
       "src/renderer/src/pages/workspace/SessionNotebookDialog.accessibility.test.tsx",
       "src/renderer/src/pages/workspace/SessionNotebookDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/SessionNotebookDialog.render.test.tsx",

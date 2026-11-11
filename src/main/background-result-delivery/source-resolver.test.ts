@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { BackgroundResultDelivery } from '../../shared/background-result-delivery'
 import type { NotebookRunRecord } from '../../shared/notebook'
+import type { JobSummary } from '../../shared/compute'
 import { resolveBackgroundResultSources } from './source-resolver'
 
 const row = (sourceId: string, sessionId = 'session-1'): BackgroundResultDelivery => ({
@@ -32,7 +33,137 @@ const run = (runId: string, status: NotebookRunRecord['status']): NotebookRunRec
   workingFiles: []
 })
 
+const computeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
+  job_id: 'job-1',
+  provider_id: 'ssh:cluster',
+  display_name: 'Cluster',
+  shape: 'scheduler_cluster',
+  session_id: 'session-1',
+  project_id: 'project-1',
+  status: 'failed',
+  intent: 'Analyze',
+  created_at: 1,
+  started_at: 2,
+  finished_at: 3,
+  exit_code: undefined,
+  error_code: undefined,
+  remote_workdir: '/scratch/job-1',
+  stdout_tail: undefined,
+  stderr_tail: undefined,
+  notified_at: 3,
+  notification_consumed_at: undefined,
+  ...overrides
+})
+
+const computeRow = (): BackgroundResultDelivery => ({
+  ...row('job-1'),
+  id: 'compute-job:job-1',
+  sourceKind: 'compute-job'
+})
+
 describe('resolveBackgroundResultSources', () => {
+  it('delivers external cancellation before collection with the same Agent conclusion', async () => {
+    const job = computeJob({ error_code: 'job_cancelled' })
+    const [resolved] = await resolveBackgroundResultSources([computeRow()], {
+      loadNotebookRuns: async () => [],
+      loadComputeJobs: async () => new Map([['job-1', job]])
+    })
+    expect(resolved).toMatchObject({
+      availability: 'terminal',
+      activity: { active: false },
+      outcome: { status: 'cancelled', result_final: true, job_id: 'job-1' }
+    })
+    expect(resolved?.outcome).not.toHaveProperty('error')
+    expect(resolved?.outcome).not.toHaveProperty('cancellation_status')
+  })
+
+  it('delivers complete unavailable errors and failed cancellation together', async () => {
+    const job = computeJob({
+      status: 'error',
+      error_code: 'job_status_unavailable',
+      error_message: 'The remote process may still be running.',
+      cancellation_status: 'failed',
+      cancellation_error: { code: 'cancel_confirmation_failed', message: 'No confirmation source.' }
+    })
+    const [resolved] = await resolveBackgroundResultSources([computeRow()], {
+      loadNotebookRuns: async () => [],
+      loadComputeJobs: async () => new Map([['job-1', job]])
+    })
+    expect(resolved?.outcome).toMatchObject({
+      status: 'error',
+      result_final: true,
+      error: {
+        code: 'job_status_unavailable',
+        message: 'The remote process may still be running.'
+      },
+      cancellation: { status: 'failed', error: { code: 'cancel_confirmation_failed' } }
+    })
+  })
+
+  it('uses the settled failure snapshot after that operation has been reopened', async () => {
+    const failure = {
+      jobId: 'job-1',
+      operationId: 'op-1',
+      revision: 4,
+      jobStatus: 'running' as const,
+      error: { code: 'cancel_request_rejected', message: 'Original permission denial.' }
+    }
+    const event: BackgroundResultDelivery = {
+      ...computeRow(),
+      id: 'compute-cancellation:op-1:4',
+      sourceKind: 'compute-cancellation',
+      sourceId: 'op-1:4',
+      sourceSnapshot: failure
+    }
+    const currentJob = computeJob({ status: 'running', cancellation_status: 'cancelling' })
+    const [resolved] = await resolveBackgroundResultSources([event], {
+      loadNotebookRuns: async () => [],
+      loadComputeJobs: async () => new Map([['op-1:4', currentJob]])
+    })
+    expect(resolved).toMatchObject({
+      availability: 'terminal',
+      outcome: {
+        status: 'running',
+        result_final: false,
+        event: 'cancellation_failed',
+        revision: 4,
+        cancellation: { status: 'failed', error: failure.error }
+      }
+    })
+  })
+
+  it.each(['success', 'cancelled', 'error'] as const)(
+    'keeps historical rejection facts coherent after the job becomes %s',
+    async (status) => {
+      const event: BackgroundResultDelivery = {
+        ...computeRow(),
+        id: 'compute-cancellation:op-1:4',
+        sourceKind: 'compute-cancellation',
+        sourceId: 'op-1:4',
+        sourceSnapshot: {
+          jobId: 'job-1',
+          operationId: 'op-1',
+          revision: 4,
+          jobStatus: 'running',
+          error: { code: 'cancel_request_rejected', message: 'Original permission denial.' }
+        }
+      }
+      const currentJob = computeJob({
+        status: status === 'cancelled' ? 'failed' : status,
+        cancellation_status: status === 'cancelled' ? 'cancelled' : undefined
+      })
+      const [resolved] = await resolveBackgroundResultSources([event], {
+        loadNotebookRuns: async () => [],
+        loadComputeJobs: async () => new Map([['op-1:4', currentJob]])
+      })
+      expect(resolved?.outcome).toMatchObject({
+        status: 'running',
+        result_final: false,
+        event: 'cancellation_failed',
+        cancellation: { status: 'failed' }
+      })
+    }
+  )
   it('loads each Notebook Session once and resolves exact Run identities', async () => {
     const loadNotebookRuns = vi.fn(
       async ({ sources }: { sources: readonly BackgroundResultDelivery[] }) =>

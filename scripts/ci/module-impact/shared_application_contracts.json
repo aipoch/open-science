@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/shared/agent-framework-id.ts",
     "src/shared/interface-scale.ts",
     "src/shared/bootstrap.ts",
     "src/shared/cli.ts",
@@ -38,6 +39,7 @@
     "src/shared/provider-url-policy.ts"
   ],
   "interfacePaths": [
+    "src/shared/agent-framework-id.ts",
     "src/shared/interface-scale.ts",
     "src/shared/application-command-contract.ts",
     "src/shared/bootstrap.ts",

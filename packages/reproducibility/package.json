@@ -45,7 +45,7 @@
   "dependencies": {
     "sharp": "0.35.5",
     "papaparse": "^5.7.0",
-    "zod": "^4.6.5",
+    "zod": "^4.6.6",
     "@aipoch/environment": "0.1.0",
     "@aipoch/diagnostics": "0.1.0",
     "@aipoch/notebook-analysis": "0.1.0"
@@ -54,6 +54,6 @@
     "@types/node": "^22.19.1",
     "@types/papaparse": "^5.5.2",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

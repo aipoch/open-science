@@ -89,14 +89,8 @@ export type AgentModelConfig = {
   persistentSystemPrompt?: string
 }
 
-export type AgentModelRoute =
-  | 'claude-anthropic'
-  | 'opencode-anthropic'
-  | 'opencode-openai'
-  | 'codebuddy-openai'
-  | 'codex-responses'
-  | 'codex-responses-compatibility'
-  | 'codex-bridge'
+import type { AgentModelRoute } from '../../shared/agent-framework-id'
+export type { AgentModelRoute } from '../../shared/agent-framework-id'
 
 export type AgentModelCatalogEntry = Readonly<{
   provider: ResolvedProvider
@@ -155,6 +149,9 @@ export type ModelConfigContext = {
   // metadata only when the model/version pair is explicitly known.
   nativeVersion?: string
   responsesConnection?: ResponsesConnection
+  // Shared credential of the app-owned loopback bridges behind Pi's model catalog. The token is sent
+  // over ACP authentication and must remain out of generated config files and the child environment.
+  piModelBridge?: Readonly<{ token: string }>
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
@@ -176,6 +173,7 @@ export type ModelConfigContext = {
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
 // privacy). The framework decides HOW it is delivered — see SessionSetup.
 export type SessionSetupContext = {
+  toolLess?: boolean
   systemPromptAppends: string[]
   // Short, high-priority reminders that must reach each turn when the framework carries the complete
   // appends only in session metadata. Frameworks whose appends already ride each prompt may omit them.
@@ -240,8 +238,8 @@ export type CommandShellDialect = 'posix' | 'powershell'
 
 // One switchable agent backend. The ACP runtime stays generic and delegates only the framework-coupled
 // decisions to this interface. See docs/internal/pluggable-agent-framework-feasibility.md.
-export interface AgentFramework {
-  readonly id: AgentFrameworkId
+export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
+  readonly id: FrameworkId
   readonly displayName: string
 
   // The shell grammar used for provider-native command tools. The permission Broker consumes this
@@ -313,6 +311,7 @@ export interface AgentFramework {
 
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
+  /** Native protocols in preference order, most preferred first. */
   readonly supportedApiTypes: readonly ModelProtocol[]
 }
 

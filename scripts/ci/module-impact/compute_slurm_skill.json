@@ -1,0 +1,13 @@
+{
+  "ownerPaths": ["resources/skills/remote-compute-ssh/references/slurm-troubleshooting.md"],
+  "interfacePaths": ["resources/skills/remote-compute-ssh/references/slurm-troubleshooting.md"],
+  "consumerModules": ["compute_service"],
+  "testFiles": {
+    "owner": [],
+    "contract": ["src/main/compute/remote-compute-skill.test.ts"],
+    "consumer": []
+  },
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The independently loaded Slurm troubleshooting resource has explicit content contracts and requires full CI validation until its resource boundary is reviewed."
+}

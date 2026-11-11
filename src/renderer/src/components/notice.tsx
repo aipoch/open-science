@@ -113,6 +113,32 @@ const NoticeButton = ({
   )
 }
 
+// Can be composed beside a notice's structured diagnostics without a second footer.
+const NoticeDiagnostics = ({
+  errorCode,
+  diagnosticsLabel,
+  summaryContent,
+  className
+}: {
+  errorCode: string
+  diagnosticsLabel: string
+  summaryContent?: ReactNode
+  className?: string
+}): React.JSX.Element => (
+  <details className={cn('group min-w-0', className)}>
+    <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 rounded-sm text-xs leading-5 text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+      {summaryContent}
+      <span className="inline-flex shrink-0 items-center gap-1 underline decoration-dotted underline-offset-4 hover:text-foreground active:text-foreground">
+        <ChevronRight className="size-3 shrink-0 group-open:rotate-90" aria-hidden="true" />
+        {diagnosticsLabel}
+      </span>
+    </summary>
+    <pre className="mt-2 w-full whitespace-pre-wrap rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+      {errorCode}
+    </pre>
+  </details>
+)
+
 const Notice = ({
   className,
   fullPage = false,
@@ -282,18 +308,11 @@ const Notice = ({
 
       {compact && errorCode !== undefined ? (
         diagnosticsLabel ? (
-          <details
-            className={cn(
-              'group border-t border-border pt-2.5',
-              Icon && (unboxed ? 'ml-6' : 'ml-7')
-            )}
-          >
-            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
-              <ChevronRight className="size-3 shrink-0 group-open:rotate-90" aria-hidden="true" />
-              {diagnosticsLabel}
-            </summary>
-            <div className="mt-2">{diagnosticContent}</div>
-          </details>
+          <NoticeDiagnostics
+            errorCode={errorCode}
+            diagnosticsLabel={diagnosticsLabel}
+            className={cn('border-t border-border pt-2.5', Icon && (unboxed ? 'ml-6' : 'ml-7'))}
+          />
         ) : (
           diagnosticContent
         )
@@ -320,5 +339,5 @@ const Notice = ({
   )
 }
 
-export { Notice }
+export { Notice, NoticeDiagnostics }
 export type { NoticeButtonProps, NoticeProps, NoticeLevel }

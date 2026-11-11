@@ -18,6 +18,91 @@ const { tableTextToken } = await import(
   pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
 )
 
+function wrappedNumberedCaption(): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number, number][] = [
+    ['Algorithm 1 Collect samples for bounded estimates. Prepare values', 299.65, 76, 10],
+    ['for a single independent group.', 300, 88, 10],
+    ['Require: a sequence', 300, 105, 10],
+    ['Ensure: a normalized total', 300, 117, 10],
+    ['1: initialize total', 305, 129, 10],
+    ['2: for each value do', 305, 141, 10],
+    ['3: add the value', 305, 153, 10],
+    ['4: end for', 305, 165, 10],
+    ['5: total ← 1', 305, 177, 10],
+    ['z', 346, 180, 7],
+    ['6: return total', 305, 189, 10],
+    ['The following paragraph remains ordinary prose.', 300, 226, 10]
+  ]
+  const items = rows.map(([str, x, baseline, height], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * height * 0.36,
+      height,
+      transform: [height, 0, 0, height, x, 800 - baseline],
+      fontName: 'native',
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    rails = [67, 93, 206],
+    operators = {
+      fnArray: rails.map(() => OPS.constructPath),
+      argsArray: rails.map((y) => [
+        OPS.stroke,
+        [[0, 300, 800 - y, 1, 535, 800 - y]],
+        [300, 800 - y, 535, 800 - y]
+      ])
+    },
+    viewport = { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: rows.map(([text, x, baseline, height], i) => ({
+        text,
+        x,
+        y: baseline - height,
+        width: items[i].width,
+        height,
+        fontSize: height
+      })),
+      graphicsBounds: rails.map((y, operationIndex) => ({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: [299 / 600, (y - 1) / 800, 536 / 600, (y + 1) / 800]
+      }))
+    },
+    content = { items, styles: { native: { ascent: 0.8, descent: -0.2, vertical: false } } }
+  return {
+    page,
+    context: { content, viewport, operators, rules: collectTableRules(operators, viewport) }
+  }
+}
+
+it('retains the final numbered return under a complete wrapped native algorithm caption', () => {
+  const { page, context } = wrappedNumberedCaption()
+  const [legacy] = findAlgorithmCandidates(page, context.rules)
+  expect(legacy.caption.lines).toHaveLength(1)
+  const [candidate] = findNativeAlgorithmCandidates(page, context)
+  expect(candidate.rect).toEqual(legacy.rect)
+  expect(candidate.caption.lines).toEqual(
+    page.lines.slice(0, 2).map((line: { text: string }) => line.text)
+  )
+  expect(candidate.nativeBody?.sourceItems).toEqual(
+    context.content.items.slice(2, -1).map((item: { sourceItem: unknown }) => item.sourceItem)
+  )
+})
+
+it('keeps a wrapped algorithm caption unchanged if the divider only exists in page geometry', () => {
+  const { page, context } = wrappedNumberedCaption()
+  const [legacy] = findAlgorithmCandidates(page, context.rules)
+  context.operators.fnArray[1] = OPS.dependency
+  context.operators.argsArray[1] = []
+  const [candidate] = findNativeAlgorithmCandidates(page, context)
+  expect(candidate).toEqual(legacy)
+  expect(candidate.nativeBody).toBeUndefined()
+})
+
 // Three actual native strokes close nested scopes; the two caption fragments
 // have disjoint used ink although their font-wide boxes overlap Output.
 function verticalScopeProgram(mode = '', dotted = false): ReturnType<typeof JSON.parse> {
@@ -1560,29 +1645,43 @@ it.each([
   ).toBe(true)
 })
 
-function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
-  const rows: [string, number, number, string][] = [
-      ['Algorithm 1: Update values for a sample', 49.9, 100, 'bold'],
-      ['Input', 50, 120, 'bold'],
-      ['values', 80, 120, 'plain'],
-      ['Output', 50, 140, 'bold'],
-      ['result', 85, 140, 'plain'],
-      ['Initialize values', 50, 160, 'plain'],
-      ['for', 50, 180, 'bold'],
-      ['each value do', 70, 180, 'bold'],
-      ['Update current value', 65, 200, 'plain'],
-      ['for', 65, 220, 'bold'],
-      ['each pair do', 85, 220, 'bold'],
-      ['Store updated pair', 80, 240, 'plain'],
-      ['Record state', 65, 260, 'plain'],
-      ['Return', 50, 280, 'plain'],
-      ['result', 85, 280, 'plain'],
-      ['Independent explanation.', 50, 340, 'plain']
-    ],
+function nativeFramedLoop(numbered = false): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number, string][] = numbered
+      ? [
+          ['Algorithm 1 Example: Pseudocode', 50, 100, 'bold'],
+          ['1:', 50, 125, 'plain'],
+          ['Notation: values', 70, 125, 'plain'],
+          ['2:', 50, 145, 'plain'],
+          ['Update x', 70, 145, 'plain'],
+          ['\u0338', 90, 145, 'plain'],
+          ['3:', 50, 165, 'plain'],
+          ['Store x', 70, 165, 'plain'],
+          ['4:', 50, 185, 'plain'],
+          ['Return x', 70, 185, 'plain'],
+          ['Independent explanation.', 50, 340, 'plain']
+        ]
+      : [
+          ['Algorithm 1: Update values for a sample', 49.9, 100, 'bold'],
+          ['Input', 50, 120, 'bold'],
+          ['values', 80, 120, 'plain'],
+          ['Output', 50, 140, 'bold'],
+          ['result', 85, 140, 'plain'],
+          ['Initialize values', 50, 160, 'plain'],
+          ['for', 50, 180, 'bold'],
+          ['each value do', 70, 180, 'bold'],
+          ['Update current value', 65, 200, 'plain'],
+          ['for', 65, 220, 'bold'],
+          ['each pair do', 85, 220, 'bold'],
+          ['Store updated pair', 80, 240, 'plain'],
+          ['Record state', 65, 260, 'plain'],
+          ['Return', 50, 280, 'plain'],
+          ['result', 85, 280, 'plain'],
+          ['Independent explanation.', 50, 340, 'plain']
+        ],
     items = rows.map(([str, x, y, fontName], index) => ({
       str,
       dir: 'ltr',
-      width: str.length * 4,
+      width: str === '\u0338' ? 0 : str.length * 4,
       height: 10,
       transform: [10, 0, 0, 10, x, 800 - y],
       fontName,
@@ -1592,11 +1691,15 @@ function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
     rules = [
       [50, 91, 500, 91],
       [50, 105, 500, 105],
-      [50, 295, 500, 295],
-      [55, 185, 55, 265],
-      [70, 225, 70, 245],
-      [70.25, 244.75, 75.25, 244.75],
-      [55.25, 264.75, 60.25, 264.75]
+      [50, numbered ? 220 : 295, 500, numbered ? 220 : 295],
+      ...(numbered
+        ? []
+        : [
+            [55, 185, 55, 265],
+            [70, 225, 70, 245],
+            [70.25, 244.75, 75.25, 244.75],
+            [55.25, 264.75, 60.25, 264.75]
+          ])
     ],
     add = (op: number, args: unknown = null): void => {
       operators.fnArray.push(op)
@@ -1610,7 +1713,7 @@ function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
       Array.from(i.str, (c) => ({
         unicode: c,
         fontChar: c,
-        width: 400,
+        width: c === '\u0338' ? 0 : 400,
         isSpace: c === ' ',
         isInFont: true,
         accent: null
@@ -1742,3 +1845,343 @@ it.each([
     false
   )
 })
+
+it.each(['ordinary', 'exterior-zero'])(
+  'retains a complete numbered pseudocode frame with exact ink: %s',
+  (mode) => {
+    const f = nativeFramedLoop(true)
+    if (mode === 'exterior-zero') {
+      const i = f.context.content.items.at(-1)
+      i.str = i.sourceItem.text = '\u0338'
+      i.width = 0
+      f.page.lines.at(-1).text = i.str
+      f.page.lines.at(-1).width = 0
+      f.context.operators.argsArray[(f.context.content.items.length - 1) * 5 + 3] = [
+        [{ unicode: '\u0338', fontChar: '\u0338', width: 0, isInFont: true, accent: null }]
+      ]
+    }
+    const before = JSON.stringify(f),
+      result = findNativeAlgorithmCandidates(f.page, f.context)
+    expect(result).toHaveLength(1)
+    expect(result[0].nativeBody.sourceItems).toEqual(
+      f.context.content.items.slice(1, -1).map((i) => i.sourceItem)
+    )
+    expect(result[0].scopedGlyphProof).toBeDefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+)
+
+it.each([
+  'missing-number',
+  'source-order',
+  'zero-advance',
+  'multiple-zero-glyphs',
+  'transparent',
+  'clip',
+  'missing-frame',
+  'foreign-paint',
+  'intruding-zero',
+  'source-text',
+  'no-pseudocode'
+])('refuses the numbered pseudocode frame when %s evidence is incomplete', (mode) => {
+  const f = nativeFramedLoop(true),
+    items = f.context.content.items,
+    o = f.context.operators,
+    change = (index: number, text: string): void => {
+      items[index].str = items[index].sourceItem.text = text
+      f.page.lines[index].text = text
+      o.argsArray[index * 5 + 3] = [
+        Array.from(text, (c) => ({
+          unicode: c,
+          fontChar: c,
+          width: c === '\u0338' ? 0 : 400,
+          isSpace: c === ' ',
+          isInFont: true,
+          accent: null
+        }))
+      ]
+    },
+    prefix = (op: number, args: unknown): void => {
+      o.fnArray.unshift(op)
+      o.argsArray.unshift(args)
+      f.page.graphicsBounds.forEach((g) => g.operationIndex++)
+    }
+  if (mode === 'missing-number') change(3, '3:')
+  if (mode === 'source-order') {
+    change(3, '3:')
+    change(6, '2:')
+  }
+  if (mode === 'zero-advance') items[5].width = 1
+  if (mode === 'multiple-zero-glyphs') change(5, '\u0338\u0338')
+  if (mode === 'transparent') prefix(OPS.setGState, [[['ca', 0.5]]])
+  if (mode === 'clip') prefix(OPS.clip, null)
+  if (mode === 'source-text') items[4].sourceItem.text += '!'
+  if (mode === 'no-pseudocode') change(0, 'Algorithm 1 Example list')
+  if (mode === 'missing-frame') {
+    const id = f.page.graphicsBounds.pop().operationIndex
+    o.fnArray[id] = OPS.dependency
+    o.argsArray[id] = []
+  }
+  if (mode === 'foreign-paint') {
+    const operationIndex = o.fnArray.length
+    o.fnArray.push(OPS.constructPath)
+    o.argsArray.push([
+      OPS.fill,
+      [[0, 80, 640, 1, 84, 640, 1, 84, 644, 1, 80, 644, 4]],
+      [80, 640, 84, 644]
+    ])
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [80 / 600, 156 / 800, 84 / 600, 160 / 800]
+    })
+  }
+  if (mode === 'intruding-zero') {
+    const i = items.at(-1)
+    i.str = i.sourceItem.text = '\u0338'
+    i.width = 0
+    i.transform[4] = 501
+    i.transform[5] = 650
+    f.context.nativeGlyphContext.glyphBounds[1].glyphs.find((g) => g.fontChar === '\u0338').bounds =
+      [-0.4, -0.01, 0, 0.7]
+    o.argsArray[(items.length - 1) * 5 + 2] = [[1, 0, 0, 1, 501, 650]]
+    o.argsArray[(items.length - 1) * 5 + 3] = [
+      [{ unicode: '\u0338', fontChar: '\u0338', width: 0, isInFont: true, accent: null }]
+    ]
+  }
+  f.context.rules = collectTableRules(o, f.context.viewport)
+  expect(findNativeAlgorithmCandidates(f.page, f.context)).toHaveLength(0)
+})
+function outdentedConditionalFrame(fault = ''): ReturnType<typeof JSON.parse> {
+  const raw: [string, number, number, number][] = [
+    ['Algorithm 1: Conditional routine', 80, 65, 10],
+    ['Input:', 80, 90, 10],
+    ['values', 120, 90, 10],
+    ['Output:', 80, 104, 10],
+    ['result', 125, 104, 10],
+    ['1', 65, 120, 8],
+    ['if ready then', 80, 120, 10],
+    ['2', 65, 133, 8],
+    ['return value', 95, 133, 10],
+    ['3', 65, 150, 8],
+    ['prepare values', 80, 150, 10],
+    ['4', 65, 166, 8],
+    ['if complete then', 80, 166, 10],
+    ['5', 65, 179, 8],
+    ['return result', 95, 179, 10],
+    ['6', 65, 200, 8],
+    ['finalize values', 80, 200, 10],
+    ['Figure 1: Independent drawing.', 80, 260, 10]
+  ]
+  if (fault === 'missing-ordinal') raw.splice(9, 1)
+  if (fault === 'cross-closing') {
+    raw[15][2] = 220
+    raw[16][2] = 220
+  }
+  if (fault === 'empty-input') raw.splice(2, 1)
+  if (fault === 'empty-output') raw.splice(4, 1)
+  if (fault === 'duplicate-ordinal') raw[11][0] = '3'
+  if (fault === 'input') raw[1][0] = 'Summary:'
+  if (fault === 'foreign-prose') raw.splice(9, 0, ['A separate prose paragraph.', 80, 142, 10])
+  if (fault === 'outdented-body') raw[8][1] = 79
+  const content = {
+    items: raw.map(([str, x, y, height], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * height * 0.4,
+      height,
+      transform: [height, 0, 0, height, x, 800 - y],
+      fontName: 'native',
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    styles: { native: { ascent: 1, descent: 0, vertical: false } }
+  }
+  if (fault === 'source') content.items[6].sourceItem.text = 'changed'
+  const rails = [
+    [80, 50, 530, 50],
+    [80, 74, 530, 74],
+    [80, 215, 530, 215],
+    [85, 124, 85, 137],
+    [85.2, 136.8, 90, 136.8],
+    [85, 170, 85, 183],
+    [85.2, 182.8, 90, 182.8]
+  ]
+  if (fault === 'missing-scope') rails.splice(3, 1)
+  if (fault === 'missing-cap') rails.splice(4, 1)
+  if (fault === 'foreign-rule') rails.push([300, 110, 350, 110])
+  const operators = {
+    fnArray: rails.map(() => OPS.constructPath),
+    argsArray: rails.map(([x, y, r, b]) => [
+      OPS.stroke,
+      [new Float32Array([0, x, 800 - y, 1, r, 800 - b])],
+      new Float32Array([x, 800 - Math.max(y, b), r, 800 - Math.min(y, b)])
+    ])
+  }
+  const viewport = {
+    width: 600,
+    height: 800,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 800]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: content.items.map((r) => ({
+      text: r.str,
+      x: r.transform[4],
+      y: 800 - r.transform[5] - r.height,
+      width: r.width,
+      height: r.height,
+      fontSize: r.height
+    })),
+    graphicsBounds: rails.map((r, operationIndex) => ({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [
+        r[0] - 0.5,
+        Math.min(r[1], r[3]) - 0.5,
+        r[2] + 0.5,
+        Math.max(r[1], r[3]) + 0.5
+      ].map((v, i) => v / (i % 2 ? 800 : 600))
+    }))
+  }
+  return {
+    page,
+    context: { content, viewport, operators, rules: collectTableRules(operators, viewport) }
+  }
+}
+it('retains complete outdented conditional ordinals without borrowing the following figure', () => {
+  const f = outdentedConditionalFrame(),
+    before = structuredClone(f),
+    result = findNativeAlgorithmCandidates(f.page, f.context)
+  expect(result).toHaveLength(1)
+  expect(result[0].rect[0]).toBe(65)
+  expect(result[0].rect[3]).toBeLessThan(220)
+  expect(result[0].nativeBody.sourceItems).toEqual(
+    f.context.content.items.slice(1, -1).map((r: { sourceItem: unknown }) => r.sourceItem)
+  )
+  expect(f).toEqual(before)
+})
+it.each([
+  'missing-ordinal',
+  'duplicate-ordinal',
+  'input',
+  'foreign-prose',
+  'outdented-body',
+  'source',
+  'missing-scope',
+  'missing-cap',
+  'foreign-rule'
+])('rejects incomplete outdented conditional proof: %s', (fault) => {
+  const f = outdentedConditionalFrame(fault)
+  expect(findNativeAlgorithmCandidates(f.page, f.context)).toEqual([])
+})
+it.each(['cross-closing', 'empty-input', 'empty-output'])(
+  'rejects a broken closed I/O frame: %s',
+  (fault) => {
+    const f = outdentedConditionalFrame(fault)
+    expect(findNativeAlgorithmCandidates(f.page, f.context)).toEqual([])
+  }
+)
+
+function titledTwoRuleProgram(): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number][] = [
+    ['Algorithm 1 Update neighbors', 50, 100],
+    ['Input:', 50, 120],
+    ['neighbors', 85, 120],
+    ...[
+      'value ← choose()',
+      'while active:',
+      'value ← value + 1',
+      'send(value)',
+      'finish()'
+    ].flatMap((text, n): [string, number, number][] => [
+      [`${n + 1}:`, 65, 140 + n * 20],
+      [text, n === 2 || n === 3 ? 110 : 90, 140 + n * 20]
+    ])
+  ]
+  const items = rows.map(([str, x, baseline], index) => ({
+    str,
+    dir: 'ltr',
+    width: str.length * 4,
+    height: 10,
+    transform: [10, 0, 0, 10, x, 800 - baseline],
+    fontName: 'native',
+    sourceItem: { pageNumber: 1, index, text: str }
+  }))
+  const rails = [105, 240],
+    operators = {
+      fnArray: rails.map(() => OPS.constructPath),
+      argsArray: rails.map((y) => [
+        OPS.stroke,
+        [[0, 50, 800 - y, 1, 350, 800 - y]],
+        [50, 800 - y, 350, 800 - y]
+      ])
+    }
+  const viewport = {
+    width: 400,
+    height: 800,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 800]
+  }
+  return {
+    page: {
+      pageNumber: 1,
+      width: 400,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: rows.map(([text, x, baseline], n) => ({
+        text,
+        x,
+        y: baseline - 10,
+        width: items[n].width,
+        height: 10,
+        fontSize: 10
+      })),
+      graphicsBounds: rails.map((y, operationIndex) => ({
+        kind: 'path',
+        operationIndex,
+        normalizedRect: [50 / 400, y / 800, 350 / 400, y / 800]
+      }))
+    },
+    context: {
+      viewport,
+      operators,
+      rules: collectTableRules(operators, viewport),
+      content: { items, styles: { native: { ascent: 0.8, descent: -0.2, vertical: false } } }
+    }
+  }
+}
+
+it('owns a complete numbered two-rule program with a title above its frame', () => {
+  const f = titledTwoRuleProgram()
+  const result = findNativeAlgorithmCandidates(f.page, f.context)
+  expect(result).toHaveLength(1)
+  expect(result[0].nativeBody.sourceItems).toHaveLength(f.context.content.items.length - 1)
+  expect(result[0].rect[1]).toBeLessThanOrEqual(90)
+})
+
+it.each(['ordinal', 'input', 'closing-rule'])(
+  'keeps incomplete two-rule programs unowned: %s',
+  (kind) => {
+    const f = titledTwoRuleProgram()
+    if (kind === 'closing-rule') f.context.rules.pop()
+    else {
+      const index = kind === 'ordinal' ? 3 : 1
+      f.context.content.items[index].str = kind === 'ordinal' ? '9:' : 'Summary:'
+      f.context.content.items[index].sourceItem.text = f.context.content.items[index].str
+      f.page.lines[index].text = f.context.content.items[index].str
+    }
+    expect(
+      findNativeAlgorithmCandidates(f.page, f.context).filter(
+        (c: { nativeBody?: unknown }) => c.nativeBody
+      )
+    ).toHaveLength(0)
+  }
+)

@@ -1,4 +1,15 @@
-import type { PDFPageProxy } from 'pdfjs-dist'
+import type { PDFPageProxy, PDFDocumentProxy } from 'pdfjs-dist'
+import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
+import type { PdfTranslationExtraction } from './extraction.js'
+import type { PdfTranslationSourceIdentity } from './table-source.js'
+import { createPdfTranslationSource } from './source.js'
+import { getPdfTranslationTextContent } from './text-content.js'
+import {
+  carryNativeCaptionEligibility,
+  rememberNativeOrdinaryProseEligibility
+} from './caption-eligibility.js'
+import { nativeInkPageIdentity, nativeInkPageCurrent } from './auxiliary-native-ink.js'
+import { nativeZeroAdvanceRegions } from './native-source-geometry.js'
 import type { PdfLayoutPage, PdfLayoutTextItem, PdfTranslationLayout } from './layout.js'
 import {
   nativeReferenceFontWitnesses,
@@ -306,4 +317,484 @@ export function nativeWrappedSectionProse(
     for (const u of [a, tail, ...prose]) accepted.add(u.items.join('|'))
   }
   return accepted
+}
+
+type ProseInput = {
+  extraction: PdfTranslationExtraction
+  document: Pick<PDFDocumentProxy, 'getPage' | 'fingerprints' | 'numPages'>
+  sourceIdentity: PdfTranslationSourceIdentity
+  signal: AbortSignal
+}
+type ProseOwner = PdfTranslationExtraction['source']['units'][number]
+type ProseContent = Awaited<ReturnType<typeof getPdfTranslationTextContent>>
+type ProseFrame = {
+  page: PDFPageProxy
+  number: number
+  content: ProseContent
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+  fonts: Record<string, NativeReferenceFontWitness>
+  zeros: Map<number, { page: number; x: number; y: number; width: number; height: number }>
+  current: () => boolean
+  verify: () => Promise<boolean>
+}
+const proseStable = (v: unknown): string => JSON.stringify(v)
+function proseReferences(value: unknown): () => boolean {
+  const seen = new Set<object>(),
+    slots: [object, string, object][] = []
+  const visit = (v: unknown): void => {
+    if (!v || typeof v !== 'object' || seen.has(v)) return
+    seen.add(v)
+    if (seen.size > 100000) throw Error('Native prose reference budget.')
+    if (ArrayBuffer.isView(v)) return
+    for (const k of Object.keys(v)) {
+      const d = Object.getOwnPropertyDescriptor(v, k)
+      if (!d || !('value' in d)) throw Error('Native prose accessor.')
+      if (d.value && typeof d.value === 'object') {
+        slots.push([v, k, d.value])
+        visit(d.value)
+      }
+    }
+  }
+  try {
+    visit(value)
+  } catch {
+    return () => false
+  }
+  return () => slots.every(([o, k, v]) => Object.getOwnPropertyDescriptor(o, k)?.value === v)
+}
+
+/** Reprove whole ordinary paragraphs after membership-changing structure work.
+ * This local text proof never clears the document's legacy reference anchor. */
+export async function restoreNativeOrdinaryAppendixProse(
+  input: ProseInput
+): Promise<PdfTranslationExtraction> {
+  const { extraction, document, sourceIdentity, signal } = input,
+    source = extraction.source
+  signal.throwIfAborted()
+  const headings = source.units.filter((u) => /^[A-Z]\. Appendix$/u.test(u.source))
+  if (
+    headings.length !== 1 ||
+    !Object.isFrozen(source) ||
+    new Set(source.units.map((u) => u.id)).size !== source.units.length ||
+    !/^[a-f0-9]{64}$/u.test(sourceIdentity.sourceChecksum) ||
+    !Number.isSafeInteger(sourceIdentity.sourceSizeBytes) ||
+    sourceIdentity.sourceSizeBytes <= 0
+  )
+    return extraction
+  const heading = headings[0],
+    hi = source.units.indexOf(heading),
+    letter = heading.source[0],
+    reference = source.units
+      .slice(0, hi)
+      .findLast((u) => /^(?:References|Bibliography)$/u.test(u.source)),
+    subsection = source.units
+      .slice(hi + 1)
+      .find((u) => new RegExp('^' + letter + '\\.1\\. \\p{Lu}', 'u').test(u.source)),
+    candidates = source.units
+      .slice(hi + 1)
+      .filter(
+        (u) =>
+          u.sourceOnly &&
+          u.preserve === 'reference' &&
+          !u.figure &&
+          u.fragments.length === 1 &&
+          u.fragments[0].items.length >= 2 &&
+          u.fragments[0].items.length <= 8 &&
+          (u.source.match(/[A-Za-z]{2,}/gu)?.length ?? 0) >= 14 &&
+          /^[A-Z][A-Za-z0-9 ,.'’():;–—-]+[.!?]$/u.test(u.source)
+      )
+  if (
+    !reference ||
+    !subsection ||
+    !candidates.length ||
+    candidates.length > 16 ||
+    [heading, reference, subsection].some((u) => u.fragments.length !== 1) ||
+    heading.fragments[0].pageNumber <= reference.fragments[0].pageNumber ||
+    subsection.fragments[0].pageNumber !== heading.fragments[0].pageNumber
+  )
+    return extraction
+  const startPage = heading.fragments[0].pageNumber,
+    endPage = startPage - 1,
+    needed = new Set([
+      reference.fragments[0].pageNumber,
+      endPage,
+      startPage,
+      ...candidates.map((u) => u.fragments[0].pageNumber)
+    ]),
+    laterAppendix = source.units.slice(hi + 1).find((u) => /^[A-Z]\. Appendix$/u.test(u.source))
+  if (needed.size > 16 || laterAppendix) return extraction
+  const sourceKey = proseStable(source),
+    identityKey = proseStable(sourceIdentity),
+    fingerprintArray = document.fingerprints,
+    fingerprint = fingerprintArray[0],
+    getPage = document.getPage,
+    rootRefs = proseReferences([source, sourceIdentity]),
+    frames = new Map<number, ProseFrame>(),
+    opened = new Set<PDFPageProxy>()
+  const current = (): boolean => {
+    signal.throwIfAborted()
+    return (
+      input.extraction === extraction &&
+      extraction.source === source &&
+      input.document === document &&
+      input.sourceIdentity === sourceIdentity &&
+      document.getPage === getPage &&
+      document.fingerprints === fingerprintArray &&
+      fingerprintArray[0] === fingerprint &&
+      source.fingerprint === fingerprint &&
+      source.pages.length === document.numPages &&
+      rootRefs() &&
+      proseStable(source) === sourceKey &&
+      proseStable(sourceIdentity) === identityKey
+    )
+  }
+  if (!current()) return extraction
+  let accepted: Set<string> | undefined,
+    cleanupOk = true
+  try {
+    for (const number of needed) {
+      const page = await document.getPage(number)
+      opened.add(page)
+      if (!current()) return extraction
+      const methods = [page.getTextContent, page.getOperatorList, page.getViewport, page.cleanup],
+        ref = page.ref,
+        view = page.view,
+        common = page.commonObjs,
+        commonGet = common?.get,
+        commonHas = common?.has,
+        readCurrent = (): boolean =>
+          current() &&
+          page.ref === ref &&
+          page.view === view &&
+          page.commonObjs === common &&
+          common.get === commonGet &&
+          common.has === commonHas &&
+          [page.getTextContent, page.getOperatorList, page.getViewport, page.cleanup].every(
+            (m, i) => m === methods[i]
+          )
+      if (!common || !readCurrent()) return extraction
+      const viewport = page.getViewport({ scale: 1 }),
+        expected = source.pages[number - 1]
+      if (
+        !expected ||
+        page.rotate !== 0 ||
+        viewport.rotation !== 0 ||
+        viewport.width !== expected.width ||
+        viewport.height !== expected.height ||
+        proseStable(viewport.transform) !== proseStable([1, 0, 0, -1, 0, viewport.height])
+      )
+        return extraction
+      const content = await getPdfTranslationTextContent(page)
+      if (!readCurrent()) return extraction
+      const before = await nativeInkPageIdentity(page, content, viewport)
+      if (!readCurrent() || !before) return extraction
+      const fonts = nativeReferenceFontWitnesses(page, content)
+      if (!fonts) return extraction
+      const operators = await page.getOperatorList()
+      if (!readCurrent()) return extraction
+      const zeros = await nativeZeroAdvanceRegions(page, content, viewport, number)
+      if (!readCurrent()) return extraction
+      const fontIds = [
+          ...new Set(content.items.flatMap((i) => ('str' in i && i.str.trim() ? [i.fontName] : [])))
+        ],
+        chars = new Set<string>(),
+        walk = (v: unknown): void => {
+          if (!v || typeof v !== 'object') return
+          if ('fontChar' in v && typeof v.fontChar === 'string') chars.add(v.fontChar)
+          if (Array.isArray(v)) for (const child of v) walk(child)
+        }
+      for (const args of operators.argsArray) walk(args)
+      const outlines = fontIds.flatMap((id) =>
+          [...chars].flatMap((c) => {
+            const key = id + '_path_' + c
+            return page.commonObjs.has(key) ? [key] : []
+          })
+        ),
+        sync = nativeInkPageCurrent(page, content, viewport, operators, outlines)
+      if (!sync) return extraction
+      const refs = proseReferences([content, operators]),
+        fontRefs = fontIds.map((id) => [id, common.get(id)] as const),
+        frameCurrent = (): boolean =>
+          readCurrent() &&
+          sync() &&
+          refs() &&
+          fontRefs.every(([id, font]) => common.get(id) === font),
+        verify = async (): Promise<boolean> => {
+          if (
+            !frameCurrent() ||
+            (await document.getPage(number)) !== page ||
+            !frameCurrent() ||
+            (await page.getOperatorList()) !== operators ||
+            !frameCurrent()
+          )
+            return false
+          const after = await nativeInkPageIdentity(page, content, viewport)
+          return frameCurrent() && !!after && after.key === before.key
+        }
+      frames.set(number, {
+        page,
+        number,
+        content,
+        viewport,
+        fonts,
+        zeros,
+        current: frameCurrent,
+        verify
+      })
+    }
+    const counts = new Map<string, number>()
+    for (const u of source.units)
+      for (const f of u.fragments)
+        for (const i of f.items) {
+          const key = f.pageNumber + ':' + i.index
+          counts.set(key, (counts.get(key) ?? 0) + 1)
+        }
+    const own = (
+      u: ProseOwner
+    ): { frame: ProseFrame; entries: { index: number; item: TextItem }[] } | undefined => {
+      if (u.fragments.length !== 1 || !u.fragments[0].items.length || u.fragments[0].unclippedRect)
+        return
+      const f = u.fragments[0],
+        frame = frames.get(f.pageNumber)
+      if (!frame) return
+      const entries: { index: number; item: TextItem }[] = []
+      for (const i of f.items) {
+        const item = frame.content.items[i.index]
+        if (
+          !item ||
+          !('str' in item) ||
+          item.str !== i.text ||
+          !i.text.trim() ||
+          counts.get(f.pageNumber + ':' + i.index) !== 1
+        )
+          return
+        entries.push({ index: i.index, item })
+      }
+      return { frame, entries }
+    }
+    const horizontal = (i: TextItem, p: ProseFrame): boolean => {
+      const f = p.fonts[i.fontName]
+      return (
+        !!f?.nativeMetrics &&
+        i.dir === 'ltr' &&
+        i.transform.length === 6 &&
+        [...i.transform, i.width, i.height].every(Number.isFinite) &&
+        i.width > 0 &&
+        i.height > 0 &&
+        i.transform[0] === i.height &&
+        i.transform[3] === i.height &&
+        i.transform[1] === 0 &&
+        i.transform[2] === 0
+      )
+    }
+    const nativeBox = (i: TextItem, p: ProseFrame, index: number): Box | undefined => {
+      const f = p.fonts[i.fontName]
+      if (
+        !f ||
+        i.transform.length !== 6 ||
+        ![...i.transform, i.width, i.height].every(Number.isFinite)
+      )
+        return
+      if (i.width === 0) {
+        const z = p.zeros.get(index)
+        return z
+          ? {
+              x: z.x * p.viewport.width,
+              right: (z.x + z.width) * p.viewport.width,
+              y: z.y * p.viewport.height,
+              bottom: (z.y + z.height) * p.viewport.height
+            }
+          : undefined
+      }
+      const [a, b, c, d, x, y] = i.transform,
+        h = Math.hypot(a, b),
+        v = Math.hypot(c, d)
+      if (
+        i.width <= 0 ||
+        i.height <= 0 ||
+        h <= 0 ||
+        v <= 0 ||
+        a * d - b * c <= 0 ||
+        Math.abs(a * c + b * d) > h * v * 0.0001
+      )
+        return
+      const ps = [0, i.width].flatMap((u) =>
+        [f.descent, f.ascent].map((t) =>
+          p.viewport.convertToViewportPoint(x + (a / h) * u + c * t, y + (b / h) * u + d * t)
+        )
+      )
+      return {
+        x: Math.min(...ps.map((p) => p[0])),
+        right: Math.max(...ps.map((p) => p[0])),
+        y: Math.min(...ps.map((p) => p[1])),
+        bottom: Math.max(...ps.map((p) => p[1]))
+      }
+    }
+    const exclusive = (u: ProseOwner): Box | undefined => {
+      const o = own(u)
+      if (!o || o.entries.some((e) => !horizontal(e.item, o.frame))) return
+      const bs = o.entries.map((e) => nativeBox(e.item, o.frame, e.index))
+      if (bs.some((b) => !b)) return
+      const domain = union(bs as Box[]),
+        keys = new Set(o.entries.map((e) => e.index))
+      if (
+        domain.x < 0 ||
+        domain.y < 0 ||
+        domain.right > o.frame.viewport.width ||
+        domain.bottom > o.frame.viewport.height
+      )
+        return
+      for (const [index, i] of o.frame.content.items.entries()) {
+        if (!('str' in i) || !i.str.trim() || keys.has(index)) continue
+        const b = nativeBox(i, o.frame, index)
+        if (!b || overlaps(domain, b)) return
+      }
+      return domain
+    }
+    const hr = own(heading),
+      rr = own(reference),
+      sr = own(subsection),
+      hb = exclusive(heading),
+      rb = exclusive(reference),
+      sb = exclusive(subsection),
+      intro = source.units.slice(hi + 1, source.units.indexOf(subsection))
+    if (
+      !hr ||
+      !rr ||
+      !sr ||
+      !hb ||
+      !rb ||
+      !sb ||
+      hr.entries.length !== 1 ||
+      rr.entries.length !== 1 ||
+      sr.entries.length !== 1 ||
+      intro.length !== 1 ||
+      !own(intro[0]) ||
+      !exclusive(intro[0])
+    )
+      return extraction
+    const h = hr.entries[0].item,
+      r = rr.entries[0].item,
+      sh = sr.entries[0].item
+    if (
+      h.fontName !== r.fontName ||
+      h.fontName !== sh.fontName ||
+      h.height !== r.height ||
+      h.height !== sh.height ||
+      Math.abs((hb.x + hb.right) / 2 - hr.frame.viewport.width / 2) > h.height * 0.05 ||
+      Math.abs((rb.x + rb.right) / 2 - rr.frame.viewport.width / 2) > r.height * 0.05 ||
+      hb.y > hr.frame.viewport.height * 0.16 ||
+      sb.y <= hb.bottom ||
+      sb.y - hb.bottom > h.height * 9 ||
+      intro[0].fragments[0].rect.y <= heading.fragments[0].rect.y ||
+      intro[0].fragments[0].rect.y >= subsection.fragments[0].rect.y
+    )
+      return extraction
+    const tail = frames.get(endPage)!,
+      visible = tail.content.items.flatMap((i, index) => {
+        if (!('str' in i) || !i.str.trim()) return []
+        const b = nativeBox(i, tail, index)
+        if (!b) throw Error('Incomplete bibliography native bounds.')
+        if (i.str === String(endPage) && b.y > tail.viewport.height * 0.9 && i.width < i.height * 2)
+          return []
+        return [{ item: i, index, box: b }]
+      }),
+      last = visible.at(-1),
+      tailText = visible.map((e) => e.item.str).join(' ')
+    if (
+      !last ||
+      !/\bpp\.\s*\d+[–-]\d+\.$/u.test(last.item.str) ||
+      (tailText.match(/\b(?:18|19|20)\d{2}\b/gu)?.length ?? 0) < 3 ||
+      (tailText.match(/\bIn:/gu)?.length ?? 0) < 3 ||
+      visible.some((e) => counts.get(endPage + ':' + e.index) !== 1) ||
+      !(
+        last.item.hasEOL ||
+        tail.content.items
+          .slice(last.index + 1)
+          .some((i) => 'str' in i && !i.str.trim() && i.hasEOL)
+      )
+    )
+      return extraction
+    const bodyFont = own(intro[0])!.entries[0].item
+    accepted = new Set()
+    for (const u of candidates) {
+      const o = own(u),
+        b = exclusive(u)
+      if (
+        !o ||
+        !b ||
+        u.fragments[0].pageNumber < startPage ||
+        o.entries.map((e) => e.item.str).join(' ') !== u.source ||
+        o.entries.some(
+          (e) => e.item.fontName !== bodyFont.fontName || e.item.height !== bodyFont.height
+        ) ||
+        b.right - b.x < o.frame.viewport.width * 0.5
+      )
+        continue
+      const rows: { baseline: number; entries: typeof o.entries }[] = []
+      for (const e of o.entries) {
+        let row = rows.at(-1)
+        if (!row || Math.abs(row.baseline - e.item.transform[5]) > 1e-6) {
+          row = { baseline: e.item.transform[5], entries: [] }
+          rows.push(row)
+        }
+        row.entries.push(e)
+      }
+      if (
+        rows.length < 2 ||
+        rows.some(
+          (row, n) =>
+            !row.entries.at(-1)!.item.hasEOL ||
+            (n > 0 &&
+              (rows[n - 1].baseline - row.baseline <= bodyFont.height ||
+                rows[n - 1].baseline - row.baseline > bodyFont.height * 1.6)) ||
+            row.entries.some(
+              (e, k) =>
+                k > 0 &&
+                e.item.transform[4] <
+                  row.entries[k - 1].item.transform[4] + row.entries[k - 1].item.width
+            )
+        )
+      )
+        continue
+      accepted.add(u.id)
+    }
+    if (!accepted.size) return extraction
+    for (const frame of frames.values())
+      if (!(await frame.verify()) || !current()) return extraction
+  } catch {
+    signal.throwIfAborted()
+    return extraction
+  } finally {
+    for (const page of opened) {
+      try {
+        await Promise.resolve(page.cleanup())
+      } catch {
+        cleanupOk = false
+      }
+    }
+  }
+  // Cleanup is the final await; no promise may intervene before immutable publication.
+  if (
+    !cleanupOk ||
+    !accepted?.size ||
+    !current() ||
+    ![...frames.values()].every((f) => f.current())
+  )
+    return extraction
+  const restored = carryNativeCaptionEligibility(
+    source,
+    createPdfTranslationSource({
+      ...source,
+      units: source.units.map((u) => {
+        if (!accepted!.has(u.id)) return u
+        const next = { ...u }
+        delete next.sourceOnly
+        delete next.preserve
+        return next
+      })
+    })
+  )
+  rememberNativeOrdinaryProseEligibility(restored, accepted)
+  return Object.freeze({ ...extraction, source: restored })
 }

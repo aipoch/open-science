@@ -109,9 +109,14 @@ describe('shared Office preview owner', () => {
       )
     ).toThrow()
   })
-  it('opens literature Office files through the existing immutable attachment lease', async () => {
+  it.each([
+    { source: 'literature' as const, path: 'literature-attachment-version:version' },
+    {
+      source: 'compute-output' as const,
+      path: 'compute-output:v1:project/session/hpc/job/featured/report.docx'
+    }
+  ])('opens $source Office files through their immutable lease', async (source) => {
     const { commands, resources } = setup()
-    const source = { source: 'literature' as const, path: 'literature-attachment-version:version' }
     const result = await commands.open(
       document().invoke([
         { ...source, requestId: 'request', name: 'report.docx', extension: 'docx', attempt: 0 }

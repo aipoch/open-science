@@ -1,12 +1,24 @@
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
-import type { OPS, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationExtraction } from './extraction.js'
 import { isPdfTranslationCaption } from './layout.js'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
 import type { PdfTranslationSourceIdentity } from './table-source.js'
 import { verifiedPdfStructureRegions } from './structure-regions.js'
 import { nativeLabelRegion } from './native-source-geometry.js'
-import { retainPdfWholeRegionSources } from './whole-region-retention.js'
+import {
+  retainPdfWholeRegionSources,
+  isCurrentCaptionedMathBodyRetention
+} from './whole-region-retention.js'
+import { restoreReferenceFigureCaptions } from './reference-figure-caption.js'
+import { carryNativeCaptionEligibility } from './caption-eligibility.js'
+import { restoreNativeOrdinaryAppendixProse } from './wrapped-section-prose.js'
+import { retainNativeFigurePanels, isCurrentNativeFigurePanels } from './figure-panels.js'
+import {
+  retainNativeFigureVariableKeys,
+  isCurrentNativeFigureVariableKeys
+} from './figure-variable-keys.js'
 
 type Rect = PdfTranslationFragment['rect']
 type Matrix = readonly number[]
@@ -36,6 +48,9 @@ const contains = (outer: Rect, inner: Rect): boolean =>
   inner.y >= outer.y - 0.003 &&
   inner.x + inner.width <= outer.x + outer.width + 0.003 &&
   inner.y + inner.height <= outer.y + outer.height + 0.003
+
+const isFigureCaption = (text: string): boolean =>
+  /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(text)
 
 /** Conservative graphic anchors, not regions authorized for PDF text replacement. */
 async function graphicRegions(
@@ -241,10 +256,7 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
       signal.throwIfAborted()
       const { images, vectors, rules = [] } = await graphicRegions(page, operators, signal)
       const captions = units
-        .filter(
-          (unit) =>
-            /^(?:Figure|Fig\.)\s*\d/iu.test(unit.source) && isPdfTranslationCaption(unit.source)
-        )
+        .filter((unit) => isFigureCaption(unit.source) && isPdfTranslationCaption(unit.source))
         .flatMap((unit) => unit.fragments.filter((f) => f.pageNumber === number))
       const regions = [
         ...images,
@@ -287,15 +299,18 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
   if (!preserved.size && !originalRegions.length) return extraction
   return Object.freeze({
     ...extraction,
-    source: createPdfTranslationSource({
-      ...source,
-      originalRegions,
-      units: source.units.map((unit) =>
-        preserved.has(unit.id)
-          ? { ...unit, ...(skipTranslation ? { sourceOnly: true as const } : {}), figure: true }
-          : unit
-      )
-    })
+    source: carryNativeCaptionEligibility(
+      source,
+      createPdfTranslationSource({
+        ...source,
+        originalRegions,
+        units: source.units.map((unit) =>
+          preserved.has(unit.id)
+            ? { ...unit, ...(skipTranslation ? { sourceOnly: true as const } : {}), figure: true }
+            : unit
+        )
+      })
+    )
   })
 }
 
@@ -393,6 +408,7 @@ export async function applyCachedPdfFigureSources({
         Awaited<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['getTextContent']>>
       >()
       const viewports = new Map<number, ReturnType<PDFPageProxy['getViewport']>>()
+      const graphicAnchors = new Map<number, Rect[]>()
       const claims = new Map<string, (typeof elements)[number]>()
       for (const figure of elements) {
         if (
@@ -406,6 +422,7 @@ export async function applyCachedPdfFigureSources({
               issue.code !== 'native-raster-composite-grid' &&
               issue.code !== 'native-raster-side-by-side' &&
               issue.code !== 'native-raster-quad' &&
+              issue.code !== 'native-vector-bar-chart' &&
               issue.code !== 'native-raster-horizontal-array' &&
               issue.code !== 'native-disjoint-mixed-group'
           )
@@ -462,6 +479,154 @@ export async function applyCachedPdfFigureSources({
           claims.set(key, figure)
         }
       }
+      // Some cached generic figures have a complete crop and caption but no
+      // serialized sourceItems. Recover them only when every native text item
+      // inside the crop belongs to complete source units wholly contained by
+      // that crop. Any mixed unit, unknown native geometry, caption overlap,
+      // or competing claim leaves the figure untranslated.
+      for (const figure of elements) {
+        if (
+          figure.kind !== 'figure' ||
+          figure.sourceItems?.length ||
+          !figure.caption ||
+          !isFigureCaption(figure.caption.text) ||
+          !isPdfTranslationCaption(figure.caption.text) ||
+          !figure.thumbnailId ||
+          figure.regions.length !== 1 ||
+          figure.issues.some((issue) => !/^native-(?:raster|vector)-/u.test(issue.code)) ||
+          figure.regions[0].width * figure.regions[0].height < 0.002 ||
+          figure.regions[0].width * figure.regions[0].height > 0.8
+        )
+          continue
+        const region = figure.regions[0]
+        if (
+          figure.caption.regions.some((caption) => overlaps(region, caption)) ||
+          elements.some(
+            (element) =>
+              element !== figure &&
+              (element.regions.some((other) => overlaps(region, other)) ||
+                element.caption?.regions.some((caption) => overlaps(region, caption)))
+          )
+        ) {
+          continue
+        }
+        const pageNumber = region.page
+        if (!native.has(pageNumber)) {
+          current()
+          const page = await document.getPage(pageNumber),
+            viewport = page.getViewport({ scale: 1 })
+          current()
+          const expected = source.pages[pageNumber - 1]
+          if (
+            !expected ||
+            ![viewport.width, viewport.height].every((n) => Number.isFinite(n) && n > 0) ||
+            Math.abs(viewport.width - expected.width) > 1e-6 ||
+            Math.abs(viewport.height - expected.height) > 1e-6
+          ) {
+            continue
+          }
+          viewports.set(pageNumber, viewport)
+          native.set(pageNumber, await page.getTextContent())
+          current()
+        }
+        const content = native.get(pageNumber)!
+        if (!graphicAnchors.has(pageNumber)) {
+          current()
+          const page = await document.getPage(pageNumber)
+          try {
+            const { images, vectors } = await graphicRegions(page, OPS, signal)
+            graphicAnchors.set(pageNumber, [...images, ...vectors])
+          } finally {
+            page.cleanup()
+          }
+          current()
+        }
+        const anchors = graphicAnchors.get(pageNumber) ?? []
+        const regionArea = region.width * region.height
+        const hasGraphicOwnership = anchors.some((anchor) => {
+          const overlapWidth = Math.max(
+            0,
+            Math.min(region.x + region.width, anchor.x + anchor.width) -
+              Math.max(region.x, anchor.x)
+          )
+          const overlapHeight = Math.max(
+            0,
+            Math.min(region.y + region.height, anchor.y + anchor.height) -
+              Math.max(region.y, anchor.y)
+          )
+          const overlap = overlapWidth * overlapHeight
+          return overlap > 0 && overlap >= Math.min(regionArea, anchor.width * anchor.height) * 0.35
+        })
+        if (!hasGraphicOwnership) continue
+        const insideKeys = new Set<string>()
+        let complete = true
+        for (const [index, item] of content.items.entries()) {
+          if (!('str' in item) || !item.str.trim()) continue
+          const label = nativeLabelRegion(
+            item,
+            content.styles?.[item.fontName],
+            viewports.get(pageNumber)!,
+            pageNumber
+          )
+          if (!label) {
+            complete = false
+            break
+          }
+          if (!inside(label, region)) continue
+          const key = `${pageNumber}:${index}`
+          if (owners.get(key) !== item.str) {
+            complete = false
+            break
+          }
+          insideKeys.add(key)
+        }
+        if (!complete || insideKeys.size < 2) {
+          continue
+        }
+        const units = source.units.filter((unit) =>
+          unit.fragments.some((fragment) =>
+            overlaps(region, { page: fragment.pageNumber, ...fragment.rect })
+          )
+        )
+        const unitKeys = new Set<string>()
+        for (const unit of units) {
+          if (isPdfTranslationCaption(unit.source)) {
+            complete = false
+            break
+          }
+          for (const fragment of unit.fragments) {
+            if (
+              fragment.pageNumber !== pageNumber ||
+              !inside(
+                {
+                  page: fragment.pageNumber,
+                  ...fragment.rect
+                },
+                region
+              ) ||
+              !fragment.items.length
+            ) {
+              complete = false
+              break
+            }
+            for (const item of fragment.items) {
+              const key = `${fragment.pageNumber}:${item.index}`
+              if (owners.get(key) !== item.text) {
+                complete = false
+                break
+              }
+              unitKeys.add(key)
+            }
+            if (!complete) break
+          }
+          if (!complete) break
+        }
+        if (!complete || !insideKeys.size || [...insideKeys].some((key) => !unitKeys.has(key))) {
+          continue
+        }
+        if ([...unitKeys].some((key) => claims.has(key) && claims.get(key) !== figure)) continue
+        for (const key of unitKeys) claims.set(key, figure)
+      }
       let changed = false
       const units = source.units.map((unit) => {
         if (unit.sourceOnly) return unit
@@ -490,7 +655,7 @@ export async function applyCachedPdfFigureSources({
         )
           return unit
         changed = true
-        return { ...unit, sourceOnly: true as const }
+        return { ...unit, sourceOnly: true as const, figure: true as const }
       })
       const originalRegions = verifiedPdfStructureRegions(
         source,
@@ -514,17 +679,20 @@ export async function applyCachedPdfFigureSources({
       return changed || originalRegions.length
         ? Object.freeze({
             ...extraction,
-            source: createPdfTranslationSource({
-              ...source,
-              units,
-              ...(originalRegions.length
-                ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
-                : {})
-            })
+            source: carryNativeCaptionEligibility(
+              source,
+              createPdfTranslationSource({
+                ...source,
+                units,
+                ...(originalRegions.length
+                  ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
+                  : {})
+              })
+            )
           })
         : extraction
     })()
-    return retainPdfWholeRegionSources({
+    const retained = await retainPdfWholeRegionSources({
       extraction: figureExtraction,
       document,
       results,
@@ -532,6 +700,46 @@ export async function applyCachedPdfFigureSources({
       nativeDocumentFactory,
       signal
     })
+    const restored = await restoreReferenceFigureCaptions({
+      extraction: retained,
+      document,
+      results,
+      sourceIdentity: identity,
+      nativeDocumentFactory,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    const ordinary = await restoreNativeOrdinaryAppendixProse({
+      extraction: restored,
+      document,
+      sourceIdentity: identity,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    const keys = await retainNativeFigureVariableKeys({
+      extraction: ordinary,
+      document,
+      results,
+      sourceIdentity: identity,
+      nativeDocumentFactory,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    const panels = await retainNativeFigurePanels({
+      extraction: keys,
+      document,
+      sourceIdentity: identity,
+      nativeDocumentFactory,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    return isCurrentNativeFigureVariableKeys(keys) && isCurrentNativeFigurePanels(panels)
+      ? panels
+      : extraction
   } catch {
     signal.throwIfAborted()
     return extraction

@@ -8,6 +8,7 @@ import {
   readTableBorderColors
 } from '../../../test/fixtures/docx-table-borders'
 
+import reportFontUrl from '../../../packages/pdf-translation/resources/NotoSansSC-Regular.otf?url'
 import reportUrl from '../../../test/fixtures/docx-report.docx?url'
 import { createDocxStyleFixture } from '../../../test/fixtures/docx-table-styles'
 
@@ -19,6 +20,12 @@ const scenario = docxTableCases.find(
 // Exercise the production preview, including fit/zoom controls and application CSS.
 void (async () => {
   await initI18n('en')
+  if (new URLSearchParams(location.search).has('report')) {
+    // Pin the report's requested font families, including CJK fallback, across runner images.
+    for (const family of ['Arial', 'PingFang SC']) {
+      document.fonts.add(await new FontFace(family, `url(${reportFontUrl})`).load())
+    }
+  }
   const dispose = await renderOfficeFile({
     bytes: new URLSearchParams(location.search).has('report')
       ? new Uint8Array(await (await fetch(reportUrl)).arrayBuffer())

@@ -108,7 +108,7 @@ export function checkDerivedConsumersAtRevision(revision, cwd = process.cwd()) {
 
 function derivedConsumerInputsUnchanged(base, head, cwd) {
   const git = (...args) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 })
   // Disable rename detection so both the old and new paths must qualify.
   const paths = git('diff', '--no-renames', '--name-only', '-z', base, head)
     .split('\0')
@@ -136,12 +136,14 @@ export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
   const hasIndex = (revision) =>
     execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
       cwd,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      maxBuffer: 128 * 1024 * 1024
     }).trim() === derivedConsumersPath
   if (!hasIndex(head)) return
   const mergeBase = execFileSync('git', ['merge-base', base, head], {
     cwd,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    maxBuffer: 128 * 1024 * 1024
   }).trim()
   if (derivedConsumerInputsUnchanged(mergeBase, head, cwd)) return
   checkDerivedConsumersAtRevision(head, cwd)
@@ -203,14 +205,19 @@ export function checkModuleConsumerCoverage({
 function formatIndexJson(text) {
   // Format as the repository path, not the destination: a checkout under /tmp would otherwise
   // match the `tmp` .prettierignore entry and Prettier would echo the input unformatted.
+  // The index is gitignored, so read only .prettierignore; Prettier 3 also honors .gitignore.
   const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
   const prettier = resolve(repositoryRoot, 'node_modules/prettier/bin/prettier.cjs')
-  return execFileSync(process.execPath, [prettier, '--stdin-filepath', derivedConsumersPath], {
-    cwd: repositoryRoot,
-    input: text,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024
-  })
+  return execFileSync(
+    process.execPath,
+    [prettier, '--ignore-path', '.prettierignore', '--stdin-filepath', derivedConsumersPath],
+    {
+      cwd: repositoryRoot,
+      input: text,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    }
+  )
 }
 
 // --write regenerates the index; --check validates it; --coverage runs the whole-tree guard.

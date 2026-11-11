@@ -122,12 +122,20 @@ const createCustomMcpFetch = (
 
 const DEFAULT_CLIENT_INFO = { name: 'connector-mcp-client', version: '0.1.0' }
 
+export type McpStdioLaunch = {
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
 export type McpTransportDependencies = {
   clientInfo?: { name: string; version: string; title?: string }
   // Host-owned credential policy. Missing/failed policy suppresses stderr text.
   redactDiagnosticText?: (value: string) => string
   fetchImpl?: typeof fetch
   prepareEnvironment?: (environment: Record<string, string>) => Record<string, string>
+  // Hosts may resolve local commands without teaching this package about application resources.
+  prepareStdioLaunch?: (launch: McpStdioLaunch) => McpStdioLaunch
   logger?: { warn(message: string, fields: Record<string, unknown>): void }
 }
 
@@ -380,14 +388,17 @@ export function buildTransport(
       if (!config.command) {
         throw new Error(`custom MCP server "${config.name}" is missing a command for stdio`)
       }
-      const transport = new StdioClientTransport({
+      const launch: McpStdioLaunch = {
         command: config.command,
-        args: config.args,
-        stderr: 'pipe',
+        args: config.args ?? [],
         env: (dependencies.prepareEnvironment ?? ((environment) => environment))({
           ...getDefaultEnvironment(),
           ...config.env
         }) as Record<string, string>
+      }
+      const transport = new StdioClientTransport({
+        ...(dependencies.prepareStdioLaunch?.(launch) ?? launch),
+        stderr: 'pipe'
       })
       // The SDK starts close without awaiting it when initialization fails. Its stdio close
       // clears the process handle before waiting, so subsequent calls must join that same cleanup.

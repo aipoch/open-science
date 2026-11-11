@@ -190,7 +190,7 @@ test('uses static updates with reduced motion and fits narrow layouts', async ({
   ).toBeVisible()
   await page.getByRole('button', { name: 'Resume analysis', exact: true }).click()
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.getByRole('button', { name: 'Collapse sidebar panel' }).click()
+  await expect(page.getByRole('button', { name: 'Expand sidebar panel' })).toBeVisible()
   const process = page.getByRole('region', { name: 'Screening process' })
   await expect(process).toBeVisible()
   expect(await process.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)

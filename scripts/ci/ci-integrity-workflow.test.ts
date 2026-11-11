@@ -205,6 +205,7 @@ describe('module registration approval boundary', () => {
       '/CODEOWNERS @aipoch/ci-maintainers',
       '/.github/workflows/ @aipoch/ci-maintainers',
       '/.github/actions/ @aipoch/ci-maintainers',
+      '/.github/codeql/ @aipoch/ci-maintainers',
       '/.github/dependabot.yml @aipoch/ci-maintainers',
       '/.github/labels.json @aipoch/ci-maintainers',
       '/scripts/ci/ @aipoch/ci-maintainers',

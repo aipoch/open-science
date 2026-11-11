@@ -93,7 +93,7 @@ function closedCellParts(item, glyphs, first, scale, context, frames) {
 // Independent text operations can be joined into one PDF.js item. Observe their
 // explicit text/graphics positions only; the numeric splitter retains its own
 // eligibility rules and never uses this observation to infer a column.
-function positionedNativeGlyphs(operators) {
+function positionedNativeGlyphs(operators, observeGlyph) {
   const points = new Map(),
     stack = []
   let matrix = [1, 0, 0, 1, 0, 0],
@@ -131,7 +131,14 @@ function positionedNativeGlyphs(operators) {
       active = true
     } else if (op === OPS.endText) active = false
     else if (op === OPS.setTextMatrix) {
-      textMatrix = Array.from(args)
+      textMatrix = Array.from(
+        observeGlyph &&
+          args.length === 1 &&
+          (Array.isArray(args[0]) || ArrayBuffer.isView(args[0])) &&
+          args[0].length === 6
+          ? args[0]
+          : args
+      )
       x = y = lineX = lineY = 0
     } else if (op === OPS.moveText) move(args[0], args[1])
     else if (op === OPS.setLeadingMoveText) {
@@ -171,6 +178,17 @@ function positionedNativeGlyphs(operators) {
         const width = (glyph.width * size) / 1000
         const start = [x, y + rise],
           end = [x + width * hScale, y + rise]
+        observeGlyph?.({
+          operationIndex: run,
+          glyphIndex: index,
+          glyph,
+          active,
+          transform: [...transform],
+          size,
+          hScale,
+          start: [...start],
+          end: [...end]
+        })
         if (valid) {
           Util.applyTransform(start, transform)
           Util.applyTransform(end, transform)
@@ -2161,4 +2179,86 @@ export function repairSpacedTextOffsets(content, operators) {
       }
     })
   }
+}
+
+// Measurement only: retain original source/glyph objects and every whitespace
+// record. This neither creates Source authority nor changes numeric splitting.
+export function nativeWholeSourceGlyphObservations(content, operators) {
+  if (
+    !Array.isArray(content?.items) ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators?.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000 ||
+    content.items.length > 100000
+  )
+    return
+  const fonts = new Map(),
+    stack = []
+  let font
+  for (const [i, op] of operators.fnArray.entries()) {
+    const a = operators.argsArray[i]
+    if (op === OPS.save || op === OPS.paintFormXObjectBegin) stack.push(font)
+    else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      if (!stack.length) return
+      font = stack.pop()
+    } else if (op === OPS.setFont) font = a?.[0]
+    else if (op === OPS.showText) {
+      if (typeof font !== 'string' || !Array.isArray(a?.[0])) return
+      fonts.set(i, font)
+    }
+  }
+  if (stack.length) return
+  const glyphs = [],
+    streams = new Map()
+  let invalid = false
+  positionedNativeGlyphs(operators, (g) => {
+    const name = fonts.get(g.operationIndex)
+    if (
+      !name ||
+      typeof g.glyph?.unicode !== 'string' ||
+      typeof g.glyph.fontChar !== 'string' ||
+      !Number.isFinite(g.glyph.width) ||
+      !g.active ||
+      ![...g.transform, ...g.start, ...g.end, g.size, g.hScale].every(Number.isFinite) ||
+      !(g.size > 0) ||
+      !(g.hScale > 0) ||
+      !(g.transform[0] * g.transform[3] - g.transform[1] * g.transform[2] > 0)
+    ) {
+      invalid = true
+      return
+    }
+    const observed = { ...g, fontName: name }
+    glyphs.push(observed)
+    if (!streams.has(name)) streams.set(name, [])
+    for (const char of Array.from(g.glyph.unicode).filter((c) => !/\s/u.test(c)))
+      streams.get(name).push({ char, observed })
+  })
+  if (invalid) return
+  const literal = new Map()
+  for (const r of content.items) {
+    if (!r || typeof r.str !== 'string' || typeof r.fontName !== 'string') return
+    literal.set(r.fontName, (literal.get(r.fontName) ?? '') + r.str.replace(/\s/gu, ''))
+  }
+  if (
+    [...streams].some(
+      ([name, stream]) => stream.map((g) => g.char).join('') !== (literal.get(name) ?? '')
+    ) ||
+    [...literal].some(([name, text]) => text && !streams.has(name))
+  )
+    return
+  const offsets = new Map(),
+    used = new Set(),
+    records = []
+  for (const [index, r] of content.items.entries()) {
+    const offset = offsets.get(r.fontName) ?? 0,
+      length = Array.from(r.str.replace(/\s/gu, '')).length,
+      local = (streams.get(r.fontName) ?? []).slice(offset, offset + length),
+      whole = [...new Set(local.map((g) => g.observed))]
+    offsets.set(r.fontName, offset + length)
+    if (local.length !== length || whole.some((g) => used.has(g))) return
+    for (const g of whole) used.add(g)
+    records.push({ index, source: r, glyphs: whole })
+  }
+  return { records, glyphs }
 }

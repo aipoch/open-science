@@ -8,7 +8,7 @@ import {
   shellSingleQuote,
   type JobPoller
 } from '@aipoch/compute/node'
-import { computeProviderId, type ComputeJobStatus } from '@aipoch/compute'
+import { computeProviderId, type AgentJobStatus } from '@aipoch/compute'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -33,7 +33,7 @@ async function pollUntilTerminal(
 ): ReturnType<ComputeService['getJobStatus']> {
   const startMs = Date.now()
   let status = await service.getJobStatus(jobId)
-  const terminal: ComputeJobStatus[] = ['success', 'failed', 'timeout', 'error']
+  const terminal: AgentJobStatus[] = ['success', 'failed', 'timeout', 'cancelled', 'error']
   while (!terminal.includes(status.status)) {
     if (Date.now() - startMs > MAX_POLL_WAIT_MS)
       throw new Error(

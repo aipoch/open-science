@@ -1,3 +1,4 @@
+import type { PdfAnnotationAgentTools } from '../pdf-annotations/agent-tools'
 import type { SandboxNetworkApprovalOwner } from '../acp/sandbox-network-approval-owner'
 import { runtimeMetadata } from '../runtime-metadata'
 import { ImageInputCompatibilityOwner } from '../acp/image-input-compatibility-owner'
@@ -61,6 +62,7 @@ export async function composeAgentRuntime({
   artifactReproducibilityAttemptOwnerRef,
   sessionPersistenceCoordinator,
   sandboxNetworkApprovalOwner,
+  pdfAnnotationAgent,
   pdfElementReader,
   literatureDocumentReader,
   mainPromptSideChatRelay,
@@ -109,6 +111,7 @@ export async function composeAgentRuntime({
     SessionMutation &
     SessionRuntimeContextCommands &
     Pick<SessionPersistenceCommands, 'sessionProjectId'>
+  pdfAnnotationAgent: PdfAnnotationAgentTools
   pdfElementReader: PdfElementAgentReader
   literatureDocumentReader: LiteratureDocumentReader
   mainPromptSideChatRelay: ReturnType<typeof createMainPromptSideChatRelay>
@@ -163,6 +166,8 @@ export async function composeAgentRuntime({
       canOwnRuntimeBindingDecision: (request) =>
         notebookService.canOwnRuntimeBindingDecision(request),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
+      isReplNamespaceUnavailable: (projectId, sessionId, rootFrameId) =>
+        notebookService.isReplNamespaceUnavailable(projectId, sessionId, rootFrameId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
       settingsService,
@@ -170,8 +175,14 @@ export async function composeAgentRuntime({
       permissionGrantRegistry,
       taskNotifications,
       notificationInbox,
-      onSessionTurnStarted: approvalSessionLifecycle.onSessionTurnStarted,
-      onSessionTurnEnded: approvalSessionLifecycle.onSessionTurnEnded,
+      onSessionTurnStarted: (sessionId, turnToken) => {
+        notebookService.noteSessionActivity(sessionId)
+        approvalSessionLifecycle.onSessionTurnStarted?.(sessionId, turnToken)
+      },
+      onSessionTurnEnded: (sessionId, turnToken) => {
+        notebookService.noteSessionActivity(sessionId)
+        approvalSessionLifecycle.onSessionTurnEnded?.(sessionId, turnToken)
+      },
       onSkillImportAttachmentEligible: approvalSessionLifecycle.onSkillImportAttachmentEligible,
       onTrustedMessageAttribution: (projectId, event) =>
         messageAttributionAuthority.recordRuntimeEvent(projectId, event),
@@ -205,6 +216,7 @@ export async function composeAgentRuntime({
       },
       literatureReader: literatureDocumentReader,
       pdfElementReader,
+      pdfAnnotationAgent,
       literatureAttachments: literatureAttachmentAuthority,
       literatureCatalog,
       literaturePdfAcquisition,

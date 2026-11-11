@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { PUBLIC_TERMINAL_FIXTURE } from './test/fixtures'
 import { connectToOpenScience, OpenScienceClient } from './index.mjs'
+import type { AgentFramework } from './index'
 
 const response = (status: number, payload: unknown): Response =>
   new Response(JSON.stringify(payload), {
@@ -127,6 +128,18 @@ describe('OpenScienceClient', () => {
         'waitForRun',
         'listArtifacts',
         'downloadArtifact',
+        'searchLiterature',
+        'getLiteratureItem',
+        'listCitationStyles',
+        'formatReferences',
+        'getReferenceMetadata',
+        'importLiterature',
+        'createLiteratureItem',
+        'setProjectLiterature',
+        'createLiteratureCollection',
+        'setCollectionLiterature',
+        'setLiteratureReadingStatus',
+        'setLiteratureLifecycle',
         'events',
         'request',
         'throwResponseError'
@@ -155,7 +168,10 @@ describe('OpenScienceClient', () => {
       memoryEnabled: false
     })
     await client.getAgentRouting()
-    await client.updateAgentRouting({ framework: 'codex' })
+    const framework: AgentFramework = 'open-science-agent'
+    await client.updateAgentRouting({ framework })
+
+    expect(JSON.parse(fetch.mock.calls.at(-1)?.[1]?.body)).toEqual({ framework })
 
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
       'http://127.0.0.1:44100/api/v1/doctor',
@@ -646,6 +662,106 @@ describe('OpenScienceClient', () => {
       await vi.advanceTimersByTimeAsync(30_000)
 
       expect(outcome).toMatchObject({ code: 'timeout' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets an artifact download outlast the request timeout while chunks keep arriving', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetch = vi.fn((_input: string, init?: RequestInit) => {
+        const signal = init?.signal
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                signal?.addEventListener('abort', () => controller.error(signal.reason), {
+                  once: true
+                })
+                for (let index = 1; index <= 6; index += 1) {
+                  setTimeout(() => {
+                    controller.enqueue(new TextEncoder().encode(`chunk-${index};`))
+                    if (index === 6) controller.close()
+                  }, index * 20_000)
+                }
+              }
+            }),
+            { status: 200 }
+          )
+        )
+      })
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch,
+        requestTimeoutMs: 30_000
+      })
+      const response = await client.downloadArtifact('artifact-1')
+      let outcome: unknown = 'still-pending'
+      void response.text().then(
+        (text) => {
+          outcome = text
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(120_000)
+
+      expect(outcome).toBe('chunk-1;chunk-2;chunk-3;chunk-4;chunk-5;chunk-6;')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('times out an artifact download once its body stops sending data', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetch = vi.fn((_input: string, init?: RequestInit) => {
+        const signal = init?.signal
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                signal?.addEventListener('abort', () => controller.error(signal.reason), {
+                  once: true
+                })
+                setTimeout(() => controller.enqueue(new TextEncoder().encode('partial')), 20_000)
+              }
+            }),
+            { status: 200 }
+          )
+        )
+      })
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'secret-token',
+        fetch,
+        requestTimeoutMs: 30_000
+      })
+      const response = await client.downloadArtifact('artifact-1')
+      let outcome: unknown = 'still-pending'
+      void response.text().then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(49_999)
+      expect(outcome).toBe('still-pending')
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(outcome).toMatchObject({
+        code: 'timeout',
+        message: 'Open-Science request timed out after 30000 milliseconds.'
+      })
     } finally {
       vi.useRealTimers()
     }

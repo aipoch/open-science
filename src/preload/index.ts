@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-import { unwrapApplicationCommandOutcome } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope,
+  unwrapApplicationCommandOutcome
+} from '../shared/application-command-contract'
 import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
 import { createElectronRendererApi } from './electron-renderer-api'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
@@ -23,10 +27,18 @@ const api = createElectronRendererApi(electronRendererContracts, {
     chrome: process.versions.chrome,
     node: process.versions.node
   }),
-  'sessions.saveSession': async (session, options) =>
-    unwrapApplicationCommandOutcome(
-      await electronRendererContracts.invoke('sessions.saveSession', session, options)
-    ),
+  'sessions.saveSession': async (session, options) => {
+    try {
+      return unwrapApplicationCommandOutcome(
+        await electronRendererContracts.invoke('sessions.saveSession', session, options)
+      )
+    } catch (error) {
+      // This transitional outcome is unwrapped here, outside the contract adapter. Error
+      // properties do not cross contextBridge; preserve only the reviewed public envelope.
+      if (error instanceof ApplicationCommandError) throw toApplicationCommandErrorEnvelope(error)
+      throw error
+    }
+  },
   'remoteAccess.onChanged': (listener) =>
     electronRendererContracts.subscribe('remoteAccess.onChanged', () => (listener as () => void)()),
   'window.onCloseActivePane': (listener) =>

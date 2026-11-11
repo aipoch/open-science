@@ -4,7 +4,11 @@ import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PdfTranslationExtraction } from './extraction.js'
 import type { PdfTranslationSourceIdentity } from './table-source.js'
 import { createPdfTranslationSource } from './source.js'
-import { createAuxiliaryNativeInkReader } from './auxiliary-native-ink.js'
+import {
+  createAuxiliaryNativeInkReader,
+  nativeInkPageIdentity,
+  nativeInkPageCurrent
+} from './auxiliary-native-ink.js'
 import {
   nativeLabelRegion,
   nativeZeroAdvanceRegions,
@@ -49,12 +53,14 @@ async function retainWholeRegionSources(
   },
   focus?: PdfStructureResult['elements'][number],
   focusInk?: ReadonlyMap<number, Region>,
-  captionlessProof?: CaptionlessBodyProof
+  captionlessProof?: CaptionlessBodyProof,
+  focusCurrent?: () => boolean
 ): Promise<PdfTranslationExtraction> {
   signal.throwIfAborted()
   const source = extraction.source,
     identity = { ...sourceIdentity }
   const current = (): boolean =>
+    (!focusCurrent || focusCurrent()) &&
     !!source.fingerprint &&
     source.fingerprint === document.fingerprints[0] &&
     source.pages.length === document.numPages
@@ -235,7 +241,11 @@ async function retainWholeRegionSources(
             const regions =
               focusInk && focus === element
                 ? fragment.items.map((i) => focusInk.get(i.index))
-                : [{ page: fragment.pageNumber, ...fragment.rect }]
+                : math && !captionless
+                  ? // Whole native math owners are revalidated item by item below.
+                    // Layout navigation padding is not native body ownership.
+                    []
+                  : [{ page: fragment.pageNumber, ...fragment.rect }]
             for (const region of regions)
               if (
                 !region ||
@@ -1096,6 +1106,229 @@ async function captionlessBodyProof(
   }
 }
 
+// Keep caption splitting and nativeLabelRegion unchanged.
+async function numberedPseudocodeBodyInk(
+  input: Parameters<typeof retainWholeRegionSources>[0],
+  element: Parameters<typeof retainWholeRegionSources>[0]['results'][number]['elements'][number]
+): Promise<ReadonlyMap<number, Region> | undefined> {
+  const { extraction, document, signal } = input,
+    body = element.nativeBody,
+    region = element.regions[0],
+    caption = element.caption
+  if (
+    element.kind !== 'algorithm' ||
+    element.issues.length ||
+    body?.kind !== 'algorithm' ||
+    element.regions.length !== 1 ||
+    caption?.regions.length !== 1 ||
+    caption.regions[0].page !== region.page ||
+    !/^Algorithm\s+[1-9]\d*\b.*\bPseudocode\b/u.test(caption.text) ||
+    body.sourceItems.length < 4 ||
+    body.sourceItems.length > 4096 ||
+    body.sourceItems.some(
+      (r, i) => r.pageNumber !== region.page || (i > 0 && r.index <= body.sourceItems[i - 1].index)
+    )
+  )
+    return
+  const ordinals = body.sourceItems.filter((r) => /^[1-9]\d*:$/.test(r.text))
+  if (
+    ordinals.length < 4 ||
+    ordinals.length > 128 ||
+    ordinals[0] !== body.sourceItems[0] ||
+    ordinals.some((r, i) => Number(r.text.slice(0, -1)) !== i + 1)
+  )
+    return
+  signal.throwIfAborted()
+  const page = await document.getPage(region.page),
+    viewport = page.getViewport({ scale: 1 }),
+    content = await page.getTextContent(),
+    expected = extraction.source.pages[region.page - 1]
+  signal.throwIfAborted()
+  if (
+    extraction.source.fingerprint !== document.fingerprints[0] ||
+    !expected ||
+    viewport.rotation !== 0 ||
+    viewport.width !== expected.width ||
+    viewport.height !== expected.height
+  )
+    return
+  for (const s of body.sourceItems) {
+    const r = content.items[s.index]
+    if (
+      !r ||
+      !('str' in r) ||
+      r.str !== s.text ||
+      (r.width === 0 && Array.from(r.str.normalize('NFD')).length !== 1)
+    )
+      return
+  }
+  const ordinalItems = ordinals.map((s) => content.items[s.index] as TextItem),
+    first = ordinalItems[0]
+  if (
+    ordinalItems.some(
+      (r, i) =>
+        r.fontName !== first.fontName ||
+        r.height !== first.height ||
+        Math.abs(r.transform[4] + r.width - first.transform[4] - first.width) > r.height * 0.001 ||
+        (i > 0 && r.transform[5] >= ordinalItems[i - 1].transform[5])
+    )
+  )
+    return
+  const ink = await nativeAlgorithmInkRegions(
+    page,
+    content,
+    viewport,
+    region.page,
+    new Set(body.sourceItems.map((s) => s.index))
+  )
+  signal.throwIfAborted()
+  return extraction.source.fingerprint === document.fingerprints[0] ? ink : undefined
+}
+
+// Whole captioned math owners may overlap their caption in advance space.
+// Only the complete existing native program can distinguish their actual ink.
+async function captionedMathBodyInk(
+  input: Parameters<typeof retainWholeRegionSources>[0],
+  result: PdfStructureResult,
+  element: PdfStructureResult['elements'][number]
+): Promise<
+  | {
+      ink: NonNullable<Awaited<ReturnType<typeof nativeAlgorithmInkRegions>>>
+      current: () => boolean
+    }
+  | undefined
+> {
+  const { document, sourceIdentity, signal } = input,
+    body = element.nativeBody,
+    region = element.regions[0],
+    binding = JSON.stringify(element),
+    bodyItems = body?.sourceItems,
+    originalBodyItems = bodyItems ? [...bodyItems] : []
+  if (
+    element.kind !== 'table' ||
+    body?.kind !== 'math-table' ||
+    body.boundary ||
+    !body.sourceItems.length ||
+    body.sourceItems.length > 4096 ||
+    element.regions.length !== 1 ||
+    element.caption?.regions.length !== 1 ||
+    element.caption.regions[0].page !== region.page ||
+    element.table ||
+    element.tableParts ||
+    element.tableNotes ||
+    element.issues.length !== 1 ||
+    element.issues[0].code !== 'no-source-cell-grid' ||
+    !result.processedPages.includes(region.page) ||
+    result.sourceChecksum !== sourceIdentity.sourceChecksum ||
+    result.sourceSizeBytes !== sourceIdentity.sourceSizeBytes ||
+    result.pageCount !== document.numPages
+  )
+    return
+  const fingerprint = input.extraction.source.fingerprint,
+    page = await document.getPage(region.page),
+    viewport = page.getViewport({ scale: 1 }),
+    content = await page.getTextContent(),
+    selected = new Set(body.sourceItems.map((i) => i.index))
+  signal.throwIfAborted()
+  if (
+    !fingerprint ||
+    fingerprint !== document.fingerprints[0] ||
+    viewport.scale !== 1 ||
+    viewport.rotation !== 0 ||
+    selected.size !== body.sourceItems.length ||
+    body.sourceItems.some((i) => {
+      const item = content.items[i.index]
+      if (i.pageNumber !== region.page || !item || !('str' in item) || item.str !== i.text)
+        return true
+      const style = content.styles[item.fontName]
+      return (
+        !style ||
+        style.vertical !== false ||
+        !Number.isFinite(style.ascent) ||
+        !Number.isFinite(style.descent) ||
+        style.ascent! <= 0 ||
+        style.ascent! > 1 ||
+        style.descent! > 0 ||
+        style.descent! < -1 ||
+        style.ascent! <= style.descent!
+      )
+    })
+  )
+    return
+  const contentItems = content.items,
+    originalItems = [...contentItems],
+    styles = content.styles,
+    originalStyles = Object.entries(styles),
+    fonts = originalStyles.map(([name]) => [name, page.commonObjs?.get(name)] as const),
+    before = await nativeInkPageIdentity(page, content, viewport)
+  signal.throwIfAborted()
+  if (!before) return
+  const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+    operators = await page.getOperatorList(),
+    fontIds = new Set<string>(),
+    glyphChars = new Set<string>()
+  signal.throwIfAborted()
+  if (operators.fnArray.length !== operators.argsArray.length || operators.fnArray.length > 100000)
+    return
+  for (const [index, op] of operators.fnArray.entries()) {
+    const args = operators.argsArray[index]
+    if (op === OPS.setFont) {
+      if (typeof args?.[0] !== 'string') return
+      fontIds.add(args[0])
+    } else if (op === OPS.showText) {
+      if (!Array.isArray(args?.[0])) return
+      for (const glyph of args[0])
+        if (typeof glyph?.fontChar === 'string' && glyph.fontChar) glyphChars.add(glyph.fontChar)
+    }
+  }
+  // Bind a conservative complete key set, including absent foreign glyphs.
+  // Extra absent keys only revoke; the existing native proof still owns all ink.
+  if (!fontIds.size || !glyphChars.size || fontIds.size * glyphChars.size > 10000) return
+  const outlineKeys = [...fontIds].flatMap((font) =>
+      [...glyphChars].map((c) => font + '_path_' + c)
+    ),
+    nativeCurrent = nativeInkPageCurrent(page, content, viewport, operators, outlineKeys)
+  if (!nativeCurrent) return
+  const ink = await nativeAlgorithmInkRegions(page, content, viewport, region.page, selected),
+    after = await nativeInkPageIdentity(page, content, viewport),
+    nonempty = content.items.flatMap((item, index) =>
+      'str' in item && item.str.trim() ? [index] : []
+    )
+  signal.throwIfAborted()
+  const current = (): boolean =>
+    nativeCurrent() &&
+    !(
+      fingerprint !== document.fingerprints[0] ||
+      element.nativeBody !== body ||
+      body.sourceItems !== bodyItems ||
+      body.sourceItems.some((item, index) => item !== originalBodyItems[index]) ||
+      content.items !== contentItems ||
+      content.items.length !== originalItems.length ||
+      content.items.some((item, index) => item !== originalItems[index]) ||
+      content.styles !== styles ||
+      Object.keys(styles).length !== originalStyles.length ||
+      originalStyles.some(([name, style]) => styles[name] !== style) ||
+      fonts.some(([name, font]) => page.commonObjs?.get(name) !== font) ||
+      before.key !== after?.key ||
+      JSON.stringify(element) !== binding
+    )
+  if (!ink || ink.size !== nonempty.length || nonempty.some((i) => !ink.has(i)) || !current())
+    return
+  return { ink, current }
+}
+
+const captionedMathRetentionCurrents = new WeakMap<PdfTranslationExtraction, () => boolean>()
+
+// The figure consumer still awaits reference-caption restoration after this
+// optional proof. Keep only its new math permission sealed through that await.
+export function isCurrentCaptionedMathBodyRetention(extraction: PdfTranslationExtraction): boolean {
+  try {
+    return captionedMathRetentionCurrents.get(extraction)?.() ?? true
+  } catch {
+    return false
+  }
+}
+
 export async function retainPdfWholeRegionSources(
   input: Parameters<typeof retainWholeRegionSources>[0]
 ): Promise<PdfTranslationExtraction> {
@@ -1150,6 +1383,47 @@ export async function retainPdfWholeRegionSources(
         input.signal.throwIfAborted()
       }
     }
+  let numberedAttempts = 0
+  for (const result of input.results)
+    for (const element of result.elements) {
+      if (element.kind !== 'algorithm' || numberedAttempts++ >= 16) continue
+      try {
+        const ink = await numberedPseudocodeBodyInk({ ...input, extraction }, element)
+        if (ink) extraction = await retainWholeRegionSources({ ...input, extraction }, element, ink)
+      } catch {
+        input.signal.throwIfAborted()
+      }
+    }
   extraction = await retainWholeRegionSources({ ...input, extraction })
-  return retainNativeDiffCodeSources({ ...input, extraction })
+  extraction = await retainNativeDiffCodeSources({ ...input, extraction })
+  const beforeMath = extraction,
+    mathCurrents: (() => boolean)[] = []
+  let mathAttempts = 0
+  for (const result of input.results)
+    for (const element of result.elements) {
+      if (element.nativeBody?.kind !== 'math-table' || !element.caption || mathAttempts++ >= 16)
+        continue
+      try {
+        const proof = await captionedMathBodyInk({ ...input, extraction }, result, element)
+        if (proof) {
+          const retained = await retainWholeRegionSources(
+            { ...input, extraction },
+            element,
+            proof.ink,
+            undefined,
+            proof.current
+          )
+          if (!proof.current()) return beforeMath
+          extraction = retained
+          mathCurrents.push(proof.current)
+        }
+      } catch {
+        input.signal.throwIfAborted()
+      }
+    }
+  // No asynchronous work remains between the retained native check and publication.
+  if (!mathCurrents.every((current) => current())) return beforeMath
+  if (mathCurrents.length)
+    captionedMathRetentionCurrents.set(extraction, () => mathCurrents.every((current) => current()))
+  return extraction
 }

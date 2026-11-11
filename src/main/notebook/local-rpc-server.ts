@@ -38,6 +38,7 @@ import {
 } from '../../shared/artifact-version-locator'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
 import {
+  AGENT_USER_CHOICE_REQUEST_CONTRACT,
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
   type AgentUserChoiceResult
@@ -104,6 +105,9 @@ import { isRecord } from '../value-guards'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-contract'
 import type {
+  HostViewImageBackend,
+  HostViewImageBackendCaptureOptions,
+  HostViewImageCaller,
   HostViewImageContext,
   HostViewImageResult,
   TransientViewImage
@@ -356,13 +360,16 @@ type NotebookLocalRpcServerOptions = {
     ): Promise<HostLlmResult | readonly HostLlmBatchItem[]>
   }
   hostViewImage?: {
-    isAvailable(context: { sessionId: string }): Promise<boolean>
+    isAvailable(context: HostViewImageCaller): Promise<boolean>
     stage(
       source: unknown,
       options: unknown,
       context: HostViewImageContext
     ): Promise<HostViewImageResult>
-    complete(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+    complete(
+      controlInvocationId: string,
+      signal?: AbortSignal
+    ): Promise<readonly TransientViewImage[]>
     discard(controlInvocationId: string): void
     discardSession(sessionId: string): void
     shutdown(): void
@@ -388,6 +395,7 @@ type NotebookLocalRpcServerOptions = {
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
   allowedMethods: Set<ArtifactRpcMethod>
   expiresAt: number
+  isOwnerActive?: () => boolean
   inFlightRequests: number
   drainWaiters: Set<() => void>
 }
@@ -405,6 +413,7 @@ type NotebookRpcSessionBinding = {
   executionCwd?: string
   isControl?: true
   delegatedNotebook?: {
+    viewImageBackend?: HostViewImageBackend
     permissionPrompts?: 'none'
     attemptId: string
     workspaceCwd: string
@@ -431,6 +440,7 @@ type ActiveArtifactTurnBinding = Readonly<{
 }>
 
 type DelegatedNotebookConnectionRequest = Readonly<{
+  viewImageBackend?: HostViewImageBackend
   permissionPrompts?: 'none'
   projectId: string
   sessionId: string
@@ -518,8 +528,8 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactReplayVersion'
 ])
 
-// Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
-// it must comfortably exceed long notebook executions that remain inside one active turn.
+// Live turn-owned capabilities follow their owner, including long executions. Capabilities issued
+// without an owner remain time-bounded; all capabilities still support explicit revoke and drain.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 // Let ordinary RPCs that are already producing a result drain before forcing the transport closed.
 // This remains comfortably inside the application module's one-second disposal budget.
@@ -788,7 +798,8 @@ class NotebookLocalRpcServer {
 
   issueArtifactRunCapability(
     binding: ArtifactRpcCapabilityBinding,
-    ttlMs = DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS
+    ttlMs = DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS,
+    isOwnerActive?: () => boolean
   ): string {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
       throw new Error('Artifact RPC capability lifetime must be positive.')
@@ -808,6 +819,7 @@ class NotebookLocalRpcServer {
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
       allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
       expiresAt: this.now() + ttlMs,
+      isOwnerActive,
       inFlightRequests: 0,
       drainWaiters: new Set()
     })
@@ -1483,6 +1495,9 @@ class NotebookLocalRpcServer {
     const connection = await this.ensureStarted()
     const token = randomUUID()
     const delegatedNotebook: NonNullable<NotebookRpcSessionBinding['delegatedNotebook']> = {
+      viewImageBackend: scope.viewImageBackend
+        ? Object.freeze({ ...scope.viewImageBackend, generationToken: {} })
+        : undefined,
       permissionPrompts: scope.permissionPrompts,
       attemptId: scope.attemptId,
       workspaceCwd: scope.workspaceCwd,
@@ -1533,7 +1548,15 @@ class NotebookLocalRpcServer {
       } as Parameters<NotebookLocalRpcCapability['shutdown']>[0] & {
         delegatedWorkAttemptId: string
       })
-      revokePromise = Promise.all([drained, shutdown]).then(() => undefined)
+      revokePromise = Promise.all([drained, shutdown]).then(
+        () => undefined,
+        (error) => {
+          // Admission stays revoked; only the failed lane teardown is retryable. Keeping a
+          // rejected promise here would prevent delegated cleanup recovery from reaping it.
+          revokePromise = undefined
+          throw error
+        }
+      )
       return revokePromise
     }
     return {
@@ -1599,6 +1622,51 @@ class NotebookLocalRpcServer {
     }
   }
 
+  private findDelegatedViewImageBinding(
+    caller: HostViewImageCaller
+  ): NotebookRpcSessionBinding | undefined {
+    if (
+      caller.role !== 'delegate' ||
+      !caller.projectId ||
+      !caller.agentFrameId ||
+      !caller.attemptId
+    )
+      return undefined
+    for (const binding of this.sessionRpcCapabilities.values()) {
+      const delegated = binding.delegatedNotebook
+      if (
+        !delegated ||
+        delegated.revoked ||
+        binding.projectId !== caller.projectId ||
+        binding.sessionId !== caller.sessionId ||
+        binding.agentFrameId !== caller.agentFrameId ||
+        delegated.attemptId !== caller.attemptId
+      )
+        continue
+      return binding
+    }
+    return undefined
+  }
+
+  // The image service requests durable Attempt authority only at admission and publication.
+  // Its repeated current-identity checks use the in-memory projection instead.
+  // Revocation and capability replacement take effect immediately without rereading the Session.
+  async captureDelegatedViewImageBackend(
+    caller: HostViewImageCaller,
+    options?: HostViewImageBackendCaptureOptions
+  ): Promise<HostViewImageBackend | undefined> {
+    const binding = this.findDelegatedViewImageBinding(caller)
+    const delegated = binding?.delegatedNotebook
+    if (!delegated) return undefined
+    if (
+      options?.requireWritableAttempt &&
+      (!(await delegated.isAttemptWritable()) ||
+        this.findDelegatedViewImageBinding(caller) !== binding)
+    )
+      return undefined
+    return delegated.viewImageBackend
+  }
+
   // Issues a dedicated capability for the persistent control-plane REPL. Unlike the Agent-facing
   // session connection, this does not rotate `sessionRpcTokens`: both callers remain valid, and the
   // narrower capability cannot invoke Notebook lifecycle or execution RPC methods.
@@ -1614,7 +1682,10 @@ class NotebookLocalRpcServer {
   ): Promise<
     NotebookRpcConnection & {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
-      completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+      completeControlInvocation(
+        controlInvocationId: string,
+        signal?: AbortSignal
+      ): Promise<readonly TransientViewImage[]>
       discardControlInvocation(controlInvocationId: string): void
       revoke: () => void
       release: () => void
@@ -1662,10 +1733,10 @@ class NotebookLocalRpcServer {
           }
         }
       },
-      completeControlInvocation: async (controlInvocationId) => {
+      completeControlInvocation: async (controlInvocationId, signal) => {
         if (!ownedControlInvocationIds.has(controlInvocationId)) return []
         const images = this.hostViewImage
-          ? await this.hostViewImage.complete(controlInvocationId)
+          ? await this.hostViewImage.complete(controlInvocationId, signal)
           : []
         ownedControlInvocationIds.delete(controlInvocationId)
         return images
@@ -1733,6 +1804,27 @@ class NotebookLocalRpcServer {
     }
   }
 
+  /** Read-only identity for an embedded harness borrowing this turn's execution capability. */
+  getArtifactTurnScope(sessionId: string):
+    | {
+        sessionId: string
+        projectId: string
+        ownerExecutionId: string
+        promptMessageId: string
+      }
+    | undefined {
+    const canonical = this.sessionAliases.get(sessionId) ?? sessionId
+    const binding = this.activeArtifactTurnBindings.get(canonical)
+    return binding
+      ? {
+          sessionId: canonical,
+          projectId: binding.projectId,
+          ownerExecutionId: binding.ownerExecutionId,
+          promptMessageId: binding.provenanceContext.promptMessageId
+        }
+      : undefined
+  }
+
   async clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): Promise<void> {
     const ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
     const binding = ownedTurns?.get(ownerExecutionId)
@@ -1778,6 +1870,20 @@ class NotebookLocalRpcServer {
     return this.inputRegistry.registerTurn(request)
   }
 
+  private assertArtifactCapabilityActive(token: string, capability: ArtifactRpcCapability): void {
+    if (capability.isOwnerActive ? capability.isOwnerActive() : capability.expiresAt > this.now()) {
+      return
+    }
+    // Preserve the shared drain promise so teardown still waits for previously admitted requests.
+    void this.revokeArtifactRunCapability(token)
+    throw new RpcHttpError(
+      401,
+      capability.isOwnerActive
+        ? 'Artifact RPC capability is no longer active.'
+        : 'Artifact RPC capability expired.'
+    )
+  }
+
   private acquireArtifactRpcRequest(
     method: ArtifactRpcMethod,
     token: string,
@@ -1785,12 +1891,7 @@ class NotebookLocalRpcServer {
   ): { params: Record<string, unknown>; release: () => void } {
     const capability = this.artifactRpcCapabilities.get(token)
     if (!capability) throw new RpcHttpError(401, 'Invalid Artifact RPC capability.')
-    if (capability.expiresAt <= this.now()) {
-      // Expiry closes admission just like an explicit runtime revoke. Keep the shared drain promise
-      // reachable so a later turn teardown still waits for requests that acquired before expiry.
-      void this.revokeArtifactRunCapability(token)
-      throw new RpcHttpError(401, 'Artifact RPC capability expired.')
-    }
+    this.assertArtifactCapabilityActive(token, capability)
     if (!capability.allowedMethods.has(method)) {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
@@ -1798,7 +1899,7 @@ class NotebookLocalRpcServer {
     if (method !== 'artifactSaveVersion') {
       throw new RpcHttpError(
         409,
-        'Artifact save protocol changed. Restart the Agent MCP connection.'
+        'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact save protocol changed. Do not retry this turn; tell the user to start a new conversation turn.'
       )
     }
     if (!capability.sourceScope)
@@ -1895,7 +1996,6 @@ class NotebookLocalRpcServer {
         callerRole,
         isControl: Boolean(sessionBinding.isControl),
         hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
-        hasWorkspace: Boolean(sessionBinding.executionCwd),
         allowsMethod,
         delegatedWorkReady,
         delegationAllowed,
@@ -1917,7 +2017,13 @@ class NotebookLocalRpcServer {
           listModels: Boolean(this.hostModel) && (await this.hostModel!.isListModelsAvailable()),
           viewImage:
             Boolean(this.hostViewImage) &&
-            (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId })),
+            (await this.hostViewImage!.isAvailable({
+              projectId: sessionBinding.projectId,
+              sessionId: sessionBinding.sessionId,
+              agentFrameId: sessionBinding.agentFrameId,
+              attemptId: sessionBinding.delegatedWorkAttemptId,
+              role: callerRole
+            })),
           delegate: Boolean(this.delegatedWorkService?.delegate),
           children: Boolean(this.delegatedWorkService?.children),
           collect: Boolean(this.delegatedWorkService?.collect),
@@ -1993,12 +2099,7 @@ class NotebookLocalRpcServer {
         ? authorization.slice('Bearer '.length)
         : ''
       const artifactCapability = this.artifactRpcCapabilities.get(bearerToken)
-      if (artifactCapability && artifactCapability.expiresAt <= this.now()) {
-        void this.revokeArtifactRunCapability(bearerToken)
-        closeRequestAfterResponse(request, response)
-        writeJson(response, 401, { error: 'Artifact RPC capability expired.' })
-        return
-      }
+      if (artifactCapability) this.assertArtifactCapabilityActive(bearerToken, artifactCapability)
       const hasKnownToken =
         authorization === `Bearer ${this.token}` ||
         this.sessionRpcCapabilities.has(bearerToken) ||
@@ -2190,7 +2291,8 @@ class NotebookLocalRpcServer {
                 'host.viewImage requires an active trusted control invocation.'
               )
             }
-            if (!sessionBinding.executionCwd) {
+            const source = isRecord(params.source) ? params.source : undefined
+            if (Object.hasOwn(source ?? {}, 'path') && !sessionBinding.executionCwd) {
               throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
             }
             if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
@@ -2279,7 +2381,10 @@ class NotebookLocalRpcServer {
             ...(method === 'viewImageCall'
               ? {
                   executionCwd: sessionBinding.executionCwd,
-                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
+                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId,
+                  agentFrameId: sessionBinding.agentFrameId,
+                  attemptId: sessionBinding.delegatedWorkAttemptId,
+                  role: sessionBinding.delegatedWorkRole ?? 'main'
                 }
               : {}),
             ...(method === 'computeCall'
@@ -2532,6 +2637,7 @@ class NotebookLocalRpcServer {
                 : message
 
       if (
+        !activeRequest.bodyComplete ||
         error instanceof ResourceBudgetExceededError ||
         error instanceof PendingRequestLimitError
       ) {
@@ -2750,7 +2856,11 @@ class NotebookLocalRpcServer {
 
     if (method === 'requestUserInput') {
       const request = sanitizeAgentUserChoiceRequest(params)
-      if (!request) throw new RpcHttpError(400, 'Invalid user choice request.')
+      if (!request)
+        throw new RpcHttpError(
+          400,
+          `Invalid user choice request: expected ${AGENT_USER_CHOICE_REQUEST_CONTRACT}.`
+        )
       if (params.caller_role === 'delegate') {
         if (!this.delegatedWorkService?.requestUserInput) {
           throw new Error('Delegated user input is not configured.')
@@ -2892,15 +3002,21 @@ class NotebookLocalRpcServer {
       if (!this.hostViewImage) throw new Error('host.viewImage is not configured.')
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
-      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : ''
+      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : undefined
       const controlInvocationId =
         typeof params.controlInvocationId === 'string' ? params.controlInvocationId : ''
-      if (!projectId || !sessionId || !executionCwd || !controlInvocationId) {
+      if (!projectId || !sessionId || !controlInvocationId) {
         throw new RpcHttpError(403, 'host.viewImage trusted capability identity is incomplete.')
+      }
+      if (isRecord(params.source) && Object.hasOwn(params.source, 'path') && !executionCwd) {
+        throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
       }
       return this.hostViewImage.stage(params.source, params.options, {
         projectId,
         sessionId,
+        agentFrameId: typeof params.agentFrameId === 'string' ? params.agentFrameId : undefined,
+        attemptId: typeof params.attemptId === 'string' ? params.attemptId : undefined,
+        role: params.role === 'delegate' ? 'delegate' : 'main',
         executionCwd,
         controlInvocationId,
         signal

@@ -48,6 +48,7 @@ let sidebarProps: {
   onOpenSession: (id: string) => void
   onNewConversation: () => void
   onOpenLiterature?: () => boolean
+  onOpenMarketplace?: () => boolean
   onDownloadArtifacts: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
 }
@@ -80,8 +81,10 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
+    sessionCleanups: {},
     actionError: null,
     pendingPermissions: [],
+    deleteSession,
     sendMessage: runtime.sendMessage,
     cancelRun: runtime.cancelRun,
     resumeInterruptedSession: runtime.resumeInterruptedSession,
@@ -1622,6 +1625,17 @@ describe('WorkspacePage draft preservation', () => {
     expect(useNavigationStore.getState().view).toBe('library')
     expect(useNavigationStore.getState().pendingLiteratureProjectId).toBe('proj-1')
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('opens the marketplace beside the conversation without replacing its draft', async () => {
+    await renderPage()
+    const before = useSessionStore.getState().selectedSessionId
+    expect(sidebarProps.onOpenMarketplace).toBeTypeOf('function')
+    await act(async () => sidebarProps.onOpenMarketplace!())
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    expect(useSessionStore.getState().selectedSessionId).toBe(before)
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:project:marketplace')
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
   })
 
   it('opens Library Preview without leaving the conversation when persistence is ready', async () => {

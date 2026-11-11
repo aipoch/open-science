@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- infer synthetic native proof fixtures */
 import { expect, it, vi } from 'vitest'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, PDFName, StandardFonts, rgb } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 // @ts-expect-error Worker-private JavaScript is exercised through its native runtime.
 import * as pdfium from '../resources/pdfium.mjs'
@@ -8,6 +8,7 @@ const { engine } = pdfium
 import { extractPdfTranslationSource } from '../src/reader/extraction.js'
 import {
   matchingOverprintFormObjects,
+  preserveOpenRectanglePaths,
   translateFormLabels
   // @ts-expect-error Worker-private JavaScript has no renderer/main public declarations.
 } from '../resources/form-labels.mjs'
@@ -435,3 +436,95 @@ it.each([
     await task.destroy()
   }
 })
+
+it.each([
+  [1, 'plain'],
+  [2, 'plain'],
+  [3, 'plain'],
+  [2, 'dash'],
+  [2, 'clip'],
+  [2, 'fill-stroke'],
+  [2, 'fractional']
+] as const)(
+  'preserves an open rectangular stroke when regenerating at scale %s with %s',
+  async (scale, style) => {
+    const document = await PDFDocument.create()
+    const page = document.addPage([220, 120])
+    page.node.set(
+      PDFName.of('Contents'),
+      document.context.register(
+        document.context.flateStream(
+          `${style === 'dash' ? '[3 2] 1 d ' : ''}${style === 'clip' ? '10 25 160 70 re W n ' : ''}${style === 'fractional' ? '.6502679 0 0 -.6502679 -10 100 cm ' : ''}0.6 0.4 0 RG 0.8 0.7 0.6 rg 0.5 w 20 80 m 20 30 l 180 30 l 180 80 l ${style === 'fill-stroke' ? 'B' : 'S'}`
+        )
+      )
+    )
+    const data = await document.save()
+    const native = await engine(),
+      p = native.p
+    const source = native.open(data)
+    const render = (doc: typeof source): Buffer => {
+      const page = p.FPDF_LoadPage(doc.doc, 0)
+      const width = 220 * scale,
+        height = 120 * scale
+      const bitmap = p.FPDFBitmap_Create(width, height, 1)
+      try {
+        p.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xffffffff)
+        p.FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, 0)
+        const pointer = p.FPDFBitmap_GetBuffer(bitmap)
+        return Buffer.from(native.m.HEAPU8.slice(pointer, pointer + width * height * 4))
+      } finally {
+        p.FPDFBitmap_Destroy(bitmap)
+        p.FPDF_ClosePage(page)
+      }
+    }
+    try {
+      const before = render(source),
+        page = p.FPDF_LoadPage(source.doc, 0)
+      try {
+        preserveOpenRectanglePaths(native, page)
+        expect(p.FPDFPath_CountSegments(p.FPDFPage_GetObject(page, 0))).toBe(5)
+        preserveOpenRectanglePaths(native, page)
+        expect(p.FPDFPath_CountSegments(p.FPDFPage_GetObject(page, 0))).toBe(5)
+        expect(p.FPDFPage_GenerateContent(page)).toBeTruthy()
+      } finally {
+        p.FPDF_ClosePage(page)
+      }
+      const output = native.open(native.save(source.doc))
+      try {
+        expect(render(output)).toEqual(before)
+      } finally {
+        output.close()
+      }
+    } finally {
+      source.close()
+    }
+  }
+)
+
+it.each(['closed', 'round-cap', 'non-rectangle'])(
+  'leaves other native paths unchanged: %s',
+  async (kind) => {
+    const document = await PDFDocument.create(),
+      page = document.addPage([220, 120])
+    const stream =
+      kind === 'closed'
+        ? '20 80 160 -50 re S'
+        : `${kind === 'round-cap' ? '1 J ' : ''}20 80 m 20 30 l 180 30 l ${kind === 'non-rectangle' ? '170' : '180'} 80 l S`
+    page.node.set(
+      PDFName.of('Contents'),
+      document.context.register(document.context.flateStream(stream))
+    )
+    const native = await engine(),
+      source = native.open(await document.save())
+    const owned = native.p.FPDF_LoadPage(source.doc, 0)
+    try {
+      const object = native.p.FPDFPage_GetObject(owned, 0)
+      const count = native.p.FPDFPath_CountSegments(object)
+      preserveOpenRectanglePaths(native, owned)
+      expect(native.p.FPDFPath_CountSegments(object)).toBe(count)
+    } finally {
+      native.p.FPDF_ClosePage(owned)
+      source.close()
+    }
+  }
+)

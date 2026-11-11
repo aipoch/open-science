@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { createHash } from 'node:crypto'
 import {
   chmod,
@@ -278,7 +279,14 @@ describe('NotebookInputRegistry', () => {
           }
         )
         const sidecar = JSON.parse(
-          await readFile(join(storageRoot!, result.fileEvidence.storageKey!), 'utf8')
+          (
+            await readNativeEvidence(
+              storageRoot!,
+              result.fileEvidence.storageKey!,
+              result.fileEvidence.checksum!,
+              16 * 1024 ** 2
+            )
+          ).toString()
         )
         const evidencePath = join(storageRoot!, sidecar.relations[0].generation.contentStorageKey)
         evidencePaths.push(evidencePath)

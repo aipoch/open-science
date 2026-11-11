@@ -389,7 +389,8 @@ export class SessionPackageOperation {
       this.current = { ...this.current, state: 'running', files: undefined, summary: undefined }
       this.selection({
         excludedStorageKeys: [...keys],
-        includePdfNotes: request.includePdfNotes === true
+        includePdfNotes: request.includePdfNotes === true,
+        ...(request.includeResearchFilms ? { includeResearchFilms: true } : {})
       })
       this.publish()
     }

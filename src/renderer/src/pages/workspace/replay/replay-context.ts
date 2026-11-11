@@ -6,7 +6,7 @@ import type {
   ReplayNotebookRunDetails
 } from '../../../../../shared/replay'
 import type { ReplayResourceMap } from './replay-resources'
-import { replayText, replayNotebookText, replayToolOutputs } from './replay-content'
+import { replayExcerpt, replayText, replayNotebookText, replayToolOutputs } from './replay-content'
 import { REPLAY_ACTIVITY_LIMIT } from '@/lib/replay/scene'
 import { projectReplayScene } from '@/lib/replay/scene'
 
@@ -15,6 +15,11 @@ import {
   REPLAY_CAPTURE_TOTAL_LIMIT,
   type ReplayCapturedRecord
 } from '../../../../../shared/session-replay'
+
+type TemporaryDiscussionInspection = {
+  notebookInspection?: unknown
+  stepInspection?: unknown
+}
 
 export type SessionDiscussionCapture = {
   scope?: 'step' | 'session'
@@ -35,6 +40,17 @@ export type SessionDiscussionCapture = {
   excerpt: string
 }
 
+// Replay inspection state belongs to the mounted renderer only. Keep it out of the persisted
+// snapshot contract even when a caller forwards a capture object with temporary fields attached.
+export const persistedDiscussionCapture = (
+  capture: SessionDiscussionCapture & TemporaryDiscussionInspection
+): SessionDiscussionCapture => {
+  const persisted = structuredClone(capture)
+  delete persisted.notebookInspection
+  delete persisted.stepInspection
+  return persisted
+}
+
 export const captureDiscussionSession = (
   document: ReplayDocument
 ): SessionDiscussionCapture | undefined => {
@@ -53,7 +69,8 @@ export const captureDiscussionStep = (
   document: ReplayDocument,
   scene: ReplayScene,
   runDetails: Readonly<Record<string, ReplayNotebookRunDetails>> = {},
-  resources: ReplayResourceMap = {}
+  resources: ReplayResourceMap = {},
+  selectedRun?: { id: string; title: string }
 ): SessionDiscussionCapture => {
   const step = scene.step
   if (!step) throw new Error('Replay step unavailable')
@@ -98,50 +115,61 @@ export const captureDiscussionStep = (
     ]
       .filter(Boolean)
       .join('\n')
-  const stepText = [
-    step.message?.content.slice(0, scene.messageCharacters),
-    ...step.activities
-      .slice(0, REPLAY_ACTIVITY_LIMIT)
-      .map((activity) => activityText(activity, scene.showResults)),
-    ...(scene.showResults && step.review
-      ? [
-          step.review.lifecycle,
-          step.review.outcome,
-          ...presentReviewSubmission(step.review).map(
-            (check) => `${check.status}: ${check.claim} — ${check.evidence}`
-          )
-        ]
-      : [])
-  ]
-    .filter(Boolean)
-    .join('\n')
-  const stepTitle = (step.title || step.message?.content || step.kind)
-    .replace(/[\r\n]/g, ' ')
-    .slice(0, 240)
-  add('step', 'step', stepTitle, stepText)
+  const stepTitle =
+    selectedRun?.title ??
+    (step.title || step.message?.content || step.kind).replace(/[\r\n]/g, ' ').slice(0, 240)
+  if (!selectedRun) {
+    const stepText = [
+      step.message?.content.slice(0, scene.messageCharacters),
+      ...step.activities
+        .slice(0, REPLAY_ACTIVITY_LIMIT)
+        .map((activity) => activityText(activity, scene.showResults)),
+      ...(scene.showResults && step.review
+        ? [
+            step.review.lifecycle,
+            step.review.outcome,
+            ...presentReviewSubmission(step.review).map(
+              (check) => `${check.status}: ${check.claim} — ${check.evidence}`
+            )
+          ]
+        : [])
+    ]
+      .filter(Boolean)
+      .join('\n')
+    add('step', 'step', stepTitle, stepText)
+  }
   // Quote only the selected step; material retained on screen from earlier steps is navigation state.
   const belongsToStep = (reference: ReplayEvidenceReference): boolean =>
     step.evidence.some((item) => item.kind === reference.kind && item.id === reference.id) ||
     (reference.kind === 'notebook-run' && step.runs.some((run) => run.runId === reference.id)) ||
     step.resourceIds.includes(reference.id)
-  const material = scene.visibleEvidence.filter((reference) =>
+  const evidence: ReplayEvidenceReference[] = selectedRun
+    ? step.evidence
+        .filter((ref) => ref.kind === 'notebook-run' && ref.id === selectedRun.id)
+        .map((ref) => ({ ...ref, part: scene.showResults ? 'record' : 'input' }))
+    : scene.visibleEvidence.filter(belongsToStep)
+  const material = evidence.filter((reference) =>
     ['notebook-run', 'artifact-version', 'upload-version'].includes(reference.kind)
   )
-  for (const reference of material.filter(belongsToStep)) {
+  for (const reference of material) {
     const id = `${reference.kind}:${reference.id}`
     if (records.some((record) => record.id === id)) continue
     if (reference.kind === 'notebook-run') {
       const detail = runDetails[reference.id]
       const run = detail?.status === 'ready' ? detail.run : undefined
+      const output = run && reference.part !== 'input' ? replayNotebookText(run) : []
+      const parts = run ? [run.script, ...(selectedRun ? output.slice(0, 12) : output)] : []
+      const quoted = selectedRun ? parts.map((part) => replayExcerpt(part)) : parts
       add(
         id,
         'step',
-        `Notebook (${run?.kernelKind ?? reference.id})`,
-        run
-          ? [run.script, ...(reference.part === 'input' ? [] : replayNotebookText(run))].join('\n')
-          : '',
+        selectedRun?.title ?? `Notebook (${run?.kernelKind ?? reference.id})`,
+        quoted.join('\n'),
         Boolean(run),
-        reference.part !== 'input' && Boolean(run?.truncated)
+        (reference.part !== 'input' && Boolean(run?.truncated)) ||
+          Boolean(
+            selectedRun && (output.length > 12 || quoted.some((part, i) => part !== parts[i]))
+          )
       )
     } else {
       const resource = document.resources.find(
@@ -173,7 +201,7 @@ export const captureDiscussionStep = (
     stepId: step.id,
     stepOffsetMs: Math.max(0, scene.positionMs - step.startMs),
     recordedAt: step.recordedAt,
-    evidence: structuredClone(scene.visibleEvidence.filter(belongsToStep)),
+    evidence: structuredClone(evidence),
     stepTitle,
     stepNumber: scene.stepIndex + 1,
     phase: scene.phase,
@@ -190,7 +218,7 @@ export const REPLAY_SEEK_EVENT = 'open-science:replay-seek'
 export type ReplaySeekTarget = Pick<
   SessionDiscussionCapture,
   'projectId' | 'sourceSessionId' | 'branchId' | 'stepId'
-> & { stepOffsetMs?: number }
+> & { stepOffsetMs?: number; runId?: string }
 
 // Navigation may mount the panel after the click. Keep only the most recent target per source.
 const pendingSeeks = new Map<string, ReplaySeekTarget>()
@@ -206,8 +234,19 @@ export const consumeReplaySeek = (
   return target
 }
 
-export const requestReplaySeek = (target: ReplaySeekTarget): void => {
-  const copy = structuredClone(target)
+export const requestReplaySeek = (
+  target: ReplaySeekTarget & Partial<Pick<SessionDiscussionCapture, 'evidence' | 'records'>>
+): void => {
+  // Whole-step snapshots also include a 'step' record, even for standalone Notebook steps.
+  const run = target.evidence?.length === 1 ? target.evidence[0] : undefined
+  const runId =
+    run?.kind === 'notebook-run' &&
+    target.records?.length === 1 &&
+    target.records[0].id === `notebook-run:${run.id}`
+      ? run.id
+      : undefined
+  const { projectId, sourceSessionId, branchId, stepId, stepOffsetMs } = target
+  const copy = { projectId, sourceSessionId, branchId, stepId, stepOffsetMs, runId }
   const key = sourceKey(target.projectId, target.sourceSessionId)
   pendingSeeks.delete(key)
   pendingSeeks.set(key, copy)

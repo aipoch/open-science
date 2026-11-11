@@ -35,6 +35,15 @@ Useful commands:
 
 Packaged output is written under `dist/`.
 
+Windows x64 installers generate extraction lists from the final application archive during
+NSIS compilation, including files electron-builder adds after signing hooks. The build runs
+`build/prepare-windows-extraction.cjs` with Node from the build environment's PATH and the
+host 7-Zip tool selected by the locked electron-builder dependency. List generation or coverage
+validation failures stop packaging; no manually prepared lists are needed. Lists under
+`out/windows-installer/x64/extraction/` are embedded only in the installer. On native AMD64,
+the installer creates archive directories first, then waits for both file extractors to succeed
+before publishing the payload. Other architectures retain single-process extraction.
+
 [README](../README.md)
 
 `npm run build:backend` builds the Node entry; `npm run pack:backend` builds the target-specific
@@ -219,3 +228,7 @@ upgrade assertions, and migration-ledger expectations belong in the database mig
 than in feature-module suites.
 
 [Contribution workflow](../CONTRIBUTING.md) · [Testing](testing.md) · [CI reference](ci.md)
+
+## Inspecting retained Session fork snapshots
+
+With the application stopped, run `node scripts/inspect-session-fork-snapshots.mjs "<data-root>"` for a read-only inventory. The argument is the application data directory containing `artifacts/`. The report lists fork IDs, logical bytes in their retained source directories, metadata bytes still used there, and potential duplicate bytes. Invalid ownership or unreadable metadata appears under `issues` and makes the command exit nonzero. The estimate excludes unverified forks. Filesystem sharing and the condition of the live Session must be checked separately before deciding whether to reclaim space.

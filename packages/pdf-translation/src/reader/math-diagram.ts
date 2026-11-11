@@ -1,6 +1,11 @@
 import type { PDFPageProxy } from 'pdfjs-dist'
-import { nativeOutlineBox as outlineBox } from './native-source-geometry.js'
+import {
+  nativeAlgorithmInkRegions,
+  nativeLabelRegion,
+  nativeOutlineBox as outlineBox
+} from './native-source-geometry.js'
 import type { PdfTranslationLayout } from './layout.js'
+import { nativePaints } from './native-display-packets.js'
 
 type Box = [number, number, number, number]
 type Point = [number, number]
@@ -56,10 +61,264 @@ const transformBox = (b: Box, m: number[]): Box =>
     })
   )
 
+type Paint = NonNullable<Awaited<ReturnType<typeof nativePaints>>>[number]
+type HookedArrow = { a: Point; b: Point; paints: Paint[] }
+const expand = (b: Box, p: number): Box => [b[0] - p, b[1] - p, b[2] + p, b[3] + p]
+const samePoint = (a: Point, b: Point): boolean => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.02
+
+// A hooked arrow has three consecutive native paints: a thin shaft, two
+// short Béziers beginning at its tail, and a dart whose notch meets its tip.
+function nativeHookedArrow(
+  shaft: Paint,
+  hook: Paint,
+  head: Paint,
+  stroke: number,
+  fill: number
+): HookedArrow | undefined {
+  if (
+    shaft.kind !== stroke ||
+    hook.kind !== stroke ||
+    head.kind !== fill ||
+    !shaft.plainBlack ||
+    !hook.plainBlack ||
+    !head.plainBlack ||
+    shaft.strokeWidth > 0.8 ||
+    hook.strokeWidth > 0.8 ||
+    shaft.path.length !== 6 ||
+    shaft.path[0] !== 0 ||
+    shaft.path[3] !== 1 ||
+    hook.path.length !== 20 ||
+    hook.path[0] !== 0 ||
+    hook.path[3] !== 1 ||
+    hook.path[6] !== 2 ||
+    hook.path[13] !== 2 ||
+    hook.hull[2] - hook.hull[0] > 4 ||
+    hook.hull[3] - hook.hull[1] > 4 ||
+    head.path.length !== 12 ||
+    head.path[0] !== 0 ||
+    head.path[3] !== 1 ||
+    head.path[6] !== 1 ||
+    head.path[9] !== 1
+  )
+    return
+  const at = ({ path, matrix }: Paint, offset: number): Point =>
+    point([path[offset], path[offset + 1]], matrix)
+  const a = at(shaft, 1),
+    b = at(shaft, 4),
+    dx = b[0] - a[0],
+    dy = b[1] - a[1],
+    length = Math.hypot(dx, dy)
+  if (
+    length < 8 ||
+    !((dx > 0 && Math.abs(dy) < 0.02) || (dy > 0 && Math.abs(dx) < 0.02)) ||
+    !samePoint(a, at(hook, 1)) ||
+    !samePoint(b, at(head, 7))
+  )
+    return
+  const local = (p: Point): Point => [
+    ((p[0] - b[0]) * dx + (p[1] - b[1]) * dy) / length,
+    ((p[1] - b[1]) * dx - (p[0] - b[0]) * dy) / length
+  ]
+  const [tip, upper, lower] = [1, 4, 10].map((offset) => local(at(head, offset)))
+  if (
+    tip[0] < 0.8 ||
+    tip[0] > 3 ||
+    Math.abs(tip[1]) > 0.02 ||
+    upper[0] > -0.3 ||
+    upper[0] < -2 ||
+    Math.abs(upper[0] - lower[0]) > 0.02 ||
+    upper[1] * lower[1] >= 0 ||
+    Math.abs(upper[1] + lower[1]) > 0.02 ||
+    Math.abs(upper[1]) < 0.5 ||
+    Math.abs(upper[1]) > 2.5
+  )
+    return
+  return { a, b, paints: [shaft, hook, head] }
+}
+
+function* orderedSquares(
+  horizontal: HookedArrow[],
+  vertical: HookedArrow[]
+): Generator<[HookedArrow, HookedArrow, HookedArrow, HookedArrow]> {
+  for (const top of horizontal)
+    for (const bottom of horizontal) {
+      if (top.a[1] >= bottom.a[1]) continue
+      for (const left of vertical)
+        for (const right of vertical) {
+          if (left.a[0] < right.a[0]) yield [top, bottom, left, right]
+        }
+    }
+}
+
+async function readNativeFilledMathDiagrams(
+  page: PDFPageProxy,
+  pageNumber: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
+): Promise<PdfMathDiagram[]> {
+  // Limit this family to compact symbolic squares with an explicit product or
+  // union in a node. An ordinary filled workflow or a compound graph stays out.
+  if (!content.items.some((item) => 'str' in item && /[×∪]/u.test(item.str))) return []
+  try {
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      viewport = page.getViewport({ scale: 1 })
+    if (
+      content.items.length > 10000 ||
+      viewport.rotation !== 0 ||
+      JSON.stringify(viewport.transform) !== JSON.stringify([1, 0, 0, -1, 0, viewport.height])
+    )
+      return []
+    const ops = await page.getOperatorList(),
+      paints = await nativePaints(ops, viewport)
+    if (!paints || paints.length > 256) return []
+    const arrows = paints.slice(0, -2).flatMap((paint, index) => {
+      const arrow = nativeHookedArrow(
+        paint,
+        paints[index + 1],
+        paints[index + 2],
+        OPS.stroke,
+        OPS.fill
+      )
+      return arrow ? [arrow] : []
+    })
+    if (arrows.length < 4 || arrows.length > 24) return []
+    const horizontal = arrows.filter(({ a, b }) => Math.abs(a[1] - b[1]) < 0.02),
+      vertical = arrows.filter(({ a, b }) => Math.abs(a[0] - b[0]) < 0.02)
+    const regionBox = (r: NonNullable<ReturnType<typeof nativeLabelRegion>>): Box => [
+      r.x * viewport.width,
+      r.y * viewport.height,
+      (r.x + r.width) * viewport.width,
+      (r.y + r.height) * viewport.height
+    ]
+    const runs = content.items.flatMap((item, index) => {
+      if (!('str' in item) || !item.str.trim() || !axis(item.transform)) return []
+      const region = nativeLabelRegion(item, content.styles[item.fontName], viewport, pageNumber)
+      return region ? [{ index, text: item.str, font: item.height, box: regionBox(region) }] : []
+    })
+    const proofs: PdfMathDiagram[] = []
+    for (const [top, bottom, left, right] of orderedSquares(horizontal, vertical)) {
+      const x0 = left.a[0],
+        y0 = top.a[1],
+        x1 = right.a[0],
+        y1 = bottom.a[1]
+      if (
+        !(x0 < x1 && y0 < y1) ||
+        ![top, bottom].every((a) => x0 < a.a[0] && a.b[0] < x1) ||
+        ![left, right].every((a) => y0 < a.a[1] && a.b[1] < y1)
+      )
+        continue
+      const corners: Point[] = [
+          [x0, y0],
+          [x1, y0],
+          [x0, y1],
+          [x1, y1]
+        ],
+        fonts = corners.map((p) =>
+          Math.max(
+            0,
+            ...runs
+              .filter(
+                (r) =>
+                  /^\p{L}[\p{L}\p{N}×∪\s]{0,6}$/u.test(r.text.trim()) &&
+                  distance(p, r.box) < r.font * 1.1 &&
+                  r.box[1] <= p[1] &&
+                  p[1] <= r.box[3]
+              )
+              .map((r) => r.font)
+          )
+        ),
+        em = fonts[0]
+      if (
+        !em ||
+        fonts.some((font) => Math.abs(font - em) > em * 0.05) ||
+        x1 - x0 > em * 10 ||
+        y1 - y0 > em * 8 ||
+        ![top, bottom].every((a) => a.a[0] - x0 < em * 3 && x1 - a.b[0] < em * 3) ||
+        ![left, right].every((a) => a.a[1] - y0 < em * 2 && y1 - a.b[1] < em * 2)
+      )
+        continue
+      const edges = [top, bottom, left, right],
+        fence: Box = [x0 - em * 2.5, y0 - em, x1 + em * 2.5, y1 + em],
+        selected = runs.filter((r) => overlaps(r.box, fence)),
+        node = (box: Box): boolean =>
+          corners.some(([x, y]) => overlaps(box, [x - em * 2.5, y - em, x + em * 2.5, y + em]))
+      if (
+        selected.length < 5 ||
+        selected.length > 24 ||
+        !selected.some((r) => /[×∪]/u.test(r.text) && node(r.box)) ||
+        !selected.some((r) => r.font < em * 0.85 && node(r.box)) ||
+        selected.some(
+          (r) =>
+            !inside(r.box, fence) ||
+            /\p{L}{5}|[\n\r]/u.test(r.text) ||
+            r.text.length > 12 ||
+            (!node(r.box) && !edges.some(({ a, b }) => nearMiddle(r.box, a, b, em)))
+        )
+      )
+        continue
+      const indexes = new Set(selected.map((r) => r.index))
+      if (
+        content.items
+          .slice(selected[0].index, selected.at(-1)!.index + 1)
+          .some(
+            (item, n) => 'str' in item && item.str.trim() && !indexes.has(selected[0].index + n)
+          )
+      )
+        continue
+      const ink = await nativeAlgorithmInkRegions(page, content, viewport, pageNumber, indexes, ops)
+      if (!ink) continue
+      const ownedPaint = new Set(edges.flatMap((a) => a.paints)),
+        box = union(
+          [...ownedPaint]
+            .map((paint) => paint.bounds)
+            .concat(selected.map((r) => regionBox(ink.get(r.index)!)))
+        ),
+        moat = expand(box, em * 0.25)
+      if (
+        !inside(box, fence) ||
+        !inside(moat, [0, 0, viewport.width, viewport.height]) ||
+        // A foreign square cap can project beyond its stroke radius.
+        paints.some(
+          (paint) =>
+            !ownedPaint.has(paint) && overlaps(expand(paint.bounds, paint.strokeWidth / 2), fence)
+        ) ||
+        [...ink].some(([i, r]) => !indexes.has(i) && overlaps(regionBox(r), moat)) ||
+        arrows.some(
+          (arrow) =>
+            !ownedPaint.has(arrow.paints[0]) &&
+            corners.some(
+              (corner) =>
+                Math.min(
+                  Math.hypot(corner[0] - arrow.a[0], corner[1] - arrow.a[1]),
+                  Math.hypot(corner[0] - arrow.b[0], corner[1] - arrow.b[1])
+                ) <
+                em * 1.5
+            )
+        )
+      )
+        continue
+      proofs.push({ page: pageNumber, box, indexes: [...indexes] })
+    }
+    return proofs.filter(
+      (proof, i) => !proofs.some((peer, j) => i !== j && overlaps(proof.box, peer.box))
+    )
+  } catch {
+    return []
+  }
+}
+
+export async function readPdfMathDiagrams(
+  page: PDFPageProxy,
+  pageNumber: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
+): Promise<PdfMathDiagram[]> {
+  const legacy = await readNativeGlyphMathDiagrams(page, pageNumber, content)
+  return legacy.length ? legacy : readNativeFilledMathDiagrams(page, pageNumber, content)
+}
+
 /** Optional proof for a narrow class of typeset, arrow-connected mathematical displays.
  * It never infers arrow direction or Unicode from appearance. Unproved pages keep the old layout.
  */
-export async function readPdfMathDiagrams(
+async function readNativeGlyphMathDiagrams(
   page: PDFPageProxy,
   pageNumber: number,
   content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>

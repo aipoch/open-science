@@ -14,6 +14,7 @@ import type { MessagePdfContextSnapshot } from './session-pdf-contract'
 import type { AgentFrameworkId } from './settings'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { TurnOutcome } from './session-turn-outcome-contract'
+import type { HarnessTurnJournal } from './harness-turn-contract'
 
 export type PersistedMessageRole = 'user' | 'agent'
 
@@ -158,6 +159,9 @@ export type PersistedChatMessage = {
   contextWindowSamples?: AcpContextWindowSample[]
   // Marks the final Agent message for a turn whose provider did not report usable totals.
   turnUsageUnavailable?: true
+  // Main-owned request facts. Unknown/malformed versions cannot be resumed as an empty turn.
+  harnessTurn?: HarnessTurnJournal
+  harnessTurnInvalid?: true
   structuredOutputEvidence?: Readonly<{
     attemptId: string
     dialect: '2020-12'

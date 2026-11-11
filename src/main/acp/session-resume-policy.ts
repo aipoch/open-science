@@ -273,6 +273,19 @@ class AcpSessionResumePolicy {
     const message = readProperty(error, 'message')
     if (!message.readable) return authoritativeFailure('uninspectable-error')
 
+    if (
+      context?.currentFrameworkId === 'pi' &&
+      code.value === -32602 &&
+      typeof message.value === 'string' &&
+      /^Invalid params: unknown session: [A-Za-z0-9_-]+$/.test(message.value)
+    ) {
+      const data = readProperty(error, 'data')
+      if (!data.readable) return authoritativeFailure('uninspectable-error')
+      if (hasNoStructuredErrorData(data.value)) {
+        return adoptableFailure('session-not-found-message')
+      }
+    }
+
     if (code.value !== -32603) {
       return code.value !== undefined || message.value !== undefined
         ? authoritativeFailure('non-internal-error')

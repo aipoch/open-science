@@ -16,6 +16,7 @@ import {
 } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { ArtifactReference, FileReference } from '../../shared/artifacts'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookPromptInput } from '../../shared/notebook'
 import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
@@ -53,6 +54,7 @@ type NotebookTurnInputs = Readonly<{
   references: FileReference[]
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
+  shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
   classificationImages: Pick<AcpClassificationImageLoader, 'load'>
   imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
@@ -92,6 +94,11 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
   isMemoryEnabledForSession?: (sessionId: string) => boolean
   notebook?: Readonly<{
     peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+    isReplNamespaceUnavailable?: (
+      projectId: string,
+      sessionId: string,
+      rootFrameId?: string
+    ) => boolean
     registerTurnInputs?: (
       input: NotebookTurnInputs
     ) => Promise<readonly NotebookPromptInput[] | void>
@@ -362,6 +369,9 @@ class AcpPromptPreparationOwner {
           ? {
               codebuddy: {
                 root: codeBuddySkillRuntimeRoot(input.backend.session.options),
+                ...(this.options.shellRuntimeBindingFor
+                  ? { shellRuntime: this.options.shellRuntimeBindingFor(input.request.sessionId) }
+                  : {}),
                 selectorAvailable: input.bridgeSkillsAvailable,
                 selectSkills,
                 signal: input.signal,
@@ -429,6 +439,14 @@ class AcpPromptPreparationOwner {
         input.request.provenanceContext?.promptMessageId ?? input.fallbackPromptMessageId
       )
       if (await cancelled()) return cancelPrepared()
+      const replNamespaceUnavailable =
+        input.tooling.notebook &&
+        (input.role ?? 'primary') === 'primary' &&
+        this.options.notebook?.isReplNamespaceUnavailable?.(
+          input.projectId,
+          input.request.sessionId,
+          input.request.provenanceContext?.rootFrameId
+        )
       const promptText = [
         input.protectedContext,
         selectedContent.history,
@@ -438,6 +456,9 @@ class AcpPromptPreparationOwner {
         buildSessionReferencePrompt(input.request.referencedSessions),
         buildLiteratureReferencePrompt(input.request.parts),
         selectedContent.context,
+        replNamespaceUnavailable
+          ? '<open_science_repl_state>At turn preparation, no retained REPL namespace is available. Previous JavaScript variables are unavailable. Initialize needed values from verified conversation results or saved data before using them; do not probe old variable names or replay side effects. This does not invalidate prior results or saved files.</open_science_repl_state>'
+          : undefined,
         selectedContent.text
       ]
         .filter((segment): segment is string => Boolean(segment))

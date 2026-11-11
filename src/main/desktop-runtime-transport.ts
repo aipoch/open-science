@@ -54,6 +54,13 @@ const clientId = z.string().uuid()
 const requestSchema = z.discriminatedUnion('kind', [
   z
     .object({
+      kind: z.literal('resource-activity'),
+      foreground: z.boolean(),
+      suspended: z.boolean()
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal('app-exit'),
       id: z.number().int().positive(),
       generation: z.string().uuid(),
@@ -141,6 +148,7 @@ export async function startDesktopRuntimeTransport(options: {
   onDisconnect?: () => void
   onControllerDisconnect?: () => void
   onConnect?: () => void
+  onResourceActivity?: (state: { foreground: boolean; suspended: boolean }) => void
   onNotificationView?: (state: z.infer<typeof desktopNotificationViewSchema>) => Promise<void>
   onNotificationError?: (error: unknown) => void
 }): Promise<
@@ -168,6 +176,7 @@ export async function startDesktopRuntimeTransport(options: {
   }
   const stream = new InternalWebEventStream()
   const connections = new Map<WebSocket, Map<string, CallerContext>>()
+  let activitySocket: WebSocket | undefined
   let controller:
     | {
         id: string
@@ -307,15 +316,17 @@ export async function startDesktopRuntimeTransport(options: {
               signal?.addEventListener('abort', abort, { once: true })
               timer = setTimeout(
                 abort,
-                request.operation === 'conversation-pdf'
-                  ? request.timeoutMs + 1000
-                  : request.operation === 'reviewer-render'
-                    ? 121_000
-                    : request.operation.startsWith('notification-') ||
-                        request.operation === 'office-frame' ||
-                        request.operation === 'process-memory'
-                      ? 5_000
-                      : 300_000
+                request.operation === 'research-video-mp4'
+                  ? 3_601_000
+                  : request.operation === 'conversation-pdf'
+                    ? request.timeoutMs + 1000
+                    : request.operation === 'reviewer-render'
+                      ? 121_000
+                      : request.operation.startsWith('notification-') ||
+                          request.operation === 'office-frame' ||
+                          request.operation === 'process-memory'
+                        ? 5_000
+                        : 300_000
               )
               send(socket, stringifyRpcJson({ kind: 'native-request', id, clientId, request }))
             })
@@ -337,6 +348,10 @@ export async function startDesktopRuntimeTransport(options: {
         const cleanup = (): void => {
           if (closed) return
           closed = true
+          if (activitySocket === socket) {
+            activitySocket = undefined
+            options.onResourceActivity?.({ foreground: false, suspended: false })
+          }
           if (preparationAttempt) preparationAttempt.cancelled = true
           if (desktopInstanceId) options.lifetime?.disconnect(desktopInstanceId, connectionId)
           if (attachmentLifecycle) {
@@ -439,7 +454,7 @@ export async function startDesktopRuntimeTransport(options: {
                   host: '127.0.0.1',
                   credentialStore: 'os'
                 },
-                rpcCapabilities: [RUNTIME_PAYLOAD_CAPABILITY],
+                rpcCapabilities: [RUNTIME_PAYLOAD_CAPABILITY, 'resource-activity-v1'],
                 pid: process.pid,
                 ...(options.startup ? { startup: options.startup.getState() } : {}),
                 rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -460,6 +475,16 @@ export async function startDesktopRuntimeTransport(options: {
               )
             })
             options.onConnect?.()
+            return
+          }
+          if (message.kind === 'resource-activity') {
+            if (controls() && activeSocket() === socket) {
+              activitySocket = socket
+              options.onResourceActivity?.({
+                foreground: message.foreground,
+                suspended: message.suspended
+              })
+            }
             return
           }
           if (message.kind === 'notification-view') {

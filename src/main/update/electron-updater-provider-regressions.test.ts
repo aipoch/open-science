@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import type { DownloadedUpdateHelper as SdkDownloadHelper } from 'electron-updater/out/DownloadedUpdateHelper'
-import { expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   ElectronUpdaterStrategy,
   type MinimalAutoUpdater,
@@ -36,6 +36,12 @@ const { NodeHttpExecutor } = requireRepo('builder-util/out/nodeHttpExecutor')
 const { ElectronHttpExecutor } = requireRepo('electron-updater/out/electronHttpExecutor')
 const { DownloadedUpdateHelper } = requireRepo('electron-updater/out/DownloadedUpdateHelper')
 const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
+// NodeHttpExecutor ignores NO_PROXY. Loopback fixtures must not use the host's proxy.
+beforeEach(() => {
+  vi.stubEnv('http_proxy', undefined)
+  vi.stubEnv('https_proxy', undefined)
+})
+afterEach(() => vi.unstubAllEnvs())
 const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
@@ -117,7 +123,9 @@ const realCacheFixture = async (
   const session = freshSession()
   try {
     await session.strategy.check()
-    expect((await session.strategy.download()).state).toBe('ready')
+    const downloaded = await session.strategy.download()
+    expect(downloaded.error).toBeUndefined()
+    expect(downloaded.state).toBe('ready')
     expect(await session.strategy.getInstaller()).toMatchObject({ format: 'deb' })
     expect(session.helper()).toBeInstanceOf(DownloadedUpdateHelper)
   } catch (error) {

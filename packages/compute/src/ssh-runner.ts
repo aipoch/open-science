@@ -393,11 +393,14 @@ export class SystemSshRunner implements SshRunner {
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       child.stdout?.on('data', onStdout)
       child.stderr?.on('data', onStderr)
-      if (streamCommand) child.stdin?.once('error', onStdinError)
+      child.stdin?.once('error', onStdinError)
       child.once('exit', onExit)
       child.once('close', onClose)
       child.once('error', onError)
       if (streamCommand) child.stdin?.end(finalCommand)
+      // Inline commands have no input payload. EOF also prevents Windows OpenSSH from
+      // waiting on an idle local pipe instead of completing its remote command.
+      else child.stdin?.end()
 
       // The signal may have changed between throwIfAborted() and listener registration.
       if (opts.signal?.aborted) onAbort()

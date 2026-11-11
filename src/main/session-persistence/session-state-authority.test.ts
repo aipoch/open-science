@@ -75,7 +75,7 @@ const harness = (initial?: PersistedChatSession) => {
 const historicalState = {
   status: 'error' as const,
   error: 'Historical provider failure',
-  errorReportable: false,
+  failure: { category: 'service' as const, diagnostics: {} },
   resumeRecovery: {
     kind: 'resume-required' as const,
     cause: 'app-restart' as const,
@@ -84,6 +84,45 @@ const historicalState = {
 }
 
 describe('Main Session state authority before and after transcript adoption', () => {
+  it('does not replay recovery preferences over a changed Main-owned Session', async () => {
+    const seed = fixture({ revision: 4, runtimeTranscriptOwner: 'main' })
+    const h = harness(seed)
+    await h.owner.saveSession(
+      { ...seed, title: 'Other window' },
+      { conflictRebaseFields: ['title'] }
+    )
+    await expect(
+      h.owner.saveSession(
+        { ...seed, title: 'Retained local change' },
+        {
+          expectedRevision: 4,
+          conflictRebaseFields: ['title']
+        }
+      )
+    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(h.durable()?.title).toBe('Other window')
+  })
+
+  it('rechecks the recovery revision at the Main-owned mutation boundary', async () => {
+    const seed = fixture({ revision: 4, runtimeTranscriptOwner: 'main' })
+    const concurrent = { ...seed, revision: 5, title: 'Concurrent window' }
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'found', session: seed })
+      .mockResolvedValue({ status: 'found', session: concurrent })
+    const save = vi.fn()
+    const owner = createOwner({ loadSessionWithDiagnostics: load, saveSession: save })
+    await expect(
+      owner.saveSession(
+        { ...seed, title: 'Retained local change' },
+        {
+          expectedRevision: 4,
+          conflictRebaseFields: ['title']
+        }
+      )
+    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(save).not.toHaveBeenCalled()
+  })
   it.each(['running', 'error', 'waiting-permission', 'waiting-plan-approval'] as const)(
     'creates an idle Session when the first renderer save submits %s',
     async (status) => {
@@ -92,7 +131,7 @@ describe('Main Session state authority before and after transcript adoption', ()
 
       expect(saved.status).toBe('idle')
       expect(saved.error).toBeUndefined()
-      expect(saved.errorReportable).toBeUndefined()
+      expect(saved.failure).toBeUndefined()
       expect(saved.resumeRecovery).toBeUndefined()
       expect(saved.runtimeTranscriptOwner).toBeUndefined()
       expect(h.durable()).toEqual(saved)
@@ -159,7 +198,7 @@ describe('Main Session state authority before and after transcript adoption', ()
       expect(saved.title).toBe('Renamed')
       expect(saved.status).toBe('idle')
       expect(saved.error).toBeUndefined()
-      expect(saved.errorReportable).toBeUndefined()
+      expect(saved.failure).toBeUndefined()
       expect(saved.resumeRecovery).toBeUndefined()
       expect(saved.runtimeTranscriptOwner).toBe(runtimeTranscriptOwner)
       expect(h.durable()).toEqual(saved)
@@ -175,7 +214,8 @@ describe('Main Session state authority before and after transcript adoption', ()
           title: 'Renamed',
           status: 'idle' as const,
           error: attempt === 'clear' ? undefined : 'Renderer operation failed',
-          errorReportable: attempt === 'clear' ? undefined : true,
+          failure:
+            attempt === 'clear' ? undefined : { category: 'internal' as const, diagnostics: {} },
           resumeRecovery:
             attempt === 'clear'
               ? undefined
@@ -229,7 +269,7 @@ describe('Main Session state authority before and after transcript adoption', ()
       })
       expect(forked.status).toBe('idle')
       expect(forked.error).toBeUndefined()
-      expect(forked.errorReportable).toBeUndefined()
+      expect(forked.failure).toBeUndefined()
 
       const prompt = { ...seed.messages[0], id: 'next-prompt', createdAt: 11, updatedAt: 11 }
       const admitted = await h.owner.saveSession(forked, {
@@ -251,7 +291,7 @@ describe('Main Session state authority before and after transcript adoption', ()
       })
       expect(admitted.status).toBe('running')
       expect(admitted.error).toBeUndefined()
-      expect(admitted.errorReportable).toBeUndefined()
+      expect(admitted.failure).toBeUndefined()
       expect(admitted.resumeRecovery).toBeUndefined()
       expect(admitted.activeRun).toEqual({ promptMessageId: prompt.id, startedAt: 12 })
       expect(admitted.runtimeTranscriptOwner).toBe(runtimeTranscriptOwner)
@@ -264,7 +304,7 @@ describe('Main Session state authority before and after transcript adoption', ()
     const options = sanitizeRendererSaveSessionOptions({
       mainTurnAdmission: true,
       taskRunCommit: true,
-      conflictRebaseFields: ['status', 'error', 'errorReportable', 'resumeRecovery', 'title']
+      conflictRebaseFields: ['status', 'error', 'failure', 'resumeRecovery', 'title']
     })
     expect(options).toEqual({ conflictRebaseFields: ['title'] })
     const saved = await h.owner.saveSession({ ...seed, ...historicalState }, options)
@@ -312,7 +352,7 @@ describe('Main Session state authority before and after transcript adoption', ()
         ...historical!,
         status: 'idle',
         error: undefined,
-        errorReportable: true,
+        failure: { category: 'internal' as const, diagnostics: {} },
         resumeRecovery: undefined
       })
 
@@ -332,7 +372,7 @@ describe('Main Turn Outcome authority', () => {
         kind: 'failed' as const,
         settledAt: 2,
         error: 'Historical failure',
-        errorReportable: false
+        failure: { category: 'service' as const, diagnostics: {} }
       }
       const seed = setTurnOutcome(
         fixture({ runtimeTranscriptOwner: kind === 'adopted' ? 'main' : undefined }),
@@ -464,7 +504,7 @@ it.each([undefined, 'main'] as const)(
           runtimeTranscriptOwner,
           status: 'error',
           error: 'Original failure',
-          errorReportable: false,
+          failure: { category: 'service' as const, diagnostics: {} },
           resumeRecovery: {
             kind: 'resume-required',
             cause: 'connection-lost',
@@ -478,7 +518,7 @@ it.each([undefined, 'main'] as const)(
           cause: 'connection-lost',
           settledAt: 2,
           error: 'Original failure',
-          errorReportable: false,
+          failure: { category: 'service' as const, diagnostics: {} },
           recovery: 'resume'
         }
       )

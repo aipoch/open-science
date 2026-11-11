@@ -56,6 +56,41 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('publishes only committed provider changes and isolates observers', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const first = vi.fn(() => {
+      throw new Error('observer failed')
+    })
+    const second = vi.fn()
+    const detachFirst = repository.subscribeProviders(first)
+    const detachSecond = repository.subscribeProviders(second)
+    await repository.upsertProvider(provider())
+    expect(second).toHaveBeenCalledWith([
+      { id: 'p1', current: expect.objectContaining({ id: 'p1' }) }
+    ])
+    await repository.upsertProvider(provider())
+    await repository.markPathsNormalized(1)
+    expect(second).toHaveBeenCalledTimes(1)
+    await expect(repository.upsertProvider(provider(), 'deleted')).rejects.toThrow()
+    expect(second).toHaveBeenCalledTimes(1)
+    await repository.deleteProvider('p1')
+    expect(second).toHaveBeenLastCalledWith([{ id: 'p1', current: undefined }])
+    detachFirst()
+    detachSecond()
+    await repository.upsertProvider(provider())
+    expect(second).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not notify provider observers when durable publication fails', async () => {
+    const store = new SettingsDocumentStore(await createStorageRoot())
+    const repository = new SettingsRepository(store)
+    const listener = vi.fn()
+    repository.subscribeProviders(listener)
+    vi.spyOn(store, 'mutate').mockRejectedValueOnce(new Error('write failed'))
+    await expect(repository.upsertProvider(provider())).rejects.toThrow('write failed')
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   it('does not rewrite a concurrently saved legacy data-root pointer', async () => {
     const dir = await createStorageRoot()
     const legacyRoot = join(dir, 'OpenScience')
@@ -992,6 +1027,7 @@ describe('settings repository', () => {
     await repository.setReviewerModel(fixed)
     await repository.setSessionDetailsModel(fixed)
     await repository.setVisionModel(fixed)
+    await repository.setPromptOptimizationModel(fixed)
 
     const settings = await repository.deleteProvider('p1', 'inherit')
 
@@ -999,6 +1035,7 @@ describe('settings repository', () => {
       providers: [],
       subagentModel: { mode: 'inherit' },
       reviewerModel: { mode: 'inherit' },
+      promptOptimizationModel: { mode: 'inherit' },
       sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
     })
     expect(settings.visionModel).toBeUndefined()
@@ -1006,6 +1043,7 @@ describe('settings repository', () => {
       providers: [],
       subagentModel: { mode: 'inherit' },
       reviewerModel: { mode: 'inherit' },
+      promptOptimizationModel: { mode: 'inherit' },
       sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
     })
   })
@@ -1020,11 +1058,43 @@ describe('settings repository', () => {
       reasoningEffort: 'high'
     })
 
+    await repository.setPromptOptimizationModel({
+      mode: 'fixed',
+      providerId: 'builtin-claude-shared',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'high'
+    })
+
     const settings = await repository.deleteProvider('builtin-claude-isolated', 'inherit')
 
     expect(settings.providers).toEqual([])
     expect(settings.reviewerModel).toEqual({ mode: 'inherit' })
+    expect(settings.promptOptimizationModel).toEqual({ mode: 'inherit' })
   })
+
+  it.each(['preserve', 'inherit'] as const)(
+    'preserves an unrelated optimization model when deleting a provider with %s',
+    async (handling) => {
+      const repository = new SettingsRepository(await createStorageRoot())
+      await repository.upsertProvider(provider())
+      await repository.upsertProvider(provider({ id: 'p2' }))
+      const fixed = {
+        mode: 'fixed' as const,
+        providerId: 'p2',
+        model: 'm',
+        reasoningEffort: 'high' as const
+      }
+      await repository.setPromptOptimizationModel(fixed)
+      expect((await repository.deleteProvider('p1', handling)).promptOptimizationModel).toEqual(
+        fixed
+      )
+      if (handling === 'preserve') {
+        expect((await repository.deleteProvider('p2', handling)).promptOptimizationModel).toEqual(
+          fixed
+        )
+      }
+    }
+  )
 
   it('ignores an active pointer that references an unknown provider', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
@@ -1984,5 +2054,28 @@ describe('settings repository: Local Shell runtime', () => {
       activatedWslSelection: active,
       wslSelection: candidate
     })
+  })
+})
+
+it('persists Modal source changes atomically alongside unrelated preferences', async () => {
+  const root = await createStorageRoot()
+  const repository = new SettingsRepository(root)
+  await Promise.all([
+    repository.setComputePythonRuntime('modal', {
+      kind: 'custom',
+      pythonPath: '/missing/venv/bin/python'
+    }),
+    repository.setNotificationsEnabled(false),
+    repository.setComputePythonRuntime('hugging-face', { kind: 'custom', pythonPath: '/hf/python' })
+  ])
+  const restored = await new SettingsRepository(root).getSettings()
+  expect(restored.huggingFaceRuntime).toEqual({ kind: 'custom', pythonPath: '/hf/python' })
+  expect(restored.modalRuntime).toEqual({ kind: 'custom', pythonPath: '/missing/venv/bin/python' })
+  expect(restored.notificationsEnabled).toBe(false)
+  await repository.setComputePythonRuntime('modal', { kind: 'managed' })
+  expect((await repository.getSettings()).modalRuntime).toEqual({ kind: 'managed' })
+  expect((await repository.getSettings()).huggingFaceRuntime).toEqual({
+    kind: 'custom',
+    pythonPath: '/hf/python'
   })
 })

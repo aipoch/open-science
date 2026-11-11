@@ -1,6 +1,10 @@
 import type { PDFDocumentProxy, PDFPageProxy, getDocument } from 'pdfjs-dist'
 import {
   nativeAlgorithmInkRegions,
+  nativeAlgorithmCaptionInk,
+  nativeIsolatedPlotCaptionInk,
+  nativeTerminalPlotCaptionInk,
+  carryNativeTerminalPlotScope,
   nativeTextFreeClipInkRegions
 } from './native-source-geometry.js'
 import { getPdfTranslationTextContent } from './text-content.js'
@@ -205,6 +209,199 @@ export async function nativeInkPageIdentity(
   }
 }
 
+/** No promise is allowed between this bounded byte/reference check and Source commit. */
+export function nativeInkPageCurrent(
+  page: PDFPageProxy,
+  content: Content,
+  viewport: Viewport,
+  operators: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
+  outlineKeys: readonly string[]
+): (() => boolean) | undefined {
+  return nativeInkPageWitness(page, content, viewport, operators, outlineKeys)?.current
+}
+
+function nativeInkPageWitness(
+  page: PDFPageProxy,
+  content: Content,
+  viewport: Viewport,
+  operators: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
+  outlineKeys: readonly string[]
+): { current: () => boolean; released: () => boolean } | undefined {
+  try {
+    const common = page.commonObjs,
+      get = common.get,
+      has = common.has,
+      apis = [page.getTextContent, page.getOperatorList, page.getViewport],
+      reference = page.ref,
+      view = page.view,
+      fonts: {
+        id: string
+        font: Record<string, unknown>
+        data: Uint8Array
+        bytes: Uint8Array
+        slots: (() => boolean)[]
+      }[] = [],
+      references: [object, string, object][] = [],
+      seen = new Set<object>()
+    const bind = (value: unknown): void => {
+      if (!value || typeof value !== 'object' || seen.has(value)) return
+      seen.add(value)
+      if (seen.size > 100000) throw Error('Native reference budget.')
+      if (ArrayBuffer.isView(value)) return
+      for (const key of Object.keys(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)
+        if (!descriptor || !('value' in descriptor)) throw Error('Native accessor.')
+        if (descriptor.value && typeof descriptor.value === 'object') {
+          references.push([value, key, descriptor.value])
+          bind(descriptor.value)
+        }
+      }
+    }
+    // PDF.js exposes font data as fresh views and metrics as freshly decoded
+    // arrays. Bind the property lookup itself; compare its decoded value below.
+    // A data property, including a shadow over a getter, retains exact identity.
+    const slot = (font: object, key: string): (() => boolean) => {
+      const chain: {
+        owner: object
+        parent: object | null
+        descriptor: PropertyDescriptor | undefined
+      }[] = []
+      let owner: object | null = font
+      while (owner) {
+        const descriptor = Object.getOwnPropertyDescriptor(owner, key),
+          parent = Object.getPrototypeOf(owner)
+        chain.push({ owner, parent, descriptor })
+        if (descriptor) {
+          if ('value' in descriptor) bind(descriptor.value)
+          break
+        }
+        owner = parent
+      }
+      return () =>
+        chain.every(({ owner, parent, descriptor }) => {
+          const now = Object.getOwnPropertyDescriptor(owner, key)
+          return (
+            Object.getPrototypeOf(owner) === parent &&
+            (descriptor === undefined
+              ? now === undefined
+              : now !== undefined &&
+                ['value', 'get', 'set', 'writable', 'enumerable', 'configurable'].every(
+                  (field) =>
+                    now[field as keyof PropertyDescriptor] ===
+                    descriptor[field as keyof PropertyDescriptor]
+                ))
+          )
+        })
+    }
+    let bytes = 0
+    for (const id of new Set(
+      content.items.flatMap((item) => ('str' in item && item.str.trim() ? [item.fontName] : []))
+    )) {
+      const font = common.get(id),
+        data = font?.data
+      if (
+        !font ||
+        font.loadedName !== id ||
+        font.missingFile !== false ||
+        !(data instanceof Uint8Array) ||
+        !(data.buffer instanceof ArrayBuffer) ||
+        !data.length ||
+        (bytes += data.length) > 32 * 1024 * 1024 ||
+        fonts.length >= 64
+      )
+        return
+      const slots = ['loadedName', 'data', ...fontProperties].map((key) => slot(font, key))
+      fonts.push({ id, font, data, bytes: data.slice(), slots })
+    }
+    if (!fonts.length) return
+    let outlineBytes = 0
+    const outlines: ((released: boolean) => boolean)[] = []
+    for (const key of new Set(outlineKeys)) {
+      if (outlines.length >= 10000) return
+      const present = common.has(key)
+      if (!present) {
+        outlines.push((released) => released || !common.has(key))
+        continue
+      }
+      const owner = common.get(key),
+        path = owner?.path,
+        currentSlot = slot(owner, 'path')
+      if (
+        !ArrayBuffer.isView(path) ||
+        path instanceof DataView ||
+        !(path.buffer instanceof ArrayBuffer) ||
+        (outlineBytes += path.byteLength) > 16 * 1024 * 1024
+      )
+        return
+      const pathKey = JSON.stringify(normalized(path))
+      outlines.push((released) => {
+        const now = owner.path
+        return (
+          (released || (common.has(key) && common.get(key) === owner)) &&
+          currentSlot() &&
+          ArrayBuffer.isView(now) &&
+          now.buffer === path.buffer &&
+          now.byteOffset === path.byteOffset &&
+          now.byteLength === path.byteLength &&
+          JSON.stringify(normalized(now)) === pathKey
+        )
+      })
+    }
+    bind([content, operators, viewport.transform, reference, view])
+    const values = (): unknown =>
+        normalized([
+          content,
+          operators,
+          viewportKey(viewport),
+          page.ref,
+          page.view,
+          page.rotate,
+          page.userUnit,
+          fonts.map(({ font }) => fontProperties.map((key) => font[key]))
+        ]),
+      snapshot = JSON.stringify(values())
+    const check = (released: boolean): boolean => {
+      try {
+        if (
+          page.commonObjs !== common ||
+          common.get !== get ||
+          common.has !== has ||
+          page.ref !== reference ||
+          page.view !== view ||
+          ![page.getTextContent, page.getOperatorList, page.getViewport].every(
+            (api, i) => api === apis[i]
+          ) ||
+          references.some(
+            ([parent, key, value]) => Object.getOwnPropertyDescriptor(parent, key)?.value !== value
+          ) ||
+          JSON.stringify(values()) !== snapshot
+        )
+          return false
+        for (const entry of fonts) {
+          const data = entry.font.data
+          if (
+            (!released && common.get(entry.id) !== entry.font) ||
+            entry.font.loadedName !== entry.id ||
+            !entry.slots.every((current) => current()) ||
+            !(data instanceof Uint8Array) ||
+            data.buffer !== entry.data.buffer ||
+            data.byteOffset !== entry.data.byteOffset ||
+            data.length !== entry.bytes.length
+          )
+            return false
+          for (let i = 0; i < entry.bytes.length; i++) if (data[i] !== entry.bytes[i]) return false
+        }
+        return outlines.every((current) => current(released))
+      } catch {
+        return false
+      }
+    }
+    return { current: () => check(false), released: () => check(true) }
+  } catch {
+    return
+  }
+}
+
 async function sameNativePage(
   primary: Request,
   page: PDFPageProxy,
@@ -309,16 +506,31 @@ export function createAuxiliaryNativeDisplayInkReader(options: Options): Auxilia
   return createNativeInkReader(options, nativeTextFreeClipInkRegions)
 }
 
-function createNativeInkReader(
+/** Terminal float Forms use a separate, complete exterior-caption proof. */
+export function createAuxiliaryNativeTerminalCaptionInkReader(
+  options: Options
+): AuxiliaryNativeInkReader {
+  return createNativeInkReader(options, nativeTerminalPlotCaptionInk, carryNativeTerminalPlotScope)
+}
+
+/** Caption isolation has its own full native program proof and keeps this lifecycle unchanged. */
+export function createAuxiliaryNativeCaptionInkReader(options: Options): AuxiliaryNativeInkReader {
+  return createNativeInkReader(options, nativeIsolatedPlotCaptionInk)
+}
+
+export function createNativeInkReader(
   { document: primary, nativeDocumentFactory, sourceIdentity, signal }: Options,
-  readInk: typeof nativeTextFreeClipInkRegions
+  readInk: typeof nativeTextFreeClipInkRegions,
+  carryInk?: (from: Ink, to: Ink) => void
 ): AuxiliaryNativeInkReader {
   let task: ReturnType<typeof getDocument> | undefined,
     pending: Promise<PDFDocumentProxy> | undefined,
     render: ReturnType<PDFPageProxy['render']> | undefined,
     disposed = false,
     closing: ReturnType<typeof getDocument> | undefined,
-    cleanup: Promise<void> | undefined
+    cleanup: Promise<void> | undefined,
+    cleanupCheckSource: Promise<void> | undefined,
+    checkedCleanup: Promise<void> | undefined
   const records = new Map<
     number,
     {
@@ -330,6 +542,7 @@ function createNativeInkReader(
       result: Promise<Ink | undefined>
     }
   >()
+  const proofChecks: NonNullable<ReturnType<typeof nativeInkPageWitness>>[] = []
   const live = (): void => {
     signal?.throwIfAborted()
     requireEvidence(!disposed)
@@ -359,10 +572,19 @@ function createNativeInkReader(
       render?.cancel()
       records.clear()
     }
-    return closeOwnedTask()
+    const closing = closeOwnedTask()
+    if (closing !== cleanupCheckSource) {
+      cleanupCheckSource = closing
+      checkedCleanup = closing.then(() => {
+        // Destroy may release the object registry, but the exact font bytes,
+        // glyph outline owners and their slots used by a published proof stay bound.
+        requireEvidence(proofChecks.every((proof) => proof.released()))
+      })
+    }
+    return checkedCleanup!
   }
   const onAbort = (): void => {
-    void dispose()
+    void dispose().catch(() => undefined)
   }
   signal?.addEventListener('abort', onAbort, { once: true })
   const initialize = async (): Promise<PDFDocumentProxy> => {
@@ -423,10 +645,31 @@ function createNativeInkReader(
       page = await auxiliary.getPage(input.pageNumber),
       content = await getPdfTranslationTextContent(page)
     live()
-    const operatorSnapshot = await sameNativePage(input, page, content)
     const viewport = page.getViewport({ scale: 1 }),
       width = Math.ceil(viewport.width),
       height = Math.ceil(viewport.height)
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      operators = await page.getOperatorList(),
+      outlineKeys = new Set<string>(),
+      stack: string[] = []
+    let font = ''
+    for (const [index, op] of operators.fnArray.entries()) {
+      const args = operators.argsArray[index]
+      if (op === OPS.setFont) font = args[0]
+      else if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) stack.push(font)
+      else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op))
+        font = stack.pop() ?? ''
+      else if (op === OPS.showText)
+        for (const glyph of args[0])
+          if (typeof glyph?.fontChar === 'string') outlineKeys.add(font + '_path_' + glyph.fontChar)
+    }
+    // disableFontFace materializes these paths with the operator list. Do not
+    // certify outlines first observed after an unbound asynchronous render.
+    requireEvidence([...outlineKeys].every((key) => page.commonObjs.has(key)))
+    const proof = nativeInkPageWitness(page, content, viewport, operators, [...outlineKeys])
+    requireEvidence(proof)
+    const operatorSnapshot = await sameNativePage(input, page, content)
+    requireEvidence(proof.current())
     requireEvidence(
       Number.isSafeInteger(width) &&
         Number.isSafeInteger(height) &&
@@ -445,6 +688,7 @@ function createNativeInkReader(
       await render.promise
       render = undefined
       live()
+      requireEvidence(proof.current())
     } finally {
       canvas.width = canvas.height = 0
     }
@@ -463,13 +707,18 @@ function createNativeInkReader(
       ink && ink.size === nonempty.length && nonempty.every((index): boolean => ink.has(index))
     )
     live()
+    requireEvidence(proof.current())
+    proofChecks.push(proof)
     return ink
   }
-  const copy = (ink: Ink | undefined): Ink | undefined =>
-    ink &&
-    new Map(
+  const copy = (ink: Ink | undefined): Ink | undefined => {
+    if (!ink) return
+    const next = new Map(
       [...ink].map(([index, rect]): [number, typeof rect] => [index, Object.freeze({ ...rect })])
     )
+    carryInk?.(ink, next)
+    return next
+  }
   return {
     async read(input): Promise<Ink | undefined> {
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -516,6 +765,7 @@ function createNativeInkReader(
           )
           const ink = await previous.result
           live()
+          requireEvidence(proofChecks.every((proof) => proof.current()))
           requireEvidence(
             previous.content === JSON.stringify(normalized(input.content)) &&
               same(previous.viewport, viewportKey(input.viewport)) &&
@@ -531,7 +781,7 @@ function createNativeInkReader(
           prove(input),
           new Promise<never>((_, reject): void => {
             timer = setTimeout((): void => {
-              void dispose()
+              void dispose().catch(() => undefined)
               reject(new Error('Auxiliary evidence timed out.'))
             }, 20000)
           })
@@ -551,6 +801,7 @@ function createNativeInkReader(
         })
         const ink = await result
         live()
+        requireEvidence(proofChecks.every((proof) => proof.current()))
         requireEvidence(
           content === JSON.stringify(normalized(input.content)) &&
             same(viewport, viewportKey(input.viewport)) &&
@@ -568,4 +819,11 @@ function createNativeInkReader(
     },
     dispose
   }
+}
+
+/** The same bounded identity lifecycle for a complete ruled algorithm caption. */
+export function createAuxiliaryNativeAlgorithmCaptionInkReader(
+  options: Options
+): AuxiliaryNativeInkReader {
+  return createNativeInkReader(options, nativeAlgorithmCaptionInk)
 }

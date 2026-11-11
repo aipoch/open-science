@@ -11,6 +11,7 @@ import type { ChatSession } from '@/stores/session-store-contract'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 
 type SessionInfoPopoverProps = {
+  canTogglePin?: boolean
   onTogglePin?: (session: ChatSession) => void
   session: ChatSession
   sourceSession?: Pick<ChatSession, 'id' | 'title' | 'number'>
@@ -20,6 +21,7 @@ type SessionInfoPopoverProps = {
 
 const SessionInfoPopover = ({
   session,
+  canTogglePin = true,
   sourceSession,
   onOpenSession,
   onEdit,
@@ -86,21 +88,23 @@ const SessionInfoPopover = ({
                 #{session.number}
               </span>
             ) : null}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="-mr-2 size-8 shrink-0 text-muted-foreground transition-none max-md:size-11"
-              aria-label={t(session.pinned ? 'Unpin' : 'Pin')}
-              title={t(session.pinned ? 'Unpin' : 'Pin')}
-              aria-pressed={session.pinned === true}
-              disabled={!onTogglePin || session.isPending}
-              onClick={() => onTogglePin?.(session)}
-            >
-              <Pin
-                className={`size-4 ${session.pinned ? 'fill-current text-foreground' : ''}`}
-                aria-hidden="true"
-              />
-            </Button>
+            {canTogglePin ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-mr-2 size-8 shrink-0 text-muted-foreground transition-none max-md:size-11"
+                aria-label={t(session.pinned ? 'Unpin' : 'Pin')}
+                title={t(session.pinned ? 'Unpin' : 'Pin')}
+                aria-pressed={session.pinned === true}
+                disabled={!onTogglePin || session.isPending}
+                onClick={() => onTogglePin?.(session)}
+              >
+                <Pin
+                  className={`size-4 ${session.pinned ? 'fill-current text-foreground' : ''}`}
+                  aria-hidden="true"
+                />
+              </Button>
+            ) : null}
           </div>
           {session.description ? (
             <p className="mt-1.5 line-clamp-2 break-words text-sm leading-5 text-muted-foreground">

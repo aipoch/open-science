@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
+import { win32 } from 'node:path'
 
 import type { DarwinProcessIdentity, DarwinProcessTable } from '@aipoch/process-tree-native'
 
@@ -934,7 +935,15 @@ const terminateWindowsTree = async (
 
   let killer: ChildProcess
   try {
-    killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+    const windowsRoot = process.env.SystemRoot || process.env.WINDIR
+    const comSpec = process.env.ComSpec
+    const system32 = comSpec && win32.isAbsolute(comSpec) ? win32.dirname(comSpec) : undefined
+    const taskkill = windowsRoot
+      ? win32.join(windowsRoot, 'System32', 'taskkill.exe')
+      : system32
+        ? win32.join(system32, 'taskkill.exe')
+        : 'taskkill'
+    killer = spawn(taskkill, ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
   } catch (error) {
     log?.error('taskkill failed to launch; falling back to direct kill', error)
     killDirectChild(child, signal)
@@ -1223,9 +1232,14 @@ const scanForOwnedDescendants = async (
 
           // Permission denied: check if this process could be a setuid descendant
           const pid = parseInt(pidStr, 10)
-          if (couldBeDescendant(pid)) {
-            hadRelevantPermissionDenied = true
+          if (!couldBeDescendant(pid)) continue
+          if (code === 'EACCES' || code === 'EPERM') {
+            // A kernel worker can start after the leader but cannot inherit its userspace marker.
+            // Require the kernel's status field; an ordinary task can choose a kworker-like name.
+            const status = readFileSync(`/proc/${pidStr}/status`, 'utf8')
+            if (/\nKthread:[ \t]+1\n/u.test(status)) continue
           }
+          hadRelevantPermissionDenied = true
         }
       }
       // An unreadable potential descendant makes absence of the marker inconclusive.

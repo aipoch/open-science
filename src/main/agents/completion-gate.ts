@@ -59,8 +59,8 @@ export class CompletionGateRuntimeRegistry implements CompletionGateRuntime {
     return this.runtimeFor(context) !== undefined
   }
 
-  async stopOldPrompt(context: TrustedToolCompletionContext): Promise<void> {
-    return this.requireRuntime(context).stopOldPrompt(context)
+  async stopOldPrompt(context: TrustedToolCompletionContext, generation?: number): Promise<void> {
+    return this.requireRuntime(context).stopOldPrompt(context, generation)
   }
 
   async waitForOwnershipRelease(context: TrustedToolCompletionContext): Promise<void> {
@@ -93,6 +93,10 @@ export class CompletionGateRuntimeRegistry implements CompletionGateRuntime {
 
   async cleanupCancelledHandoff(context: TrustedToolCompletionContext): Promise<void> {
     await this.runtimeFor(context)?.cleanupCancelledHandoff?.(context)
+  }
+
+  releaseSupersededHandoff(context: TrustedToolCompletionContext, generation: number): void {
+    this.runtimeFor(context)?.releaseSupersededHandoff?.(context, generation)
   }
 
   private runtimeFor(context: TrustedToolCompletionContext): CompletionGateRuntime | undefined {
@@ -290,10 +294,11 @@ export class CompletionGateCoordinator {
       return
     }
     try {
-      await this.runtime.stopOldPrompt(context)
+      await this.runtime.stopOldPrompt(context, disposition.generation)
       await this.runtime.waitForOwnershipRelease(context)
       this.emitLifecycle('ownership-released', context, disposition)
       if (this.isSuperseded(context, disposition)) {
+        this.runtime.releaseSupersededHandoff?.(context, disposition.generation)
         this.emitLifecycle('handoff-superseded', context, disposition)
         return
       }

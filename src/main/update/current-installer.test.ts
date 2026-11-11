@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, type TestContext } from 'vitest'
 import type { UpdateStatus } from '../../shared/update'
 import {
   confirmInstaller,
@@ -12,6 +12,19 @@ import {
 } from './current-installer'
 
 const directories: string[] = []
+const createFileSymlink = async (
+  target: string,
+  path: string,
+  context: TestContext
+): Promise<void> => {
+  try {
+    await symlink(target, path, 'file')
+  } catch (error) {
+    if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM')
+      context.skip('File symlinks require Windows Developer Mode or elevated privileges.')
+    throw error
+  }
+}
 const makeDirectory = async (): Promise<string> => {
   const directory = await mkdtemp(join(tmpdir(), 'current-update-installer-'))
   directories.push(directory)
@@ -38,21 +51,27 @@ describe('current completed installer identity', () => {
     expect(installerFormat(fileName, platform)).toBe(format)
   })
 
-  it('never accepts a relative path, directory, or symlink as a completed file', async () => {
+  it('never accepts a relative path or directory as a completed file', async () => {
+    const directory = await makeDirectory()
+    const file = join(directory, 'app.deb')
+    await writeFile(file, 'complete')
+    expect(await inspectInstallerFile('app.deb')).toBeNull()
+    expect(await inspectInstallerFile(directory)).toBeNull()
+    expect(await inspectInstallerFile(file)).toMatchObject({ size: 8 })
+  })
+
+  it('never accepts a file symlink as a completed file', async (context) => {
     const directory = await makeDirectory()
     const file = join(directory, 'app.deb')
     const link = join(directory, 'linked.deb')
     await writeFile(file, 'complete')
-    await symlink(file, link)
-    expect(await inspectInstallerFile('app.deb')).toBeNull()
-    expect(await inspectInstallerFile(directory)).toBeNull()
+    await createFileSymlink(file, link, context)
     expect(await inspectInstallerFile(link)).toBeNull()
-    expect(await inspectInstallerFile(file)).toMatchObject({ size: 8 })
   })
 
-  it.each(['deleted', 'replaced', 'symlink', 'parent-symlink'])(
+  it.for(['deleted', 'replaced', 'symlink', 'parent-symlink'])(
     'rejects a confirmed file that is later %s',
-    async (change) => {
+    async (change, context) => {
       const directory = await makeDirectory()
       const folder = join(directory, 'pending')
       await mkdir(folder)
@@ -72,14 +91,14 @@ describe('current completed installer identity', () => {
         await rename(folder, moved)
         await mkdir(replacement)
         await writeFile(join(replacement, 'app.deb'), 'complete')
-        await symlink(replacement, folder)
+        await symlink(replacement, folder, process.platform === 'win32' ? 'junction' : 'dir')
       } else {
         await rm(path)
         if (change === 'replaced') await writeFile(path, 'complete')
         if (change === 'symlink') {
           const other = join(directory, 'other.deb')
           await writeFile(other, 'complete')
-          await symlink(other, path)
+          await createFileSymlink(other, path, context)
         }
       }
       expect(await inspectConfirmedInstaller(artifact, inspectInstallerFile, () => true)).toEqual({

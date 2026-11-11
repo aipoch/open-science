@@ -15,7 +15,7 @@ import type { SessionDiscussionCapture } from './replay/replay-context'
 import { createPreviewFileItem } from './preview-file-item'
 import { SessionReplayProgressWriter } from './session-replay-progress-writer'
 import { SessionReplayEvidence } from './SessionReplayEvidence'
-import { SessionDiscussionDialog } from './SessionDiscussionDialog'
+import { openDiscussionDraft } from './workspace-session-actions'
 
 type Props = { item: PreviewToolItem; isActive?: boolean }
 type LoadedReplay = {
@@ -31,7 +31,6 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
   const [activated, setActivated] = useState(isActive)
   if (isActive && !activated) setActivated(true)
   const projectId = item.replaySourceProjectId ?? item.projectId ?? ''
-  const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
   const sourceSessionId = item.replaySourceSessionId ?? item.sessionId
   const expanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
   const [loaded, setLoaded] = useState<LoadedReplay>()
@@ -69,6 +68,7 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
   const sourceUnavailable =
     (sourceObserved && !sourcePresent) ||
     sourceStatus === 'missing' ||
+    sourceStatus === 'deleted' ||
     sourceStatus === 'unreadable'
 
   useEffect(() => {
@@ -140,8 +140,13 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
   }
 
   const askStep = (context: SessionDiscussionCapture): void => {
-    if (sourceUnavailable) return
-    setDiscussionCapture(context)
+    if (sourceUnavailable || !loaded?.document.source.packageOrigin) return
+    if (!openDiscussionDraft(context, true))
+      setSaveError(
+        t(
+          'Could not open the discussion. Check that the source project is available and try again.'
+        )
+      )
   }
 
   const openEvidence = (resource: ReplayResource | undefined, step: ReplayStep): void => {
@@ -234,12 +239,6 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
           primaryButton={{ label: t('Retry'), onClick: retry }}
         />
       ) : null}
-      {discussionCapture ? (
-        <SessionDiscussionDialog
-          context={discussionCapture}
-          onClose={() => setDiscussionCapture(undefined)}
-        />
-      ) : null}
       {saveError ? (
         <ErrorNotice
           tone="amber"
@@ -259,7 +258,7 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
           initialView={loaded.view}
           active={isActive && !evidenceStep}
           onViewChange={notebookUnavailable ? undefined : loaded.writer.enqueue}
-          onAskStep={askStep}
+          onAskStep={loaded.document.source.packageOrigin ? askStep : undefined}
           onOpenEvidence={openEvidence}
         />
       </div>

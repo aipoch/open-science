@@ -73,10 +73,12 @@ export type PackageSelectableFile = PackageExcludedFile & {
 export type PackageFileSelection = {
   excludedStorageKeys: readonly string[]
   includePdfNotes: boolean
+  includeResearchFilms?: boolean
 }
 
 export type PackageSelectionSummary = {
   pdfNotesAvailable?: boolean
+  researchFilms?: { count: number; sizeBytes: number }
   retainedFiles: Array<PackageExcludedFile & { checksum?: string }>
   metadataBytes: number
 }
@@ -229,7 +231,8 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
       action: z.literal('select'),
       operationId: identity,
       excludedStorageKeys: z.array(z.string().max(2048)).max(10000),
-      includePdfNotes: z.boolean().optional()
+      includePdfNotes: z.boolean().optional(),
+      includeResearchFilms: z.boolean().optional()
     })
     .strict()
 ])
@@ -266,13 +269,22 @@ export const packageInventoryEntrySchema = z
   })
   .strict()
 
+const packageFeatureSchema = z.enum([
+  'literature',
+  'ro-crate',
+  'content-dedupe',
+  'research-film',
+  'log-evidence',
+  'compute-log-evidence'
+])
+
 export const sessionPackageManifestSchema = z
   .object({
     format: z.literal('open-science-session'),
     // content-dedupe lets logical inventory entries share one content-addressed object path.
     requiredFeatures: z
-      .array(z.enum(['literature', 'ro-crate', 'content-dedupe']))
-      .max(3)
+      .array(packageFeatureSchema)
+      .max(packageFeatureSchema.options.length)
       .optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),
@@ -319,6 +331,7 @@ export const sessionPackageReceiptSchema = packageOriginSchema
     schemaVersion: z.literal(1),
     projectId: identity,
     sessionId: identity,
+    nativeLogOrigin: z.literal(true).optional(),
     // Source graph/runtime IDs are opaque (including composite separators); only remapped
     // destination IDs become filesystem identities and must satisfy the path-safe schema.
     identities: z.record(z.string().min(1).max(4096), identity),
@@ -442,7 +455,14 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
           .array(packageExcludedFileSchema.extend({ checksum: checksum.optional() }))
           .max(10000),
         metadataBytes: z.number().nonnegative(),
-        pdfNotesAvailable: z.boolean().optional()
+        pdfNotesAvailable: z.boolean().optional(),
+        researchFilms: z
+          .object({
+            count: z.number().int().positive().max(1000),
+            sizeBytes: z.number().int().nonnegative().max(PACKAGE_MAX_BYTES)
+          })
+          .strict()
+          .optional()
       })
       .strict()
       .optional(),

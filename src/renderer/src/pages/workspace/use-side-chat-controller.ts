@@ -213,6 +213,11 @@ const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRunt
             }
           }
           for (const snapshot of snapshotList.chats) {
+            if (
+              snapshot.sideSessionId &&
+              closedSideSessionIdsRef.current.has(snapshot.sideSessionId)
+            )
+              continue
             const lastRevision =
               revisionByChatRef.current.get(snapshot.sideSessionId ?? snapshot.parentSessionId) ?? 0
             if (snapshot.revision < lastRevision) continue
@@ -680,18 +685,9 @@ const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRunt
         : { parentSessionId: current.parentSessionId }
       void window.api.sideChat
         .close(request)
-        .catch((error) => {
-          if (current.sideSessionId) closedSideSessionIdsRef.current.delete(current.sideSessionId)
-          update(
-            chatId,
-            (latest) =>
-              latest ?? {
-                ...current,
-                running: false,
-                error: t('Could not close Side chat: {{error}}', { error: errorText(error) })
-              }
-          )
-        })
+        // Closing is a user decision. Backend cleanup owns its retries; a transport or cleanup
+        // failure must not restore the tab or expose internal process diagnostics.
+        .catch(() => undefined)
         .finally(() => {
           const next = new Set(closingChatIdsRef.current)
           next.delete(chatId)
@@ -699,7 +695,7 @@ const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRunt
           setClosingChatIds(next)
         })
     },
-    [t, update]
+    [update]
   )
 
   useEffect(() => {

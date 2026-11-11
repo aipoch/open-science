@@ -34,7 +34,7 @@ No application paths, schema migrations, IPC, Electron or browser runtime are in
 - CommonJS `require` and ESM named imports resolve the same CommonJS implementation, queue and error
   classes. Install one compatible package instance across participating owners. Independently
   installed versions or bundled copies do not share state.
-- Ordinary files use write-capable fsync handles. Directory flushes are strict on POSIX; Windows
+- Ordinary files use write-capable fsync handles. Directory flushes are strict by default on POSIX; Windows
   ignores only EISDIR/EPERM/EINVAL/ENOTSUP for directory barriers. This cannot guarantee persistence
   beyond the filesystem/device's own durability guarantees.
 
@@ -43,6 +43,12 @@ receives the target path. `isRecoverableDurableJsonTemporaryFile` classifies a s
 that already checked the basename prefix and `.tmp` extension, as directory recovery does.
 
 `createFileDurability` and `defaultFileDurability` expose file/directory barriers;
+`syncDirectory(path, { allowPermissionDenied: true })` lets user-export callers tolerate
+EACCES/EPERM when opening the parent directory on any platform. It does not relax file barriers
+or add exceptions for directory sync/close failures; existing Windows behavior remains unchanged.
+When directory access is denied, publication lacks a directory metadata durability guarantee.
+Application-owned persistence should retain the default policy.
+
 `retryFileReplacement` provides the bounded replacement policy. `FileDurability` and
 `DurableJsonFileDependencies` describe supported I/O injection. No queue or mutable internal state
 is exported, and private paths are blocked by package exports.

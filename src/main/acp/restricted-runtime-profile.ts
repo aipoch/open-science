@@ -1,13 +1,16 @@
+import { HARNESS_ACP_ARG } from '../harness-acp/config'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
+import { isolatePiProfile } from '../agent-framework/pi'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 
 type RestrictedRuntimeProfile = Readonly<{
+  taskOnly?: boolean
   agentName: string
   description: string
   systemPrompt: string
@@ -95,6 +98,7 @@ const prepareOpenCodeBackend = async (
   const configured = record(JSON.parse(backend.env.OPENCODE_CONFIG_CONTENT ?? '{}'))
   const restricted = {
     ...configured,
+    ...(profile.taskOnly ? { instructions: [] } : {}),
     default_agent: profile.agentName,
     permission: profile.openCodePermissions,
     agent: {
@@ -137,6 +141,12 @@ const prepareCodexBackend = async (
     subscriptionTransport: backend.codexSubscriptionTransport
   })
   const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
+  if (profile.taskOnly) {
+    const instructionFile = join(codexHome, 'task-instructions.md')
+    await writeFile(instructionFile, profile.systemPrompt, { mode: 0o600 })
+    codexConfig.model_instructions_file = instructionFile
+    codexConfig.skills = { ...record(codexConfig.skills), include_instructions: false }
+  }
   delete codexConfig.developer_instructions
   codexConfig.experimental_use_unified_exec_tool = false
   codexConfig.features = {
@@ -153,8 +163,8 @@ const prepareCodexBackend = async (
       USERPROFILE: codexHome,
       CODEX_CONFIG: JSON.stringify(codexConfig)
     },
-    systemPromptAppends: [profile.systemPrompt],
-    persistentSystemPrompt: undefined
+    systemPromptAppends: profile.taskOnly ? [] : [profile.systemPrompt],
+    persistentSystemPrompt: profile.taskOnly ? profile.systemPrompt : undefined
   }
 }
 
@@ -177,6 +187,7 @@ const prepareClaudeBackend = async (
     env,
     sessionOptions: {
       ...sessionOptions,
+      ...(profile.taskOnly ? { strictMcpConfig: true, mcpServers: {} } : {}),
       tools: [],
       skills: [],
       plugins: [],
@@ -214,11 +225,35 @@ const prepareCodeBuddyBackend = async (
   }
 }
 
+// The app-owned Pi adapter already disables native tools, extensions, and Skills; app MCP tools
+// still pass the permission guard and the session capability policy. Keep Main's native sessions
+// and Skill runtime out of this profile.
+const preparePiBackend = async (
+  backend: ResolvedAgentBackend,
+  profileRoot: string,
+  profile: RestrictedRuntimeProfile
+): Promise<ResolvedAgentBackend> => ({
+  ...backend,
+  ...(await isolatePiProfile(backend, profileRoot)),
+  sessionOptions: removeSkillRuntimeCapability(backend.sessionOptions),
+  systemPromptAppends: [profile.systemPrompt],
+  persistentSystemPrompt: undefined
+})
+
 const prepareRestrictedBackend = (
   backend: ResolvedAgentBackend,
   profileRoot: string,
   profile: RestrictedRuntimeProfile
 ): Promise<ResolvedAgentBackend> => {
+  if (profile.taskOnly && backend.framework.id === 'open-science-agent') {
+    return Promise.resolve({
+      ...backend,
+      args: [HARNESS_ACP_ARG, join(profileRoot, 'sessions')],
+      sessionOptions: removeSkillRuntimeCapability(backend.sessionOptions),
+      systemPromptAppends: [profile.systemPrompt],
+      persistentSystemPrompt: undefined
+    })
+  }
   if (backend.framework.id === 'opencode') {
     return prepareOpenCodeBackend(backend, profileRoot, profile)
   }
@@ -226,6 +261,7 @@ const prepareRestrictedBackend = (
   if (backend.framework.id === 'codebuddy') {
     return prepareCodeBuddyBackend(backend, profileRoot, profile)
   }
+  if (backend.framework.id === 'pi') return preparePiBackend(backend, profileRoot, profile)
   return prepareClaudeBackend(backend, profileRoot, profile)
 }
 

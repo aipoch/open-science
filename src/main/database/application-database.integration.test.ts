@@ -154,7 +154,13 @@ describe('application database (integration)', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
-        '0051_literature_reading_status'
+        '0051_literature_reading_status',
+        '0052_literature_personal_note_search',
+        '0053_literature_doi_identity',
+        '0054_slurm_job_reliability',
+        '0055_session_discussion_parent',
+        '0056_compute_kubernetes_workspace',
+        '0057_project_optimization_prompt'
       ]
     })
 
@@ -1180,7 +1186,13 @@ describe('application database (integration)', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
-        '0051_literature_reading_status'
+        '0051_literature_reading_status',
+        '0052_literature_personal_note_search',
+        '0053_literature_doi_identity',
+        '0054_slurm_job_reliability',
+        '0055_session_discussion_parent',
+        '0056_compute_kubernetes_workspace',
+        '0057_project_optimization_prompt'
       ]
     })
 

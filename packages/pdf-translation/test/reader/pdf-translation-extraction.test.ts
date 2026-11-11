@@ -292,6 +292,74 @@ describe('extractPdfTranslationSource', () => {
     )
   })
 
+  const missingControl = (str: string, mapped = false, width = 150) => {
+    const fixture = setup([{ ...text(str), width }])
+    const glyphs = [...str].map((unicode) => ({
+      unicode,
+      originalCharCode: unicode.charCodeAt(0),
+      isInFont: true
+    }))
+    const map = Object.fromEntries(
+      glyphs
+        .filter((glyph) => mapped || glyph.originalCharCode >= 32)
+        .map((glyph) => [glyph.originalCharCode, glyph.unicode])
+    )
+    Object.assign(fixture.page, {
+      commonObjs: { has: () => true, get: () => ({ composite: true, toUnicode: { _map: map } }) },
+      getOperatorList: vi.fn().mockResolvedValue({
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['body', 10], [glyphs]]
+      })
+    })
+    return fixture
+  }
+
+  it('retains a proven missing-Unicode small owner only as original', async () => {
+    const str = '\u0012 X',
+      fixture = missingControl(str)
+    const before = await extractPdfTranslationSource(setup([text(str)]).context)
+    const actual = await extractPdfTranslationSource(fixture.context)
+    expect(actual.coverage).toEqual({
+      ...before.coverage,
+      warnings: [{ unitId: before.source.units[0].id, reasons: ['unreliable-font-unicode'] }]
+    })
+    expect(before.source.units).toHaveLength(1)
+    expect(before.source.units[0].sourceOnly).toBeUndefined()
+    expect(actual.source.units).toEqual([{ ...before.source.units[0], sourceOnly: true }])
+    expect(applyPdfContentFirstPolicy(actual.source).units).toEqual(actual.source.units)
+  })
+
+  it.each([
+    'An ordinary unchanged \u0001 sentence retains translation eligibility.',
+    '\u0003 oi',
+    '\t X',
+    '\n X',
+    '\r X'
+  ])('keeps ordinary, mixed-word and legal-whitespace admission unchanged (%s)', async (str) => {
+    const fixture = missingControl(str)
+    const before = await extractPdfTranslationSource(setup([text(str)]).context)
+    const actual = await extractPdfTranslationSource(fixture.context)
+    expect(actual.source).toEqual(before.source)
+    expect(actual.coverage.excludedItemCount).toBe(before.coverage.excludedItemCount)
+  })
+
+  it.each(['mapped', 'unavailable', 'zero advance'])(
+    'does not infer missing-Unicode small-owner admission from %s',
+    async (variant) => {
+      const str = '\u0012 X',
+        width = variant === 'zero advance' ? 0 : 150
+      const fixture =
+        variant === 'unavailable'
+          ? setup([text(str)])
+          : missingControl(str, variant === 'mapped', width)
+      const before = await extractPdfTranslationSource(setup([{ ...text(str), width }]).context)
+      const actual = await extractPdfTranslationSource(fixture.context)
+      expect(actual.source).toEqual(before.source)
+      if (variant !== 'zero advance')
+        expect(actual.coverage.warnings).toEqual(before.coverage.warnings)
+    }
+  )
+
   const symbolicFallback = () => {
     const fixture = simpleControl('&')
     const font = Object.assign(fixture.font, {
@@ -1149,6 +1217,98 @@ describe('extractPdfTranslationSource', () => {
     expect(coverage.textItemCount).toBe(3)
     expect(source.units[1].fragments[0].items.map((item) => item.index)).toEqual([2, 3])
   })
+
+  it.each(['viewport', 'invalid-width'])(
+    'keeps native justified caption boundaries without admitting whitespace as a source: %s',
+    async (variant) => {
+      const item = (
+        str: string,
+        x: number,
+        y: number,
+        width: number,
+        size = 10,
+        fontName = 'body',
+        hasEOL = true
+      ) => ({
+        ...text(str),
+        width,
+        height: size,
+        transform: [size, 0, 0, size, x, y],
+        fontName,
+        hasEOL
+      })
+      const items = [
+        item(
+          'The preceding ordinary explanation establishes the surrounding discussion.',
+          60,
+          400,
+          480
+        ),
+        item('Across these independent conditions', 60, 388, 200, 10, 'body', false),
+        item(' ', 260, 388, 12, 10, 'body', false),
+        item('the discussion continues with', 272, 388, 268),
+        item('Figure 1:', 60, 220, 45, 10, 'body', false),
+        item(
+          'Observed values from the complete independent comparison.',
+          110,
+          220,
+          430,
+          8,
+          'caption'
+        ),
+        item(
+          'an ordinary continuation that remains separate from the completed caption.',
+          60,
+          212,
+          480
+        ),
+        item('The following ordinary sentence preserves the remaining body context.', 60, 200, 480)
+      ]
+      if (variant === 'invalid-width') items[2].width = NaN
+      const original = structuredClone(items),
+        fixture = setup(items)
+      fixture.page.getTextContent.mockResolvedValue({
+        items,
+        styles: {
+          body: { ascent: 0.8, descent: -0.2, vertical: false },
+          caption: { ascent: 0.8, descent: -0.2, vertical: false }
+        }
+      })
+      if (variant === 'viewport')
+        fixture.page.getViewport.mockReturnValue({
+          width: 1200,
+          height: 1600,
+          transform: [2, 0, 0, -2, -20, 1580]
+        })
+      const result = await extractPdfTranslationSource(fixture.context)
+      const indices = (unit: (typeof result.source.units)[number]): number[] =>
+        unit.fragments.flatMap((f) => f.items.map((i) => i.index))
+      const caption = result.source.units.find((u) => indices(u).includes(4))!
+      expect(indices(caption).includes(6)).toBe(variant === 'invalid-width')
+      expect(result.source.units.every((u) => !u.sourceOnly)).toBe(true)
+      expect(result.source.units.flatMap(indices)).toEqual([0, 1, 3, 4, 5, 6, 7])
+      expect(result.coverage).toMatchObject({
+        textItemCount: 7,
+        includedItemCount: 7,
+        excludedItemCount: 0,
+        exclusions: []
+      })
+      expect(items).toEqual(original)
+      const bound = await bindPdfTranslation(
+        result.source,
+        {
+          source: result.source,
+          units: [
+            { id: caption.id, translationSource: caption.source, translation: '完整的图注。' }
+          ]
+        },
+        fixture.context.document,
+        'current',
+        fixture.context.signal
+      )
+      expect(bound?.units.find((u) => u.id === caption.id)?.translation).toBe('完整的图注。')
+    }
+  )
 
   it('creates a bindable immutable snapshot with original item indexes and no cleanup', async () => {
     const fixture = setup([text(''), text('An intact source paragraph.')])

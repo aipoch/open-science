@@ -17,6 +17,10 @@ import {
   respondToWorkspaceElicitation,
   type WorkspaceElicitationRuntime
 } from './workspace-elicitation-runtime'
+import {
+  reportWorkspaceElicitationFailure,
+  useWorkspaceElicitationFailures
+} from './workspace-operation-error'
 
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
@@ -32,7 +36,10 @@ const pendingWorkspaceElicitations = (
   return (session.activities ?? []).flatMap((activity) => {
     const elicitation = activity.elicitation
     return elicitation &&
-      (elicitation.state === 'pending' || elicitation.continuationRecovery) &&
+      (elicitation.state === 'pending' ||
+        elicitation.continuationRecovery ||
+        (elicitation.continuationPending &&
+          (elicitation.state === 'answered' || elicitation.state === 'declined'))) &&
       elicitation.durable
       ? [
           {
@@ -112,6 +119,14 @@ const useWorkspaceElicitation = (
         ? useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
         : undefined
       const selected = session ? resolveSessionRuntimeSelection(session.id) : undefined
+      if (sessionId) {
+        useWorkspaceElicitationFailures.setState(({ failures }) => {
+          if (!failures[sessionId]) return {}
+          const next = { ...failures }
+          delete next[sessionId]
+          return { failures: next }
+        })
+      }
 
       try {
         await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
@@ -125,6 +140,24 @@ const useWorkspaceElicitation = (
           historyReplayDescriptor: selected?.historyReplayDescriptor
         })
       } catch (error) {
+        const saved = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === sessionId)
+          ?.activities?.find(
+            (activity) => activity.elicitation?.durable?.requestId === response.requestId
+          )?.elicitation
+        if (
+          sessionId &&
+          saved?.continuationPending &&
+          !saved.continuationRecovery &&
+          (saved.state === 'answered' || saved.state === 'declined')
+        ) {
+          reportWorkspaceElicitationFailure(
+            sessionId,
+            response.requestId,
+            error instanceof Error ? error.message : String(error)
+          )
+        }
         if (sessionId && isSessionSizeLimitError(error)) onSessionSizeLimit?.(sessionId)
         throw error
       }
@@ -135,4 +168,9 @@ const useWorkspaceElicitation = (
   return { respondToElicitation }
 }
 
-export { createWorkspaceElicitationRuntime, pendingWorkspaceElicitations, useWorkspaceElicitation }
+export {
+  createWorkspaceElicitationRuntime,
+  pendingWorkspaceElicitations,
+  useWorkspaceElicitation,
+  useWorkspaceElicitationFailures
+}

@@ -200,8 +200,7 @@ it.runIf(executablePath)(
       onProcessError: vi.fn(),
       onProcessExit: vi.fn(),
       onConnectionClosed: () => owner.cleanupUnexpectedClose(owner.epoch),
-      reportCleanupFailure: vi.fn(),
-      reportProcessTreeError: vi.fn()
+      reportCleanupFailure: vi.fn()
     }
     try {
       const ready = await owner.connect(async (attempt) => {
@@ -223,7 +222,8 @@ it.runIf(executablePath)(
             }),
             prepareBackend: (backend) => backendOwner.prepare(attempt, backend),
             isCurrent: () => owner.epoch === attempt.epoch,
-            isShuttingDown: () => owner.isShuttingDown
+            isShuttingDown: () => owner.isShuttingDown,
+            cleanupUnattached: (resource, onFailure) => owner.cleanupUnattached(resource, onFailure)
           },
           hooks
         )

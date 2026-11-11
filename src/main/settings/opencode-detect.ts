@@ -24,6 +24,8 @@ export type OpencodeDetectDeps = {
   platform: NodeJS.Platform
   isExecutable: (path: string) => Promise<boolean>
   getVersion: (path: string, signal?: AbortSignal) => Promise<string | undefined>
+  // A configured executable must preserve launch/exit failures; discovery may skip a bad candidate.
+  probeVersion?: (path: string, signal?: AbortSignal) => Promise<string | undefined>
   resolveNpmBinDirs: (signal?: AbortSignal) => Promise<string[]>
   // Extra fixed directories to probe (e.g. the app-managed install dir), searched after PATH/home.
   extraDirs?: string[]
@@ -99,7 +101,10 @@ const detectOpencode = async (
       signal?.throwIfAborted()
       if (!executable) continue
 
-      const version = await deps.getVersion(candidate, signal)
+      const version = await deps.getVersion(candidate, signal).catch(() => {
+        signal?.throwIfAborted()
+        return undefined
+      })
       signal?.throwIfAborted()
 
       // A path that exists but cannot report a version is not a usable opencode; keep searching.
@@ -138,7 +143,7 @@ const parseVersion = (output: string): string | undefined => {
 // directly, so route it through the shell with the path quoted; native `.exe`/Unix binaries run
 // without a shell. Short timeout so a hung binary can't stall detection.
 const runOpencodeVersion =
-  (platform: NodeJS.Platform) =>
+  (platform: NodeJS.Platform, preserveFailure = false) =>
   async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
       const { stdout } =
@@ -158,8 +163,9 @@ const runOpencodeVersion =
             })
 
       return parseVersion(stdout)
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted()
+      if (preserveFailure) throw error
       return undefined
     }
   }
@@ -205,6 +211,7 @@ const createDefaultDetectDeps = (): OpencodeDetectDeps => {
     platform,
     isExecutable: isExecutableFile(platform),
     getVersion: runOpencodeVersion(platform),
+    probeVersion: runOpencodeVersion(platform, true),
     resolveNpmBinDirs: resolveNpmBinDirs(platform)
   }
 }

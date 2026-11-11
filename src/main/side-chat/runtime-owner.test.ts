@@ -27,7 +27,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import type { PersistedSideChat } from '../../shared/session-persistence'
 import { BackendShutdownCoordinator } from '../lifecycle-shutdown'
 import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatModelSelection } from '../../shared/side-chat'
-import type { AcpCreateSessionResponse } from '../../shared/acp'
+import type { AcpCreateSessionResponse, AcpStateSnapshot } from '../../shared/acp'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { AgentModelConfig, ResolvedAgentBackend } from '../agent-framework'
@@ -38,7 +38,8 @@ import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import {
   SIDE_CHAT_SYSTEM_PROMPT,
   SideChatRuntimeOwner,
-  prepareSideChatBackend
+  prepareSideChatBackend,
+  type SideChatRuntimePort
 } from './runtime-owner'
 
 const createRelayOwner = (targetState: 'idle' | 'completed' = 'idle'): SideChatRelayOwner =>
@@ -191,7 +192,7 @@ describe('Side chat OpenCode instruction isolation', () => {
               options.callbacks?.onProviderPromptAccepted?.('side-chat-test')
               return { stopReason: 'end_turn' }
             },
-            shutdownForQuit: async () => undefined,
+            shutdownForQuit: async () => ({ reaped: true }),
             deleteSession: async () => ({ sessionIds: [] })
           } as never
         }
@@ -355,6 +356,209 @@ describe('Side chat restricted backend profile', () => {
 })
 
 describe('SideChatRuntimeOwner lifecycle', () => {
+  it.each([
+    { mode: 'start', gate: 'all' },
+    { mode: 'resume', gate: 'all' },
+    { mode: 'start', gate: 'project' },
+    { mode: 'start', gate: 'parent' }
+  ] as const)(
+    'retains failed $mode cleanup after user close for the $gate teardown gate',
+    async ({ mode, gate }) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-closed-startup-'))
+      const id = 'side-chat-closed-startup'
+      const startup = Promise.withResolvers<AcpCreateSessionResponse>()
+      const openSession = vi.fn(() => startup.promise)
+      const shutdown = vi
+        .fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({ reaped: true }))
+        .mockResolvedValueOnce({ reaped: false })
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: async () => target,
+        resolveTarget: async () => backend(claudeCodeFramework),
+        relay: createRelayOwner(),
+        onEvent: vi.fn(),
+        createRuntime: () =>
+          ({
+            createSession: openSession,
+            resumeSession: openSession,
+            shutdownForQuit: shutdown
+          }) as never
+      })
+      if (mode === 'resume')
+        owner.hydrate([
+          {
+            projectId: 'project',
+            parentSessionId: 'main',
+            sideChat: {
+              version: 1,
+              id,
+              lifecycle: 'open',
+              frameworkId: 'claude-code',
+              historyPreamble: '',
+              entries: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        ])
+      const operation =
+        mode === 'start'
+          ? owner.start({
+              sideSessionId: id,
+              parentSessionId: 'main',
+              projectId: 'project',
+              text: 'Question'
+            })
+          : owner.send({ sideSessionId: id, text: 'Continue' })
+      const failed = expect(operation).rejects.toThrow('Provider startup failed')
+      await vi.waitFor(() => expect(openSession).toHaveBeenCalledOnce())
+      const profile = join(temporaryRoot, 'runtime-support', 'side-chat', id)
+      await writeFile(join(profile, 'sentinel'), 'owned')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await owner.close({ sideSessionId: id })
+        startup.reject(new Error('Provider startup failed'))
+        await failed
+        await flushImmediate()
+        expect(owner.list().chats).toEqual([])
+        await owner.sweepStaleProfiles()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        if (gate === 'project') await owner.invalidateProject('project')
+        else if (gate === 'parent') await owner.invalidateParents(['main'])
+        else await owner.suspendAll()
+        expect(shutdown).toHaveBeenCalledTimes(2)
+        await expect(access(profile)).rejects.toThrow()
+      } finally {
+        await owner.shutdown()
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('starts sibling shutdown while a user-closed runtime is still being reaped', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-close-sibling-'))
+    const cleanup = deferred<void>()
+    const siblingShutdown = vi.fn(async () => ({ reaped: true }))
+    let runtimeNumber = 0
+    const owner = new SideChatRuntimeOwner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      captureTarget: async () => target,
+      resolveTarget: async () => backend(claudeCodeFramework),
+      relay: createRelayOwner(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        const first = ++runtimeNumber === 1
+        return {
+          createSession: async () => ({ sessionId: `provider-${runtimeNumber}` }),
+          sendPrompt: async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' }
+          },
+          deleteSession: async () => ({}),
+          shutdownForQuit: first
+            ? async () => {
+                await cleanup.promise
+                return { reaped: true }
+              }
+            : siblingShutdown
+        } as never
+      }
+    })
+    const first = await owner.start({ parentSessionId: 'main-a', projectId: 'project', text: 'A' })
+    await owner.start({ parentSessionId: 'main-b', projectId: 'project', text: 'B' })
+    await owner.close({ sideSessionId: first.sideSessionId })
+    const shutdown = owner.shutdown()
+    try {
+      await flushImmediate()
+      expect(siblingShutdown).toHaveBeenCalledOnce()
+    } finally {
+      cleanup.resolve()
+      await shutdown
+    }
+  })
+
+  it('acknowledges close before process cleanup and retries failures without restoring the chat', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-background-close-'))
+    const persistence = createPersistence()
+    const onEvent = vi.fn()
+    const paused = vi.fn()
+    const cleanup = deferred<void>()
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
+    shutdownForQuit.mockImplementationOnce(async () => {
+      await cleanup.promise
+      return { reaped: false }
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      captureTarget: async () => target,
+      resolveTarget: async () => backend(claudeCodeFramework),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent,
+      setParentInteractionsPaused: paused,
+      createRuntime: (options) =>
+        ({
+          createSession: async () => ({ sessionId: 'provider-background-close' }),
+          sendPrompt: async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' }
+          },
+          deleteSession: async () => ({}),
+          shutdownForQuit
+        }) as never
+    })
+    const started = await owner.start({
+      parentSessionId: 'main',
+      projectId: 'project',
+      text: 'Question'
+    })
+    const profile = join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId)
+    await writeFile(join(profile, 'sentinel'), 'owned')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const close = owner.close({ sideSessionId: started.sideSessionId })
+    let acknowledged = false
+    void close.then(
+      () => {
+        acknowledged = true
+      },
+      () => undefined
+    )
+    try {
+      await flushImmediate()
+      expect(acknowledged).toBe(true)
+      expect(owner.list().chats).toEqual([])
+      expect(owner.hasForParent('main')).toBe(false)
+      expect(paused).toHaveBeenLastCalledWith('main', false)
+      expect(
+        onEvent.mock.calls.filter(([envelope]) => envelope.event.kind === 'closed')
+      ).toHaveLength(1)
+      expect(persistence.clear).not.toHaveBeenCalled()
+      await owner.sweepStaleProfiles()
+      expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+      cleanup.resolve()
+      await flushImmediate()
+      expect(owner.list().chats).toEqual([])
+      await vi.advanceTimersToNextTimerAsync()
+      await vi.waitFor(() => expect(persistence.clear).toHaveBeenCalledOnce())
+      await owner.shutdown()
+      expect(shutdownForQuit).toHaveBeenCalledTimes(2)
+      expect(
+        onEvent.mock.calls.filter(([envelope]) => envelope.event.kind === 'closed')
+      ).toHaveLength(1)
+      await expect(access(profile)).rejects.toThrow()
+    } finally {
+      cleanup.resolve()
+      await close.catch(() => undefined)
+      await owner.shutdown().catch(() => undefined)
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects oversized initial prompts before creating provider state', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-input-limit-'))
     const captureTarget = vi.fn(async () => target)
@@ -405,7 +609,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -545,8 +751,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         return { stopReason: 'end_turn' as const }
       })
       const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
-      const shutdownForQuit = vi.fn(async () => {
+      const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => {
         closeOrder.push('runtime')
+        return { reaped: true }
       })
       const owner = new SideChatRuntimeOwner({
         appVersion: '0.11.0',
@@ -645,6 +852,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       reconnectedRelay?.restore()
 
       await owner.closeForParent('main-session-1')
+      await owner.suspendAll()
 
       if (subscription) expect(unregisterHostMessageSession).not.toHaveBeenCalled()
       else expect(unregisterHostMessageSession).toHaveBeenCalledWith('provider-session-1')
@@ -716,7 +924,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -823,7 +1033,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -856,7 +1068,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     const captureTarget = vi.fn(() => pendingTarget)
     const sendPrompt = vi.fn()
     const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -1174,7 +1388,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1228,7 +1444,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
         deleteSession: vi.fn(async () => ({ sessionIds: [] })),
         respondToPermission: vi.fn(async () => undefined),
-        shutdownForQuit: vi.fn(async () => undefined)
+        shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+          reaped: true
+        }))
       } as never
     })
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -1374,7 +1592,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1440,7 +1660,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1500,7 +1722,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1522,9 +1746,18 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       }
     ])
 
+    const profile = join(
+      temporaryRoot,
+      'runtime-support',
+      'side-chat',
+      'side-chat-resume-save-retry'
+    )
+    await mkdir(profile, { recursive: true })
+    await writeFile(join(profile, 'sentinel'), 'provider history')
     await expect(
       owner.send({ sideSessionId: 'side-chat-resume-save-retry', text: 'First attempt' })
     ).rejects.toThrow('Session file is busy')
+    expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('provider history')
     expect(sendPrompt).not.toHaveBeenCalled()
     expect(owner.list().chats).toContainEqual(
       expect.objectContaining({
@@ -1569,7 +1802,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1636,7 +1871,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1701,7 +1938,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         }) as never
     })
     owner.hydrate([
@@ -1829,7 +2068,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
           requestProviderReconnect,
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1884,6 +2125,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     )
 
     await owner.close({ sideSessionId: started.sideSessionId })
+    await owner.suspendAll()
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-reconfigure')
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('provider-session-reconfigured')
   })
@@ -1940,7 +2182,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
           requestProviderReconnect: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1980,7 +2224,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       return { stopReason: 'cancelled' as const }
     })
     const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -2111,7 +2357,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           }),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -2154,7 +2402,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     }>()
     const resumeSession = vi.fn(() => resumed.promise)
     const sendPrompt = vi.fn()
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -2279,6 +2529,102 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     }
   )
 
+  it.each([
+    { mode: 'degraded', retry: 'background' },
+    { mode: 'rejected', retry: 'background' },
+    { mode: 'degraded', retry: 'shutdown' },
+    { mode: 'rejected', retry: 'shutdown' }
+  ] as const)(
+    'retains durable state and physical ownership after $mode direct close for $retry retry',
+    async ({ mode, retry }) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-direct-close-retry-'))
+      const persistence = createPersistence()
+      const onEvent = vi.fn()
+      const state: AcpStateSnapshot = {
+        status: 'closed',
+        cwd: temporaryRoot,
+        sessionIds: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        contextUsageBySession: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: [],
+        events: []
+      }
+      const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+        reaped: true
+      }))
+      if (mode === 'rejected')
+        shutdownForQuit.mockRejectedValueOnce(new Error('provider process remains alive'))
+      else shutdownForQuit.mockResolvedValueOnce({ reaped: false })
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: async () => target,
+        resolveTarget: async () => backend(claudeCodeFramework),
+        relay: createRelayOwner(),
+        persistence,
+        onEvent,
+        createRuntime: (options) =>
+          ({
+            createSession: async () => ({
+              sessionId: 'provider-close-retry',
+              frameworkId: 'claude-code'
+            }),
+            resumeSession: async () => ({
+              sessionId: 'provider-close-retry',
+              frameworkId: 'claude-code'
+            }),
+            sendPrompt: async (request) => {
+              options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+              return { stopReason: 'end_turn' }
+            },
+            cancelPrompt: async () => state,
+            deleteSession: async () => state,
+            respondToPermission: async () => state,
+            requestProviderReconnect: async () => undefined,
+            shutdownForQuit
+          }) satisfies SideChatRuntimePort
+      })
+      const started = await owner.start({
+        parentSessionId: 'main-close-retry',
+        projectId: 'project',
+        text: 'Initial turn'
+      })
+      const profile = join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId)
+      await writeFile(join(profile, 'sentinel'), 'owned')
+      const close = (): Promise<void> => owner.close({ sideSessionId: started.sideSessionId })
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await expect(close()).resolves.toBeUndefined()
+        await flushImmediate()
+        expect(owner.list().chats).toEqual([])
+        expect(persistence.clear).not.toHaveBeenCalled()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        expect(onEvent.mock.calls.some(([event]) => event.event.kind === 'closed')).toBe(true)
+        await expect(
+          owner.send({ sideSessionId: started.sideSessionId, text: 'Too early' })
+        ).rejects.toThrow('not active')
+        await owner.sweepStaleProfiles()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        if (retry === 'background') {
+          await vi.advanceTimersToNextTimerAsync()
+          await vi.waitFor(() => expect(persistence.clear).toHaveBeenCalledOnce())
+        }
+        await owner.shutdown()
+        expect(shutdownForQuit).toHaveBeenCalledTimes(2)
+        expect(persistence.clear).toHaveBeenCalledOnce()
+        await expect(access(profile)).rejects.toThrow()
+        expect(owner.hasForParent('main-close-retry')).toBe(false)
+      } finally {
+        await owner.shutdown().catch(() => undefined)
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it.each(['session', 'parent'] as const)(
     'retries a failed Side chat suspension through the %s close entry',
     async (entry) => {
@@ -2325,11 +2671,13 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         entry === 'session'
           ? owner.close({ sideSessionId: started.sideSessionId })
           : owner.closeForParent('main-shutdown-save-fail')
-      await expect(close()).rejects.toThrow('Side chat')
+      await expect(close()).resolves.toBeUndefined()
+      await flushImmediate()
+      expect(owner.list().chats).toEqual([])
       expect(shutdownForQuit).toHaveBeenCalledTimes(2)
       expect(persistence.clear).not.toHaveBeenCalled()
       shutdownForQuit.mockResolvedValue({ reaped: true })
-      await expect(close()).resolves.toBeUndefined()
+      await expect(owner.suspendAll()).resolves.toBeUndefined()
       expect(shutdownForQuit.mock.calls.length).toBeGreaterThanOrEqual(3)
       expect(persistence.clear).toHaveBeenCalledOnce()
       expect(owner.hasForParent('main-shutdown-save-fail')).toBe(false)
@@ -2340,7 +2688,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-save-fail-'))
     const persistence = createPersistence()
     let runtimeOptions: AcpRuntimeOptions | undefined
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -2420,7 +2770,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         }) as never
     })
     const started = await owner.start({
@@ -2429,23 +2781,26 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       text: 'Hello'
     })
 
-    const closeFailure = expect(
-      owner.close({ sideSessionId: started.sideSessionId })
-    ).rejects.toThrow('Session file is busy')
+    await expect(owner.close({ sideSessionId: started.sideSessionId })).resolves.toBeUndefined()
     await clearStarted.promise
     const invalidationFailure = expect(owner.invalidateProject('project-1')).rejects.toThrow(
       'Side chat Project invalidation failed: project-1'
     )
     failClear.resolve()
 
-    await Promise.all([closeFailure, invalidationFailure])
-    expect(deleteSession).not.toHaveBeenCalled()
+    await invalidationFailure
+    expect(deleteSession).toHaveBeenCalledOnce()
     owner.restoreProject('project-1')
-    expect(owner.list().chats).toContainEqual(
-      expect.objectContaining({ sideSessionId: started.sideSessionId })
-    )
+    await expect(
+      owner.start({
+        parentSessionId: 'main-close-retry',
+        projectId: 'project-1',
+        sideSessionId: started.sideSessionId,
+        text: 'Too early'
+      })
+    ).rejects.toThrow('already open')
 
-    await owner.close({ sideSessionId: started.sideSessionId })
+    await owner.suspendAll()
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'provider-close-retry' })
     expect(owner.list().chats).toEqual([])
   })
@@ -2467,7 +2822,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         createRuntime: (options) => {
           runtimeNumber += 1
           const sideSessionId = `side-session-${runtimeNumber}`
-          const shutdownForQuit = vi.fn(async () => undefined)
+          const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
           shutdowns.push(shutdownForQuit)
           return {
             createSession: vi.fn(async () => ({
@@ -2518,7 +2875,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
       await owner.close({ sideSessionId: first.sideSessionId })
 
-      expect(shutdowns[0]).toHaveBeenCalledOnce()
+      await vi.waitFor(() => expect(shutdowns[0]).toHaveBeenCalledOnce())
       expect(shutdowns[1]).not.toHaveBeenCalled()
       expect(owner.list().chats).toEqual([
         expect.objectContaining({
@@ -2527,6 +2884,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         })
       ])
       await owner.close({ sideSessionId: second.sideSessionId })
+      await owner.shutdown()
     }
   )
 
@@ -2564,7 +2922,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
           requestProviderReconnect,
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -2579,8 +2939,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
   it('does not reuse a Side chat ID until asynchronous teardown finishes', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-drain-'))
-    let finishShutdown!: () => void
-    const shutdown = new Promise<void>((resolve) => {
+    let finishShutdown!: (result: { reaped: boolean }) => void
+    const shutdown = new Promise<{ reaped: boolean }>((resolve) => {
       finishShutdown = resolve
     })
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -2626,8 +2986,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         text: 'Too early'
       })
     ).rejects.toThrow('already open')
-    finishShutdown()
+    finishShutdown({ reaped: true })
     await close
+    await owner.shutdown()
   })
 })
 
@@ -2701,7 +3062,9 @@ describe('Side chat recovery and preflight regressions', () => {
           requestProviderReconnect: vi.fn(async () => undefined),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -3023,7 +3386,9 @@ describe('Side chat conversation model selection', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         }
         runtimes.push(runtime)
         return runtime as never
@@ -3392,6 +3757,68 @@ describe('Side chat without durable recovery', () => {
 })
 
 describe('Side chat profile cleanup barriers', () => {
+  it.each(['history', 'profile'] as const)(
+    'retries dormant %s cleanup without restoring a user-closed chat',
+    async (failure) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-dormant-close-'))
+      const id = 'side-chat-dormant-close'
+      const profile = join(temporaryRoot, 'runtime-support', 'side-chat', id)
+      await mkdir(profile, { recursive: true })
+      await writeFile(join(profile, 'sentinel'), 'owned')
+      const persistence = createPersistence()
+      if (failure === 'history')
+        persistence.clear.mockRejectedValueOnce(new Error('Session file is busy'))
+      else profileRemoval.failPath = profile
+      const onEvent = vi.fn()
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: vi.fn(),
+        resolveTarget: vi.fn(),
+        relay: createRelayOwner(),
+        persistence,
+        onEvent
+      })
+      owner.hydrate([
+        {
+          projectId: 'project',
+          parentSessionId: 'main',
+          sideChat: {
+            version: 1,
+            id,
+            lifecycle: 'open',
+            frameworkId: 'claude-code',
+            historyPreamble: '',
+            entries: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        }
+      ])
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await Promise.all([owner.close({ sideSessionId: id }), owner.closeForParent('main')])
+        await flushImmediate()
+        expect(owner.list().chats).toEqual([])
+        expect(owner.hasForParent('main')).toBe(false)
+        expect(onEvent).toHaveBeenCalledOnce()
+        expect(onEvent.mock.calls[0][0].event).toEqual({ kind: 'closed', reason: 'closed' })
+        await owner.sweepStaleProfiles()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        profileRemoval.failPath = ''
+        await vi.advanceTimersToNextTimerAsync()
+        await owner.suspendAll()
+        await expect(access(profile)).rejects.toThrow()
+        expect(owner.list().chats).toEqual([])
+        expect(onEvent).toHaveBeenCalledOnce()
+      } finally {
+        profileRemoval.failPath = ''
+        await owner.shutdown()
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('waits for an in-flight deletion before reusing a profile identity and shutting down', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-profile-race-'))
     const profile = join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-reused')

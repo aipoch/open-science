@@ -20,6 +20,7 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { notebookNetworkSettingsAllowDomain } from '../../../../shared/notebook-network'
 
+import { SourceLinkSummary } from './SourceLinkSummary'
 import { LinkSafetyModal } from './LinkSafetyModal'
 
 type SessionMessageLinkProps = ComponentProps<'a'> & {
@@ -29,7 +30,7 @@ type SessionMessageLinkProps = ComponentProps<'a'> & {
 
 type FaviconState = 'local' | 'loading' | 'success' | 'error'
 
-const SOURCE_PREVIEW_OPEN_DELAY_MS = 350
+const SOURCE_PREVIEW_OPEN_DELAY_MS = 100
 const SOURCE_PREVIEW_CLOSE_DELAY_MS = 150
 const TOUCH_ACTIVATION_RESET_MS = 1000
 
@@ -297,13 +298,13 @@ const SessionMessageLink = ({
         </PopoverTrigger>
         <PopoverContent
           ref={sourcePreviewContentRef}
-          side="top"
+          side="bottom"
           align="start"
           sideOffset={8}
           collisionPadding={8}
           data-source-preview-hover-card=""
           aria-labelledby={sourcePreviewTitleId}
-          className="hover-bubble w-fit min-w-56 max-w-[min(24rem,calc(100vw-1rem))] border border-border-300 bg-bg-000 p-3 text-text-000 shadow-card"
+          className="hover-bubble w-80 max-w-[calc(100vw-1rem)] overflow-hidden border border-border-300 bg-bg-000 p-0 text-text-000 shadow-card"
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
           onEscapeKeyDown={() => dismissSourcePreview(true)}
@@ -334,79 +335,56 @@ const SessionMessageLink = ({
             }
           }}
         >
-          <div
-            data-source-preview-hover-layout=""
-            className={cn(
-              'grid min-w-0 items-stretch',
-              linkHostname ? 'grid-cols-[auto_minmax(0,1fr)] gap-x-2.5' : 'grid-cols-1'
-            )}
-          >
-            {linkHostname ? (
-              <div data-source-preview-hover-icon-column="" className="flex items-start">
-                <SessionLinkFavicon
-                  key={faviconUrl ?? 'local'}
-                  className="mt-0.5 me-0 size-5 shrink-0"
-                  src={faviconUrl}
-                />
-              </div>
-            ) : null}
-            <div data-source-preview-hover-content-column="" className="min-w-0">
-              <div data-source-preview-hover-summary="" className="min-w-0">
-                <div
-                  id={sourcePreviewTitleId}
-                  data-source-preview-hover-title=""
-                  className="break-words text-sm font-medium leading-5 text-text-000"
-                >
-                  {sourceItem.title}
-                </div>
-                <div
-                  data-source-preview-hover-hostname=""
-                  className="truncate text-xs leading-4 text-text-000/70"
-                >
-                  {hostname}
-                </div>
-              </div>
-              <div
-                data-source-preview-hover-actions=""
-                className="mt-3 flex min-w-0 items-center gap-2"
-              >
-                <a
-                  href={sourceItem.url}
-                  data-source-preview-hover-url=""
-                  title={sourceItem.url}
-                  className="min-w-0 flex-1 break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    activateSource(true)
-                  }}
-                >
-                  {sourceItem.url}
-                </a>
-                <TooltipProvider delayDuration={200}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        data-source-preview-hover-external=""
-                        aria-label={t('Open source in browser')}
-                        className="text-text-100 hover:text-text-000"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          dismissSourcePreview(true)
-                          window.open(sourceItem.url, '_blank', 'noreferrer')
-                        }}
-                      >
-                        <ExternalLink className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Open source in browser')}</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-            </div>
+          <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+            <SessionLinkFavicon
+              key={faviconUrl ?? 'local'}
+              src={faviconUrl}
+              className="me-0 shrink-0"
+            />
+            <a
+              id={sourcePreviewTitleId}
+              data-source-preview-hover-url=""
+              href={sourceItem.url}
+              title={sourceItem.url}
+              className="min-w-0 flex-1 truncate text-xs font-medium text-text-100 hover:underline"
+              onClick={(event) => {
+                event.preventDefault()
+                activateSource(true)
+              }}
+            >
+              {hostname}
+            </a>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    data-source-preview-hover-external=""
+                    aria-label={t('Open source in browser')}
+                    className="text-text-100 hover:text-text-000"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      dismissSourcePreview(true)
+                      window.open(sourceItem.url, '_blank', 'noreferrer')
+                    }}
+                  >
+                    <ExternalLink className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Open source in browser')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
+          {isSourcePreviewOpen && (
+            <SourceLinkSummary
+              key={sourceItem.url}
+              url={sourceItem.url}
+              allowed
+              hostname={hostname}
+            />
+          )}
         </PopoverContent>
         <LinkSafetyModal
           url={sourceItem.url}

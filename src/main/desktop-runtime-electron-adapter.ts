@@ -16,7 +16,12 @@ import { ipcMainHandle, createIpcHandlerInstallationScope } from './ipc-handler-
 // commands unwrap. The main process forwards requests; it never creates a business owner.
 export function installDesktopRuntimeElectronAdapter(
   client: Pick<DesktopRuntimeClient, 'commandNames' | 'invoke' | 'release'>,
-  isApplicationWindow: (sender: WebContents) => boolean
+  isApplicationWindow: (sender: WebContents) => boolean,
+  fallback?: (
+    clientId: string,
+    channel: string,
+    args: readonly unknown[]
+  ) => Promise<unknown> | undefined
 ): { uninstall(): void; documentFor(clientId: string): WebContents | undefined } {
   const scope = createIpcHandlerInstallationScope()
   const documents = new WeakMap<ApplicationCallerLease, string>()
@@ -61,7 +66,8 @@ export function installDesktopRuntimeElectronAdapter(
     // Electron preserves an explicit trailing undefined; JSON encodes it as null. Omit
     // optional trailing slots so the command owner keeps its existing default behavior.
     while (args.length && args[args.length - 1] === undefined) args.pop()
-    return client.invoke(document, channel, args)
+    const localResult = fallback?.(document, channel, args)
+    return localResult === undefined ? client.invoke(document, channel, args) : localResult
   }
   const reportChannel = 'office-preview:report-state'
   const report = (event: IpcMainEvent, ...args: unknown[]): void => {

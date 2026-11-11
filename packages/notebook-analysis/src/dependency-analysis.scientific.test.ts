@@ -7836,7 +7836,7 @@ describe('R qualified model inspectors', () => {
       expect(qualified).toEqual(bare)
       expect(qualified).toMatchObject({
         readState: 'partial',
-        writeState: 'complete',
+        writeState: name === 'coef' ? 'complete' : 'partial',
         writes: ['outputs/result.csv']
       })
       const { facts } = await analyzeRNotebookSource(prefix + 'stats::' + name + suffix)

@@ -1,3 +1,5 @@
+import type { LiteratureOverviewBatch } from './overview-batch'
+import type { LiteratureOverviewService } from './overview'
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type {
   LiteratureBatchJobs,
@@ -8,7 +10,10 @@ import type {
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
-import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import {
+  literatureItemInputSchema,
+  type LiteratureItemView
+} from '@aipoch/literature-library/contracts'
 import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
 import type { GetArtifactVersionProvenanceRequest } from '../../shared/artifact-provenance'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
@@ -17,21 +22,34 @@ import type { ContentRepository } from '../storage/content-repository'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureCommandOwner } from './application-commands'
 import type { LiteratureCatalog } from './catalog'
+import type { LiteratureCollector } from './collector'
 import type { LiteratureSupplementAttachments } from './supplement-attachments'
 import type { LiteratureCitationDocument } from './citation-document'
 import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
 import type { LiteraturePdfImporter } from './pdf-importer'
 import { transactLiterature } from './transact'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  ZOTERO_BATCH_POLICY_CONFLICT,
+  ZOTERO_FILL_TYPE_CONFLICT,
+  ZOTERO_COLLECTION_CONFLICT,
+  ZOTERO_PREVIEW_CHANGED,
+  ZOTERO_CONNECTION_FAILED,
+  ZOTERO_REQUEST_TIMED_OUT,
+  ZOTERO_LOCAL_API_DISABLED
+} from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
+  literatureOverviewBatch: Pick<LiteratureOverviewBatch, 'run'>
+  literatureOverview: Pick<LiteratureOverviewService, 'run'>
   journalAttributes: Pick<JournalAttributes, 'run'>
   literatureBatchJobs: Pick<LiteratureBatchJobs, 'run'>
   literatureCitationFormatter: Pick<
     LiteratureCitationFormatter,
     'citationStyles' | 'formatReferences' | 'exportReferences' | 'parseReferences'
   >
-  literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
+  literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'lookup'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
   literatureRelatedFinder: Pick<LiteratureRelatedFinder, 'run'>
   literatureSupplementFinder: Pick<LiteratureSupplementFinder, 'run'>
@@ -61,11 +79,14 @@ type LiteratureCommandServices = Readonly<{
     | 'transact'
     | 'contentBlobIdsForItems'
   >
+  literatureCollector: Pick<LiteratureCollector, 'run'>
   literaturePdfImporter: Pick<LiteraturePdfImporter, 'import' | 'cancelImport' | 'addToLiterature'>
   contentRepository: Pick<ContentRepository, 'sweep'>
 }>
 
 export const createLiteratureCommandOwner = ({
+  literatureOverview,
+  literatureOverviewBatch,
   journalAttributes,
   literatureBatchJobs,
   literatureCitationFormatter,
@@ -81,17 +102,46 @@ export const createLiteratureCommandOwner = ({
   literatureCitationDocument,
   literatureCatalog,
   literaturePdfImporter,
+  literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  collect: async (request, signal) => {
+    try {
+      return await literatureCollector.run(request, signal)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        [
+          ZOTERO_BATCH_POLICY_CONFLICT,
+          ZOTERO_FILL_TYPE_CONFLICT,
+          ZOTERO_COLLECTION_CONFLICT,
+          ZOTERO_PREVIEW_CHANGED,
+          ZOTERO_CONNECTION_FAILED,
+          ZOTERO_REQUEST_TIMED_OUT,
+          ZOTERO_LOCAL_API_DISABLED
+        ].includes(error.message)
+      )
+        throw new ApplicationCommandError('command-failed', error.message)
+      throw error
+    }
+  },
+  overviewBatch: (request, signal) => literatureOverviewBatch.run(request, signal),
+  studySnapshot: (request, signal) => literatureOverview.run(request, signal),
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
   citationStyles: (request) =>
     withCitationStyleErrors(() => literatureCitationFormatter.citationStyles(request)),
   lookupMetadata: async (doi) => {
-    const [resolved] = await literatureReferenceResolver.resolve([
-      doi.startsWith('pmid:') ? doi : 'doi:' + doi
-    ])
+    const input = doi.trim()
+    const separator = input.indexOf(':')
+    const scheme = separator >= 0 ? input.slice(0, separator).toLowerCase() : ''
+    const reference = ['doi', 'pmid', 'pmcid', 'arxiv'].includes(scheme)
+      ? input
+      : input.startsWith('10.')
+        ? `doi:${input}`
+        : input
+    const resolved = await literatureReferenceResolver.lookup(reference)
     return resolved.item
   },
   completeMetadata: (request) => literatureMetadataEnricher.complete(request),
@@ -197,9 +247,18 @@ export const createLiteratureCommandOwner = ({
   importPdf: (request, signal) => literaturePdfImporter.import(request, signal),
   cancelPdfImport: (request) => literaturePdfImporter.cancelImport(request.operationId),
   importRecords: async (request) => {
-    const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
-      request.content
-    )
+    // Resolved metadata is already native data; do not round-trip it through a citation format.
+    const { warnings, ...parsed } =
+      'items' in request
+        ? {
+            format: 'items' as const,
+            items: request.items.map((item) => literatureItemInputSchema.parse(item)),
+            errors: [],
+            warnings: [],
+            truncated: false,
+            scannedEntries: request.items.length
+          }
+        : await literatureCitationFormatter.parseReferences(request.content)
     const indexes = request.selectedItemIndexes
     if (
       indexes &&

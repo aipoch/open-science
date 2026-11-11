@@ -167,6 +167,17 @@ describe('Notebook process environment', () => {
     })
   })
 
+  it.each([
+    ['canonical', 'PROCESSOR_ARCHITECTURE', 'ARM64'],
+    ['case-insensitive', 'processor_architecture', 'x86']
+  ])('preserves host processor architecture from %s environment keys', (_, key, value) => {
+    const env = buildNotebookKernelEnvironment('win32', {
+      [key]: value
+    })
+
+    expect(env.PROCESSOR_ARCHITECTURE).toBe(value)
+  })
+
   it('projects a custom trust bundle to native Notebook clients', () => {
     expect(notebookTrustBundleEnvironment('/certs/complete.pem')).toEqual({
       CONDA_SSL_VERIFY: '/certs/complete.pem',

@@ -2,10 +2,12 @@ import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type {
+  RemoteAccessMode,
   RemotePairingDecision,
   RemotePairingRequestView,
   TrustedRemoteBrowserView
 } from '../../shared/remote-access'
+import { PairTokenManager, type PairTokenMode, type PairOffer } from './pair-token'
 import type {
   ExternalWebAccess,
   ExternalWebAccessAuthorization,
@@ -56,6 +58,12 @@ type PendingPairing = BrowserDescription & {
 type OneTimeSession = {
   tokenHash: string
   expiresAt: number
+  route?: Exclude<RemoteAccessMode, 'off'>
+  host?: string
+  browser?: string
+  platform?: string
+  createdAt?: number
+  lastSeenAt?: number
 }
 
 type RemoteSessionAccess =
@@ -69,6 +77,7 @@ type PairingManagerOptions = {
   onChanged: () => void
   onAuthorizationExpired?: (principalId: string) => void
   now?: () => number
+  route?: () => { mode: RemoteAccessMode; origin?: string; allowRemember?: boolean }
 }
 
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -93,27 +102,28 @@ const readCookies = (request: IncomingMessage): Map<string, string> => {
   return result
 }
 
-const sessionCookie = (value: string, persistent: boolean): string =>
-  `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=${persistent ? 'Lax' : 'Strict'}; Path=/${
+const sessionCookie = (value: string, persistent: boolean, secure = true): string =>
+  `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=${persistent ? 'Lax' : 'Strict'}; Path=/${
     persistent ? `; Max-Age=${TRUSTED_BROWSER_TTL_MS / 1_000}` : ''
   }`
 
-const pairingCookie = (value: string): string =>
-  `${PAIRING_COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${
+const pairingCookie = (value: string, secure = true): string =>
+  `${PAIRING_COOKIE}=${encodeURIComponent(value)}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Strict; Path=/; Max-Age=${
     PAIRING_TTL_MS / 1_000
   }`
 
-const clearCookie = (name: string): string =>
-  `${name}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+const clearCookie = (name: string, secure = true): string =>
+  `${name}=; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Strict; Path=/; Max-Age=0`
 
 const normalizeRemoteHost = (
-  host: string | undefined
+  host: string | undefined,
+  scheme: 'http' | 'https' = 'https'
 ): Readonly<{ hostname: string; origin: string }> | undefined => {
   if (!host) return undefined
   try {
-    const parsed = new URL(`https://${host}`)
+    const parsed = new URL(`${scheme}://${host}`)
     if (
-      parsed.protocol !== 'https:' ||
+      parsed.protocol !== `${scheme}:` ||
       parsed.username ||
       parsed.password ||
       parsed.pathname !== '/' ||
@@ -163,6 +173,9 @@ const describeBrowser = (userAgent: string | undefined): BrowserDescription => {
 }
 
 const clientAddress = (request: IncomingMessage): string | undefined => {
+  if (request.socket.localAddress && !['127.0.0.1', '::1'].includes(request.socket.localAddress)) {
+    return request.socket.remoteAddress || undefined
+  }
   const forwarded = request.headers['x-forwarded-for']
   const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim()
   return first || request.socket.remoteAddress || undefined
@@ -178,6 +191,7 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
 }
 
 export class RemoteSessionPairingManager {
+  private readonly pairTokens: PairTokenManager
   private stored: StoredRemoteAccess
   private readonly pending = new Map<string, PendingPairing>()
   private readonly oneTimeSessions = new Map<string, OneTimeSession>()
@@ -198,6 +212,7 @@ export class RemoteSessionPairingManager {
   ) {
     this.stored = stored
     this.now = options.now ?? Date.now
+    this.pairTokens = new PairTokenManager(this.now)
     this.scheduleExpirationTimer()
   }
 
@@ -211,18 +226,33 @@ export class RemoteSessionPairingManager {
 
   get preferences(): Pick<
     StoredRemoteAccess,
-    'mode' | 'remoteItAppServiceId' | 'remoteItBrowserServiceId' | 'remoteItPublicUrl'
+    | 'mode'
+    | 'remoteItAppServiceId'
+    | 'remoteItBrowserServiceId'
+    | 'remoteItPublicUrl'
+    | 'lanAddress'
+    | 'pinggyRegion'
   > {
     return {
       mode: this.stored.mode,
       remoteItAppServiceId: this.stored.remoteItAppServiceId,
       remoteItBrowserServiceId: this.stored.remoteItBrowserServiceId,
-      remoteItPublicUrl: this.stored.remoteItPublicUrl
+      remoteItPublicUrl: this.stored.remoteItPublicUrl,
+      lanAddress: this.stored.lanAddress,
+      pinggyRegion: this.stored.pinggyRegion
     }
   }
 
   async setModePreference(mode: StoredRemoteAccess['mode']): Promise<void> {
     await this.commitStoredMutation((stored) => ({ ...stored, mode }))
+  }
+
+  async setLanAddress(address: string): Promise<void> {
+    await this.commitStoredMutation((stored) => ({ ...stored, lanAddress: address }))
+  }
+
+  async setPinggyRegion(region: NonNullable<StoredRemoteAccess['pinggyRegion']>): Promise<void> {
+    await this.commitStoredMutation((stored) => ({ ...stored, pinggyRegion: region }))
   }
 
   async setRemoteItServiceId(
@@ -281,14 +311,37 @@ export class RemoteSessionPairingManager {
     return [...this.stored.trustedBrowsers]
       .filter((browser) => !this.unclaimedTrustedBrowserCleanup.has(browser.id))
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-      .map(({ id, browser, platform, createdAt, lastSeenAt, expiresAt }) => ({
+      .map(({ id, browser, platform, createdAt, lastSeenAt, expiresAt, route, host }) => ({
         id,
         browser,
         platform,
         createdAt,
         lastSeenAt,
-        expiresAt
+        expiresAt,
+        route,
+        host
       }))
+  }
+
+  connectedViews(): TrustedRemoteBrowserView[] {
+    this.pruneExpired(false)
+    const temporary = [...this.oneTimeSessions].flatMap(([id, session]) =>
+      session.browser && session.platform && session.createdAt !== undefined
+        ? [
+            {
+              id,
+              browser: session.browser,
+              platform: session.platform,
+              createdAt: session.createdAt,
+              lastSeenAt: session.lastSeenAt ?? session.createdAt,
+              expiresAt: session.expiresAt,
+              route: session.route,
+              host: session.host
+            }
+          ]
+        : []
+    )
+    return [...this.trustedViews(), ...temporary].sort((a, b) => b.lastSeenAt - a.lastSeenAt)
   }
 
   async approve(requestId: string, decision: RemotePairingDecision): Promise<void> {
@@ -366,6 +419,11 @@ export class RemoteSessionPairingManager {
   }
 
   async revoke(browserId: string): Promise<void> {
+    if (this.oneTimeSessions.delete(browserId)) {
+      this.scheduleExpirationTimer()
+      this.options.onChanged()
+      return
+    }
     if (
       this.pendingRevocations.has(browserId) ||
       !this.stored.trustedBrowsers.some((browser) => browser.id === browserId)
@@ -390,6 +448,10 @@ export class RemoteSessionPairingManager {
 
   async revokeBrowsers(browserIds: readonly string[]): Promise<void> {
     const ids = new Set(browserIds)
+    let removedTemporary = false
+    for (const id of ids) {
+      if (this.oneTimeSessions.delete(id)) removedTemporary = true
+    }
     if ([...ids].some((id) => this.pendingRevocations.has(id))) {
       throw new Error('Trusted browser revocation is already pending.')
     }
@@ -398,13 +460,14 @@ export class RemoteSessionPairingManager {
     try {
       const changed = await this.removeStoredTrustedBrowsers(ids)
       this.scheduleExpirationTimer()
-      if (changed) this.options.onChanged()
+      if (changed || removedTemporary) this.options.onChanged()
     } finally {
       for (const id of ids) this.pendingRevocations.delete(id)
     }
   }
 
   async clearTransientAccess(): Promise<void> {
+    this.pairTokens.clear()
     this.authorizationGeneration += 1
     const unclaimedTrustedBrowsers = new Set(
       [...this.pending.values()].flatMap((request) =>
@@ -432,17 +495,30 @@ export class RemoteSessionPairingManager {
     authorizeWebSocket: (request, url) => this.authorizeWebSocket(request, url)
   }
 
+  issueOffer(mode: PairTokenMode, ttlMs: number): PairOffer {
+    return this.pairTokens.issue(mode, ttlMs)
+  }
+
+  clearOffer(): void {
+    this.pairTokens.clear()
+  }
+
   private isExpectedRemoteRequest(request: IncomingMessage, requireOrigin: boolean): boolean {
     if (!this.options.isEnabled()) return false
-    const remoteHost = normalizeRemoteHost(request.headers.host)
+    const route = this.options.route?.()
+    const scheme = route?.mode === 'lan' ? 'http' : 'https'
+    const remoteHost = normalizeRemoteHost(request.headers.host, scheme)
     if (!remoteHost || !this.options.isAllowedRemoteHost(remoteHost.hostname)) return false
+    if (route?.origin && remoteHost.origin !== route.origin) return false
+    if (route?.mode === 'lan' && request.socket.localAddress !== new URL(route.origin!).hostname)
+      return false
 
     const origin = request.headers.origin
     if (!origin) return !requireOrigin
     try {
       const parsed = new URL(origin)
       return (
-        parsed.protocol === 'https:' &&
+        parsed.protocol === `${scheme}:` &&
         !parsed.username &&
         !parsed.password &&
         parsed.pathname === '/' &&
@@ -476,11 +552,22 @@ export class RemoteSessionPairingManager {
       return this.httpAuthorization(request, needsOrigin, authorizationGeneration, sessionAccess)
     }
 
+    if (url.pathname === '/pair' && request.method === 'GET') {
+      await this.handleOfferGet(request, response, url)
+      return 'handled'
+    }
+    if (url.pathname === '/pair/verify' && request.method === 'POST') {
+      await this.handleOfferVerify(request, response)
+      return 'handled'
+    }
+
     if (url.pathname === REMOTE_PAIR_STATUS_PATH && request.method === 'GET') {
       await this.handlePairingStatus(request, response)
       return 'handled'
     }
     if (request.method !== 'GET' || url.pathname !== '/') return 'denied'
+    if (this.options.route?.().mode === 'lan' || this.options.route?.().mode === 'pinggy')
+      return 'denied'
 
     const admission = this.ensurePending(request, response)
     if ('retryAt' in admission) {
@@ -566,6 +653,136 @@ export class RemoteSessionPairingManager {
     }
     const browser = this.stored.trustedBrowsers.find(({ id }) => id === access.sessionId)
     return Boolean(browser && browser.expiresAt > now)
+  }
+
+  private async grantOfferSession(
+    request: IncomingMessage,
+    response: ServerResponse,
+    remember: boolean
+  ): Promise<void> {
+    const route = this.options.route?.()
+    const host = normalizeRemoteHost(
+      request.headers.host,
+      route?.mode === 'lan' ? 'http' : 'https'
+    )?.hostname
+    const sessionId = randomUUID()
+    const secret = randomBytes(32).toString('base64url')
+    const createdAt = this.now()
+    if (remember && route?.allowRemember && route.mode !== 'off') {
+      const browser: StoredTrustedBrowser = {
+        id: sessionId,
+        ...describeBrowser(request.headers['user-agent']),
+        tokenHash: hash(secret),
+        createdAt,
+        lastSeenAt: createdAt,
+        expiresAt: createdAt + TRUSTED_BROWSER_TTL_MS,
+        route: route.mode,
+        host
+      }
+      await this.commitStoredMutation((stored) => ({
+        ...stored,
+        trustedBrowsers: [...stored.trustedBrowsers, browser]
+      }))
+    } else {
+      this.oneTimeSessions.set(sessionId, {
+        tokenHash: hash(secret),
+        expiresAt: createdAt + ONE_TIME_SESSION_TTL_MS,
+        route: route?.mode === 'off' ? undefined : route?.mode,
+        host,
+        ...describeBrowser(request.headers['user-agent']),
+        createdAt,
+        lastSeenAt: createdAt
+      })
+    }
+    response.setHeader('set-cookie', [
+      sessionCookie(
+        `${sessionId}.${secret}`,
+        remember && route?.allowRemember === true,
+        route?.mode !== 'lan'
+      ),
+      clearCookie(PAIRING_COOKIE, route?.mode !== 'lan')
+    ])
+    response.writeHead(302, {
+      location: '/',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer'
+    })
+    response.end()
+    this.options.onChanged()
+  }
+
+  private async handleOfferGet(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL
+  ): Promise<void> {
+    const mode = this.options.route?.().mode
+    const token = url.searchParams.get('token') ?? ''
+    if ((mode !== 'lan' && mode !== 'pinggy') || !this.pairTokens.matches(token, mode)) {
+      this.offerExpired(response)
+      return
+    }
+    if (mode === 'lan') {
+      if (this.pairTokens.consume(token, mode))
+        await this.grantOfferSession(request, response, false)
+      else this.offerExpired(response)
+      return
+    }
+    response.setHeader('set-cookie', pairingCookie(token))
+    // `no-referrer` would make the password form POST send `Origin: null`, which the origin check
+    // rejects. `same-origin` keeps the real Origin while never leaking the token URL cross-site.
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'same-origin',
+      'content-security-policy':
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
+    })
+    response.end(
+      '<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect to Open-Science</title><body style="font:16px system-ui;max-width:25rem;margin:15vh auto;padding:1rem"><h1>Connect to Open-Science</h1><p>This device can control the computer workspace.</p><form method="post" action="/pair/verify"><label>Connection password <input name="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus></label><p><button>Connect</button></p></form></body></html>'
+    )
+  }
+
+  private async handleOfferVerify(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    if (this.options.route?.().mode !== 'pinggy') return this.offerExpired(response)
+    const token = readCookies(request).get(PAIRING_COOKIE) ?? ''
+    let body = ''
+    for await (const chunk of request) {
+      body += String(chunk)
+      if (body.length > 1024) return this.offerExpired(response)
+    }
+    const password = new URLSearchParams(body).get('password') ?? ''
+    const result = this.pairTokens.verifyPassword(token, password)
+    if (result === 'valid' && this.pairTokens.consume(token, 'pinggy')) {
+      await this.grantOfferSession(request, response, false)
+      return
+    }
+    if (result === 'expired') {
+      this.options.onChanged()
+      this.offerExpired(response)
+      return
+    }
+    response.writeHead(303, {
+      location: '/pair?token=' + encodeURIComponent(token),
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer'
+    })
+    response.end()
+  }
+
+  private offerExpired(response: ServerResponse): void {
+    response.writeHead(410, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'content-security-policy': "default-src 'none'; frame-ancestors 'none'"
+    })
+    response.end(
+      '<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><title>QR code expired</title><body><h1>QR code expired</h1><p>Scan a new QR code on your computer.</p></body></html>'
+    )
   }
 
   private ensurePending(
@@ -694,15 +911,32 @@ export class RemoteSessionPairingManager {
     if (separator <= 0) return undefined
     const id = value.slice(0, separator)
     const tokenHash = hash(value.slice(separator + 1))
+    const route = this.options.route?.().mode
+    const host = normalizeRemoteHost(
+      request.headers.host,
+      route === 'lan' ? 'http' : 'https'
+    )?.hostname
+    const matchesScope = (entry: {
+      route?: Exclude<RemoteAccessMode, 'off'>
+      host?: string
+    }): boolean =>
+      entry.route
+        ? entry.route === route && entry.host === host
+        : route !== 'lan' && route !== 'pinggy'
 
     const once = this.oneTimeSessions.get(id)
-    if (once && once.expiresAt > this.now() && safeHashEqual(once.tokenHash, tokenHash)) {
+    if (
+      once &&
+      matchesScope(once) &&
+      once.expiresAt > this.now() &&
+      safeHashEqual(once.tokenHash, tokenHash)
+    ) {
       return { kind: 'once', sessionId: id }
     }
     if (this.pendingRevocations.has(id)) return undefined
 
     const trusted = this.stored.trustedBrowsers.find((browser) => browser.id === id)
-    if (!trusted) return undefined
+    if (!trusted || !matchesScope(trusted)) return undefined
     if (this.unclaimedTrustedBrowserCleanup.has(id)) return undefined
     if (trusted.expiresAt <= this.now()) {
       const changed = await this.removeStoredTrustedBrowsers(new Set([id]))

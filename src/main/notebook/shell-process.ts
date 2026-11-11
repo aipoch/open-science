@@ -1,3 +1,4 @@
+import { compilePowerShellCommand } from './powershell-native-capture'
 import { ExecutionDeadline } from './execution-deadline'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -5,6 +6,7 @@ import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { ShellCellSession } from './shell-cell-session'
+import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
 
@@ -53,6 +55,8 @@ import {
 } from './shell-runtime'
 import {
   resolveWindowsNotebookRuntime,
+  resolveWindowsNotebookNodeRuntime,
+  windowsNotebookNodeEnvironment,
   windowsNotebookRuntimeEnvironment
 } from './windows-notebook-runtime'
 
@@ -67,7 +71,14 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
 type NotebookShellProcess = {
+  idleProcesses?: () => Array<IdleInterpreter & { laneKey?: string }>
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
+  prepareEnvironment?(
+    request: Pick<
+      NotebookShellProcessRequest,
+      'handoffDir' | 'runtimeRoot' | 'runtimeBinding' | 'signal'
+    >
+  ): Promise<NodeJS.ProcessEnv>
   shutdown?(scope: {
     projectId?: string
     sessionId?: string
@@ -94,7 +105,8 @@ const buildShellEnv = (
   sourceEnv: NodeJS.ProcessEnv = process.env,
   runtimeRoot?: string,
   workloadCacheEnv?: NodeJS.ProcessEnv,
-  binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
+  binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform),
+  hostPlatform: NodeJS.Platform = platform
 ): NodeJS.ProcessEnv => {
   const env = buildShellProcessEnvironment(
     platform,
@@ -106,9 +118,10 @@ const buildShellEnv = (
   if (runtimeRoot) {
     Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
   }
-  return binding.kind === 'powershell' && binding.version === '7.6'
+  if (hostPlatform !== 'win32' || binding.kind !== 'powershell') return env
+  return binding.version === '7.6'
     ? windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
-    : env
+    : windowsNotebookNodeEnvironment(env, resolveWindowsNotebookNodeRuntime())
 }
 
 const POWERSHELL_CLIXML_BLOCK = /#< CLIXML\r?\n<Objs\b[\s\S]*?<\/Objs>(?:\r?\n)?/gu
@@ -166,7 +179,10 @@ type ShellInvocation = {
 
 // PowerShell receives a UTF-16LE wrapper around a separately encoded UTF-8 script block, isolating
 // trailing syntax from UTF-8 setup and the $?/$LASTEXITCODE normalization.
-const encodePowerShellCommand = (command: string): string => {
+const powerShellCommandArgs = (
+  command: string,
+  binding: Extract<ShellRuntimeBinding, { kind: 'powershell' }>
+): string[] => {
   const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
   const script = [
     'try {',
@@ -188,7 +204,7 @@ const encodePowerShellCommand = (command: string): string => {
     "$ProgressPreference = 'SilentlyContinue'",
     "$ErrorActionPreference = 'Stop'",
     '$openScienceCommandText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($openScienceCommandBase64))',
-    '$openScienceCommand = [ScriptBlock]::Create($openScienceCommandText)',
+    `$openScienceCommand = ${compilePowerShellCommand(command, '$openScienceCommandText', binding)}`,
     '& $openScienceCommand',
     '$openScienceSucceeded = $?',
     '$openScienceNativeExitCode = $LASTEXITCODE',
@@ -200,7 +216,18 @@ const encodePowerShellCommand = (command: string): string => {
     'exit 1'
   ].join('\n')
 
-  return Buffer.from(script, 'utf16le').toString('base64')
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  // Use UTF-8 for a large 5.1 launch so adding the capture adapter does not consume the
+  // Windows command-line budget of a previously valid cell. The argument contains only
+  // a fixed decoder and Base64 data, independent of user quoting or trailing syntax.
+  if (binding.version === '5.1' && command.includes('2>') && encoded.length >= 30_000) {
+    const utf8 = Buffer.from(script, 'utf8').toString('base64')
+    return [
+      '-Command',
+      `. ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${utf8}'))))`
+    ]
+  }
+  return ['-EncodedCommand', encoded]
 }
 
 // Resolve the command interpreter explicitly instead of using shell:true. Node's Windows default is
@@ -220,8 +247,7 @@ const resolveShellInvocation = (
           '-NoLogo',
           '-NoProfile',
           '-NonInteractive',
-          '-EncodedCommand',
-          encodePowerShellCommand(command)
+          ...powerShellCommandArgs(command, binding)
         ]
       }
     : {
@@ -272,6 +298,32 @@ class ShellPreparationError extends Error {
   }
 }
 
+const prepareWindowsShellRuntime = async (
+  platform: NodeJS.Platform,
+  binding: ShellRuntimeBinding,
+  processSandbox?: NotebookProcessSandbox,
+  signal?: AbortSignal
+): Promise<boolean | undefined> => {
+  if (platform !== 'win32' || binding.kind !== 'powershell') return undefined
+  try {
+    const runtime = await processSandbox?.resolveWindowsRuntime?.({
+      runtime: 'bash',
+      binding,
+      signal
+    })
+    return runtime === undefined ? undefined : runtime !== null
+  } catch (error) {
+    throw new ShellPreparationError({
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+      exitCode: null,
+      runtimeStatus: 'unavailable',
+      errorCode: 'shell-runtime-unavailable',
+      recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+    })
+  }
+}
+
 const prepareShellLaunch = async (
   options: NotebookShellProcessRequest & {
     previewAvailable?: () => boolean
@@ -309,26 +361,12 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
-  let windowsProtectionRequired: boolean | undefined
-  if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
-    try {
-      const runtime = await options.processSandbox?.resolveWindowsRuntime?.({
-        runtime: 'bash',
-        binding: runtimeBinding,
-        signal: options.signal
-      })
-      if (runtime !== undefined) windowsProtectionRequired = runtime !== null
-    } catch (error) {
-      throw new ShellPreparationError({
-        stdout: '',
-        stderr: error instanceof Error ? error.message : String(error),
-        exitCode: null,
-        runtimeStatus: 'unavailable',
-        errorCode: 'shell-runtime-unavailable',
-        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
-      })
-    }
-  }
+  const windowsProtectionRequired = await prepareWindowsShellRuntime(
+    hostPlatform,
+    runtimeBinding,
+    options.processSandbox,
+    options.signal
+  )
   if (
     runtimeBinding.kind === 'wsl2-bash' &&
     (!(options.previewAvailable ?? (() => wsl2BashPreviewStatus().available))() ||
@@ -358,13 +396,26 @@ const prepareShellLaunchOptions = async (
           process.env,
           options.runtimeRoot,
           workloadCacheEnv,
-          runtimeBinding
+          runtimeBinding,
+          hostPlatform
         )
+    if (options.environment && hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+      shellEnv =
+        runtimeBinding.version === '7.6'
+          ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
+          : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
+    }
     // Resolve host npm before injecting the workload-writable global bin into PATH.
     if (options.processSandbox && runtimeBinding.kind === 'native-posix') {
       npmReadRoots = shellNpmReadRoots(shellEnv, runtimePlatform)
     }
     shellEnv = prepareShellNpmEnvironment(options.runtimeRoot, runtimePlatform, shellEnv)
+    if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+      shellEnv =
+        runtimeBinding.version === '7.6'
+          ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
+          : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
+    }
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
@@ -376,14 +427,40 @@ const prepareShellLaunchOptions = async (
   }
 
   const platform = hostPlatform
+  // Probe PATH-controlled executables only inside the workload sandbox. The ordinary backend
+  // Node is also the packaged client Node; Electron's executable is not an npm interpreter.
+  const fallbackNodeDirectory =
+    options.processSandbox &&
+    runtimeBinding.kind === 'native-posix' &&
+    !process.versions.electron &&
+    process.allowedNodeEnvironmentFlags.has('--use-env-proxy')
+      ? dirname(process.execPath)
+      : undefined
+  let launchCommand = options.launchCommand ?? options.command
+  if (fallbackNodeDirectory) {
+    const quotedDirectory = `'${fallbackNodeDirectory.replaceAll("'", "'\\''")}'`
+    launchCommand =
+      `if ! node -e 'process.exit(process.allowedNodeEnvironmentFlags.has("--use-env-proxy") ? 0 : 1)' >/dev/null 2>&1; then\n` +
+      `  export PATH=${quotedDirectory}:"$PATH"\n` +
+      `fi\n${launchCommand}`
+  }
   const invocation = resolveShellProcessInvocation(
-    options.launchCommand ?? options.command,
+    launchCommand,
     runtimeBinding,
     options.runtimeRoot,
     hostPlatform,
     Boolean(options.processSandbox)
   )
   const baseEnv = shellEnv
+  const bundledNodeRoot =
+    hostPlatform === 'win32' && runtimeBinding.kind === 'powershell'
+      ? dirname(
+          (runtimeBinding.version === '7.6'
+            ? resolveWindowsNotebookRuntime()
+            : resolveWindowsNotebookNodeRuntime()
+          ).node
+        )
+      : undefined
   let sandboxed: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
   try {
     sandboxed = options.processSandbox
@@ -415,9 +492,8 @@ const prepareShellLaunchOptions = async (
           filesystem: {
             readOnlyRoots: [
               options.runtimeRoot,
-              ...(runtimeBinding.kind === 'powershell' && runtimeBinding.version === '7.6'
-                ? [dirname(resolveWindowsNotebookRuntime().node)]
-                : []),
+              ...(fallbackNodeDirectory ? [fallbackNodeDirectory] : []),
+              ...(bundledNodeRoot ? [bundledNodeRoot] : []),
               ...(options.inputRoot ? [options.inputRoot] : []),
               ...(runtimeBinding.kind === 'wsl2-bash'
                 ? []
@@ -637,6 +713,7 @@ const runShellCommand = (
         ownershipHost ? process.execPath : (sandboxed?.executable ?? invocation.executable),
         ownershipHost
           ? [
+              '--disable-warning=UNDICI-EHPA',
               ownershipHost.path,
               ownershipHost.pendingPath,
               ownershipHost.receiptId,
@@ -1044,6 +1121,25 @@ const runShellCommand = (
 // Each lane owns a live interpreter; runShellCommand remains the one-shot spawn/cleanup owner.
 class NotebookShellProcessAdapter implements NotebookShellProcess {
   private readonly sessions = new Map<string, ShellCellSession>()
+  idleProcesses(): Array<IdleInterpreter & { laneKey?: string }> {
+    return [...this.sessions]
+      .filter(([, session]) => session.isLive)
+      .map(([key, session]) => ({
+        identity: session,
+        projectId: session.identity.projectId,
+        sessionId: session.identity.sessionId,
+        laneKey: session.identity.laneKey,
+        group: 'shell',
+        lastUsedAt: session.lastUsedAt,
+        release: async (stillIdle) => {
+          if (!stillIdle() || this.sessions.get(key) !== session) return false
+          const result = await session.shutdown()
+          if (!result.reaped) throw new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE)
+          if (this.sessions.get(key) === session) this.sessions.delete(key)
+          return true
+        }
+      }))
+  }
   constructor(
     private readonly platform: NodeJS.Platform = process.platform,
     private readonly processSandbox?: NotebookProcessSandbox,
@@ -1066,6 +1162,30 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
       }): ShellProcessLaunchOwnership
     }
   ) {}
+
+  async prepareEnvironment(
+    request: Pick<
+      NotebookShellProcessRequest,
+      'handoffDir' | 'runtimeRoot' | 'runtimeBinding' | 'signal'
+    >
+  ): Promise<NodeJS.ProcessEnv> {
+    const binding = request.runtimeBinding ?? defaultShellRuntimeBinding(this.platform)
+    request.signal?.throwIfAborted()
+    try {
+      await prepareWindowsShellRuntime(this.platform, binding, this.processSandbox, request.signal)
+    } finally {
+      request.signal?.throwIfAborted()
+    }
+    return buildShellEnv(
+      request.handoffDir,
+      shellRuntimePlatform(binding, this.platform),
+      process.env,
+      request.runtimeRoot,
+      prepareNotebookWorkloadCache(request.runtimeRoot),
+      binding,
+      this.platform
+    )
+  }
 
   async prepare(request: NotebookShellProcessRequest): Promise<{
     execute(signal?: AbortSignal): Promise<NotebookShellResult>
@@ -1152,6 +1272,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
                 return preparedLaunch.sandboxed?.networkApprovalRetryRequired?.()
               }
             },
+            annotateStderr: (stderr, stdout) =>
+              preparedLaunch.sandboxed?.annotateStderr(stderr, stdout) ?? stderr,
             retryCleanup: async () => (await retryCleanup?.()) ?? false
           }
         },
@@ -1222,6 +1344,7 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
 
 export {
   NotebookShellProcessAdapter,
+  ShellPreparationError,
   buildShellEnv,
   normalizePowerShellStderr,
   resolveShellInvocation,

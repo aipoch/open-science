@@ -15,6 +15,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { useSessionStore } from '@/stores/session-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 
 type DeleteSessionDialogProps = {
@@ -42,6 +43,15 @@ const DeleteSessionDialog = ({
 }: DeleteSessionDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const dialogSession = useRetainedDialogValue(session)
+  const childCount = useSessionStore((state) =>
+    dialogSession
+      ? state.sessions.filter(
+          (child) =>
+            child.parentSessionId === dialogSession.id &&
+            child.projectId === dialogSession.projectId
+        ).length
+      : 0
+  )
   const dialogProjectName = useRetainedDialogValue(session ? (projectName ?? '') : undefined)
 
   return (
@@ -92,6 +102,18 @@ const DeleteSessionDialog = ({
                       'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. Messages and execution evidence attached to those Artifacts will remain available in Provenance. Files in its working folder are not deleted. This action cannot be undone.',
                       { title: dialogSession?.title ?? '' }
                     )}
+                {childCount > 0 && (
+                  <p className="mt-2">
+                    {t(
+                      '{{count}} child discussions will become ordinary conversations. Their messages and references will be kept.',
+                      {
+                        count: childCount,
+                        defaultValue_one:
+                          '{{count}} child discussion will become an ordinary conversation. Its messages and references will be kept.'
+                      }
+                    )}
+                  </p>
+                )}
                 {dialogSession?.packageOrigin || dialogSession?.id.startsWith('import-') ? (
                   <p className="mt-2">
                     {t(

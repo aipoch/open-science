@@ -32,6 +32,7 @@ export const VITEST_ARCHITECTURE_TEST_GLOBS = [
 export const VITEST_DATABASE_TEST_GLOBS = [
   'scripts/database-migration-ledger-smoke.test.ts',
   'src/main/database/migration-service.test.ts',
+  'src/main/database/literature-doi-identity-migration.test.ts',
   'src/main/storage/provenance-migration-validation.test.ts',
   // Package round trips repeatedly migrate real validation databases. Keep their disk/CPU work
   // out of the parallel unit pool instead of extending the tests' timeout budget.
@@ -59,6 +60,8 @@ const BASE_VITEST_EXCLUDE_PATTERNS = [
   // This native addon owns its node:test runner; Vitest cannot collect those suites.
   'packages/credential-identity-probe-native/test/**',
   'docs/internal/**',
+  '.scratch/**',
+  'test-results/**',
   '**/.claude/**',
   '**/.codex/**',
   '**/.pnpm-store/**',
@@ -94,6 +97,7 @@ function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
 
 // These suites use the same package-owned configuration locally and in the host runner.
 const standalonePackageRoots = [
+  'packages/research-film',
   'packages/resilient-download',
   'packages/durable-files',
   'packages/compute',
@@ -178,6 +182,10 @@ function coverageThresholdsFor(env: NodeJS.ProcessEnv): CoverageThresholds | und
     }
   }
 }
+
+const coveragePackageNames: string[] = JSON.parse(
+  readFileSync(new URL('./scripts/ci/package-test-boundaries.json', import.meta.url), 'utf8')
+).packages.map(({ root }: { root: string }) => basename(root))
 
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
@@ -312,14 +320,10 @@ export default defineConfig({
       // text for the CI log, lcov for upload/tooling, html for local inspection.
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
+      // Group registered packages so V8 coverage need not compile one matcher per package for each file.
       include: [
         'src/**/*.{ts,tsx}',
-        ...JSON.parse(
-          readFileSync(
-            new URL('./scripts/ci/package-test-boundaries.json', import.meta.url),
-            'utf8'
-          )
-        ).packages.map(({ root }: { root: string }) => `${root}/src/**/*.{ts,tsx}`)
+        `packages/@(${coveragePackageNames.join('|')})/src/**/*.{ts,tsx}`
       ],
       // Exclude non-logic files so coverage reflects testable code, not wiring/types.
       exclude: VITEST_COVERAGE_EXCLUDE_PATTERNS,

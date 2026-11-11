@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import * as tar from 'tar'
 import type {
   SessionDiagnosticItem,
+  SessionDiagnosticIdentity,
   SessionDiagnosticWorkerInput,
   SessionDiagnosticWorkerResult
 } from '../../shared/session-diagnostics'
@@ -14,9 +15,12 @@ import { projectDiagnosticSession, projectDiagnosticLog } from './projection'
 import { readDiagnosticDatabase } from './database'
 import { projectDiagnosticNotebook, type DiagnosticNotebookCodeCoverage } from './notebook'
 import { projectDiagnosticEnvironment } from './environment'
+import { diagnosticText } from './detail'
+import { exportResourceJournal, inspectResourceJournal } from './resources'
 
 const FILE_LIMIT = 8 * 1024 * 1024
 const TOTAL_LIMIT = 32 * 1024 * 1024
+const BACKEND_LOG_TAIL_BYTES = 256 * 1024
 const safeSegment = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(value)
 class DiagnosticCollectionError extends Error {}
 const ownsDiagnosticSession = (
@@ -63,6 +67,7 @@ type Source = SessionDiagnosticItem & {
   output: string
   expectedChecksum?: string
   frameId?: string
+  tailBytes?: number
 }
 
 // Check every descendant boundary, not only the final file, before any source access.
@@ -80,6 +85,7 @@ async function checkPath(root: string, path: string): Promise<void> {
 
 async function inspectSource(source: Source): Promise<Source> {
   try {
+    if (source.kind === 'resource-log') return source
     if (source.kind === 'sensitive-evidence' || source.kind === 'environment')
       return { ...source, available: true }
     if (!source.path && source.reason) return source
@@ -103,7 +109,9 @@ async function inspectSource(source: Source): Promise<Source> {
   }
 }
 
-async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> {
+async function discoverSessionSources(
+  input: SessionDiagnosticWorkerInput & SessionDiagnosticIdentity
+): Promise<Source[]> {
   const project = join(input.configRoot, 'sessions', input.projectId)
   const notebookRoot = join(input.dataRoot, 'notebooks', input.projectId, input.sessionId)
   const sources: Source[] = [
@@ -115,15 +123,6 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
       root: input.configRoot,
       path: join(project, `${input.sessionId}.json`),
       output: 'session.json'
-    },
-    {
-      id: 'environment',
-      name: 'environment.json',
-      kind: 'environment',
-      available: true,
-      root: input.configRoot,
-      path: join(input.configRoot, 'settings.json'),
-      output: 'environment.json'
     },
     {
       id: 'notebook',
@@ -196,46 +195,6 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
   } catch {
     /* An absent or inaccessible frame tree does not hide the root Notebook source. */
   }
-  for (let index = 0; index < 3; index++) {
-    const name = index === 0 ? 'main.log' : `main.${index}.log`
-    sources.push({
-      id: `log:${name}`,
-      name,
-      kind: 'log',
-      available: false,
-      root: input.logPath ? dirname(input.logPath) : input.configRoot,
-      path: input.logPath ? join(dirname(input.logPath), name) : undefined,
-      output: `logs/${name}`
-    })
-  }
-  if (input.desktopLogPath) {
-    for (let index = 0; index < 3; index++) {
-      const name = index === 0 ? 'main.log' : `main.${index}.log`
-      sources.push({
-        id: `desktop-log:${name}`,
-        name: `Desktop: ${name}`,
-        kind: 'log',
-        available: false,
-        root: dirname(input.desktopLogPath),
-        path: join(dirname(input.desktopLogPath), name),
-        output: `logs/desktop/${name}`
-      })
-    }
-  }
-  if (input.legacyDesktopLogPath) {
-    for (let index = 0; index < 3; index++) {
-      const name = index === 0 ? 'main.log' : `main.${index}.log`
-      sources.push({
-        id: `desktop-legacy-log:${name}`,
-        name: `Desktop (earlier version): ${name}`,
-        kind: 'log',
-        available: false,
-        root: dirname(input.legacyDesktopLogPath),
-        path: join(dirname(input.legacyDesktopLogPath), name),
-        output: `logs/desktop-legacy/${name}`
-      })
-    }
-  }
   sources.push({
     id: 'database',
     name: 'Session database records',
@@ -287,39 +246,180 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
       })
     }
   }
+  return sources
+}
+
+async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> {
+  const sources: Source[] = input.scope === 'application' ? [] : await discoverSessionSources(input)
+  sources.push({
+    id: 'environment',
+    name: 'environment.json',
+    kind: 'environment',
+    available: true,
+    root: input.configRoot,
+    path: join(input.configRoot, 'settings.json'),
+    output: 'environment.json'
+  })
+  for (let index = 0; index < 3; index++) {
+    const name = index === 0 ? 'main.log' : `main.${index}.log`
+    sources.push({
+      id: `log:${name}`,
+      name,
+      kind: 'log',
+      available: false,
+      root: input.logPath ? dirname(input.logPath) : input.configRoot,
+      path: input.logPath ? join(dirname(input.logPath), name) : undefined,
+      output: `logs/${name}`
+    })
+  }
+  if (input.desktopLogPath) {
+    for (let index = 0; index < 3; index++) {
+      const name = index === 0 ? 'main.log' : `main.${index}.log`
+      sources.push({
+        id: `desktop-log:${name}`,
+        name: `Desktop: ${name}`,
+        kind: 'log',
+        available: false,
+        root: dirname(input.desktopLogPath),
+        path: join(dirname(input.desktopLogPath), name),
+        output: `logs/desktop/${name}`
+      })
+    }
+  }
+  if (input.legacyDesktopLogPath) {
+    for (let index = 0; index < 3; index++) {
+      const name = index === 0 ? 'main.log' : `main.${index}.log`
+      sources.push({
+        id: `desktop-legacy-log:${name}`,
+        name: `Desktop (earlier version): ${name}`,
+        kind: 'log',
+        available: false,
+        root: dirname(input.legacyDesktopLogPath),
+        path: join(dirname(input.legacyDesktopLogPath), name),
+        output: `logs/desktop-legacy/${name}`
+      })
+    }
+  }
+  const backendLogsRoot = join(input.configRoot, 'logs')
+  try {
+    await checkPath(input.configRoot, backendLogsRoot)
+    const directory = await opendir(backendLogsRoot)
+    const recent: { name: string; timestamp: number }[] = []
+    let visited = 0
+    let found = 0
+    for await (const entry of directory) {
+      if (++visited > 10_000) break
+      const match = /^desktop-backend-\d{1,10}-(\d{13})\.log$/.exec(entry.name)
+      if (!entry.isFile() || !match) continue
+      found++
+      recent.push({ name: entry.name, timestamp: Number(match[1]) })
+      recent.sort((a, b) => b.timestamp - a.timestamp || b.name.localeCompare(a.name))
+      if (recent.length > 20) recent.pop()
+    }
+    for (const { name } of recent)
+      sources.push({
+        id: `backend-log:${name}`,
+        name,
+        kind: 'log',
+        available: false,
+        root: input.configRoot,
+        path: join(backendLogsRoot, name),
+        output: `logs/backend/${name}`,
+        tailBytes: BACKEND_LOG_TAIL_BYTES
+      })
+    if (found > recent.length || visited > 10_000)
+      sources.push({
+        id: 'backend-log:limited',
+        name: 'desktop-backend-…',
+        kind: 'log',
+        available: false,
+        reason: `Backend log discovery limited: ${found - recent.length} older files omitted${visited > 10_000 ? '; directory scan limit reached' : ''}`,
+        root: input.configRoot,
+        output: 'logs/backend'
+      })
+  } catch (error) {
+    // Missing/inaccessible startup logs stay observable in the diagnostic manifest.
+    sources.push({
+      id: 'backend-log:unavailable',
+      name: 'desktop-backend-…',
+      kind: 'log',
+      available: false,
+      reason: diagnosticFailure(error),
+      root: input.configRoot,
+      output: 'logs/backend'
+    })
+  }
+  sources.push({
+    id: 'resource-logs',
+    name: 'logs/resources',
+    kind: 'resource-log',
+    root: input.configRoot,
+    output: 'logs/resources',
+    ...(await inspectResourceJournal(input.configRoot))
+  })
   return Promise.all(sources.map(inspectSource))
 }
 
-async function readSource(
-  source: Source
-): Promise<{ text: string; note?: string; partial?: boolean }> {
+async function readSource(source: Source): Promise<{
+  text: string
+  note?: string
+  partial?: boolean
+  readBytes?: number
+  boundaryProbeBytes?: number
+  omittedBytes?: number
+}> {
   await checkPath(source.root, source.path!)
   const handle = await open(source.path!, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
   try {
     const before = await handle.stat()
-    if (!before.isFile() || before.size > FILE_LIMIT)
+    if (!before.isFile() || (!source.tailBytes && before.size > FILE_LIMIT))
       throw new DiagnosticCollectionError('Source exceeds file limit or is not regular')
-    const buffer = Buffer.alloc(before.size)
+    const start = Math.max(0, before.size - (source.tailBytes ?? before.size))
+    // One preceding byte distinguishes a complete first record from a cut-off line.
+    // It is not part of the bounded tail payload and is accounted for separately.
+    const boundaryProbe = start > 0 ? 1 : 0
+    const readStart = start - boundaryProbe
+    const buffer = Buffer.alloc(before.size - readStart)
     let offset = 0
     while (offset < buffer.length) {
-      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+      const { bytesRead } = await handle.read(
+        buffer,
+        offset,
+        buffer.length - offset,
+        readStart + offset
+      )
       if (!bytesRead) break
       offset += bytesRead
     }
     const after = await handle.stat()
-    const text = buffer.subarray(0, offset).toString('utf8')
+    // A newline in the probe preserves the complete first record. Otherwise omit the
+    // partial line, which may begin inside a UTF-8 sequence or JSON record.
+    const firstLine = start > 0 ? buffer.subarray(0, offset).indexOf(10) : -1
+    const skip = start > 0 ? (firstLine < 0 ? offset : firstLine + 1) : 0
+    const text = buffer.subarray(skip, offset).toString('utf8')
+    const tailMetadata = source.tailBytes
+      ? {
+          readBytes: Math.max(0, offset - boundaryProbe),
+          boundaryProbeBytes: Math.min(boundaryProbe, offset),
+          omittedBytes: readStart + skip
+        }
+      : {}
     if (source.kind === 'log') {
       const current = await lstat(source.path!).catch(() => undefined)
       const rotated = !current || current.ino !== before.ino || current.dev !== before.dev
-      const truncated = offset < before.size || after.size < before.size
+      const truncated = readStart + offset < before.size || after.size < before.size
       if (rotated || truncated)
         return {
           text,
+          ...tailMetadata,
           partial: true,
           note: 'Log rotated or truncated during collection; retained available bytes from the initially opened file'
         }
       return {
         text,
+        ...tailMetadata,
+        // The bounded tail is the requested log projection, not a collection failure.
+        partial: false,
         note: 'Log snapshot contains at most the file size at open time; later appended bytes are excluded'
       }
     }
@@ -374,7 +474,11 @@ export async function runSessionDiagnosticWorker(
   }
   let partial = false
   try {
-    if (!safeSegment(input.projectId) || !safeSegment(input.sessionId))
+    if (
+      input.scope === 'application'
+        ? input.projectId !== undefined || input.sessionId !== undefined
+        : !safeSegment(input.projectId) || !safeSegment(input.sessionId)
+    )
       throw new DiagnosticCollectionError('Invalid session identity')
     const sources = await discover(input)
     if (input.action === 'inspect')
@@ -472,7 +576,7 @@ export async function runSessionDiagnosticWorker(
         collectedAt: new Date().toISOString(),
         output: source.output,
         scope:
-          source.kind === 'log' || source.kind === 'environment'
+          source.kind === 'log' || source.kind === 'resource-log' || source.kind === 'environment'
             ? 'global'
             : source.kind === 'sensitive-file'
               ? 'unknown'
@@ -490,7 +594,9 @@ export async function runSessionDiagnosticWorker(
         collectedAt: new Date().toISOString(),
         output: source?.output,
         scope:
-          source?.kind === 'log' || source?.kind === 'environment'
+          source?.kind === 'log' ||
+          source?.kind === 'resource-log' ||
+          source?.kind === 'environment'
             ? ('global' as const)
             : source?.kind === 'sensitive-file'
               ? ('unknown' as const)
@@ -499,9 +605,30 @@ export async function runSessionDiagnosticWorker(
       }
       statuses.push(state)
       try {
-        if (!source?.available || (source.kind !== 'sensitive-evidence' && !source.path))
+        if (
+          !source?.available ||
+          (source.kind !== 'sensitive-evidence' && source.kind !== 'resource-log' && !source.path)
+        )
           throw new DiagnosticCollectionError(source?.reason ?? 'Source is no longer discoverable')
-        if (source.kind === 'sensitive-evidence') {
+        if (source.kind === 'resource-log') {
+          const snapshot = await exportResourceJournal(input.configRoot, content)
+          files.push(...snapshot.files)
+          state.sourceMetadata = snapshot.metadata
+          if (snapshot.partial) {
+            partial = true
+            state.status = 'partial'
+          }
+          await writeBestEffort(
+            'logs/resources/metadata.json',
+            () =>
+              encode({
+                ...snapshot.metadata,
+                policy:
+                  'Incident segments first; independent 64 MiB resource budget. Complete structural records from files at open time. No source mutation; later appends excluded.'
+              }),
+            state
+          )
+        } else if (source.kind === 'sensitive-evidence') {
           await writeBestEffort(
             source.output,
             () => encode(input.sensitiveContent ?? {}),
@@ -562,7 +689,7 @@ export async function runSessionDiagnosticWorker(
           } else {
             await writeBestEffort(source.output, () => readBinarySource(source), state)
           }
-        } else if (source.kind === 'database') {
+        } else if (source.kind === 'database' && input.scope !== 'application') {
           await checkPath(source.root, source.path!)
           for (const result of readDiagnosticDatabase(
             source.path!,
@@ -595,7 +722,7 @@ export async function runSessionDiagnosticWorker(
           const stat = await lstat(source.path!)
           const metadata = { sizeBytes: stat.size, mtimeMs: stat.mtimeMs }
           state.sourceMetadata = metadata
-          if (stat.size > FILE_LIMIT) {
+          if (stat.size > FILE_LIMIT && !source.tailBytes) {
             await writeBestEffort(
               `${source.output}.metadata.json`,
               () => encode({ ...metadata, omissionReason: 'source-size-limit' }),
@@ -612,9 +739,10 @@ export async function runSessionDiagnosticWorker(
               state.status = 'partial'
             }
             if (
-              source.kind === 'session' ||
-              source.kind === 'invalid-session' ||
-              source.kind === 'notebook'
+              input.scope !== 'application' &&
+              (source.kind === 'session' ||
+                source.kind === 'invalid-session' ||
+                source.kind === 'notebook')
             ) {
               let parsed: unknown
               try {
@@ -731,6 +859,7 @@ export async function runSessionDiagnosticWorker(
               const projected: string[] = []
               let earliest: string | undefined
               let latest: string | undefined
+              let nativeError = false
               for (const line of observation.text.split('\n')) {
                 if (!line.trim()) continue
                 try {
@@ -745,7 +874,28 @@ export async function runSessionDiagnosticWorker(
                     }
                   } else omittedLines++
                 } catch {
-                  omittedLines++
+                  // stderr also contains ordinary output. Retain only recognized fatal/errors
+                  // and their stack frames, never the whole raw process stream.
+                  const beginsError =
+                    /^(?:#\s*)?(?:FATAL ERROR:|Fatal process out of memory:|Fatal error in\b|Check failed:|(?:[\w.]*Error|Exception)(?: \[[A-Z][A-Z0-9_]+\])?:)/.test(
+                      line.trim()
+                    )
+                  const stackLine =
+                    /^\s*(?:----- (?:Native|JavaScript) stack trace -----|at\s|\d+:\s+(?:0x)?[\da-fA-F]+\b)/.test(
+                      line
+                    )
+                  if (source.tailBytes && (beginsError || (nativeError && stackLine))) {
+                    projected.push(
+                      JSON.stringify({
+                        level: 'error',
+                        event: diagnosticText(line, textOptions, 2_000)
+                      })
+                    )
+                    nativeError = true
+                  } else {
+                    if (line.trim() !== '#') nativeError = false
+                    omittedLines++
+                  }
                 }
               }
               await writeBestEffort(
@@ -758,6 +908,13 @@ export async function runSessionDiagnosticWorker(
                 () =>
                   encode({
                     ...metadata,
+                    ...(source.tailBytes
+                      ? {
+                          readBytes: observation.readBytes,
+                          boundaryProbeBytes: observation.boundaryProbeBytes,
+                          omittedBytes: observation.omittedBytes
+                        }
+                      : {}),
                     retainedRecords: projected.length,
                     omittedLines,
                     missingEventTextRecords,
@@ -769,16 +926,30 @@ export async function runSessionDiagnosticWorker(
               )
               state.sourceMetadata = {
                 ...metadata,
+                ...(source.tailBytes
+                  ? {
+                      readBytes: observation.readBytes,
+                      boundaryProbeBytes: observation.boundaryProbeBytes,
+                      omittedBytes: observation.omittedBytes
+                    }
+                  : {}),
                 retainedRecords: projected.length,
                 omittedLines,
                 missingEventTextRecords
               }
-              if (omittedLines || missingEventTextRecords) {
+              // Backend captures include arbitrary stdout; filtering it is expected.
+              // Canonical logs should be structured, so omitted records indicate lost evidence.
+              if (omittedLines) {
+                if (!source.tailBytes) {
+                  partial = true
+                  state.status = 'partial'
+                }
+                record('Unstructured log records omitted')
+              }
+              if (missingEventTextRecords) {
                 partial = true
                 state.status = 'partial'
-                if (omittedLines) record('Unstructured log records omitted')
-                if (missingEventTextRecords)
-                  record('Retained log records without event text counted in source metadata')
+                record('Retained log records without event text counted in source metadata')
               }
             }
           }
@@ -828,7 +999,8 @@ export async function runSessionDiagnosticWorker(
             (status) =>
               status.output === name ||
               (status.output && name.startsWith(`${status.output}.`)) ||
-              (status.id === 'database' && name.startsWith('db/'))
+              (status.id === 'database' && name.startsWith('db/')) ||
+              (status.id === 'resource-logs' && name.startsWith('logs/resources/'))
           )
           if (owner?.status === 'exported') owner.status = 'partial'
           record(`Diagnostic output ${name} unavailable before archive creation`)
@@ -841,7 +1013,7 @@ export async function runSessionDiagnosticWorker(
     await writeBestEffort(
       'README.txt',
       () =>
-        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
+        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. Optional logs/resources/*.jsonl contains structural system commit memory, PID/birth identities and session activity across application sessions, including retained pre-failure incident segments. Its separate 64 MiB budget does not consume the 32 MiB general export budget. Resource metadata lists incomplete, unavailable or rotated segments; original journals are never cleared. Backend startup logs/backend/desktop-backend-*.log contain projected structured records and recognized native fatal/exception stacks from at most the last 256 KiB of each of the newest 20 files; unrelated process output is omitted. A one-byte boundary probe preserves complete records at the tail edge; metadata accounts for probe, tail and omitted bytes separately. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
       undefined,
       true
     )
@@ -853,6 +1025,7 @@ export async function runSessionDiagnosticWorker(
         version: 2,
         appVersion: input.appVersion,
         platform: process.platform,
+        scope: input.scope ?? 'session',
         projectId: input.projectId,
         sessionId: input.sessionId,
         collectedAt: new Date().toISOString(),

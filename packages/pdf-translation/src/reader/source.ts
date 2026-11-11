@@ -5,6 +5,7 @@ import {
 } from '../contracts.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 import { nativePartialNavigation } from './native-source-geometry.js'
+import { inheritNativeCaptionEligibility } from './caption-eligibility.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 export type PdfRendition = 'original' | 'translated' | 'compare'
@@ -93,61 +94,68 @@ export function isPdfTranslationResultExtension(
 }
 
 export function createPdfTranslationSource(input: PdfTranslationSourceData): PdfTranslationSource {
-  return Object.freeze({
-    [sourceSnapshot]: true as const,
-    resourceRequestKey: input.resourceRequestKey,
-    fingerprint: input.fingerprint,
-    pages: Object.freeze(input.pages.map(({ width, height }) => Object.freeze({ width, height }))),
-    ...(input.originalRegions
-      ? {
-          originalRegions: Object.freeze(
-            input.originalRegions.map((region) =>
-              Object.freeze({
-                pageNumber: region.pageNumber,
-                rect: Object.freeze({ ...region.rect })
-              })
+  return inheritNativeCaptionEligibility(
+    input,
+    Object.freeze({
+      [sourceSnapshot]: true as const,
+      resourceRequestKey: input.resourceRequestKey,
+      fingerprint: input.fingerprint,
+      pages: Object.freeze(
+        input.pages.map(({ width, height }) => Object.freeze({ width, height }))
+      ),
+      ...(input.originalRegions
+        ? {
+            originalRegions: Object.freeze(
+              input.originalRegions.map((region) =>
+                Object.freeze({
+                  pageNumber: region.pageNumber,
+                  rect: Object.freeze({ ...region.rect })
+                })
+              )
             )
-          )
-        }
-      : {}),
-    units: Object.freeze(
-      input.units.map((unit) => {
-        const { id, source, fragments, sourceOnly, figure, preserve } = unit
-        return Object.freeze({
-          id,
-          source,
-          ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
-          ...(figure === true ? { figure: true as const } : {}),
-          ...(preserve ? { preserve } : {}),
-          ...(unit.referenceBoundary === true ? { referenceBoundary: true as const } : {}),
-          fragments: Object.freeze(
-            fragments.map(({ pageNumber, rect, items, unclippedRect }) =>
-              Object.freeze({
-                pageNumber,
-                rect: Object.freeze({
-                  x: rect.x,
-                  y: rect.y,
-                  width: rect.width,
-                  height: rect.height
-                }),
-                ...(unclippedRect
-                  ? {
-                      unclippedRect: Object.freeze({
-                        x: unclippedRect.x,
-                        y: unclippedRect.y,
-                        width: unclippedRect.width,
-                        height: unclippedRect.height
-                      })
-                    }
-                  : {}),
-                items: Object.freeze(items.map(({ index, text }) => Object.freeze({ index, text })))
-              })
+          }
+        : {}),
+      units: Object.freeze(
+        input.units.map((unit) => {
+          const { id, source, fragments, sourceOnly, figure, preserve } = unit
+          return Object.freeze({
+            id,
+            source,
+            ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
+            ...(figure === true ? { figure: true as const } : {}),
+            ...(preserve ? { preserve } : {}),
+            ...(unit.referenceBoundary === true ? { referenceBoundary: true as const } : {}),
+            fragments: Object.freeze(
+              fragments.map(({ pageNumber, rect, items, unclippedRect }) =>
+                Object.freeze({
+                  pageNumber,
+                  rect: Object.freeze({
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height
+                  }),
+                  ...(unclippedRect
+                    ? {
+                        unclippedRect: Object.freeze({
+                          x: unclippedRect.x,
+                          y: unclippedRect.y,
+                          width: unclippedRect.width,
+                          height: unclippedRect.height
+                        })
+                      }
+                    : {}),
+                  items: Object.freeze(
+                    items.map(({ index, text }) => Object.freeze({ index, text }))
+                  )
+                })
+              )
             )
-          )
+          })
         })
-      })
-    )
-  })
+      )
+    })
+  )
 }
 
 // Compose display data only from the independently owned source. Copy result strings
@@ -351,7 +359,10 @@ async function verifyPdfTranslationSource(
       fragments.set(pageNumber, [...(fragments.get(pageNumber) ?? []), fragment])
     }
   }
-  for (const [pageNumber, pageFragments] of fragments) {
+  const verifyPage = async ([pageNumber, pageFragments]: [
+    number,
+    PdfTranslationFragment[]
+  ]): Promise<boolean> => {
     if (signal.aborted) return false
     const page = await document.getPage(pageNumber)
     if (signal.aborted) return false
@@ -394,6 +405,13 @@ async function verifyPdfTranslationSource(
             return false
         }
       }
+    return !signal.aborted
+  }
+  // Overlap cold range reads without queuing the whole document or changing page ownership.
+  const pages = [...fragments]
+  for (let index = 0; index < pages.length; index += 4) {
+    const verified = await Promise.all(pages.slice(index, index + 4).map(verifyPage))
+    if (verified.some((valid) => !valid)) return false
   }
   return !signal.aborted
 }

@@ -3,10 +3,172 @@ import { groupPageLines } from './literature-pdf-caption-group.mjs'
 import { intersection, area } from './literature-pdf-page-geometry.mjs'
 import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 
+function completeHorizontalRasterParagraphs(page, figure, captions, tables, tokens) {
+  const crop = figure?.rect,
+    caption = figure?.caption,
+    valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0,
+    inside = (a, b, e = 0.02) => b.every((v, n) => (n < 2 ? v >= a[n] - e : v <= a[n] + e)),
+    compact = (s) => s.replace(/\s/gu, '')
+  if (
+    !valid(crop) ||
+    !valid(caption?.rect) ||
+    caption.page !== page.pageNumber ||
+    page.invalidGraphicsBounds !== 0 ||
+    crop[3] >= caption.rect[1]
+  )
+    return
+  const images = page.graphicsBounds
+    .filter(
+      (g) =>
+        g.kind === 'image' && /^[a-f\d]{64}$/iu.test(g.imageHash ?? '') && valid(g.normalizedRect)
+    )
+    .map((g) => ({
+      g,
+      rect: g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+    }))
+    .filter((g) => inside(crop, g.rect))
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (images.length !== 2 || images[0].rect[2] >= images[1].rect[0]) return
+  const owned = []
+  let em,
+    step,
+    bottom = crop[3]
+  for (const [n, image] of images.entries()) {
+    const keys = tokens.filter(
+      (t) =>
+        t.horizontal &&
+        valid(t.rect) &&
+        t.text.startsWith('(' + String.fromCharCode(97 + n) + ')') &&
+        t.rect[0] >= image.rect[0] - t.height / 8 &&
+        t.rect[2] <= image.rect[2] + t.height / 8 &&
+        t.rect[1] >= image.rect[3] - t.height / 8 &&
+        t.rect[1] - image.rect[3] < t.height * 2
+    )
+    if (keys.length !== 1) return
+    const key = keys[0]
+    em ??= key.height
+    if (
+      !(em > 0) ||
+      Math.abs(key.height - em) > em / 1000 ||
+      Math.abs(image.rect[1] - images[0].rect[1]) > em / 8 ||
+      Math.abs(image.rect[3] - images[0].rect[3]) > em / 8
+    )
+      return
+    const paragraph = tokens
+      .filter(
+        (t) =>
+          valid(t.rect) &&
+          t.rect[0] >= image.rect[0] - em / 8 &&
+          t.rect[2] <= image.rect[2] + em / 8 &&
+          t.rect[1] >= key.rect[1] - em / 16 &&
+          t.rect[3] < caption.rect[1]
+      )
+      .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])
+    if (
+      !paragraph.length ||
+      paragraph.some(
+        (t) =>
+          !t.horizontal ||
+          Math.abs(t.height - em) > em / 1000 ||
+          !Number.isFinite(t.fontDescent) ||
+          t.fontDescent > 0 ||
+          t.fontDescent < -0.5 ||
+          t.sourceItem?.pageNumber !== page.pageNumber ||
+          !Number.isSafeInteger(t.sourceItem.index) ||
+          t.sourceItem.index < 0 ||
+          t.sourceItem.text !== t.text ||
+          t.sourceSegment ||
+          tokens.filter(
+            (q) =>
+              q.sourceItem?.index === t.sourceItem.index ||
+              q.sourceSegment?.index === t.sourceItem.index
+          ).length !== 1
+      )
+    )
+      return
+    const rows = []
+    for (const t of paragraph) {
+      const previous = rows.at(-1)
+      if (!previous || Math.abs(t.rect[1] - previous[0].rect[1]) > em / 16) rows.push([t])
+      else previous.push(t)
+    }
+    if (rows.length !== 3 || rows[0][0] !== key) return
+    for (const [i, row] of rows.entries()) {
+      const text = row.map((t) => t.text).join(' '),
+        left = Math.min(...row.map((t) => t.rect[0])),
+        right = Math.max(...row.map((t) => t.rect[2]))
+      if (
+        Math.abs(left - key.rect[0]) > em / 8 ||
+        right - left < (image.rect[2] - image.rect[0]) * (i === 2 ? 0.25 : 0.65) ||
+        (i < 2 && /[.!?]$/u.test(text.trim())) ||
+        (i === 2 && !/[.!?]$/u.test(text.trim())) ||
+        (i && /^(?:\([a-z]\)|Figure\b|Fig\.|Table\b)/u.test(text))
+      )
+        return
+      if (i) {
+        const gap = row[0].rect[1] - rows[i - 1][0].rect[1]
+        step ??= gap
+        if (gap < em || gap > em * 1.5 || Math.abs(gap - step) > em / 16) return
+      }
+    }
+    if (
+      paragraph
+        .map((t) => t.text)
+        .join(' ')
+        .split(/\s/u).length < 6 ||
+      crop[3] < rows[1][0].rect[1] ||
+      crop[3] >= Math.min(...rows[2].map((t) => t.rect[3]))
+    )
+      return
+    owned.push(...paragraph)
+    bottom = Math.max(bottom, ...paragraph.map((t) => t.rect[3] - t.fontDescent * t.height))
+  }
+  const cap = tokens.filter((t) => valid(t.rect) && intersection(t.rect, caption.rect) > 0)
+  if (
+    !cap.length ||
+    cap.some(
+      (t) =>
+        !t.horizontal ||
+        t.sourceItem?.pageNumber !== page.pageNumber ||
+        !Number.isSafeInteger(t.sourceItem.index) ||
+        t.sourceItem.index < 0 ||
+        t.sourceItem.text !== t.text ||
+        t.sourceSegment ||
+        tokens.filter(
+          (q) =>
+            q.sourceItem?.index === t.sourceItem.index ||
+            q.sourceSegment?.index === t.sourceItem.index
+        ).length !== 1
+    ) ||
+    compact(cap.map((t) => t.text).join('')) !== compact(caption.lines.join('')) ||
+    bottom >= caption.rect[1] ||
+    bottom - crop[3] > em * 2
+  )
+    return
+  const extension = [crop[0], crop[3], crop[2], bottom]
+  if (
+    tables.some((r) => intersection(r, extension) > 0) ||
+    captions.some((c) => c.page === page.pageNumber && intersection(c.rect, extension) > 0) ||
+    page.graphicsBounds.some(
+      (g) =>
+        valid(g.normalizedRect) &&
+        intersection(
+          extension,
+          g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+        ) > 0
+    ) ||
+    tokens.some((t) => valid(t.rect) && intersection(extension, t.rect) > 0 && !owned.includes(t))
+  )
+    return
+  return [crop[0], crop[1], crop[2], bottom]
+}
+
 // A crop can cross the first line of the final panel description. An earlier
 // complete description and two aligned plot rows prove this narrow paragraph
 // family; proximity to the main caption alone never admits prose.
 export function completeNativePanelParagraphs(page, figure, captions, tables, tokens) {
+  const horizontal = completeHorizontalRasterParagraphs(page, figure, captions, tables, tokens)
+  if (horizontal) return horizontal
   const finite = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0
   const contains = (a, b, e = 0.02) => b.every((v, n) => (n < 2 ? v >= a[n] - e : v <= a[n] + e))

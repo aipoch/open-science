@@ -298,7 +298,7 @@ export function checkModuleOwnership({
 
 export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() } = {}) {
   const git = (...args) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 })
   const mergeBase = git('merge-base', base, head).trim()
   const files = (revision) =>
     git('ls-tree', '-r', '--name-only', '-z', revision).split('\0').filter(Boolean)

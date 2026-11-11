@@ -655,7 +655,10 @@ const useAcpRuntime = (): {
   )
 
   return {
-    state,
+    // A send can await persistence while a generation retires. Its captured API must see that update.
+    get state() {
+      return stateRef.current
+    },
     reconcileSnapshot: applySnapshot,
     subscribeRuntimeEvents,
     currentRuntimeEvents: runtimeEventOwner.currentEvents,

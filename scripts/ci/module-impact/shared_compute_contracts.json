@@ -1,6 +1,6 @@
 {
-  "ownerPaths": ["src/shared/compute.ts"],
-  "interfacePaths": ["src/shared/compute.ts"],
+  "ownerPaths": ["src/shared/compute.ts", "src/shared/compute-accounts.ts"],
+  "interfacePaths": ["src/shared/compute.ts", "src/shared/compute-accounts.ts"],
   "consumerModules": [],
   "testFiles": {
     "owner": [],

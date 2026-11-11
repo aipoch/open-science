@@ -79,6 +79,7 @@
     "src/renderer/src/pages/literature/collections/smart-collection-state.test.ts",
     "src/renderer/src/pages/literature/collections/smart-collection-state.ts",
     "src/renderer/src/pages/literature/collections/smart-rule-fields.ts",
+    "src/renderer/src/pages/literature/collections/useLiteratureMembership.test.tsx",
     "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
     "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.ts",
     "src/renderer/src/pages/literature/collections/SmartCollectionProcess.tsx",
@@ -160,7 +161,16 @@
     "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.ts",
     "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx",
     "src/renderer/src/pages/literature/detail/LiteraturePublicationCheck.tsx",
-    "src/renderer/src/pages/literature/detail/LiteraturePublicationCheck.test.tsx"
+    "src/renderer/src/pages/literature/detail/LiteraturePublicationCheck.test.tsx",
+    "src/renderer/src/pages/literature/LiteratureZoteroDialog.tsx",
+    "src/renderer/src/pages/literature/LiteratureZoteroDialog.test.tsx",
+    "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.tsx",
+    "src/renderer/src/pages/literature/imports/LiteratureLinkReview.tsx",
+    "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverview.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -206,6 +216,7 @@
       "src/renderer/src/pages/literature/collections/SmartCollectionCells.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionDraftPreview.test.tsx",
       "src/renderer/src/pages/literature/collections/smart-collection-state.test.ts",
+      "src/renderer/src/pages/literature/collections/useLiteratureMembership.test.tsx",
       "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
@@ -216,7 +227,11 @@
       "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/workflows/screening-results-csv.test.ts",
       "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx",
-      "src/renderer/src/pages/literature/detail/LiteraturePublicationCheck.test.tsx"
+      "src/renderer/src/pages/literature/detail/LiteraturePublicationCheck.test.tsx",
+      "src/renderer/src/pages/literature/LiteratureZoteroDialog.test.tsx",
+      "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",

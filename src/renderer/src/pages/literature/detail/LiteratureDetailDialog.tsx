@@ -591,6 +591,7 @@ export function LiteratureDetailDialog({
                         key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
                         item={metadata.editBase?.item ?? selectedItem.item}
                         saving={metadata.saving || metadata.awaitingReload}
+                        busy={metadata.saving}
                         saveDisabled={
                           metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
                         }

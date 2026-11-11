@@ -1,5 +1,12 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- inferred test fixture types */
 import { describe, expect, it, vi } from 'vitest'
+import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { PDFDocument } from 'pdf-lib'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { applyCachedPdfTableSources } from '../../src/reader/table-source.js'
 import {
@@ -11,6 +18,254 @@ import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
 import { bindPdfTranslation, createPdfTranslationSource } from '../../src/reader/source.js'
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
+
+describe('unchanged original formula owners in table cells', () => {
+  const fixture = () => {
+    const f = setup()
+    f.items[0].str = '(7)'
+    f.cached.elements[0].table!.cells[0].text = '(7)'
+    f.cached.elements[0].table!.cells[0].sourceItems![0].text = '(7)'
+    f.items[1].transform[5] = 60
+    f.cached.elements[0].table!.cells[1].regions[0].y = 0.3
+    f.cached.elements[0].table!.cells[1].row = 1
+    f.cached.elements[0].table!.cells[1].column = 0
+    f.cached.elements[0].table!.rowCount = 2
+    f.cached.elements[0].table!.columnCount = 1
+    // The crop includes independently owned prose; it cannot replace the
+    // existing formula's original fragment with a whole-table original region.
+    f.cached.elements[0].regions[0].height = 0.6
+    f.context.extraction = {
+      ...f.extraction,
+      source: createPdfTranslationSource({
+        ...f.extraction.source,
+        units: [
+          {
+            id: 'header',
+            source: '(7)',
+            sourceOnly: true,
+            preserve: 'formula',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 0.095, y: 0.095, width: 0.21, height: 0.115 },
+                items: [{ index: 0, text: '(7)' }]
+              }
+            ]
+          },
+          {
+            id: 'body',
+            source: '10',
+            fragments: [
+              { pageNumber: 1, rect: f.rect(0.4, 0.3), items: [{ index: 1, text: '10' }] }
+            ]
+          },
+          f.extraction.source.units[1]
+        ]
+      }),
+      coverage: {
+        ...f.extraction.coverage,
+        warnings: [{ unitId: 'header', reasons: ['table-layout'] }]
+      }
+    }
+    return f
+  }
+  const mutableUnits = (f: ReturnType<typeof fixture>) =>
+    f.context.extraction.source.units.map((u) => ({
+      ...u,
+      fragments: u.fragments.map((g) => ({
+        ...g,
+        rect: { ...g.rect },
+        items: g.items.map((i) => ({ ...i }))
+      }))
+    }))
+  it.each(['foreign-crop', 'complete-crop'] as const)(
+    'keeps the exact literal formula owner, position, crop and diagnostics: %s',
+    async (mode) => {
+      const f = fixture(),
+        before = f.context.extraction.source
+      if (mode === 'complete-crop') f.cached.elements[0].regions[0].height = 0.35
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(result.source.units[0]).toEqual(before.units[mode === 'foreign-crop' ? 0 : 2])
+      expect(
+        result.source.units.filter((u) => u.id.startsWith('table-source:')).map((u) => u.source)
+      ).toEqual(mode === 'foreign-crop' ? ['10'] : ['(7)', '10'])
+      if (mode === 'foreign-crop') expect(result.source.originalRegions).toBeUndefined()
+      else
+        expect(result.source.originalRegions).toEqual([
+          {
+            pageNumber: 1,
+            rect: {
+              x: 0.095,
+              y: 0.095,
+              width: expect.closeTo(0.505),
+              height: expect.closeTo(0.355)
+            }
+          }
+        ])
+      const header = result.source.units.find((u) => u.source === '(7)')!
+      expect(header.sourceOnly).toBe(true)
+      expect(result.coverage.warnings).toContainEqual({
+        unitId: header.id,
+        reasons: ['table-layout']
+      })
+      const content = applyPdfContentFirstPolicy(result.source)
+      if (mode === 'foreign-crop')
+        expect(content.originalRegions).toContainEqual({
+          pageNumber: 1,
+          rect: before.units[0].fragments[0].rect
+        })
+      else {
+        expect(header.id).not.toBe('header')
+        expect(header.preserve).toBeUndefined()
+        expect(content.originalRegions).toEqual(result.source.originalRegions)
+      }
+      const native = (source: typeof before) =>
+        source.units
+          .flatMap((u) =>
+            u.fragments.flatMap((g) => g.items.map((i) => [g.pageNumber, i.index, i.text]))
+          )
+          .sort((a, b) => Number(a[1]) - Number(b[1]))
+      expect(native(result.source)).toEqual(native(before))
+      expect(native(content)).toEqual(native(before))
+      for (const source of [before, result.source, content])
+        expect(
+          await bindPdfTranslation(
+            source,
+            {
+              source,
+              units: [{ id: 'prose', translationSource: 'Prose', translation: 'Translation' }]
+            },
+            f.context.document,
+            'reader',
+            f.context.signal
+          )
+        ).not.toBeNull()
+    }
+  )
+  it.each([
+    'literal',
+    'shared-cell',
+    'split-owner',
+    'no-later-row',
+    'overlapping-row',
+    'spanning-row',
+    'cross-page',
+    'ordinary-source',
+    'non-formula',
+    'mixed-first-row'
+  ] as const)(
+    'does not retain a leading formula through an unproved one-to-one band: %s',
+    async (mode) => {
+      const f = fixture(),
+        table = f.cached.elements[0].table!,
+        units = mutableUnits(f)
+      if (mode === 'literal') units[0].source = '( 7 )'
+      if (mode === 'ordinary-source') delete units[0].sourceOnly
+      if (mode === 'non-formula') delete units[0].preserve
+      if (mode === 'mixed-first-row') {
+        f.items.push({ ...f.items[0], str: 'Label', transform: [10, 0, 0, 10, 70, 80] })
+        units.push({
+          id: 'ordinary-header',
+          source: 'Label',
+          fragments: [{ pageNumber: 1, rect: f.rect(0.7), items: [{ index: 3, text: 'Label' }] }]
+        })
+        table.columnCount = 2
+        table.cells.push({
+          row: 0,
+          column: 1,
+          rowSpan: 1,
+          columnSpan: 1,
+          text: 'Label',
+          regions: [{ page: 1, ...f.rect(0.7) }],
+          sourceItems: [{ pageNumber: 1, index: 3, text: 'Label' }]
+        })
+        f.cached.elements[0].regions[0].width = 0.8
+      }
+      if (mode === 'shared-cell') {
+        table.cells[0].text = '(7) 10'
+        table.cells[0].sourceItems!.push(...table.cells[1].sourceItems!)
+        table.cells[0].regions.push(...table.cells[1].regions)
+        table.cells.pop()
+      }
+      if (mode === 'split-owner') {
+        units[0].source = '(7) 10'
+        units[0].fragments.push(...units[1].fragments)
+        units.splice(1, 1)
+      }
+      if (mode === 'no-later-row') {
+        table.cells[1].row = 0
+        table.cells[1].column = 1
+        table.rowCount = 1
+        table.columnCount = 2
+      }
+      if (mode === 'overlapping-row') {
+        f.items[1].transform[5] = 85
+        table.cells[1].regions[0].y = 0.05
+        units[1].fragments[0].rect.y = 0.05
+      }
+      if (mode === 'spanning-row') {
+        table.cells[0].rowSpan = 2
+        table.cells[1].column = 1
+        table.columnCount = 2
+      }
+      if (mode === 'cross-page') {
+        f.document.numPages = 2
+        f.cached.pageCount = 2
+        f.cached.requestedPages.push(2)
+        f.cached.processedPages.push(2)
+        f.cached.pages.push({ ...f.cached.pages[0], page: 2 })
+        table.cells[1].regions[0].page = 2
+        table.cells[1].sourceItems![0].pageNumber = 2
+        units[1].fragments[0].pageNumber = 2
+        f.cached.elements[0].regions.push({ page: 2, ...f.rect(0.4, 0.3) })
+      }
+      f.context.extraction = {
+        ...f.context.extraction,
+        source: createPdfTranslationSource({
+          ...f.context.extraction.source,
+          units,
+          ...(mode === 'cross-page'
+            ? {
+                pages: [f.context.extraction.source.pages[0], f.context.extraction.source.pages[0]]
+              }
+            : {})
+        })
+      }
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(result.source.units.some((u) => u.id === 'header')).toBe(false)
+      expect(
+        result.source.units
+          .flatMap((u) =>
+            u.fragments.flatMap((g) => g.items.map((i) => [g.pageNumber, i.index, i.text]))
+          )
+          .sort((a, b) => Number(a[1]) - Number(b[1]))
+      ).toEqual([
+        [1, 0, '(7)'],
+        [mode === 'cross-page' ? 2 : 1, 1, '10'],
+        [1, 2, 'Prose'],
+        ...(mode === 'mixed-first-row' ? [[1, 3, 'Label']] : [])
+      ])
+    }
+  )
+  it('keeps the existing whole-unit rejection when only part of the formula is claimed', async () => {
+    const f = fixture(),
+      units = mutableUnits(f)
+    units[0].source = '(7) 10'
+    units[0].fragments.push(...units[1].fragments)
+    units.splice(1, 1)
+    f.cached.elements[0].table!.cells.pop()
+    f.context.extraction = {
+      ...f.context.extraction,
+      source: createPdfTranslationSource({ ...f.context.extraction.source, units })
+    }
+    const result = await applyCachedPdfTableSources(f.context)
+    expect(result.source.units).toEqual(f.context.extraction.source.units)
+    expect(result.coverage.warnings).toContainEqual({
+      unitId: 'header',
+      reasons: ['table-layout', 'table-structure-unreliable']
+    })
+  })
+})
 
 describe('unreliable mathematical source witnesses', () => {
   const fixture = () => {
@@ -162,9 +417,141 @@ describe('unreliable mathematical source witnesses', () => {
   )
 })
 
+describe('independent original regions for grouped tables', () => {
+  it.each(['complete', 'legacy', 'foreign-text', 'blocked-part'] as const)(
+    'keeps only independently proved part crops without consuming the intervening prose: %s',
+    async (mode) => {
+      const f = setup()
+      const top = { page: 1, x: 0.1, y: 0.1, width: 0.5, height: 0.13 }
+      const bottom = { page: 1, x: 0.1, y: 0.6, width: 0.2, height: 0.13 }
+      f.items.push({ ...f.items[2], str: 'Explanation', transform: [10, 0, 0, 10, 10, 50] })
+      const source = createPdfTranslationSource({
+        ...f.extraction.source,
+        units: [
+          ...f.extraction.source.units,
+          {
+            id: 'between',
+            source: 'Explanation',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: f.rect(0.1, 0.4),
+                items: [{ index: 3, text: 'Explanation' }]
+              }
+            ]
+          },
+          ...(mode === 'foreign-text'
+            ? [
+                {
+                  id: 'foreign',
+                  source: 'Foreign',
+                  fragments: [
+                    {
+                      pageNumber: 1,
+                      rect: f.rect(0.2, 0.16),
+                      items: [{ index: 4, text: 'Foreign' }]
+                    }
+                  ]
+                }
+              ]
+            : [])
+        ]
+      })
+      if (mode === 'foreign-text')
+        f.items.push({ ...f.items[2], str: 'Foreign', transform: [10, 0, 0, 10, 20, 76] })
+      f.context.extraction = {
+        ...f.extraction,
+        source,
+        coverage: {
+          ...f.extraction.coverage,
+          textItemCount: f.items.length,
+          includedItemCount: f.items.length
+        }
+      }
+      const table = f.cached.elements[0].table!
+      if (mode === 'blocked-part')
+        table.issues = [{ code: 'unresolved-spanning-cells', detail: 'Unproved span' }]
+      f.cached.elements[0] = {
+        ...f.cached.elements[0],
+        table: undefined,
+        caption: {
+          text: 'Table 1. Separate measurements.',
+          regions: [{ page: 1, x: 0.1, y: 0.02, width: 0.5, height: 0.04 }]
+        },
+        regions: [{ page: 1, x: 0.1, y: 0.1, width: 0.5, height: 0.63 }],
+        tableParts: [
+          { title: 'First', table, ...(mode === 'legacy' ? {} : { regions: [top] }) },
+          {
+            title: 'Second',
+            ...(mode === 'legacy' ? {} : { regions: [bottom] }),
+            table: {
+              rowCount: 1,
+              columnCount: 1,
+              issues: [],
+              unassignedText: [],
+              cells: [
+                {
+                  row: 0,
+                  column: 0,
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  text: 'Prose',
+                  regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+                  sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+                }
+              ]
+            }
+          }
+        ]
+      }
+      expect(() => parsePdfStructureResult(f.cached, f.cached)).not.toThrow()
+      const result = await applyCachedPdfTableSources(f.context)
+      const expected = mode === 'legacy' ? [] : mode === 'complete' ? [top, bottom] : [bottom]
+      expect(result.source.originalRegions ?? []).toEqual(
+        expected.map(({ page: pageNumber, ...rect }) => ({
+          pageNumber,
+          rect: { ...rect, width: expect.closeTo(rect.width, 12) }
+        }))
+      )
+      expect(result.source.units.find((unit) => unit.id === 'between')).toEqual(source.units[2])
+      if (mode === 'foreign-text')
+        expect(result.source.units.find((unit) => unit.id === 'foreign')).toEqual(source.units[3])
+      const origins = (value: typeof source) =>
+        value.units
+          .flatMap((unit) =>
+            unit.fragments.flatMap((fragment) =>
+              fragment.items.map((item) =>
+                JSON.stringify([fragment.pageNumber, item.index, item.text])
+              )
+            )
+          )
+          .sort()
+      const before = origins(source)
+      const after = origins(result.source)
+      expect(after).toEqual(before)
+      expect(new Set(after).size).toBe(after.length)
+      expect(
+        result.source.units.filter((unit) => unit.id.startsWith('table-source:'))
+      ).toHaveLength(mode === 'blocked-part' ? 1 : 3)
+    }
+  )
+})
+
 function setup() {
   const sourceIdentity = { sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 }
-  const item = (str: string, x: number, y = 80) => ({
+  const item = (
+    str: string,
+    x: number,
+    y = 80
+  ): {
+    str: string
+    dir: string
+    fontName: string
+    transform: number[]
+    width: number
+    height: number
+    hasEOL?: boolean
+  } => ({
     str,
     dir: 'ltr',
     fontName: 'f',
@@ -176,7 +563,14 @@ function setup() {
   const rect = (x: number, y = 0.1) => ({ x, y, width: 0.2, height: 0.1 })
   const page = {
     rotate: 0,
-    getViewport: vi.fn(() => ({
+    getViewport: vi.fn<
+      () => {
+        width: number
+        height: number
+        transform?: number[]
+        convertToViewportPoint: (x: number, y: number) => number[]
+      }
+    >(() => ({
       width: 100,
       height: 100,
       convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
@@ -265,7 +659,9 @@ function setup() {
     navigation: [],
     issues: []
   }
-  const readCached = vi.fn(async () => cached as PdfStructureResult | undefined)
+  const readCached = vi.fn<Parameters<typeof applyCachedPdfTableSources>[0]['readCached']>(
+    async () => cached
+  )
   const controller = new AbortController()
   const context = {
     extraction,
@@ -807,7 +1203,7 @@ describe('cached PDF table source ownership', () => {
     ]
     const figures = await applyCachedPdfFigureSources(f.context)
     expect(figures.source.units).toEqual([
-      { ...f.extraction.source.units[0], sourceOnly: true },
+      { ...f.extraction.source.units[0], sourceOnly: true, figure: true },
       f.extraction.source.units[1]
     ])
     expect(figures.coverage).toEqual(f.context.extraction.coverage)
@@ -1141,6 +1537,12 @@ describe('cached PDF table source ownership', () => {
 
   it.each([
     'missing-proof',
+    'vector-missing-proof',
+    'vector-partial-unit',
+    'vector-wrong-literal',
+    'vector-caption-overlap',
+    'vector-competing-figure',
+    'vector-uncertain-figure',
     'partial-unit',
     'wrong-literal',
     'stale-source',
@@ -1179,39 +1581,41 @@ describe('cached PDF table source ownership', () => {
       ]
     }
     fixture.cached.elements = [figure]
+    const fault = variant.replace(/^vector-/u, '')
+    if (variant.startsWith('vector-'))
+      figure.issues = [{ code: 'native-vector-bar-chart', detail: 'native-vector-bar-chart' }]
     if (variant.startsWith('horizontal-')) {
       figure.issues = [
         { code: 'native-raster-horizontal-array', detail: 'native-raster-horizontal-array' }
       ]
-      if (variant === 'horizontal-missing-proof') delete figure.sourceItems
-      if (variant === 'horizontal-partial-unit') figure.sourceItems!.pop()
-      if (variant === 'horizontal-uncertain')
+      if (fault === 'horizontal-missing-proof') delete figure.sourceItems
+      if (fault === 'horizontal-partial-unit') figure.sourceItems!.pop()
+      if (fault === 'horizontal-uncertain')
         figure.issues.push({ code: 'uncertain', detail: 'Unproved' })
     }
-    if (variant === 'missing-proof') delete figure.sourceItems
-    if (variant === 'partial-unit') figure.sourceItems!.pop()
-    if (variant === 'wrong-literal') figure.sourceItems![0].text = 'Different'
-    if (variant === 'stale-source') fixture.cached.sourceChecksum = 'd'.repeat(64)
-    if (variant === 'duplicate-origin') figure.sourceItems![1] = { ...figure.sourceItems![0] }
-    if (variant === 'wrong-page') figure.sourceItems![0].pageNumber = 2
-    if (variant === 'caption-overlap') figure.caption!.regions = structuredClone(figure.regions)
-    if (variant === 'competing-figure')
+    if (fault === 'missing-proof') delete figure.sourceItems
+    if (fault === 'partial-unit') figure.sourceItems!.pop()
+    if (fault === 'wrong-literal') figure.sourceItems![0].text = 'Different'
+    if (fault === 'stale-source') fixture.cached.sourceChecksum = 'd'.repeat(64)
+    if (fault === 'duplicate-origin') figure.sourceItems![1] = { ...figure.sourceItems![0] }
+    if (fault === 'wrong-page') figure.sourceItems![0].pageNumber = 2
+    if (fault === 'caption-overlap') figure.caption!.regions = structuredClone(figure.regions)
+    if (fault === 'competing-figure')
       fixture.cached.elements.push({
         id: 'figure-2',
         kind: 'figure',
         issues: [],
         regions: structuredClone(figure.regions)
       })
-    if (variant === 'outside-native-ink') fixture.items[0].transform[5] = 20
-    if (variant === 'outside-unit') figure.regions[0].height = 0.12
-    if (variant === 'missing-caption') delete figure.caption
-    if (variant === 'uncertain-figure')
-      figure.issues.push({ code: 'uncertain', detail: 'Unproved' })
-    if (variant === 'unsafe-figure')
+    if (fault === 'outside-native-ink') fixture.items[0].transform[5] = 20
+    if (fault === 'outside-unit') figure.regions[0].height = 0.12
+    if (fault === 'missing-caption') delete figure.caption
+    if (fault === 'uncertain-figure') figure.issues.push({ code: 'uncertain', detail: 'Unproved' })
+    if (fault === 'unsafe-figure')
       figure.issues.push({ code: 'text-dominant-graphics', detail: 'text-dominant-graphics' })
-    if (variant === 'generic-strip')
+    if (fault === 'generic-strip')
       figure.issues = [{ code: 'native-raster-vector-strip', detail: 'native-raster-vector-strip' }]
-    if (variant === 'uncertain-group')
+    if (fault === 'uncertain-group')
       figure.issues = [
         { code: 'native-disjoint-mixed-group', detail: 'native-disjoint-mixed-group' },
         { code: 'uncertain', detail: 'Unproved' }
@@ -1219,6 +1623,137 @@ describe('cached PDF table source ownership', () => {
     expect(await applyCachedPdfFigureSources(fixture.context)).toBe(fixture.extraction)
     expect(fixture.extraction.source.units[0].sourceOnly).toBeUndefined()
   })
+
+  it.each([
+    'stable',
+    'early replacement',
+    'late replacement',
+    'late in-place fingerprint',
+    'key-stage replacement'
+  ] as const)(
+    'publishes figure ownership only while the source remains current: %s',
+    async (mode) => {
+      const f = setup()
+      f.context.extraction = {
+        ...f.extraction,
+        source: createPdfTranslationSource({
+          ...f.extraction.source,
+          units: f.extraction.source.units.map((unit) =>
+            unit.id === 'prose'
+              ? { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
+              : unit
+          )
+        })
+      }
+      f.page.getTextContent.mockResolvedValue({
+        items: f.items,
+        styles: { f: { vertical: false, ascent: 0.8, descent: -0.2 } }
+      })
+      f.cached.elements = [
+        {
+          id: 'figure',
+          kind: 'figure',
+          issues: [],
+          regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
+          caption: {
+            text: 'Figure 1. Measured signals.',
+            regions: [{ page: 1, x: 0.05, y: 0.4, width: 0.7, height: 0.1 }]
+          },
+          sourceItems: [
+            { pageNumber: 1, index: 0, text: 'Row' },
+            { pageNumber: 1, index: 1, text: '10' }
+          ]
+        },
+        {
+          id: 'math',
+          kind: 'table',
+          issues: [{ code: 'no-source-cell-grid', detail: 'no-source-cell-grid' }],
+          regions: [{ page: 1, x: 0.05, y: 0.6, width: 0.7, height: 0.3 }],
+          caption: {
+            text: 'Table 1. Expressions.',
+            regions: [{ page: 1, x: 0.05, y: 0.92, width: 0.7, height: 0.05 }]
+          },
+          nativeBody: {
+            kind: 'math-table',
+            sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+          }
+        }
+      ]
+      const fingerprints = f.document.fingerprints,
+        originalFingerprint = fingerprints[0],
+        originalExtraction = structuredClone(f.context.extraction)
+      let pageReads = 0,
+        changedAtRead: number | undefined
+      f.document.getPage.mockImplementation(async () => {
+        pageReads++
+        if (mode === 'early replacement' && pageReads === 1) {
+          changedAtRead = pageReads
+          f.document.fingerprints = ['replacement']
+        }
+        if (mode === 'late replacement' && pageReads === 2) {
+          changedAtRead = pageReads
+          f.document.fingerprints = ['replacement']
+        }
+        if (mode === 'late in-place fingerprint' && pageReads === 2) {
+          changedAtRead = pageReads
+          fingerprints[0] = 'replacement'
+        }
+        if (mode === 'key-stage replacement' && pageReads === 4) {
+          changedAtRead = pageReads
+          f.document.fingerprints = ['replacement']
+        }
+        return f.page
+      })
+      const result = await applyCachedPdfFigureSources(f.context)
+      if (mode === 'stable') expect(result.source.units[0].sourceOnly).toBe(true)
+      else {
+        expect(result).toBe(f.context.extraction)
+        expect(result.source.units[0].sourceOnly).toBeUndefined()
+        expect(result.coverage).toBe(f.context.extraction.coverage)
+      }
+      // After the figure and original whole-region checks, an independent
+      // captioned-math proof reads this page once more. A stable source then
+      // reaches the detached-key candidate read. Neither stage may publish
+      // earlier figure ownership after a source-failure injection.
+      expect(pageReads).toBe(
+        mode === 'early replacement'
+          ? 1
+          : mode === 'stable' || mode === 'key-stage replacement'
+            ? 4
+            : 3
+      )
+      expect(changedAtRead).toBe(
+        mode === 'stable'
+          ? undefined
+          : mode === 'early replacement'
+            ? 1
+            : mode === 'key-stage replacement'
+              ? 4
+              : 2
+      )
+      expect(f.document.getPage.mock.calls).toEqual(Array.from({ length: pageReads }, () => [1]))
+      if (mode === 'stable' || mode === 'late in-place fingerprint') {
+        expect(f.document.fingerprints).toBe(fingerprints)
+        expect(fingerprints).toEqual([mode === 'stable' ? originalFingerprint : 'replacement'])
+      } else {
+        expect(f.document.fingerprints).not.toBe(fingerprints)
+        expect(f.document.fingerprints).toEqual(['replacement'])
+        expect(fingerprints).toEqual([originalFingerprint])
+      }
+      if (mode === 'stable')
+        expect(result.coverage).toEqual({
+          ...originalExtraction.coverage,
+          warnings: [
+            ...originalExtraction.coverage.warnings,
+            { unitId: 'prose', reasons: ['table-structure-unreliable'] }
+          ]
+        })
+      expect(result.source.fingerprint).toBe(originalExtraction.source.fingerprint)
+      expect(result.source.units[1]).toEqual(originalExtraction.source.units[1])
+      expect(structuredClone(f.context.extraction)).toEqual(originalExtraction)
+      expect(result.source.units.map((unit) => unit.source)).toEqual(['Row 10', 'Prose'])
+    }
+  )
 
   it('propagates cancellation and retains source when a figure cache read fails', async () => {
     const fixture = setup()
@@ -1231,6 +1766,7 @@ describe('cached PDF table source ownership', () => {
   it.each([
     '',
     'native-raster-composite-grid',
+    'native-vector-bar-chart',
     'native-disjoint-mixed-group',
     'native-raster-horizontal-array',
     'native-raster-side-by-side',
@@ -1261,7 +1797,7 @@ describe('cached PDF table source ownership', () => {
       ]
       const result = await applyCachedPdfFigureSources(fixture.context)
       expect(result.source.units).toEqual([
-        { ...fixture.extraction.source.units[0], sourceOnly: true },
+        { ...fixture.extraction.source.units[0], sourceOnly: true, figure: true },
         fixture.extraction.source.units[1]
       ])
       expect(result.coverage).toEqual(fixture.extraction.coverage)
@@ -1276,6 +1812,7 @@ describe('cached PDF table source ownership', () => {
     async (fault) => {
       for (const mechanism of [
         'native-raster-composite-grid',
+        'native-vector-bar-chart',
         'native-disjoint-mixed-group',
         'native-raster-horizontal-array',
         'native-raster-side-by-side',
@@ -2625,7 +3162,7 @@ describe('complete native mathematical source preservation', () => {
       const original = {
         ...f.extraction.source.units[0],
         source,
-        sourceOnly: true,
+        sourceOnly: true as const,
         fragments: [
           {
             pageNumber: 1,
@@ -3143,12 +3680,12 @@ it.each([
       expect(result.source.units.find((u) => u.id === 'prose')).toEqual(
         f.context.extraction.source.units[1]
       )
-    } else if (kind === 'partial-owner') {
-      expect(result.source.units).toEqual(f.context.extraction.source.units)
     } else {
-      expect(result.source.units.find((u) => u.id.startsWith('table-source:'))?.source).toBe(
-        '1 . 5 × 10 − 2'
-      )
+      expect(result.source.units).toEqual(f.context.extraction.source.units)
+      expect(result.source.units.some((u) => u.id.startsWith('table-source:'))).toBe(false)
+      expect(
+        result.coverage.warnings.some((w) => w.reasons.includes('table-structure-unreliable'))
+      ).toBe(true)
     }
     expect(f.cached).toEqual(before)
     expect({ ...result.coverage, warnings: [] }).toEqual({
@@ -3196,3 +3733,217 @@ it.each([
     warnings: []
   })
 })
+
+async function nativeCanonicalTable(kind: string) {
+  const require = createRequire(import.meta.url),
+    assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/',
+    pdf = await PDFDocument.create()
+  pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+  const regular = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
+    italic = await pdf.embedFont(await readFile(assets + 'LiberationSans-Italic.ttf')),
+    page = pdf.addPage([400, 240])
+  const draw = (text: string, x: number, y: number, size = 12, font = regular) => {
+    page.drawText(text, { font, size, x, y })
+    return x + font.widthOfTextAtSize(text, size)
+  }
+  const power = (label: string, y: number, value = '−3') => {
+    let x = draw(label, 40, y)
+    x = draw('10', x, y, 12, italic)
+    const end = draw(value, x + 0.01, y + 4.5, 8)
+    draw(')', end + 0.01, y)
+  }
+  if (kind === 'whole-scientific') {
+    let x = draw('1.5 ', 40, 175)
+    x = draw('× ', x, 175, 12, italic)
+    x = draw('10', x, 175)
+    draw('−2', x + 0.01, 179.5, 8)
+    page.drawRectangle({ x: 35, y: 160, width: 200, height: 40, borderWidth: 0.5 })
+    draw('Figure 1. Native measurements are retained in this independent specimen.', 35, 130, 8)
+  } else if (kind === 'no-canonical') {
+    const x = draw('Area R', 40, 175)
+    draw('64', x + 0.01, 179.5, 8)
+  } else if (kind === 'shared' || kind === 'maximal-run') {
+    draw(kind === 'shared' ? 'First (10⁻³)' : 'First (10⁻³⁴)', 40, 175)
+    draw('An independent ordinary paragraph separates the two original records.', 40, 135)
+    power('Second (', 95)
+  } else {
+    power('Scale (', 175)
+  }
+  draw('Ordinary surrounding prose stays independent.', 40, 35)
+  const bytes = await pdf.save(),
+    sourceIdentity = {
+      sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+      sourceSizeBytes: bytes.length
+    },
+    loading = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      standardFontDataUrl: assets
+    })
+  try {
+    const document = await loading.promise,
+      original = await extractPdfTranslationSource({
+        document,
+        resourceRequestKey: 'generated-canonical-conservation',
+        signal: new AbortController().signal,
+        sourceIdentity
+      }),
+      extraction =
+        kind === 'whole-scientific'
+          ? await preservePdfFigureSources({
+              document,
+              extraction: original,
+              operators: OPS,
+              signal: new AbortController().signal
+            })
+          : original,
+      nativePage = await document.getPage(1),
+      content = await nativePage.getTextContent()
+    const selected = extraction.source.units.filter(
+      (u) =>
+        u.fragments.some((f) => f.rect.y < 0.7) &&
+        !u.source.includes('independent ordinary paragraph') &&
+        !/^Figure 1\./u.test(u.source)
+    )
+    const origins = selected.flatMap((u) =>
+      u.fragments.flatMap((f) => f.items.map((i) => ({ pageNumber: f.pageNumber, ...i })))
+    )
+    origins.sort((a, b) => a.index - b.index)
+    const regions = origins.map(({ index }) => {
+      const item = content.items[index]
+      if (!('str' in item)) throw new Error('Missing real native text')
+      return {
+        page: 1,
+        x: item.transform[4] / 400,
+        y: (240 - item.transform[5] - item.height) / 240,
+        width: item.width / 400,
+        height: item.height / 240
+      }
+    })
+    const text = origins.map((i) => i.text).join(' '),
+      runs =
+        kind === 'whole-scientific'
+          ? [
+              { text: '1.5 × 10', position: 'normal' as const },
+              { text: '−2', position: 'superscript' as const }
+            ]
+          : kind === 'no-canonical'
+            ? [
+                { text: 'Area R', position: 'normal' as const },
+                { text: '64', position: 'superscript' as const }
+              ]
+            : undefined,
+      x = Math.min(...regions.map((r) => r.x)),
+      y = Math.min(...regions.map((r) => r.y)),
+      cached: PdfStructureResult = {
+        schemaVersion: 1,
+        extractionId: 'generated-native',
+        engineFingerprint: 'b'.repeat(64),
+        ...sourceIdentity,
+        pageCount: 1,
+        requestedPages: [1],
+        processedPages: [1],
+        pages: [{ page: 1, width: 400, height: 240, rotation: 0 }],
+        elements: [
+          {
+            id: 'native-table',
+            kind: 'table',
+            regions: [
+              {
+                page: 1,
+                x,
+                y,
+                width: Math.max(...regions.map((r) => r.x + r.width)) - x,
+                height: Math.max(...regions.map((r) => r.y + r.height)) - y
+              }
+            ],
+            issues: [],
+            table: {
+              rowCount: 1,
+              columnCount: 1,
+              issues: [],
+              unassignedText: [],
+              cells: [
+                {
+                  row: 0,
+                  column: 0,
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  text,
+                  ...(runs ? { textRuns: runs } : {}),
+                  sourceItems: origins,
+                  regions
+                }
+              ]
+            }
+          }
+        ],
+        thumbnails: [],
+        navigation: [],
+        issues: []
+      }
+    if (runs) cached.elements[0].table!.cells[0].text = runs.map((r) => r.text).join('')
+    return {
+      document,
+      extraction,
+      selected,
+      cached,
+      sourceIdentity,
+      destroy: () => loading.destroy()
+    }
+  } catch (error) {
+    await loading.destroy()
+    throw error
+  }
+}
+
+it.each(['compound', 'shared', 'maximal-run', 'whole-scientific', 'no-canonical'])(
+  'conserves canonical scripts from real native Source parents transactionally: %s',
+  async (kind) => {
+    const f = await nativeCanonicalTable(kind)
+    try {
+      const before = JSON.parse(JSON.stringify(f.extraction.source)),
+        input = structuredClone(f.cached),
+        result = await applyCachedPdfTableSources({
+          extraction: f.extraction,
+          document: f.document,
+          sourceId: 'generated-canonical-conservation',
+          sourceIdentity: f.sourceIdentity,
+          signal: new AbortController().signal,
+          readCached: async () => f.cached
+        }),
+        mapped = result.source.units.filter((u) => u.id.startsWith('table-source:'))
+      if (kind === 'whole-scientific') {
+        expect(f.selected).toHaveLength(1)
+        expect(f.selected[0].sourceOnly, JSON.stringify(f.selected)).toBe(true)
+        expect(f.selected[0].source).toContain('⁻²')
+        expect(mapped).toHaveLength(1)
+        expect(mapped[0].source).toBe(f.selected[0].source)
+      } else if (kind === 'no-canonical') {
+        expect(f.selected.every((u) => !/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻₀₁₂₃₄₅₆₇₈₉]/u.test(u.source))).toBe(true)
+        expect(mapped).toHaveLength(1)
+      } else {
+        if (kind === 'shared' || kind === 'maximal-run') {
+          expect(f.selected).toHaveLength(2)
+          expect(f.selected.every((u) => u.source.includes('⁻³'))).toBe(true)
+        } else expect(f.selected.some((u) => u.source.includes('⁻³'))).toBe(true)
+        expect(mapped).toHaveLength(0)
+        expect(result.source.units).toEqual(f.extraction.source.units)
+        expect(
+          result.coverage.warnings.some((w) => w.reasons.includes('table-structure-unreliable'))
+        ).toBe(true)
+      }
+      expect(JSON.parse(JSON.stringify(f.extraction.source))).toEqual(before)
+      expect(f.cached).toEqual(input)
+      expect({ ...result.coverage, warnings: [] }).toEqual({
+        ...f.extraction.coverage,
+        warnings: []
+      })
+    } finally {
+      await f.destroy()
+    }
+  }
+)

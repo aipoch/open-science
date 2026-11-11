@@ -21,6 +21,7 @@ export const backendOnlyElectronDependencies = [
   '@aipoch/literature-reading',
   '@aipoch/literature-screening',
   '@aipoch/reproducibility',
+  '@aipoch/research-film',
   'styled-exceljs',
   'tar',
   'brotli',
@@ -29,7 +30,11 @@ export const backendOnlyElectronDependencies = [
   'protobufjs',
   'flatbuffers',
   'guid-typescript',
-  'fflate'
+  'fflate',
+  'tesseract.js',
+  'tesseract.js-core',
+  '@tesseract.js-data/eng',
+  '@tesseract.js-data/chi_sim'
 ]
 
 export function assertElectronHostDependencies(specifiers, root) {

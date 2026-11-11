@@ -1,3 +1,4 @@
+import { acquirePdfStructureOcr, pdfStructureOcrFingerprint, type PdfStructureOcrUse } from './ocr'
 import { PDF_CLEANUP_PENDING } from '../../../shared/pdf-structure'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, rmdir } from 'node:fs/promises'
@@ -12,6 +13,7 @@ import {
   type PdfStructureIdentity,
   type PdfStructureResult
 } from '@aipoch/pdf-structure/result'
+import { isPdfStructureResourceLimitError, type PdfStructureEngine } from '@aipoch/pdf-structure'
 import { PdfStructureSourceAuthority, type PdfStructureSourceRequest } from './source'
 import { PdfStructureCache, type PdfStructureCacheClearResult } from './cache'
 
@@ -22,12 +24,11 @@ export type PdfStructureProgress = Readonly<{
   processedPages: readonly number[]
 }>
 
-import type { PdfStructureEngine } from '@aipoch/pdf-structure'
-
 type Dependencies = {
   sources: PdfStructureSourceAuthority
   models: Pick<LocalModelOwner, 'acquireUse'>
   engine: PdfStructureEngine
+  ocrModels?: Pick<LocalModelOwner, 'getSnapshot' | 'acquireUse'>
   dataRoot?: () => string
   acquireWriter?: () => () => void
 }
@@ -39,8 +40,11 @@ type Consumer = {
   reject: (error: unknown) => void
 }
 type Job = {
+  ocr?: PdfStructureOcrUse
+  ocrInExecution?: boolean
   key: string
   identity: PdfStructureIdentity
+  baseEngineFingerprint: string
   modelRevision: string
   controller: AbortController
   consumers: Set<Consumer>
@@ -125,12 +129,17 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       /* detached view */
     }
   }
+  const releaseOcr = (job: Job): void => {
+    job.ocr?.release()
+    job.ocr = undefined
+  }
   const cancelJob = (job: Job): void => {
     job.controller.abort(cancelled())
     const index = queue.indexOf(job)
     if (index !== -1) {
       queue.splice(index, 1)
       jobs.delete(job.key)
+      releaseOcr(job)
       for (const consumer of job.consumers) consumer.reject(cancelled())
       job.finish()
     }
@@ -152,6 +161,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
     job.controller.signal.throwIfAborted()
     // No outer writer here: the model use acquires the single long-lived migration reservation.
     const model = await dependencies.models.acquireUse()
+    job.ocrInExecution = Boolean(job.ocr)
     let directory: string | undefined
     let copy: ReturnType<PdfStructureSourceAuthority['stage']> | undefined
     let worker: ReturnType<PdfStructureEngine['start']> | undefined
@@ -174,6 +184,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       await stop()
       await cleanupFiles()
       model.release()
+      releaseOcr(job)
       retained.delete(cleanup)
     }
     try {
@@ -205,46 +216,75 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       }
       if (!copied) throw sourceError
       job.controller.signal.throwIfAborted()
-      worker = dependencies.engine.start({
-        inputPath,
-        model: { revision: model.revision, assets: model.assets.map((asset) => ({ ...asset })) },
-        identity: structuredClone(job.identity),
-        signal: job.controller.signal,
-        onProgress: ({ phase, processedPages }) => {
-          if (job.controller.signal.aborted) return
-          if (
-            new Set(processedPages).size !== processedPages.length ||
-            processedPages.some((page) => !job.identity.requestedPages.includes(page)) ||
-            job.progress.processedPages.some((page) => !processedPages.includes(page))
-          )
-            return
-          job.progress = {
-            state: 'running',
-            phase,
-            requestedPages: job.identity.requestedPages,
-            processedPages: [...processedPages].sort((a, b) => a - b)
+      const executeWorker = async (
+        identity: PdfStructureIdentity,
+        withOcr: boolean
+      ): Promise<unknown> => {
+        worker = dependencies.engine.start({
+          inputPath,
+          model: { revision: model.revision, assets: model.assets.map((asset) => ({ ...asset })) },
+          identity: structuredClone(identity),
+          ...(withOcr && job.ocr ? { ocr: job.ocr.options } : {}),
+          signal: job.controller.signal,
+          onProgress: ({ phase, processedPages }) => {
+            if (job.controller.signal.aborted) return
+            if (
+              new Set(processedPages).size !== processedPages.length ||
+              processedPages.some((page) => !job.identity.requestedPages.includes(page)) ||
+              job.progress.processedPages.some((page) => !processedPages.includes(page))
+            )
+              return
+            job.progress = {
+              state: 'running',
+              phase,
+              requestedPages: job.identity.requestedPages,
+              processedPages: [...processedPages].sort((a, b) => a - b)
+            }
+            for (const consumer of job.consumers) notify(consumer, job.progress)
           }
-          for (const consumer of job.consumers) notify(consumer, job.progress)
+        })
+        stopped = false
+        let abortListener!: () => void
+        const aborted = new Promise<never>((_, reject) => {
+          abortListener = () => reject(job.controller.signal.reason)
+          job.controller.signal.addEventListener('abort', abortListener, { once: true })
+          if (job.controller.signal.aborted) abortListener()
+        })
+        try {
+          return await Promise.race([worker.result, aborted])
+        } finally {
+          job.controller.signal.removeEventListener('abort', abortListener)
         }
-      })
-      let abortListener!: () => void
-      const aborted = new Promise<never>((_, reject) => {
-        abortListener = () => reject(job.controller.signal.reason)
-        job.controller.signal.addEventListener('abort', abortListener, { once: true })
-        if (job.controller.signal.aborted) abortListener()
-      })
+      }
       let output: unknown
       try {
-        output = await Promise.race([worker.result, aborted])
-      } finally {
-        job.controller.signal.removeEventListener('abort', abortListener)
+        output = await executeWorker(job.identity, Boolean(job.ocr))
+      } catch (error) {
+        if (!job.ocr || !isPdfStructureResourceLimitError(error)) throw error
+        const original = error
+        await stop()
+        releaseOcr(job)
+        job.ocrInExecution = false
+        job.controller.signal.throwIfAborted()
+        const retryIdentity = { ...job.identity, engineFingerprint: job.baseEngineFingerprint }
+        job.identity = retryIdentity
+        try {
+          output = await executeWorker(retryIdentity, false)
+        } catch (retryError) {
+          throw new AggregateError(
+            [original, retryError],
+            'PDF resource-limit retry without OCR failed.'
+          )
+        }
       }
       // Parsing the result and delivering it only happens after confirmed process teardown.
       await stop()
       job.controller.signal.throwIfAborted()
+      const thumbnails = worker?.thumbnails
+      if (!thumbnails) throw new Error('PDF worker returned no thumbnail inventory.')
       const result = await cache.publish(
         parsePdfStructureResult(output, job.identity),
-        worker.thumbnails,
+        thumbnails,
         job.controller.signal
       )
       job.accepting = false
@@ -263,8 +303,10 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         }
       }
     } finally {
-      if (stopped && !directory) model.release()
-      else
+      if (stopped && !directory) {
+        model.release()
+        releaseOcr(job)
+      } else
         await cleanup().catch((error: unknown) => {
           retained.add(cleanup)
           throw new Error(PDF_CLEANUP_PENDING, { cause: error })
@@ -287,6 +329,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
           for (const consumer of job.consumers) consumer.reject(error)
         } finally {
           jobs.delete(job.key)
+          if (!job.ocrInExecution) releaseOcr(job)
           job.finish()
           running--
           pump()
@@ -304,6 +347,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
     const controller = new AbortController()
     let job: Job | undefined
     let consumer: Consumer | undefined
+    let unclaimedOcr: PdfStructureOcrUse | undefined
     const detach = (): void => {
       if (!job || !consumer) return
       consumer.reject(controller.signal.reason ?? cancelled())
@@ -337,10 +381,30 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       controller.signal.throwIfAborted()
       if (source.sizeBytes > 50 * 1024 ** 2)
         throw new Error('PDF source exceeds the 50 MiB parsing limit.')
-      const recipe = await dependencies.engine.describe()
-      if (!/^[a-f0-9]{64}$/.test(recipe.fingerprint) || !recipe.modelRevision) {
+      const baseRecipe = await dependencies.engine.describe()
+      if (!/^[a-f0-9]{64}$/.test(baseRecipe.fingerprint) || !baseRecipe.modelRevision) {
         throw new Error('PDF engine recipe is invalid.')
       }
+      const baseCacheKey = {
+        sourceChecksum: source.checksum,
+        sourceSizeBytes: source.sizeBytes,
+        engineFingerprint: baseRecipe.fingerprint,
+        requestedPages
+      }
+      const baseCached = await withWriter(async () => {
+        controller.signal.throwIfAborted()
+        const result = await cache.read(baseCacheKey)
+        if (result) await dependencies.sources.reauthorize(sourceRequest, source)
+        controller.signal.throwIfAborted()
+        return result
+      })
+      if (baseCached) return baseCached
+      unclaimedOcr = await acquirePdfStructureOcr(dependencies.ocrModels)
+      const recipe = {
+        ...baseRecipe,
+        fingerprint: pdfStructureOcrFingerprint(baseRecipe.fingerprint, unclaimedOcr)
+      }
+      controller.signal.throwIfAborted()
       const cacheKey = {
         sourceChecksum: source.checksum,
         sourceSizeBytes: source.sizeBytes,
@@ -390,6 +454,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         })
         job = {
           key,
+          ocr: unclaimedOcr,
           modelRevision: recipe.modelRevision,
           controller: new AbortController(),
           consumers: new Set(),
@@ -401,13 +466,17 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
             engineFingerprint: recipe.fingerprint,
             requestedPages
           },
+          baseEngineFingerprint: baseRecipe.fingerprint,
           progress: { state: 'queued', requestedPages, processedPages: [] },
           settled,
           finish
         }
+        unclaimedOcr = undefined
         jobs.set(key, job)
         queue.push(job)
       }
+      unclaimedOcr?.release()
+      unclaimedOcr = undefined
       let resolve!: Consumer['resolve']
       let reject!: Consumer['reject']
       const completion = new Promise<PdfStructureResult>((yes, no) => {
@@ -434,6 +503,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         () => undefined
       )
       .finally(() => {
+        unclaimedOcr?.release()
         detach()
         requests.delete(controller)
         options.signal?.removeEventListener('abort', release)
@@ -491,21 +561,41 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       admit()
       signal?.throwIfAborted()
       const recipe = await dependencies.engine.describe()
-      return withWriter(async () => {
-        admit()
-        signal?.throwIfAborted()
-        const source = await dependencies.sources.resolve(sourceRequest)
-        const value = await read({
-          sourceChecksum: source.checksum,
-          sourceSizeBytes: source.sizeBytes,
-          engineFingerprint: recipe.fingerprint,
-          requestedPages
+      const source = await withWriter(() => dependencies.sources.resolve(sourceRequest))
+      let ocr: PdfStructureOcrUse | undefined
+      try {
+        const baseValue = await withWriter(() =>
+          read({
+            sourceChecksum: source.checksum,
+            sourceSizeBytes: source.sizeBytes,
+            engineFingerprint: recipe.fingerprint,
+            requestedPages
+          })
+        )
+        if (baseValue) {
+          await dependencies.sources.reauthorize(sourceRequest, source)
+          signal?.throwIfAborted()
+          return baseValue
+        }
+        ocr = await acquirePdfStructureOcr(dependencies.ocrModels)
+        const engineFingerprint = pdfStructureOcrFingerprint(recipe.fingerprint, ocr)
+        return await withWriter(async () => {
+          admit()
+          signal?.throwIfAborted()
+          const value = await read({
+            sourceChecksum: source.checksum,
+            sourceSizeBytes: source.sizeBytes,
+            engineFingerprint,
+            requestedPages
+          })
+          await dependencies.sources.reauthorize(sourceRequest, source)
+          signal?.throwIfAborted()
+          if (closed) throw new Error('PDF structure owner is closed.')
+          return value
         })
-        await dependencies.sources.reauthorize(sourceRequest, source)
-        signal?.throwIfAborted()
-        if (closed) throw new Error('PDF structure owner is closed.')
-        return value
-      })
+      } finally {
+        ocr?.release()
+      }
     })()
     const finished = operation
       .then(

@@ -19,7 +19,10 @@ import type {
 import type { JobSummary } from '../../../../shared/compute'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import { projectSessionActionability } from '@/stores/session-actionability'
+import {
+  isSessionDeletionAllowed,
+  projectSessionActionability
+} from '@/stores/session-actionability'
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 import {
@@ -289,6 +292,9 @@ const useWorkspaceSessionController = ({
       })
   }
   const openDelete = (session: ChatSession): void => {
+    const current =
+      useSessionStore.getState().sessions.find(({ id }) => id === session.id) ?? session
+    if (!isSessionDeletionAllowed(current)) return
     if (isPersistenceHydrated && canDeleteConversations && deletingIdsRef.current.size === 0) {
       setDeleteDialog({
         session,
@@ -300,7 +306,10 @@ const useWorkspaceSessionController = ({
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
-    const { session } = deleteDialog
+    const session =
+      useSessionStore.getState().sessions.find(({ id }) => id === deleteDialog.session.id) ??
+      deleteDialog.session
+    if (!isSessionDeletionAllowed(session)) return
     const sessionId = session.id
     if (deletingIdsRef.current.has(sessionId) || !beginSessionDeletion(sessionId)) return
     deletingIdsRef.current.add(sessionId)

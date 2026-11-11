@@ -149,7 +149,7 @@ const regressionEnricher = (
 }
 
 const crossref = (message: Record<string, unknown>): Response =>
-  new Response(JSON.stringify({ message }))
+  new Response(JSON.stringify({ message: { DOI: '10.1000/example', ...message } }))
 
 describe('LiteratureMetadataEnricher', () => {
   it.each([
@@ -862,7 +862,7 @@ it('requires a fresh search before applying a persisted legacy review', async ()
 })
 
 it('accepts a valid JSON response exactly at the byte limit', async () => {
-  const empty = JSON.stringify({ message: { extra: '' } })
+  const empty = JSON.stringify({ message: { DOI: '10.1000/example', extra: '' } })
   const { enricher } = regressionEnricher(
     item,
     crossref({ extra: 'a'.repeat(2 * 1024 * 1024 - Buffer.byteLength(empty)) })

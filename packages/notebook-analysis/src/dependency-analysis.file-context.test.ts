@@ -18332,7 +18332,1970 @@ describe('R integration callback file authority', () => {
   })
 })
 
+describe('R direct orthogonal prediction authority', () => {
+  const call = 'stats:::predict.poly(model,newdata=newdata)'
+  it.each([
+    call,
+    'predict.poly(model,newdata=newdata)',
+    'stats:::predict.poly(model,newdata)',
+    'stats:::predict.poly(new=newdata,obj=model)'
+  ])('withdraws caller paths across %s', async (expr) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload prediction paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a later path without certifying prediction method purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats:::predict.poly'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'predict.poly<-function(...)1;path<-"old.txt";fit<-predict.poly(model,newdata=newdata);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    'later<-function()stats:::predict.poly(model,newdata=newdata)',
+    'reference<-stats:::predict.poly'
+  ])('does not invoke deferred code %s', async (deferred) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + deferred + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    'stats:::predict.poly({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.poly(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)'
+  ])('revokes argument producers across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each(['stats:::predict.poly(model)', 'stats:::predict.poly(object=model)'])(
+    'retains paths when newdata is omitted in %s',
+    async (expr) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it('retains a serialized producer when newdata is omitted', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-stats:::predict.poly(model);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'cache.rds', format: 'rds', valueType: 'r-value' }
+    ])
+  })
+  it('evaluates an explicit object promise without inventing prediction effects', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";fit<-stats:::predict.poly({path<-"after.txt";model});base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+  it('keeps forwarded argument matching uncertain', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-stats:::predict.poly(model,...);base::readLines(path)'
+      )
+    ).toMatchObject({ reads: [], externalState: 'partial' })
+  })
+})
+
+describe('R finite QC authority is.finite', () => {
+  it.each([
+    'base::is.finite(base::c(1,2))',
+    'is.finite(x=base::c(1,NA_real_,Inf))',
+    'base:::is.finite(base::c(TRUE,FALSE))',
+    'base::is.finite(base::c("a","b"))',
+    'base::is.finite(x=base::c(1,2))',
+    'is.finite(base::c(1,2))'
+  ])('retains established primitive authority across %s', async (call) => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");path<-"old.txt";mask<-' +
+      call +
+      ';base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', code)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it.each([
+    'base::is.finite(model)',
+    'is.finite(x=model)',
+    'base::is.finite(x=model)',
+    'base:::is.finite(model)',
+    'base::is.finite(model,...)',
+    'base::is.finite(x=model,x=other)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-base::is.finite(model);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-base::is.finite(model)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code = 'fit<-base::is.finite(model);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'base::is.finite'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'is.finite<-function(...)1;path<-"old.txt";fit<-is.finite(model);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()base::is.finite(model)', 'pointer<-base::is.finite'])(
+    'does not execute deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    'base::is.finite({base::saveRDS(8,"cache.rds");model})',
+    'base::is.finite(x={base::saveRDS(8,"cache.rds");model})'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R sequence normalization authority toupper', () => {
+  it.each([
+    'base::toupper(model)',
+    'toupper(x=model)',
+    'base::toupper(x=model)',
+    'base:::toupper(model)',
+    'base::toupper(model,...)',
+    'base::toupper(x=model,x=other)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-base::toupper(model);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-base::toupper(model)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code = 'fit<-base::toupper(model);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'base::toupper'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'toupper<-function(...)1;path<-"old.txt";fit<-toupper(model);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()base::toupper(model)', 'pointer<-base::toupper'])(
+    'does not execute deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    'base::toupper({base::saveRDS(8,"cache.rds");model})',
+    'base::toupper(x={base::saveRDS(8,"cache.rds");model})'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R sequence normalization authority substr', () => {
+  it.each([
+    'base::substr(model,1,2)',
+    'substr(x=model,start=1,stop=2)',
+    'base::substr(x=model,start=1,stop=2)',
+    'base:::substr(model,1,2)',
+    'base::substr(model,1,2,...)',
+    'base::substr(x=model,start=1,stop=2,x=other)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-base::substr(model,1,2);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-base::substr(model,1,2)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code = 'fit<-base::substr(model,1,2);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'base::substr'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'substr<-function(...)1;path<-"old.txt";fit<-substr(model,1,2);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()base::substr(model,1,2)', 'pointer<-base::substr'])(
+    'does not execute deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    'base::substr({base::saveRDS(8,"cache.rds");model},1,2)',
+    'base::substr(x={base::saveRDS(8,"cache.rds");model},start=1,stop=2)'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R sequence normalization authority chartr', () => {
+  it.each([
+    'base::chartr("acgt","tgca",model)',
+    'chartr(old="acgt",new="tgca",x=model)',
+    'base::chartr(old="acgt",new="tgca",x=model)',
+    'base:::chartr("acgt","tgca",model)',
+    'base::chartr("acgt","tgca",model,...)',
+    'base::chartr(old="acgt",new="tgca",x=model,x=other)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-base::chartr("acgt","tgca",model);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-base::chartr("acgt","tgca",model)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code = 'fit<-base::chartr("acgt","tgca",model);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'base::chartr'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'chartr<-function(...)1;path<-"old.txt";fit<-chartr("acgt","tgca",model);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()base::chartr("acgt","tgca",model)', 'pointer<-base::chartr'])(
+    'does not execute deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    'base::chartr("acgt","tgca",{base::saveRDS(8,"cache.rds");model})',
+    'base::chartr(old="acgt",new="tgca",x={base::saveRDS(8,"cache.rds");model})'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R sequence normalization primitive proof', () => {
+  it.each([
+    'base::substr("acgt",1,2)',
+    'base::toupper(base::substr(base::c("acgt","tgca"),1,2))',
+    'base::toupper("acgt")',
+    'toupper(x=base::c("acgt","tgca"))',
+    'base:::toupper(8)',
+    'base::chartr("acgt","tgca","acgt")',
+    'chartr(x="acgt",new="tgca",old="acgt")',
+    'base:::chartr("12","34",12)'
+  ])('retains ordinary proof across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");converted<-' +
+      call +
+      ';flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it.each([
+    'base::substr(base::c(1,2),1,2)',
+    'base::toupper(base::c(1,2))',
+    'base::chartr("12","34",base::c(1,2))'
+  ])('bypasses unrelated conversion defaults across %s', async (call) => {
+    const source =
+      'as.character.default<-function(...)stop("default");as.character.numeric<-function(...)stop("numeric");path<-"old.txt";converted<-' +
+      call +
+      ';flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it.each(['base::substr(model,1,2)', 'base::toupper(model)', 'base::chartr("acgt","tgca",model)'])(
+    'does not grant atomic proof across %s',
+    async (call) => {
+      const source =
+        'model<-structure(base::c(1,2),class="audit_sequence");path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");converted<-' +
+        call +
+        ';flags<-base::is.finite(converted);base::readLines(path)'
+      const io = await analyzeNotebookSourceFileAccess('r', source)
+      expect(io).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect(io.reads).not.toContain('old.txt')
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    }
+  )
+  it.each([false, true])('retains ordinary bindings warm=%s', async (warm) => {
+    const context = await fileContext('r', ['ordinary<-base::c("acgt","tgca")'], [], warm)
+    for (const call of [
+      'base::substr(ordinary,1,2)',
+      'base::toupper(ordinary)',
+      'base::chartr("acgt","tgca",ordinary)'
+    ]) {
+      const source =
+        'path<-"old.txt";converted<-' +
+        call +
+        ';flags<-base::is.finite(converted);base::readLines(path)'
+      expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+        reads: ['old.txt'],
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+    }
+  })
+})
+
+describe('R logical mask primitive proof', () => {
+  it.each([
+    'base::as.logical(base::c(-1,0,1))',
+    'as.logical(base::c(-1,0,1))',
+    'base:::as.logical(base::c(-1,0,1))',
+    'base::as.logical()',
+    'base::as.logical(x=base::c(-1,0,1))'
+  ])('retains ordinary input proof across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");converted<-' +
+      call +
+      ';flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('does not invoke a default method for an ordinary input', async () => {
+    const source =
+      'as.logical.default<-function(...)stop("default");path<-"old.txt";converted<-base::as.logical(base::c(-1,0,1));flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it('does not grant atomic output proof to a classed input', async () => {
+    const source =
+      'model<-structure(base::c(-1,0,1),class="audit_mask");path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");converted<-base::as.logical(model);flags<-base::is.finite(converted);base::readLines(path)'
+    const io = await analyzeNotebookSourceFileAccess('r', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).not.toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])('retains ordinary bindings warm=%s', async (warm) => {
+    const context = await fileContext('r', ['ordinary<-base::c(-1,0,1)'], [], warm)
+    const source =
+      'path<-"old.txt";converted<-base::as.logical(ordinary);flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+})
+
+describe('R integer quantization primitive proof', () => {
+  it.each([
+    'base::as.integer(base::c(-2.7,1.3))',
+    'as.integer(base::c(-2.7,1.3))',
+    'base:::as.integer(base::c(-2.7,1.3))',
+    'base::as.integer()',
+    'base::as.integer(x=base::c(-2.7,1.3))'
+  ])('retains ordinary input proof across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");converted<-' +
+      call +
+      ';flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('does not invoke a default method for an ordinary input', async () => {
+    const source =
+      'as.integer.default<-function(...)stop("default");path<-"old.txt";converted<-base::as.integer(base::c(-2.7,1.3));flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it('does not grant atomic output proof to a classed input', async () => {
+    const source =
+      'model<-structure(base::c(-2.7,1.3),class="audit_count");path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");converted<-base::as.integer(model);flags<-base::is.finite(converted);base::readLines(path)'
+    const io = await analyzeNotebookSourceFileAccess('r', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).not.toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])('retains ordinary bindings warm=%s', async (warm) => {
+    const context = await fileContext('r', ['ordinary<-base::c(-2.7,1.3)'], [], warm)
+    const source =
+      'path<-"old.txt";converted<-base::as.integer(ordinary);flags<-base::is.finite(converted);base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+})
+
+describe('R vector layout atomic unname', () => {
+  it.each(['unname(c(a=1,b=2))', 'base::unname(c(a=1,b=2))', 'unname(obj=c(a=1,b=2),force=TRUE)'])(
+    'retains known numeric paths across %s',
+    async (call) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";value<-' + call + ';base::readLines(path)'
+        )
+      ).toMatchObject({ reads: ['old.txt'], readState: 'complete', writeState: 'complete' })
+    }
+  )
+})
+
+describe('R range normalization atomic proof', () => {
+  it.each(['range(c(1,2,4))', 'base::range(c(1,2,4))', 'range(c(1,2,4),finite=TRUE)'])(
+    'retains proven numeric paths across %s',
+    async (call) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";value<-' + call + ';base::readLines(path)'
+        )
+      ).toMatchObject({ reads: ['old.txt'], readState: 'complete', writeState: 'complete' })
+    }
+  )
+})
+
+describe('R smoother initialization authority KalmanSmooth', () => {
+  it.each([
+    'stats::KalmanSmooth(series,model)',
+    'stats::KalmanSmooth(series,model,nit=0)',
+    'stats::KalmanSmooth(y=series,mod=model,nit=0L)'
+  ])('retains paths with a default or literal initialization argument %s', async (call) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + call + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+    expect(
+      (
+        await analyzeRNotebookSource(
+          'base::saveRDS(base::c(1,2),"cache.rds");' + call + ';base::readRDS("cache.rds")'
+        )
+      ).facts.serializedValueWrites
+    ).toHaveLength(1)
+  })
+  it.each([
+    'stats::KalmanSmooth(series,model,nit=burn)',
+    'KalmanSmooth(y=series,mod=model,nit=burn)',
+    'stats::KalmanSmooth(y=series,mod=model,nit=burn)',
+    'stats:::KalmanSmooth(series,model,nit=burn)',
+    'stats::KalmanSmooth(series,model,nit=burn,...)',
+    'stats::KalmanSmooth(y=series,mod=model,nit=burn,nit=other)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-stats::KalmanSmooth(series,model,nit=burn);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-stats::KalmanSmooth(series,model,nit=burn)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code =
+      'fit<-stats::KalmanSmooth(series,model,nit=burn);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'stats::KalmanSmooth'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'KalmanSmooth<-function(...)1;path<-"old.txt";fit<-KalmanSmooth(series,model,nit=burn);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    'later<-function()stats::KalmanSmooth(series,model,nit=burn)',
+    'pointer<-stats::KalmanSmooth'
+  ])('does not execute deferred code %s', async (deferred) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + deferred + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    'stats::KalmanSmooth(series,model,{base::saveRDS(8,"cache.rds");burn})',
+    'stats::KalmanSmooth(y=series,mod=model,nit={base::saveRDS(8,"cache.rds");burn})'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+for (const diagnostic of ['cooks.distance', 'covratio', 'dffits']) {
+  describe(`R deletion diagnostic authority ${diagnostic}`, () => {
+    it.each([
+      `stats::${diagnostic}(model)`,
+      `${diagnostic}(model=model)`,
+      `stats::${diagnostic}(model=model)`,
+      `stats:::${diagnostic}(model)`,
+      `stats::${diagnostic}(model,...)`,
+      `stats::${diagnostic}(model=model,model=other)`
+    ])('withdraws paths across %s', async (call) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+        )
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    })
+    it('revokes a preceding serialized producer', async () => {
+      const code = `base::saveRDS(base::c(1,2),"cache.rds");fit<-stats::${diagnostic}(model);base::readRDS("cache.rds")`
+      expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+      expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+    })
+    it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', `fit<-stats::${diagnostic}(model)`],
+        [],
+        warm
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    })
+    it('retains later assignments without granting purity', async () => {
+      const code = `fit<-stats::${diagnostic}(model);path<-"after.txt";base::readLines(path)`
+      expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+      expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+        `stats::${diagnostic}`
+      )
+    })
+    it('retains a local replacement', async () => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            `${diagnostic}<-function(...)1;path<-"old.txt";fit<-${diagnostic}(model);base::readLines(path)`
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    })
+    it.each([`later<-function()stats::${diagnostic}(model)`, `pointer<-stats::${diagnostic}`])(
+      'does not execute deferred code %s',
+      async (deferred) => {
+        expect(
+          (
+            await analyzeNotebookSourceFileAccess(
+              'r',
+              'path<-"old.txt";' + deferred + ';base::readLines(path)'
+            )
+          ).reads
+        ).toEqual(['old.txt'])
+      }
+    )
+    it.each([
+      `stats::${diagnostic}({base::saveRDS(8,"cache.rds");model})`,
+      `stats::${diagnostic}(model={base::saveRDS(8,"cache.rds");model})`
+    ])('revokes argument producers across %s', async (code) => {
+      expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    })
+  })
+}
+
+describe('R plotting position authority', () => {
+  it.each([
+    'stats::ppoints(count)',
+    'ppoints(n=count,a=.5)',
+    'stats::ppoints(count,a=0)',
+    'stats::ppoints(n=count,a=offset)',
+    'stats::ppoints(count,...)',
+    'stats::ppoints(n=0,n=count)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-stats::ppoints(count,a=.5);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-stats::ppoints(count)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code = 'fit<-stats::ppoints(count);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'stats::ppoints'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'ppoints<-function(...)1;path<-"old.txt";fit<-ppoints(count);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()stats::ppoints(count)', 'pointer<-stats::ppoints'])(
+    'does not execute deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    'stats::ppoints({base::saveRDS(8,"cache.rds");count})',
+    'stats::ppoints(n={base::saveRDS(8,"cache.rds");count},a=.5)'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each(['stats::ppoints(0)', 'stats::ppoints(n=0L)', 'stats::ppoints(a=.5,n=0)'])(
+    'retains zero-count authority for %s',
+    async (call) => {
+      const code =
+        'path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");fit<-' +
+        call +
+        ';base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites).toContainEqual({
+        path: 'cache.rds',
+        format: 'rds',
+        valueType: 'r-value'
+      })
+    }
+  )
+})
+
+describe('R endpoint smoothing authority', () => {
+  it.each([
+    'stats::smoothEnds(values)',
+    'smoothEnds(y=values,k=5)',
+    'stats::smoothEnds(values,k=7)',
+    'stats::smoothEnds(y=values,k=bandwidth)',
+    'stats::smoothEnds(values,...)',
+    'stats::smoothEnds(values,k=1,k=3)'
+  ])('withdraws paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-stats::smoothEnds(values,k=3);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not restore paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-stats::smoothEnds(values)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains later assignments without granting purity', async () => {
+    const code = 'fit<-stats::smoothEnds(values);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.safeCallNames ?? []).not.toContain(
+      'stats::smoothEnds'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'smoothEnds<-function(...)1;path<-"old.txt";fit<-smoothEnds(values);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()stats::smoothEnds(values)', 'pointer<-stats::smoothEnds'])(
+    'does not execute deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    'stats::smoothEnds({base::saveRDS(8,"cache.rds");values})',
+    'stats::smoothEnds(y={base::saveRDS(8,"cache.rds");values},k=5)'
+  ])('revokes argument producers across %s', async (code) => {
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([
+    'stats::smoothEnds(values,1)',
+    'stats::smoothEnds(y=values,k=1L)',
+    'stats::smoothEnds(k=1,y=values)'
+  ])('retains pass-through authority for %s', async (call) => {
+    const code =
+      'path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites).toContainEqual({
+      path: 'cache.rds',
+      format: 'rds',
+      valueType: 'r-value'
+    })
+  })
+})
+
+describe.each(['napredict', 'naresid', 'napredict.exclude', 'naresid.exclude'])(
+  'R result restoration authority %s',
+  (method) => {
+    const call = `stats:::${method}(omission,values)`
+    it.each([call, `stats:::${method}(omit=omission,x=values)`])(
+      'withdraws caller paths across %s',
+      async (expr) => {
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+          )
+        ).toMatchObject({
+          reads: [],
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+      }
+    )
+    it('revokes a preceding serialized producer', async () => {
+      const source =
+        'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    })
+    it.each([false, true])('does not reload restoration paths warm=%s', async (warm) => {
+      const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    })
+    it('retains a later path without certifying subsetting method purity', async () => {
+      const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+        `stats:::${method}`
+      )
+    })
+    it('retains a local replacement', async () => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            `${method}<-function(...)1;path<-"old.txt";fit<-${method}(omission,values);base::readLines(path)`
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    })
+    it.each([
+      `later<-function()stats:::${method}(omission,values)`,
+      `reference<-stats:::${method}`
+    ])('does not invoke deferred code %s', async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    })
+    it.each([
+      `stats:::${method}(omission,{base::saveRDS(8,"cache.rds");values})`,
+      `stats:::${method}(omit=omission,x={base::saveRDS(8,"cache.rds");values})`
+    ])('revokes argument producers across %s', async (source) => {
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    })
+  }
+)
+
+describe.each(['napredict', 'naresid'])('R unqualified restoration %s', (method) => {
+  it('withdraws caller authority', async () =>
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";v<-' + method + '(omission,values);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual([]))
+})
+describe.each(['napredict.default', 'naresid.default'])(
+  'R restoration pass-through %s',
+  (method) => {
+    it('preserves the input without invoking subsetting', async () => {
+      const code =
+        'base::saveRDS(base::c(1,2),"cache.rds");path<-"old.txt";v<-stats:::' +
+        method +
+        '(omission,values);base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites).toContainEqual({
+        path: 'cache.rds',
+        format: 'rds',
+        valueType: 'r-value'
+      })
+    })
+  }
+)
+
+describe('R histogram and raster invocation authority review', () => {
+  it.each([
+    'graphics::hist(model,breaks=c(0,1,2),plot=FALSE)',
+    'graphics:::hist(model,breaks=c(0,1,2),plot=FALSE)',
+    'hist(x=model,breaks=3,plot=FALSE)',
+    'graphics::hist.default(model,breaks=c(0,1,2),plot=FALSE)',
+    'graphics::hist.default(structure(c(1,2),class="custom"),breaks=3,plot=FALSE)',
+    'graphics::hist(c(1,2),breaks=c(0,1,2),freq=flag,plot=FALSE)'
+  ])('revokes unknown histogram operands across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(1,"cache.rds");out<-' +
+      call +
+      ';base::readLines(path);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'hist.numeric',
+    'hist.integer',
+    'hist.default',
+    'diff.numeric',
+    'sort.numeric',
+    'pretty.numeric',
+    'mean.numeric',
+    'median.numeric',
+    'quantile.numeric'
+  ])('revokes a histogram proof after rebinding %s', async (method) => {
+    const source =
+      method +
+      '<-function(x,...)1;path<-"old.txt";base::saveRDS(1,"cache.rds");' +
+      'out<-graphics::hist(c(1,2),breaks=c(0,1,2,3,4,5,6),plot=FALSE);' +
+      'base::readLines(path);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['cache.rds'])
+  })
+  it.each(['hist', 'graphics::hist', 'graphics:::hist', 'graphics::hist.default'])(
+    'retains ordinary histogram operands for %s',
+    async (callee) => {
+      const source =
+        'path<-"old.txt";base::saveRDS(1,"cache.rds");out<-' +
+        callee +
+        '(c(1,2),breaks=c(0,1,2),plot=FALSE);base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.serializedValueWrites).toContainEqual({
+        path: 'cache.rds',
+        format: 'rds',
+        valueType: 'r-value'
+      })
+      expect(facts.rAtomicValueNames ?? []).not.toContain('out')
+    }
+  )
+  it('does not apply generic hist methods to a direct default call', async () => {
+    const source =
+      'hist.numeric<-function(x,...)1;path<-"old.txt";out<-graphics::hist.default(c(1,2),breaks=c(0,1,2),plot=FALSE);base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+  })
+  it('revokes the label drawing method without trusting numeric histogram input', async () => {
+    const source =
+      'text.numeric<-function(x,...)1;path<-"old.txt";base::saveRDS(1,"cache.rds");out<-graphics::hist.default(c(1,2),breaks=c(0,1,2),labels=TRUE);base::readLines(path);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['cache.rds'])
+  })
+  it.each(['plot=FALSE,labels=TRUE', 'plot=TRUE,labels=FALSE'])(
+    'does not invoke text methods for a closed label branch %s',
+    async (options) => {
+      const source =
+        'text.numeric<-function(x,...)1;path<-"old.txt";out<-graphics::hist.default(c(1,2),breaks=c(0,1,2),' +
+        options +
+        ');base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    }
+  )
+  it.each(['::', ':::'])(
+    'revokes histogram and native raster proofs when %s is replaced',
+    async (operator) => {
+      for (const call of [
+        `graphics${operator}hist(c(1,2),breaks=c(0,1,2),plot=FALSE)`,
+        `graphics${operator}hist.default(c(1,2),breaks=c(0,1,2),plot=FALSE)`,
+        `graphics${operator}rasterImage(structure(matrix(0L,2,2),class="nativeRaster"),0,0,1,1)`
+      ]) {
+        const source =
+          '`' +
+          operator +
+          '`<-function(...)function(...)1;path<-"old.txt";out<-' +
+          call +
+          ';readLines(path)'
+        expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+      }
+    }
+  )
+  it.each([false, true])('rebuilds histogram method uncertainty warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['hist.numeric<-function(x,...)1', 'path<-"old.txt"'],
+      [],
+      warm
+    )
+    const source = 'out<-graphics::hist(c(1,2),breaks=c(0,1,2),plot=FALSE);base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source, context)).reads).toEqual([])
+  })
+})
+
+describe.each(['ts.intersect', 'ts.union'])('R time alignment authority %s', (method) => {
+  const call = `stats::${method}(series,peer)`
+  it.each([call, `${method}(series,peer)`, `stats::${method}(left=series,right=peer)`])(
+    'withdraws caller paths across %s',
+    async (expr) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+        )
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+  it.each([
+    `stats::${method}(series)`,
+    `stats::${method}(series,dframe=FALSE)`,
+    `stats::${method}(series,NULL)`
+  ])('retains authority for single-series fast path %s', async (expr) => {
+    const code =
+      'base::saveRDS(base::c(1,2),"cache.rds");path<-"old.txt";joined<-' +
+      expr +
+      ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(code)).facts.serializedValueWrites).toContainEqual({
+      path: 'cache.rds',
+      format: 'rds',
+      valueType: 'r-value'
+    })
+  })
+  it('withdraws single-series data-frame conversion authority', async () => {
+    const code =
+      'path<-"old.txt";joined<-stats::' + method + '(series,dframe=TRUE);base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', code)).reads).toEqual([])
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload alignment paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a later path without certifying series conversion purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      `stats::${method}`
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `${method}<-function(...)1;path<-"old.txt";fit<-${method}(series,peer);base::readLines(path)`
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([`later<-function()stats::${method}(series,peer)`, `reference<-stats::${method}`])(
+    'does not invoke deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    `stats::${method}({base::saveRDS(8,"cache.rds");series},peer)`,
+    `stats::${method}(left={base::saveRDS(8,"cache.rds");series},right=peer)`
+  ])('revokes argument producers across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R local linear smoothing authority', () => {
+  const call = `stats::lowess(coordinates,response,f=1,iter=0,delta=0)`
+  it.each([
+    call,
+    `lowess(coordinates,response,f=1,iter=0,delta=0)`,
+    `stats::lowess(x=coordinates,y=response,f=1,iter=0,delta=0)`
+  ])('withdraws caller paths across %s', async (expr) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload smoothing paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a later path without certifying coordinate conversion purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      `stats::lowess`
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `lowess<-function(...)1;path<-"old.txt";fit<-lowess(coordinates,response,f=1,iter=0,delta=0);base::readLines(path)`
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    `later<-function()stats::lowess(coordinates,response,f=1,iter=0,delta=0)`,
+    `reference<-stats::lowess`
+  ])('does not invoke deferred code %s', async (deferred) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + deferred + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    `stats::lowess({base::saveRDS(8,"cache.rds");coordinates})`,
+    `stats::lowess(x={base::saveRDS(8,"cache.rds");coordinates})`
+  ])('revokes argument producers across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe.each(['na.contiguous', 'na.contiguous.default'])(
+  'R contiguous window authority %s',
+  (method) => {
+    const call = `stats:::${method}(series)`
+    it.each([call, `${method}(series)`, `stats:::${method}(object=series)`])(
+      'withdraws caller paths across %s',
+      async (expr) => {
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+          )
+        ).toMatchObject({
+          reads: [],
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+      }
+    )
+    it('revokes a preceding serialized producer', async () => {
+      const source =
+        'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    })
+    it.each([false, true])('does not reload window paths warm=%s', async (warm) => {
+      const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    })
+    it('retains a later path without certifying missingness method purity', async () => {
+      const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+        `stats:::${method}`
+      )
+    })
+    it('retains a local replacement', async () => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            `${method}<-function(...)1;path<-"old.txt";fit<-${method}(series);base::readLines(path)`
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    })
+    it.each([`later<-function()stats:::${method}(series)`, `reference<-stats:::${method}`])(
+      'does not invoke deferred code %s',
+      async (deferred) => {
+        expect(
+          (
+            await analyzeNotebookSourceFileAccess(
+              'r',
+              'path<-"old.txt";' + deferred + ';base::readLines(path)'
+            )
+          ).reads
+        ).toEqual(['old.txt'])
+      }
+    )
+    it.each([
+      `stats:::${method}({base::saveRDS(8,"cache.rds");series})`,
+      `stats:::${method}(object={base::saveRDS(8,"cache.rds");series})`
+    ])('revokes argument producers across %s', async (source) => {
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    })
+  }
+)
+
+describe('R autocovariance AR authority', () => {
+  const call = `stats::acf2AR(sequence)`
+  it.each([call, `acf2AR(sequence)`, `stats::acf2AR(acf=sequence)`])(
+    'withdraws caller paths across %s',
+    async (expr) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+        )
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+  it('revokes a preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload coefficient paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a later path without certifying coefficient conversion purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      `stats::acf2AR`
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `acf2AR<-function(...)1;path<-"old.txt";fit<-acf2AR(sequence);base::readLines(path)`
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([`later<-function()stats::acf2AR(sequence)`, `reference<-stats::acf2AR`])(
+    'does not invoke deferred code %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+  it.each([
+    `stats::acf2AR({base::saveRDS(8,"cache.rds");sequence})`,
+    `stats::acf2AR(acf={base::saveRDS(8,"cache.rds");sequence})`
+  ])('revokes argument producers across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R cross-tabulation authority', () => {
+  const call = `stats::xtabs(formula,data=table,na.action=handler)`
+  it.each([
+    call,
+    `xtabs(formula,data=table,na.action=handler)`,
+    `stats::xtabs(formula,table,na.action=handler)`,
+    `stats::xtabs(formula,data=table)`
+  ])('withdraws caller paths across %s', async (expr) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload tabulation paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a later path without certifying tabulation callback purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      `stats::xtabs`
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `xtabs<-function(...)1;path<-"old.txt";fit<-xtabs(formula,data=table,na.action=handler);base::readLines(path)`
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    `later<-function()stats::xtabs(formula,data=table,na.action=handler)`,
+    `reference<-stats::xtabs`
+  ])('does not invoke deferred code %s', async (deferred) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + deferred + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    `stats::xtabs({base::saveRDS(8,"cache.rds");formula},data=table,na.action=handler)`,
+    `stats::xtabs(formula={base::saveRDS(8,"cache.rds");formula},data=table,na.action=handler)`
+  ])('revokes argument producers across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R cross-correlation authority', () => {
+  const call = `stats::ccf(signal,comparison,lag.max=4,plot=FALSE)`
+  it.each([
+    call,
+    `stats::ccf(signal,comparison,plot=FALSE)`,
+    `ccf(signal,comparison,lag.max=4,plot=FALSE)`,
+    `stats::ccf(x=signal,y=comparison,lag.max=4,type="covariance",plot=FALSE)`
+  ])('withdraws caller paths across %s', async (expr) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes a preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload cross-correlation paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a later path without certifying cross-correlation method purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      `stats::ccf`
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `ccf<-function(...)1;path<-"old.txt";fit<-ccf(signal,comparison,lag.max=4,plot=FALSE);base::readLines(path)`
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    `later<-function()stats::ccf(signal,comparison,lag.max=4,plot=FALSE)`,
+    `reference<-stats::ccf`
+  ])('does not invoke deferred code %s', async (deferred) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + deferred + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    `stats::ccf({base::saveRDS(8,"cache.rds");signal},y=comparison,lag.max=4,plot=FALSE)`,
+    `stats::ccf(x={base::saveRDS(8,"cache.rds");signal},y=comparison,lag.max=4,plot=FALSE)`
+  ])('revokes argument producers across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R prediction generic method effects', () => {
+  it.each([
+    'stats::predict(model,newdata=data)',
+    'predict(model,newdata=data)',
+    'stats::predict(object=model,newx=axis)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('withdraws a serialized producer before dispatch', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-stats::predict(model,newdata=data);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload dispatched paths warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'fit<-stats::predict(model,newdata=data)'],
+      [],
+      warm
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains a proven local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'predict<-function(...)1;path<-"old.txt";fit<-predict(model);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['later<-function()stats::predict(model,newdata=data)', 'reference<-stats::predict'])(
+    'does not invoke deferred %s',
+    async (deferred) => {
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'path<-"old.txt";' + deferred + ';base::readLines(path)'
+          )
+        ).reads
+      ).toEqual(['old.txt'])
+    }
+  )
+})
+
+describe('R native raster drawing bounds', () => {
+  const native = 'structure(matrix(0L,2,2),class="nativeRaster")'
+  it.each([
+    `rasterImage(${native},0,0,1,1)`,
+    'graphics::rasterImage(base::structure(base::matrix(0L,2,2),class="nativeRaster"),0,0,1,1)',
+    `graphics::rasterImage(image=${native},ytop=1,xright=1,ybottom=0,xleft=0,angle=0,interpolate=FALSE)`,
+    'structure<-custom;graphics::rasterImage(base::structure(base::matrix(0L,2,2),class="nativeRaster"),0,0,1,1)'
+  ])('retains explicit paths for bounded drawing %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it.each([
+    'graphics::rasterImage(stored_native,0,0,1,1)',
+    'graphics::rasterImage(structure(matrix(0L,2,2),class="raster"),0,0,1,1)',
+    'graphics::rasterImage(structure(matrix(0L,2,2),class="nativeRaster",tag=unknown),0,0,1,1)',
+    `graphics::rasterImage(${native},position,0,1,1)`,
+    `graphics::rasterImage(${native},0,0,1,1,angle=theta)`,
+    `graphics::rasterImage(${native},0,0,1,1,interpolate=mode)`,
+    `graphics::rasterImage(${native},0,0,1,1,extra=value)`,
+    `graphics::rasterImage(${native},structure(0,class="audit_position"),0,1,1)`,
+    `left<-0;graphics::rasterImage(${native},left,0,1,1)`,
+    'pixels<-0L;graphics::rasterImage(structure(matrix(pixels,2,2),class="nativeRaster"),0,0,1,1)',
+    `left<-0;grDevices::as.raster(image);path<-"old.txt";graphics::rasterImage(${native},left,0,1,1)`,
+    `structure<-custom;graphics::rasterImage(${native},0,0,1,1)`,
+    `matrix<-custom;graphics::rasterImage(${native},0,0,1,1)`
+  ])('withdraws paths when native drawing remains unproved %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+})
+
+describe('R Tukey screening method authority', () => {
+  const call = 'grDevices::boxplot.stats(sample)'
+  it.each([
+    call,
+    'boxplot.stats(sample)',
+    'grDevices:::boxplot.stats(sample)',
+    'grDevices::boxplot.stats(x=sample,coef=0)',
+    'grDevices::boxplot.stats(sample,do.conf=FALSE,do.out=FALSE)',
+    'grDevices::boxplot.stats(sample,coef=fence)'
+  ])('withdraws caller paths across %s', async (expr) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + expr + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it('revokes the preceding serialized producer', async () => {
+    const source =
+      'base::saveRDS(base::c(1,2),"cache.rds");fit<-' + call + ';base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('does not reload successful screening paths warm=%s', async (warm) => {
+    const context = await fileContext('r', ['path<-"old.txt"', 'fit<-' + call], [], warm)
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('retains an explicit later path without certifying result purity', async () => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'grDevices::boxplot.stats'
+    )
+  })
+  it('retains a local replacement', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'boxplot.stats<-function(...)1;path<-"old.txt";fit<-boxplot.stats(sample);base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    'later<-function()grDevices::boxplot.stats(sample)',
+    'reference<-grDevices::boxplot.stats'
+  ])('does not invoke deferred code %s', async (deferred) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + deferred + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each([
+    'grDevices::boxplot.stats({base::saveRDS(8,"cache.rds");sample})',
+    'grDevices::boxplot.stats(sample,coef={base::saveRDS(8,"cache.rds");1.5})'
+  ])('revokes an argument producer across %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([
+    'grDevices::boxplot.stats(c(1,2,3),coef=0,do.conf=FALSE,do.out=FALSE)',
+    'boxplot.stats(x=1:3,coef=1.5,do.out=TRUE)'
+  ])('preserves bounded ordinary calls: %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: ['old.txt'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it.each(['sort.integer', 'diff.numeric'])(
+    'withdraws proof after replacing implicit %s',
+    async (method) => {
+      const source =
+        method +
+        '<-function(x,...) {path<<-"new.txt";x};path<-"old.txt";fit<-grDevices::boxplot.stats(1:3);base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+    }
+  )
+  it.each([
+    'grDevices::boxplot.stats(1:3,do.conf=flag)',
+    'grDevices::boxplot.stats(1:3,coef=1,coef=2)',
+    'grDevices::boxplot.stats(1:3,extra=callback)',
+    'grDevices::boxplot.stats(structure(1:3,class="audit_sample"),do.out=FALSE)'
+  ])('does not certify unproved options or classes: %s', async (call) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";fit<-' + call + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual([])
+  })
+})
+
+describe('R FIR convolution failure recovery', () => {
+  it.each([false, true])(
+    'retains uncertainty after a failed signal method warm=%s',
+    async (warm) => {
+      const context = await fileContext(
+        'r',
+        [
+          'path<-"old.txt";base::saveRDS(base::c(1,2),"cache.rds")',
+          'filtered<-stats::convolve(observed_signal,kernel,type="open")'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        warm
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      const io = await analyzeNotebookSourceFileAccess(
+        'r',
+        'base::readLines(path);base::readRDS("cache.rds")',
+        context
+      )
+      expect(io.reads).toEqual(['cache.rds'])
+      expect(io.readState).toBe('partial')
+    }
+  )
+})
+
 describe('R tapply callback file authority', () => {
+  it.each([
+    'base::tapply(c(1,2),groups)',
+    'base::tapply(c(1,2),groups,FUN=NULL)',
+    'tapply(c(1,2),structure(c(1,2),class="audit_groups"),FUN=NULL)',
+    'base::tapply(INDEX=groups,X=c(1,2),FU=NULL)',
+    'base::tapply(c(1,2),list(c(1,2)),FUN=NULL)'
+  ])('withdraws paths across unproved group-index coercion: %s', async (call) => {
+    const source = 'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'unique.numeric',
+    'as.character.numeric',
+    'length.factor',
+    'levels.factor',
+    'as.integer.factor'
+  ])('withdraws group-index authority when %s is replaced', async (method) => {
+    const source =
+      method +
+      ' <- function(x,...) { path <<- "new.txt"; stop("coercion") }\n' +
+      'path <- "old.txt"\nresult <- base::tapply(c(1,2),c(1,2),FUN=NULL)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it('does not certify a prior RDS producer across group-index coercion', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- base::tapply(c(1,2),groups,FUN=NULL)\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])(
+    'does not restore paths after successful group-index coercion (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'result <- base::tapply(c(1,2),groups,FUN=NULL)'],
+        [],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
   it.each([
     'base::tapply(c(1,2),c(1,2),FUN=reduce_group)',
     'tapply(c(1,2),c(1,2),reduce_group)',
@@ -20162,7 +22125,13 @@ describe('R PCA matrix conversion evaluation authority', () => {
     'stats::prcomp.default(sensor)',
     'stats::prcomp.default(sensor,center=FALSE,scale.=FALSE)',
     'stats::prcomp(sensor,rank.=1)',
-    'stats::prcomp(sensor,tol=0.1,retx=FALSE)'
+    'stats::prcomp(sensor,tol=0.1,retx=FALSE)',
+    'stats::princomp(sensor,cor=TRUE)',
+    'princomp(x=sensor,cor=FALSE,scores=FALSE)',
+    'stats:::princomp.default(sensor,cor=TRUE,scores=FALSE)',
+    'stats::princomp(sensor,subset=rows,cor=TRUE)',
+    'stats::princomp(sensor,covmat=external_cov,scores=FALSE)',
+    'stats::princomp(structure(c(1,2),class="audit_pca"),cor=FALSE)'
   ])('withdraws caller path and serialized contents across %s', async (call) => {
     const source =
       'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
@@ -20182,16 +22151,23 @@ describe('R PCA matrix conversion evaluation authority', () => {
   it.each([
     'base::saveRDS(c(1,2),"cache.rds");stats::prcomp(sensor,center=TRUE,scale.=TRUE)',
     'stats::prcomp({base::saveRDS(c(1,2),"cache.rds");sensor})',
-    'stats::prcomp.default(sensor,center={base::saveRDS(c(1,2),"cache.rds");TRUE})'
+    'stats::prcomp.default(sensor,center={base::saveRDS(c(1,2),"cache.rds");TRUE})',
+    'base::saveRDS(c(1,2),"cache.rds");stats::princomp(sensor,cor=TRUE)',
+    'stats::princomp({base::saveRDS(c(1,2),"cache.rds");sensor},cor=TRUE)'
   ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
     expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
   })
-  it.each([false, true])(
-    'keeps failed PCA conversion history conservative (%s)',
-    async (precompute) => {
+  it.each([
+    ['stats::prcomp(sensor,center=TRUE,scale.=TRUE)', false],
+    ['stats::prcomp(sensor,center=TRUE,scale.=TRUE)', true],
+    ['stats::princomp(sensor,cor=TRUE)', false],
+    ['stats::princomp(sensor,cor=TRUE)', true]
+  ] as const)(
+    'keeps failed PCA conversion history conservative (%s warm=%s)',
+    async (call, precompute) => {
       const context = await fileContext(
         'r',
-        ['path<-"old.txt"', 'stats::prcomp(sensor,center=TRUE,scale.=TRUE)'],
+        ['path<-"old.txt"', call],
         [{}, { status: 'failed', kernelDispatched: true }],
         precompute
       )
@@ -20204,20 +22180,23 @@ describe('R PCA matrix conversion evaluation authority', () => {
   it.each([
     'later<-function()stats::prcomp(sensor,center=TRUE,scale.=TRUE)',
     'factory<-stats::prcomp',
-    'prcomp<-function(...)1;prcomp(sensor)'
+    'prcomp<-function(...)1;prcomp(sensor)',
+    'later<-function()stats::princomp(sensor,cor=TRUE)',
+    'factory<-stats::princomp',
+    'princomp<-function(...)1;princomp(sensor)'
   ])('preserves dormant references and a pure local replacement: %s', async (body) => {
     const source =
       'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
     expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
     expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
   })
-  it('allows explicit later paths without granting PCA purity', async () => {
-    const source =
-      'fit<-stats::prcomp(sensor,center=TRUE,scale.=TRUE);path<-"after.txt";base::readLines(path)'
+  it.each([
+    ['stats::prcomp(sensor,center=TRUE,scale.=TRUE)', 'stats::prcomp'],
+    ['stats::princomp(sensor,cor=TRUE)', 'stats::princomp']
+  ])('allows explicit later paths without granting PCA purity: %s', async (call, identity) => {
+    const source = 'fit<-' + call + ';path<-"after.txt";base::readLines(path)'
     expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
-    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
-      'stats::prcomp'
-    )
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(identity)
   })
 })
 
@@ -20753,6 +22732,128 @@ describe('R kernel smoothing subset authority', () => {
       'stats::ksmooth'
     )
   })
+})
+
+describe('R opaque call argument isolation', () => {
+  it.each([
+    'stats::isoreg(x={path<-"new.txt";c(1,2)},y={base::readLines(path);c(1,2)})',
+    'base::mean(trim={path<-"new.txt";0},x={base::readLines(path);c(1,2)})'
+  ])('does not borrow a sibling promise path in %s', async (call) => {
+    expect(await analyzeNotebookSourceFileAccess('r', 'path<-"old.txt";' + call)).toMatchObject({
+      reads: [],
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'stats::isoreg(x={base::writeLines("new","cache.txt");c(1,2)},y={base::readLines("cache.txt");c(1,2)})',
+    'base::mean(trim={base::writeLines("new","cache.txt");0},x={base::readLines("cache.txt");c(1,2)})'
+  ])('retains a possible earlier generation read across %s', async (call) => {
+    expect(await analyzeNotebookSourceFileAccess('r', call)).toMatchObject({
+      reads: ['cache.txt'],
+      writes: ['cache.txt'],
+      externalState: 'partial'
+    })
+  })
+
+  it('retains path order within one promise and explicit paths afterward', async () => {
+    const source =
+      'stats::isoreg(x={path<-"inside.txt";base::readLines(path);c(1,2)},y=c(1,2));path<-"after.txt";base::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['after.txt', 'inside.txt'],
+      externalState: 'partial'
+    })
+  })
+
+  it('keeps a generated file internal within one promise', async () => {
+    const source =
+      'stats::isoreg(x={base::writeLines("generated","inside.txt");base::readLines("inside.txt");c(1,2)},y=c(1,2))'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: ['inside.txt'],
+      externalState: 'partial'
+    })
+  })
+})
+
+describe('R isotonic regression invocation authority', () => {
+  const setup = 'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");'
+  const tail = ';base::readLines(path);cached<-base::readRDS("cache.rds")'
+
+  it.each([
+    'stats::isoreg(c(3,1,2),c(2,3,1))',
+    'stats::isoreg(y=c(2,3,1),x=c(3,1,2))',
+    'isoreg(c(3,1,2))',
+    'stats::isoreg(c(3,1,2),y=NULL)'
+  ])('retains bounded invocation effects and structured ownership: %s', async (call) => {
+    const source = setup + `fit<-${call}` + tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      externalState: 'complete'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.copyOnModifyNames).toContain('fit')
+    expect(facts.rAtomicValueNames ?? []).not.toContain('fit')
+    expect(facts.serializedValueWrites).toHaveLength(1)
+  })
+
+  it.each([
+    'stats::isoreg(input,c(1,2))',
+    'stats::isoreg(c(1,2),input)',
+    'stats::isoreg(structure(c(1,2),class="audit"),c(1,2))',
+    'stats::isoreg(c(1,2),structure(c(1,2),class="audit"))',
+    'stats::isoreg(base::matrix(c(1,2),2,1))',
+    'stats::isoreg(c(1,2),c(1,2),extra=TRUE)',
+    'base::with(frame,stats::isoreg(x,y))'
+  ])('withholds authority from unproved isotonic inputs: %s', async (call) => {
+    const source = setup + `fit<-${call}` + tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it('keeps isotonic result methods visible downstream', async () => {
+    const source =
+      'as.double.isoreg<-function(...){path<<-"new.txt";stop("after effects")};' +
+      setup +
+      'fit<-stats::isoreg(c(1,2),c(1,2));value<-base::as.double(fit)' +
+      tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      externalState: 'partial'
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it.each([false, true])(
+    'rebuilds failed isotonic callback uncertainty warm=%s',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        [
+          setup +
+            'as.double.audit<-function(...){path<<-"new.txt";base::saveRDS(8,"cache.rds");stop("after effects")};axis<-structure(c(1,2),class="audit")',
+          'fit<-stats::isoreg(axis,c(1,2))'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::readLines(path);base::readRDS("cache.rds")',
+          context
+        )
+      ).toMatchObject({
+        reads: ['cache.rds'],
+        externalState: 'partial'
+      })
+    }
+  )
 })
 
 describe('R scientific invocation authority', () => {
@@ -22735,4 +24836,1866 @@ describe('R scientific invocation authority', () => {
       (await analyzeRNotebookSource(source, context)).facts.copyOnModifyNames ?? []
     ).not.toContain('encoded')
   })
+})
+
+// Unknown methods and forced arguments may mutate caller paths and serialized files.
+// Keep every distinct invocation fixture in one table; shared control-flow rules
+// are exercised below rather than copied for each scientific function.
+describe('R scientific invocation file authority', () => {
+  it.each([
+    'AIC(object=model)',
+    'ARMAacf(ar=ar,ma=ma,lag.max=5)',
+    'ARMAtoMA(ar=ar,ma=ma,lag.max=5)',
+    'BIC(object=model)',
+    'Box.test(series,lag=4,type="Box-Pierce",fitdf=df)',
+    'Box.test(x=series,lag=4,type="Ljung-Box",fitdf=0)',
+    'Box.test(x=series,lag=window,type=method,fitdf=fitdf)',
+    'KalmanForecast(n.ahead=steps,mod=model,update=FALSE)',
+    'SSD(object=model)',
+    'SSasymp(input=series,Asym=2,R0=.5,lrc=-1)',
+    'SSasympOff(input=series,Asym=2,lrc=-1,c0=.5)',
+    'SSasympOrig(input=series,Asym=2,lrc=-1)',
+    'SSbiexp(input=series,A1=2,lrc1=-2,A2=1,lrc2=-.2)',
+    'SSfol(Dose=2,input=series,lKe=-2,lKa=-.2,lCl=-.7)',
+    'SSfpl(input=series,A=.2,B=2,xmid=.7,scal=-.1)',
+    'SSgompertz(x=series,Asym=3,b2=2,b3=.7)',
+    'SSlogis(input=series,Asym=2,xmid=.5,scal=.1)',
+    'SSmicmen(input=series,Vm=2,K=.3)',
+    'SSweibull(x=series,Asym=3,Drop=1,lrc=-1,pwr=1.5)',
+    'TukeyHSD(x=model)',
+    'add1(object=model)',
+    'addNA(x=model)',
+    'addmargins(A,FUN=reducer,quiet=TRUE)',
+    'aggregate.data.frame(x=model)',
+    'aggregate.ts(x=model)',
+    'alias(object=model)',
+    'anova(object=model)',
+    'ansari.test(x=sample,y=reference,alternative="less")',
+    'ansari.test.default(sample,reference,conf.int=TRUE,conf.level=.9)',
+    'aperm(a=model)',
+    'ar.burg(x=model)',
+    'arima(x=series,order=c(1,0,0))',
+    'arima.sim(model=model,n=8,rand.gen=generator)',
+    'as.Date(x=model)',
+    'as.POSIXct(x=model)',
+    'as.array(x=model)',
+    'as.complex(x=model)',
+    'as.dendrogram(object=model)',
+    'as.dist(m=model)',
+    'as.factor(x=model)',
+    'as.hclust(x=model)',
+    'as.integer(x=model)',
+    'as.list(x=model)',
+    'as.list.default(x=model)',
+    'as.logical(x=model)',
+    'as.ordered(x=model)',
+    'as.raster(plate)',
+    'as.stepfun(x=model)',
+    'as.table(x=model)',
+    'as.ts(x=model)',
+    'as.vector(x=model)',
+    'axisTicks(bounds,log=TRUE)',
+    'backsolve(r=upper,x=rhs,k=window,transpose=transposed)',
+    'bandwidth.kernel(k=window)',
+    'bartlett.test(x=sample,g=groups)',
+    'base:::addNA(model)',
+    'base:::aperm(model)',
+    'base:::as.Date(model)',
+    'base:::as.POSIXct(model)',
+    'base:::as.array(model)',
+    'base:::as.complex(model)',
+    'base:::as.factor(model)',
+    'base:::as.integer(model)',
+    'base:::as.list(model)',
+    'base:::as.list.default(model)',
+    'base:::as.logical(model)',
+    'base:::as.ordered(model)',
+    'base:::as.table(model)',
+    'base:::as.vector(model)',
+    'base:::by.data.frame(model,groups,FUN=reduce)',
+    'base:::by.default(model,groups,FUN=reduce)',
+    'base:::cbind(model)',
+    'base:::chol2inv(factor)',
+    'base:::det(covariance)',
+    'base:::difftime(model,other,units="hours")',
+    'base:::droplevels(model)',
+    'base:::droplevels.data.frame(model)',
+    'base:::droplevels.factor(model)',
+    'base:::expand.grid(model)',
+    'base:::forwardsolve(lower,rhs)',
+    'base:::interaction(model)',
+    'base:::merge(model)',
+    'base:::merge.data.frame(model)',
+    'base:::ordered(model)',
+    'base:::prop.table(counts)',
+    'base:::qr.Q(model)',
+    'base:::qr.R(model)',
+    'base:::qr.fitted(design,response)',
+    'base:::qr.solve(design,response)',
+    'base:::quarters(model)',
+    'base:::range(model)',
+    'base:::range.default(model)',
+    'base:::rbind(model)',
+    'base:::rowsum.data.frame(model,groups)',
+    'base:::solve(coefficients,rhs)',
+    'base:::split(model,f=groups)',
+    'base:::split.data.frame(model,f=groups)',
+    'base:::split.default(model,f=groups)',
+    'base:::unname(model)',
+    'base:::unsplit(model,f=groups)',
+    'base::addNA(model)',
+    'base::addNA(model,...)',
+    'base::addNA(x=model)',
+    'base::addNA(x=model,x=other)',
+    'base::addNA(x={base::saveRDS(8,"cache.rds");model})',
+    'base::addNA({base::saveRDS(8,"cache.rds");model})',
+    'base::aperm(a=model)',
+    'base::aperm(a=model,a=other)',
+    'base::aperm(a={base::saveRDS(8,"cache.rds");model})',
+    'base::aperm(model)',
+    'base::aperm(model,...)',
+    'base::aperm({base::saveRDS(8,"cache.rds");model})',
+    'base::as.Date(model)',
+    'base::as.Date(model,...)',
+    'base::as.Date(x=model)',
+    'base::as.Date(x=model,x=other)',
+    'base::as.Date(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.Date({base::saveRDS(8,"cache.rds");model})',
+    'base::as.POSIXct(model)',
+    'base::as.POSIXct(model,...)',
+    'base::as.POSIXct(x=model)',
+    'base::as.POSIXct(x=model,x=other)',
+    'base::as.POSIXct(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.POSIXct({base::saveRDS(8,"cache.rds");model})',
+    'base::as.array(model)',
+    'base::as.array(model,...)',
+    'base::as.array(x=model)',
+    'base::as.array(x=model,x=other)',
+    'base::as.array(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.array({base::saveRDS(8,"cache.rds");model})',
+    'base::as.complex(model)',
+    'base::as.complex(model,...)',
+    'base::as.complex(x=model)',
+    'base::as.complex(x=model,x=other)',
+    'base::as.complex(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.complex({base::saveRDS(8,"cache.rds");model})',
+    'base::as.factor(model)',
+    'base::as.factor(model,...)',
+    'base::as.factor(x=model)',
+    'base::as.factor(x=model,x=other)',
+    'base::as.factor(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.factor({base::saveRDS(8,"cache.rds");model})',
+    'base::as.integer(model)',
+    'base::as.integer(model,...)',
+    'base::as.integer(x=model)',
+    'base::as.integer(x=model,x=other)',
+    'base::as.integer(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.integer({base::saveRDS(8,"cache.rds");model})',
+    'base::as.list(model)',
+    'base::as.list(model,...)',
+    'base::as.list(x=model)',
+    'base::as.list(x=model,x=other)',
+    'base::as.list(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.list({base::saveRDS(8,"cache.rds");model})',
+    'base::as.list.default(model)',
+    'base::as.list.default(model,...)',
+    'base::as.list.default(x=model)',
+    'base::as.list.default(x=model,x=other)',
+    'base::as.list.default(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.list.default({base::saveRDS(8,"cache.rds");model})',
+    'base::as.logical(model)',
+    'base::as.logical(model,...)',
+    'base::as.logical(x=model)',
+    'base::as.logical(x=model,x=other)',
+    'base::as.logical(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.logical({base::saveRDS(8,"cache.rds");model})',
+    'base::as.ordered(model)',
+    'base::as.ordered(model,...)',
+    'base::as.ordered(x=model)',
+    'base::as.ordered(x=model,x=other)',
+    'base::as.ordered(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.ordered({base::saveRDS(8,"cache.rds");model})',
+    'base::as.table(model)',
+    'base::as.table(model,...)',
+    'base::as.table(x=model)',
+    'base::as.table(x=model,x=other)',
+    'base::as.table(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.table({base::saveRDS(8,"cache.rds");model})',
+    'base::as.vector(model)',
+    'base::as.vector(model,...)',
+    'base::as.vector(x=model)',
+    'base::as.vector(x=model,x=other)',
+    'base::as.vector(x={base::saveRDS(8,"cache.rds");model})',
+    'base::as.vector({base::saveRDS(8,"cache.rds");model})',
+    'base::backsolve(upper,rhs,transpose=TRUE)',
+    'base::backsolve(upper,rhs,upper.tri=FALSE)',
+    'base::backsolve(upper,vector_rhs,k=2,transpose=TRUE)',
+    'base::backsolve(upper,{base::saveRDS(8,"cache.rds");rhs})',
+    'base::by.data.frame(data=model,INDICES=groups,FUN=reduce)',
+    'base::by.data.frame(data=model,INDICES=groups,FUN=reduce,data=other)',
+    'base::by.data.frame(data={base::saveRDS(8,"cache.rds");model},groups,FUN=reduce)',
+    'base::by.data.frame(model,groups,FUN=reduce)',
+    'base::by.data.frame(model,groups,FUN=reduce,...)',
+    'base::by.data.frame({base::saveRDS(8,"cache.rds");model},groups,FUN=reduce)',
+    'base::by.default(data=model,INDICES=groups,FUN=reduce)',
+    'base::by.default(data=model,INDICES=groups,FUN=reduce,data=other)',
+    'base::by.default(data={base::saveRDS(8,"cache.rds");model},groups,FUN=reduce)',
+    'base::by.default(model,groups,FUN=reduce)',
+    'base::by.default(model,groups,FUN=reduce,...)',
+    'base::by.default({base::saveRDS(8,"cache.rds");model},groups,FUN=reduce)',
+    'base::cbind(model)',
+    'base::cbind(model,...)',
+    'base::cbind(x=model)',
+    'base::cbind(x=model,x=other)',
+    'base::cbind(x={base::saveRDS(8,"cache.rds");model})',
+    'base::cbind({base::saveRDS(8,"cache.rds");model})',
+    'base::chol2inv(factor)',
+    'base::chol2inv({base::saveRDS(8,"cache.rds");factor})',
+    'base::det(covariance)',
+    'base::det({base::saveRDS(8,"cache.rds");covariance})',
+    'base::determinant(covariance)',
+    'base::determinant(covariance,logarithm=FALSE)',
+    'base::determinant(covariance,logarithm={base::saveRDS(8,"cache.rds");TRUE})',
+    'base::determinant(x=covariance,logarithm=TRUE)',
+    'base::difftime(model,other,units="hours")',
+    'base::difftime(model,other,units="hours",...)',
+    'base::difftime(time1=model,time2=other,units="hours")',
+    'base::difftime(time1=model,time2=other,units="hours",time1=other)',
+    'base::difftime(time1={base::saveRDS(8,"cache.rds");model},time2=other,units="hours")',
+    'base::difftime({base::saveRDS(8,"cache.rds");model},other,units="hours")',
+    'base::droplevels(model)',
+    'base::droplevels(model,...)',
+    'base::droplevels(x=model)',
+    'base::droplevels(x=model,x=other)',
+    'base::droplevels(x={base::saveRDS(8,"cache.rds");model})',
+    'base::droplevels({base::saveRDS(8,"cache.rds");model})',
+    'base::droplevels.data.frame(model)',
+    'base::droplevels.data.frame(model,...)',
+    'base::droplevels.data.frame(x=model)',
+    'base::droplevels.data.frame(x=model,x=other)',
+    'base::droplevels.data.frame(x={base::saveRDS(8,"cache.rds");model})',
+    'base::droplevels.data.frame({base::saveRDS(8,"cache.rds");model})',
+    'base::droplevels.factor(model)',
+    'base::droplevels.factor(model,...)',
+    'base::droplevels.factor(x=model)',
+    'base::droplevels.factor(x=model,x=other)',
+    'base::droplevels.factor(x={base::saveRDS(8,"cache.rds");model})',
+    'base::droplevels.factor({base::saveRDS(8,"cache.rds");model})',
+    'base::expand.grid(axis=model)',
+    'base::expand.grid(axis=model,axis=other)',
+    'base::expand.grid(axis={base::saveRDS(8,"cache.rds");model})',
+    'base::expand.grid(model)',
+    'base::expand.grid(model,...)',
+    'base::expand.grid({base::saveRDS(8,"cache.rds");model})',
+    'base::forwardsolve(lower,rhs)',
+    'base::forwardsolve(lower,rhs,upper.tri=FALSE,transpose=TRUE)',
+    'base::forwardsolve({base::saveRDS(8,"cache.rds");lower},rhs)',
+    'base::interaction(model)',
+    'base::interaction(model,...)',
+    'base::interaction(x=model)',
+    'base::interaction(x=model,x=other)',
+    'base::interaction(x={base::saveRDS(8,"cache.rds");model})',
+    'base::interaction({base::saveRDS(8,"cache.rds");model})',
+    'base::kappa(input,exact=TRUE)',
+    'base::kappa(input,exact=TRUE,norm=normtype)',
+    'base::kappa(structure(matrix(c(2,1,1,3),2),class=c("audit_condition","matrix","array")),exact=TRUE)',
+    'base::kappa.default(input,exact=TRUE,norm="1",inv_z=inverse)',
+    'base::kappa.default(input,exact=TRUE,norm="2")',
+    'base::margin.table(A)',
+    'base::margin.table(x=A,margin=1)',
+    'base::marginSums(x=A)',
+    'base::merge(model)',
+    'base::merge(model,...)',
+    'base::merge(x=model)',
+    'base::merge(x=model,x=other)',
+    'base::merge(x={base::saveRDS(8,"cache.rds");model})',
+    'base::merge({base::saveRDS(8,"cache.rds");model})',
+    'base::merge.data.frame(model)',
+    'base::merge.data.frame(model,...)',
+    'base::merge.data.frame(x=model)',
+    'base::merge.data.frame(x=model,x=other)',
+    'base::merge.data.frame(x={base::saveRDS(8,"cache.rds");model})',
+    'base::merge.data.frame({base::saveRDS(8,"cache.rds");model})',
+    'base::ordered(model)',
+    'base::ordered(model,...)',
+    'base::ordered(x=model)',
+    'base::ordered(x=model,x=other)',
+    'base::ordered(x={base::saveRDS(8,"cache.rds");model})',
+    'base::ordered({base::saveRDS(8,"cache.rds");model})',
+    'base::prop.table(counts)',
+    'base::prop.table(counts,margin=2)',
+    'base::prop.table({base::saveRDS(8,"cache.rds");counts})',
+    'base::proportions(counts)',
+    'base::proportions(counts,margin={base::saveRDS(8,"cache.rds");1})',
+    'base::proportions(x=counts,margin=1)',
+    'base::qr(design)',
+    'base::qr.Q(model)',
+    'base::qr.Q(model,...)',
+    'base::qr.Q(qr=model)',
+    'base::qr.Q(qr=model,qr=other)',
+    'base::qr.Q(qr={base::saveRDS(8,"cache.rds");model})',
+    'base::qr.Q({base::saveRDS(8,"cache.rds");model})',
+    'base::qr.R(model)',
+    'base::qr.R(model,...)',
+    'base::qr.R(qr=model)',
+    'base::qr.R(qr=model,qr=other)',
+    'base::qr.R(qr={base::saveRDS(8,"cache.rds");model})',
+    'base::qr.R({base::saveRDS(8,"cache.rds");model})',
+    'base::qr.coef(factorization,response)',
+    'base::qr.default(design,LAPACK=FALSE)',
+    'base::qr.fitted(design,response)',
+    'base::qr.fitted(design,response,k=2)',
+    'base::qr.fitted({base::saveRDS(8,"cache.rds");design},response)',
+    'base::qr.resid(design,response)',
+    'base::qr.resid(design,y={base::saveRDS(8,"cache.rds");response})',
+    'base::qr.resid(qr=design,y=response)',
+    'base::qr.solve(design,response)',
+    'base::quarters(model)',
+    'base::quarters(model,...)',
+    'base::quarters(x=model)',
+    'base::quarters(x=model,x=other)',
+    'base::quarters(x={base::saveRDS(8,"cache.rds");model})',
+    'base::quarters({base::saveRDS(8,"cache.rds");model})',
+    'base::range(model)',
+    'base::range(model,...)',
+    'base::range(x=model)',
+    'base::range(x=model,x=other)',
+    'base::range(x={base::saveRDS(8,"cache.rds");model})',
+    'base::range({base::saveRDS(8,"cache.rds");model})',
+    'base::range.default(model)',
+    'base::range.default(model,...)',
+    'base::range.default(x=model)',
+    'base::range.default(x=model,x=other)',
+    'base::range.default(x={base::saveRDS(8,"cache.rds");model})',
+    'base::range.default({base::saveRDS(8,"cache.rds");model})',
+    'base::rbind(model)',
+    'base::rbind(model,...)',
+    'base::rbind(x=model)',
+    'base::rbind(x=model,x=other)',
+    'base::rbind(x={base::saveRDS(8,"cache.rds");model})',
+    'base::rbind({base::saveRDS(8,"cache.rds");model})',
+    'base::rcond(covariance,norm="1")',
+    'base::rcond(covariance,norm={base::saveRDS(8,"cache.rds");"1"})',
+    'base::rcond(covariance,triangular=TRUE)',
+    'base::rcond(x=covariance,norm="1")',
+    'base::rowsum.data.frame(model,groups)',
+    'base::rowsum.data.frame(model,groups,...)',
+    'base::rowsum.data.frame(x=model,group=groups)',
+    'base::rowsum.data.frame(x=model,group=groups,x=other)',
+    'base::rowsum.data.frame(x={base::saveRDS(8,"cache.rds");model},groups)',
+    'base::rowsum.data.frame({base::saveRDS(8,"cache.rds");model},groups)',
+    'base::sample(pool,size=12L,replace=FALSE)',
+    'base::sample(structure(1:272,class="audit_pool"),12L)',
+    'base::sample(x=pool,size=12L,prob=weights)',
+    'base::sample.int(population_size,size=12L)',
+    'base::solve(coefficients)',
+    'base::solve(coefficients,rhs)',
+    'base::solve({base::saveRDS(8,"cache.rds");coefficients},rhs)',
+    'base::solve.default(a=coefficients,b=rhs)',
+    'base::solve.default(coefficients,b={base::saveRDS(8,"cache.rds");rhs})',
+    'base::solve.default(coefficients,rhs)',
+    'base::split(model,f=groups)',
+    'base::split(model,f=groups,...)',
+    'base::split(x=model,f=groups)',
+    'base::split(x=model,f=groups,x=other)',
+    'base::split(x={base::saveRDS(8,"cache.rds");model},f=groups)',
+    'base::split({base::saveRDS(8,"cache.rds");model},f=groups)',
+    'base::unname(model)',
+    'base::unname(model,...)',
+    'base::unname(obj=model)',
+    'base::unname(obj=model,obj=other)',
+    'base::unname(obj={base::saveRDS(8,"cache.rds");model})',
+    'base::unname({base::saveRDS(8,"cache.rds");model})',
+    'base::unsplit(model,f=groups)',
+    'base::unsplit(model,f=groups,...)',
+    'base::unsplit(value=model,f=groups)',
+    'base::unsplit(value=model,f=groups,value=other)',
+    'base::unsplit(value={base::saveRDS(8,"cache.rds");model},f=groups)',
+    'base::unsplit({base::saveRDS(8,"cache.rds");model},f=groups)',
+    'binom.test(x=count,n=trials,alternative="less")',
+    'bs(axis,degree=1)',
+    'bw.SJ(x=model)',
+    'bw.bcv(x=model)',
+    'bw.nrd(sample)',
+    'bw.nrd0(sample)',
+    'bw.ucv(x=model)',
+    'by.data.frame(data=model,INDICES=groups,FUN=reduce)',
+    'by.default(data=model,INDICES=groups,FUN=reduce)',
+    'case.names(object=model)',
+    'cbind(x=model)',
+    'chol2inv(factor)',
+    'chull(x,y)',
+    'coefficients(object=model)',
+    'confint(object=model)',
+    'confint.default(object=model)',
+    'confint.lm(object=model)',
+    'contourLines(x,y,z,levels=levels)',
+    'contr.SAS(n=labels,contrasts=FALSE)',
+    'contr.helmert(labels,contrasts=TRUE,sparse=FALSE)',
+    'contr.poly(n=6,scores=series,contrasts=FALSE)',
+    'contr.sum(labels,contrasts=TRUE,sparse=FALSE)',
+    'contr.treatment(labels,contrasts=TRUE,sparse=FALSE)',
+    'convertColor(colors,from="XYZ",to="Lab")',
+    'cor.test.default(series,y=other,method="pearson")',
+    'cov2cor(V=input)',
+    'cutree(tree,k=count)',
+    'cycle(x=model)',
+    'deltat(x=model)',
+    'det(covariance)',
+    'deviance(object=model)',
+    'df.kernel(k=window)',
+    'df.residual(object=model)',
+    'dfbeta(model=model)',
+    'dfbetas(model=model)',
+    'diffinv.default(series,xi=initial)',
+    'difftime(time1=model,time2=other,units="hours")',
+    'drop1(object=model)',
+    'droplevels(x=model)',
+    'droplevels.data.frame(x=model)',
+    'droplevels.factor(x=model)',
+    'dummy.coef(object=model)',
+    'eff.aovlist(aovlist=model)',
+    'effects(object=model)',
+    'embed(series,dimension=3)',
+    'end(x=model)',
+    'estVar(object=model)',
+    'expand.grid(axis=model)',
+    'extendrange(values)',
+    'extractAIC(object=model)',
+    'factanal(covmat=model)',
+    'fitted(object=model)',
+    'fitted.values(object=model)',
+    'fligner.test(x=sample,g=groups)',
+    'forwardsolve(l=lower,x=rhs)',
+    'frequency(x=model)',
+    'friedman.test.default(model)',
+    'friedman.test.default(y=model)',
+    'ftable(x=model)',
+    'getCall(x=model)',
+    'getInitial(object=model)',
+    'get_all_vars(formula=model)',
+    'grDevices:::as.raster(plate)',
+    'grDevices:::axisTicks(bounds,log=TRUE)',
+    'grDevices:::chull(points)',
+    'grDevices:::contourLines(x,y,z,levels=levels)',
+    'grDevices:::convertColor(colors,"Lab","XYZ")',
+    'grDevices:::extendrange(values,f=.1)',
+    'grDevices:::n2mfrow(count)',
+    'grDevices:::nclass.FD(signal,digits=5)',
+    'grDevices:::rgb2hsv(channels)',
+    'grDevices:::trans3d(x,y,z,projection)',
+    'grDevices:::xyz.coords(x,y,z)',
+    'grDevices::as.raster(max=255,x=plate)',
+    'grDevices::as.raster(plate,max=1)',
+    'grDevices::as.raster(plate,max=255)',
+    'grDevices::as.raster(plate,max={base::saveRDS(8,"cache.rds");1})',
+    'grDevices::as.raster(values,nrow=5,ncol=6,byrow=TRUE)',
+    'grDevices::as.raster({base::saveRDS(8,"cache.rds");plate})',
+    'grDevices::axisTicks(bounds,TRUE,nint={base::saveRDS(8,"cache.rds");5})',
+    'grDevices::axisTicks(bounds,log=TRUE,axp=c(1,1000,1))',
+    'grDevices::axisTicks(bounds,log=TRUE,axp=c(1,1000,2))',
+    'grDevices::axisTicks(bounds,log=TRUE,axp=c(1,1000,3))',
+    'grDevices::axisTicks(log=TRUE,usr=bounds,nint=5)',
+    'grDevices::axisTicks({base::saveRDS(8,"cache.rds");bounds},TRUE)',
+    'grDevices::chull(x,y)',
+    'grDevices::contourLines(grid,levels=levels)',
+    'grDevices::contourLines(x,y,z,levels=levels)',
+    'grDevices::contourLines(x,y,z,levels={base::saveRDS(8,"cache.rds");levels})',
+    'grDevices::contourLines(x,y,z,nlevels=7)',
+    'grDevices::contourLines(z=z,y=y,x=x,levels=levels)',
+    'grDevices::contourLines({base::saveRDS(8,"cache.rds");x},y,z)',
+    'grDevices::convertColor(colors,"XYZ","Lab",scale.in=NULL,scale.out=NULL,clip=FALSE)',
+    'grDevices::convertColor(colors,from="XYZ",to="Lab")',
+    'grDevices::convertColor(colors,from=converter,to="Lab")',
+    'grDevices::convertColor(colors,from={base::saveRDS(8,"cache.rds");converter},to="Lab")',
+    'grDevices::convertColor(to="Lab",from="XYZ",color=colors,from.ref.white="D65",to.ref.white="D65")',
+    'grDevices::convertColor({base::saveRDS(8,"cache.rds");colors},"XYZ","Lab")',
+    'grDevices::extendrange(f=c(.2,.05),r=bounds)',
+    'grDevices::extendrange(r=bounds,f=c(.05,.2))',
+    'grDevices::extendrange(r={base::saveRDS(8,"cache.rds");bounds})',
+    'grDevices::extendrange(unused,r=bounds,f=.1)',
+    'grDevices::extendrange(values,f=0)',
+    'grDevices::extendrange({base::saveRDS(8,"cache.rds");values})',
+    'grDevices::n2mfrow(asp=0.5,nr.plots=count)',
+    'grDevices::n2mfrow(count,asp=0.5)',
+    'grDevices::n2mfrow(count,asp=1)',
+    'grDevices::n2mfrow(count,asp=2)',
+    'grDevices::n2mfrow(count,asp={base::saveRDS(8,"cache.rds");1})',
+    'grDevices::n2mfrow({base::saveRDS(8,"cache.rds");count},1)',
+    'grDevices::nclass.FD(signal)',
+    'grDevices::nclass.Sturges(signal)',
+    'grDevices::nclass.scott(signal)',
+    'grDevices::rgb2hsv(channels,maxColorValue=1)',
+    'grDevices::rgb2hsv(channels,maxColorValue=255)',
+    'grDevices::rgb2hsv(channels,maxColorValue={base::saveRDS(8,"cache.rds");1})',
+    'grDevices::rgb2hsv(maxColorValue=255,r=channels)',
+    'grDevices::rgb2hsv(r,g,b,maxColorValue=1)',
+    'grDevices::rgb2hsv({base::saveRDS(8,"cache.rds");channels})',
+    'grDevices::trans3d(pmat=projection,z=z,y=y,x=x)',
+    'grDevices::trans3d(x,y,z,projection)',
+    'grDevices::trans3d(x,y,z,projection,continuous=TRUE,verbose=FALSE)',
+    'grDevices::trans3d(x,y,z,projection,continuous=mode)',
+    'grDevices::trans3d(x,y,z,{base::saveRDS(8,"cache.rds");projection})',
+    'grDevices::trans3d({base::saveRDS(8,"cache.rds");x},y,z,projection)',
+    'grDevices::xy.coords(points,recycle=TRUE,log="xy")',
+    'grDevices::xy.coords(x,y)',
+    'grDevices::xyz.coords(list(x=x,y=y,z=z),recycle=TRUE)',
+    'grDevices::xyz.coords(x,y,z,setLab=FALSE)',
+    'grDevices::xyz.coords(x,y,{base::saveRDS(8,"cache.rds");z})',
+    'grDevices::xyz.coords(z=z,y=y,x=x,setLab=FALSE)',
+    'grDevices::xyz.coords(z~x+y,setLab=FALSE)',
+    'grDevices::xyz.coords({base::saveRDS(8,"cache.rds");x},y,z)',
+    'graphics:::rasterImage(image,1,-2,4,2)',
+    'graphics::hist(c(43,60,80,96),bre=choose_breaks,plot=FALSE)',
+    'graphics::hist(c(43,60,80,96),breaks=choose_breaks,plot=FALSE)',
+    'graphics::hist(c(43,60,80,96),breaks=function(x){path<<-"new.txt";c(40,60,80,100)},plot=FALSE)',
+    'graphics::hist(c(43,60,80,96),nclass=choose_breaks,plot=FALSE)',
+    'graphics::hist.default(c(43,60,80,96),breaks=choose_breaks,plot=FALSE)',
+    'graphics::hist.default(c(43,60,80,96),ncl=choose_breaks,plot=FALSE)',
+    'graphics::rasterImage(image,1,-2,4,2,angle=0)',
+    'graphics::rasterImage(image,1,-2,4,2,interpolate=FALSE)',
+    'graphics::rasterImage(image,1,-2,4,2,interpolate=TRUE)',
+    'graphics::rasterImage(image,{base::saveRDS(8,"cache.rds");1},-2,4,2)',
+    'graphics::rasterImage(ytop=2,xright=4,ybottom=-2,xleft=1,image=image)',
+    'graphics::rasterImage({base::saveRDS(8,"cache.rds");image},1,-2,4,2)',
+    'hat(x=model)',
+    'hatvalues(model)',
+    'hatvalues.lm(model)',
+    'heatmap(x=model)',
+    'hist(c(43,60,80,96),choose_breaks,plot=FALSE)',
+    'hist.default(x=c(43,60,80,96),breaks=choose_breaks,plot=FALSE)',
+    'influence(model=model)',
+    'influence.measures(model=model)',
+    'interaction(x=model)',
+    'kappa(z=input,exact=FALSE,method="direct")',
+    'kappa.default(z=input,exact=FALSE,triangular=TRUE)',
+    'knots(Fn=model)',
+    'kruskal.test.default(model)',
+    'kruskal.test.default(x=model)',
+    'ks.test.default(series,y=other,exact=FALSE)',
+    'lm.fit(x=design,y=response,offset=offset,singular.ok=FALSE)',
+    'lm.wfit(x=design,y=response,w=weights,singular.ok=FALSE)',
+    'logLik(object=model)',
+    'loglin(cube,margin=list(1,2,3),fit=TRUE,print=FALSE)',
+    'mantelhaen.test(tables,exact=TRUE,alternative="two.sided")',
+    'mantelhaen.test(x=group,y=outcome,z=strata,alternative="less")',
+    'mantelhaen.test(x=tables,correct=TRUE,alternative="less")',
+    'mauchly.test(object=model,T=contrasts)',
+    'mcnemar.test(x=pairs,correct=TRUE)',
+    'medpolish(plate,maxiter=100L)',
+    'medpolish(x=plate,maxiter=100L,eps=1e-10,trace.iter=FALSE)',
+    'merge(x=model)',
+    'merge.data.frame(x=model)',
+    'model.extract(frame=model,"weights")',
+    'model.frame(formula=model)',
+    'model.frame.default(formula=model)',
+    'model.matrix(formula,data=table,contrasts.arg=contrasts)',
+    'model.matrix.default(formula,data=table,contrasts.arg=contrasts)',
+    'model.offset(x=frame)',
+    'model.response(data=frame,type="numeric")',
+    'model.tables(x=model)',
+    'model.weights(x=model)',
+    'mood.test(x=sample,y=reference,alternative="less")',
+    'n2mfrow(count)',
+    'na.fail(object=model)',
+    'nclass.Sturges(signal)',
+    'nclass.scott(x=signal)',
+    'nobs(object=model)',
+    'ns(axis,intercept=TRUE)',
+    'oneway.test(formula=model_formula,data=sample_data,var.equal=TRUE)',
+    'oneway.test(model_formula,data=sample_data,var.equal=equal)',
+    'ordered(x=model)',
+    'pacf(x=series,lag.max=4,plot=FALSE)',
+    'pacf.default(x=series,lag.max=4,plot=FALSE)',
+    'pairwise.prop.test(counts,totals,correct=FALSE)',
+    'pairwise.t.test(samples,groups,p.adjust.method=method,pool.sd=pooled)',
+    'pairwise.t.test(x=samples,g=groups,p.adjust.method="holm",pool.sd=TRUE)',
+    'pairwise.wilcox.test(series,groups,exact=FALSE,correct=FALSE)',
+    'poisson.test(x=count,T=exposure,alternative="less")',
+    'poly(sensor,2)',
+    'polym(sensor,other,degree=2)',
+    'power.anova.test(groups=3,n=16,between.var=variance,within.var=1)',
+    'power.prop.test(n=80,p1=.5,p2=.7,sig.level=NULL,power=input)',
+    'power.prop.test(n=80,p1=input,p2=.7,alternative="one.sided")',
+    'power.prop.test(n=80,p1=input,p2=.7,strict=FALSE)',
+    'power.t.test(n=24,delta=effect)',
+    'predict.HoltWinters(model,n.ahead=6,prediction.interval=TRUE,level=.95)',
+    'predict.StructTS(model)',
+    'predict.StructTS(object=model)',
+    'predict.ar(model,newdata=newdata,n.ahead=6,se.fit=TRUE)',
+    'predict.glm(model,newdata=newdata,type="response",se.fit=TRUE)',
+    'predict.lm(model,newdata=newdata,se.fit=TRUE)',
+    'predict.loess(model,newdata=newdata,se=TRUE)',
+    'predict.nls(model,newdata=newdata)',
+    'predict.prcomp(model,newdata=newdata)',
+    'predict.smooth.spline(model,x=newdata,deriv=1)',
+    'predict.smooth.spline.fit(model,x=newdata,deriv=1)',
+    'proj(object=model)',
+    'prop.table(counts)',
+    'prop.test(x=counts,n=totals,correct=TRUE)',
+    'prop.trend.test(counts,totals)',
+    'prop.trend.test(x=counts,n=totals,score=scores)',
+    'qqnorm(y=sample,plot.it=FALSE,datax=TRUE)',
+    'qr.Q(qr=model)',
+    'qr.R(qr=model)',
+    'qr.coef(qr=factorization,y=classed_response)',
+    'qr.default(x=design,LAPACK=TRUE)',
+    'qr.fitted(design,response)',
+    'qr.solve(a=design,b=response,tol=1e-9)',
+    'quade.test.default(model)',
+    'quade.test.default(y=model)',
+    'quantile.default(series,probs=c(.25,.75),type=7,names=FALSE)',
+    'quarters(x=model)',
+    'range(x=model)',
+    'range.default(x=model)',
+    'rasterImage(image,1,-2,4,2)',
+    'rbind(x=model)',
+    'relevel(x=group,ref="mid")',
+    'relist(flesh=values,skeleton=model)',
+    'reorder(model,wts=weights,agglo.FUN=aggregate)',
+    'reorder.dendrogram(model,wts=weights,agglo.FUN=aggregate)',
+    'replications(formula=model)',
+    'reshape(data=model,direction="long",varying=c("t1","t2"),v.names="value")',
+    'resid(object=model)',
+    'residuals(object=model)',
+    'residuals.glm(object=model)',
+    'rgb2hsv(channels)',
+    'rowsum.data.frame(x=model,group=groups)',
+    'rstandard(model=model)',
+    'rstudent(model=model)',
+    'runmed(x=signal,k=3L,algorithm="Stuetzle")',
+    'sample(pool,12L)',
+    'sample.int(n=population_size,si=12L)',
+    'se.contrast(object=model)',
+    'seq(40,100,by=20);hist(c(43,60,80,96),breaks=breaks,plot=FALSE)',
+    'shapiro.test(x=sample)',
+    'sigma(object=model)',
+    'smooth(signal,kind="3RS3R",twiceit=TRUE)',
+    'solve(coefficients,rhs)',
+    'spec.ar(model,n.freq=9,plot=FALSE)',
+    'spec.taper(x=model)',
+    'splinefunH(x=grid,y=y,m=slopes)',
+    'split(x=model,f=groups)',
+    'stack(x=model)',
+    'start(x=model)',
+    'stats:::AIC(model)',
+    'stats:::ARMAacf(ar,ma,lag.max=5)',
+    'stats:::ARMAtoMA(ar,ma,lag.max=5)',
+    'stats:::BIC(model)',
+    'stats:::Box.test(series,lag=4,fitdf=1)',
+    'stats:::KalmanForecast(steps,model)',
+    'stats:::SSD(model)',
+    'stats:::SSasymp(series,2,.5,-1)',
+    'stats:::SSasympOff(series,2,-1,.5)',
+    'stats:::SSasympOrig(series,2,-1)',
+    'stats:::SSbiexp(series,2,-2,1,-.2)',
+    'stats:::SSfol(2,series,-2,-.2,-.7)',
+    'stats:::SSfpl(series,.2,2,.7,-.1)',
+    'stats:::SSgompertz(series,3,2,.7)',
+    'stats:::SSlogis(series,2,.5,.1)',
+    'stats:::SSmicmen(series,2,.3)',
+    'stats:::SSweibull(series,3,1,-1,1.5)',
+    'stats:::TukeyHSD(model)',
+    'stats:::add1(model)',
+    'stats:::aggregate.data.frame(model)',
+    'stats:::aggregate.ts(model)',
+    'stats:::alias(model)',
+    'stats:::anova(model)',
+    'stats:::ansari.test.default(sample,reference,exact=TRUE)',
+    'stats:::ar.burg(model)',
+    'stats:::arima.sim(model,n=8,rand.gen=generator)',
+    'stats:::as.dendrogram(model)',
+    'stats:::as.dist(model)',
+    'stats:::as.hclust(model)',
+    'stats:::as.stepfun(model)',
+    'stats:::as.ts(model)',
+    'stats:::bandwidth.kernel(window)',
+    'stats:::bartlett.test.default(sample,g=groups)',
+    'stats:::bw.SJ(model)',
+    'stats:::bw.bcv(model)',
+    'stats:::bw.ucv(model)',
+    'stats:::case.names(model)',
+    'stats:::coefficients(model)',
+    'stats:::confint(model)',
+    'stats:::confint.default(model)',
+    'stats:::confint.lm(model)',
+    'stats:::contr.SAS(labels)',
+    'stats:::contr.poly(6,scores=series)',
+    'stats:::cophenetic.default(tree)',
+    'stats:::cophenetic.default(x=tree)',
+    'stats:::cophenetic.default(x={base::saveRDS(8,"cache.rds");tree})',
+    'stats:::cor.test.default(series,y=other,method="pearson")',
+    'stats:::cor.test.default(series,y=other,method="pearson",alternative="greater")',
+    'stats:::cor.test.default(series,y=other,method="pearson",alternative="greater",conf.level=.9)',
+    'stats:::cor.test.default(x=series,y=other,method="pearson",alternative="less")',
+    'stats:::cor.test.default(x=series,y=other,method="pearson",conf.level=.9)',
+    'stats:::cor.test.default(x={base::saveRDS(8,"cache.rds");series})',
+    'stats:::cor.test.default({base::saveRDS(8,"cache.rds");series},y=other,method="pearson")',
+    'stats:::cov2cor(input)',
+    'stats:::cycle(model)',
+    'stats:::deltat(model)',
+    'stats:::deviance(model)',
+    'stats:::df.kernel(window)',
+    'stats:::df.residual(model)',
+    'stats:::dfbeta(model)',
+    'stats:::dfbetas(model)',
+    'stats:::diffinv.default(series,lag=2,xi=initial)',
+    'stats:::diffinv.default(series,xi=initial)',
+    'stats:::diffinv.default(x=series,lag=2,differences=2,xi=initial)',
+    'stats:::diffinv.default({base::saveRDS(8,"cache.rds");series},xi=initial)',
+    'stats:::diffinv.vector(series,lag=order,xi=initial)',
+    'stats:::diffinv.vector(x=series,lag=order,xi=initial)',
+    'stats:::diffinv.vector(x={base::saveRDS(8,"cache.rds");series},lag=order,xi=initial)',
+    'stats:::drop1(model)',
+    'stats:::dummy.coef(model)',
+    'stats:::eff.aovlist(model)',
+    'stats:::effects(model)',
+    'stats:::embed(series,dimension=3)',
+    'stats:::end(model)',
+    'stats:::estVar(model)',
+    'stats:::extractAIC(model)',
+    'stats:::factanal(model)',
+    'stats:::fitted(model)',
+    'stats:::fitted.values(model)',
+    'stats:::fligner.test.default(sample,g=groups)',
+    'stats:::frequency(model)',
+    'stats:::friedman.test.default(model)',
+    'stats:::friedman.test.default(model,...)',
+    'stats:::friedman.test.default(y=model)',
+    'stats:::friedman.test.default(y=model,y=other)',
+    'stats:::friedman.test.default(y={base::saveRDS(8,"cache.rds");model})',
+    'stats:::friedman.test.default({base::saveRDS(8,"cache.rds");model})',
+    'stats:::ftable(model)',
+    'stats:::getCall(model)',
+    'stats:::getInitial(model)',
+    'stats:::get_all_vars(formula=model,formula=other)',
+    'stats:::get_all_vars(formula={base::saveRDS(8,"cache.rds");model})',
+    'stats:::get_all_vars(model)',
+    'stats:::get_all_vars(model,...)',
+    'stats:::get_all_vars({base::saveRDS(8,"cache.rds");model})',
+    'stats:::hat(model)',
+    'stats:::hatvalues(model)',
+    'stats:::hatvalues(model,infl=influence)',
+    'stats:::hatvalues(model=model)',
+    'stats:::hatvalues(model={base::saveRDS(8,"cache.rds");model})',
+    'stats:::hatvalues({base::saveRDS(8,"cache.rds");model})',
+    'stats:::hatvalues.lm(model)',
+    'stats:::hatvalues.lm(model,infl=influence)',
+    'stats:::hatvalues.lm(model=model)',
+    'stats:::hatvalues.lm(model={base::saveRDS(8,"cache.rds");model})',
+    'stats:::hatvalues.lm({base::saveRDS(8,"cache.rds");model})',
+    'stats:::heatmap(model)',
+    'stats:::influence(model)',
+    'stats:::influence.measures(model)',
+    'stats:::knots(model)',
+    'stats:::kruskal.test.default(model)',
+    'stats:::kruskal.test.default(model,...)',
+    'stats:::kruskal.test.default(x=model)',
+    'stats:::kruskal.test.default(x=model,x=other)',
+    'stats:::kruskal.test.default(x={base::saveRDS(8,"cache.rds");model})',
+    'stats:::kruskal.test.default({base::saveRDS(8,"cache.rds");model})',
+    'stats:::ks.test.default(series,y=other,exact=FALSE)',
+    'stats:::ks.test.default(series,y=other,exact=FALSE,alternative="greater")',
+    'stats:::ks.test.default(series,y=other,exact=FALSE,alternative="greater",simulate.p.value=FALSE)',
+    'stats:::ks.test.default(x=series,y=cdf,exact=FALSE,alternative="less")',
+    'stats:::ks.test.default(x=series,y=other,exact=FALSE,simulate.p.value=FALSE)',
+    'stats:::ks.test.default(x={base::saveRDS(8,"cache.rds");series})',
+    'stats:::ks.test.default({base::saveRDS(8,"cache.rds");series},y=other,exact=FALSE)',
+    'stats:::logLik(model)',
+    'stats:::mantelhaen.test(tables,conf.level=.9)',
+    'stats:::mauchly.test(model,T=contrasts)',
+    'stats:::median.default(series)',
+    'stats:::median.default(x=series,na.rm=TRUE)',
+    'stats:::median.default(x={base::saveRDS(8,"cache.rds");series})',
+    'stats:::model.extract(model,"weights")',
+    'stats:::model.frame(model)',
+    'stats:::model.frame.default(model)',
+    'stats:::model.offset(frame)',
+    'stats:::model.response(frame,type="numeric")',
+    'stats:::model.tables(model)',
+    'stats:::model.weights(model)',
+    'stats:::mood.test.default(sample,reference,alternative="greater")',
+    'stats:::na.fail(model)',
+    'stats:::nobs(model)',
+    'stats:::oneway.test(model_formula,data=sample_data)',
+    'stats:::pacf.default(series,lag.max=4,na.action=handler,plot=FALSE)',
+    'stats:::pacf.default(series,lag.max=4,plot=FALSE)',
+    'stats:::pairwise.t.test(samples,groups,p.adjust.method="holm")',
+    'stats:::power.anova.test(groups=3,n=16,between.var=variance,within.var=1)',
+    'stats:::power.prop.test(n=80,p1=input,p2=.7,sig.level=.1)',
+    'stats:::power.t.test(n=24,delta=effect)',
+    'stats:::predict.Arima(model,n.ahead=1,se.fit=TRUE)',
+    'stats:::predict.Arima(model,n.ahead=6,se.fit=FALSE)',
+    'stats:::predict.Arima(object=model,n.ahead=6)',
+    'stats:::predict.Arima(object={base::saveRDS(8,"cache.rds");value},n.ahead=6)',
+    'stats:::predict.Arima({base::saveRDS(8,"cache.rds");value},n.ahead=6)',
+    'stats:::predict.HoltWinters(model,6,FALSE)',
+    'stats:::predict.HoltWinters(model,n.ahead=6,prediction.interval=TRUE,level=.95)',
+    'stats:::predict.HoltWinters(object=model)',
+    'stats:::predict.HoltWinters(object={base::saveRDS(8,"cache.rds");model},n.ahead=6,prediction.interval=TRUE)',
+    'stats:::predict.HoltWinters({base::saveRDS(8,"cache.rds");model},n.ahead=6,prediction.interval=TRUE)',
+    'stats:::predict.StructTS(model)',
+    'stats:::predict.StructTS(model,...)',
+    'stats:::predict.StructTS(object=model)',
+    'stats:::predict.StructTS(object=model,object=other)',
+    'stats:::predict.StructTS(object={base::saveRDS(8,"cache.rds");model})',
+    'stats:::predict.StructTS({base::saveRDS(8,"cache.rds");model})',
+    'stats:::predict.ar(model,newdata,n.ahead=6)',
+    'stats:::predict.ar(model,newdata=newdata,n.ahead=6,se.fit=TRUE)',
+    'stats:::predict.ar(object=model,n.ahead=6)',
+    'stats:::predict.ar(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.ar({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.loess(model,newdata,se=FALSE)',
+    'stats:::predict.loess(model,newdata=newdata,se=TRUE)',
+    'stats:::predict.loess(object=model,se=FALSE)',
+    'stats:::predict.loess(object=model,se=TRUE)',
+    'stats:::predict.loess(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.loess({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.nls(model,newdata)',
+    'stats:::predict.nls(model,newdata=newdata)',
+    'stats:::predict.nls(object=model)',
+    'stats:::predict.nls(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.nls({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.prcomp(model,newdata)',
+    'stats:::predict.prcomp(model,newdata=newdata)',
+    'stats:::predict.prcomp(object=model)',
+    'stats:::predict.prcomp(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.prcomp({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats:::predict.smooth.spline(model,newdata,2)',
+    'stats:::predict.smooth.spline(model,x=newdata,deriv=1)',
+    'stats:::predict.smooth.spline(object=model)',
+    'stats:::predict.smooth.spline(object={base::saveRDS(8,"cache.rds");model},x=newdata,deriv=1)',
+    'stats:::predict.smooth.spline({base::saveRDS(8,"cache.rds");model},x=newdata,deriv=1)',
+    'stats:::predict.smooth.spline.fit(model,newdata,2)',
+    'stats:::predict.smooth.spline.fit(model,x=newdata,deriv=1)',
+    'stats:::predict.smooth.spline.fit(object=model)',
+    'stats:::predict.smooth.spline.fit(object={base::saveRDS(8,"cache.rds");model},x=newdata,deriv=1)',
+    'stats:::predict.smooth.spline.fit({base::saveRDS(8,"cache.rds");model},x=newdata,deriv=1)',
+    'stats:::proj(model)',
+    'stats:::prop.trend.test(counts,totals,score=scores)',
+    'stats:::qqnorm.default(sample,plot.it=FALSE)',
+    'stats:::quade.test.default(model)',
+    'stats:::quade.test.default(model,...)',
+    'stats:::quade.test.default(y=model)',
+    'stats:::quade.test.default(y=model,y=other)',
+    'stats:::quade.test.default(y={base::saveRDS(8,"cache.rds");model})',
+    'stats:::quade.test.default({base::saveRDS(8,"cache.rds");model})',
+    'stats:::quantile.default(series,probs=.5,type=7,names=TRUE)',
+    'stats:::quantile.default(series,probs=c(.25,.75),type=1,names=FALSE)',
+    'stats:::quantile.default(series,probs=c(.25,.75),type=7,names=FALSE)',
+    'stats:::quantile.default(x=series,probs=.5,type=1,na.rm=TRUE)',
+    'stats:::quantile.default(x=series,probs=.5,type=7)',
+    'stats:::quantile.default(x={base::saveRDS(8,"cache.rds");series})',
+    'stats:::quantile.default({base::saveRDS(8,"cache.rds");series},probs=c(.25,.75),type=7,names=FALSE)',
+    'stats:::relevel(group,ref="mid")',
+    'stats:::reorder(model,weights,aggregate)',
+    'stats:::reorder(model,wts=weights)',
+    'stats:::reorder(model,wts=weights,agglo.FUN=aggregate)',
+    'stats:::reorder(x={base::saveRDS(8,"cache.rds");model},wts=weights,agglo.FUN=aggregate)',
+    'stats:::reorder({base::saveRDS(8,"cache.rds");model},wts=weights,agglo.FUN=aggregate)',
+    'stats:::reorder.dendrogram(model,weights,aggregate)',
+    'stats:::reorder.dendrogram(model,wts=weights)',
+    'stats:::reorder.dendrogram(model,wts=weights,agglo.FUN=aggregate)',
+    'stats:::reorder.dendrogram(x={base::saveRDS(8,"cache.rds");model},wts=weights,agglo.FUN=aggregate)',
+    'stats:::reorder.dendrogram({base::saveRDS(8,"cache.rds");model},wts=weights,agglo.FUN=aggregate)',
+    'stats:::replications(model)',
+    'stats:::reshape(model,direction="long",varying=c("t1","t2"),v.names="value")',
+    'stats:::resid(model)',
+    'stats:::residuals(model)',
+    'stats:::residuals.glm(model)',
+    'stats:::rstandard(model)',
+    'stats:::rstudent(model)',
+    'stats:::se.contrast(model)',
+    'stats:::sigma(model)',
+    'stats:::spec.taper(model)',
+    'stats:::start(model)',
+    'stats:::summary.aov(model)',
+    'stats:::summary.glm(model)',
+    'stats:::summary.lm(model)',
+    'stats:::summary.manova(model)',
+    'stats:::symnum(model)',
+    'stats:::t.test.default(series,mu=.1,alternative="greater")',
+    'stats:::t.test.default(series,mu=0)',
+    'stats:::t.test.default(series,y=other,paired=TRUE)',
+    'stats:::t.test.default(x=series,mu=0,conf.level=.9)',
+    'stats:::t.test.default(x=series,y=other,paired=TRUE,mu=.1)',
+    'stats:::t.test.default(x={base::saveRDS(8,"cache.rds");series})',
+    'stats:::t.test.default({base::saveRDS(8,"cache.rds");series},mu=0)',
+    'stats:::time(model)',
+    'stats:::ts(model)',
+    'stats:::tsSmooth(model)',
+    'stats:::tsSmooth(model,...)',
+    'stats:::tsSmooth(object=model,object=other)',
+    'stats:::tsSmooth(object={base::saveRDS(8,"cache.rds");model})',
+    'stats:::tsSmooth({base::saveRDS(8,"cache.rds");model})',
+    'stats:::var.test.default(sample,reference,alternative="greater")',
+    'stats:::var.test.default(sample,reference,conf.level=.9)',
+    'stats:::vcov(model)',
+    'stats:::weighted.mean.default(series,w=weights)',
+    'stats:::weighted.mean.default(series,w=weights,na.rm=TRUE)',
+    'stats:::weighted.mean.default(x=series,w=weights,na.rm=TRUE)',
+    'stats:::weighted.mean.default({base::saveRDS(8,"cache.rds");series},w=weights)',
+    'stats:::weights(model)',
+    'stats:::wilcox.test.default(series,y=other,exact=FALSE)',
+    'stats:::wilcox.test.default(series,y=other,exact=FALSE,alternative="greater")',
+    'stats:::wilcox.test.default(series,y=other,exact=FALSE,alternative="greater",correct=TRUE)',
+    'stats:::wilcox.test.default(x=series,y=other,exact=FALSE,alternative="less")',
+    'stats:::wilcox.test.default(x=series,y=other,exact=FALSE,correct=TRUE)',
+    'stats:::wilcox.test.default(x={base::saveRDS(8,"cache.rds");series})',
+    'stats:::wilcox.test.default({base::saveRDS(8,"cache.rds");series},y=other,exact=FALSE)',
+    'stats:::window(series,start=2,end=5)',
+    'stats:::window.default(series,start=2,end=5)',
+    'stats:::window.default(x=series,start=2,end=5)',
+    'stats:::window.default(x={base::saveRDS(8,"cache.rds");series},start=2,end=5)',
+    'stats::AIC(model)',
+    'stats::AIC(model,...)',
+    'stats::AIC(object=model)',
+    'stats::AIC(object=model,object=other)',
+    'stats::AIC(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::AIC({base::saveRDS(8,"cache.rds");model})',
+    'stats::ARMAacf(ar,ma,lag.max=5)',
+    'stats::ARMAacf(ar,ma,lag.max=5,...)',
+    'stats::ARMAacf(ar,{base::saveRDS(8,"cache.rds");ma},lag.max=5)',
+    'stats::ARMAacf(ar=ar,ma=ma,lag.max=5)',
+    'stats::ARMAacf(ar=ar,ma=ma,lag.max=5,ma=other)',
+    'stats::ARMAacf(ar=ar,ma={base::saveRDS(8,"cache.rds");ma},lag.max=5)',
+    'stats::ARMAtoMA(ar,ma,lag.max=5)',
+    'stats::ARMAtoMA(ar,ma,lag.max=5,...)',
+    'stats::ARMAtoMA(ar,{base::saveRDS(8,"cache.rds");ma},lag.max=5)',
+    'stats::ARMAtoMA(ar=ar,ma=ma,lag.max=5)',
+    'stats::ARMAtoMA(ar=ar,ma=ma,lag.max=5,ma=other)',
+    'stats::ARMAtoMA(ar=ar,ma={base::saveRDS(8,"cache.rds");ma},lag.max=5)',
+    'stats::BIC(model)',
+    'stats::BIC(model,...)',
+    'stats::BIC(object=model)',
+    'stats::BIC(object=model,object=other)',
+    'stats::BIC(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::BIC({base::saveRDS(8,"cache.rds");model})',
+    'stats::Box.test(series,lag=4,type="Box-Pierce",fitdf=1)',
+    'stats::Box.test(series,lag=4,type="Ljung-Box",fitdf=1)',
+    'stats::Box.test(series,lag=5,type="Ljung-Box",fitdf=2)',
+    'stats::Box.test(structure(c(1,2,3,4,5),class="audit_residual"),lag=4)',
+    'stats::KalmanForecast(n.ahead=steps,mod=model,n.ahead=other)',
+    'stats::KalmanForecast(n.ahead=steps,mod=model,update=FALSE)',
+    'stats::KalmanForecast(n.ahead={base::saveRDS(8,"cache.rds");steps},mod=model)',
+    'stats::KalmanForecast(steps,model)',
+    'stats::KalmanForecast(steps,model,...)',
+    'stats::KalmanForecast({base::saveRDS(8,"cache.rds");steps},model)',
+    'stats::SSD(model)',
+    'stats::SSD(model,...)',
+    'stats::SSD(object=model)',
+    'stats::SSD(object=model,object=other)',
+    'stats::SSD(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::SSD({base::saveRDS(8,"cache.rds");model})',
+    'stats::SSasymp(input=series,Asym=2,R0=.5,lrc=-1)',
+    'stats::SSasymp(input=series,Asym=2,R0=.5,lrc=-1,input=other)',
+    'stats::SSasymp(input={base::saveRDS(8,"cache.rds");series},Asym=2,lrc=-1,c0=.5)',
+    'stats::SSasymp(series,2,.5,-1)',
+    'stats::SSasymp(series,2,.5,-1,...)',
+    'stats::SSasymp({base::saveRDS(8,"cache.rds");series},2,-1,.5)',
+    'stats::SSasympOff(input=series,Asym=2,lrc=-1,c0=.5)',
+    'stats::SSasympOff(input=series,Asym=2,lrc=-1,c0=.5,input=other)',
+    'stats::SSasympOff(input={base::saveRDS(8,"cache.rds");series},Asym=2,lrc=-1,c0=.5)',
+    'stats::SSasympOff(series,2,-1,.5)',
+    'stats::SSasympOff(series,2,-1,.5,...)',
+    'stats::SSasympOff({base::saveRDS(8,"cache.rds");series},2,-1,.5)',
+    'stats::SSasympOrig(input=series,Asym=2,lrc=-1)',
+    'stats::SSasympOrig(input=series,Asym=2,lrc=-1,input=other)',
+    'stats::SSasympOrig(input={base::saveRDS(8,"cache.rds");series},Asym=2,lrc=-1)',
+    'stats::SSasympOrig(series,2,-1)',
+    'stats::SSasympOrig(series,2,-1,...)',
+    'stats::SSasympOrig({base::saveRDS(8,"cache.rds");series},2,-1)',
+    'stats::SSbiexp(input=series,A1=2,lrc1=-2,A2=1,lrc2=-.2)',
+    'stats::SSbiexp(input=series,A1=2,lrc1=-2,A2=1,lrc2=-.2,input=other)',
+    'stats::SSbiexp(input={base::saveRDS(8,"cache.rds");series},A1=2,lrc1=-2,A2=1,lrc2=-.2)',
+    'stats::SSbiexp(series,2,-2,1,-.2)',
+    'stats::SSbiexp(series,2,-2,1,-.2,...)',
+    'stats::SSbiexp({base::saveRDS(8,"cache.rds");series},2,-2,1,-.2)',
+    'stats::SSfol(2,series,-2,-.2,-.7)',
+    'stats::SSfol(2,series,-2,-.2,-.7,...)',
+    'stats::SSfol(2,{base::saveRDS(8,"cache.rds");series},-2,-.2,-.7)',
+    'stats::SSfol(Dose=2,input=series,lKe=-2,lKa=-.2,lCl=-.7)',
+    'stats::SSfol(Dose=2,input=series,lKe=-2,lKa=-.2,lCl=-.7,input=other)',
+    'stats::SSfol(Dose=2,input={base::saveRDS(8,"cache.rds");series},lKe=-2,lKa=-.2,lCl=-.7)',
+    'stats::SSfpl(input=series,A=.2,B=2,xmid=.7,scal=-.1)',
+    'stats::SSfpl(input=series,A=.2,B=2,xmid=.7,scal=-.1,input=other)',
+    'stats::SSfpl(input={base::saveRDS(8,"cache.rds");series},A=.2,B=2,xmid=.7,scal=-.1)',
+    'stats::SSfpl(series,.2,2,.7,-.1)',
+    'stats::SSfpl(series,.2,2,.7,-.1,...)',
+    'stats::SSfpl({base::saveRDS(8,"cache.rds");series},.2,2,.7,-.1)',
+    'stats::SSgompertz(series,3,2,.7)',
+    'stats::SSgompertz(series,3,2,.7,...)',
+    'stats::SSgompertz(x=series,Asym=3,b2=2,b3=.7)',
+    'stats::SSgompertz(x=series,Asym=3,b2=2,b3=.7,x=other)',
+    'stats::SSgompertz(x={base::saveRDS(8,"cache.rds");series},Asym=3,b2=2,b3=.7)',
+    'stats::SSgompertz({base::saveRDS(8,"cache.rds");series},3,2,.7)',
+    'stats::SSlogis(input=series,Asym=2,xmid=.5,scal=.1)',
+    'stats::SSlogis(input=series,Asym=2,xmid=.5,scal=.1,input=other)',
+    'stats::SSlogis(input={base::saveRDS(8,"cache.rds");series},Asym=2,xmid=.5,scal=.1)',
+    'stats::SSlogis(series,2,.5,.1)',
+    'stats::SSlogis(series,2,.5,.1,...)',
+    'stats::SSlogis({base::saveRDS(8,"cache.rds");series},2,.5,.1)',
+    'stats::SSmicmen(input=series,Vm=2,K=.3)',
+    'stats::SSmicmen(input=series,Vm=2,K=.3,input=other)',
+    'stats::SSmicmen(input={base::saveRDS(8,"cache.rds");series},Vm=2,K=.3)',
+    'stats::SSmicmen(series,2,.3)',
+    'stats::SSmicmen(series,2,.3,...)',
+    'stats::SSmicmen({base::saveRDS(8,"cache.rds");series},2,.3)',
+    'stats::SSweibull(series,3,1,-1,1.5)',
+    'stats::SSweibull(series,3,1,-1,1.5,...)',
+    'stats::SSweibull(x=series,Asym=3,Drop=1,lrc=-1,pwr=1.5)',
+    'stats::SSweibull(x=series,Asym=3,Drop=1,lrc=-1,pwr=1.5,x=other)',
+    'stats::SSweibull(x={base::saveRDS(8,"cache.rds");series},Asym=3,Drop=1,lrc=-1,pwr=1.5)',
+    'stats::SSweibull({base::saveRDS(8,"cache.rds");series},3,1,-1,1.5)',
+    'stats::TukeyHSD(model)',
+    'stats::TukeyHSD(model,...)',
+    'stats::TukeyHSD(x=model)',
+    'stats::TukeyHSD(x=model,x=other)',
+    'stats::TukeyHSD(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::TukeyHSD({base::saveRDS(8,"cache.rds");model})',
+    'stats::add1(model)',
+    'stats::add1(model,...)',
+    'stats::add1(object=model)',
+    'stats::add1(object=model,object=other)',
+    'stats::add1(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::add1({base::saveRDS(8,"cache.rds");model})',
+    'stats::addmargins(A,FUN=reducer,quiet=TRUE)',
+    'stats::addmargins(A,margin=1,FUN=reducer,quiet=TRUE)',
+    'stats::addmargins(x={base::saveRDS(8,"cache.rds");series})',
+    'stats::addmargins({base::saveRDS(8,"cache.rds");A},FUN=reducer,quiet=TRUE)',
+    'stats::aggregate.data.frame(base::data.frame(value=base::c(1,2,3,4)),by=base::list(block=base::c(1,1,2,2)),FUN={base::saveRDS(8,"cache.rds");function(x)base::sum(x)})',
+    'stats::aggregate.data.frame(model)',
+    'stats::aggregate.data.frame(model,...)',
+    'stats::aggregate.data.frame(x=model)',
+    'stats::aggregate.data.frame(x=model,x=other)',
+    'stats::aggregate.data.frame(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::aggregate.data.frame({base::saveRDS(8,"cache.rds");model})',
+    'stats::aggregate.ts(model)',
+    'stats::aggregate.ts(model,...)',
+    'stats::aggregate.ts(stats::ts(base::c(1,2,3,4),frequency=2),nfrequency=1,FUN={base::saveRDS(8,"cache.rds");function(x)base::sum(x)})',
+    'stats::aggregate.ts(x=model)',
+    'stats::aggregate.ts(x=model,x=other)',
+    'stats::aggregate.ts(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::aggregate.ts({base::saveRDS(8,"cache.rds");model})',
+    'stats::alias(model)',
+    'stats::alias(model,...)',
+    'stats::alias(object=model)',
+    'stats::alias(object=model,object=other)',
+    'stats::alias(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::alias({base::saveRDS(8,"cache.rds");model})',
+    'stats::anova(model)',
+    'stats::anova(model,...)',
+    'stats::anova(object=model)',
+    'stats::anova(object=model,object=other)',
+    'stats::anova(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::anova({base::saveRDS(8,"cache.rds");model})',
+    'stats::ansari.test(sample,reference,exact=FALSE,conf.int=FALSE)',
+    'stats::ar.burg(model)',
+    'stats::ar.burg(model,...)',
+    'stats::ar.burg(x=model)',
+    'stats::ar.burg(x=model,x=other)',
+    'stats::ar.burg(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::ar.burg({base::saveRDS(8,"cache.rds");model})',
+    'stats::arima(series,method="CSS")',
+    'stats::arima(series,order=base::c(1,0,0),fixed=parameters)',
+    'stats::arima(x={base::saveRDS(8,"cache.rds");value},order=c(1,0,0))',
+    'stats::arima({base::saveRDS(8,"cache.rds");value},order=c(1,0,0))',
+    'stats::arima.sim(model,n=8,...)',
+    'stats::arima.sim(model,n=8,rand.gen=generator)',
+    'stats::arima.sim(model=model,model=other,n=8)',
+    'stats::arima.sim(model=model,n=8,rand.gen=generator)',
+    'stats::arima.sim(model={base::saveRDS(8,"cache.rds");model},n=8,rand.gen=generator)',
+    'stats::arima.sim({base::saveRDS(8,"cache.rds");model},n=8,rand.gen=generator)',
+    'stats::as.dendrogram(model)',
+    'stats::as.dendrogram(model,...)',
+    'stats::as.dendrogram(object=model)',
+    'stats::as.dendrogram(object=model,object=other)',
+    'stats::as.dendrogram(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::as.dendrogram({base::saveRDS(8,"cache.rds");model})',
+    'stats::as.dist(m=model)',
+    'stats::as.dist(m=model,m=other)',
+    'stats::as.dist(m={base::saveRDS(8,"cache.rds");model})',
+    'stats::as.dist(model)',
+    'stats::as.dist(model,...)',
+    'stats::as.dist({base::saveRDS(8,"cache.rds");model})',
+    'stats::as.hclust(model)',
+    'stats::as.hclust(model,...)',
+    'stats::as.hclust(x=model)',
+    'stats::as.hclust(x=model,x=other)',
+    'stats::as.hclust(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::as.hclust({base::saveRDS(8,"cache.rds");model})',
+    'stats::as.stepfun(model)',
+    'stats::as.stepfun(model,...)',
+    'stats::as.stepfun(x=model)',
+    'stats::as.stepfun(x=model,x=other)',
+    'stats::as.stepfun(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::as.stepfun({base::saveRDS(8,"cache.rds");model})',
+    'stats::as.ts(model)',
+    'stats::as.ts(model,...)',
+    'stats::as.ts(x=model)',
+    'stats::as.ts(x=model,x=other)',
+    'stats::as.ts(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::as.ts({base::saveRDS(8,"cache.rds");model})',
+    'stats::bandwidth.kernel(k=window)',
+    'stats::bandwidth.kernel(k=window,k=other)',
+    'stats::bandwidth.kernel(k={base::saveRDS(8,"cache.rds");window})',
+    'stats::bandwidth.kernel(window)',
+    'stats::bandwidth.kernel(window,...)',
+    'stats::bandwidth.kernel({base::saveRDS(8,"cache.rds");window})',
+    'stats::bartlett.test(sample,g=groups)',
+    'stats::bartlett.test(structure(c(1,2,4),class="audit_scale"),g=groups)',
+    'stats::binom.test(count,n=trials,p=.5)',
+    'stats::binom.test(count,trials,conf.level=.9)',
+    'stats::binom.test(structure(1,class="audit_events"),n=trials,p=.5)',
+    'stats::bw.SJ(model)',
+    'stats::bw.SJ(model,...)',
+    'stats::bw.SJ(x=model)',
+    'stats::bw.SJ(x=model,x=other)',
+    'stats::bw.SJ(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::bw.SJ({base::saveRDS(8,"cache.rds");model})',
+    'stats::bw.bcv(model)',
+    'stats::bw.bcv(model,...)',
+    'stats::bw.bcv(x=model)',
+    'stats::bw.bcv(x=model,x=other)',
+    'stats::bw.bcv(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::bw.bcv({base::saveRDS(8,"cache.rds");model})',
+    'stats::bw.nrd(sample)',
+    'stats::bw.nrd(x=sample)',
+    'stats::bw.nrd(x={base::saveRDS(8,"cache.rds");sample})',
+    'stats::bw.nrd({base::saveRDS(8,"cache.rds");sample})',
+    'stats::bw.nrd0(sample)',
+    'stats::bw.nrd0(x=sample)',
+    'stats::bw.nrd0(x={base::saveRDS(8,"cache.rds");sample})',
+    'stats::bw.nrd0({base::saveRDS(8,"cache.rds");sample})',
+    'stats::bw.ucv(model)',
+    'stats::bw.ucv(model,...)',
+    'stats::bw.ucv(x=model)',
+    'stats::bw.ucv(x=model,x=other)',
+    'stats::bw.ucv(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::bw.ucv({base::saveRDS(8,"cache.rds");model})',
+    'stats::case.names(model)',
+    'stats::case.names(model,...)',
+    'stats::case.names(object=model)',
+    'stats::case.names(object=model,object=other)',
+    'stats::case.names(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::case.names({base::saveRDS(8,"cache.rds");model})',
+    'stats::coefficients(model)',
+    'stats::coefficients(model,...)',
+    'stats::coefficients(object=model)',
+    'stats::coefficients(object=model,object=other)',
+    'stats::coefficients(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::coefficients({base::saveRDS(8,"cache.rds");model})',
+    'stats::confint(model)',
+    'stats::confint(model,...)',
+    'stats::confint(object=model)',
+    'stats::confint(object=model,object=other)',
+    'stats::confint(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::confint({base::saveRDS(8,"cache.rds");model})',
+    'stats::confint.default(model)',
+    'stats::confint.default(model,...)',
+    'stats::confint.default(object=model)',
+    'stats::confint.default(object=model,object=other)',
+    'stats::confint.default(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::confint.default({base::saveRDS(8,"cache.rds");model})',
+    'stats::confint.lm(model)',
+    'stats::confint.lm(model,...)',
+    'stats::confint.lm(object=model)',
+    'stats::confint.lm(object=model,object=other)',
+    'stats::confint.lm(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::confint.lm({base::saveRDS(8,"cache.rds");model})',
+    'stats::contr.SAS(labels)',
+    'stats::contr.SAS(labels,...)',
+    'stats::contr.SAS(n=labels,contrasts=FALSE)',
+    'stats::contr.SAS(n=labels,n=other)',
+    'stats::contr.SAS(n={base::saveRDS(8,"cache.rds");labels})',
+    'stats::contr.SAS({base::saveRDS(8,"cache.rds");labels})',
+    'stats::contr.helmert(labels)',
+    'stats::contr.helmert(n=labels,contrasts=FALSE)',
+    'stats::contr.helmert(n={base::saveRDS(8,"cache.rds");labels},contrasts=FALSE)',
+    'stats::contr.helmert({base::saveRDS(8,"cache.rds");labels},contrasts=FALSE)',
+    'stats::contr.poly(6,scores=series)',
+    'stats::contr.poly(6,scores=series,...)',
+    'stats::contr.poly(6,{base::saveRDS(8,"cache.rds");series})',
+    'stats::contr.poly(n=6,scores=series,contrasts=FALSE)',
+    'stats::contr.poly(n=6,scores=series,scores=other)',
+    'stats::contr.poly(n=6,scores={base::saveRDS(8,"cache.rds");series})',
+    'stats::contr.sum(labels)',
+    'stats::contr.sum(n=labels,contrasts=FALSE)',
+    'stats::contr.sum(n={base::saveRDS(8,"cache.rds");labels},contrasts=FALSE)',
+    'stats::contr.sum({base::saveRDS(8,"cache.rds");labels},contrasts=FALSE)',
+    'stats::contr.treatment(labels)',
+    'stats::contr.treatment(n=labels,contrasts=FALSE)',
+    'stats::contr.treatment(n={base::saveRDS(8,"cache.rds");labels},contrasts=FALSE)',
+    'stats::contr.treatment({base::saveRDS(8,"cache.rds");labels},contrasts=FALSE)',
+    'stats::cophenetic(tree)',
+    'stats::cophenetic(x=tree)',
+    'stats::cophenetic({base::saveRDS(8,"cache.rds");tree})',
+    'stats::cov2cor(V=input)',
+    'stats::cov2cor(classed_matrix)',
+    'stats::cov2cor(input)',
+    'stats::cutree(tree,h=height)',
+    'stats::cutree(tree,k=count)',
+    'stats::cutree({base::saveRDS(8,"cache.rds");tree},k=count)',
+    'stats::cycle(model)',
+    'stats::cycle(model,...)',
+    'stats::cycle(x=model)',
+    'stats::cycle(x=model,x=other)',
+    'stats::cycle(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::cycle({base::saveRDS(8,"cache.rds");model})',
+    'stats::deltat(model)',
+    'stats::deltat(model,...)',
+    'stats::deltat(x=model)',
+    'stats::deltat(x=model,x=other)',
+    'stats::deltat(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::deltat({base::saveRDS(8,"cache.rds");model})',
+    'stats::deviance(model)',
+    'stats::deviance(model,...)',
+    'stats::deviance(object=model)',
+    'stats::deviance(object=model,object=other)',
+    'stats::deviance(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::deviance({base::saveRDS(8,"cache.rds");model})',
+    'stats::df.kernel(k=window)',
+    'stats::df.kernel(k=window,k=other)',
+    'stats::df.kernel(k={base::saveRDS(8,"cache.rds");window})',
+    'stats::df.kernel(window)',
+    'stats::df.kernel(window,...)',
+    'stats::df.kernel({base::saveRDS(8,"cache.rds");window})',
+    'stats::df.residual(model)',
+    'stats::df.residual(model,...)',
+    'stats::df.residual(object=model)',
+    'stats::df.residual(object=model,object=other)',
+    'stats::df.residual(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::df.residual({base::saveRDS(8,"cache.rds");model})',
+    'stats::dfbeta(model)',
+    'stats::dfbeta(model,...)',
+    'stats::dfbeta(model=model)',
+    'stats::dfbeta(model=model,model=other)',
+    'stats::dfbeta(model={base::saveRDS(8,"cache.rds");model})',
+    'stats::dfbeta({base::saveRDS(8,"cache.rds");model})',
+    'stats::dfbetas(model)',
+    'stats::dfbetas(model,...)',
+    'stats::dfbetas(model=model)',
+    'stats::dfbetas(model=model,model=other)',
+    'stats::dfbetas(model={base::saveRDS(8,"cache.rds");model})',
+    'stats::dfbetas({base::saveRDS(8,"cache.rds");model})',
+    'stats::drop1(model)',
+    'stats::drop1(model,...)',
+    'stats::drop1(object=model)',
+    'stats::drop1(object=model,object=other)',
+    'stats::drop1(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::drop1({base::saveRDS(8,"cache.rds");model})',
+    'stats::dummy.coef(model)',
+    'stats::dummy.coef(model,...)',
+    'stats::dummy.coef(object=model)',
+    'stats::dummy.coef(object=model,object=other)',
+    'stats::dummy.coef(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::dummy.coef({base::saveRDS(8,"cache.rds");model})',
+    'stats::eff.aovlist(aovlist=model)',
+    'stats::eff.aovlist(aovlist=model,aovlist=other)',
+    'stats::eff.aovlist(aovlist={base::saveRDS(8,"cache.rds");model})',
+    'stats::eff.aovlist(model)',
+    'stats::eff.aovlist(model,...)',
+    'stats::eff.aovlist({base::saveRDS(8,"cache.rds");model})',
+    'stats::effects(model)',
+    'stats::effects(model,...)',
+    'stats::effects(object=model)',
+    'stats::effects(object=model,object=other)',
+    'stats::effects(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::effects({base::saveRDS(8,"cache.rds");model})',
+    'stats::embed(series,dimension=2)',
+    'stats::embed(series,dimension=3)',
+    'stats::embed({base::saveRDS(8,"cache.rds");series},dimension=3)',
+    'stats::end(model)',
+    'stats::end(model,...)',
+    'stats::end(x=model)',
+    'stats::end(x=model,x=other)',
+    'stats::end(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::end({base::saveRDS(8,"cache.rds");model})',
+    'stats::estVar(model)',
+    'stats::estVar(model,...)',
+    'stats::estVar(object=model)',
+    'stats::estVar(object=model,object=other)',
+    'stats::estVar(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::estVar({base::saveRDS(8,"cache.rds");model})',
+    'stats::extractAIC(model)',
+    'stats::extractAIC(model,...)',
+    'stats::extractAIC(object=model)',
+    'stats::extractAIC(object=model,object=other)',
+    'stats::extractAIC(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::extractAIC({base::saveRDS(8,"cache.rds");model})',
+    'stats::factanal(covmat=model)',
+    'stats::factanal(covmat=model,covmat=other)',
+    'stats::factanal(covmat={base::saveRDS(8,"cache.rds");model})',
+    'stats::factanal(model)',
+    'stats::factanal(model,...)',
+    'stats::factanal({base::saveRDS(8,"cache.rds");model})',
+    'stats::fitted(model)',
+    'stats::fitted(model,...)',
+    'stats::fitted(object=model)',
+    'stats::fitted(object=model,object=other)',
+    'stats::fitted(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::fitted({base::saveRDS(8,"cache.rds");model})',
+    'stats::fitted.values(model)',
+    'stats::fitted.values(model,...)',
+    'stats::fitted.values(object=model)',
+    'stats::fitted.values(object=model,object=other)',
+    'stats::fitted.values(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::fitted.values({base::saveRDS(8,"cache.rds");model})',
+    'stats::fligner.test(sample,g=groups)',
+    'stats::frequency(model)',
+    'stats::frequency(model,...)',
+    'stats::frequency(x=model)',
+    'stats::frequency(x=model,x=other)',
+    'stats::frequency(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::frequency({base::saveRDS(8,"cache.rds");model})',
+    'stats::ftable(model)',
+    'stats::ftable(model,...)',
+    'stats::ftable(x=model)',
+    'stats::ftable(x=model,x=other)',
+    'stats::ftable(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::ftable({base::saveRDS(8,"cache.rds");model})',
+    'stats::getCall(model)',
+    'stats::getCall(model,...)',
+    'stats::getCall(x=model)',
+    'stats::getCall(x=model,x=other)',
+    'stats::getCall(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::getCall({base::saveRDS(8,"cache.rds");model})',
+    'stats::getInitial(model)',
+    'stats::getInitial(model,...)',
+    'stats::getInitial(object=model)',
+    'stats::getInitial(object=model,object=other)',
+    'stats::getInitial(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::getInitial({base::saveRDS(8,"cache.rds");model})',
+    'stats::get_all_vars(formula=model)',
+    'stats::get_all_vars(model)',
+    'stats::hat(model)',
+    'stats::hat(model,...)',
+    'stats::hat(x=model)',
+    'stats::hat(x=model,x=other)',
+    'stats::hat(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::hat({base::saveRDS(8,"cache.rds");model})',
+    'stats::heatmap(model)',
+    'stats::heatmap(model,...)',
+    'stats::heatmap(x=model)',
+    'stats::heatmap(x=model,x=other)',
+    'stats::heatmap(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::heatmap({base::saveRDS(8,"cache.rds");model})',
+    'stats::influence(model)',
+    'stats::influence(model,...)',
+    'stats::influence(model=model)',
+    'stats::influence(model=model,model=other)',
+    'stats::influence(model={base::saveRDS(8,"cache.rds");model})',
+    'stats::influence({base::saveRDS(8,"cache.rds");model})',
+    'stats::influence.measures(model)',
+    'stats::influence.measures(model,...)',
+    'stats::influence.measures(model=model)',
+    'stats::influence.measures(model=model,model=other)',
+    'stats::influence.measures(model={base::saveRDS(8,"cache.rds");model})',
+    'stats::influence.measures({base::saveRDS(8,"cache.rds");model})',
+    'stats::knots(Fn=model)',
+    'stats::knots(Fn=model,Fn=other)',
+    'stats::knots(Fn={base::saveRDS(8,"cache.rds");model})',
+    'stats::knots(model)',
+    'stats::knots(model,...)',
+    'stats::knots({base::saveRDS(8,"cache.rds");model})',
+    'stats::lag(series,k=1)',
+    'stats::lag(x=series,k=1)',
+    'stats::lag(x={base::saveRDS(8,"cache.rds");series},k=1)',
+    'stats::lm.fit(design,response,offset=offset)',
+    'stats::lm.fit(design,response,offset=offset,tol=tolerance)',
+    'stats::lm.wfit(design,response,structure(c(1,0,2),class="audit_weights"))',
+    'stats::lm.wfit(design,response,weights)',
+    'stats::lm.wfit(design,response,weights,offset=offset)',
+    'stats::logLik(model)',
+    'stats::logLik(model,...)',
+    'stats::logLik(object=model)',
+    'stats::logLik(object=model,object=other)',
+    'stats::logLik(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::logLik({base::saveRDS(8,"cache.rds");model})',
+    'stats::loglin(cube,margin=list(1,2,3),fit=TRUE,print=FALSE)',
+    'stats::loglin(cube,margin=list(c(1,2),c(2,3)),fit=TRUE,print=FALSE)',
+    'stats::loglin(cube,margin=margins,iter=1000,param=TRUE,print=FALSE)',
+    'stats::loglin(cube,margin=margins,start=initial,eps=1e-10,print=FALSE)',
+    'stats::loglin(table=cube,margin=margins,param=FALSE,print=FALSE)',
+    'stats::loglin(table={base::saveRDS(8,"cache.rds");cube},margin=margins,print=FALSE)',
+    'stats::loglin({base::saveRDS(8,"cache.rds");cube},margin=margins,print=FALSE)',
+    'stats::mantelhaen.test(group,outcome,strata,conf.level=.9)',
+    'stats::mantelhaen.test(structure(array(1,c(2,2,3)),class=c("audit_mh","array")))',
+    'stats::mantelhaen.test(tables,correct=FALSE,exact=FALSE)',
+    'stats::mantelhaen.test(tables,exact=TRUE,alternative="greater")',
+    'stats::mauchly.test(model,...)',
+    'stats::mauchly.test(model,T=contrasts)',
+    'stats::mauchly.test(object=model,T=contrasts)',
+    'stats::mauchly.test(object=model,object=other,T=contrasts)',
+    'stats::mauchly.test(object={base::saveRDS(8,"cache.rds");model},T=contrasts)',
+    'stats::mauchly.test({base::saveRDS(8,"cache.rds");model},T=contrasts)',
+    'stats::mcnemar.test(pairs,correct=FALSE)',
+    'stats::mcnemar.test(pairs,correct=correction)',
+    'stats::mcnemar.test(structure(matrix(c(1,2,3,4),2),class=c("audit_table","matrix","array")),correct=FALSE)',
+    'stats::medpolish(plate,eps=0.01,maxiter=10L)',
+    'stats::medpolish(plate,na.rm=TRUE,trace.iter=FALSE)',
+    'stats::medpolish(plate,trace.iter=FALSE)',
+    'stats::medpolish(structure(c(1,2),class="audit_plate"),trace.iter=FALSE)',
+    'stats::model.extract(frame=model,"weights")',
+    'stats::model.extract(frame=model,frame=other,component="weights")',
+    'stats::model.extract(frame={base::saveRDS(8,"cache.rds");model},"weights")',
+    'stats::model.extract(model,"weights")',
+    'stats::model.extract(model,"weights",...)',
+    'stats::model.extract({base::saveRDS(8,"cache.rds");model},"weights")',
+    'stats::model.frame(formula=model)',
+    'stats::model.frame(formula=model,formula=other)',
+    'stats::model.frame(formula={base::saveRDS(8,"cache.rds");model})',
+    'stats::model.frame(model)',
+    'stats::model.frame(model,...)',
+    'stats::model.frame({base::saveRDS(8,"cache.rds");model})',
+    'stats::model.frame.default(formula=model)',
+    'stats::model.frame.default(formula=model,formula=other)',
+    'stats::model.frame.default(formula={base::saveRDS(8,"cache.rds");model})',
+    'stats::model.frame.default(model)',
+    'stats::model.frame.default(model,...)',
+    'stats::model.frame.default({base::saveRDS(8,"cache.rds");model})',
+    'stats::model.matrix(formula,data=table)',
+    'stats::model.matrix(formula,data=table,contrasts.arg=contrasts)',
+    'stats::model.matrix(formula,table,contrasts)',
+    'stats::model.matrix(object={base::saveRDS(8,"cache.rds");formula},data=table,contrasts.arg=contrasts)',
+    'stats::model.matrix({base::saveRDS(8,"cache.rds");formula},data=table,contrasts.arg=contrasts)',
+    'stats::model.matrix.default(formula,data=table)',
+    'stats::model.matrix.default(formula,data=table,contrasts.arg=contrasts)',
+    'stats::model.matrix.default(formula,table,contrasts)',
+    'stats::model.matrix.default(object={base::saveRDS(8,"cache.rds");formula},data=table,contrasts.arg=contrasts)',
+    'stats::model.matrix.default({base::saveRDS(8,"cache.rds");formula},data=table,contrasts.arg=contrasts)',
+    'stats::model.offset(frame)',
+    'stats::model.offset(frame,...)',
+    'stats::model.offset(x=frame)',
+    'stats::model.offset(x=frame,x=other)',
+    'stats::model.offset(x={base::saveRDS(8,"cache.rds");frame})',
+    'stats::model.offset({base::saveRDS(8,"cache.rds");frame})',
+    'stats::model.response(data=frame,data=other)',
+    'stats::model.response(data=frame,type="numeric")',
+    'stats::model.response(data={base::saveRDS(8,"cache.rds");frame},type="numeric")',
+    'stats::model.response(frame,type="numeric")',
+    'stats::model.response(frame,type="numeric",...)',
+    'stats::model.response({base::saveRDS(8,"cache.rds");frame},type="numeric")',
+    'stats::model.tables(model)',
+    'stats::model.tables(model,...)',
+    'stats::model.tables(x=model)',
+    'stats::model.tables(x=model,x=other)',
+    'stats::model.tables(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::model.tables({base::saveRDS(8,"cache.rds");model})',
+    'stats::model.weights(frame)',
+    'stats::model.weights(model)',
+    'stats::model.weights(model,...)',
+    'stats::model.weights(x=model)',
+    'stats::model.weights(x=model,x=other)',
+    'stats::model.weights(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::model.weights({base::saveRDS(8,"cache.rds");model})',
+    'stats::mood.test(sample,reference,alternative="two.sided")',
+    'stats::mood.test(structure(c(1,2),class="audit_scale"),reference)',
+    'stats::na.fail(model)',
+    'stats::na.fail(model,...)',
+    'stats::na.fail(object=model)',
+    'stats::na.fail(object=model,object=other)',
+    'stats::na.fail(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::na.fail({base::saveRDS(8,"cache.rds");model})',
+    'stats::nobs(model)',
+    'stats::nobs(model,...)',
+    'stats::nobs(object=model)',
+    'stats::nobs(object=model,object=other)',
+    'stats::nobs(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::nobs({base::saveRDS(8,"cache.rds");model})',
+    'stats::oneway.test(model_formula,data=sample_data,subset=keep,na.action=handler)',
+    'stats::oneway.test(model_formula,data=sample_data,var.equal=FALSE)',
+    'stats::oneway.test(model_formula,data=sample_data,var.equal=TRUE)',
+    'stats::oneway.test(response~group,data=sample_data)',
+    'stats::oneway.test(transform(response)~group,data=sample_data)',
+    'stats::pacf(series,lag.max=4,na.action=handler,plot=plotting)',
+    'stats::pacf(series,lag.max=4,plot=FALSE)',
+    'stats::pacf(structure(c(1,2,3),class="audit_lag"),lag.max=2,plot=FALSE)',
+    'stats::pairwise.prop.test(cbind(counts,failures),correct=FALSE)',
+    'stats::pairwise.prop.test(counts,totals,correct=FALSE)',
+    'stats::pairwise.prop.test(counts,totals,p.adjust.method="bonferroni",correct=TRUE)',
+    'stats::pairwise.prop.test(counts,totals,p.adjust.method="holm")',
+    'stats::pairwise.prop.test(x=counts,n=totals,correct=TRUE)',
+    'stats::pairwise.prop.test(x={base::saveRDS(8,"cache.rds");counts},n=totals,correct=FALSE)',
+    'stats::pairwise.prop.test({base::saveRDS(8,"cache.rds");counts},totals,correct=FALSE)',
+    'stats::pairwise.t.test(samples,groups,p.adjust.method="holm",pool.sd=FALSE)',
+    'stats::pairwise.t.test(samples,groups,p.adjust.method="holm",pool.sd=TRUE)',
+    'stats::pairwise.t.test(samples,groups,p.adjust.method="none",pool.sd=TRUE)',
+    'stats::pairwise.t.test(samples,groups,paired=TRUE,pool.sd=FALSE)',
+    'stats::pairwise.t.test(structure(c(1,2,3,4),class="audit_waiting"),groups,pool.sd=TRUE)',
+    'stats::pairwise.wilcox.test(series,groups,exact=FALSE,alternative="greater",correct=TRUE)',
+    'stats::pairwise.wilcox.test(series,groups,exact=FALSE,alternative="less")',
+    'stats::pairwise.wilcox.test(series,groups,exact=FALSE,correct=FALSE)',
+    'stats::pairwise.wilcox.test(series,groups,exact=FALSE,p.adjust.method="holm")',
+    'stats::pairwise.wilcox.test(x=series,g=groups,exact=FALSE,paired=TRUE)',
+    'stats::pairwise.wilcox.test(x={base::saveRDS(8,"cache.rds");series},g=groups,exact=FALSE)',
+    'stats::pairwise.wilcox.test({base::saveRDS(8,"cache.rds");series},groups,exact=FALSE)',
+    'stats::poisson.test(count,T=exposure,r=.5,alternative="greater")',
+    'stats::poisson.test(count,exposure,conf.level=.9)',
+    'stats::poly(sensor,degree=2)',
+    'stats::poly(sensor,degree=2,raw=TRUE)',
+    'stats::poly(structure(c(1,2,3,4),class="audit_predictor"),degree=2)',
+    'stats::polym(sensor,degree=2,raw=TRUE)',
+    'stats::power.anova.test(groups=3,n=16,between.var=variance,within.var=1)',
+    'stats::power.anova.test(groups=3,n=16,between.var=variance,within.var={base::saveRDS(8,"cache.rds");1})',
+    'stats::power.anova.test(groups=3,n=16,between.var={base::saveRDS(8,"cache.rds");variance},within.var=1)',
+    'stats::power.anova.test(groups=3,n=32,between.var=variance,within.var=1)',
+    'stats::power.anova.test(groups=5,n=16,between.var=variance,within.var=1)',
+    'stats::power.anova.test(within.var=1,between.var=variance,n=16,groups=3)',
+    'stats::power.prop.test(n=80,p1=input,p2=.7,strict=TRUE)',
+    'stats::power.prop.test(n=80,p1=structure(.5,class="audit_power"),p2=.7)',
+    'stats::power.prop.test(n=NULL,p1=input,p2=.7,power=.8)',
+    'stats::power.prop.test(n=NULL,p1=input,p2=.7,power=.8,strict=TRUE)',
+    'stats::power.t.test(delta=effect,n=24,strict=FALSE)',
+    'stats::power.t.test(n=12,delta=effect,type="two.sample")',
+    'stats::power.t.test(n=24,delta=effect,sd={base::saveRDS(8,"cache.rds");1})',
+    'stats::power.t.test(n=24,delta=effect,type="one.sample",strict=TRUE)',
+    'stats::power.t.test(n=24,delta={base::saveRDS(8,"cache.rds");effect})',
+    'stats::power.t.test(n=48,delta=effect,type="paired")',
+    'stats::predict.glm(model,newdata=newdata,type="response",se.fit=FALSE)',
+    'stats::predict.glm(model,newdata=newdata,type="response",se.fit=TRUE)',
+    'stats::predict.glm(model,newdata=newdata,type="response",se.fit=TRUE,dispersion=2)',
+    'stats::predict.glm(model,newdata=newdata,type="terms",se.fit=TRUE)',
+    'stats::predict.glm(object=model,newdata=newdata,type="link",se.fit=TRUE)',
+    'stats::predict.glm(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats::predict.glm({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats::predict.lm(model,newdata=newdata,interval="confidence")',
+    'stats::predict.lm(model,newdata=newdata,interval="prediction",level=.9)',
+    'stats::predict.lm(model,newdata=newdata,se.fit=FALSE)',
+    'stats::predict.lm(model,newdata=newdata,se.fit=TRUE)',
+    'stats::predict.lm(object=model,newdata=newdata,type="response")',
+    'stats::predict.lm(object={base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats::predict.lm({base::saveRDS(8,"cache.rds");model},newdata=newdata)',
+    'stats::proj(model)',
+    'stats::proj(model,...)',
+    'stats::proj(object=model)',
+    'stats::proj(object=model,object=other)',
+    'stats::proj(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::proj({base::saveRDS(8,"cache.rds");model})',
+    'stats::prop.test(counts,n=totals,correct=FALSE)',
+    'stats::prop.test(counts,totals,alternative="greater")',
+    'stats::prop.trend.test(counts,structure(c(10,20,30),class="audit_totals"),score=scores)',
+    'stats::prop.trend.test(counts,totals,score=10+2*scores)',
+    'stats::prop.trend.test(counts,totals,score=c(0,1,3))',
+    'stats::prop.trend.test(counts,totals,score=scores)',
+    'stats::prop.trend.test(structure(c(3,9,17),class="audit_counts"),totals,score=scores)',
+    'stats::qqnorm(sample,plot.it=FALSE)',
+    'stats::relevel(group,ref="mid")',
+    'stats::relevel(group,ref="mid",...)',
+    'stats::relevel(x=group,ref="mid")',
+    'stats::relevel(x=group,ref="mid",x=other)',
+    'stats::relevel(x={base::saveRDS(8,"cache.rds");group},ref="mid")',
+    'stats::relevel({base::saveRDS(8,"cache.rds");group},ref="mid")',
+    'stats::replications(formula=model)',
+    'stats::replications(formula=model,formula=other)',
+    'stats::replications(formula={base::saveRDS(8,"cache.rds");model})',
+    'stats::replications(model)',
+    'stats::replications(model,...)',
+    'stats::replications({base::saveRDS(8,"cache.rds");model})',
+    'stats::reshape(data=model,direction="long",varying=c("t1","t2"),v.names="value")',
+    'stats::reshape(data=model,direction="long",varying=c("t1","t2"),v.names="value",data=other)',
+    'stats::reshape(data={base::saveRDS(8,"cache.rds");model},direction="long",varying=c("t1","t2"),v.names="value")',
+    'stats::reshape(model,direction="long",varying=c("t1","t2"),v.names="value")',
+    'stats::reshape(model,direction="long",varying=c("t1","t2"),v.names="value",...)',
+    'stats::reshape({base::saveRDS(8,"cache.rds");model},direction="long",varying=c("t1","t2"),v.names="value")',
+    'stats::resid(model)',
+    'stats::resid(model,...)',
+    'stats::resid(object=model)',
+    'stats::resid(object=model,object=other)',
+    'stats::resid(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::resid({base::saveRDS(8,"cache.rds");model})',
+    'stats::residuals(model)',
+    'stats::residuals(model,...)',
+    'stats::residuals(object=model)',
+    'stats::residuals(object=model,object=other)',
+    'stats::residuals(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::residuals({base::saveRDS(8,"cache.rds");model})',
+    'stats::residuals.glm(model)',
+    'stats::residuals.glm(model,...)',
+    'stats::residuals.glm(object=model)',
+    'stats::residuals.glm(object=model,object=other)',
+    'stats::residuals.glm(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::residuals.glm({base::saveRDS(8,"cache.rds");model})',
+    'stats::rstandard(model)',
+    'stats::rstandard(model,...)',
+    'stats::rstandard(model=model)',
+    'stats::rstandard(model=model,model=other)',
+    'stats::rstandard(model={base::saveRDS(8,"cache.rds");model})',
+    'stats::rstandard({base::saveRDS(8,"cache.rds");model})',
+    'stats::rstudent(model)',
+    'stats::rstudent(model,...)',
+    'stats::rstudent(model=model)',
+    'stats::rstudent(model=model,model=other)',
+    'stats::rstudent(model={base::saveRDS(8,"cache.rds");model})',
+    'stats::rstudent({base::saveRDS(8,"cache.rds");model})',
+    'stats::runmed(signal,3L,endrule="constant",algorithm="Turlach")',
+    'stats::runmed(signal,3L,endrule="keep")',
+    'stats::se.contrast(model)',
+    'stats::se.contrast(model,...)',
+    'stats::se.contrast(object=model)',
+    'stats::se.contrast(object=model,object=other)',
+    'stats::se.contrast(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::se.contrast({base::saveRDS(8,"cache.rds");model})',
+    'stats::shapiro.test(sample)',
+    'stats::shapiro.test(structure(c(1,2,4),class="audit_sample"))',
+    'stats::sigma(model)',
+    'stats::sigma(model,...)',
+    'stats::sigma(object=model)',
+    'stats::sigma(object=model,object=other)',
+    'stats::sigma(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::sigma({base::saveRDS(8,"cache.rds");model})',
+    'stats::smooth(signal,kind="3",endrule="copy")',
+    'stats::smooth(structure(c(1,9,2,8,3),class="audit_signal"),kind="3")',
+    'stats::spec.ar(model,n.freq=9,plot=FALSE)',
+    'stats::spec.ar(x=model,n.freq=9,plot=FALSE)',
+    'stats::spec.ar(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::spec.ar({base::saveRDS(8,"cache.rds");model})',
+    'stats::spec.taper(model)',
+    'stats::spec.taper(model,...)',
+    'stats::spec.taper(x=model)',
+    'stats::spec.taper(x=model,x=other)',
+    'stats::spec.taper(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::spec.taper({base::saveRDS(8,"cache.rds");model})',
+    'stats::splinefunH(grid,y,slopes)',
+    'stats::splinefunH(structure(c(1,2,3),class="audit_grid"),c(1,3,2),c(2,.5,-1))',
+    'stats::start(model)',
+    'stats::start(model,...)',
+    'stats::start(x=model)',
+    'stats::start(x=model,x=other)',
+    'stats::start(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::start({base::saveRDS(8,"cache.rds");model})',
+    'stats::stepfun(grid,levels,right=FALSE)',
+    'stats::stepfun(grid,levels,ties=resolve_ties)',
+    'stats::stl(series,s.window="periodic")',
+    'stats::stl(series,s.window="periodic",na.action=handler)',
+    'stats::stl(series,s.window=7,na.action=base::identity)',
+    'stats::stl(x={base::saveRDS(8,"cache.rds");series},s.window="periodic",na.action=handler)',
+    'stats::stl({base::saveRDS(8,"cache.rds");series},s.window="periodic")',
+    'stats::summary.aov(model)',
+    'stats::summary.aov(model,...)',
+    'stats::summary.aov(object=model)',
+    'stats::summary.aov(object=model,object=other)',
+    'stats::summary.aov(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.aov({base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.glm(model)',
+    'stats::summary.glm(model,...)',
+    'stats::summary.glm(object=model)',
+    'stats::summary.glm(object=model,object=other)',
+    'stats::summary.glm(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.glm({base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.lm(model)',
+    'stats::summary.lm(model,...)',
+    'stats::summary.lm(object=model)',
+    'stats::summary.lm(object=model,object=other)',
+    'stats::summary.lm(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.lm({base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.manova(model)',
+    'stats::summary.manova(model,...)',
+    'stats::summary.manova(object=model)',
+    'stats::summary.manova(object=model,object=other)',
+    'stats::summary.manova(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::summary.manova({base::saveRDS(8,"cache.rds");model})',
+    'stats::supsmu(axis,values)',
+    'stats::supsmu(axis,values,...)',
+    'stats::supsmu(axis,values,periodic=TRUE)',
+    'stats::supsmu(axis,values,span=.25)',
+    'stats::supsmu(axis,values,span=.5)',
+    'stats::supsmu(axis,{base::saveRDS(8,"cache.rds");values})',
+    'stats::supsmu(x=axis,y=values,bass=5)',
+    'stats::supsmu(x=axis,y={base::saveRDS(8,"cache.rds");values},span=.5)',
+    'stats::symnum(model)',
+    'stats::symnum(model,...)',
+    'stats::symnum(x=model)',
+    'stats::symnum(x=model,x=other)',
+    'stats::symnum(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::symnum({base::saveRDS(8,"cache.rds");model})',
+    'stats::time(model)',
+    'stats::time(model,...)',
+    'stats::time(x=model)',
+    'stats::time(x=model,x=other)',
+    'stats::time(x={base::saveRDS(8,"cache.rds");model})',
+    'stats::time({base::saveRDS(8,"cache.rds");model})',
+    'stats::ts(data=model)',
+    'stats::ts(data=model,data=other)',
+    'stats::ts(data={base::saveRDS(8,"cache.rds");model})',
+    'stats::ts(model)',
+    'stats::ts(model,...)',
+    'stats::ts({base::saveRDS(8,"cache.rds");model})',
+    'stats::tsSmooth(model)',
+    'stats::tsSmooth(object=model)',
+    'stats::var.test(sample,reference,conf.level=.9)',
+    'stats::var.test(sample,reference,ratio=1)',
+    'stats::var.test(structure(c(1,2),class="audit_variance"),reference)',
+    'stats::vcov(model)',
+    'stats::vcov(model,...)',
+    'stats::vcov(object=model)',
+    'stats::vcov(object=model,object=other)',
+    'stats::vcov(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::vcov({base::saveRDS(8,"cache.rds");model})',
+    'stats::weighted.residuals(model)',
+    'stats::weighted.residuals(model,drop0=FALSE)',
+    'stats::weighted.residuals(obj=model,drop0=FALSE)',
+    'stats::weighted.residuals(obj={base::saveRDS(8,"cache.rds");model})',
+    'stats::weighted.residuals({base::saveRDS(8,"cache.rds");model})',
+    'stats::weights(model)',
+    'stats::weights(model,...)',
+    'stats::weights(object=model)',
+    'stats::weights(object=model,object=other)',
+    'stats::weights(object={base::saveRDS(8,"cache.rds");model})',
+    'stats::weights({base::saveRDS(8,"cache.rds");model})',
+    'stats::window(series,frequency=2)',
+    'stats::window(series,start=2,end=5)',
+    'stats::window({base::saveRDS(8,"cache.rds");series},start=2,end=5)',
+    'stepfun(x=grid,y=levels,right=TRUE)',
+    'stl(x=series,s.window="periodic",na.action=handler)',
+    'summary.aov(object=model)',
+    'summary.glm(object=model)',
+    'summary.lm(object=model)',
+    'summary.manova(object=model)',
+    'supsmu(x=axis,y=values,span=.5)',
+    'symnum(x=model)',
+    't.test.default(series,mu=0)',
+    'time(x=model)',
+    'trans3d(x,y,z,projection)',
+    'ts(data=model)',
+    'tsSmooth(object=model)',
+    'unname(obj=model)',
+    'unsplit(value=model,f=groups)',
+    'unstack(x=model)',
+    'utils:::relist(values,model)',
+    'utils:::stack(model)',
+    'utils:::stack.data.frame(model)',
+    'utils:::stack.default(model)',
+    'utils:::unstack(model)',
+    'utils:::unstack.data.frame(model)',
+    'utils:::unstack.default(model)',
+    'utils::relist(flesh=values,skeleton=model)',
+    'utils::relist(flesh=values,skeleton={base::saveRDS(8,"cache.rds");model})',
+    'utils::relist(values,model)',
+    'utils::relist(values,model,...)',
+    'utils::relist(values,skeleton=model,skeleton=other)',
+    'utils::relist(values,{base::saveRDS(8,"cache.rds");model})',
+    'utils::stack(model)',
+    'utils::stack(model,...)',
+    'utils::stack(x=model)',
+    'utils::stack(x=model,x=other)',
+    'utils::stack(x={base::saveRDS(8,"cache.rds");model})',
+    'utils::stack({base::saveRDS(8,"cache.rds");model})',
+    'utils::unstack(model)',
+    'utils::unstack(model,...)',
+    'utils::unstack(x=model)',
+    'utils::unstack(x=model,x=other)',
+    'utils::unstack(x={base::saveRDS(8,"cache.rds");model})',
+    'utils::unstack({base::saveRDS(8,"cache.rds");model})',
+    'var.test(x=sample,y=reference,alternative="less")',
+    'var.test.default(x=sample,y=reference,alternative="less")',
+    'vcov(object=model)',
+    'weighted.mean.default(series,w=weights)',
+    'weighted.residuals(model,drop0=FALSE)',
+    'weights(object=model)',
+    'wilcox.test.default(series,y=other,exact=FALSE)',
+    'window(series,start=2,end=5)',
+    'xy.coords(x=x,y=y,setLab=FALSE)',
+    'xyz.coords(x,y,z)'
+  ])('withdraws caller and serialized proofs across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");out<-' +
+      call +
+      ';base::readLines(path);base::readRDS("cache.rds")'
+    const analysis = await analyzeRNotebookSource(source)
+    expect(analysis.facts.serializedValueWrites ?? []).toEqual([])
+    const access = await analyzeNotebookSourceFileAccess('r', source)
+    expect(access.reads).not.toContain('old.txt')
+    expect(access.reads).toContain('cache.rds')
+    expect(access).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'quarters',
+    'hat',
+    'getInitial',
+    'factanal',
+    'TukeyHSD',
+    'residuals.glm',
+    'heatmap',
+    'model.tables',
+    'relist',
+    'proj',
+    'confint.lm',
+    'ar.burg',
+    'spec.taper',
+    'model.frame',
+    'summary.glm',
+    'summary.lm',
+    'summary.manova',
+    'influence.measures',
+    'summary.aov',
+    'arima.sim',
+    'mauchly.test',
+    'SSD',
+    'se.contrast',
+    'alias',
+    'eff.aovlist',
+    'case.names',
+    'estVar',
+    'replications',
+    'getCall',
+    'model.frame.default',
+    'kruskal.test.default',
+    'quade.test.default',
+    'predict.StructTS',
+    'get_all_vars',
+    'tsSmooth',
+    'friedman.test.default',
+    'fitted',
+    'residuals'
+  ])('preserves the bare %s model dependency without certifying purity', async (name) => {
+    const { facts } = await analyzeRNotebookSource('out<-' + name + '(model)')
+    expect(facts.receiverCalls).toContainEqual(
+      expect.objectContaining({ receiver: 'model', member: name, kind: 'generic' })
+    )
+  })
+  it.each([
+    'stats:::friedman.test.default(model)',
+    'stats::tsSmooth(model)',
+    'utils::relist(values,skeleton)',
+    'stats::heatmap(model)',
+    'base::merge(model,other)',
+    'graphics::hist(model,breaks=breaks)'
+  ])('preserves control-flow boundaries around %s', async (call) => {
+    for (const warm of [false, true]) {
+      const context = await fileContext('r', ['path<-"old.txt"', 'out<-' + call], [], warm)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'out<-' + call + ';path<-"after.txt";base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";later<-function()' + call + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it.each(['friedman.test.default', 'tsSmooth', 'relist', 'heatmap', 'merge', 'hist'])(
+    'respects a local pure %s replacement',
+    async (name) => {
+      const source =
+        name + '<-function(...)1;path<-"old.txt";out<-' + name + '(model);base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    }
+  )
 })

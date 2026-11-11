@@ -13,13 +13,34 @@ import { useSettingsStore } from '@/stores/settings-store'
 import type { LiteratureJobRequest, LiteratureJobView } from '@aipoch/literature-discovery/jobs'
 import {
   literatureItemInputSchema,
+  literatureRecordImportRequestSchema,
   type LiteratureItemView,
   type LiteratureCatalogCommand
 } from '@aipoch/literature-library/contracts'
 import { createRoot } from 'react-dom/client'
 
 initI18n('en')
-const mode = new URLSearchParams(location.search).get('mode')
+const params = new URLSearchParams(location.search)
+const mode = params.get('mode')
+document.documentElement.classList.toggle('dark', params.has('dark'))
+let foreignFields: Record<string, unknown> = {}
+if (params.has('foreign-metadata')) {
+  const frame = document.createElement('iframe')
+  frame.hidden = true
+  document.body.append(frame)
+  const foreignJson = (frame.contentWindow as unknown as { JSON: JSON }).JSON
+  foreignFields = foreignJson.parse(
+    '{"nested":{"scores":[0,1,2],"flag":false,"none":null}}'
+  ) as Record<string, unknown>
+}
+const linkReferences: string[] = []
+const pendingLinkLookups: Array<() => void> = []
+Object.assign(window, {
+  literatureLink: {
+    references: linkReferences,
+    completeLookup: (index: number): void => pendingLinkLookups[index]()
+  }
+})
 let requiresCitationKey = new URLSearchParams(location.search).has('citation-key')
 const parent = {
   id: 'parent',
@@ -119,6 +140,61 @@ window.api = {
     abortTransfer: async () => {}
   },
   literature: {
+    overviewBatch: async () => null,
+    lookupMetadata: async (reference: string) => {
+      linkReferences.push(reference)
+      await new Promise<void>((resolve) => pendingLinkLookups.push(resolve))
+      const arxiv = reference.startsWith('arxiv:')
+      const scheme = arxiv
+        ? 'arxiv'
+        : reference.startsWith('pmcid:')
+          ? 'pmcid'
+          : reference.startsWith('pmid:')
+            ? 'pmid'
+            : 'doi'
+      return literatureItemInputSchema.parse({
+        itemType: arxiv ? 'preprint' : 'journalArticle',
+        title: arxiv
+          ? 'A linked reference with a deliberately long title for reviewing metadata in a narrow window'
+          : scheme === 'doi'
+            ? 'Reproducible analysis of open research datasets'
+            : 'Open access methods for biomedical literature review',
+        abstract: 'Metadata supplied by the browser fixture, with no external provider requests.',
+        issuedYear: 2024,
+        containerTitle: 'Journal of Reproducible Scientific Research',
+        typeFields: { volume: '18', issue: '4', pages: '1–16', ...foreignFields },
+        creators: [
+          {
+            creatorType: 'author',
+            nameMode: 'person',
+            familyName: 'Researcher',
+            givenName: 'Alice Alexandra'
+          },
+          {
+            creatorType: 'author',
+            nameMode: 'person',
+            familyName: 'Scientist',
+            givenName: 'Bob Benjamin'
+          },
+          {
+            creatorType: 'author',
+            nameMode: 'person',
+            familyName: 'Collaborator',
+            givenName: 'Carol Catherine'
+          }
+        ],
+        identifiers: [
+          {
+            scheme,
+            value: scheme === 'doi' ? reference : reference.slice(reference.indexOf(':') + 1),
+            isPrimary: true
+          },
+          arxiv || scheme === 'pmid'
+            ? { scheme: 'doi', value: '10.1234/identity-review', isPrimary: true }
+            : { scheme: 'pmid', value: '2097408', isPrimary: true }
+        ]
+      })
+    },
     related: async (request: LiteratureRelatedRequest) => {
       fileRequests.push(request)
       if (new URLSearchParams(location.search).has('citation-loading'))
@@ -160,6 +236,10 @@ window.api = {
         ]
       }
     },
+    studySnapshot: async (request: { expectedSourceKey: string }) => ({
+      sourceKey: request.expectedSourceKey,
+      issue: 'not-generated' as const
+    }),
     get: async () => fileItem,
     importPdf: async (request: { itemId: string; attachment: { name: string } }) => {
       fileRequests.push(request)
@@ -177,9 +257,34 @@ window.api = {
       }
       return { item: fileItem }
     },
-    importRecords: async (request: object) => {
+    importRecords: async (request: {
+      mode: 'preview' | 'commit'
+      content?: string
+      items?: unknown[]
+    }) => {
+      literatureRecordImportRequestSchema.parse(request)
       fileRequests.push(request)
-      return { mode: 'preview', format: 'nbib', items: [fileItem.item], warnings: [] }
+      return {
+        format: 'items',
+        items: [fileItem.item],
+        entries: [
+          {
+            index: 0,
+            title: fileItem.item.title,
+            status: 'ready',
+            warnings: [],
+            item: fileItem.item
+          }
+        ],
+        errors: [],
+        truncated: false,
+        scannedEntries: 1,
+        ...(request.mode === 'commit'
+          ? {
+              imported: { itemIds: [fileItem.id], createdCount: 1, reusedCount: 0 }
+            }
+          : {})
+      }
     },
     onChanged: () => () => {},
     search: async (request: { scope: string }) => ({
@@ -188,12 +293,28 @@ window.api = {
           ? mode === 'files'
             ? []
             : collections
-          : mode === 'files' && request.scope === 'library'
+          : (mode === 'files' ||
+                (mode === 'links' &&
+                  commands.some(
+                    (command) => 'kind' in command && command.kind === 'create-item'
+                  ))) &&
+              request.scope === 'library'
             ? [fileItem]
             : []
     }),
     transact: async (command: LiteratureCatalogCommand) => {
       commands.push(command)
+      if (mode === 'links' && command.kind === 'create-item') {
+        fileItem = {
+          ...fileItem,
+          id: 'linked-item',
+          item: command.item,
+          attachments: [],
+          collectionIds: [],
+          projectIds: []
+        }
+        return { kind: 'item', id: fileItem.id, state: 'present' }
+      }
       if (command.kind === 'stage-candidate') {
         const saveMode = new URLSearchParams(location.search).get('citation-save')
         if (saveMode) {
@@ -239,7 +360,7 @@ window.api = {
 } as unknown as typeof window.api
 useNavigationStore.setState({
   view: 'library',
-  pendingLiteratureCollectionId: mode === 'files' ? undefined : 'parent'
+  pendingLiteratureCollectionId: mode === 'files' || mode === 'links' ? undefined : 'parent'
 })
 useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })

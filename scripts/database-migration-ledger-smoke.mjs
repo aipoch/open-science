@@ -208,6 +208,30 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0051_literature_reading_status',
     checksum: 'a32ab5f82ae8a11fe74860f5020f8f5e2b8747d19c3935773cfbf8c8f933fe0a'
+  },
+  {
+    id: '0052_literature_personal_note_search',
+    checksum: '0866849a77e3e3ddc3f084a89de6e57a8197519a365a3a2b4ae08cdf405e65b6'
+  },
+  {
+    id: '0053_literature_doi_identity',
+    checksum: '37c0bf2052799a6bdc2417d137a473b7d89f02a7826bf2dc253c3b6a376d7095'
+  },
+  {
+    id: '0054_slurm_job_reliability',
+    checksum: '1525c308d5403411490596cf7ad4e03a2fc9ae7ee43adf6d3622d0b17d97319b'
+  },
+  {
+    id: '0055_session_discussion_parent',
+    checksum: '8fc258c3f41f8ce14ad74a58cde8aa53c93bf312a251f6345174b5d06bb65cf1'
+  },
+  {
+    id: '0056_compute_kubernetes_workspace',
+    checksum: '658ff2adbd570b019249e119f3e5579e27c385ab247321311a383ff3739f5e7d'
+  },
+  {
+    id: '0057_project_optimization_prompt',
+    checksum: '226fb954f1b09aeab18527a4562a9a0f5551145edf5259e57513f73c8dbb150e'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

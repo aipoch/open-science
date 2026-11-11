@@ -12,9 +12,15 @@ import { NotebookRunRepository } from '../../notebook/repository'
 import { writeArtifactFileForCurrentRun } from '../mcp-server'
 import { createLinearConversationGraph } from '../../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../../shared/session-persistence'
+import type { ArtifactWriteSource } from '../../../shared/artifacts'
 import { configureRuntimeMetadata } from '../../runtime-metadata'
 
 const [root, phase] = process.argv.slice(2)
+const inlineSource = (content: string): ArtifactWriteSource => ({
+  kind: 'inline',
+  content,
+  encoding: 'utf8'
+})
 configureRuntimeMetadata(() => ({
   version: '0.0.0-test',
   locale: 'en-US',
@@ -202,13 +208,13 @@ const main = async (): Promise<void> => {
     env,
     phase === 'copying'
       ? { filename: 'first.txt', source: { kind: 'localPath', path: copySourcePath } }
-      : { filename: 'first.txt', content: 'first crash-safe bytes' },
+      : { filename: 'first.txt', source: inlineSource('first crash-safe bytes') },
     { requestId: 'first' }
   )
   const second = await writeArtifactFileForCurrentRun(
     compatibility,
     env,
-    { filename: 'second.txt', content: 'second crash-safe bytes' },
+    { filename: 'second.txt', source: inlineSource('second crash-safe bytes') },
     { requestId: 'second' }
   )
   if (phase !== 'activated-unattached') {

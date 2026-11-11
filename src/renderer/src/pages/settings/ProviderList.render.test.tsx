@@ -202,7 +202,7 @@ describe('ProviderList', () => {
       undefined,
       {
         agentFrameworkId: 'opencode',
-        frameworkEndpoints: ['messages', 'chat-completions'],
+        frameworkEndpoints: ['chat-completions', 'messages'],
         frameworkName: 'OpenCode'
       }
     )

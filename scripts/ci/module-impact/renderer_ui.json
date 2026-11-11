@@ -43,7 +43,8 @@
     "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
     "src/renderer/src/components/ui/split-button.tsx",
     "src/renderer/src/components/ui/split-button.css",
-    "src/renderer/src/components/ui/split-button.test.tsx"
+    "src/renderer/src/components/ui/split-button.test.tsx",
+    "src/renderer/src/components/ui/progress-bar.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ui/badge.tsx",
@@ -346,7 +347,6 @@
       "src/renderer/src/pages/workspace/SessionBackgroundActivity.test.tsx",
       "src/renderer/src/pages/workspace/SessionHoverPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx",
-      "src/renderer/src/pages/workspace/SessionInterruptedBanner.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.test.tsx",

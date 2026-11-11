@@ -1,9 +1,14 @@
+import { CREDENTIAL_AUTHORIZATION_TIMEOUT_MS } from './credential-identity/identity-contract'
 import {
   readServiceLifetime,
+  serviceStopDeadline,
+  LOCAL_SERVICE_STOP_ESCALATION_MS,
+  LOCAL_SERVICE_STOP_BUDGET_MS,
   serviceLifetimeRecordSchema,
   type ServiceLifetimeRecord
 } from './local-service-lifetime'
 import { terminateVerifiedService } from './verified-service-stop'
+import { terminateProcessTree } from './process-tree'
 import { connectDesktopRuntime } from './desktop-runtime-client'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from './desktop-runtime-info'
@@ -18,6 +23,7 @@ import {
   terminateVerifiedLegacyRuntime,
   type LegacyTerminationDeps
 } from './legacy-service-termination'
+import { pruneBackendStartupLogs } from './backend-startup-log-retention'
 import { randomUUID } from 'node:crypto'
 import {
   backendStartupStatusSchema,
@@ -194,6 +200,7 @@ export async function discoverDesktopBackend(
       if (startupOptions) verifyStartupOptions?.(startupOptions)
       let probe: Awaited<ReturnType<typeof connectDesktopRuntime>> | undefined
       let retirementTimer: ReturnType<typeof setTimeout> | undefined
+      const retirementDeadline = legacy ? Date.now() + 12_000 : serviceStopDeadline()
       const retirement = new AbortController()
       const retirementSignal = signal
         ? AbortSignal.any([signal, retirement.signal])
@@ -221,7 +228,7 @@ export async function discoverDesktopBackend(
                 await probe.lifecycle({
                   operation: 'prepare',
                   fingerprint: work.fingerprint,
-                  deadlineAt: Date.now() + 10_000
+                  deadlineAt: legacy ? Date.now() + 10_000 : retirementDeadline
                 })
                 await probe.refreshControl()
                 const finalInfo = probe.runtimeInfo()
@@ -233,7 +240,10 @@ export async function discoverDesktopBackend(
                   return false
                 }
                 retirementSignal.throwIfAborted()
-                const lease = await probe.stopRuntime('restart', { requireCleanExit: false })
+                const lease = await probe.stopRuntime('restart', {
+                  requireCleanExit: false,
+                  ...(!legacy ? { deadlineAt: retirementDeadline } : {})
+                })
                 lease.release()
                 const intent = await readServiceLifetime(configRoot)
                 if (
@@ -248,11 +258,14 @@ export async function discoverDesktopBackend(
             return false
           })(),
           new Promise<never>((_, reject) => {
-            retirementTimer = setTimeout(() => {
-              retirement.abort()
-              probe?.close()
-              reject(new Error('Abandoned desktop service retirement timed out.'))
-            }, 12_000)
+            retirementTimer = setTimeout(
+              () => {
+                retirement.abort()
+                probe?.close()
+                reject(new Error('Abandoned desktop service retirement timed out.'))
+              },
+              Math.max(1, retirementDeadline - Date.now())
+            )
           })
         ])
         if (retired) return undefined
@@ -291,6 +304,7 @@ export async function discoverDesktopBackend(
                 throw new Error('The service retirement still has connected Apps.')
               onRetired?.(intent, startupOptions)
               signal?.throwIfAborted()
+              const stopDeadline = serviceStopDeadline()
               let lease
               try {
                 lease = await waitForRuntimeStopped({
@@ -298,7 +312,10 @@ export async function discoverDesktopBackend(
                   generation: owner.desktop.generation,
                   pid: owner.pid,
                   requireCleanExit: false,
-                  timeoutMs: 1500,
+                  timeoutMs: Math.max(
+                    1,
+                    stopDeadline - Date.now() - LOCAL_SERVICE_STOP_ESCALATION_MS
+                  ),
                   signal
                 })
               } catch (error) {
@@ -310,7 +327,7 @@ export async function discoverDesktopBackend(
                     generation: owner.desktop.generation,
                     pid: owner.pid,
                     birthToken: owner.birthToken,
-                    deadlineAt: Date.now() + 5000
+                    deadlineAt: stopDeadline
                   })
                 } catch (terminationError) {
                   // The graceful stop may finish during the asynchronous identity read.
@@ -321,7 +338,7 @@ export async function discoverDesktopBackend(
                   generation: owner.desktop.generation,
                   pid: owner.pid,
                   requireCleanExit: false,
-                  timeoutMs: 5000,
+                  timeoutMs: Math.max(1, stopDeadline - Date.now()),
                   signal
                 })
               }
@@ -474,9 +491,9 @@ export function desktopBackendPaths(options: {
   applicationPath: string
   resourcesPath: string
   packaged: boolean
-}): { command: string; entry: string } {
+}): { command: string; entry: string; serviceLauncher?: string } {
   const executable = process.platform === 'win32' ? 'node.exe' : 'node'
-  return options.packaged
+  const paths = options.packaged
     ? {
         command: join(options.resourcesPath, 'node-runtime', executable),
         entry: join(options.resourcesPath, 'backend', 'out', 'backend', 'index.cjs')
@@ -491,9 +508,14 @@ export function desktopBackendPaths(options: {
         ),
         entry: join(options.applicationPath, 'out', 'backend', 'index.cjs')
       }
+  if (process.platform !== 'darwin') return paths
+  const directory = options.packaged
+    ? join(options.resourcesPath, 'backend')
+    : join(options.applicationPath, 'out')
+  return { ...paths, serviceLauncher: join(directory, 'desktop-service-launcher') }
 }
 
-const OWNERSHIP_RELEASE_WAIT_MS = 20_000
+const OWNERSHIP_RELEASE_WAIT_MS = LOCAL_SERVICE_STOP_BUDGET_MS
 const MAX_OWNERSHIP_RESPAWNS = 2
 
 // A stopping runtime is waited out; if it does not exit, only an identity-verified runtime is stopped.
@@ -557,6 +579,7 @@ export async function startOrAttachDesktopBackend(options: {
   profilePath: string
   version: string
   command: string
+  serviceLauncher?: string
   entry: string
   packaged: boolean
   args?: readonly string[]
@@ -583,11 +606,10 @@ export async function startOrAttachDesktopBackend(options: {
   await Promise.all([access(options.command), access(options.entry)])
   const logs = join(options.configRoot, 'logs')
   await mkdir(logs, { recursive: true, mode: 0o700 })
-  const file = await open(
-    join(logs, `desktop-backend-${process.pid}-${Date.now()}.log`),
-    'wx',
-    0o600
-  )
+  const logName = `desktop-backend-${process.pid}-${Date.now()}.log`
+  const file = await open(join(logs, logName), 'wx', 0o600)
+  // Retention is best effort. Files that cannot be inspected are retried on a later launch.
+  void pruneBackendStartupLogs(logs, logName).catch(() => undefined)
   // The explicit config root must not make Node select a different credential profile.
   const attemptId = randomUUID()
   let credentialInventoryPath: string | undefined
@@ -624,10 +646,18 @@ export async function startOrAttachDesktopBackend(options: {
   let failure: Error | undefined
   let status: BackendStartupStatus | undefined
   const startedAt = Date.now()
+  let deadline = startedAt + (options.timeoutMs ?? 60_000)
+  let credentialWaitGranted = false
   const onMessage = (message: unknown): void => {
     const result = backendStartupStatusSchema.safeParse(message)
     if (result.success && result.data.attemptId === attemptId && status?.kind !== 'failed') {
       status = result.data
+      if (status.stage === 'credentials' && status.kind === 'progress' && !credentialWaitGranted) {
+        credentialWaitGranted = true
+        // Grant once; repeated status messages cannot keep startup alive indefinitely.
+        if (options.timeoutMs === undefined)
+          deadline = Math.max(deadline, Date.now() + CREDENTIAL_AUTHORIZATION_TIMEOUT_MS + 60_000)
+      }
       try {
         options.onStatus?.({ ...status, elapsedMs: Date.now() - startedAt })
       } catch {
@@ -643,8 +673,9 @@ export async function startOrAttachDesktopBackend(options: {
     await options.beforeLaunch?.()
     options.signal?.throwIfAborted()
     child = spawn(
-      options.command,
+      options.serviceLauncher ?? options.command,
       [
+        ...(options.serviceLauncher ? [options.command] : []),
         options.entry,
         ...(!options.packaged ? ['--development'] : []),
         ...(options.args ?? []),
@@ -669,7 +700,6 @@ export async function startOrAttachDesktopBackend(options: {
   await file.close()
   child.unref()
   child.channel?.unref()
-  const deadline = startedAt + (options.timeoutMs ?? 60_000)
   try {
     while (Date.now() < deadline) {
       options.signal?.throwIfAborted()
@@ -723,6 +753,25 @@ export async function startOrAttachDesktopBackend(options: {
       logs,
       status
     )
+  } catch (error) {
+    if (
+      status?.stage === 'credentials' &&
+      child.exitCode === null &&
+      child.signalCode === null &&
+      (options.signal?.aborted || (error instanceof DesktopBackendStartupError && !error.canRetry))
+    ) {
+      // A blocked credential helper must not outlive an abandoned launch attempt.
+      const stopped = await terminateProcessTree(child, 'SIGKILL')
+      if (stopped.reaped && error instanceof DesktopBackendStartupError)
+        throw new DesktopBackendStartupError(
+          `Node backend startup timed out. See ${logs}.`,
+          status.stage,
+          true,
+          logs,
+          status
+        )
+    }
+    throw error
   } finally {
     child.off('message', onMessage)
     if (child.connected) child.disconnect()

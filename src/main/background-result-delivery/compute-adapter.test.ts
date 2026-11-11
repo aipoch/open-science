@@ -66,6 +66,37 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('Compute Job result delivery adapter', () => {
+  it.each([{ cancellation_status: 'cancelled' as const }, { error_code: 'job_cancelled' }])(
+    'acknowledges cancelled results before collection completes: %j',
+    async (cancellation) => {
+      const { adapter, deps } = harness()
+      const cancelled = job({ status: 'failed', ...cancellation, notified_at: 5 })
+      await adapter.observeNotification(cancelled)
+      expect(await adapter.observeResult(cancelled)).toBe('suppressed')
+      expect(deps.enqueue).toHaveBeenCalledExactlyOnceWith(source)
+      expect(deps.acknowledgeObserved).toHaveBeenCalledExactlyOnceWith(source)
+    }
+  )
+
+  it('uses each settled operation revision without consuming the task result', async () => {
+    const { adapter, deps } = harness()
+    const failure = {
+      jobId: 'job-1',
+      operationId: 'op-1',
+      revision: 4,
+      jobStatus: 'running' as const,
+      error: { code: 'cancel_request_rejected', message: 'Permission denied.' }
+    }
+    await adapter.observeCancellationFailure(job(), failure)
+    await adapter.observeCancellationFailure(job(), { ...failure, revision: 8 })
+    expect(deps.enqueue.mock.calls.map(([ref]) => ref)).toEqual([
+      { ...source, sourceKind: 'compute-cancellation', sourceId: 'op-1:4' },
+      { ...source, sourceKind: 'compute-cancellation', sourceId: 'op-1:8' }
+    ])
+    expect(deps.acknowledgeObserved).not.toHaveBeenCalled()
+    await adapter.observeNotification(job({ status: 'success', notified_at: 9, harvested_at: 9 }))
+    expect(deps.enqueue).toHaveBeenLastCalledWith(source)
+  })
   it.each(['queued', 'submitted', 'running'] as const)(
     'admits %s Jobs but does not deliver premature results',
     async (status) => {

@@ -285,7 +285,15 @@ describe('SkillsPanel (list view)', () => {
     act(() => row.querySelector<HTMLElement>('[data-slot="skill-usage-agents-label"]')!.click())
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
     onNavigate.mockClear()
+    act(() => row.querySelector<HTMLElement>('p')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+    onNavigate.mockClear()
     act(() => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+    onNavigate.mockClear()
+    act(() =>
+      row.querySelector<HTMLButtonElement>('[aria-label="View details for Alpha"]')!.click()
+    )
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
   })
   it('keeps assignment popup interactions separate from row navigation', async () => {
@@ -349,7 +357,9 @@ describe('SkillsPanel (list view)', () => {
     })
 
     const filters = document.body.querySelector<HTMLElement>('[data-slot="skills-filter-bar"]')
-    const actions = document.body.querySelector<HTMLElement>('[data-slot="skills-action-bar"]')
+    const actions = document.body.querySelector<HTMLElement>(
+      '[data-slot="resource-catalog-header"]'
+    )
     const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Manage'
     )
@@ -360,20 +370,21 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.querySelector('[aria-label="Filter skills by source"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter Skills by agent"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter by Tag"]')).not.toBeNull()
-    const search = filters?.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
-    expect(search?.parentElement?.className).toContain('basis-full')
+    const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
+    expect(filters?.contains(search ?? null)).toBe(true)
     expect(filters?.contains(manage ?? null)).toBe(false)
     expect(filters?.contains(addSkill ?? null)).toBe(false)
     expect(manage).toBeUndefined()
     expect(actions?.contains(addSkill ?? null)).toBe(true)
-    expect(actions?.className).toContain('flex-wrap')
-    expect(actions?.compareDocumentPosition(filters!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    const marketplace = [...actions!.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Browse Marketplace'
-    )!
-    expect(marketplace.dataset.variant).toBe('default')
-    expect(marketplace.querySelector('svg')?.getAttribute('data-icon')).toBe('inline-start')
-    expect(document.querySelector('[data-slot="skills-header"] h3')?.textContent).toContain(
+    expect(actions?.querySelector('h2')?.textContent).toBe('Skills')
+    expect(actions?.contains(filters!)).toBe(true)
+    const marketplace = Array.from(
+      actions!.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.trim() === 'Marketplace')
+    expect(marketplace).not.toBeNull()
+    expect(marketplace?.getAttribute('aria-selected')).toBe('false')
+    expect(actions?.querySelector('[role="tablist"]')).not.toBeNull()
+    expect(actions?.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
       'Installed'
     )
   })
@@ -387,7 +398,7 @@ describe('SkillsPanel (list view)', () => {
     const importedGroup = document.body.querySelector<HTMLElement>(
       '[data-slot="skills-source-group"][data-source="imported"]'
     )
-    expect(importedGroup?.textContent).toContain('Skills you imported into Open-Science.')
+    expect(importedGroup?.querySelector('h3')?.textContent).toBe('Imported0')
     expect(importedGroup?.textContent).toContain('No imported skills yet.')
 
     const importButton = Array.from(
@@ -537,6 +548,9 @@ describe('SkillsPanel (list view)', () => {
     })
 
     expect(document.body.querySelector('[role="status"]')?.textContent).toContain('Loading Skills…')
+    expect(
+      document.body.querySelector('[data-slot="resource-catalog-header"] h2')?.textContent
+    ).toBe('Skills')
     expect(document.body.textContent).not.toContain('No skills match your search.')
     expect(document.body.textContent).not.toContain('No imported skills yet.')
   })
@@ -664,7 +678,7 @@ describe('SkillsPanel (list view)', () => {
     expect(betaRow?.textContent).toContain('Used by')
     const tagMenu = alphaRow?.querySelector('[aria-label="Manage Tags"]')
     const controls = alphaRow?.querySelector('[data-slot="resource-assignment-trigger"]')
-    expect(tagMenu!.compareDocumentPosition(controls!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(controls!.compareDocumentPosition(tagMenu!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
 
     await act(async () => alphaAgents?.focus())
     expect(
@@ -1047,7 +1061,7 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.querySelector('[aria-label="Skill ID"]')).toBeNull()
 
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
     await act(async () => {
       save?.click()
@@ -1103,7 +1117,7 @@ describe('SkillsPanel (sub-views)', () => {
     )
 
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
     await act(async () => {
       save?.click()
@@ -1146,7 +1160,7 @@ describe('SkillsPanel (sub-views)', () => {
     pasteValue('Skill body', ['---', 'author: Ada', 'license: MIT', '---', '# New body'].join('\n'))
 
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
     await act(async () => {
       save?.click()
@@ -1196,7 +1210,7 @@ describe('SkillsPanel (sub-views)', () => {
     ).not.toBeNull()
 
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
     await act(async () => {
       save?.click()
@@ -1241,7 +1255,7 @@ describe('SkillsPanel (sub-views)', () => {
     )
 
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
     await act(async () => {
       save?.click()
@@ -1359,7 +1373,7 @@ describe('SkillsPanel (sub-views)', () => {
         document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill description"]')?.value
       ).toBe(change.startsWith('header') ? 'After' : 'My revised description')
       const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-        (button) => button.textContent?.trim() === 'Save'
+        (button) => button.textContent?.trim() === 'Save changes'
       )
       await act(async () => save?.click())
       expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
@@ -1884,7 +1898,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
 
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save'
+      (button) => button.textContent?.trim() === 'Save changes'
     )
     expect(document.body.textContent).toContain(
       'The skill package exceeds the 128 MB total size limit.'
@@ -3011,14 +3025,27 @@ it('distinguishes a selected update from an already installed revision', async (
 })
 
 it('selects Featured Skills in their category without exposing deletion or a global Manage action', () => {
-  act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+  const onNavigate = vi.fn()
+  act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
   const select = container.querySelector<HTMLButtonElement>(
     '[aria-label="Select multiple in Featured"]'
   )
   expect(select).not.toBeNull()
   act(() => select!.click())
   const checkbox = container.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!
-  act(() => checkbox.click())
+  const card = checkbox.closest('[data-slot="settings-list-row"]')!
+  const selectionSurface = checkbox.closest('label')!
+  expect(card.querySelector('[data-slot="resource-row-content"]')?.hasAttribute('inert')).toBe(true)
+  expect(card.querySelector('[aria-label="View details for Alpha"]')).toBeNull()
+  act(() => selectionSurface.click())
+  expect(checkbox.closest('[data-slot="settings-list-row"]')?.getAttribute('data-selected')).toBe(
+    'true'
+  )
+  expect(
+    container.querySelector(
+      '[data-slot="resource-catalog-header"] [data-slot="resource-selection-bar"]'
+    )
+  ).not.toBeNull()
   expect(container.querySelector('[data-slot="resource-selection-bar"]')?.textContent).toContain(
     'Unlink Specialists'
   )
@@ -3028,4 +3055,27 @@ it('selects Featured Skills in their category without exposing deletion or a glo
       (button) => button.textContent === 'Manage'
     )
   ).toBe(false)
+})
+
+it('restores Skill detail navigation after leaving card selection', () => {
+  const onNavigate = vi.fn()
+  act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+      .click()
+  )
+  const checkbox = container.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!
+  const card = checkbox.closest('[data-slot="settings-list-row"]')!
+  act(() => checkbox.closest('label')!.click())
+  expect(checkbox.checked).toBe(true)
+  act(() => checkbox.closest('label')!.click())
+  expect(checkbox.checked).toBe(false)
+  expect(onNavigate).not.toHaveBeenCalled()
+  act(() => container.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')!.click())
+  expect(card.querySelector('[data-slot="resource-row-content"]')?.hasAttribute('inert')).toBe(
+    false
+  )
+  act(() => card.querySelector<HTMLButtonElement>('[aria-label="View details for Alpha"]')!.click())
+  expect(onNavigate).toHaveBeenCalledTimes(1)
 })

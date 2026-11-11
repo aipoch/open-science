@@ -5,8 +5,29 @@ import { createHash } from 'node:crypto'
 import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { nativeRecoveryGroupDepth } from './literature-pdf-native-figure-recovery-profile.mjs'
+import {
+  nativeRecordedGroupPaintEnvelopes,
+  bindNativeGroupPaintBudget
+} from './literature-pdf-render-bounds.mjs'
 import { nativeCompositingPaintSpan } from './literature-pdf-native-compositing-profile.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
+
+const originalHeaderClipEvidence = new WeakSet()
+
+// Geometry for original raster-header retention only. The returned observation
+// is not a pixel-crop or native-paint certificate for any existing caller.
+export function collectOriginalRasterHeaderFrames(operators, viewport) {
+  const evidence = {
+    images: [],
+    paths: new Map(),
+    texts: new Map(),
+    frames: new Map(),
+    isolatedGroups: new Map()
+  }
+  originalHeaderClipEvidence.add(evidence)
+  collectClosedFigureFrames(operators, viewport, evidence)
+  return evidence
+}
 
 // Locate small tables missed by the detector. The structure model still owns
 // their cells: require a caption, enclosing rules and aligned numeric records.
@@ -297,7 +318,8 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence, co
         Object.keys(group).sort().join(',') !== 'bbox,isolated,knockout,matrix,smask' ||
         group.matrix !== null ||
         group.smask !== null ||
-        group.isolated !== true ||
+        (group.isolated !== true &&
+          !(originalHeaderClipEvidence.has(paintEvidence) && group.isolated === false)) ||
         group.knockout !== false ||
         !Array.isArray(group.bbox) ||
         group.bbox.length !== 4 ||
@@ -772,7 +794,7 @@ function filledGridRules(rectangles) {
     .map((c) => ({ ...c, paint: c.paint }))
 }
 
-export function collectTableRules(operators, viewport, rulePaintBounds) {
+export function collectTableRules(operators, viewport, rulePaintBounds, rulePaintOperations) {
   const fillThickness =
     1.1 *
     Math.max(
@@ -820,6 +842,7 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
   }
   // The public rules retain their original center lines. This optional private
   // map records only paint proved by native state and an axis-aligned transform.
+  let ruleOperation
   const rememberPaint = (rule, bounds) => {
     if (!rulePaintBounds) return
     const key = rule.join(',')
@@ -842,6 +865,10 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       return
     }
     if (unknownPaint.has(key)) return
+    if (rulePaintOperations && ruleOperation !== undefined) {
+      if (!rulePaintOperations.has(ruleOperation)) rulePaintOperations.set(ruleOperation, new Set())
+      rulePaintOperations.get(ruleOperation).add(key)
+    }
     const previous = rulePaintBounds.get(key)
     rulePaintBounds.set(
       key,
@@ -884,6 +911,7 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
     ]
   }
   for (const [i, operation] of operators.fnArray.entries()) {
+    ruleOperation = i
     let op = operation,
       args = operators.argsArray[i]
     // PDF.js paints this operation with fillRect(0, 0, 1, 1). Reuse the
@@ -1222,6 +1250,7 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       }
     }
   }
+  ruleOperation = undefined
   for (const { rule, paint } of filledGridRules(filledRectangles)) {
     if (rules.some((r) => r.every((v, n) => Math.abs(v - rule[n]) < 0.01))) continue
     rules.push(rule)
@@ -2223,6 +2252,7 @@ export function collectGraphicsBounds(renderTask, boxes) {
   const transforms = [],
     viewport = renderTask._internalRenderTask.params?.viewport
   const envelopeContext = imageEnvelopeRenderContext(renderTask._internalRenderTask, operators)
+  const groupClips = nativeRecordedGroupPaintEnvelopes(renderTask)
   let invalidGraphicsBounds = 0
   for (const [index, operation] of operators.fnArray.entries()) {
     const args = operators.argsArray[index]
@@ -2323,23 +2353,58 @@ export function collectGraphicsBounds(renderTask, boxes) {
     )
       imageMasks.add(graphic)
   }
-  return {
-    graphicsBounds: graphicsBounds.filter((graphic) => {
-      if (!imageMasks.has(graphic)) return true
-      const r = graphic.normalizedRect
-      // Thin mask strips are page decoration; near-identical image masks often
-      // repaint an existing figure and must not change its ownership.
-      if (r[2] - r[0] < 0.05 || r[3] - r[1] < 0.05) return false
-      return !graphicsBounds.some((other) => {
-        if (imageMasks.has(other)) return false
-        const b = other.normalizedRect
-        const intersection =
-          Math.max(0, Math.min(r[2], b[2]) - Math.max(r[0], b[0])) *
-          Math.max(0, Math.min(r[3], b[3]) - Math.max(r[1], b[1]))
-        const union = (r[2] - r[0]) * (r[3] - r[1]) + (b[2] - b[0]) * (b[3] - b[1]) - intersection
-        return intersection / union > 0.9
+  const clipped = groupClips?.current()
+    ? graphicsBounds.flatMap((graphic) => {
+        const clip = groupClips.clips.get(graphic.operationIndex)
+        if (!clip) return [graphic]
+        const r = graphic.normalizedRect,
+          normalizedRect = [
+            Math.max(r[0], clip[0]),
+            Math.max(r[1], clip[1]),
+            Math.min(r[2], clip[2]),
+            Math.min(r[3], clip[3])
+          ]
+        if (normalizedRect[2] <= normalizedRect[0] || normalizedRect[3] <= normalizedRect[1])
+          return []
+        const value = { ...graphic, normalizedRect }
+        for (const key of ['paintedNormalizedRect', 'imageEnvelopeNormalizedRect'])
+          if (
+            value[key] &&
+            !value[key].every((v, i) => (i < 2 ? v >= normalizedRect[i] : v <= normalizedRect[i]))
+          )
+            delete value[key]
+        if (imageMasks.has(graphic)) imageMasks.add(value)
+        return [value]
       })
-    }),
+    : graphicsBounds
+  const retainGraphic = (graphic) => {
+    if (!imageMasks.has(graphic)) return true
+    const r = graphic.normalizedRect
+    // Thin mask strips are page decoration; near-identical image masks often
+    // repaint an existing figure and must not change its ownership.
+    if (r[2] - r[0] < 0.05 || r[3] - r[1] < 0.05) return false
+    return !graphicsBounds.some((other) => {
+      if (imageMasks.has(other)) return false
+      const b = other.normalizedRect
+      const intersection =
+        Math.max(0, Math.min(r[2], b[2]) - Math.max(r[0], b[0])) *
+        Math.max(0, Math.min(r[3], b[3]) - Math.max(r[1], b[1]))
+      const union = (r[2] - r[0]) * (r[3] - r[1]) + (b[2] - b[0]) * (b[3] - b[1]) - intersection
+      return intersection / union > 0.9
+    })
+  }
+  const coarse = graphicsBounds.filter(retainGraphic),
+    retainedMaskOperations = new Set(
+      coarse.filter((graphic) => imageMasks.has(graphic)).map((graphic) => graphic.operationIndex)
+    ),
+    visible = clipped.filter(
+      (graphic) =>
+        retainGraphic(graphic) &&
+        (!imageMasks.has(graphic) || retainedMaskOperations.has(graphic.operationIndex))
+    )
+  return {
+    graphicsBounds:
+      groupClips && !bindNativeGroupPaintBudget(renderTask, coarse, visible) ? coarse : visible,
     invalidGraphicsBounds
   }
 }

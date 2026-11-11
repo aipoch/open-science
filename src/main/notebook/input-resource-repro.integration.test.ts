@@ -24,7 +24,7 @@ for (const [language, workflow] of [
 ] as const) {
   const command = language === 'python' ? python : r
   it.skipIf(!process.env.RUN_KERNEL || !command)(
-    `freezes and replays the ${language} ${workflow} input without unrelated files`,
+    `freezes and replays the ${language} ${workflow} input with ${language === 'r' && workflow === 'plot' ? 'conservative' : 'precise'} file coverage`,
     async () => {
       const storageRoot = await mkdtemp(join(tmpdir(), 'input-resource-repro-'))
       const sessionRoot = join(storageRoot, 'notebook')
@@ -119,8 +119,18 @@ write.csv(frame, "result.csv", row.names=FALSE)`
           throw error
         }
         const result = await observation.finish()
-        expect(result.fileEvidence).toMatchObject({ state: 'available', fileReads: 'complete' })
-        expect(result.confirmedReadPaths).toEqual([`data/${path}`])
+        // droplevels can dispatch user methods, so the R plot retains partial coverage.
+        const partial = language === 'r' && workflow === 'plot'
+        expect(result.fileEvidence).toMatchObject({
+          state: partial ? 'partial' : 'available',
+          fileReads: partial ? 'partial' : 'complete'
+        })
+        if (partial) {
+          expect(result.fileEvidence.reasonCodes).toEqual(
+            expect.arrayContaining(['source-analysis-unsupported-call', 'dynamic-path-unresolved'])
+          )
+        }
+        expect(result.confirmedReadPaths).toEqual(partial ? undefined : [`data/${path}`])
         const evidence: {
           relations: Array<{
             relativePath: string
@@ -133,7 +143,7 @@ write.csv(frame, "result.csv", row.names=FALSE)`
         expect(captured[0]!.registeredInput?.inputFileVersionId).toBe('input-v1')
         expect(
           evidence.relations.some((relation) => relation.relativePath.includes('unrelated'))
-        ).toBe(false)
+        ).toBe(partial)
         const replay = join(storageRoot, 'replay')
         const replayInput = join(replay, path)
         await mkdir(dirname(replayInput), { recursive: true })

@@ -1,4 +1,5 @@
 // Ordered fragments keep the public registration order when capabilities interleave.
+import type { SourceLinkMetadata } from '../source-preview'
 import type {
   ClassificationSnapshot,
   ClassificationMutation,
@@ -136,6 +137,14 @@ export const settingsSetNetworkProxyContracts = {
   'settings.setNotebookNetwork': callable<
     (request: SetNotebookNetworkRequest) => Promise<NotebookNetworkSettings>
   >()('settings', ['settings:set-notebook-network', LOCAL]),
+  'settings.getSourceLinkMetadata': callable<(url: string) => Promise<SourceLinkMetadata>>()(
+    'settings',
+    ['settings:get-source-link-metadata', WEB]
+  ),
+  'settings.getSourceLinkImage': callable<(url: string) => Promise<string | undefined>>()(
+    'settings',
+    ['settings:get-source-link-image', WEB]
+  ),
   'settings.getNotebookNetworkStatus': callable<() => Promise<NotebookNetworkStatus>>()(
     'settings',
     ['settings:get-notebook-network-status', LOCAL]

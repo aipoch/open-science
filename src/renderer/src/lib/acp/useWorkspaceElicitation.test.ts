@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SESSION_SIZE_LIMIT_ERROR_CODE } from '../../../../shared/session-persistence'
@@ -16,7 +16,8 @@ vi.mock('./workspace-elicitation-runtime', async (importOriginal) => ({
 import {
   createWorkspaceElicitationRuntime,
   pendingWorkspaceElicitations,
-  useWorkspaceElicitation
+  useWorkspaceElicitation,
+  useWorkspaceElicitationFailures
 } from './useWorkspaceElicitation'
 
 describe('createWorkspaceElicitationRuntime', () => {
@@ -26,6 +27,7 @@ describe('createWorkspaceElicitationRuntime', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    useWorkspaceElicitationFailures.setState({ failures: {} })
     vi.stubGlobal('window', {
       api: {
         acp: {
@@ -91,6 +93,78 @@ describe('createWorkspaceElicitationRuntime', () => {
 
     expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
   })
+
+  it.each([false, true])(
+    'retains a question-scoped failure across responder remounts only after commitment (saved: %s)',
+    async (saved) => {
+      const request = {
+        requestId: 'choice-1',
+        sessionId: 'session-1',
+        toolCallId: 'tool-1',
+        message: 'Choose',
+        fields: [],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+      }
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [
+          {
+            id: request.sessionId,
+            projectId: 'project-1',
+            title: 'Choose',
+            cwd: '/workspace',
+            status: 'waiting-for-user',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+            activities: [
+              {
+                id: request.toolCallId,
+                kind: 'tool',
+                title: request.message,
+                status: 'completed',
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                eventIds: [],
+                elicitation: {
+                  message: request.message,
+                  fields: request.fields,
+                  durable: request.durable,
+                  state: saved ? 'answered' : 'pending',
+                  ...(saved ? { continuationPending: true as const } : {})
+                }
+              }
+            ]
+          }
+        ]
+      })
+      const attachment = Promise.withResolvers<void>()
+      respondToWorkspaceElicitation.mockReturnValueOnce(attachment.promise)
+      const hook = renderHook(() => useWorkspaceElicitation(vi.fn()))
+      const response = { requestId: request.requestId, action: 'accept' as const, request }
+      const responding = hook.result.current.respondToElicitation(response)
+      const rejected = expect(responding).rejects.toThrow('Recovery persistence failed')
+      hook.unmount()
+      await act(async () => {
+        attachment.reject(new Error('Recovery persistence failed'))
+        await rejected
+      })
+      const remounted = renderHook(() => useWorkspaceElicitation(vi.fn()))
+      expect(useWorkspaceElicitationFailures.getState().failures).toEqual(
+        saved
+          ? {
+              'session-1': { requestId: 'choice-1', error: 'Recovery persistence failed' }
+            }
+          : {}
+      )
+      respondToWorkspaceElicitation.mockResolvedValueOnce(undefined)
+      await act(async () =>
+        remounted.result.current.respondToElicitation({ ...response, action: 'cancel' })
+      )
+      expect(useWorkspaceElicitationFailures.getState().failures).toEqual({})
+    }
+  )
 })
 
 it('keeps imported pending questions as recorded evidence without reconstructing requests', () => {

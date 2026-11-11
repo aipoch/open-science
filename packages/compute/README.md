@@ -1,7 +1,9 @@
 # @aipoch/compute
 
-Remote Compute domain contracts, SSH/SCP transport, direct-SSH and Slurm execution protocols,
-queue admission, lifecycle transitions, cancellation, deletion and result-collection scheduling.
+Remote Compute contracts and job lifecycle management for Open-Science. The Node entry point
+provides SSH/SCP transport, direct SSH and Slurm execution, a Kubernetes Job adapter, and
+submission, job control and file transfer helpers for Hugging Face Jobs and Ray Jobs.
+The Open-Science host implements Modal Sandbox execution.
 This package builds and tests independently. It ships with Open-Science; no separate publishing
 workflow is required. Node >=22.13 is supported; development and CI use Node 24.
 
@@ -12,7 +14,8 @@ workflow is required. Node >=22.13 is supported; development and CI use Node 24.
   validation and storage/connection contracts. CJS `require` and ESM `import` use the same implementation.
 - Other subpaths are private. Import through the package name; do not import `src` or `dist`.
 
-The package imports only Node built-ins, `micromatch` and `@aipoch/diagnostics/node`.
+The Node implementation uses `@huggingface/hub` for bucket transfers and `jszip` for Ray working
+directories.
 There are no application aliases, database clients, Electron, Notebook initialization, resource-root
 lookups or application environment variables. Declaration files are included in the tarball.
 
@@ -35,7 +38,8 @@ concurrent writers. Callback notification failure must not undo a committed life
 
 ## Safety and integration
 
-- **Scope:** SSH/SCP transfers, direct SSH or Slurm job execution, and remote lifecycle coordination.
+- **Scope:** Job execution and file transfers on user-provisioned SSH, Slurm, Kubernetes, Hugging Face
+  Jobs and Ray targets.
 - **Controls:** Input/profile validation, queue admission, lifecycle claims, and cancellation/collection
   protocols operate through the host-supplied connection and storage contracts.
 - **Remaining risks:** Scripts and inputs leave the local machine. Jobs act with the remote account's
@@ -85,6 +89,35 @@ cancellation completion and user retry use that same scheduler. It owns deduplic
 collection slots and retry backoff. Abort the host's collection signal and await `waitForIdle()` on
 shutdown. The actual downloads, budget policy, evidence receipts and publication stay with the host.
 
+## Kubernetes file jobs
+
+The Node adapter exposes a per-job workspace for hosts that supply Kubernetes credentials,
+a namespace with dynamic volume provisioning, and a trusted transfer image with `sleep` and
+the file transfer tools used by the host. The adapter account needs get/create/delete on
+PVCs and transfer Pods in that namespace. The file transport needs permission for `pods/exec`.
+
+1. After approval, persist the target, job ID and requested capacity. Call
+   `prepareWorkspace(jobId, target, sizeMiB)` and journal its receipt before staging files.
+   Retry an interrupted creation with the same reservation. Keep the receipt across restarts.
+2. Call `withWorkspaceFiles(receipt, 'upload', image, transfer)`. The transfer callback receives
+   the helper Pod name. Copy frozen inputs to temporary paths in `/workspace`, verify their
+   checksums, and rename them before returning. With kubectl, use `cp --no-preserve` on upload.
+3. Call `submitInWorkspace(request, receipt)` and record the Job handle. The workload runs in
+   `/workspace`. Treat a lost submission response as an ambiguous launch. An existing Job
+   handle supports recovery and cancellation separately from the workspace receipt.
+4. After the workload stops, use `withWorkspaceFiles(receipt, 'archive', image, transfer)`.
+   The helper mounts the volume read-only. The host validates paths and byte budgets, publishes
+   the declared outputs and records their evidence. On interruption, retry with the saved receipt.
+5. Once publication is durable (or the user explicitly abandons the files), call
+   `releaseWorkspace(receipt)`. Keep the cleanup obligation while it returns `requested`;
+   `confirmed` means the claim is absent. Physical volume reclamation follows the cluster's
+   StorageClass policy.
+
+A Job cleanup only removes compute resources. While files await collection the PVC survives
+Job deletion, consumes cluster storage, and must be accounted for by the host. Transfer Pods
+belong to the claim, have a one-hour deadline and are deleted after each transfer callback.
+Use a trusted namespace where only the host provisions or replaces the workspace claims.
+
 ## Runtime and resources
 
 SSH/SCP are external OpenSSH executables; no executable or credential is bundled. On Unix the default
@@ -100,9 +133,9 @@ and the filesystem/process tools exercised by the protocol tests. Slurm addition
 Windows exclusions apply only to those Unix-native cases; portable transport, path and parser tests
 run on Windows too. The package configuration owns test concurrency; CI does not serialize it.
 
-Launcher and protocol scripts are generated from strings compiled into `dist`; there are no WASM,
-Worker, template or external data resources to locate. Host askpass scripts remain host-owned and
-are registered in `scripts/ci/module-runtime-consumers.json` with the credential adapter.
+SSH launcher and protocol scripts are generated from strings compiled into `dist`. Hugging Face
+bucket transfers load the compiled `hugging-face-bucket-worker.js` alongside the bucket module.
+Askpass scripts belong to the host and are registered in `scripts/ci/module-runtime-consumers.json` with the credential adapter.
 
 ## Build, tests and independent consumption
 

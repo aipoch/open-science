@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { resourceActivity } from '../resource-diagnostics/activity'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -38,6 +39,7 @@ import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
 import type { TransientViewImage } from './execution-model-contract'
+import { HostViewImageError } from './host-view-image-service'
 import { getNotebookInputRoot } from './input-staging'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
@@ -53,6 +55,7 @@ import type {
 import { notebookInterpreterIdentity } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
+  ShellPreparationError,
   buildShellEnv,
   type NotebookShellProcess
 } from './shell-process'
@@ -77,6 +80,7 @@ type NotebookControlResult = Pick<
 > & {
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
+  viewImageError?: 'evidence-unavailable'
 }
 
 type NotebookControlCompletionInterceptor = {
@@ -643,43 +647,45 @@ class NotebookExecutionOwner {
       // The admission promise is an internal replay seam. The primary execution promise remains the
       // public error surface, so admission failures must not become unhandled when no retry is waiting.
       void admitted.catch(() => undefined)
-      const promise = (async () => {
-        if (executionRequest.executionInvocationId) {
-          const existing = await this.options.runTerminalization.findSubmission(
-            session,
-            submissionIdentity
-          )
-          if (existing) {
-            if (existing.submissionFingerprint !== submissionFingerprint) {
-              throw new NotebookRunSubmissionConflictError(submissionIdentity)
+      const promise = resourceActivity
+        .run(async () => {
+          if (executionRequest.executionInvocationId) {
+            const existing = await this.options.runTerminalization.findSubmission(
+              session,
+              submissionIdentity
+            )
+            if (existing) {
+              if (existing.submissionFingerprint !== submissionFingerprint) {
+                throw new NotebookRunSubmissionConflictError(submissionIdentity)
+              }
+              resolveAdmitted(existing)
+              onAdmitted?.(existing)
+              const dependencyProjection = await this.options
+                .projectDependencies(session, existing)
+                .catch(() => unavailableNotebookDependencyProjection([existing]))
+              return { run: existing, dependencyProjection }
             }
-            resolveAdmitted(existing)
-            onAdmitted?.(existing)
-            const dependencyProjection = await this.options
-              .projectDependencies(session, existing)
-              .catch(() => unavailableNotebookDependencyProjection([existing]))
-            return { run: existing, dependencyProjection }
           }
-        }
-        runId ??= this.options.runTerminalization.allocateRunIdentity().runId
-        return this.executeDataCellDurable(
-          session,
-          cell,
-          executionRequest,
-          runId,
-          submissionIdentity,
-          submissionFingerprint,
-          signal,
-          executionHelperIds,
-          (run) => {
-            resolveAdmitted(run)
-            onAdmitted?.(run)
-          }
-        )
-      })().catch((error) => {
-        rejectAdmitted(error)
-        throw error
-      })
+          runId ??= this.options.runTerminalization.allocateRunIdentity().runId
+          return this.executeDataCellDurable(
+            session,
+            cell,
+            executionRequest,
+            runId,
+            submissionIdentity,
+            submissionFingerprint,
+            signal,
+            executionHelperIds,
+            (run) => {
+              resolveAdmitted(run)
+              onAdmitted?.(run)
+            }
+          )
+        })
+        .catch((error) => {
+          rejectAdmitted(error)
+          throw error
+        })
       const entry = { fingerprint: submissionFingerprint, admitted, promise }
       this.activeDataSubmissions.set(submissionKey, entry)
       try {
@@ -1092,40 +1098,42 @@ class NotebookExecutionOwner {
       resolveExecutionSettled = resolve
     })
     if (onExecutionSettled) void executionSettled.then(onExecutionSettled)
-    const promise = (async () => {
-      if (request.executionInvocationId) {
-        const existing = await this.options.runTerminalization.findSubmission(
-          session,
-          submissionIdentity
-        )
-        if (existing) {
-          if (existing.submissionFingerprint !== submissionFingerprint) {
-            throw new NotebookRunSubmissionConflictError(submissionIdentity)
+    const promise = resourceActivity
+      .run(async () => {
+        if (request.executionInvocationId) {
+          const existing = await this.options.runTerminalization.findSubmission(
+            session,
+            submissionIdentity
+          )
+          if (existing) {
+            if (existing.submissionFingerprint !== submissionFingerprint) {
+              throw new NotebookRunSubmissionConflictError(submissionIdentity)
+            }
+            resolveAdmitted(existing)
+            onAdmitted?.(existing)
+            return controlResultFromRun(existing)
           }
-          resolveAdmitted(existing)
-          onAdmitted?.(existing)
-          return controlResultFromRun(existing)
         }
-      }
-      const identity = initialIdentity ?? this.options.runTerminalization.allocateRunIdentity()
-      return this.executeControlDurable(
-        session,
-        request,
-        identity.runId,
-        identity.sequence,
-        submissionIdentity,
-        submissionFingerprint,
-        signal,
-        (run) => {
-          resolveAdmitted(run)
-          onAdmitted?.(run)
-        },
-        resolveExecutionSettled
-      )
-    })().catch((error) => {
-      rejectAdmitted(error)
-      throw error
-    })
+        const identity = initialIdentity ?? this.options.runTerminalization.allocateRunIdentity()
+        return this.executeControlDurable(
+          session,
+          request,
+          identity.runId,
+          identity.sequence,
+          submissionIdentity,
+          submissionFingerprint,
+          signal,
+          (run) => {
+            resolveAdmitted(run)
+            onAdmitted?.(run)
+          },
+          resolveExecutionSettled
+        )
+      })
+      .catch((error) => {
+        rejectAdmitted(error)
+        throw error
+      })
     const entry = { fingerprint: submissionFingerprint, admitted, executionSettled, promise }
     this.activeControlSubmissions.set(submissionKey, entry)
     try {
@@ -1284,8 +1292,16 @@ class NotebookExecutionOwner {
         session.discardControlInvocation(controlInvocationId)
         return result
       }
-      const viewImages = await session.completeControlInvocation(controlInvocationId)
-      return viewImages.length > 0 ? { ...result, viewImages } : result
+      try {
+        const viewImages = await session.completeControlInvocation(controlInvocationId, signal)
+        return viewImages.length > 0 ? { ...result, viewImages } : result
+      } catch (error) {
+        if (signal?.aborted || !(error instanceof HostViewImageError)) throw error
+        return {
+          ...result,
+          viewImageError: 'evidence-unavailable'
+        }
+      }
     } catch (error) {
       session.discardControlInvocation(controlInvocationId)
       throw error
@@ -1479,14 +1495,6 @@ class NotebookExecutionOwner {
     const handoffDir = join(session.notebookSessionRoot, 'handoff')
     const inputRoot = this.inputRoot(session)
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
-    const environment = buildShellEnv(
-      handoffDir,
-      shellRuntimePlatform(runtimeBinding, platform),
-      process.env,
-      runtimeRoot,
-      prepareNotebookWorkloadCache(runtimeRoot),
-      runtimeBinding
-    )
     const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
       cwd: session.cwd,
       handoffDir,
@@ -1494,14 +1502,68 @@ class NotebookExecutionOwner {
       notebookSessionRoot: session.notebookSessionRoot,
       inputRoot,
       protectedDirs,
-      environment: Object.fromEntries(
-        Object.entries(environment).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined
-        )
-      ),
+      environment: {},
       timeoutMs: request.timeoutMs ?? 120_000,
       platform
     }
+    const replayExisting = (existing: NotebookRunRecord): NotebookShellResult => {
+      // Replaying admitted work must not depend on today's runtime readiness or environment.
+      // Keep validating the command, runtime binding and all other caller-controlled context.
+      const fingerprint = shellRunFingerprint(
+        session,
+        request,
+        { ...frozenShellContext, environment: existing.frozenShellContext?.environment ?? {} },
+        runtimeBinding
+      )
+      if (existing.submissionFingerprint !== fingerprint) {
+        throw new NotebookRunSubmissionConflictError(request.executionInvocationId!)
+      }
+      onAdmitted?.(existing)
+      return publicShellResult(existing)
+    }
+    if (request.executionInvocationId) {
+      const existing = await this.options.runTerminalization.findSubmission(
+        session,
+        request.executionInvocationId
+      )
+      const active = this.activeShellSubmissions.get(
+        `${notebookLaneKey(session.lane)}:${request.executionInvocationId}`
+      )
+      if (active) {
+        replayExisting(await active.admitted)
+        return active.promise
+      }
+      if (existing) return replayExisting(existing)
+      this.assertShellAdmissionAvailable(session)
+    }
+    let environment: NodeJS.ProcessEnv = {}
+    let preparationFailure: NotebookShellResult | undefined
+    try {
+      environment = this.shellProcess.prepareEnvironment
+        ? await this.shellProcess.prepareEnvironment({
+            handoffDir,
+            runtimeRoot,
+            runtimeBinding,
+            signal
+          })
+        : buildShellEnv(
+            handoffDir,
+            shellRuntimePlatform(runtimeBinding, platform),
+            process.env,
+            runtimeRoot,
+            prepareNotebookWorkloadCache(runtimeRoot),
+            runtimeBinding
+          )
+    } catch (error) {
+      if (!(error instanceof ShellPreparationError)) throw error
+      // No command can use this empty environment: persist the preparation failure below.
+      preparationFailure = error.result
+    }
+    frozenShellContext.environment = Object.fromEntries(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    )
     const submissionFingerprint = shellRunFingerprint(
       session,
       request,
@@ -1530,19 +1592,16 @@ class NotebookExecutionOwner {
     // The admission promise is an internal replay seam. The primary execution promise remains the
     // public error surface, so admission failures must not become unhandled when no retry is waiting.
     void admitted.catch(() => undefined)
-    const promise = (async (): Promise<NotebookShellResult> => {
+    const promise = resourceActivity.run(async (): Promise<NotebookShellResult> => {
       if (request.executionInvocationId) {
         const existing = await this.options.runTerminalization.findSubmission(
           session,
           submissionIdentity
         )
         if (existing) {
-          if (existing.submissionFingerprint !== submissionFingerprint) {
-            throw new NotebookRunSubmissionConflictError(submissionIdentity)
-          }
+          const result = replayExisting(existing)
           resolveAdmitted(existing)
-          onAdmitted?.(existing)
-          return publicShellResult(existing)
+          return result
         }
       }
       // A teardown may have fenced this scope while an idempotency lookup was awaiting storage.
@@ -1639,7 +1698,8 @@ class NotebookExecutionOwner {
           if (lifecycleSignal.aborted) throw lifecycleSignal.reason
           // Freeze this request before admission. The lane validates it against the live cwd and
           // activates per-command network grants when it reaches the front of its execution queue.
-          preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
+          if (!preparationFailure)
+            preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
           durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
         } catch (error) {
           rejectAdmitted(error)
@@ -1661,6 +1721,21 @@ class NotebookExecutionOwner {
           await liveRun.requestCancellation(lifecycleSignal.reason)
         }
         this.options.notifyAvailable(session, 'agent')
+        if (preparationFailure) {
+          const result = preparationFailure
+          const terminalized = await this.options.runTerminalization.runAdmitted({
+            session,
+            queuedRun: durableAdmission.run,
+            invoke: async () => ({
+              ...result,
+              status: 'failed',
+              traceback: '',
+              cwdAfter: frozenShellContext.cwd,
+              outputs: [{ type: 'stream', name: 'stderr', text: result.stderr }]
+            })
+          })
+          return publicShellResult(terminalized.run)
+        }
         try {
           lease = await this.shellAdmission.acquire(
             session.projectId,
@@ -1832,7 +1907,7 @@ class NotebookExecutionOwner {
           finishLifecycle()
         }
       }
-    })()
+    })
     // Fail duplicate callers waiting for admission even when an error occurs before durable admit.
     void promise.catch(rejectAdmitted)
     const entry = { fingerprint: submissionFingerprint, admitted, promise }

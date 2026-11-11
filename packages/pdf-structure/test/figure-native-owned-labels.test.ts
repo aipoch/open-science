@@ -552,3 +552,77 @@ it.each([
   if (missing === 'outside-segment') f.rules.at(-1)[3] = f.tables[0][3] + 1
   expect(nativeTableDividerGraphic(f.page, f.graphic, f.tables, f.rules)).toBe(false)
 })
+
+const { anonymousCertifiedPicture } = await import('./fixtures/figure-recovery-program.mjs')
+const { createNativeVectorFigureLabelCertificate, nativeVectorFigureLabelCertificateData } =
+  await import(
+    pathToFileURL(resolve('resources/literature-pdf-native-owned-figure-labels.mjs')).href
+  )
+const vectorLabelArguments = (f: ReturnType<typeof JSON.parse>): unknown[] => [
+  f.page,
+  f.figure,
+  f.captions,
+  f.tables,
+  f.tokens,
+  f.context,
+  f.peers,
+  f.crop
+]
+
+it('keeps complete paired descriptive captions translatable while retaining body labels', () => {
+  const f = anonymousCertifiedPicture(['(a) First sample viewed', '(b) Second sample viewed']),
+    args = vectorLabelArguments(f),
+    handle = createNativeVectorFigureLabelCertificate(...args),
+    data = nativeVectorFigureLabelCertificateData(handle, ...args)
+  expect(data.sourceItems.map((s: { text: string }) => s.text)).toEqual(['Axis', 'Value'])
+})
+
+it.each([
+  ['(a)', '(b)'],
+  ['(a) Error', '(b) Rate']
+])('does not treat bare panel keys or short labels as descriptive caption packets', (a, b) => {
+  const f = anonymousCertifiedPicture([a, b]),
+    args = vectorLabelArguments(f),
+    handle = createNativeVectorFigureLabelCertificate(...args),
+    data = nativeVectorFigureLabelCertificateData(handle, ...args)
+  expect(data.sourceItems.map((s: { text: string }) => s.text)).toEqual([
+    'Axis',
+    'Value',
+    ...(/\p{L}{2}/u.test(a) ? [a, b] : [])
+  ])
+})
+
+it('certifies only original whole label Source items inside one closed vector body', () => {
+  const f = anonymousCertifiedPicture(),
+    args = vectorLabelArguments(f),
+    h = createNativeVectorFigureLabelCertificate(...args),
+    d = nativeVectorFigureLabelCertificateData(h, ...args)
+  expect(d.sourceItems.map((s: { text: string }) => s.text)).toEqual(['Axis', 'Value'])
+  expect(d.sourceItems[0]).toBe(f.context.content.items[1].sourceItem)
+  expect(f.figure.sourceItems).toBeUndefined()
+  const original = f.context.operators.argsArray
+  f.context.operators.argsArray = structuredClone(original)
+  expect(nativeVectorFigureLabelCertificateData(h, ...args)).toBeUndefined()
+  f.context.operators.argsArray = original
+  expect(nativeVectorFigureLabelCertificateData(h, ...args)).toBe(d)
+  d.sourceItems = [...d.sourceItems]
+  expect(nativeVectorFigureLabelCertificateData(h, ...args)).toBeUndefined()
+})
+
+it.each(['existing-owner', 'caption', 'table', 'peer', 'font', 'partial-source', 'whole-form'])(
+  'preserves an unproved vector label scope: %s',
+  (mode) => {
+    const f = anonymousCertifiedPicture()
+    if (mode === 'existing-owner') f.figure.sourceItems = [f.tokens[0].sourceItem]
+    if (mode === 'caption') f.captions.push({ ...f.captions[0], rect: [70, 80, 100, 100] })
+    if (mode === 'table') f.tables.push([70, 80, 100, 100])
+    if (mode === 'peer') f.peers.push({ ...f.figure })
+    if (mode === 'font') delete f.context.content.styles.F.descent
+    if (mode === 'partial-source') f.context.content.items[1].str = 'Axi'
+    if (mode === 'whole-form')
+      f.context.operators.argsArray[
+        f.context.operators.fnArray.indexOf(f.OPS.paintFormXObjectBegin)
+      ][1] = null
+    expect(createNativeVectorFigureLabelCertificate(...vectorLabelArguments(f))).toBeUndefined()
+  }
+)

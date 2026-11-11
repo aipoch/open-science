@@ -1,17 +1,28 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import * as acp from '@agentclientprotocol/sdk'
+import optimizationFixture from '../../test/fixtures/prompt-optimization/plain-draft.json' with { type: 'json' }
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
-import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
-const autoReviewResumeCounts = new Map()
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
   let message
@@ -134,8 +145,17 @@ const DELEGATED_RELIABLE_FAILURE_NAME = 'Post-fence reliable question'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_A = 'Queue reliable fairness question A.'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_B = 'Queue reliable fairness question B.'
 const RELIABLE_CHILD_DIRECTIVE = 'Use the renderer-visible reliable evidence.'
+const DELEGATION_SETTLEMENT_PROMPT =
+  'Delegated work settlement update (application-owned context, not a user message).'
 const RELIABLE_CONTROL_MARKERS = [
+  DELEGATION_SETTLEMENT_PROMPT,
+  DELEGATION_TERMINAL_PROMPT,
+  DELEGATION_BOUNDED_COLLECT_PROMPT,
+  DELEGATION_BOUNDED_RECOLLECT_PROMPT,
+  DELEGATION_PERMISSION_PROMPT,
+  DELEGATION_STOP_PROMPT,
   RELIABLE_CHILD_DIRECTIVE,
+  DELEGATION_INHERITED_SPECIALIST_PROMPT,
   'Child reliable question reached Main',
   'Main answered the reliable child question',
   'Parked reliable child question',
@@ -154,7 +174,6 @@ const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
-const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -171,6 +190,24 @@ const waitForReleaseFile = async (releaseFile, timeout = 30_000) => {
   }
 }
 
+// Claim the one-shot gate across provider processes; a follow-up create must remain unblocked.
+const holdFirstSessionCreateWhenRequested = async (sessionId) => {
+  const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
+  if (!storageRoot) return undefined
+  const control = join(storageRoot, 'e2e-session-create-gate.json')
+  const claimed = `${control}.claimed`
+  try {
+    await rename(control, claimed)
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  }
+  const gate = JSON.parse(await readFile(claimed, 'utf8'))
+  await writeFile(gate.started, sessionId, 'utf8')
+  await waitForReleaseFile(gate.release)
+  return gate.closed
+}
+
 const suspendSessionWrites = async () => {
   const sessionsRoot = join(process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '', 'sessions')
   const projects = await readdir(sessionsRoot, { withFileTypes: true })
@@ -178,7 +215,6 @@ const suspendSessionWrites = async () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(sessionsRoot, entry.name))
   await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
-  return async () => Promise.all(directories.map((directory) => chmod(directory, 0o700)))
 }
 
 const stringEnvironment = (overrides = []) => {
@@ -189,12 +225,12 @@ const stringEnvironment = (overrides = []) => {
   return environment
 }
 
-const toolResult = (name, result) => {
+const toolResult = (name, result, { allowToolError = false } = {}) => {
   const text = result.content
     .filter((item) => item.type === 'text')
     .map((item) => item.text)
     .join('\n')
-  if (result.isError) throw new Error(`${name} failed: ${text}`)
+  if (result.isError && !allowToolError) throw new Error(`${name} failed: ${text}`)
   return JSON.parse(text)
 }
 
@@ -211,137 +247,93 @@ const delegatedArtifactHandoff = async (mcpServers) => {
   return { artifactCurrentRunFile: currentRunFile, artifactExecutionId: executionId }
 }
 
-const parseMcpResponse = (body) => {
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? JSON.parse(json) : {}
-}
-
-const submitReviewerPass = async (mcpServers, prompt = '') => {
-  const server = mcpServers.find(
-    (candidate) =>
-      candidate.type === 'http' &&
-      (candidate.name === 'open-science-reviewer' ||
-        candidate.name === frameworkServerName('open-science-reviewer'))
-  )
-  if (!server?.url) return false
-  const token =
-    server.headers
-      ?.find((header) => header.name?.toLowerCase() === 'authorization')
-      ?.value?.replace('Bearer ', '') ?? ''
-  const baseHeaders = {
-    accept: 'application/json, text/event-stream',
-    authorization: `Bearer ${token}`,
-    'content-type': 'application/json'
-  }
-  const initialize = await fetch(server.url, {
-    method: 'POST',
-    headers: baseHeaders,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'open-science-e2e-reviewer', version: '1.0' }
-      }
-    })
-  })
-  if (!initialize.ok) throw new Error(`Reviewer MCP initialize failed: ${initialize.status}`)
-  const initialized = parseMcpResponse(await initialize.text())
-  const sessionId = initialize.headers.get('mcp-session-id')
-  if (!sessionId || !initialized.result) {
-    throw new Error('Reviewer MCP initialize did not return a session.')
-  }
-  const headers = { ...baseHeaders, 'mcp-session-id': sessionId }
-  await fetch(server.url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
-  })
-  let nextId = 2
-  const callTool = async (name, args) => {
-    const response = await fetch(server.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: nextId++,
-        method: 'tools/call',
-        params: { name, arguments: args }
-      })
-    })
-    if (!response.ok) throw new Error(`${name} failed: ${response.status}`)
-    const payload = parseMcpResponse(await response.text())
-    if (payload.error) throw new Error(`${name} failed: ${payload.error.message ?? 'unknown'}`)
-    if (payload.result?.isError) {
-      throw new Error(payload.result.content?.[0]?.text ?? `${name} returned an error`)
+const submitReviewerPass = async (sessionId, prompt = '') => {
+  const server = sessionRoutes
+    .get(sessionId)
+    ?.mcpServers?.find(
+      (candidate) =>
+        candidate.name === 'open-science-reviewer' ||
+        candidate.name === frameworkServerName('open-science-reviewer')
+    )
+  if (!server) return false
+  return withMcpClient(sessionId, 'open-science-reviewer', async (client) => {
+    const callTool = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args })
+      if (result.isError) throw new Error(result.content?.[0]?.text ?? name + ' returned an error')
+      return result
     }
-    return payload.result
-  }
-  const turn = await callTool('read_turn', {})
-  const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
-  const reproBlock = blocks.find(
-    (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
-  )
-  if (reproBlock) {
+    const turn = await callTool('read_turn', {})
+    const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
+    const reproBlock = blocks.find(
+      (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
+    )
+    if (reproBlock) {
+      await callTool('submit_findings', {
+        checks: [
+          {
+            status: 'fail',
+            claim: reproBlock.content,
+            evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
+            locator: {
+              blockRef: { blockIndex: reproBlock.blockIndex },
+              contentHash: reproBlock.contentHash
+            }
+          }
+        ]
+      })
+      return true
+    }
+    const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map(
+      (match) => match[1]
+    )
+    if (trackedIds.length > 0) {
+      const unresolvedBlock = blocks.find(
+        (block) => block.content === 'Recovered execution still needs correction.'
+      )
+      await callTool('submit_findings', {
+        checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
+          sourceFindingId,
+          ...(unresolvedBlock
+            ? {
+                locator: {
+                  blockRef: { blockIndex: unresolvedBlock.blockIndex },
+                  contentHash: unresolvedBlock.contentHash
+                }
+              }
+            : {}),
+          status: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'fail'
+            : 'pass',
+          claim: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
+            : 'The controlled correction completed.',
+          evidence: 'The corrected answer is present in the frozen turn.'
+        }))
+      })
+      return true
+    }
     await callTool('submit_findings', {
       checks: [
         {
-          status: 'fail',
-          claim: reproBlock.content,
-          evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
-          locator: {
-            blockRef: { blockIndex: reproBlock.blockIndex },
-            contentHash: reproBlock.contentHash
-          }
+          status: 'pass',
+          claim: 'The completed turn follows the requested production path.',
+          evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
         }
       ]
     })
     return true
-  }
-  const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map((match) => match[1])
-  if (trackedIds.length > 0) {
-    const unresolvedBlock = blocks.find(
-      (block) => block.content === 'Recovered execution still needs correction.'
-    )
-    await callTool('submit_findings', {
-      checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
-        sourceFindingId,
-        ...(unresolvedBlock
-          ? {
-              locator: {
-                blockRef: { blockIndex: unresolvedBlock.blockIndex },
-                contentHash: unresolvedBlock.contentHash
-              }
-            }
-          : {}),
-        status: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'fail'
-          : 'pass',
-        claim: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
-          : 'The controlled correction completed.',
-        evidence: 'The corrected answer is present in the frozen turn.'
-      }))
-    })
-    return true
-  }
-  await callTool('submit_findings', {
-    checks: [
-      {
-        status: 'pass',
-        claim: 'The completed turn follows the requested production path.',
-        evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
-      }
-    ]
   })
-  return true
+}
+
+const recordMutationStage = async (stage) => {
+  const path = process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS
+  if (path && path !== 'enabled') {
+    await appendFile(path, JSON.stringify({ at: new Date().toISOString(), stage }) + '\n')
+  }
 }
 
 const withMcpClient = async (sessionId, serverName, operation) => {
@@ -350,23 +342,36 @@ const withMcpClient = async (sessionId, serverName, operation) => {
     (candidate) =>
       candidate.name === serverName || candidate.name === frameworkServerName(serverName)
   )
-  if (!route || !server?.command) {
+  if (!route || (!server?.command && !(server?.type === 'http' && server.url))) {
     const routed = route?.mcpServers?.map((candidate) => candidate.name).join(', ') || 'none'
     throw new Error(`${serverName} was not routed to ${sessionId}; routed servers: ${routed}.`)
   }
 
-  const transport = new StdioClientTransport({
-    command: server.command,
-    args: server.args ?? [],
-    cwd: route.cwd,
-    env: stringEnvironment(server.env)
-  })
+  const transport =
+    server.type === 'http'
+      ? new StreamableHTTPClientTransport(new URL(server.url), {
+          requestInit: {
+            headers: Object.fromEntries(
+              (server.headers ?? []).map(({ name, value }) => [name, value])
+            )
+          }
+        })
+      : new StdioClientTransport({
+          command: server.command,
+          args: server.args ?? [],
+          cwd: route.cwd,
+          env: stringEnvironment(server.env)
+        })
   const client = new Client({ name: 'open-science-e2e-agent', version: VERSION })
+  await recordMutationStage('mcp-connect-start')
   await client.connect(transport)
+  await recordMutationStage('mcp-connected')
   try {
     return await operation(client)
   } finally {
+    await recordMutationStage('mcp-close-start')
     await client.close()
+    await recordMutationStage('mcp-closed')
   }
 }
 
@@ -1010,17 +1015,24 @@ const waitForProcessesToExit = async (pids, timeoutMs = 10_000) => {
 
 const verifyNotebookMutationCancellation = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    await recordMutationStage('warmup-start')
     const warmup = toolResult(
       'manage_environments',
-      await client.callTool(
-        {
-          name: 'manage_environments',
-          arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
-        },
-        undefined,
-        { timeout: 60_000, resetTimeoutOnProgress: true, onprogress: () => undefined }
-      )
+      await client
+        .callTool(
+          {
+            name: 'manage_environments',
+            arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
+          },
+          undefined,
+          { timeout: 60_000 }
+        )
+        .catch(async (error) => {
+          await recordMutationStage('warmup-failed')
+          throw new Error(`Mutation warm-up failed: ${String(error)}`, { cause: error })
+        })
     )
+    await recordMutationStage('warmup-complete')
     if (warmup.created?.runnable !== true) {
       throw new Error(`Mutation warm-up did not succeed: ${JSON.stringify(warmup)}`)
     }
@@ -1311,57 +1323,67 @@ const verifyNotebookPackageCancellation = async (sessionId) =>
     return `Notebook package cancellation verified; stopped PIDs ${started.pid} and ${started.descendantPid}.`
   })
 
-const createProvenanceArtifact = async (sessionId) => {
-  const producerRunId = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
-    const before = toolResult(
-      'notebook_state',
-      await client.callTool({ name: 'notebook_state', arguments: {} })
-    )
-    const existingRunIds = new Set(
-      before.recentRuns?.map((candidate) => candidate.runId).filter(Boolean) ?? []
-    )
-    const execution = toolResult(
-      'bash_execute',
-      await client.callTool({
-        name: 'bash_execute',
-        arguments: { command: "echo 'artifact-provenance-e2e'" }
+const createProvenanceArtifact = async (sessionId, markdown = false, withoutExecution = false) => {
+  const producerRunId = withoutExecution
+    ? undefined
+    : await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+        const before = toolResult(
+          'notebook_state',
+          await client.callTool({ name: 'notebook_state', arguments: {} })
+        )
+        const existingRunIds = new Set(
+          before.recentRuns?.map((candidate) => candidate.runId).filter(Boolean) ?? []
+        )
+        const execution = toolResult(
+          'bash_execute',
+          await client.callTool({
+            name: 'bash_execute',
+            arguments: { command: "echo 'artifact-provenance-e2e'" }
+          })
+        )
+        const state = toolResult(
+          'notebook_state',
+          await client.callTool({ name: 'notebook_state', arguments: {} })
+        )
+        const run = state.recentRuns
+          ?.toReversed()
+          .find(
+            (candidate) =>
+              candidate.kernelKind === 'bash' &&
+              candidate.status === 'completed' &&
+              !existingRunIds.has(candidate.runId)
+          )
+        if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
+          throw new Error(
+            `The Notebook did not persist the Bash producer run: ${JSON.stringify({ execution, recentRuns: state.recentRuns })}`
+          )
+        }
+        return run.runId
       })
-    )
-    const state = toolResult(
-      'notebook_state',
-      await client.callTool({ name: 'notebook_state', arguments: {} })
-    )
-    const run = state.recentRuns
-      ?.toReversed()
-      .find(
-        (candidate) =>
-          candidate.kernelKind === 'bash' &&
-          candidate.status === 'completed' &&
-          !existingRunIds.has(candidate.runId)
-      )
-    if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
-      throw new Error(
-        `The Notebook did not persist the Bash producer run: ${JSON.stringify({ execution, recentRuns: state.recentRuns })}`
-      )
-    }
-    return run.runId
-  })
   const stored = await withMcpClient(sessionId, 'open-science-artifacts', async (client) =>
     toolResult(
       'write_artifact_file',
       await client.callTool({
         name: 'write_artifact_file',
         arguments: {
-          filename: 'provenance-evidence.txt',
-          mimeType: 'text/plain',
-          content: 'artifact provenance e2e',
-          encoding: 'utf8',
+          filename: markdown ? 'publication-policy.md' : 'provenance-evidence.txt',
+          mimeType: markdown ? 'text/markdown' : 'text/plain',
+          source: {
+            kind: 'inline',
+            content: markdown
+              ? '# Publication report\n\nOriginal result.\n'
+              : 'artifact provenance e2e',
+            encoding: 'utf8'
+          },
           producerRunId
         }
       })
     )
   )
-  if (!stored.artifact?.version_id || stored.artifact.producer_run_id !== producerRunId) {
+  if (
+    !stored.artifact?.version_id ||
+    (producerRunId && stored.artifact.producer_run_id !== producerRunId)
+  ) {
     throw new Error('The artifact Version did not retain its Notebook producer run.')
   }
   return `Artifact provenance verified for session ${sessionId}, artifact ${stored.artifact.artifact_id}, version ${stored.artifact.version_id}.`
@@ -1376,9 +1398,12 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.html',
           mimeType: 'text/html',
-          content:
-            '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
-          encoding: 'utf8'
+          source: {
+            kind: 'inline',
+            content:
+              '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
+            encoding: 'utf8'
+          }
         }
       })
     )
@@ -1389,8 +1414,7 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.docx',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          content: PREVIEW_CONTEXT_MENU_DOCX_BASE64,
-          encoding: 'base64'
+          source: { kind: 'inline', content: PREVIEW_CONTEXT_MENU_DOCX_BASE64, encoding: 'base64' }
         }
       })
     )
@@ -1401,8 +1425,11 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.xlsx',
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          content: await createPreviewContextMenuXlsxBase64(),
-          encoding: 'base64'
+          source: {
+            kind: 'inline',
+            content: await createPreviewContextMenuXlsxBase64(),
+            encoding: 'base64'
+          }
         }
       })
     )
@@ -1462,8 +1489,7 @@ const createSpreadsheetSearchArtifacts = async (sessionId) => {
             arguments: {
               filename: file.filename,
               mimeType: file.mimeType,
-              content,
-              encoding: 'base64'
+              source: { kind: 'inline', content, encoding: 'base64' }
             }
           })
         )
@@ -1542,9 +1568,11 @@ if (process.argv.includes('--version')) {
     .onRequest(acp.methods.agent.session.new, async (context) => {
       await failResumeAttachmentWhenRequested(context.params.cwd)
       const sessionId = `e2e-session-${fixtureInstanceId}${nextSessionId++}`
+      const createGateClosedFile = await holdFirstSessionCreateWhenRequested(sessionId)
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
         cwd: context.params.cwd,
+        createGateClosedFile,
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
@@ -1574,7 +1602,16 @@ if (process.argv.includes('--version')) {
       const controlStart = Math.max(
         ...RELIABLE_CONTROL_MARKERS.map((marker) => rawPrompt.lastIndexOf(marker))
       )
-      const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
+      const specialistCheck = rawPrompt.lastIndexOf(
+        'Verify specialist switch runtime remains usable.'
+      )
+      const prompt =
+        specialistCheck >= 0 &&
+        specialistCheck > rawPrompt.lastIndexOf('Continue the original user task as ')
+          ? rawPrompt.slice(specialistCheck)
+          : controlStart >= 0
+            ? rawPrompt.slice(controlStart)
+            : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
@@ -1594,7 +1631,9 @@ if (process.argv.includes('--version')) {
       }
       if (
         !prompt.includes('Generate Session metadata only from the following JSON data:') &&
-        (prompt.includes(PLAN_DISMISS_PROMPT) || prompt.includes(PLAN_RECOVERY_PROMPT))
+        (prompt.includes(PLAN_DISMISS_PROMPT) ||
+          prompt.includes(PLAN_RECOVERY_PROMPT) ||
+          prompt.includes(PLAN_RECOVERY_FEEDBACK))
       ) {
         planRecoveryScenarios.add(context.params.sessionId)
       }
@@ -1651,11 +1690,11 @@ if (process.argv.includes('--version')) {
               'return await host.delegate({ task: "Delegation resume held child task.", name: "Interrupted child" }, { wait: false })'
             )
           )
-          globalThis.delegationResumeChild = created.children[0]
+          if (!created.children?.[0]) throw new Error('Delegation resume child was not created.')
         }
         if (shouldDelegate) {
           const code = continuation
-            ? `const before = await host.children(); const receipt = await host.sendFrameMessage(${JSON.stringify(globalThis.delegationResumeChild?.frameId)}, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };`
+            ? 'const before = await host.children(); const child = before.find(child => child.name === "Interrupted child"); if (!child) throw new Error("missing original child"); const receipt = await host.sendFrameMessage(child.frameId, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };'
             : 'const value = await host.delegate({ task: "Return a short confirmation for the resume audit.", name: "Resume audit child" }, { wait: false }); return { outcome: "admitted", value };'
           const result = await executeControlCode(
             context.params.sessionId,
@@ -1693,10 +1732,17 @@ if (process.argv.includes('--version')) {
       if (reproScenario) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
         const correction = prompt.includes('[Auditor] A fresh-context reviewer')
-        const resumeCount = resumed
-          ? (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) + 1
-          : 0
-        if (resumed) autoReviewResumeCounts.set(context.params.sessionId, resumeCount)
+        // Provider replacement changes both process globals and provider Session IDs.
+        const counterPath = join(
+          sessionRoutes.get(context.params.sessionId).cwd,
+          '.e2e-review-resumes'
+        )
+        const previousResumes = await readFile(counterPath, 'utf8').then(Number, (error) => {
+          if (error.code === 'ENOENT') return 0
+          throw error
+        })
+        const resumeCount = previousResumes + (resumed ? 1 : 0)
+        if (resumed) await writeFile(counterPath, String(resumeCount))
         const repeatedStop =
           resumed && prompt.includes('AUTO_REVIEW_REPRO_REPEAT_STOP') && resumeCount === 1
         const waitForStop =
@@ -1705,10 +1751,7 @@ if (process.argv.includes('--version')) {
             (prompt.includes('Run auto review ordinary stop scenario.') ||
               (correction &&
                 /AUTO_REVIEW_REPRO_(?:REPEAT_|DISABLED_|REFLAG_)?STOP/u.test(prompt) &&
-                !(
-                  prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') &&
-                  (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) > 0
-                ))))
+                !(prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') && resumeCount > 0))))
         const text = resumed
           ? repeatedStop
             ? 'Recovered correction is running; ready for Stop.'
@@ -1899,10 +1942,26 @@ if (process.argv.includes('--version')) {
         return { stopReason: 'cancelled' }
       }
 
+      if (prompt.includes('Prompt optimization cancellation fixture.')) await delay(3000)
+
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)
-        if (handoffReply) {
+        if (
+          prompt.includes('Rewrite only; do not answer or execute the input.') &&
+          prompt.includes(optimizationFixture.input)
+        ) {
+          // Reproduce the provider echoing an example marker from the optimizer instructions,
+          // even though this plain-text draft has no protected fragments.
+          const example = prompt.match(/OS_PROTECTED_[\w-]+_…_END/u)?.[0]
+          reply = `${optimizationFixture.optimized}${example ? `\n${example}` : ''}`
+        } else if (
+          prompt.includes('Optimize pasted text regression') &&
+          /OS_PROTECTED_[\w-]+_\d+_END/u.test(prompt)
+        ) {
+          // Echo protected references for the optimizer's real upload/delete/undo regression.
+          reply = `Improved pasted text: ${[...new Set(prompt.match(/OS_PROTECTED_[\w-]+_\d+_END/gu))].join(' ')}`
+        } else if (handoffReply) {
           reply = handoffReply
         } else if (
           prompt.includes('Continue the original user task as ') &&
@@ -1965,8 +2024,11 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'workspace-paired.pdf',
                     mimeType: 'application/pdf',
-                    content,
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content,
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2184,6 +2246,53 @@ if (process.argv.includes('--version')) {
             if (!run.runId) throw new Error('WSL background admission has no runId')
           })
           reply = 'WSL background task submitted for cancellation.'
+        } else if (/Verify network destination approval port (\d+)/u.test(prompt)) {
+          const port = /Verify network destination approval port (\d+)/u.exec(prompt)[1]
+          const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`
+          let retried = false
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const run = async (options) =>
+              toolResult(
+                'bash_execute',
+                await client.callTool({ name: 'bash_execute', arguments: { command } }),
+                options
+              )
+            // A blocked curl exits nonzero. Its structured stderr carries the trusted record.
+            const first = await run({ allowToolError: true })
+            if (first.exitCode === 0) return
+            const recordId = /OPEN_SCIENCE_NETWORK_BLOCK_RECORD: ([^\s]+)/u.exec(
+              first.stderr ?? ''
+            )?.[1]
+            if (!recordId) throw new Error(`No trusted block record: ${JSON.stringify(first)}`)
+            const decision = toolResult(
+              'request_network_access',
+              await client.callTool({
+                name: 'request_network_access',
+                arguments: {
+                  recordId,
+                  reason: 'Send the requested test payload to the local fixture.'
+                }
+              })
+            )
+            if (
+              decision.status !== 'allowed' &&
+              decision.status !== 'allowedOnce' &&
+              decision.status !== 'alreadyAllowed' &&
+              decision.status !== 'projectAllowed' &&
+              decision.status !== 'alwaysAllowed'
+            ) {
+              throw new Error(`Destination was not approved: ${JSON.stringify(decision)}`)
+            }
+            // The test server confirmed no payload was received before consent. The Agent now
+            // explicitly retries this known fixture command; the application never replays it.
+            const retry = await run()
+            if (retry.exitCode !== 0)
+              throw new Error(`Explicit retry failed: ${JSON.stringify(retry)}`)
+            retried = true
+          })
+          reply = retried
+            ? 'Network destination explicit retry verified.'
+            : 'Network destination saved access verified.'
         } else if (prompt.includes('Verify real WSL Bash execution.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             const execution = toolResult(
@@ -2518,10 +2627,13 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'sanitized-performance.png',
                     mimeType: 'image/png',
-                    content: (
-                      await readFile(new URL('./sanitized-performance.png', import.meta.url))
-                    ).toString('base64'),
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content: (
+                        await readFile(new URL('./sanitized-performance.png', import.meta.url))
+                      ).toString('base64'),
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2622,12 +2734,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Expand a table with source links.')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
-        } else if (
-          await submitReviewerPass(
-            sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [],
-            prompt
-          )
-        ) {
+        } else if (await submitReviewerPass(context.params.sessionId, prompt)) {
           reply = ''
         } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
           await context.client.notify(acp.methods.client.session.update, {
@@ -2748,7 +2855,10 @@ if (process.argv.includes('--version')) {
                 await client.callTool({
                   name: 'bash_execute',
                   arguments: {
-                    command: `node -e "setTimeout(() => console.log('background-completion-e2e'), 3000)"`,
+                    command:
+                      process.platform === 'win32'
+                        ? "Start-Sleep -Seconds 3; Write-Output 'background-completion-e2e'"
+                        : "sleep 3; printf 'background-completion-e2e\\n'",
                     background: true
                   }
                 })
@@ -2762,6 +2872,39 @@ if (process.argv.includes('--version')) {
             prompt,
             withMcpClient,
             toolResult
+          )
+        } else if (prompt.includes('Prepare Notebook for Windows update.')) {
+          reply = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) => {
+              const call = async (name, args) =>
+                toolResult(
+                  name,
+                  await client.callTool({ name, arguments: args }, undefined, { timeout: 240_000 })
+                )
+              const repl = controlResultValue(
+                await call('repl_execute', {
+                  code: 'globalThis.updateWitness = 42; return { pid: process.pid, value: globalThis.updateWitness };',
+                  timeoutMs: 180_000
+                })
+              )
+              const shell = await call('bash_execute', {
+                command: "Write-Output ('UPDATE_SHELL_PID=' + $PID)",
+                timeoutMs: 180_000
+              })
+              const shellPid = Number(shell.stdout?.match(/UPDATE_SHELL_PID=(\d+)/)?.[1])
+              if (
+                repl.value !== 42 ||
+                !Number.isSafeInteger(repl.pid) ||
+                shell.exitCode !== 0 ||
+                !shellPid
+              )
+                throw new Error(
+                  `Notebook update preparation failed: ${JSON.stringify({ repl, shell })}`
+                )
+              return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
+            }
           )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
@@ -2809,9 +2952,12 @@ if (process.argv.includes('--version')) {
                       // Fixed 160 × 112 chart makes manual full-preview acceptance visible.
                       filename: 'resumed-figure.png',
                       mimeType: 'image/png',
-                      content:
-                        'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
-                      encoding: 'base64'
+                      source: {
+                        kind: 'inline',
+                        content:
+                          'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
+                        encoding: 'base64'
+                      }
                     }
                   })
                 )
@@ -2820,15 +2966,42 @@ if (process.argv.includes('--version')) {
               ? 'PNG artifact created.'
               : 'Resumed PNG artifact created.'
           }
+        } else if (prompt.includes('Verify Markdown task reads.')) {
+          const expected = prompt.includes('Expected: restored')
+            ? '# Publication report\n\nManually corrected result.\n'
+            : '# Publication report\n\nOriginal result.\n'
+          const historicalId = prompt.match(/Historical version: ([a-zA-Z0-9_-]+)/)?.[1]
+          if (!historicalId) throw new Error('Missing historical version')
+          const result = await executeControlCode(
+            context.params.sessionId,
+            `{
+            const files = await host.artifacts({ filename: 'publication-policy.md', exact: true });
+            if (files.artifacts.length !== 1) throw new Error('Expected one logical file');
+            const fs = require('node:fs/promises');
+            const latest = await fs.readFile(await host.artifactPath(files.artifacts[0].latestVersionId), 'utf8');
+            const historical = await fs.readFile(await host.artifactPath(${JSON.stringify(historicalId)}), 'utf8');
+            if (latest !== ${JSON.stringify(expected)} || historical !== '# Publication report\\n\\nManually corrected result.\\n') throw new Error('Task read selected incorrect bytes');
+            return { marker: 'markdown-task-read-verified' };
+          }`
+          )
+          if (controlResultValue(result).marker !== 'markdown-task-read-verified')
+            throw new Error(JSON.stringify(result))
+          reply = 'Markdown task read verified.'
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           if (prompt.includes('Observe the Task before publication.')) {
             await new Promise((resolve) => setTimeout(resolve, 8_000))
           }
-          reply = await createProvenanceArtifact(context.params.sessionId)
+          reply = await createProvenanceArtifact(
+            context.params.sessionId,
+            prompt.includes('Markdown publication policy'),
+            prompt.includes('Without execution evidence')
+          )
         } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
           reply = await createSpreadsheetSearchArtifacts(context.params.sessionId)
+        } else if (prompt.includes(DELEGATION_SETTLEMENT_PROMPT)) {
+          reply = 'Delegated settlement received.'
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,
@@ -2848,7 +3021,7 @@ if (process.argv.includes('--version')) {
           const dispatched = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: "Complete the bounded fixture after a delay." }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
             )
           )
           if (
@@ -2881,7 +3054,7 @@ if (process.argv.includes('--version')) {
           const terminal = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
+              `const slow = (await host.children()).find((child) => child.name === "Complete the bounded fixture after a delay."); return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (terminal.length !== 1 || terminal[0].status !== 'completed') {
@@ -2971,7 +3144,6 @@ if (process.argv.includes('--version')) {
           if (!child?.frameId || !child?.attemptId) {
             throw new Error(`Reliable child admission failed: ${JSON.stringify(dispatched)}`)
           }
-          reliableMessagingChildren.set(context.params.sessionId, child.frameId)
           const downward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
@@ -3064,15 +3236,12 @@ if (process.argv.includes('--version')) {
           if (delegated.kind !== 'results' || child?.status !== 'completed') {
             throw new Error(`Subagent model initial Attempt failed: ${JSON.stringify(delegated)}`)
           }
-          globalThis.subagentModelContinuationFrameId = child.frameId
           reply = 'Subagent model initial Attempt completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_CONTINUATION_FINISH_PROMPT)) {
-          const frameId = globalThis.subagentModelContinuationFrameId
-          if (!frameId) throw new Error('Subagent model continuation Frame was not captured.')
           const continued = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const receipt = await host.sendFrameMessage(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
+              `const children = await host.children(); const child = children.find(child => child.name === ${JSON.stringify(DELEGATED_MODEL_CONTINUATION_NAME)}); if (!child) throw new Error("missing original model continuation child"); const receipt = await host.sendFrameMessage(child.frameId, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (continued.length !== 1 || continued[0].status !== 'completed') {
@@ -3173,8 +3342,13 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_CHILD_DIRECTIVE)) {
           reply = 'Child received the reliable Main directive.'
         } else if (prompt.includes('Child reliable question reached Main')) {
-          const childFrameId = reliableMessagingChildren.get(context.params.sessionId)
-          if (!childFrameId) throw new Error('Reliable messaging child Frame was not retained.')
+          const { frameId: childFrameId } = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              'const child = (await host.children()).find((child) => child.name === "Send a reliable question to Main."); return { frameId: child?.frameId }'
+            )
+          )
+          if (!childFrameId) throw new Error('Reliable messaging child Frame was not found.')
           const answered = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
@@ -3190,30 +3364,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Parked reliable child question')) {
           reply = 'Main rendered the parked child question after branch restoration.'
         } else if (prompt.includes('Trigger reliable post-fence persistence failure')) {
-          const restoreWrites = await suspendSessionWrites()
-          try {
-            await context.client.notify(acp.methods.client.session.update, {
-              sessionId: context.params.sessionId,
-              update: {
-                sessionUpdate: 'agent_message_chunk',
-                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-                content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
-              }
-            })
-            await delay(1_000)
-          } finally {
-            await restoreWrites()
-            await writeFile(
-              join(process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT, 'post-fence-released'),
-              'released'
-            )
-          }
+          // Playwright owns restoration because persistence failure can terminate this provider.
+          await suspendSessionWrites()
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
               messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-              content: { type: 'text', text: 'Persistence sabotage released.' }
+              content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
             }
           })
           // Keep the provider call in flight until the test crashes Main. Completing it would
@@ -3441,10 +3599,112 @@ if (process.argv.includes('--version')) {
       sessionCancellationResolvers.delete(context.params.sessionId)
       resolve?.()
     })
-    .onRequest(acp.methods.agent.session.close, () => ({}))
+    .onRequest(acp.methods.agent.session.close, async (context) => {
+      const closed = sessionRoutes.get(context.params.sessionId)?.createGateClosedFile
+      if (closed) await writeFile(closed, context.params.sessionId, 'utf8')
+      return {}
+    })
 
-  const connection = app.connect(
-    acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
-  )
-  await connection.closed
+  // OpenCode 1.x exposes native message metadata alongside ACP. Register each emitted
+  // reply before delivery so the application's compaction guard can classify it.
+  const nativeMessages = new Map()
+  const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
+  const writer = stream.writable.getWriter()
+  const classificationFaultAttempts = new Map()
+  const portIndex = process.argv.indexOf('--port')
+  const server =
+    portIndex === -1
+      ? undefined
+      : createServer(async (request, response) => {
+          const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
+          if (request.headers.authorization !== authorization) {
+            response.writeHead(401).end()
+            return
+          }
+          const url = new URL(request.url, 'http://127.0.0.1')
+          const match = /^\/session\/([^/]+)\/message\/([^/]+)$/.exec(url.pathname)
+          const sessionId = match && decodeURIComponent(match[1])
+          const messageId = match && decodeURIComponent(match[2])
+          const info = nativeMessages.get(JSON.stringify([sessionId, messageId]))
+          if (
+            request.method !== 'GET' ||
+            !info ||
+            sessionRoutes.get(sessionId)?.cwd !== url.searchParams.get('directory')
+          ) {
+            response.writeHead(404).end()
+            return
+          }
+          // Fault only the external Agent's auxiliary HTTP boundary. ACP output, application
+          // adapters, persistence and renderer remain real; never close the ACP process here.
+          const faultRoot = process.env.OPEN_SCIENCE_E2E_CLASSIFICATION_FAULT_ROOT
+          if (faultRoot) {
+            const { mode } = JSON.parse(await readFile(join(faultRoot, 'fault.json'), 'utf8'))
+            const faultKey = `${faultRoot}:${mode}`
+            const attempt = (classificationFaultAttempts.get(faultKey) ?? 0) + 1
+            classificationFaultAttempts.set(faultKey, attempt)
+            await appendFile(
+              join(faultRoot, 'requests.jsonl'),
+              `${JSON.stringify({
+                timestamp: Date.now(),
+                mode,
+                attempt,
+                sessionId,
+                messageId,
+                pid: process.pid,
+                infoPresent: true,
+                delayMs: mode === 'timeout' ? 2_500 : 0
+              })}\n`
+            )
+            if (
+              mode === 'http-500' ||
+              mode === 'not-yet-visible' ||
+              (attempt === 1 && mode === 'transient-500')
+            ) {
+              response.writeHead(mode.endsWith('500') ? 500 : 404).end()
+              return
+            }
+            if (mode === 'timeout') await delay(2_500)
+            if (mode === 'body-reset' || (mode === 'transient-body-reset' && attempt === 1)) {
+              response.writeHead(200, { 'content-type': 'application/json' })
+              response.write('{"info":')
+              await delay(30)
+              response.destroy()
+              return
+            }
+          }
+          if (response.destroyed) return
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ info, parts: [] }))
+        })
+  if (server) {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(Number(process.argv[portIndex + 1]), '127.0.0.1', resolve)
+    })
+  }
+  try {
+    const connection = app.connect({
+      readable: stream.readable,
+      writable: new WritableStream({
+        write(message) {
+          const params = message.method === 'session/update' ? message.params : undefined
+          const update = params?.update
+          if (['agent_message_chunk', 'agent_thought_chunk'].includes(update?.sessionUpdate)) {
+            nativeMessages.set(JSON.stringify([params.sessionId, update.messageId]), {
+              id: update.messageId,
+              sessionID: params.sessionId,
+              role: 'assistant',
+              summary: false
+            })
+          }
+          return writer.write(message)
+        },
+        close: () => writer.close(),
+        abort: (reason) => writer.abort(reason)
+      })
+    })
+    await connection.closed
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve))
+  }
 }

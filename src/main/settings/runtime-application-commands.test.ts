@@ -24,6 +24,7 @@ const expectedChannels = [
   'settings:uninstall-claude',
   'settings:uninstall-codex',
   'settings:uninstall-codebuddy',
+  'settings:uninstall-pi',
   'settings:uninstall-opencode',
   'settings:upsert-provider',
   'settings:delete-provider',
@@ -90,7 +91,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 21-command inventory and keeps Task-only routing off renderer IPC', async () => {
+  it('installs the exact 22-command inventory and keeps Task-only routing off renderer IPC', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)

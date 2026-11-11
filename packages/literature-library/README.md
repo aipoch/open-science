@@ -40,6 +40,20 @@ changing their metadata revision or screening evidence. Search filters apply bef
 paging. Legacy snapshots may omit the top-level `readingStatus`, which clients display as `unread`.
 Duplicate merges keep the surviving reference's status; bibliographic imports do not overwrite it.
 
+## Personal note search
+
+In the Open-Science host, the existing reference search box also matches personal notes
+(`personalNote`), including the editable Notes column in the Library table. A match returns the
+owning reference. Library and global reference queries share this behavior; existing scope filters,
+counts and pagination still apply.
+
+The host reuses the existing V1 text normalization: Unicode NFKC, lowercase and collapsed
+whitespace. It maintains `normalizedPersonalNote` on creation and metadata replacement. Host-owned
+migration `0052_literature_personal_note_search` backfills existing notes in batches of up to 500
+rows inside the migration transaction, with a backup required before application. It preserves
+source notes, metadata revisions and modification times. Existing notes become searchable without
+resaving them. The derived field is not a search index; matching remains substring-based.
+
 ## Import-only consumers
 
 Use `LibraryImporter` with the exported `LibraryImportStore` when only importing or previewing

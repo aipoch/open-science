@@ -62,6 +62,9 @@ describe('independent package test direction', () => {
     'tsconfig.node.json',
     'test/setup.ts',
     '.github/workflows/pr-gate.yml',
+    'build/native-components.json',
+    'electron.vite.config.ts',
+    'patches/dependency+1.0.0.patch',
     'scripts/build-dev-packages.mjs',
     'scripts/check-packages.mjs',
     'scripts/ci/package-test-impact.mjs',
@@ -70,15 +73,20 @@ describe('independent package test direction', () => {
   ])('keeps all package tests for shared or unknown input %s', (path) => {
     expect(createPackageTestPlan([path], registry).excluded).toEqual([])
   })
-  it.each(['scripts/build.mjs', 'scripts/ci/classify-pr-changes.mjs', 'test/fixtures/case.jsonl'])(
-    'excludes unchanged package units for non-package evidence %s',
-    (path) => {
-      expect(createPackageTestPlan([path], registry)).toMatchObject({
-        selected: [],
-        excluded: [core, providers, mcp]
-      })
-    }
-  )
+  it.each([
+    'scripts/build.mjs',
+    'scripts/ci/classify-pr-changes.mjs',
+    'test/fixtures/case.jsonl',
+    'build/packaging.test.ts',
+    'electron-builder.yml',
+    'e2e/browser/home-use-cases.spec.ts',
+    '.github/workflows/package-smoke.yml'
+  ])('excludes unchanged package units for non-package evidence %s', (path) => {
+    expect(createPackageTestPlan([path], registry)).toMatchObject({
+      selected: [],
+      excluded: [core, providers, mcp]
+    })
+  })
   it('keeps the CI install wrapper global', () => {
     expect(createPackageTestPlan(['scripts/ci/npm-ci.mjs'], registry).excluded).toEqual([])
   })
@@ -268,6 +276,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       `export default {root: ${JSON.stringify(join(fixture, 'packages/providers'))}, test: {name:'providers',include:['src/**/*.test.ts']}}`
     )
     const literaturePackages = [
+      'research-film',
       'pdf-structure',
       'pdf-translation',
       'literature-citations',
@@ -346,7 +355,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         .map((file) => join(fixture, file))
         .sort()
     )
-    expect(list('0')).toHaveLength(20)
+    expect(list('0')).toHaveLength(12 + literaturePackages.length)
     // Include roots beyond today's directory inventory: partitioning must not drop future host tests.
     for (const path of ['root.test.ts', 'future-host/nested/new.test.ts']) {
       const file = join(fixture, path)
@@ -368,8 +377,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       expect(new Set([...host, ...packages]).size).toBe(host.length + packages.length)
       expect([...host, ...packages].sort()).toEqual(baseline)
     }
-    expect(list('0', [], 'host')).toHaveLength(22)
-    expect(list('0', [], 'packages')).toHaveLength(22)
+    expect(list('0', [], 'host')).toHaveLength(14 + literaturePackages.length)
+    expect(list('0', [], 'packages')).toHaveLength(14 + literaturePackages.length)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
@@ -612,6 +621,8 @@ describe('installed-consumer input selection', () => {
     createPackageTestPlan(paths, actual, { verification: true })
   it.each([
     'src/main/application-events.ts',
+    'prisma/schema.prisma',
+    'scripts/database-migration-ledger-smoke.mjs',
     'docs/package-workflows.md',
     'README.md',
     '.github/workflows/source-regression.yml',
@@ -649,6 +660,17 @@ describe('installed-consumer input selection', () => {
         'test/config/vite.browser-test.config.test.ts'
       ]).selected
     ).toEqual([])
+  })
+  it('keeps host database changes out of library verification while retaining the changed archive', () => {
+    const paths = [
+      'prisma/schema.prisma',
+      'scripts/database-migration-ledger-smoke.mjs',
+      'src/main/database/migration-service.ts',
+      'scripts/ci/module-impact/main_database.json',
+      'packages/literature-library/README.md'
+    ]
+    expect(select(paths).selected).toEqual(['packages/literature-library'])
+    expect(createPackageTestPlan(paths, actual).selected).toEqual(['packages/literature-library'])
   })
   it('keeps mixed package/host edits directional and only builds upstream prerequisites', async () => {
     const { packageVerificationPlan } = await import('../package-verification-plan.mjs')

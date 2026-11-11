@@ -10,10 +10,10 @@ import type { AcpSessionInteractionScope } from './session-interaction-owner'
 import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 import type { LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
 import { LiteratureDocumentReader } from '../literature/document-reader'
-import { extractPdfText } from '../uploads/attachment-media'
+import { extractPdfText } from '../uploads/pdf-text-extraction'
 
-vi.mock('../uploads/attachment-media', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../uploads/attachment-media')>()),
+vi.mock('../uploads/pdf-text-extraction', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../uploads/pdf-text-extraction')>()),
   extractPdfText: vi.fn()
 }))
 

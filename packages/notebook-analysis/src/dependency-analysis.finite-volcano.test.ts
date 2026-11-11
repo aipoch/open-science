@@ -145,7 +145,8 @@ it.each([
     expression.includes('sqrt(') ||
     expression.includes('log(') ||
     expression.includes('log2(') ||
-    expression.includes('log10(')
+    expression.includes('log10(') ||
+    expression.includes('range(')
   ) {
     expect(facts.copyOnModifyNames ?? []).not.toContain('d')
     expect(facts).toMatchObject({

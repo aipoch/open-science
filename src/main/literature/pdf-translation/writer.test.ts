@@ -10,6 +10,8 @@ import { expect, it } from 'vitest'
 import { type PdfTranslationPdfRequest } from '../../../shared/pdf-translation'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import { PdfTranslationWriter } from './writer'
+import { stageDesktopPdfLib } from '../../../../scripts/desktop-pdf-lib.mjs'
+import { stageDesktopDependencyChain } from '../../../../scripts/desktop-dependency-chains.mjs'
 
 async function fixture(): Promise<PdfTranslationPdfRequest> {
   const pdf = await PDFDocument.create(),
@@ -47,9 +49,12 @@ it('ships the existing Noto font license and explicit physical worker dependenci
     expect(manifest.dependencies[name]).toEqual(expect.stringMatching(/\S/))
 })
 
-it.each(['installed', '安装 package'])(
-  'generates a readable translated PDF from the configured physical backend boundary (%s)',
-  async (installationDirectory) => {
+it.each([
+  { installationDirectory: 'installed', bundled: false },
+  { installationDirectory: '安装 package', bundled: true }
+])(
+  'generates a readable translated PDF from the configured physical backend boundary ($installationDirectory, bundled=$bundled)',
+  async ({ installationDirectory, bundled }) => {
     const root = await mkdtemp(join(tmpdir(), 'pdf-translation-backend-')),
       source = join(root, 'out/desktop-backend'),
       resources = join(root, installationDirectory, 'resources'),
@@ -86,9 +91,14 @@ it.each(['installed', '安装 package'])(
         copied.add(directory)
         const target = join(source, 'node_modules', location)
         await mkdir(dirname(target), { recursive: true })
-        await cp(directory, target, { recursive: true })
+        const chain = bundled
+          ? await stageDesktopDependencyChain(metadata, directory, target)
+          : undefined
+        if (!chain && !(bundled && (await stageDesktopPdfLib(metadata, directory, target))))
+          await cp(directory, target, { recursive: true })
         for (const dependency of Object.keys(metadata.dependencies ?? {}))
-          await copyPackage(dependency, createRequire(join(directory, 'package.json')))
+          if (!chain?.has(dependency))
+            await copyPackage(dependency, createRequire(join(directory, 'package.json')))
       }
       await mkdir(join(source, 'resources'), { recursive: true })
       // An ancestor's module type must not substitute for the backend manifest.

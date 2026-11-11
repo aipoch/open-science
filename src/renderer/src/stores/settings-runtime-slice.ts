@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings'
 import type { StoreApi } from 'zustand'
 
 import type {
@@ -46,7 +47,7 @@ export type RuntimeSetupState = {
   isDetectingOpencode: boolean
   isDetectingCodex: boolean
   isDetectingCodeBuddy: boolean
-  installStates: Record<AgentFrameworkId, RuntimeInstallState>
+  installStates: Record<Exclude<AgentFrameworkId, 'open-science-agent'>, RuntimeInstallState>
 }
 
 export type RuntimeSetupActions = {
@@ -63,11 +64,13 @@ export type RuntimeSetupActions = {
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   installCodex: (source?: CodexInstallSource) => Promise<ClaudeInstallResult>
   installCodeBuddy: (source?: 'managed') => Promise<ClaudeInstallResult>
+  installPi: (source?: 'managed') => Promise<ClaudeInstallResult>
   uninstallClaude: () => Promise<void>
   uninstallOpencode: () => Promise<void>
   uninstallCodeBuddy: () => Promise<void>
+  uninstallPi: () => Promise<void>
   uninstallCodex: () => Promise<void>
-  clearInstallLogs: (runtime?: AgentFrameworkId) => void
+  clearInstallLogs: (runtime?: Exclude<AgentFrameworkId, 'open-science-agent'>) => void
 }
 
 export type RuntimeSetupSlice = RuntimeSetupState & RuntimeSetupActions
@@ -91,9 +94,11 @@ type RuntimeSetupCommands = Pick<
   | 'installOpencode'
   | 'installCodex'
   | 'installCodeBuddy'
+  | 'installPi'
   | 'uninstallClaude'
   | 'uninstallOpencode'
   | 'uninstallCodeBuddy'
+  | 'uninstallPi'
   | 'uninstallCodex'
   | 'onInstallLog'
 >
@@ -126,8 +131,9 @@ const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
   codexReady: false,
+  piReady: false,
   codebuddyReady: false,
-  agentFrameworkId: 'claude-code',
+  agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
   agentReady: false,
   activeProviderReady: false
 })
@@ -150,7 +156,8 @@ export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
     'claude-code': createInitialRuntimeInstallState(),
     opencode: createInitialRuntimeInstallState(),
     codex: createInitialRuntimeInstallState(),
-    codebuddy: createInitialRuntimeInstallState()
+    codebuddy: createInitialRuntimeInstallState(),
+    pi: createInitialRuntimeInstallState()
   }
 })
 
@@ -188,7 +195,7 @@ const updateInstallStates = <Store extends RuntimeSetupHost>(
 
 const patchInstallState = <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
-  runtime: AgentFrameworkId,
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>,
   patch: Partial<RuntimeInstallState>
 ): void =>
   updateInstallStates(set, (installStates) => ({
@@ -198,7 +205,7 @@ const patchInstallState = <Store extends RuntimeSetupHost>(
 
 const snapshotRuntimePath = (
   snapshot: SettingsSnapshot,
-  runtime: AgentFrameworkId
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>
 ): string | undefined => {
   if (runtime === 'claude-code') return snapshot.claude.resolvedPath
   if (runtime === 'opencode') return snapshot.opencode.resolvedPath
@@ -208,7 +215,7 @@ const snapshotRuntimePath = (
 
 const clearRuntimeInstallDiagnosticsIfMissing = <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
-  runtime: AgentFrameworkId,
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>,
   snapshot: SettingsSnapshot
 ): void => {
   if (snapshotRuntimePath(snapshot, runtime)) return
@@ -224,7 +231,7 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
   get: StoreApi<Store>['getState'],
   getCommands: () => RuntimeSetupCommands,
   reconcileSnapshot: RuntimeSetupSliceOptions<Store>['reconcileSnapshot'],
-  runtime: AgentFrameworkId,
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>,
   invoke: (commands: RuntimeSetupCommands) => Promise<ClaudeInstallResult>
 ): Promise<ClaudeInstallResult> => {
   // Install events are broadcast without a runtime id. The synchronous global guard guarantees that
@@ -303,7 +310,8 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
     try {
       const snapshot = await commands.getSettings()
       reconcileSnapshot(snapshot)
-      if (result.ok) clearRuntimeInstallDiagnosticsIfMissing(set, runtime, snapshot)
+      if (result.ok && runtime !== 'pi')
+        clearRuntimeInstallDiagnosticsIfMissing(set, runtime, snapshot)
       await get().refreshPreflight()
     } catch {
       // The next detection or refresh repairs a briefly stale renderer projection.
@@ -485,6 +493,10 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codebuddy', (commands) =>
       commands.installCodeBuddy({ source })
     ),
+  installPi: (source = 'managed') =>
+    runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'pi', (commands) =>
+      commands.installPi({ source })
+    ),
 
   uninstallClaude: async () => {
     reconcileSnapshot(await getCommands().uninstallClaude())
@@ -500,6 +512,11 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     clearRuntimeInstallDiagnosticsIfMissing(set, 'codebuddy', snapshot)
     await get().refreshPreflight()
   },
+  uninstallPi: async () => {
+    const snapshot = await getCommands().uninstallPi()
+    reconcileSnapshot(snapshot)
+    await get().refreshPreflight()
+  },
   uninstallCodex: async () => {
     reconcileSnapshot(await getCommands().uninstallCodex())
     await get().refreshPreflight()
@@ -507,9 +524,9 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
 
   clearInstallLogs: (runtime) =>
     updateInstallStates(set, (current) => {
-      const runtimes: AgentFrameworkId[] = runtime
+      const runtimes: Exclude<AgentFrameworkId, 'open-science-agent'>[] = runtime
         ? [runtime]
-        : ['claude-code', 'opencode', 'codex', 'codebuddy']
+        : ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi']
       const installStates = { ...current }
 
       for (const id of runtimes) {

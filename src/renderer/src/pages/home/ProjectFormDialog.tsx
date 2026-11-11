@@ -1,5 +1,6 @@
+import { DEFAULT_OPTIMIZATION_PROMPT } from '../../../../shared/prompt-optimization'
 import type { Project } from '../../../../shared/projects'
-import { LoaderCircle, X } from 'lucide-react'
+import { ChevronDown, LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 import { useRef } from 'react'
@@ -36,6 +37,7 @@ type ProjectFormDialogProps = {
   nameDraft: string
   descriptionDraft: string
   agentContextDraft: string
+  optimizationPromptDraft: string
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -45,6 +47,7 @@ type ProjectFormDialogProps = {
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
+  onOptimizationPromptChange: (value: string) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -62,6 +65,7 @@ const ProjectFormDialog = ({
   nameDraft,
   descriptionDraft,
   agentContextDraft,
+  optimizationPromptDraft,
   isSubmitting,
   error,
   errorDetail,
@@ -71,6 +75,7 @@ const ProjectFormDialog = ({
   onNameChange,
   onDescriptionChange,
   onAgentContextChange,
+  onOptimizationPromptChange,
   discardConfirmationOpen,
   onKeepEditing,
   onDiscardChanges,
@@ -176,29 +181,68 @@ const ProjectFormDialog = ({
                   className={dialogFormTextareaClassName}
                 />
               </div>
-              <div>
-                <label className={dialogFormLabelClassName} htmlFor="project-form-agent-context">
-                  {t('Agent Context')}
-                </label>
-                <p id="project-form-agent-context-help" className={dialogFormHelpClassName}>
-                  {t(
-                    'Injected into the system prompt of every agent session in this project, including resumed ones. Sent to the model provider with every session — do not include secrets.'
-                  )}
-                </p>
-                <textarea
-                  id="project-form-agent-context"
-                  disabled={isSubmitting}
-                  aria-describedby="project-form-agent-context-help"
-                  value={agentContextDraft}
-                  onChange={(event) => onAgentContextChange(event.target.value)}
-                  placeholder={t(
-                    'e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes.'
-                  )}
-                  rows={4}
-                  maxLength={16000}
-                  className={dialogFormTextareaClassName}
-                />
-              </div>
+              {/* Keep advanced instructions mounted so collapsing preserves the draft. */}
+              <details className="group/agent-options border-t border-border pt-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-sm py-1 text-sm font-medium text-foreground hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+                  {t('Advanced agent options')}
+                  <ChevronDown
+                    className="size-4 shrink-0 text-muted-foreground transition-transform group-open/agent-options:rotate-180 motion-reduce:transition-none"
+                    aria-hidden="true"
+                  />
+                </summary>
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <label
+                      className={dialogFormLabelClassName}
+                      htmlFor="project-form-agent-context"
+                    >
+                      {t('Agent Context')}
+                    </label>
+                    <p id="project-form-agent-context-help" className={dialogFormHelpClassName}>
+                      {t(
+                        'Injected into the system prompt of every agent session in this project, including resumed ones. Sent to the model provider with every session — do not include secrets.'
+                      )}
+                    </p>
+                    <textarea
+                      id="project-form-agent-context"
+                      disabled={isSubmitting}
+                      aria-describedby="project-form-agent-context-help"
+                      value={agentContextDraft}
+                      onChange={(event) => onAgentContextChange(event.target.value)}
+                      placeholder={t(
+                        'e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes.'
+                      )}
+                      rows={4}
+                      maxLength={16000}
+                      className={dialogFormTextareaClassName}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className={dialogFormLabelClassName}
+                      htmlFor="project-optimization-prompt"
+                    >
+                      {t('Optimization prompt')}
+                    </label>
+                    <p id="project-optimization-help" className={dialogFormHelpClassName}>
+                      {t(
+                        'Used only when optimizing a question in this project. Leave empty to use the built-in default.'
+                      )}
+                    </p>
+                    <textarea
+                      id="project-optimization-prompt"
+                      aria-describedby="project-optimization-help"
+                      value={optimizationPromptDraft}
+                      onChange={(event) => onOptimizationPromptChange(event.target.value)}
+                      disabled={isSubmitting}
+                      rows={5}
+                      maxLength={16000}
+                      placeholder={t(DEFAULT_OPTIMIZATION_PROMPT)}
+                      className={dialogFormTextareaClassName}
+                    />
+                  </div>
+                </div>
+              </details>
             </div>
             {error ? (
               <p className="px-5 pb-4 text-sm text-danger-000" role="alert">
@@ -215,6 +259,8 @@ const ProjectFormDialog = ({
                   <dd>{conflictProject.description}</dd>
                   <dt>{t('Agent Context')}</dt>
                   <dd>{conflictProject.agentContext}</dd>
+                  <dt>{t('Optimization prompt')}</dt>
+                  <dd>{conflictProject.optimizationPrompt}</dd>
                 </dl>
                 <p className="text-sm text-muted-foreground">
                   {t(

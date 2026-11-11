@@ -145,7 +145,7 @@ class PdfAnnotationService {
     }
   }
 
-  private async librarySource(versionId: string): Promise<PdfAnnotationSource> {
+  private async librarySource(versionId: string, prepare = true): Promise<PdfAnnotationSource> {
     const version = await this.options.literature.resolveVersion(versionId)
     if (!version || version.versionId !== versionId || !isPdfVersion(version))
       throw new Error('PDF annotation source is not available.')
@@ -160,7 +160,7 @@ class PdfAnnotationService {
     const lease = await this.options.literature.openContent(versionId)
     try {
       await lease.verifyUnchanged()
-      await this.prepareSource(source, lease)
+      if (prepare) await this.prepareSource(source, lease)
     } finally {
       await lease.close()
     }
@@ -249,10 +249,12 @@ class PdfAnnotationService {
     operation: (
       lease: { path: string; size: number; verifyUnchanged(): Promise<void> },
       canonical: PdfAnnotationSource
-    ) => Promise<T>
+    ) => Promise<T>,
+    options: { writable?: boolean } = {}
   ): Promise<T> {
+    const writable = options.writable ?? true
     if (source.kind === 'literature-attachment-version') {
-      const canonical = await this.librarySource(source.versionId)
+      const canonical = await this.librarySource(source.versionId, writable)
       if (!isDeepStrictEqual(canonical, source))
         throw new Error('PDF annotation source is not available.')
       const lease = await this.options.literature.openContent(source.versionId)
@@ -266,7 +268,7 @@ class PdfAnnotationService {
     if (!source.projectId || !source.sessionId)
       throw new Error('PDF annotation source is not available.')
     return this.options.runWithSessionAuthority(source.projectId, source.sessionId, async () => {
-      await this.requireSession(source.projectId!, source.sessionId!, true)
+      await this.requireSession(source.projectId!, source.sessionId!, writable)
       const resolved = await this.options.resolveSessionPdfVersion({
         projectId: source.projectId!,
         sourceKind: source.kind as 'upload-version' | 'artifact-version',
@@ -286,7 +288,7 @@ class PdfAnnotationService {
       const lease = await resolved.openContent()
       try {
         await lease.verifyUnchanged()
-        await this.prepareSource(canonical, lease)
+        if (writable) await this.prepareSource(canonical, lease)
         return await operation(lease, canonical)
       } finally {
         await lease.close()
@@ -309,10 +311,11 @@ class PdfAnnotationService {
     })
   }
 
-  create(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation> {
+  create(request: CreatePdfAnnotationRequest, beforeWrite?: () => void): Promise<PdfAnnotation> {
     if (!createPdfAnnotationRequestSchema.safeParse(request).success)
       return Promise.reject(new Error('PDF annotation source is not available.'))
     return this.withScope(request, async () => {
+      beforeWrite?.()
       const recovered = await this.options.repository.recoverCreate(request)
       if (recovered) return recovered
       const source = request.target.source
@@ -330,7 +333,10 @@ class PdfAnnotationService {
       ) {
         throw new Error('PDF annotation source is not available.')
       }
-      return this.options.repository.create(request)
+      beforeWrite?.()
+      return beforeWrite
+        ? this.options.repository.create(request, beforeWrite)
+        : this.options.repository.create(request)
     })
   }
 

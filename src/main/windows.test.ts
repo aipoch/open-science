@@ -21,14 +21,16 @@ const {
   ipcMainRemoveListenerMock,
   showMessageBoxMock,
   showMessageBoxSyncMock,
-  webFrameMainFromIdMock
+  webFrameMainFromIdMock,
+  screenGetPrimaryDisplayMock
 } = vi.hoisted(() => ({
   openExternalMock: vi.fn(async () => undefined),
   ipcMainOnMock: vi.fn(),
   ipcMainRemoveListenerMock: vi.fn(),
   showMessageBoxMock: vi.fn(),
   showMessageBoxSyncMock: vi.fn(),
-  webFrameMainFromIdMock: vi.fn()
+  webFrameMainFromIdMock: vi.fn(),
+  screenGetPrimaryDisplayMock: vi.fn(() => ({ workAreaSize: { width: 1280, height: 960 } }))
 }))
 
 const { windowLogSpies } = vi.hoisted(() => ({
@@ -219,6 +221,7 @@ vi.mock('electron', () => ({
   dialog: { showMessageBox: showMessageBoxMock, showMessageBoxSync: showMessageBoxSyncMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
   shell: { openExternal: openExternalMock },
+  screen: { getPrimaryDisplay: screenGetPrimaryDisplayMock },
   webFrameMain: { fromId: webFrameMainFromIdMock }
 }))
 
@@ -226,7 +229,7 @@ vi.mock('@electron-toolkit/utils', () => ({ is: { dev: false } }))
 
 vi.mock('../../resources/icon.png?asset', () => ({ default: 'icon-path' }))
 
-const { createMainWindow } = await import('./windows')
+const { constrainMainWindowSize, createMainWindow } = await import('./windows')
 
 // A keyDown close chord for the host platform: Cmd+W on macOS, Ctrl+W elsewhere. Built off
 // process.platform so the interception test passes on every CI runner (windows, linux, macOS).
@@ -250,6 +253,47 @@ const findChord = (overrides: Partial<KeyChordInput> = {}): KeyChordInput => ({
   shift: false,
   isAutoRepeat: false,
   ...overrides
+})
+
+describe('main window sizing', () => {
+  it('keeps the preferred size when the work area is large enough', () => {
+    expect(
+      constrainMainWindowSize(
+        { width: 1280, height: 960, minWidth: 1100, minHeight: 720 },
+        { width: 1920, height: 1080 }
+      )
+    ).toEqual({ width: 1280, height: 960, minWidth: 1100, minHeight: 720 })
+  })
+
+  it('clamps the initial and minimum dimensions to a smaller work area', () => {
+    expect(
+      constrainMainWindowSize(
+        { width: 1280, height: 960, minWidth: 1100, minHeight: 720 },
+        { width: 1200, height: 700 }
+      )
+    ).toEqual({ width: 1200, height: 700, minWidth: 1100, minHeight: 700 })
+  })
+
+  it('uses the Windows work area for the native initial window size', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    screenGetPrimaryDisplayMock.mockReturnValueOnce({
+      workAreaSize: { width: 1200, height: 700 }
+    })
+
+    try {
+      createMainWindow()
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+
+    expect(lastWindowOptions).toMatchObject({
+      width: 1200,
+      height: 700,
+      minWidth: 1100,
+      minHeight: 700
+    })
+  })
 })
 
 // Drives the captured 'close' handlers with a fresh event, then mirrors Electron: an un-prevented

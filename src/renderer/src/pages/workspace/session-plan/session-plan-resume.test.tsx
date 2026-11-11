@@ -100,6 +100,20 @@ function graphOnlyRecoveryFixture(
 }
 
 describe('Session Plan feedback recovery', () => {
+  it('keeps imported recovery historical without discarding its durable state', () => {
+    const session = hydrateSession(fixture())
+    session.packageOrigin = {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 600,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    const original = structuredClone(session)
+    expect(resolveSessionRecoveryPresentation(session)).toBeUndefined()
+    expect(session).toEqual(original)
+  })
+
   it('does not attribute feedback recovery to the original prompt', () => {
     expect(resolveTurnOutcome(fixture(), 'original')).toBeUndefined()
     expect(resolveTurnOutcome(fixture(), 'feedback')?.kind).toBe('cancelled')
@@ -113,6 +127,18 @@ describe('Session Plan feedback recovery', () => {
       cause: 'cancelled',
       error: 'This turn was interrupted. Resume to continue.'
     })
+  })
+
+  it('gives global Retry the matching execution while its transcript overlay is loading', () => {
+    const session = hydrateSession(graphOnlyRecoveryFixture('connection-lost'))
+    const admission = session.runtimeSessionAdmissions!.find(
+      ({ promptMessageId }) => promptMessageId === 'feedback'
+    )!
+    const failure = { ...admission, projectId: session.projectId, startedAt: 1 }
+    expect(resolveSessionRecoveryPresentation(session, [failure])).toBeUndefined()
+    expect(
+      resolveSessionRecoveryPresentation(session, [{ ...failure, messageBranchId: 'other-branch' }])
+    ).toEqual(resolveSessionRecoveryPresentation(session))
   })
 
   it.each(['connection-lost', 'app-restart'] as const)(

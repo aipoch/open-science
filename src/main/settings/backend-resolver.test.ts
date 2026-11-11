@@ -1,3 +1,4 @@
+import { releaseResolvedAgentBackendLeases } from '../agent-framework'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -249,6 +250,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   const runtime = {
     resolveClaudeExecutable: vi.fn(async () => '/runtime/claude'),
+    resolvePiExecutable: vi.fn(async () => '/runtime/pi'),
     resolveOpencodeExecutable: vi.fn(async () => '/runtime/opencode'),
     probeOpencodeVersion: vi.fn(async () => '1.19.4'),
     resolveCodeBuddyExecutable: vi.fn(async () => '/runtime/codebuddy'),
@@ -386,6 +388,54 @@ const expectRuntimeNotStarted = (runtime: ReturnType<typeof makeHarness>['runtim
 }
 
 describe('AgentBackendResolver construction and selection', () => {
+  it.each([
+    ['claude-code', 'messages', 'https://gateway.example', 'claude-anthropic'],
+    ['opencode', 'messages', 'https://gateway.example', 'opencode-anthropic'],
+    ['opencode', 'chat-completions', 'https://gateway.example', 'opencode-openai'],
+    ['codex', 'responses', 'https://api.openai.com', 'codex-responses'],
+    ['codex', 'responses', 'https://gateway.example', 'codex-responses-compatibility'],
+    ['codex', 'chat-completions', 'https://gateway.example', 'codex-bridge'],
+    ['codebuddy', 'chat-completions', 'https://gateway.example', 'codebuddy-openai'],
+    ['pi', 'messages', 'https://gateway.example', 'pi'],
+    ['open-science-agent', 'messages', 'https://gateway.example', 'open-science-agent']
+  ] as const)(
+    'resolves an unpublished draft through %s / %s at %s',
+    async (frameworkId, endpoint, baseUrl, route) => {
+      const root = await mkdtemp(join(tmpdir(), 'validation-backend-'))
+      const settings = makeSettings({ agentFrameworkId: frameworkId })
+      const harness = makeHarness({ settings })
+      const original = JSON.stringify(settings)
+      let resolved: ResolvedAgentBackend | undefined
+      try {
+        resolved = await harness.resolver.resolveValidationTarget(
+          {
+            type: 'custom',
+            model: 'gpt-5.4',
+            baseUrl,
+            apiEndpoints: [endpoint],
+            key: 'draft-secret'
+          },
+          settings,
+          root
+        )
+        expect(resolved.modelRoute).toBe(route)
+        expect(resolved.providerId).toBe('validation')
+        expect(resolved.contextUsageModel).toBe('gpt-5.4')
+        expect(JSON.stringify(settings)).toBe(original)
+        expect(harness.readSettings).not.toHaveBeenCalled()
+        expect(harness.runtime.provisionClaudeRuntimeConfig).not.toHaveBeenCalled()
+        expect(harness.runtime.prepareAgentSkillDiscovery).not.toHaveBeenCalled()
+        for (const [files] of harness.runtime.materializeAgentConfigFiles.mock.calls)
+          for (const file of files ?? []) expect(file.path.startsWith(root)).toBe(true)
+        if (frameworkId === 'claude-code')
+          expect(resolved.env.CLAUDE_CONFIG_DIR.startsWith(root)).toBe(true)
+      } finally {
+        if (resolved) await releaseResolvedAgentBackendLeases(resolved)
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('constructs without side effects and captures a secret-free framework selection', async () => {
     const harness = makeHarness({
       settings: makeSettings({ agentFrameworkId: 'codex' })
@@ -1245,6 +1295,17 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     }
   )
 
+  it('distinguishes an OpenCode version probe failure from an unsupported version', async () => {
+    const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
+    const cause = Object.assign(new Error('process could not start'), { code: 'ENOMEM' })
+    harness.runtime.probeOpencodeVersion.mockRejectedValue(cause)
+    await expect(harness.resolver.resolveActiveBackend()).rejects.toMatchObject({
+      message: 'OpenCode CLI version check failed.',
+      cause
+    })
+    expect(harness.runtime.reserveOpenCodeUsagePort).not.toHaveBeenCalled()
+  })
+
   it('pre-registers immutable OpenCode provider routes without exposing upstream credentials', async () => {
     const providerA = {
       ...makeStoredProvider('provider-a', 'model-a'),
@@ -1280,6 +1341,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           id: JSON.stringify(['opencode', 'provider-a', 'model-a']),
           wire: 'chat-completions',
           endpoint: 'https://provider-a.example/v1/chat/completions',
+          adaptStream: expect.any(Function),
           key: 'plain:provider-a-key-ref',
           model: 'model-a'
         }
@@ -1293,6 +1355,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           id: JSON.stringify(['opencode', 'provider-b', 'model-b']),
           wire: 'chat-completions',
           endpoint: 'https://provider-b.example/custom/chat/completions',
+          adaptStream: expect.any(Function),
           key: 'plain:provider-b-key-ref',
           model: 'model-b'
         }
@@ -2367,3 +2430,35 @@ it.each([undefined, 'unsupported', 'none-high'] as const)(
     expectRuntimeNotStarted(harness.runtime)
   }
 )
+
+describe('independent built-in harness route', () => {
+  it('acquires a host bridge without launching or configuring another framework', async () => {
+    const h = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'open-science-agent' }),
+      targetOverride: () => ({ configRevision: 1 })
+    })
+    const backend = await h.resolver.resolveActiveBackend()
+    expect(backend.framework.id).toBe('open-science-agent')
+    expect(backend.modelRoute).toBe('open-science-agent')
+    expect(backend.authentication?._meta?.['open-science-agent']).toMatchObject({
+      model: 'model-a',
+      modelIdentity: JSON.stringify(['open-science-agent', 'provider-a', 1, 'model-a'])
+    })
+    expect(JSON.stringify(backend.env)).not.toContain('plain:')
+    expect(backend.providerTransportLease?.setTarget('other')).toBe(false)
+    expect(h.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
+      h.getSettings(),
+      join('/storage', 'open-science-agent', 'skill-runtime'),
+      new Set(),
+      undefined
+    )
+    expect(backend.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]).toMatchObject({
+      root: join('/storage', 'open-science-agent', 'skill-runtime'),
+      skillsDirectory: join('/storage', 'open-science-agent', 'skill-runtime', 'skills')
+    })
+    vi.mocked(h.runtime.prepareAgentSkillDiscovery).mockClear()
+    expectRuntimeNotStarted(h.runtime)
+    await backend.providerTransportLease?.release()
+    expect(h.protocolForwardingBridges[0].close).toHaveBeenCalledOnce()
+  })
+})

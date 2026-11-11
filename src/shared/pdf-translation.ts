@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AGENT_FRAMEWORK_ID_VALUES } from './agent-framework-id'
 import {
   pdfTranslationAgentModelSchema as packageAgentModelSchema,
   type PdfTranslationBeginRequest as PackageBeginRequest
@@ -6,7 +7,7 @@ import {
 
 // Application-supported frameworks are host policy. The standalone package accepts adapter IDs.
 export const pdfTranslationAgentModelSchema = packageAgentModelSchema.extend({
-  frameworkId: z.enum(['claude-code', 'opencode', 'codex', 'codebuddy'])
+  frameworkId: z.enum(AGENT_FRAMEWORK_ID_VALUES)
 })
 export type PdfTranslationAgentModel = Readonly<z.infer<typeof pdfTranslationAgentModelSchema>>
 export type PdfTranslationBeginRequest = Omit<PackageBeginRequest, 'agentModel' | 'sourceId'> & {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { expect } from '@playwright/test'
@@ -686,21 +686,11 @@ test('resolves a bare Artifact version_id into a delegated read-only input', asy
   expect(evidence?.artifactVersions[0]).toMatch(/^[0-9a-f-]{36}$/)
 })
 
-test('projects real production-composed delegation, permission, and Stop lifecycle', async ({
-  app
-}) => {
+test('collects a bounded delegation across two Main turns', async ({ app }) => {
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await createProject(page, 'Production delegation release gate')
-
-  await sendPrompt(
-    page,
-    TERMINAL_PROMPT,
-    'Production delegation reached a terminal result.',
-    120_000
-  )
-  await expectDurableChildStatus(page, TERMINAL_CHILD, 'completed')
+  await createProject(page, 'Bounded delegation release gate')
 
   const releaseFile = join(await app.createTestDirectory('bounded-delegation'), 'release')
   await sendPrompt(
@@ -719,7 +709,24 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
     120_000
   )
   await expectDurableChildStatus(page, 'Complete the bounded fixture after a delay.', 'completed')
-  await expectRenderedChildStatus(page, TERMINAL_CHILD, 'completed')
+  await expectRenderedChildStatus(page, 'Complete the bounded fixture after a delay.', 'completed')
+})
+
+test('projects real production-composed delegation, permission, and Stop lifecycle', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page, 'Production delegation release gate')
+
+  await sendPrompt(
+    page,
+    TERMINAL_PROMPT,
+    'Production delegation reached a terminal result.',
+    120_000
+  )
+  await expectDurableChildStatus(page, TERMINAL_CHILD, 'completed')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
   await composer.fill(PERMISSION_PROMPT)
@@ -741,6 +748,7 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
   })
   await expectDurableChildStatus(page, PERMISSION_CHILD, 'completed')
   await expectRenderedChildStatus(page, PERMISSION_CHILD, 'completed')
+  await expectRenderedChildStatus(page, TERMINAL_CHILD, 'completed')
 
   await composer.fill(STOP_PROMPT)
   await page.getByRole('button', { name: 'Send message' }).click()
@@ -1316,50 +1324,48 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
   const { profile } = await app.captureBrandState()
   const storageRoot = join(dirname(profile), 'storage')
 
-  await sendPrompt(
-    page,
-    RELIABLE_FAILURE_PROMPT,
-    'Reliable post-fence source turn completed.',
-    120_000
-  )
-  // Persistence failure suppresses renderer updates. Observe the fault out of band, then
-  // inspect durable bytes without queuing a load behind the intentionally unfinished turn.
-  await expect
-    .poll(() =>
-      readFile(join(storageRoot, 'e2e-handoff-captures', 'post-fence-released'), 'utf8').catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === 'ENOENT') return ''
-          throw error
-        }
-      )
-    )
-    .toBe('released')
   let sessionId: string | undefined
-  await expect
-    .poll(async () => {
-      const directory = join(storageRoot, 'sessions', projectId)
-      const files = await readdir(directory)
-      const file = files.find((name) => name.endsWith('.json'))
-      if (!file) return undefined
-      const { session } = JSON.parse(await readFile(join(directory, file), 'utf8')) as {
-        session: PersistedChatSession
-      }
-      sessionId = session.id
-      const command = session.runtimeContext?.delegatedWork?.messageCommands?.find(
-        ({ requestId }) => requestId === 'e2e-child-post-fence'
-      )
-      return {
-        sessionStatus: session.status,
-        dispatchStarted:
-          command?.receipt.status === 'queued' &&
-          typeof command.receipt.dispatchStartedAt === 'number'
-      }
-    })
-    .toEqual({ sessionStatus: 'running', dispatchStarted: true })
-  expect(sessionId).toEqual(expect.any(String))
-  const log = await readFile(await app.captureMainLog('post-fence-persistence.log'), 'utf8')
-  expect(log).toContain('EACCES')
-  expect(log).toContain(`${sessionId}.json`)
+  try {
+    await sendPrompt(
+      page,
+      RELIABLE_FAILURE_PROMPT,
+      'Reliable post-fence source turn completed.',
+      120_000
+    )
+    await expect
+      .poll(async () => {
+        const directory = join(storageRoot, 'sessions', projectId)
+        const files = await readdir(directory)
+        const file = files.find((name) => name.endsWith('.json'))
+        if (!file) return undefined
+        const { session } = JSON.parse(await readFile(join(directory, file), 'utf8')) as {
+          session: PersistedChatSession
+        }
+        sessionId = session.id
+        const command = session.runtimeContext?.delegatedWork?.messageCommands?.find(
+          ({ requestId }) => requestId === 'e2e-child-post-fence'
+        )
+        return {
+          sessionStatus: session.status,
+          dispatchStarted:
+            command?.receipt.status === 'queued' &&
+            typeof command.receipt.dispatchStartedAt === 'number'
+        }
+      })
+      .toEqual({ sessionStatus: 'running', dispatchStarted: true })
+    expect(sessionId).toEqual(expect.any(String))
+    await expect
+      .poll(async () => readFile(await app.captureMainLog('post-fence-persistence.log'), 'utf8'))
+      .toContain('EACCES')
+    const log = await readFile(await app.captureMainLog('post-fence-persistence.log'), 'utf8')
+    expect(log).toContain(`${sessionId}.json`)
+  } finally {
+    // The runtime may terminate the provider on persistence failure; restoration belongs to the test.
+    const sessionsRoot = join(storageRoot, 'sessions')
+    for (const entry of await readdir(sessionsRoot, { withFileTypes: true })) {
+      if (entry.isDirectory()) await chmod(join(sessionsRoot, entry.name), 0o700)
+    }
+  }
   page = await app.restartAfterCrash()
   await openProjectSession(page, 'Reliable failure window release gate', RELIABLE_FAILURE_PROMPT)
   const messageId = await page.evaluate(

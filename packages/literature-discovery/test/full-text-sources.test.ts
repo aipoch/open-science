@@ -3,6 +3,36 @@ import { describe, expect, it, vi } from 'vitest'
 import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from '../src/full-text-sources.js'
 
 describe('additional full-text sources', () => {
+  it('rejects a non-equivalent Unicode DOI returned by Unpaywall', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        doi: '10.1234/á',
+        best_oa_location: { url_for_pdf: 'https://journal.example/wrong.pdf' }
+      })
+    )
+    await expect(findUnpaywallPdfs('10.1234/Á', 'research@lab.org', fetcher)).resolves.toEqual([])
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('decodes resolver DOI identity once while retaining opaque suffixes during discovery', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        doi: '10.1000/term.#',
+        best_oa_location: { url_for_pdf: 'https://journal.example/paper.pdf' }
+      })
+    )
+    const candidates = await findUnpaywallPdfs(
+      'https://doi.org/10.1000/term.%23',
+      'research@lab.org',
+      fetcher
+    )
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0].sourceUrl).toBe('https://doi.org/10.1000/term.%23')
+    const requested = new URL(String(fetcher.mock.calls[0]![0]))
+    expect(decodeURIComponent(requested.pathname)).toBe('/v2/10.1000/term.#')
+    expect(requested.hash).toBe('')
+  })
+
   it.each(['10.1000/example', 'https://doi.org/10.1000/EXAMPLE'])(
     'uses the Unpaywall contact email only in DOI discovery for %s and separates article and PDF links',
     async (doi) => {

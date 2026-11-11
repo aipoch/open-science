@@ -79,7 +79,9 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     const jobs = encrypted
       ? new ComputeJobRepository(() => Promise.resolve(client), encryptedFieldProtection())
       : database.repositories.jobs
-    const operations = database.repositories.operations
+    const operations = encrypted
+      ? new ComputeJobOperationRepository(() => Promise.resolve(client), encryptedFieldProtection())
+      : database.repositories.operations
     const createJob = async (
       status: 'queued' | 'submitted' | 'running' | 'success',
       handle = status === 'running' ? remoteHandle : undefined,
@@ -103,6 +105,39 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     }
     return { client, jobs, operations, createJob }
   }
+
+  it('protects cancellation errors and immutable failure delivery snapshots like other job diagnostics', async () => {
+    const { client, jobs, operations, createJob } = await setup(true)
+    await createJob('running')
+    await operations.request('job-1', 'cancel', scope, new Date())
+    const claim = await operations.claimNext('cancel', new Date(), 30000, 'encrypted-failure')
+    const error = {
+      code: 'cancel_request_rejected',
+      message: 'Permission denied for /private/workdir'
+    }
+    await operations.settle(claim!, new Date(), { outcome: 'failed', error })
+    const storedOperation = await client.computeJobOperation.findUniqueOrThrow({
+      where: { id: claim!.operation.id }
+    })
+    const storedEvent = await client.backgroundResultDelivery.findFirstOrThrow()
+    expect(storedOperation.errorMessage).toContain('open-science:protected')
+    expect(storedOperation.errorMessage).not.toContain('/private/workdir')
+    expect(storedEvent.sourceSnapshot).toContain('open-science:protected')
+    expect(storedEvent.sourceSnapshot).not.toContain('/private/workdir')
+    expect(await createJobCancellation(operations, jobs).status('job-1', scope)).toMatchObject({
+      status: 'running',
+      cancellation: { status: 'failed', error }
+    })
+    await jobs.update('job-1', {
+      status: 'error',
+      errorCode: 'job_status_unavailable',
+      errorMessage: 'No record for /private/workdir'
+    })
+    expect(
+      (await client.computeJob.findUniqueOrThrow({ where: { id: 'job-1' } })).errorMessage
+    ).not.toContain('/private/workdir')
+    expect((await jobs.get('job-1'))?.error_message).toBe('No record for /private/workdir')
+  })
 
   it.each(['running', 'exited', 'vanished'] as const)(
     'retains uncertain missing-directory cancellation until later %s evidence',
@@ -164,7 +199,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
           .runOnce()
         await expect(cancellation.status('job-1', scope)).resolves.toMatchObject({
           status: 'submitted',
-          cancellation_status: 'cancelling'
+          cancellation: { status: 'cancelling' }
         })
         await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
           phase: 'active',
@@ -218,8 +253,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
           .createCancellationReaper(operations, jobs, broker, options)
           .runOnce()
         await expect(cancellation.status('job-1', scope)).resolves.toMatchObject({
-          status: 'failed',
-          cancellation_status: 'cancelled'
+          status: 'cancelled'
         })
         await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
           phase: 'settled',
@@ -339,8 +373,8 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
         await owner.request('job-1', scope)
         await reaper.runOnce()
         await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-          status: evidence.startsWith('truncated-') ? 'running' : 'failed',
-          cancellation_status: evidence.startsWith('truncated-') ? 'cancelling' : 'cancelled'
+          status: evidence.startsWith('truncated-') ? 'running' : 'cancelled',
+          ...(evidence.startsWith('truncated-') ? { cancellation: { status: 'cancelling' } } : {})
         })
         expect(run).toHaveBeenCalledTimes(
           evidence === 'owned' || evidence === 'truncated-termination' ? 2 : 1
@@ -359,8 +393,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
 
     await expect(owner.request('job-1', scope)).resolves.toMatchObject({
       job_id: 'job-1',
-      status: 'failed',
-      cancellation_status: 'cancelled'
+      status: 'cancelled'
     })
     const reaper = createComputeExecution().createCancellationReaper(operations, jobs, {
       acquire
@@ -369,7 +402,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
 
     expect(acquire).not.toHaveBeenCalled()
     await expect(owner.request('job-1', scope)).resolves.toMatchObject({
-      cancellation_status: 'cancelled'
+      status: 'cancelled'
     })
   })
 
@@ -391,14 +424,13 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
 
       await expect(owner.request('job-1', scope)).resolves.toMatchObject({
         status: 'running',
-        cancellation_status: 'cancelling'
+        cancellation: { status: 'cancelling' }
       })
       expect(onConfirmed).not.toHaveBeenCalled()
       await reaper.runOnce()
 
       await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-        status: 'failed',
-        cancellation_status: 'cancelled'
+        status: 'cancelled'
       })
       expect(run).toHaveBeenCalledTimes(evidence === 'owned' ? 2 : 1)
       expect(onConfirmed).toHaveBeenCalledWith('job-1')
@@ -410,7 +442,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await createJob('running')
     const owner = createJobCancellation(operations, jobs)
     await expect(owner.request('job-1', scope)).resolves.toMatchObject({
-      cancellation_status: 'cancelling'
+      cancellation: { status: 'cancelling' }
     })
 
     await expect(
@@ -421,8 +453,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
       )
     ).resolves.toBe(true)
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-      status: 'failed',
-      cancellation_status: 'cancelled'
+      status: 'cancelled'
     })
     await expect(
       operations.fulfillCancellationAfterRemoteCleanup(
@@ -499,7 +530,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await reaper.runOnce()
 
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-      cancellation_status: 'cancelling'
+      cancellation: { status: 'cancelling' }
     })
     await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
       phase: 'active',
@@ -532,7 +563,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     expect(run.mock.calls.some(([command]) => command.startsWith('scancel '))).toBe(false)
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
       status: 'running',
-      cancellation_status: 'cancelling'
+      cancellation: { status: 'cancelling' }
     })
   })
 
@@ -542,9 +573,9 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     const owner = createJobCancellation(operations, jobs)
 
     await expect(owner.request('job-1', scope)).resolves.toMatchObject({
-      status: 'success',
-      cancellation_status: undefined
+      status: 'success'
     })
+    expect((await owner.status('job-1', scope)).cancellation).toBeUndefined()
     await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
       phase: 'settled',
       outcome: 'superseded'
@@ -568,7 +599,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await restarted.runOnce()
 
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-      cancellation_status: 'cancelled'
+      status: 'cancelled'
     })
   })
 
@@ -640,7 +671,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     expect(run.mock.calls[0]?.[0]).toContain('job_pid_is_owned 4321')
     expect(JSON.stringify(run.mock.calls)).not.toContain('open-science:protected')
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-      cancellation_status: 'cancelled'
+      status: 'cancelled'
     })
   })
 
@@ -672,7 +703,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
         stderrTail: null
       })
     ).resolves.toEqual({ kind: 'ignored' })
-    expect((await owner.status('job-1', scope)).cancellation_status).toBe('cancelling')
+    expect((await owner.status('job-1', scope)).cancellation?.status).toBe('cancelling')
   })
 
   it('linearizes request against a terminal poll CAS', async () => {
@@ -690,7 +721,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     const cancellation = await operations.get('job-1', 'cancel')
 
     expect(
-      (requested.cancellation_status === 'cancelling' && polled === null) ||
+      (requested.cancellation?.status === 'cancelling' && polled === null) ||
         (requested.status === 'success' && cancellation?.outcome === 'superseded')
     ).toBe(true)
   })
@@ -706,8 +737,8 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     ])
 
     expect(results).toEqual([
-      expect.objectContaining({ cancellation_status: 'cancelling' }),
-      expect.objectContaining({ cancellation_status: 'cancelling' })
+      expect.objectContaining({ cancellation: { status: 'cancelling' } }),
+      expect.objectContaining({ cancellation: { status: 'cancelling' } })
     ])
     await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
       phase: 'active',

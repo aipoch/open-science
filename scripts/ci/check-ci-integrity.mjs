@@ -11,6 +11,8 @@ import { parseNameStatus } from './classify-pr-changes.mjs'
 import { checkDerivedConsumerRevisions } from './module-graph/index.mjs'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 
+const GIT_OUTPUT_MAX_BUFFER = 128 * 1024 * 1024
+
 function actionReferences(document, workflow) {
   const references = new Set()
 
@@ -339,6 +341,7 @@ function textAtRevision(revision, path, cwd) {
     return execFileSync('git', ['show', `${revision}:${path}`], {
       cwd,
       encoding: 'utf8',
+      maxBuffer: GIT_OUTPUT_MAX_BUFFER,
       stdio: ['ignore', 'pipe', 'ignore']
     })
   } catch {
@@ -349,9 +352,13 @@ function textAtRevision(revision, path, cwd) {
 export function ciIntegrityFilesFromRevisions(base, head, { cwd = process.cwd() } = {}) {
   const mergeBase = execFileSync('git', ['merge-base', base, head], {
     cwd,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
   }).trim()
-  const diff = execFileSync('git', ['diff', '--name-status', '-z', mergeBase, head], { cwd })
+  const diff = execFileSync('git', ['diff', '--name-status', '-z', mergeBase, head], {
+    cwd,
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  })
   return parseNameStatus(diff.toString('utf8'))
     .filter(({ path, previousPath }) => [path, previousPath].filter(Boolean).some(isGuardedPath))
     .map(({ path, previousPath }) => ({

@@ -216,6 +216,19 @@ describe('SessionDetailsOwner', () => {
         ...overrides
       })
 
+    it('retains archived generation state across startup and save notifications', async () => {
+      const running = runningSession({ packageOrigin: importedSession().packageOrigin })
+      const queued = queuedSession({ id: 'import-queued', packageOrigin: running.packageOrigin })
+      const { owner, store, generate } = harness([running, queued])
+      const mutate = vi.spyOn(store, 'mutateSession')
+      owner.afterSessionSaved(queued)
+      await owner.start()
+      owner.afterSessionSaved(queued)
+      await owner.shutdown()
+      expect(mutate).not.toHaveBeenCalled()
+      expect(generate).not.toHaveBeenCalled()
+    })
+
     it.each(['absent', 'generated', 'running'] as const)(
       'renames imported research while preserving %s details provenance',
       async (provenance) => {

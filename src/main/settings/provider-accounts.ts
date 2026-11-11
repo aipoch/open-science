@@ -34,6 +34,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
   requiresChatCompletionsBridge,
@@ -86,10 +87,15 @@ type ProviderAccountsModuleOptions = {
   allocateSettingsIdSequence: () => number
   resolveCodexExecutable: (
     adapterPath: string | undefined,
-    nativePath: string | undefined
+    nativePath: string | undefined,
+    prepareForHarness?: boolean
   ) => Promise<string>
   resolveCodexProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
   runClaudeSubscriptionProbe: (
+    provider: ResolvedProvider,
+    settings: StoredSettings
+  ) => Promise<ValidateProviderResult>
+  runAcpValidation?: (
     provider: ResolvedProvider,
     settings: StoredSettings
   ) => Promise<ValidateProviderResult>
@@ -127,7 +133,19 @@ class ProviderAccountsModule {
   }
 
   async dispose(): Promise<void> {
-    await Promise.all([this.auth.dispose(), Promise.resolve().then(() => this.xai.cancelLogin())])
+    await Promise.all([this.auth.dispose(), this.xai.dispose()])
+  }
+
+  quiesceAuthentication(): ReturnType<XaiProviderAccountOwner['quiesce']> {
+    const xai = this.xai.quiesce()
+    const codex = this.auth.quiesceCodexHarnessCredentials()
+    return {
+      settled: Promise.all([xai.settled, codex.settled]).then(() => undefined),
+      release: () => {
+        codex.release()
+        xai.release()
+      }
+    }
   }
 
   async prepareBootstrapCodex(): Promise<void> {
@@ -162,6 +180,7 @@ class ProviderAccountsModule {
   async completeBootstrapCodex(): Promise<string> {
     return this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const provider = settings.providers.find(({ id }) => id === identity.id)
       if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
@@ -225,7 +244,11 @@ class ProviderAccountsModule {
       settings,
       {
         ...provider,
-        ...buildProviderValidationPatch(provider, result, { model, endpoint: 'responses' })
+        ...buildProviderValidationPatch(
+          provider,
+          result,
+          result.testedTarget ?? { model, endpoint: 'responses' }
+        )
       },
       true
     )
@@ -528,6 +551,16 @@ class ProviderAccountsModule {
     await this.xai.logout()
   }
 
+  bindCodexHarnessConnection(
+    target: ProviderRuntimeTarget
+  ): ReturnType<ProviderAuthLifecycleOwner['bindCodexHarnessConnection']> {
+    return this.auth.bindCodexHarnessConnection(
+      target.providerId,
+      target.providerType,
+      target.configRevision
+    )
+  }
+
   getXaiOAuthAccessToken(forceRefresh = false): Promise<string> {
     return this.xai.getAccessToken(forceRefresh)
   }
@@ -603,8 +636,8 @@ class ProviderAccountsModule {
     }
     if (request.draft) {
       assertProviderDraftLimits(request.draft)
-      if (request.draft.type === 'custom' && request.draft.baseUrl?.trim()) {
-        const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl.trim())
+      if (request.draft.type === 'custom') {
+        const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl?.trim() ?? '')
         if (baseUrlError) throw new Error(baseUrlError)
       }
     }
@@ -638,15 +671,11 @@ class ProviderAccountsModule {
     )
     return {
       ...result,
-      testedTarget: {
+      testedTarget: result.testedTarget ?? {
         model: provider.model,
         endpoint: preferredEndpoint(
           provider.apiEndpoints ?? ['messages'],
-          this.validationFrameworkEndpoints(provider, settings) ?? [
-            'messages',
-            'chat-completions',
-            'responses'
-          ]
+          this.validationFrameworkEndpoints(provider, settings) ?? DEFAULT_ENDPOINT_ORDER
         )
       }
     }
@@ -663,7 +692,7 @@ class ProviderAccountsModule {
       : !incompatibility &&
           framework.id === 'codebuddy' &&
           requiresChatCompletionsBridge(provider, framework)
-        ? providerEndpoints(provider)
+        ? DEFAULT_ENDPOINT_ORDER
         : incompatibility || framework.id === 'codex'
           ? undefined
           : framework.supportedApiTypes
@@ -724,7 +753,7 @@ class ProviderAccountsModule {
       resolved.provider,
       settings
     )
-    const probeResult =
+    let probeResult =
       xaiAuthResult ??
       authResult ??
       (await validateProviderTarget(validationProvider, {
@@ -735,6 +764,34 @@ class ProviderAccountsModule {
           requiresNativeResponsesCompatibility(resolved.provider, framework),
         frameworkEndpoints: validationFrameworkEndpoints
       }))
+    // HTTP is the fast path. Every failed request gets one native attempt, without interpreting
+    // upstream status codes or messages. Subscription authentication keeps its existing owner.
+    if (
+      !probeResult.ok &&
+      !incompatibility &&
+      !authResult &&
+      !xaiAuthResult &&
+      (validationProvider.type === 'custom' || validationProvider.type === 'official') &&
+      this.options.runAcpValidation
+    ) {
+      const native = await this.options.runAcpValidation(validationProvider, settings)
+      probeResult = native.ok
+        ? {
+            ...native,
+            testedTarget: {
+              ...native.testedTarget,
+              model: validationProvider.model,
+              endpoint: preferredEndpoint(
+                validationProvider.apiEndpoints ?? ['messages'],
+                validationFrameworkEndpoints ?? DEFAULT_ENDPOINT_ORDER
+              )
+            }
+          }
+        : {
+            ...probeResult,
+            message: `HTTP: ${probeResult.message ?? probeResult.category}${probeResult.status ? ` (${probeResult.status})` : ''}; ACP: ${native.message ?? native.category}`
+          }
+    }
     const result = incompatibility
       ? {
           ...probeResult,
@@ -745,12 +802,23 @@ class ProviderAccountsModule {
         }
       : probeResult
 
+    if ((await this.repository.getSettings()).agentFrameworkId !== settings.agentFrameworkId)
+      return { ...result, applied: false }
+
     if (
       resolved.storedId &&
       this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration
     ) {
       return { ...result, applied: false }
     }
+    if (result.applied === false) return result
+    // Harness capability is projected per framework, never persisted as an account-wide failure.
+    if (
+      framework.id === 'open-science-agent' &&
+      isCodexSubscriptionProvider(resolved.provider.type) &&
+      result.frameworkIncompatible
+    )
+      return result
     if (
       healthPolicy === 'definitive-failures' &&
       (result.ok ||
@@ -781,7 +849,7 @@ class ProviderAccountsModule {
             model: resolved.provider.model,
             endpoint: preferredEndpoint(
               resolved.provider.apiEndpoints ?? ['messages'],
-              validationFrameworkEndpoints ?? ['messages', 'chat-completions', 'responses']
+              validationFrameworkEndpoints ?? DEFAULT_ENDPOINT_ORDER
             )
           })
     const validationPatch = buildProviderValidationPatch(stored, result, validationTarget)
@@ -852,9 +920,16 @@ class ProviderAccountsModule {
     return this.runtimeProjection.toProviderView(provider, activeModel)
   }
 
-  async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
+  async isProviderKeyUsable(
+    provider: StoredProvider,
+    frameworkId?: AgentFrameworkId
+  ): Promise<boolean> {
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
-    return this.auth.isProviderKeyUsable(provider)
+    if (!isCodexSubscriptionProvider(provider.type)) return this.auth.isProviderKeyUsable(provider)
+    return this.auth.isProviderKeyUsable(
+      provider,
+      frameworkId ?? (await this.repository.getSettings()).agentFrameworkId
+    )
   }
 
   resolveActiveModel(provider: StoredProvider | undefined, requested?: string): string | undefined {

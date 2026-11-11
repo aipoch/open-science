@@ -1,7 +1,8 @@
-import { createCanvas } from '@napi-rs/canvas'
+import { createCanvas, GlobalFonts } from '@napi-rs/canvas'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { resolve } from './paths.js'
 import {
   PDFArray,
@@ -628,6 +629,10 @@ it.each([
   'no-radical',
   'nonadjacent',
   'move',
+  'move-increment',
+  'missing-increment',
+  'changed-increment',
+  'duplicate-increment',
   'move-reversed',
   'move-rotated',
   'changed',
@@ -638,6 +643,9 @@ it.each([
   'source-extended',
   'nested'
 ] as const)('retains unowned radical overbars without blocking other text (%s)', async (kind) => {
+  const increment = kind.endsWith('-increment'),
+    operand = increment ? '∆' : 'dT',
+    operandRight = increment ? 115.4 : 120.7
   const pathKind =
     kind === 'move-reversed' ? 'reversed' : kind === 'move-rotated' ? 'rotated' : kind
   const pdf = await PDFDocument.create(),
@@ -667,21 +675,23 @@ it.each([
       page.pushOperators(pushGraphicsState(), concatTransformationMatrix(0, 1, -1, 0, 106.6, y))
     page.drawLine({
       start:
-        pathKind === 'rotated' ? { x: 0, y: 0 } : { x: pathKind === 'reversed' ? 120.7 : 106.6, y },
+        pathKind === 'rotated'
+          ? { x: 0, y: 0 }
+          : { x: pathKind === 'reversed' ? operandRight : 106.6, y },
       end:
         pathKind === 'rotated'
           ? { x: 0, y: -14.1 }
-          : { x: pathKind === 'reversed' ? 106.6 : 120.7, y },
+          : { x: pathKind === 'reversed' ? 106.6 : operandRight, y },
       thickness: 0.5,
       opacity: kind === 'transparent' ? 0 : 1
     })
     if (pathKind === 'rotated') page.pushOperators(popGraphicsState())
   }
-  page.drawText('dT', { font, size: 12, x: 107, y: 700 })
+  page.drawText(operand, { font: increment ? symbol : font, size: 12, x: 107, y: 700 })
   page.drawText(kind === 'source-extended' ? '2 is bounded.' : ' is bounded.', {
     font,
     size: 12,
-    x: 121,
+    x: increment ? 116 : 121,
     y: 700
   })
   page.drawText('Other paragraph.', { font, size: 12, x: 40, y: 650 })
@@ -700,26 +710,34 @@ it.each([
         )
       ])
     )
-  const moving = ['move', 'move-reversed', 'move-rotated'].includes(kind),
+  const moving = ['move', 'move-increment', 'move-reversed', 'move-rotated'].includes(kind),
     translated =
       moving || kind === 'linked'
-        ? '这个模型给出的总体尺度√dT有界。'
-        : kind === 'changed'
-          ? '该尺度√dX有界。'
-          : kind === 'duplicate'
-            ? '该尺度√dT与√dT有界。'
-            : kind === 'extended'
-              ? '该尺度√dTotal有界。'
-              : kind === 'combining'
-                ? '该尺度√dT\u0302有界。'
-                : '该尺度有界。'
+        ? `这个模型给出的总体尺度√${operand}有界。`
+        : kind === 'changed-increment'
+          ? '该尺度√Γ有界。'
+          : kind === 'duplicate-increment'
+            ? '该尺度√∆与√∆有界。'
+            : kind === 'changed'
+              ? '该尺度√dX有界。'
+              : kind === 'duplicate'
+                ? '该尺度√dT与√dT有界。'
+                : kind === 'extended'
+                  ? '该尺度√dTotal有界。'
+                  : kind === 'combining'
+                    ? '该尺度√dT\u0302有界。'
+                    : '该尺度有界。'
   const data = await pdf.save(),
-    source = `Scale ${kind === 'nested' ? '√' : ''}${kind === 'no-radical' ? 'R' : '√'}dT${kind === 'source-extended' ? '2' : ''} is bounded.`,
+    nativeSourceBytes = data.slice(),
+    source = `Scale ${kind === 'nested' ? '√' : ''}${kind === 'no-radical' ? 'R' : '√'}${operand}${kind === 'source-extended' ? '2' : ''} is bounded.`,
     retained = [
       'visible',
       'reversed',
       'rotated',
       'changed',
+      'missing-increment',
+      'changed-increment',
+      'duplicate-increment',
       'duplicate',
       'extended',
       'combining',
@@ -781,6 +799,7 @@ it.each([
           ]
         : []
     )
+    const nativeTargetBytes = increment && moving ? output!.data.slice() : undefined
     target = getDocument({ data: output!.data, useSystemFonts: true })
     const before = await (await original.promise).getPage(1),
       after = await (await target.promise).getPage(1),
@@ -793,8 +812,8 @@ it.each([
     if (moving) {
       const beforeItems = (await before.getTextContent()).items.filter((item) => 'str' in item),
         afterItems = (await after.getTextContent()).items.filter((item) => 'str' in item),
-        a = beforeItems.filter((item) => item.str === '√' || item.str === 'dT'),
-        b = afterItems.filter((item) => item.str === '√' || item.str === 'dT')
+        a = beforeItems.filter((item) => item.str === '√' || item.str === operand),
+        b = afterItems.filter((item) => item.str === '√' || item.str === operand)
       expect(a).toHaveLength(2)
       expect(b).toHaveLength(2)
       expect(b.map((item) => item.str)).toEqual(a.map((item) => item.str))
@@ -810,6 +829,46 @@ it.each([
         )
       }
       expect(b[0].transform[4]).not.toBe(a[0].transform[4])
+      if (increment) {
+        const { engine } = await import(pathToFileURL(resolve('resources/pdfium.mjs')).href),
+          native = await engine(),
+          marks: number[][] = [],
+          fonts: string[][] = []
+        for (const bytes of [nativeSourceBytes, nativeTargetBytes!]) {
+          const document = native.open(bytes),
+            page = native.p.FPDF_LoadPage(document.doc, 0)
+          try {
+            const objects: Array<{ obj: number; type: number; bounds: number[]; text?: string }> =
+                native.objects(page),
+              roots = objects.filter((object) => object.text?.trim() === '√'),
+              bars = objects.filter((object) => object.type === 2)
+            expect(roots).toHaveLength(1)
+            expect(bars).toHaveLength(1)
+            marks.push(bars[0].bounds.map((value, axis) => value - roots[0].bounds[axis % 2]))
+            fonts.push(
+              objects
+                .filter((object) => ['√', operand].includes(object.text?.trim() ?? ''))
+                .map((object) => {
+                  const font = native.p.FPDFTextObj_GetFont(object.obj),
+                    length = native.p.FPDFFont_GetBaseFontName(font, 0, 0),
+                    at = native.alloc(length)
+                  try {
+                    expect(native.p.FPDFFont_GetBaseFontName(font, at, length)).toBe(length)
+                    return Buffer.from(native.m.HEAPU8.slice(at, at + length - 1)).toString('utf8')
+                  } finally {
+                    native.free(at)
+                  }
+                })
+            )
+          } finally {
+            native.p.FPDF_ClosePage(page)
+            document.close()
+          }
+        }
+        for (let axis = 0; axis < 4; axis++) expect(marks[1][axis]).toBeCloseTo(marks[0][axis], 3)
+        expect(fonts[0]).toHaveLength(2)
+        expect(fonts[1]).toEqual(fonts[0])
+      }
     }
     if (retained || kind === 'unchanged') {
       expect(text).toContain(source.replace(/\s/gu, ''))
@@ -1642,6 +1701,163 @@ it.each([
       }
     } finally {
       await task?.destroy()
+      caller.release()
+    }
+  }
+)
+
+it.each([
+  'clear',
+  'wrong-items',
+  'partial-foreign-object',
+  'foreign-paint',
+  'other-unit-overlap',
+  'different-return-font',
+  'tight-leading',
+  'formula-prefix',
+  'unowned-return',
+  'rotated-initial',
+  'clipped-initial'
+] as const)(
+  'requires complete next-fragment native ownership for a two-line numeric initial (%s)',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      alternate = await pdf.embedFont(StandardFonts.Courier),
+      page = pdf.addPage([612, 792]),
+      caller = lease(),
+      inset = 40 + font.widthOfTextAtSize('3', 28.8) + 2,
+      rows = [
+        kind === 'formula-prefix'
+          ? 'D + x = 0 describes the first measured response.'
+          : 'D human pose estimation describes the measured response.',
+        'A second row remains beside the complete initial.',
+        'The returned row uses 2D-to-3D lifting.',
+        'The linked result is '
+      ],
+      source = '3' + rows.join(' ') + '[1]',
+      translation = '3D人体姿态估计使用2D-to-3D提升，并保留关联结果[1]。'
+    if (kind === 'clipped-initial')
+      page.pushOperators(pushGraphicsState(), rectangle(38, 678, 8, 30), clip(), endPath())
+    page.drawText('3', {
+      font,
+      size: 28.8,
+      x: 40,
+      y: 682,
+      rotate: degrees(kind === 'rotated-initial' ? 1 : 0)
+    })
+    if (kind === 'clipped-initial') page.pushOperators(popGraphicsState())
+    rows.forEach((text, index) =>
+      page.drawText(text, {
+        font: kind === 'different-return-font' && index === 2 ? alternate : font,
+        size: 10,
+        x: index < 2 ? inset : 40,
+        y: index === 1 && kind === 'tight-leading' ? 692 : 696 - index * 12
+      })
+    )
+    const linkX = 40 + font.widthOfTextAtSize(rows[3], 10),
+      linkWidth = font.widthOfTextAtSize('[1]', 10)
+    page.drawText('[1]', { font, size: 10, x: linkX, y: 660 })
+    page.node.set(
+      PDFName.of('Annots'),
+      pdf.context.obj([
+        pdf.context.register(
+          pdf.context.obj({
+            Type: 'Annot',
+            Subtype: 'Link',
+            Rect: [linkX, 658, linkX + linkWidth, 668],
+            Border: [0, 0, 0],
+            A: { S: 'URI', URI: PDFString.of('https://example.org/reference') }
+          })
+        )
+      ])
+    )
+    if (kind === 'partial-foreign-object')
+      page.drawText('Foreign', { font, size: 10, x: 395, y: 660 })
+    if (kind === 'foreign-paint')
+      page.drawRectangle({ x: 380, y: 674, width: 8, height: 2, color: rgb(0, 0, 0) })
+    const bytes = await pdf.save(),
+      original = getDocument({ data: bytes.slice(), useSystemFonts: true })
+    let output: ReturnType<typeof getDocument> | undefined
+    try {
+      const items = (await (await (await original.promise).getPage(1)).getTextContent()).items,
+        owned = items.flatMap((item, index) =>
+          'str' in item &&
+          [rows[1], rows[2], rows[3], '[1]'].map((text) => text.trim()).includes(item.str.trim())
+            ? [{ index, text: item.str }]
+            : []
+        )
+      const initialItems = items.flatMap((item, index) =>
+        'str' in item && ['3', rows[0]].includes(item.str) ? [{ index, text: item.str }] : []
+      )
+      expect(initialItems.length).toBe(2)
+      expect(owned.length).toBe(4)
+      if (kind === 'wrong-items') owned[0] = { ...owned[0], text: 'Unrelated source' }
+      const data = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'numeric-initial',
+          data: bytes,
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          pages: [{ width: 612, height: 792 }],
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 38 / 612, y: 86 / 792, width: 360 / 612, height: 28 / 792 },
+                  items: initialItems
+                },
+                ...(kind === 'unowned-return'
+                  ? []
+                  : [
+                      {
+                        pageNumber: 1,
+                        rect: { x: 38 / 612, y: 97 / 792, width: 360 / 612, height: 42 / 792 },
+                        items: owned
+                      }
+                    ])
+              ]
+            },
+            ...(kind === 'other-unit-overlap'
+              ? [
+                  {
+                    source: rows[2],
+                    translation: rows[2],
+                    fragments: [
+                      {
+                        pageNumber: 1,
+                        rect: { x: 38 / 612, y: 111 / 792, width: 360 / 612, height: 14 / 792 }
+                      }
+                    ]
+                  }
+                ]
+              : [])
+          ]
+        },
+        caller.lease
+      )
+      output = getDocument({ data: data!.data, useSystemFonts: true })
+      const writtenPage = await (await output.promise).getPage(1),
+        written = (await writtenPage.getTextContent()).items
+          .flatMap((item) => ('str' in item ? [item.str] : []))
+          .join('')
+          .replace(/\s/gu, '')
+      expect(data!.layoutFailures.length).toBe(kind === 'clear' ? 0 : 1)
+      expect(written).toBe(
+        (kind === 'clear'
+          ? translation
+          : source + (kind === 'partial-foreign-object' ? 'Foreign' : '')
+        ).replace(/\s/gu, '')
+      )
+      expect((await writtenPage.getAnnotations()).map((annotation) => annotation.url)).toEqual([
+        'https://example.org/reference'
+      ])
+    } finally {
+      await output?.destroy()
+      await original.destroy()
       caller.release()
     }
   }
@@ -4661,6 +4877,153 @@ describe('translated PDF writer', () => {
       caller.release()
     }
   })
+
+  it.each([
+    { layout: undefined, joined: false, incremental: false },
+    { layout: undefined, joined: false, incremental: true },
+    { layout: undefined, joined: true, incremental: false },
+    { layout: 'reflow' as const, joined: false, incremental: false },
+    { layout: 'reflow' as const, joined: true, incremental: false }
+  ])(
+    'keeps healthy pages after a worker failure ($layout, joined=$joined, incremental=$incremental)',
+    async ({ layout, joined, incremental }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'pdf-partial-')),
+        caller = lease()
+      let task: ReturnType<typeof getDocument> | undefined
+      try {
+        const path = join(directory, 'worker.mjs')
+        await writeFile(
+          path,
+          `import { parentPort, workerData } from 'node:worker_threads';
+          if (workerData.units.some(u => u.translation === '失败段落。' ||
+            (${incremental} && !workerData.incremental && u.translation !== u.source &&
+             u.fragments.some(f => f.pageNumber === 1)))) {
+            parentPort.postMessage({ failure: { code: 'timeout' } });
+          } else await import(${JSON.stringify(pathToFileURL(entry()).href)});`
+        )
+        const pdf = await PDFDocument.create(),
+          font = await pdf.embedFont(StandardFonts.Helvetica)
+        for (let i = 0; i < (joined ? 4 : 3); i++)
+          pdf.addPage([400, 300]).drawText('Cell growth is measured.', {
+            font,
+            size: 12,
+            x: 30,
+            y: 250
+          })
+        const input: PdfTranslationPdfRequest = {
+          id: 'partial',
+          layout,
+          data: await pdf.save(),
+          pages: Array.from({ length: joined ? 4 : 3 }, () => ({ width: 400, height: 300 })),
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [1, 2, 3].map((number) => ({
+            source:
+              joined && number === 2
+                ? 'Cell growth is measured. Cell growth is measured.'
+                : 'Cell growth is measured.',
+            translation: number === 2 ? '失败段落。' : '测量细胞生长。',
+            fragments: (joined && number === 2
+              ? [2, 3]
+              : [joined && number === 3 ? 4 : number]
+            ).map((pageNumber) => ({
+              pageNumber,
+              rect: { x: 0.05, y: 0.1, width: 0.9, height: 0.2 }
+            }))
+          }))
+        }
+        const baseline = incremental
+          ? await new PdfTranslationWriter(entry).generateDetailed(
+              {
+                ...input,
+                units: input.units.map((unit, index) =>
+                  index === 1 ? { ...unit, translation: unit.source } : unit
+                )
+              },
+              caller.lease
+            )
+          : undefined
+        const output = await new PdfTranslationWriter(() => path).generateDetailed(
+          {
+            ...input,
+            ...(baseline ? { incremental: { data: baseline.data, pageNumbers: [2, 3] } } : {})
+          },
+          caller.lease
+        )
+        expect(output?.layoutFailures).toEqual([
+          {
+            unitIndex: 1,
+            code: 'timeout',
+            phase: 'generation',
+            pageNumbers: joined ? [2, 3] : [2],
+            fragmentCount: joined ? 2 : 1
+          }
+        ])
+        task = getDocument({ data: output!.data.slice() })
+        const document = await task.promise
+        const texts: string[] = []
+        for (let number = 1; number <= document.numPages; number++) {
+          const page = await document.getPage(number)
+          texts.push(
+            (await page.getTextContent()).items
+              .flatMap((item) => ('str' in item ? [item.str] : []))
+              .join('')
+          )
+        }
+        expect(texts.join('')).toContain('Cell growth is measured.')
+        expect(texts.join('').match(/测量细胞生长。/gu)).toHaveLength(2)
+        expect(texts.join('')).not.toContain('失败段落。')
+        if (layout) expect(output?.reflow?.originalPageNumbers).toContain(2)
+      } finally {
+        await task?.destroy()
+        caller.release()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['cancel', 'timeout'] as const)(
+    'holds the worker slot throughout bounded recovery until %s',
+    async (ending) => {
+      const directory = await mkdtemp(join(tmpdir(), 'pdf-recovery-')),
+        caller = lease(),
+        input = { ...(await fixture()), preserveUnsupported: true },
+        starts = vi.fn()
+      const path = join(directory, 'waiting.mjs')
+      await writeFile(path, 'setInterval(() => {}, 1000)')
+      const writer = new PdfTranslationWriter(() => {
+        starts()
+        return path
+      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+      try {
+        const result = writer.generateDetailed(input, caller.lease).catch(pdfGenerationFailure)
+        await vi.advanceTimersByTimeAsync(60000)
+        await vi.waitFor(() => expect(starts).toHaveBeenCalledTimes(2))
+        await expect(writer.generateDetailed(input, caller.lease)).rejects.toMatchObject({
+          failure: { code: 'busy' }
+        })
+        if (ending === 'cancel') {
+          writer.cancel(input.id, caller.lease)
+          expect(await result).toBeNull()
+          expect(starts).toHaveBeenCalledTimes(2)
+        } else {
+          await vi.advanceTimersByTimeAsync(30000)
+          await vi.waitFor(() => expect(starts).toHaveBeenCalledTimes(3))
+          await vi.advanceTimersByTimeAsync(30000)
+          expect(await result).toEqual({ code: 'timeout' })
+          expect(starts).toHaveBeenCalledTimes(3)
+        }
+        const retry = writer.generateDetailed(input, caller.lease)
+        writer.cancel(input.id, caller.lease)
+        expect(await retry).toBeNull()
+      } finally {
+        caller.release()
+        vi.useRealTimers()
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('distinguishes capacity and timeout, reaping workers before allowing a retry', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pdf-generation-'))
@@ -8572,9 +8935,18 @@ it.each(['flat', 'covered-shadow', 'transparent', 'stripe', 'raster-text', 'part
       context.fillRect(45, 0, 5, 60)
     }
     if (kind === 'raster-text') {
-      context.fillStyle = '#ffffff'
-      context.font = '12px sans-serif'
-      context.fillText('Raster content', 15, 38)
+      const fixtureFont = GlobalFonts.registerFromPath(
+        resolve('resources/NotoSansSC-Regular.otf'),
+        'RasterBackdropTest'
+      )
+      if (!fixtureFont) throw new Error('Raster backdrop fixture font is unavailable.')
+      try {
+        context.fillStyle = '#ffffff'
+        context.font = '12px RasterBackdropTest'
+        context.fillText('Raster content', 15, 38)
+      } finally {
+        GlobalFonts.remove(fixtureFont)
+      }
     }
     const image = await pdf.embedPng(canvas.toBuffer('image/png'))
     page.drawImage(image, { x: kind === 'partial' ? 130 : 90, y: 480, width: 200, height: 60 })

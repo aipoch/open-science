@@ -149,6 +149,8 @@ type ManagedFileVersionDiffResult = {
 }
 
 type ManagedFileVersionSaveTextEditRequest = ManagedFileIdentity & {
+  // Explicit historical restoration creates a new version even when its bytes are unchanged.
+  restore?: boolean
   basedOnVersionId: string
   expectedHeadVersionId: string
   content: string

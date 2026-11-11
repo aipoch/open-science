@@ -265,8 +265,7 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
           onProcessError: vi.fn(),
           onProcessExit: vi.fn(),
           onConnectionClosed: vi.fn(),
-          reportCleanupFailure: vi.fn(),
-          reportProcessTreeError: vi.fn()
+          reportCleanupFailure: vi.fn()
         }
         await main.configureMainAgentProcessOwnership(ownership)
         try {
@@ -277,7 +276,9 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
                 resolveBackend: async () => backend,
                 prepareBackend: (resolved) => backendOwner.prepare(attempt, resolved),
                 isCurrent: () => true,
-                isShuttingDown: () => false
+                isShuttingDown: () => false,
+                cleanupUnattached: (resource, onFailure) =>
+                  connectionOwner.cleanupUnattached(resource, onFailure)
               },
               hooks
             )
@@ -347,6 +348,8 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
         const { acquireRuntimeDirectorySync } = await import('../runtime-ownership')
         const backendOwner = new AcpBackendGenerationOwner(opencodeFramework)
         const identity = { epoch: 1, assertCurrent: vi.fn() }
+        const { AcpConnectionResourceOwner } = await import('./connection-resource-owner')
+        const resources = new AcpConnectionResourceOwner()
         const failure = new Error('Native spawn did not return a process handle')
         f.spawn.mockImplementationOnce(() => {
           throw failure
@@ -367,6 +370,8 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
                 prepareBackend: (backend) => backendOwner.prepare(identity, backend),
                 isCurrent: () => true,
                 isShuttingDown: () => false,
+                cleanupUnattached: (resource, onFailure) =>
+                  resources.cleanupUnattached(resource, onFailure),
                 registerOpenCodeStoreRelease: (release) => {
                   releaseStore = release
                 }
@@ -386,8 +391,7 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
                 onProcessError: vi.fn(),
                 onProcessExit: vi.fn(),
                 onConnectionClosed: vi.fn(),
-                reportCleanupFailure: vi.fn(),
-                reportProcessTreeError: vi.fn()
+                reportCleanupFailure: vi.fn()
               }
             )
           ).rejects.toThrow(/Native spawn did not return|spawn is unconfirmed/)

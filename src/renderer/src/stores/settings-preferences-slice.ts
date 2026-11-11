@@ -6,6 +6,7 @@ import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
+  PromptOptimizationModelConfiguration,
   ReviewerModelConfiguration,
   SessionDetailsModelConfiguration,
   SetNotebookNetworkRequest,
@@ -29,6 +30,8 @@ type SettingsPreferencesState = {
   notebookNetwork: NotebookNetworkSettings
   reasoningEffort: ReasoningEffort
   reviewerModel?: ReviewerModelConfiguration
+  promptOptimizationModel?: PromptOptimizationModelConfiguration
+  promptOptimizationModelPending?: boolean
   reviewerModelPending?: boolean
   sessionDetailsModel?: SessionDetailsModelConfiguration
   sessionDetailsModelPending?: boolean
@@ -60,6 +63,7 @@ export type SettingsPreferencesActions = {
   setNotebookFolderRestrictionEnabled: (enabled: boolean) => Promise<void>
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   setReviewerModel: (configuration: ReviewerModelConfiguration) => Promise<void>
+  setPromptOptimizationModel: (configuration: PromptOptimizationModelConfiguration) => Promise<void>
   setSessionDetailsModel: (configuration: SessionDetailsModelConfiguration) => Promise<void>
   setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
   setVisionModel: (configuration: VisionModelConfiguration | undefined) => Promise<void>
@@ -77,7 +81,8 @@ export type SettingsPreferencesActions = {
   setNotebookNetwork: (
     settings: NotebookNetworkSettings,
     baseAllowedDomains?: readonly string[],
-    baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations']
+    baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations'],
+    revokeNetworkGrantIds?: readonly string[]
   ) => Promise<NotebookNetworkSettings>
 }
 
@@ -99,6 +104,8 @@ type SettingsPreferencesCommands = Pick<
       Window['api']['settings'],
       | 'getSettings'
       | 'setReviewerModel'
+      | 'setPromptOptimizationModel'
+      | 'setPromptOptimizationModel'
       | 'setSessionDetailsModel'
       | 'setSubagentModel'
       | 'setVisionModel'
@@ -255,6 +262,33 @@ export const createSettingsPreferencesSlice = ({
       }
     },
 
+    setPromptOptimizationModel: async (configuration) => {
+      const write = writeCoordinator.begin('promptOptimizationModel')
+      setState({ promptOptimizationModelPending: true })
+      try {
+        const snapshot = await getCommands().setPromptOptimizationModel!({ configuration })
+        if (!write.isCurrent()) return
+        reconcileSnapshot(snapshot)
+        write.succeed()
+      } catch (error) {
+        write.fail('prompt-optimization-model')
+        console.error('Failed to set Prompt optimization model', error)
+        const refresh = getCommands().getSettings
+        if (refresh) {
+          try {
+            reconcileSnapshot(await refresh())
+          } catch (refreshError) {
+            console.error(
+              'Failed to refresh Settings after rejected Prompt optimization model',
+              refreshError
+            )
+          }
+        }
+      } finally {
+        if (write.isCurrent()) setState({ promptOptimizationModelPending: false })
+      }
+    },
+
     setSubagentModel: async (configuration) => {
       const write = writeCoordinator.begin('subagentModel')
       setState({ subagentModelPending: true })
@@ -400,12 +434,14 @@ export const createSettingsPreferencesSlice = ({
     setNotebookNetwork: async (
       notebookNetwork,
       baseAllowedDomains,
-      baseTrustedPrivateDestinations
+      baseTrustedPrivateDestinations,
+      revokeNetworkGrantIds
     ) => {
       const command = getCommands().setNotebookNetwork
       if (!command) throw new Error('Notebook network settings are unavailable.')
       const request: SetNotebookNetworkRequest = {
         ...notebookNetwork,
+        ...(revokeNetworkGrantIds ? { revokeNetworkGrantIds } : {}),
         ...(baseTrustedPrivateDestinations === undefined ? {} : { baseTrustedPrivateDestinations }),
         ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })
       }

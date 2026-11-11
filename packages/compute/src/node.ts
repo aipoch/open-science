@@ -1,7 +1,11 @@
 export { createCleanupStopEvidence, hasCleanupStopEvidence } from './cleanup-stop-evidence'
 export { validateComputeEnvironmentName } from './compute-environment'
 export { classifyComputeJobIntegrity, isKnownComputeJobStatus } from './compute-job-integrity'
-export { isComputeJobResultFinal, projectJobStatus } from './compute-job-status'
+export {
+  isComputeJobCancelled,
+  isComputeJobResultFinal,
+  projectJobStatus
+} from './compute-job-status'
 export { type SessionStatus } from './concurrency-manager'
 export {
   ComputeConnectionError,
@@ -30,6 +34,7 @@ export {
   HARVEST_MAX_FILE_MB,
   assertSafeInputDestination,
   classifyFiles,
+  hasAllDeclaredOutputs,
   normalizeHarvestConfig,
   validateHarvestConfig,
   type FileEntry,
@@ -52,6 +57,7 @@ export { parseSlurmSchedulerJobId } from './remote-job-handle'
 export { probeRemoteLaunch } from './remote-launch-recovery'
 export {
   GLOB_CHARS,
+  isPortableComputeFileName,
   SHELL_UNSAFE_CHARS,
   assertSafeScratchRoot,
   assertSafeSshAlias,
@@ -77,6 +83,7 @@ export {
   SlurmDriverError,
   hasLeadingSlurmDirective,
   parseSbatchJobId,
+  readSlurmJobTails,
   recoverSlurmJob,
   validateSlurmCommand
 } from './slurm-driver'
@@ -90,3 +97,80 @@ export {
 
 export type { DispatcherDeps, JobPollerDeps } from './controllers'
 export type { ComputeQueueOptions } from './execution'
+
+export {
+  assertComputeBackendCanSubmit,
+  assertComputeBackendCapabilities,
+  classifyComputeBackendObservation,
+  ComputeBackendAdapterRegistry,
+  ComputeBackendCatalog,
+  LEGACY_COMPUTE_BACKENDS,
+  ComputeBackendCapabilityError,
+  requiredComputeBackendCapabilities,
+  type ComputeBackendAdapter,
+  type ComputeBackendCapabilities,
+  type ComputeBackendCapability,
+  type ComputeBackendCancellation,
+  type ComputeBackendCleanup,
+  type ComputeBackendContact,
+  type ComputeBackendDescriptor,
+  type ComputeBackendHandle,
+  type ComputeBackendHarvest,
+  type ComputeBackendId,
+  type ComputeBackendLogChunk,
+  type ComputeBackendObservation,
+  type ComputeBackendObservationDisposition,
+  type ComputeBackendPhase,
+  type ComputeBackendSubmissionRequest,
+  type ComputeBackendTarget,
+  type ComputeBackendValidation
+} from './backend'
+
+export {
+  KubernetesBackendError,
+  createKubernetesBackendAdapter,
+  parseKubernetesResourceRequest,
+  type KubernetesBackendOptions,
+  type KubernetesBackendAdapter,
+  type KubernetesWorkspace,
+  type KubernetesResourceRequirements,
+  type KubernetesFetch
+} from './kubernetes-backend'
+
+export {
+  findHuggingFaceJobForRun,
+  recoverApprovedHuggingFaceJob,
+  HUGGING_FACE_RUN_LABEL,
+  submitHuggingFaceJob
+} from './hugging-face-job-submission'
+export {
+  inspectHuggingFaceJob,
+  readHuggingFaceJobLogs,
+  cancelHuggingFaceJob
+} from './hugging-face-job-control'
+export {
+  stageHuggingFaceInputs,
+  listHuggingFaceJobOutputs,
+  archiveHuggingFaceOutputs,
+  cleanupHuggingFaceBucketFiles,
+  type HuggingFaceArchivedFile
+} from './hugging-face-bucket'
+
+export { HuggingFaceJobCreationRejectedError } from './hugging-face-jobs-http'
+
+export { resolveRayJobsEndpoint, isRayBearerEndpoint, type RayJobsTarget } from './ray-jobs-http'
+export { prepareRayJobInputs, uploadRayWorkingDirectory } from './ray-job-inputs'
+export {
+  inspectRayJob,
+  inspectRayDashboard,
+  verifyRayJobsAccess,
+  submitRayJob,
+  RayJobCreationRejectedError,
+  RayJobCreationNotSentError,
+  stopRayJob,
+  readRayJobLogs,
+  type RayJobClaim,
+  type RayJobStatus,
+  type RayJobObservation
+} from './ray-job-control'
+export { stageRayJobOutputs } from './ray-job-outputs'

@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery } from '../../shared/tool-error-recovery'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 
@@ -414,10 +415,9 @@ export class ReviewerMcpServer {
   }
 
   private buildMcpServer(): ModelContextProtocolServer {
-    const server = new ModelContextProtocolServer({
-      name: REVIEWER_MCP_SERVER_NAME,
-      version: '1.0.0'
-    })
+    const server = installToolErrorRecovery(
+      new ModelContextProtocolServer({ name: REVIEWER_MCP_SERVER_NAME, version: '1.0.0' })
+    )
 
     const trackedCheckAllowance = this.trackedFindingIds.size
     const submitFindingsObjectSchema = createSubmitFindingsObjectSchema(
@@ -703,8 +703,8 @@ export class ReviewerMcpServer {
         if (this.findingsSubmissionState !== 'idle') {
           const message =
             this.findingsSubmissionState === 'submitted'
-              ? 'Validation error: a submission was already accepted; submit_findings was already called successfully.'
-              : 'Validation error: submit_findings was already called and is still in progress.'
+              ? 'Validation error: a submission was already accepted; submit_findings was already called successfully. Do not call submit_findings again; stop.'
+              : 'Validation error: submit_findings was already called and is still in progress. Do not call submit_findings again; wait for that submission.'
           return {
             content: [{ type: 'text', text: message }],
             isError: true
@@ -718,10 +718,7 @@ export class ReviewerMcpServer {
         } catch (err) {
           const message = toErrorMessage(err)
           log.warn('submit_findings validation failed', { error: message })
-          return {
-            content: [{ type: 'text', text: `Validation error: ${message}` }],
-            isError: true
-          }
+          return this.submissionValidationError(message)
         }
 
         log.info('submit_findings received', { count: parsed.checks.length })
@@ -740,10 +737,7 @@ export class ReviewerMcpServer {
         const trackingError = this.validateTrackedDispositions(trackedChecks)
         if (trackingError) {
           log.warn('submit_findings tracking validation failed', { error: trackingError })
-          return {
-            content: [{ type: 'text', text: `Validation error: ${trackingError}` }],
-            isError: true
-          }
+          return this.submissionValidationError(trackingError)
         }
 
         try {
@@ -751,10 +745,7 @@ export class ReviewerMcpServer {
         } catch (err) {
           const message = toErrorMessage(err)
           log.warn('submit_findings evidence access validation failed', { error: message })
-          return {
-            content: [{ type: 'text', text: `Validation error: ${message}` }],
-            isError: true
-          }
+          return this.submissionValidationError(message)
         }
 
         // Reconstruct each locator identity from its scope block, verify the supplied frozen hash,
@@ -765,10 +756,7 @@ export class ReviewerMcpServer {
         } catch (err) {
           const message = toErrorMessage(err)
           log.warn('submit_findings locator out of scope', { error: message })
-          return {
-            content: [{ type: 'text', text: `Validation error: ${message}` }],
-            isError: true
-          }
+          return this.submissionValidationError(message)
         }
 
         this.findingsSubmissionState = 'submitting'
@@ -823,6 +811,22 @@ export class ReviewerMcpServer {
   } {
     const message = toErrorMessage(error)
     return { content: [{ type: 'text', text: message }], isError: true }
+  }
+
+  // Rejected submissions are not recorded, so the Reviewer can correct them in the same Review Turn.
+  private submissionValidationError(message: string): {
+    content: Array<{ type: 'text'; text: string }>
+    isError: true
+  } {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Validation error: ${message}\nNothing was recorded. Fix the reported issue (read the required evidence first if the message says so) and call submit_findings again.`
+        }
+      ],
+      isError: true
+    }
   }
 
   private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {

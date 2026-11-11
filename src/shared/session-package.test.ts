@@ -1,4 +1,4 @@
-import { sessionPackageCommandContracts } from './session-package'
+import { sessionPackageCommandContracts, sessionPackageManifestSchema } from './session-package'
 import { expect, it } from 'vitest'
 import { packageOperationRequestSchema, sessionPackageImportRequestSchema } from './session-package'
 
@@ -47,6 +47,33 @@ it('transports Literature selection through the package operation contract', () 
     ]
   }
   expect(sessionPackageCommandContracts.operation.result.parse(snapshot)).toEqual(snapshot)
+})
+
+it('transports optional completed-film selection metadata and rejects invalid totals', () => {
+  const snapshot = {
+    id: 'operation',
+    kind: 'export',
+    state: 'awaiting-selection',
+    progress: { phase: 'selecting' },
+    summary: { metadataBytes: 0, retainedFiles: [] }
+  }
+  for (const researchFilms of [undefined, { count: 2, sizeBytes: 4096 }]) {
+    const value = { ...snapshot, summary: { ...snapshot.summary, researchFilms } }
+    expect(sessionPackageCommandContracts.operation.result.parse(value)).toEqual(value)
+  }
+  for (const researchFilms of [
+    { count: 0, sizeBytes: 4096 },
+    { count: 1001, sizeBytes: 4096 },
+    { count: 1, sizeBytes: -1 },
+    { count: 1, sizeBytes: 4096, sourcePath: '/private/file' }
+  ]) {
+    expect(() =>
+      sessionPackageCommandContracts.operation.result.parse({
+        ...snapshot,
+        summary: { ...snapshot.summary, researchFilms }
+      })
+    ).toThrow()
+  }
 })
 
 it('requires a bounded operation identity for an explicit sensitive-content export', () => {
@@ -160,4 +187,9 @@ it('accepts faster transfer budgets while retaining existing numeric requests', 
   for (const rate of [0, -1, NaN, Infinity, 1024 ** 3 + 1]) {
     expect(packageOperationRequestSchema.safeParse(request(rate)).success).toBe(false)
   }
+})
+
+it('allows every supported package feature in one manifest', () => {
+  const features = sessionPackageManifestSchema.shape.requiredFeatures.unwrap()
+  expect(features.parse(features.element.options)).toEqual(features.element.options)
 })

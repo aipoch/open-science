@@ -162,8 +162,8 @@ describe('personal reading status', () => {
 })
 
 describe('independent library transactions', () => {
-  it('removes text joined to a DOI without requiring a host provider', () =>
-    expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/example'))
+  it('preserves opaque DOI suffixes without requiring a host provider', () =>
+    expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/examplecopyright'))
   it('previews repeated identities using virtual targets and commits one reference', async () => {
     const db = memoryLibrary(),
       inputs = [paper(), paper()]

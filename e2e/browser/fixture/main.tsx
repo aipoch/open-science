@@ -5,6 +5,8 @@ import { createRoot } from 'react-dom/client'
 import { useTranslation } from 'react-i18next'
 import { initI18n } from '@/i18n'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
+import { SharingMarketplacePage } from '@/pages/marketplace/SharingMarketplacePage'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { HomePage } from '@/pages/home/HomePage'
 import { LiteratureRendererProvider } from '@/pages/literature/public/host'
 import { literatureRendererHost } from '@/lib/literature-renderer-host'
@@ -159,6 +161,7 @@ if (undoFixture) {
 
 export function Fixture(): React.JSX.Element {
   useTranslation()
+  const view = useNavigationStore((state) => state.view)
   const [quitNotice, setQuitNotice] = useState(true)
   const [retries, setRetries] = useState(0)
   const open = useSettingsStore((state) => state.isSettingsOpen)
@@ -167,7 +170,15 @@ export function Fixture(): React.JSX.Element {
   )
   return (
     <TooltipProvider>
-      <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={() => undefined} />
+      {view === 'marketplace' ? (
+        <SharingMarketplacePage />
+      ) : (
+        <HomePage
+          canDeleteProjects
+          hasCompleteSessionCatalog
+          onOpenGlobalSearch={() => undefined}
+        />
+      )}
       {new URLSearchParams(location.search).has('catalog') ? (
         <>
           {open && (

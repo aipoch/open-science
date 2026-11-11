@@ -103,7 +103,8 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     getSnapshot: vi.fn(),
     install: vi.fn(),
     cancel: vi.fn(),
-    remove: vi.fn()
+    remove: vi.fn(),
+    setOcrLanguages: vi.fn()
   },
   cli: {
     getStatus: vi.fn(async () => ({
@@ -253,7 +254,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 82 desktop request channels in their existing capability groups', () => {
+  it('defines the exact 87 desktop request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -301,7 +302,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(82)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(87)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -317,7 +318,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(82)
+    expect(router.dispatcher.commandNames()).toHaveLength(87)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -377,8 +378,14 @@ describe('Host application commands', () => {
     )
     await router.dispatcher.invoke(hostApplicationCommands.notifications.sendTest, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.getStatus, invocation([]))
-    await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([]))
-    await router.dispatcher.invoke(hostApplicationCommands.logs.revealInFolder, invocation([]))
+    const startupLog = 'desktop-backend-42-1700000000000.log'
+    await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([startupLog]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.logs.revealInFolder,
+      invocation([startupLog])
+    )
+    expect(dependencies.logs.openFile).toHaveBeenLastCalledWith(startupLog)
+    expect(dependencies.logs.revealInFolder).toHaveBeenLastCalledWith(startupLog)
     await router.dispatcher.invoke(
       hostApplicationCommands.notifications.getSnapshot,
       invocation([])
@@ -515,8 +522,11 @@ describe('Host application commands', () => {
       hostApplicationCommands.network.checkConnectivity,
       invocation([])
     )
-    for (const command of Object.values(hostApplicationCommands.localModels)) {
-      await router.dispatcher.invoke(command, invocation([]))
+    for (const [name, command] of Object.entries(hostApplicationCommands.localModels)) {
+      await router.dispatcher.invoke(
+        command,
+        invocation(name === 'setOcrLanguages' ? [['eng']] : [])
+      )
     }
     await router.dispatcher.invoke(
       hostApplicationCommands.backgroundResults.sessionActivity,
@@ -532,6 +542,7 @@ describe('Host application commands', () => {
     expect(dependencies.backgroundResults.projectActivity).toHaveBeenCalledWith({
       projectId: 'project'
     })
+    expect(dependencies.localModels.setOcrLanguages).toHaveBeenCalledWith(['eng'])
     expect(dependencies.localFs.listDir).toHaveBeenCalledWith('/data')
     expect(dependencies.localFs.readPreview).toHaveBeenCalledWith(previewRequest)
     expect(dependencies.notifications.takePendingOpenSession).toHaveBeenCalledWith(7)
@@ -702,7 +713,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(43)
+    expect(localOnlyChannels).toHaveLength(44)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

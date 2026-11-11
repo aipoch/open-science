@@ -1,0 +1,51 @@
+{
+  "name": "@aipoch/agent-harness",
+  "version": "0.1.0",
+  "description": "Independent agent sessions, streaming model adapters, durable tools and context compaction",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./chat-completions": {
+      "types": "./dist/chat-completions.d.ts",
+      "default": "./dist/chat-completions.js"
+    },
+    "./responses": {
+      "types": "./dist/responses.d.ts",
+      "default": "./dist/responses.js"
+    },
+    "./messages": {
+      "types": "./dist/messages.d.ts",
+      "default": "./dist/messages.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SUPPORT.md"
+  ],
+  "scripts": {
+    "build": "node tsc.cjs -p tsconfig.json",
+    "typecheck": "node tsc.cjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

@@ -1,6 +1,7 @@
 import {
   LITERATURE_IDENTITY_SCHEMES,
   normalizeLiteratureIdentifierPreferences,
+  normalizeLiteratureIdentifierKey,
   normalizeLiteratureIdentifierValue,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
@@ -22,10 +23,9 @@ const normalizeSpace = (value: string): string =>
   value.normalize('NFKC').trim().replace(/\s+/gu, ' ')
 
 const normalizeIdentifier = (scheme: LiteratureIdentifierScheme, rawValue: string): string => {
+  if (scheme === 'doi') return normalizeLiteratureIdentifierKey('doi', rawValue)
   const value = normalizeSpace(rawValue)
   switch (scheme) {
-    case 'doi':
-      return normalizeLiteratureIdentifierValue(scheme, value).toLowerCase()
     case 'pmid':
       return normalizeLiteratureIdentifierValue(scheme, value)
     case 'pmcid':
@@ -176,15 +176,23 @@ const findIdentityItem = async (
 
 const identityKey = (scheme: string, value: string): string => `${scheme}:${value}`
 
+type ImportIdentityRecord = Pick<LiteratureItemInput, 'title' | 'identifiers'> &
+  Partial<
+    Pick<
+      LiteratureItemInput,
+      'itemType' | 'creators' | 'issuedYear' | 'issuedText' | 'containerTitle'
+    >
+  > & { inTrash?: boolean; metadataRevision?: number }
+
 type ImportIdentityIndex = {
   byIdentifier: Map<string, Set<string | number>>
-  records: Map<string | number, Pick<LiteratureItemInput, 'title' | 'identifiers'>>
+  records: Map<string | number, ImportIdentityRecord>
 }
 
 const rememberImportIdentity = (
   index: ImportIdentityIndex,
   target: string | number,
-  item: Pick<LiteratureItemInput, 'title' | 'identifiers'>
+  item: ImportIdentityRecord
 ): void => {
   index.records.set(target, item)
   for (const { scheme, normalizedValue } of normalizedIdentifiers(item.identifiers)) {
@@ -214,17 +222,21 @@ const importIdentityMap = async (
 
 const importIdentity = (
   index: ImportIdentityIndex,
-  item: LiteratureItemInput
+  item: LiteratureItemInput,
+  sourceTarget?: string | number,
+  sourceTargets: readonly (string | number)[] = []
 ): { target?: string | number; conflict?: LiteratureRecordImportEntry['conflict'] } => {
   const identifiers = normalizedIdentifiers(item.identifiers).filter(({ scheme }) =>
     identitySchemes.has(scheme)
   )
   const targets = [
-    ...new Set(
-      identifiers.flatMap(({ scheme, normalizedValue }) => [
+    ...new Set([
+      ...(sourceTarget === undefined ? [] : [sourceTarget]),
+      ...sourceTargets,
+      ...identifiers.flatMap(({ scheme, normalizedValue }) => [
         ...(index.byIdentifier.get(identityKey(scheme, normalizedValue)) ?? [])
       ])
-    )
+    ])
   ]
   const contradictory = identifiers.some((identifier) =>
     identifiers.some(
@@ -233,14 +245,15 @@ const importIdentity = (
     )
   )
   const target = targets[0]
-  const existing =
-    target === undefined ? [] : normalizedIdentifiers(index.records.get(target)!.identifiers)
-  const disagrees = identifiers.some((identifier) => {
-    const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
-    return (
-      sameScheme.length > 0 &&
-      !sameScheme.some(({ normalizedValue }) => normalizedValue === identifier.normalizedValue)
-    )
+  const disagrees = targets.some((existingTarget) => {
+    const existing = normalizedIdentifiers(index.records.get(existingTarget)!.identifiers)
+    return identifiers.some((identifier) => {
+      const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
+      return (
+        sameScheme.length > 0 &&
+        !sameScheme.some(({ normalizedValue }) => normalizedValue === identifier.normalizedValue)
+      )
+    })
   })
   if (targets.length > 1 || contradictory || disagrees)
     return {
@@ -282,9 +295,13 @@ export {
   canonicalJson,
   findIdentityItem,
   importIdentityMap,
+  importIdentity,
+  rememberImportIdentity,
   normalizedIdentifiers,
   normalizeIdentifier,
   normalizeSpace,
   resolveImportItems,
   sha256
 }
+
+export type { ImportIdentityRecord, ImportIdentityIndex }

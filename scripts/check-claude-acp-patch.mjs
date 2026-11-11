@@ -12,6 +12,14 @@ if (installedPackage.version !== expectedVersion) {
 }
 
 const acpAgent = await import(`${packageName}/dist/acp-agent.js`)
+const launch = await import(`${packageName}/dist/open-science-launch.js`)
+
+if (
+  typeof launch.needsFileConfiguration !== 'function' ||
+  typeof launch.spawnWithFileConfiguration !== 'function'
+) {
+  throw new Error(`${packageName} Windows configuration transport patch is incomplete. Run npm ci.`)
+}
 
 if (typeof acpAgent.waitForMcpServers !== 'function') {
   throw new Error(

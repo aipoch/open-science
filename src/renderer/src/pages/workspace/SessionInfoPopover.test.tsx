@@ -111,6 +111,13 @@ describe('Session information', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Pin' }).disabled).toBe(true)
   })
 
+  it('omits pin controls when the session owner disallows pinning', () => {
+    render(<SessionInfoPopover session={session} canTogglePin={false} onTogglePin={vi.fn()} />)
+    open()
+    expect(screen.queryByRole('button', { name: 'Pin' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Unpin' })).toBeNull()
+  })
+
   it('shows honest loading values until hydration and disables editing', () => {
     const { rerender } = render(
       <SessionInfoPopover

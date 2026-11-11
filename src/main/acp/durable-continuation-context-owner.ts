@@ -102,7 +102,13 @@ class AcpDurableContinuationContextOwner {
     recovery?: { error: string }
     replay?: DurableContinuationReplay
   }): Promise<DurableElicitationContinuationPreparation> {
-    const session = await this.loadSession(input.projectId, input.sessionId)
+    const session = await this.loadSession(input.projectId, input.sessionId).catch(
+      (error: unknown) => {
+        if (!input.continuePrepared) throw error
+        // No mutation or provider delivery has started; retry only this authority read once.
+        return this.loadSession(input.projectId, input.sessionId)
+      }
+    )
     if (input.replacePreviousAnswer) {
       return this.prepareElicitationRevision(session, input)
     }
@@ -120,7 +126,7 @@ class AcpDurableContinuationContextOwner {
     }
     const answers =
       input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
-    const committed = await this.sessions.mutateRuntimeSession(input, (latest) => {
+    const commit = this.sessions.mutateRuntimeSession(input, (latest) => {
       if (saved) this.assertRetry(latest, input)
       const current = this.resolvePendingElicitation(latest, input, saved)
       if (!isDeepStrictEqual(current, authority)) {
@@ -150,7 +156,40 @@ class AcpDurableContinuationContextOwner {
         }
       }
     })
-    if (input.recovery) await this.publishSessionUpdated?.(structuredClone(committed))
+    const committed = await commit.catch(async (error: unknown) => {
+      if (input.continuePrepared && this.publishSessionUpdated) {
+        try {
+          // The answer is already durable. A failed continuation mutation must still expose an
+          // exit, without claiming a commit or granting another provider delivery.
+          const latest = await this.loadSession(input.projectId, input.sessionId)
+          this.assertRetry(latest, input)
+          const current = this.resolvePendingElicitation(latest, input, true)
+          const respondedAt = (candidate: PersistedChatSession): number | undefined =>
+            candidate.conversationGraph?.activities.find(({ id }) => id === input.toolCallId)
+              ?.elicitation?.respondedAt
+          if (
+            isDeepStrictEqual(current, authority) &&
+            respondedAt(latest) === respondedAt(session)
+          ) {
+            const detail = error instanceof Error ? error.message : String(error)
+            const recovery =
+              input.recovery ?? (detail.trim() ? { error: detail.slice(0, 4_000) } : undefined)
+            await this.publishSessionUpdated(
+              rearmUnacceptedElicitationContinuations(
+                latest,
+                authority.promptMessageId,
+                input,
+                recovery
+              )
+            )
+          }
+        } catch {
+          // A stale decision or unavailable observer cannot replace the original write failure.
+        }
+      }
+      throw error
+    })
+    await this.publishSessionUpdated?.(structuredClone(committed))
 
     return {
       ...continuation,
@@ -258,7 +297,7 @@ class AcpDurableContinuationContextOwner {
         activities,
         status: stillWaiting ? 'waiting-for-user' : 'idle',
         error: undefined,
-        errorReportable: undefined,
+        failure: undefined,
         resumeRecovery: undefined
       }
     })

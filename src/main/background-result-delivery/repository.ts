@@ -3,12 +3,15 @@ import type {
   PrismaClient
 } from '@prisma/client'
 import { Prisma } from '@prisma/client'
+import { revealProtectedString } from '../secure-storage'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 import type {
   BackgroundResultDelivery,
   BackgroundResultDeliveryState,
   BackgroundResultSourceRef
 } from '../../shared/background-result-delivery'
+import type { ComputeCancellationFailureSnapshot } from '../../shared/background-result-delivery'
 
 type DeliveryClient = Pick<
   PrismaClient,
@@ -16,6 +19,37 @@ type DeliveryClient = Pick<
 >
 
 const dateMs = (value: Date | null): number | undefined => value?.getTime()
+const log = createLogger('background-result-delivery')
+
+const readSourceSnapshot = (
+  value: string | null,
+  deliveryId: string
+): ComputeCancellationFailureSnapshot | undefined => {
+  if (value === null) return undefined
+  try {
+    const snapshot: unknown = JSON.parse(revealProtectedString(value))
+    if (!snapshot || typeof snapshot !== 'object')
+      throw new Error('Invalid cancellation failure snapshot.')
+    const entry = snapshot as Partial<ComputeCancellationFailureSnapshot>
+    if (
+      typeof entry.jobId !== 'string' ||
+      typeof entry.operationId !== 'string' ||
+      !['queued', 'submitted', 'running'].includes(entry.jobStatus ?? '') ||
+      !Number.isSafeInteger(entry.revision) ||
+      !entry.error ||
+      typeof entry.error.code !== 'string' ||
+      typeof entry.error.message !== 'string'
+    ) {
+      throw new Error('Invalid cancellation failure snapshot.')
+    }
+    return entry as ComputeCancellationFailureSnapshot
+  } catch {
+    // Keep one unreadable event out of its siblings' claim/read path. The existing delivery
+    // owner will surface this source as needing attention; never log protected error text.
+    log.warn('Cancellation failure snapshot is unavailable', { deliveryId })
+    return undefined
+  }
+}
 
 const toDelivery = (row: PrismaBackgroundResultDelivery): BackgroundResultDelivery => ({
   id: row.id,
@@ -32,7 +66,8 @@ const toDelivery = (row: PrismaBackgroundResultDelivery): BackgroundResultDelive
     : { claimExpiresAt: dateMs(row.claimExpiresAt) }),
   ...(row.continuationMessageId ? { continuationMessageId: row.continuationMessageId } : {}),
   createdAt: row.createdAt.getTime(),
-  updatedAt: row.updatedAt.getTime()
+  updatedAt: row.updatedAt.getTime(),
+  ...(row.sourceSnapshot ? { sourceSnapshot: readSourceSnapshot(row.sourceSnapshot, row.id) } : {})
 })
 
 const assertOwnership = (

@@ -447,3 +447,38 @@ it('compares image handles only in declared paint and dependency roles', () => {
   assert(!samePrintedFaceOperators(native, work, new Map([['image-a', 'cache-a']])))
   assert(isDeepStrictEqual(native, program('image-a', 'image-b')))
 })
+
+it('retains a printed-face conflict behind balanced foreign Figure metadata', async () => {
+  const f = fixture(),
+    o = f.context.operators
+  o.fnArray.push(OPS.beginMarkedContentProps)
+  o.argsArray.push(['Figure', 0])
+  foreignClip(f)
+  o.fnArray.push(OPS.endMarkedContent)
+  o.argsArray.push(null)
+  const before = JSON.stringify(f.table),
+    out = await review(f)
+  assert.equal(out.reviewCandidate, false)
+  assert.equal(JSON.stringify(f.table), before)
+})
+
+it.each(['unclosed', 'unknown-role', 'invalid-id'])(
+  'declines an unproved printed-face metadata scope: %s',
+  async (variant) => {
+    const f = fixture(),
+      o = f.context.operators
+    o.fnArray.push(OPS.beginMarkedContentProps)
+    o.argsArray.push(
+      variant === 'unknown-role' ? ['Unknown', 0] : ['Figure', variant === 'invalid-id' ? -1 : 0]
+    )
+    foreignClip(f)
+    if (variant !== 'unclosed') {
+      o.fnArray.push(OPS.endMarkedContent)
+      o.argsArray.push(null)
+    }
+    const before = JSON.stringify(f.table),
+      out = await review(f)
+    assert.equal(out.reviewCandidate, true)
+    assert.equal(JSON.stringify(f.table), before)
+  }
+)

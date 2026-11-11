@@ -6,6 +6,8 @@ import { z } from 'zod'
 import { readFileWithinLimit } from './bounded-read.js'
 import {
   checkPdfStructureDecodingBudget,
+  checkWorkerSourceMetadataBudget,
+  validateWorkerSourceMetadata,
   pdfTextRunsSchema,
   pdfTableSourceItemsSchema,
   pdfNativeBodySchema,
@@ -96,7 +98,12 @@ const rawSchema = z.object({
         candidate.extend({ captionIssue: z.string().optional(), ...rawTableData.shape }),
         candidate.extend({
           parts: z
-            .array(rawTableData.extend({ title: z.string().min(1) }))
+            .array(
+              rawTableData.extend({
+                title: z.string().min(1),
+                cropRects: z.array(rect).min(1).max(8).optional()
+              })
+            )
             .min(2)
             .max(8),
           notes: z.array(rawNote).optional()
@@ -109,10 +116,10 @@ const rawSchema = z.object({
   })
 })
 
-// Called only for the byte-bounded worker JSON or the result built from it.
-// Drop all optional origins together if they alone prevent an otherwise valid preview.
-// Shape/identity validation still runs afterwards; cached results remain strictly decoded.
-function fitSourceMetadataBudget(input: unknown): unknown {
+// Called only for the validated result built from the byte-bounded worker JSON.
+// Keep complete element bundles, cheapest first; never truncate individual source claims.
+// The complete original evidence is validated before this optional allocation runs.
+function fitSourceMetadataBudget(input: PdfStructureResult): PdfStructureResult {
   const check = (value: unknown): void => {
     checkPdfStructureDecodingBudget(value)
     if (Buffer.byteLength(JSON.stringify(value)) > 8 * 1024 ** 2)
@@ -122,7 +129,7 @@ function fitSourceMetadataBudget(input: unknown): unknown {
     check(input)
     return input
   } catch {
-    const withoutOrigins: unknown = JSON.parse(
+    const withoutOrigins: PdfStructureResult = JSON.parse(
       JSON.stringify(input, (key, value) =>
         key === 'sourceItems' ||
         key === 'sourceSegments' ||
@@ -133,6 +140,33 @@ function fitSourceMetadataBudget(input: unknown): unknown {
       )
     )
     check(withoutOrigins)
+    const nodes = (value: unknown): number => {
+      let count = 0
+      const pending = [value]
+      while (pending.length) {
+        const current = pending.pop()
+        count++
+        if (current && typeof current === 'object') pending.push(...Object.values(current))
+      }
+      return count
+    }
+    const bundles = input.elements
+      .map((element, index) => ({
+        element,
+        index,
+        cost: nodes(element) - nodes(withoutOrigins.elements[index])
+      }))
+      .filter(({ cost }) => cost > 0)
+      .sort((a, b) => a.cost - b.cost || a.index - b.index)
+    for (const { element, index } of bundles) {
+      const bare = withoutOrigins.elements[index]
+      withoutOrigins.elements[index] = element
+      try {
+        check(withoutOrigins)
+      } catch {
+        withoutOrigins.elements[index] = bare
+      }
+    }
     return withoutOrigins
   }
 }
@@ -154,7 +188,8 @@ export const readWorkerResult = async (
   const input: unknown = JSON.parse(
     await readFileWithinLimit(join(root, 'structure.json'), 8 * 1024 ** 2)
   )
-  const raw = rawSchema.parse(fitSourceMetadataBudget(input))
+  checkWorkerSourceMetadataBudget(input)
+  const raw = rawSchema.parse(input)
   if (raw.sourceSha256 !== identity.sourceChecksum) throw new Error('PDF worker source changed.')
   for (const pages of [raw.requestedPages, raw.processedPages]) {
     if (JSON.stringify(pages) !== JSON.stringify(identity.requestedPages))
@@ -335,6 +370,23 @@ export const readWorkerResult = async (
       if ('parts' in item) {
         element.tableParts = item.parts.map((part) => ({
           title: part.title,
+          ...(part.cropRects
+            ? {
+                regions: part.cropRects.map((box) => {
+                  const { width, height } = part.sourceViewport
+                  if (
+                    box[0] < 0 ||
+                    box[1] < 0 ||
+                    box[2] > width ||
+                    box[3] > height ||
+                    box[2] <= box[0] ||
+                    box[3] <= box[1]
+                  )
+                    throw new Error('Invalid PDF worker table part boundary.')
+                  return region(item.page, box, width, height)
+                })
+              }
+            : {}),
           table: convertTable(part)
         }))
         element.tableNotes = item.notes?.map(convertNote)
@@ -351,19 +403,24 @@ export const readWorkerResult = async (
     }
   }
   return parsePdfStructureResult(
-    fitSourceMetadataBudget({
-      schemaVersion: 1,
-      ...identity,
-      pageCount: raw.pageCount,
-      requestedPages: raw.requestedPages,
-      processedPages: raw.processedPages,
-      ...(raw.auxiliaryPages ? { auxiliaryPages: raw.auxiliaryPages } : {}),
-      pages: raw.pages,
-      elements,
-      thumbnails: inventory,
-      navigation: raw.navigation.entries,
-      issues
-    }),
+    fitSourceMetadataBudget(
+      validateWorkerSourceMetadata(
+        {
+          schemaVersion: 1,
+          ...identity,
+          pageCount: raw.pageCount,
+          requestedPages: raw.requestedPages,
+          processedPages: raw.processedPages,
+          ...(raw.auxiliaryPages ? { auxiliaryPages: raw.auxiliaryPages } : {}),
+          pages: raw.pages,
+          elements,
+          thumbnails: inventory,
+          navigation: raw.navigation.entries,
+          issues
+        },
+        identity
+      )
+    ),
     identity
   )
 }

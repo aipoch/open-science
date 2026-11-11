@@ -154,9 +154,38 @@ export const lifecycleClaimRuntimeWriterContracts = {
 } as const
 
 export const logsGetStatusContracts = {
+  'resourceRecording.getState': callable<
+    () => Promise<import('../resource-recording').ResourceRecordingState>
+  >()(
+    'resource-recording',
+    ['resource-recording:get-state', ELECTRON, undefined, undefined, RUNTIME_VALIDATED],
+    { optionalRoot: true }
+  ),
+  'resourceRecording.start': callable<
+    () => Promise<import('../resource-recording').ResourceRecordingState>
+  >()(
+    'resource-recording',
+    ['resource-recording:start', ELECTRON, undefined, undefined, RUNTIME_VALIDATED],
+    { optionalRoot: true }
+  ),
+  'resourceRecording.stop': callable<
+    () => Promise<import('../resource-recording').ResourceRecordingState>
+  >()(
+    'resource-recording',
+    ['resource-recording:stop', ELECTRON, undefined, undefined, RUNTIME_VALIDATED],
+    { optionalRoot: true }
+  ),
+  'resourceRecording.onChanged': callable<
+    (
+      listener: AcpListener<import('../resource-recording').ResourceRecordingState>
+    ) => RemoveListener
+  >()('resource-recording', ['resource-recording:changed', ELECTRON_EVENT], { optionalRoot: true }),
   'logs.getStatus': callable<() => Promise<LogFileStatus>>()('logs', ['logs:get-status', LOCAL]),
-  'logs.openFile': callable<() => Promise<OpenLogFileResult>>()('logs', ['logs:open-file', LOCAL]),
-  'logs.revealInFolder': callable<() => Promise<RevealLogFileResult>>()('logs', [
+  'logs.openFile': callable<(name?: string) => Promise<OpenLogFileResult>>()('logs', [
+    'logs:open-file',
+    LOCAL
+  ]),
+  'logs.revealInFolder': callable<(name?: string) => Promise<RevealLogFileResult>>()('logs', [
     'logs:reveal-in-folder',
     LOCAL
   ])

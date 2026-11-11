@@ -280,7 +280,8 @@ const onHideWindowFind = vi.fn((listener: () => void) => {
   }
 })
 
-vi.mock('@/stores/preview-workbench-store', () => ({
+vi.mock('@/stores/preview-workbench-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/stores/preview-workbench-store')>()),
   usePreviewWorkbenchStore: {
     getState: () => ({ openFileDialog, upsertAndActivateItem })
   },
@@ -1580,6 +1581,64 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       })
     )
   })
+
+  it.each([true, false])(
+    'reveals only the current choice request from its inline entry (active=%s)',
+    async (active) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const fields = [
+        {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'single-select' as const,
+          options: [{ value: 'minimal', label: 'Minimal change' }]
+        },
+        { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+      ]
+      const projection = { message: 'Choose an approach', fields, state: 'pending' as const }
+      const session = createSession({
+        activities: [createActivity({ id: 'tool-ask-1', elicitation: projection })]
+      })
+      const onReveal = vi.fn()
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={session}
+            onSendEditedMessage={vi.fn()}
+            pendingElicitations={[
+              {
+                requestId: 'elicitation-1',
+                sessionId: session.id,
+                toolCallId: 'tool-ask-1',
+                message: projection.message,
+                fields
+              }
+            ]}
+            pendingElicitationControl={{
+              activityId: active ? 'tool-ask-1' : 'another-question',
+              onReveal
+            }}
+          />
+        )
+      })
+      const placeholder = container.querySelector(
+        '[data-testid="elicitation-pending-placeholder"]'
+      )!
+      const entry = placeholder.querySelector<HTMLButtonElement>('button')
+      if (active) {
+        expect(entry?.textContent).toContain('1 question awaiting your answer')
+        expect(container.textContent).not.toContain('Choose an approach')
+        await act(async () => entry!.click())
+        expect(onReveal).toHaveBeenCalledOnce()
+      } else {
+        expect(entry).toBeNull()
+        expect(container.textContent).toContain('Approach')
+        expect(container.textContent).toContain('Awaiting your answer…')
+        expect(onReveal).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   it('reserves a read-only transcript card while structured input waits below', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
@@ -4233,6 +4292,42 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       })
     )
     expect(previewItem).not.toHaveProperty('selectedVersionId')
+  })
+
+  it('opens a sent Skill reference in the resource pane without changing its message', async () => {
+    Object.assign(window.api, {
+      settings: { getSkillDetail: vi.fn().mockResolvedValue({ id: 'lit' }) }
+    })
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          content: '/Literature analyze',
+          parts: [
+            { type: 'skill', id: 'lit', name: 'Literature' },
+            { type: 'text', text: ' analyze' }
+          ]
+        })
+      ]
+    })
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Open skill Literature"]')!.click()
+    )
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:project:marketplace',
+        skillDetailRequest: { skillId: 'lit' }
+      })
+    )
+    expect(session.messages[0].content).toBe('/Literature analyze')
+    expect(container.textContent).toContain('analyze')
   })
 
   const linkedFolderSession = (): ChatSession =>

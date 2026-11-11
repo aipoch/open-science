@@ -180,7 +180,8 @@ export function pdfTranslationLayoutFragments(
   // sentence may wrap downwards; table values keep their existing footprint.
   if (!result.length) return result
   const captionHeading = (text: string): boolean =>
-    /^(?:figure|fig\.)\s*\d+\b/i.test(text) && isPdfTranslationCaption(text)
+    /^(?:(?:extended data\s+)?(?:figure|fig\.))\s*\d+\b/i.test(text) &&
+    isPdfTranslationCaption(text)
   let caption = captionHeading(unit.source)
   let next = unit.fragments[0]
   for (let index = source.units.indexOf(unit) - 1; !caption && index >= 0; index--) {

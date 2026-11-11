@@ -103,6 +103,8 @@ export async function composeNotebookRuntime({
     {
       admitSessionWork: (projectId: string, sessionId: string) =>
         archiveCoordinator.admitSessionWork(projectId, sessionId),
+      isSessionBusy: (projectId: string, sessionId: string) =>
+        archiveCoordinator.isSessionBusy(projectId, sessionId),
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,

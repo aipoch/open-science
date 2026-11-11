@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { execFile as execFileCallback } from 'node:child_process'
@@ -12,6 +13,7 @@ import {
   stat,
   symlink,
   unlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -33,6 +35,7 @@ import {
   beginComputeJobFileEvidence,
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
+  ensureWorkingFileEvidenceProject,
   reconcileComputeJobFileEvidence,
   reconcileWorkingFileEvidence,
   runEvidenceWorker,
@@ -78,9 +81,18 @@ const createWorkerBlobPool = async (): Promise<{
 }
 
 afterEach(async () => {
-  if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
+  // Windows can briefly keep deleted evidence entries pending after the resident worker replies.
+  if (storageRoot)
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
   storageRoot = undefined
 })
+
+const legacyWorker: typeof runEvidenceWorker = (root, request, signal) =>
+  runEvidenceWorker(
+    root,
+    request.operation === 'begin' ? { ...request, poolAddressed: false } : request,
+    signal
+  )
 
 describe('working-file evidence', () => {
   it.each([
@@ -125,7 +137,7 @@ describe('working-file evidence', () => {
         fileEvidenceRoot: location.root,
         fileEvidenceStoragePrefix: location.storageKeyPrefix
       },
-      { watchDirectory: watcherUnavailable }
+      { watchDirectory: watcherUnavailable, runEvidenceWorker: legacyWorker }
     )
     const result = await observation.finish()
     await completeWorkingFileEvidence(location, {
@@ -147,6 +159,7 @@ describe('working-file evidence', () => {
     const orphanPool = join(projectRoot, 'blobs', `sha256-${orphanHash}`)
     const orphanPath = join(activity, 'blobs', `sha256-${orphanHash}`)
     await writeFile(orphanPool, orphanContent)
+    await utimes(orphanPool, new Date(0), new Date(0))
     await link(orphanPool, orphanPath)
     const owner = {
       receiptName: 'receipt-history-run.json',
@@ -1061,7 +1074,15 @@ describe('working-file evidence', () => {
     })
   })
 
-  it.each(['cross-project', 'missing', 'replaced', 'corrupt', 'symlink', 'working-file'] as const)(
+  it.each([
+    'cross-project',
+    'missing',
+    'replaced',
+    'corrupt',
+    'symlink',
+    'working-file',
+    'working-file-unsafe-identity'
+  ] as const)(
     'freezes an isolated input when immutable sharing is unsafe: %s',
     async (condition) => {
       const { sessionRoot, dataRoot } = await createRoots()
@@ -1129,16 +1150,17 @@ describe('working-file evidence', () => {
                 await rename(originalPath, `${originalPath}.old`)
                 await symlink(workingPath, originalPath)
               }
-              if (
-                condition === 'working-file' &&
-                Number.isSafeInteger(working.dev) &&
-                Number.isSafeInteger(working.ino)
-              )
-                item.immutableSource = {
-                  physicalPath: workingPath,
-                  dev: working.dev,
-                  ino: working.ino
-                }
+              if (condition === 'working-file' || condition === 'working-file-unsafe-identity') {
+                const identity =
+                  condition === 'working-file-unsafe-identity'
+                    ? { dev: working.dev, ino: Number.MAX_SAFE_INTEGER + 1 }
+                    : working
+                // Unsafe working-file IDs must remove the original valid sharing candidate too.
+                item.immutableSource =
+                  Number.isSafeInteger(identity.dev) && Number.isSafeInteger(identity.ino)
+                    ? { physicalPath: workingPath, dev: identity.dev, ino: identity.ino }
+                    : undefined
+              }
             }
             return runEvidenceWorker(root, request, signal)
           }
@@ -2291,10 +2313,14 @@ describe('working-file evidence', () => {
     )
     const firstResult = await first.finish()
     const firstSidecar = JSON.parse(
-      await readFile(
-        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
-        'utf8'
-      )
+      (
+        await readNativeEvidence(
+          storageRoot!,
+          firstResult.fileEvidence.storageKey!,
+          firstResult.fileEvidence.checksum!,
+          64 * 1024 ** 2
+        )
+      ).toString()
     ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
     const blobPath = join(
       storageRoot as string,
@@ -2382,7 +2408,7 @@ describe('working-file evidence', () => {
         const sessionRoot = join(storageRoot as string, `notebook-${sessionId}`)
         const dataRoot = join(sessionRoot, 'data')
         await mkdir(dataRoot, { recursive: true })
-        await writeFile(join(dataRoot, `${sessionId}.csv`), sessionId.padEnd(6, sessionId))
+        await writeFile(join(dataRoot, `${sessionId}.csv`), sessionId.padEnd(64 * 1024, sessionId))
         return startWorkingFileObservation(
           {
             dataRoot,
@@ -2392,7 +2418,7 @@ describe('working-file evidence', () => {
             fileEvidenceStoragePrefix: `execution-file-evidence/project-budget/${sessionId}`,
             runId: `budget-${sessionId}`
           },
-          { watchDirectory: watcherUnavailable, maxEvidenceBytes: 10 }
+          { watchDirectory: watcherUnavailable, maxEvidenceBytes: 96 * 1024 }
         )
       })
     )
@@ -3641,10 +3667,14 @@ describe('working-file evidence', () => {
       { runId: 'project-reuse-first', fileEvidence: firstResult.fileEvidence }
     )
     const firstSidecar = JSON.parse(
-      await readFile(
-        join(storageRoot as string, ...firstResult.fileEvidence.storageKey!.split('/')),
-        'utf8'
-      )
+      (
+        await readNativeEvidence(
+          storageRoot!,
+          firstResult.fileEvidence.storageKey!,
+          firstResult.fileEvidence.checksum!,
+          64 * 1024 ** 2
+        )
+      ).toString()
     ) as { relations: Array<{ generation: { contentStorageKey: string } }> }
 
     const worker: typeof runEvidenceWorker = async (root, request, signal) => {
@@ -3722,7 +3752,7 @@ describe('working-file evidence', () => {
         fileEvidenceStoragePrefix: storageKeyPrefix,
         runId: 'project-copied-run'
       },
-      { watchDirectory: watcherUnavailable }
+      { watchDirectory: watcherUnavailable, runEvidenceWorker: legacyWorker }
     )
     const result = await observation.finish()
     await completeWorkingFileEvidence(
@@ -3748,7 +3778,8 @@ describe('working-file evidence', () => {
       [{ runId: 'project-copied-run', fileEvidence: result.fileEvidence }]
     )
 
-    await expect(readdir(join(projectRoot, 'blobs'))).resolves.toEqual([])
+    const poolName = 'sha256-' + createHash('sha256').update(content).digest('hex')
+    await expect(readFile(join(projectRoot, 'blobs', poolName), 'utf8')).resolves.toBe(content)
     await expect(readFile(activityBlob, 'utf8')).resolves.toBe(content)
   })
 
@@ -4146,6 +4177,28 @@ describe('working-file evidence', () => {
     await deleteWorkingFileEvidenceProject(storageRoot as string, 'project-rename-gap')
 
     await expect(readdir(evidenceRoot)).resolves.toEqual([])
+  })
+
+  it('reuses verified Project ownership until deletion or a failed evidence request', async () => {
+    await createRoots()
+    const worker = vi.fn(runEvidenceWorker)
+    const ensureOperations = (): number =>
+      worker.mock.calls.filter(([, request]) => request.operation === 'ensure-project').length
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    expect(ensureOperations()).toBe(1)
+
+    await deleteWorkingFileEvidenceProject(storageRoot!, 'project-reused')
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    expect(ensureOperations()).toBe(2)
+
+    // Any failed queued request drops verified ownership, including one for another Project.
+    worker.mockRejectedValueOnce(new Error('worker failed'))
+    await expect(
+      ensureWorkingFileEvidenceProject(storageRoot!, 'project-other', worker)
+    ).rejects.toThrow('worker failed')
+    await ensureWorkingFileEvidenceProject(storageRoot!, 'project-reused', worker)
+    expect(ensureOperations()).toBe(4)
   })
 
   it('retries a partially removed Project tombstone while preserving its marker until last', async () => {

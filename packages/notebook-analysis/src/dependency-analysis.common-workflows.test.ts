@@ -154,9 +154,9 @@ it.each(commonAnalysisScripts)('resolves common %s %s', async (language, _name, 
       storageRoot: root,
       repository: { readSessionRuns: async () => [run] }
     }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
-    if (language === 'r' && _name === 'table proportions') {
-      // A table's class reaches Math dispatch; ordinary table ownership is not
-      // a classless atomic proof for the rounding operation.
+    if (language === 'r' && ['table proportions', 'levels after filtering'].includes(_name)) {
+      // Ordinary table ownership does not prove classless operands or bound
+      // the methods reached by rounding and factor-level reconstruction.
       expect(projection.stalenessByRunId.run).toMatchObject({ state: 'unknown' })
       expect(await analyzeNotebookSourceFileAccess(language, script)).toMatchObject({
         readState: 'partial',

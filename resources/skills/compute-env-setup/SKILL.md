@@ -11,6 +11,12 @@ activation file. Open-Science resolves `submitJob(..., { environment: '<name>' }
 `~/.open-science/environments/<name>.sh` before the workload. Existing `~/.openscience/environments/<name>.sh` definitions remain readable in place. Before creating an activation, check both names: update the existing definition at its exact location; if both exist, ask the user which to retain. Never create a second activation just to rename the brand. The file contains activation only; it
 does not install packages when a job starts.
 
+Software environment setup and Slurm accounting service configuration are separate concerns.
+An unavailable `sacct` service is not evidence that Python, Conda, modules, or the named activation
+file are missing. Use the Remote Compute Skill's Slurm troubleshooting reference for scheduler
+status and cancellation problems; do not make enabling accounting the only recovery path or assume
+the user has administrator privileges.
+
 The environment, package caches, images, and activation file are user-managed durable resources,
 not Open-Science-owned components. This Skill may inspect them and prepare exact setup/removal
 commands, but must not execute commands that create, replace, or remove those resources. The user

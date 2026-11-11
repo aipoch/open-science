@@ -21,12 +21,14 @@ import {
 
 export const PackageImportSelection = ({
   operation,
+  currentProjectId,
   notice,
   error,
   onCancel,
   onContinue
 }: {
   operation: PackageOperationSnapshot
+  currentProjectId?: string
   notice?: React.ReactNode
   error?: string
   onCancel: () => void
@@ -35,7 +37,7 @@ export const PackageImportSelection = ({
   const { t } = useTranslation()
   const { projects, loadProjects, loadError, isLoaded } = useProjectStore()
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState('')
+  const [selected, setSelected] = useState(currentProjectId ?? '')
   const [name, setName] = useState('')
   const [creatingProject, setCreatingProject] = useState(false)
   const createFormId = useId()
@@ -53,7 +55,9 @@ export const PackageImportSelection = ({
     else if (wasCreating.current) createButtonRef.current?.focus()
     wasCreating.current = creatingProject
   }, [creatingProject])
-  const available = projects.filter((project) => project.archivedAt === undefined)
+  const available = projects
+    .filter((project) => project.archivedAt === undefined)
+    .sort((a, b) => Number(b.id === currentProjectId) - Number(a.id === currentProjectId))
   const selectedProject = available.find((project) => project.id === selected)
   const destination = projects.find((project) => project.id === operation.importTarget?.projectId)
   const create = async (): Promise<void> => {
@@ -71,10 +75,10 @@ export const PackageImportSelection = ({
   return (
     <>
       <div
-        data-package-body
+        data-workflow-body
         className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
-        <div data-package-content className="space-y-4">
+        <div data-workflow-content className="space-y-4">
           {notice}
           {preview ? (
             <>

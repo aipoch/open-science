@@ -151,6 +151,7 @@ vi.mock('@/lib/preview-persistence/preview-persistence', () => ({
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
+    sessionCleanups: {},
     actionError: null,
     pendingPermissions: [],
     sendMessage: vi.fn(),

@@ -82,7 +82,12 @@ export async function packRuntimeArchive({
   const destination = join(temporary, stem)
   try {
     await cp(source, join(destination, 'backend'), { recursive: true })
-    await cp(nodeSource, join(destination, 'node-runtime'), { recursive: true })
+    // Keep launcher symlinks verbatim: dereferencing rewrites relative npm/npx links to the
+    // staging machine's absolute paths, and linux-cli-packages rejects those as unsafe.
+    await cp(nodeSource, join(destination, 'node-runtime'), {
+      recursive: true,
+      verbatimSymlinks: true
+    })
     const launcher = join(destination, target.os === 'win32' ? 'open-science.cmd' : 'open-science')
     await writeFile(launcher, archiveLauncher(target.os))
     await chmod(launcher, 0o755)

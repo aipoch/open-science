@@ -1858,6 +1858,26 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
   })
 
+  it.each([true, false])(
+    'deletes a stopped first-prompt draft through composer cleanup with pending=%s',
+    async (isPending) => {
+      const active = session({ isPending, firstPromptDraft: true, pendingRetryable: true })
+      useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+      const deleteSession = vi.fn().mockResolvedValue({ status: 'deleted', runtimeDetached: true })
+      const settleSessionDeletion = vi.fn()
+      const hook = renderController({ activeSession: active, deleteSession, settleSessionDeletion })
+      mounted.push(hook)
+      act(() => hook.result.current.actions.openDelete(active))
+      await act(async () => hook.result.current.actions.confirmDelete())
+      expect(deleteSession).toHaveBeenCalledWith({
+        projectId: active.projectId,
+        sessionId: active.id
+      })
+      expect(settleSessionDeletion).toHaveBeenCalledWith(active.id, true)
+      expect(hook.result.current.view.dialogs.delete).toBeNull()
+    }
+  )
+
   it('coordinates duplicate deletion through the composer transaction boundary', async () => {
     const active = session()
     const deletion = deferred<SessionDeletionResult>()

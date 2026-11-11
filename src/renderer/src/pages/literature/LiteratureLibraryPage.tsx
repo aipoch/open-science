@@ -1,3 +1,4 @@
+import { LiteratureOverviewBatch } from './detail/LiteratureOverviewBatch'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
 import type { LiteraturePreviewItem } from './renderer-host'
@@ -5,6 +6,10 @@ import { useLiteratureHost } from './renderer-host'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { LITERATURE_JOB_MAX_ITEMS } from '@aipoch/literature-discovery/jobs'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import {
+  literatureOverviewSource,
+  type LiteratureOverviewRequest
+} from '../../../../shared/literature-overview'
 
 import { LiteratureCollectionDeleteDialog } from './collections/LiteratureCollectionDeleteDialog'
 import { setSmartReevaluationConfirmation } from './collections/smart-collection-preferences'
@@ -24,6 +29,7 @@ import { LiteratureDetailDialog } from './detail/LiteratureDetailDialog'
 import { LiteratureDetailOverview } from './detail/LiteratureDetailOverview'
 import { LiteratureMergeDialog } from './duplicates/LiteratureMergeDialog'
 import { useLiteratureMerge } from './duplicates/useLiteratureMerge'
+import { LiteratureLinkImportDialog } from './imports/LiteratureLinkImportDialog'
 import { LiteratureCreateItemDialog } from './imports/LiteratureCreateItemDialog'
 import {
   LiteraturePdfBatchImportDialog,
@@ -55,6 +61,7 @@ import type { LiteratureSort } from './list/useLiteratureQuery'
 import { useLiteratureQuery } from './list/useLiteratureQuery'
 import { useLiteratureTable } from './list/useLiteratureTable'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { LiteratureZoteroDialog } from './LiteratureZoteroDialog'
 import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
 import { useAttachmentOperationsStore } from './workflows/literature-attachment-operations'
 import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
@@ -310,6 +317,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     createLiteratureDetailController((id) => hostApi.literature.get(id))
   )
   const selectedItem = detailController.getSnapshot().item
+  const [overviewRevision, setOverviewRevision] = useState(0)
+  const [activeOverviewRequests, setActiveOverviewRequests] = useState<LiteratureOverviewRequest[]>(
+    []
+  )
+  const onOverviewSaved = useCallback(
+    (request: LiteratureOverviewRequest): void => {
+      const detail = detailController.getSnapshot()
+      if (
+        detail.open &&
+        detail.item?.id === request.itemId &&
+        literatureOverviewSource(detail.item).key === request.expectedSourceKey &&
+        (i18n.resolvedLanguage ?? i18n.language) === request.language
+      )
+        setOverviewRevision((revision) => revision + 1)
+    },
+    [detailController, i18n.resolvedLanguage, i18n.language]
+  )
 
   const [error, setError] = useState<string>()
   const [linkedItemError, setLinkedItemError] = useState<string>()
@@ -330,6 +354,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const importPdfInputRef = useRef<HTMLInputElement>(null)
   const importRecordsInputRef = useRef<HTMLInputElement>(null)
+  const [zoteroOpen, setZoteroOpen] = useState(false)
   const tableScrollRef = useRef<HTMLDivElement>(null)
   const citationStyleRef = useRef<LiteratureCitationStyle>('apa')
   const detailTagMenuOpenRef = useRef(false)
@@ -1213,6 +1238,28 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
+  const [isAddingLink, setIsAddingLink] = useState(false)
+  const linkImportTrigger = useRef<HTMLButtonElement | null>(null)
+  const openLinkImport = (trigger: HTMLButtonElement | null): void => {
+    linkImportTrigger.current = trigger
+    setIsAddingLink(true)
+  }
+  const restoreLinkImportFocus = (event: Event): void => {
+    if (!linkImportTrigger.current) return
+    event.preventDefault()
+    // Preserve the next dialog's focus during lookup → review → detail transitions.
+    if (
+      document.querySelector(
+        '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
+      )
+    )
+      return
+    const trigger = linkImportTrigger.current
+    linkImportTrigger.current = null
+    if (trigger.isConnected) trigger.focus()
+    else libraryEntryRef.current?.focus()
+  }
+
   const {
     isCreatingItem,
     isSavingNewItem,
@@ -1224,9 +1271,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     isImportingRecords,
     createManualItem,
     beginPdfImport,
+    beginLinkImport,
     closeItemEditor,
     previewRecordImport,
     previewRecordSelection,
+    previewResolvedImport,
     commitRecordImport,
     trackNewMetadataDirty,
     beginManualImport,
@@ -1708,6 +1757,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 duplicatesOpen ||
                 isCreatingItem ||
                 recordImport ||
+                zoteroOpen ||
                 pdfBatch ||
                 previewItem
               )
@@ -1732,6 +1782,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onImportFiles={receiveImportFiles}
               importRecordsInputRef={importRecordsInputRef}
               beginManualImport={beginManualImport}
+              onImportZotero={() => setZoteroOpen(true)}
+              beginLinkImport={openLinkImport}
               query={query}
               searchResetRevision={searchResetRevision}
               setQuery={setQuery}
@@ -1969,159 +2021,179 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           items.length > 0 &&
                           items.every((item) => isLiteratureItemSelected(selection, item.id))
                         return (
-                          <div className={cn('flex h-12 min-w-0 items-center justify-end gap-2')}>
-                            {selectedCollection?.smart && !hasSelection && (
-                              <>
-                                <Tabs.Root
-                                  value={smartFilter}
-                                  onValueChange={(value) =>
-                                    setSmartFilter(value as typeof smartFilter)
-                                  }
-                                  className="mr-auto min-w-0 max-w-full"
-                                >
-                                  <Tabs.List
-                                    aria-label={t('Filter decisions')}
-                                    className={literatureTabsListClassName}
-                                  >
-                                    {(
-                                      [
-                                        [
-                                          'match',
-                                          t('Included'),
-                                          t('Papers included by the rule or your manual decision.')
-                                        ],
-                                        [
-                                          'review',
-                                          t('Needs review'),
-                                          t('Uncertain or outdated results that need review.')
-                                        ],
-                                        [
-                                          'no-match',
-                                          t('Excluded'),
-                                          t('Papers excluded by the rule or your manual decision.')
-                                        ],
-                                        [
-                                          'pending',
-                                          t('Not evaluated'),
-                                          t(
-                                            'Papers not evaluated by a model: not started, failed, or insufficient evidence.'
-                                          )
-                                        ]
-                                      ] as const
-                                    ).map(([value, label, hint]) => (
-                                      <Tabs.Trigger
-                                        key={value}
-                                        value={value}
-                                        id={`smart-decision-${value}`}
-                                        aria-controls="smart-collection-results"
-                                        title={hint}
-                                        className={literatureTabClassName}
+                          <LiteratureOverviewBatch
+                            hasSelection={section !== 'inbox' && hasSelection}
+                            resolveSelection={resolveSelectedItemIds}
+                            onOverviewSaved={onOverviewSaved}
+                            onActiveRequestsChange={setActiveOverviewRequests}
+                            onOpenOverview={openSelectedItemDetail}
+                            returnFocusRef={libraryEntryRef}
+                          >
+                            {(overviewActions, generateOverviews) => (
+                              <div
+                                className={cn('flex h-12 min-w-0 items-center justify-end gap-2')}
+                              >
+                                {selectedCollection?.smart && !hasSelection && (
+                                  <>
+                                    <Tabs.Root
+                                      value={smartFilter}
+                                      onValueChange={(value) =>
+                                        setSmartFilter(value as typeof smartFilter)
+                                      }
+                                      className="mr-auto min-w-0 max-w-full"
+                                    >
+                                      <Tabs.List
+                                        aria-label={t('Filter decisions')}
+                                        className={literatureTabsListClassName}
                                       >
-                                        {label}
-                                        <span className="rounded-sm bg-muted px-1.5 text-xs tabular-nums">
-                                          {(smartDecisionSource === 'all'
-                                            ? smartView?.counts
-                                            : smartView?.countsBySource?.[smartDecisionSource])?.[
-                                            value
-                                          ] ?? '—'}
-                                        </span>
-                                      </Tabs.Trigger>
-                                    ))}
-                                  </Tabs.List>
-                                </Tabs.Root>
-                              </>
-                            )}
-                            <LiteratureBackgroundTasks
-                              hidden={hasSelection || section === 'inbox'}
-                              onOpen={(job) =>
-                                setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
-                              }
-                              onChanged={receiveBackgroundItems}
-                            />
-                            {section !== 'inbox' && (
-                              <>
-                                {!hasSelection && (
-                                  <LiteratureViewControls
-                                    selectedCollection={selectedCollection}
-                                    smartDecisionSource={smartDecisionSource}
-                                    smartView={smartView}
-                                    setSmartDecisionSource={setSmartDecisionSource}
-                                    clearSelection={clearSelection}
-                                    sortBy={sortBy}
-                                    setSortBy={setSortBy}
-                                    filtersOpen={filtersOpen}
-                                    setFiltersOpen={setFiltersOpen}
-                                    yearFilter={yearFilter}
-                                    activeFilterCount={activeFilterCount}
-                                    accessibilityId={accessibilityId}
-                                    tagId={tagId}
-                                    setTagId={setTagId}
-                                    filterItemType={filterItemType}
-                                    setFilterItemType={setFilterItemType}
-                                    itemTypeLabels={itemTypeLabels}
-                                    filterHasPdf={filterHasPdf}
-                                    setFilterHasPdf={setFilterHasPdf}
-                                    filterReadingStatus={filterReadingStatus}
-                                    setFilterReadingStatus={setFilterReadingStatus}
-                                    journalFilterDatasets={journalFilterDatasets}
-                                    journalAttributeFilters={journalAttributeFilters}
-                                    setJournalAttributeFilters={setJournalAttributeFilters}
-                                    clearFilters={clearFilters}
-                                    journalDatasets={journalDatasets}
-                                    journalSourceYears={journalSourceYears}
-                                    tableColumnOrder={tableColumnOrder}
-                                    journalColumns={journalColumns}
-                                    tableColumnLabels={tableColumnLabels}
-                                    visibleTableColumns={visibleTableColumns}
-                                    moveTableColumn={moveTableColumn}
-                                    moveTableColumnBy={moveTableColumnBy}
-                                    setVisibleTableColumns={setVisibleTableColumns}
-                                  />
+                                        {(
+                                          [
+                                            [
+                                              'match',
+                                              t('Included'),
+                                              t(
+                                                'Papers included by the rule or your manual decision.'
+                                              )
+                                            ],
+                                            [
+                                              'review',
+                                              t('Needs review'),
+                                              t('Uncertain or outdated results that need review.')
+                                            ],
+                                            [
+                                              'no-match',
+                                              t('Excluded'),
+                                              t(
+                                                'Papers excluded by the rule or your manual decision.'
+                                              )
+                                            ],
+                                            [
+                                              'pending',
+                                              t('Not evaluated'),
+                                              t(
+                                                'Papers not evaluated by a model: not started, failed, or insufficient evidence.'
+                                              )
+                                            ]
+                                          ] as const
+                                        ).map(([value, label, hint]) => (
+                                          <Tabs.Trigger
+                                            key={value}
+                                            value={value}
+                                            id={`smart-decision-${value}`}
+                                            aria-controls="smart-collection-results"
+                                            title={hint}
+                                            className={literatureTabClassName}
+                                          >
+                                            {label}
+                                            <span className="rounded-sm bg-muted px-1.5 text-xs tabular-nums">
+                                              {(smartDecisionSource === 'all'
+                                                ? smartView?.counts
+                                                : smartView?.countsBySource?.[
+                                                    smartDecisionSource
+                                                  ])?.[value] ?? '—'}
+                                            </span>
+                                          </Tabs.Trigger>
+                                        ))}
+                                      </Tabs.List>
+                                    </Tabs.Root>
+                                  </>
                                 )}
-                                {hasSelection && (
-                                  <LiteratureSelectionToolbar
-                                    selectedItemCount={selectedItemCount}
-                                    selection={selection}
-                                    allLoadedItemsSelected={allLoadedItemsSelected}
-                                    entriesOffset={entriesOffset}
-                                    nextEntriesOffset={nextEntriesOffset}
-                                    formattedMatchingCount={formattedMatchingCount}
-                                    isBatching={isBatching}
-                                    selectionStore={selectionStore}
-                                    clearSelection={clearSelection}
-                                    smartDecisionBatch={smartDecisionBatch}
-                                    collectionId={collectionId}
-                                    selectedCollection={selectedCollection}
-                                    pendingDecisions={pendingDecisions}
-                                    confirmSmartDecision={confirmSmartDecision}
-                                    smartView={smartView}
-                                    prepareSmartReevaluation={prepareSmartReevaluation}
-                                    section={section}
-                                    startingReadingProjectId={startingReadingProjectId}
-                                    requestReadSelection={requestReadSelection}
-                                    setReadingStatus={setReadingStatus}
-                                    batchCollections={batchCollections}
-                                    activeProjects={activeProjects}
-                                    projectsLoaded={projectsLoaded}
-                                    createCollectionForSelection={createCollectionForSelection}
-                                    batchProjectFormDialog={batchProjectFormDialog}
-                                    moveSelectedItems={moveSelectedItems}
-                                    addSelectedItemsToProject={addSelectedItemsToProject}
-                                    items={items}
-                                    previewRestoreSelection={previewRestoreSelection}
-                                    exportSelectedItems={exportSelectedItems}
-                                    requestBatchLookup={requestBatchLookup}
-                                    setMergeSurvivorId={setMergeSurvivorId}
-                                    setMergeFieldSources={setMergeFieldSources}
-                                    setMergeError={setMergeError}
-                                    setMergeOpen={setMergeOpen}
-                                    runLifecycleAction={runLifecycleAction}
-                                    requestPermanentDeletion={requestPermanentDeletion}
-                                  />
+                                {!hasSelection && section !== 'inbox' && overviewActions}
+                                <LiteratureBackgroundTasks
+                                  hidden={hasSelection || section === 'inbox'}
+                                  onOpen={(job) =>
+                                    setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
+                                  }
+                                  onChanged={receiveBackgroundItems}
+                                />
+                                {section !== 'inbox' && (
+                                  <>
+                                    {!hasSelection && (
+                                      <LiteratureViewControls
+                                        selectedCollection={selectedCollection}
+                                        smartDecisionSource={smartDecisionSource}
+                                        smartView={smartView}
+                                        setSmartDecisionSource={setSmartDecisionSource}
+                                        clearSelection={clearSelection}
+                                        sortBy={sortBy}
+                                        setSortBy={setSortBy}
+                                        filtersOpen={filtersOpen}
+                                        setFiltersOpen={setFiltersOpen}
+                                        yearFilter={yearFilter}
+                                        activeFilterCount={activeFilterCount}
+                                        accessibilityId={accessibilityId}
+                                        tagId={tagId}
+                                        setTagId={setTagId}
+                                        filterItemType={filterItemType}
+                                        setFilterItemType={setFilterItemType}
+                                        itemTypeLabels={itemTypeLabels}
+                                        filterHasPdf={filterHasPdf}
+                                        setFilterHasPdf={setFilterHasPdf}
+                                        filterReadingStatus={filterReadingStatus}
+                                        setFilterReadingStatus={setFilterReadingStatus}
+                                        journalFilterDatasets={journalFilterDatasets}
+                                        journalAttributeFilters={journalAttributeFilters}
+                                        setJournalAttributeFilters={setJournalAttributeFilters}
+                                        clearFilters={clearFilters}
+                                        journalDatasets={journalDatasets}
+                                        journalSourceYears={journalSourceYears}
+                                        tableColumnOrder={tableColumnOrder}
+                                        journalColumns={journalColumns}
+                                        tableColumnLabels={tableColumnLabels}
+                                        visibleTableColumns={visibleTableColumns}
+                                        moveTableColumn={moveTableColumn}
+                                        moveTableColumnBy={moveTableColumnBy}
+                                        setVisibleTableColumns={setVisibleTableColumns}
+                                      />
+                                    )}
+                                    {hasSelection && (
+                                      <LiteratureSelectionToolbar
+                                        overviewActions={overviewActions}
+                                        overviewMenuAction={generateOverviews}
+                                        selectedItemCount={selectedItemCount}
+                                        selection={selection}
+                                        allLoadedItemsSelected={allLoadedItemsSelected}
+                                        entriesOffset={entriesOffset}
+                                        nextEntriesOffset={nextEntriesOffset}
+                                        formattedMatchingCount={formattedMatchingCount}
+                                        isBatching={isBatching}
+                                        selectionStore={selectionStore}
+                                        clearSelection={clearSelection}
+                                        smartDecisionBatch={smartDecisionBatch}
+                                        collectionId={collectionId}
+                                        selectedCollection={selectedCollection}
+                                        pendingDecisions={pendingDecisions}
+                                        confirmSmartDecision={confirmSmartDecision}
+                                        smartView={smartView}
+                                        prepareSmartReevaluation={prepareSmartReevaluation}
+                                        section={section}
+                                        startingReadingProjectId={startingReadingProjectId}
+                                        requestReadSelection={requestReadSelection}
+                                        setReadingStatus={setReadingStatus}
+                                        batchCollections={batchCollections}
+                                        activeProjects={activeProjects}
+                                        projectsLoaded={projectsLoaded}
+                                        createCollectionForSelection={createCollectionForSelection}
+                                        batchProjectFormDialog={batchProjectFormDialog}
+                                        moveSelectedItems={moveSelectedItems}
+                                        addSelectedItemsToProject={addSelectedItemsToProject}
+                                        items={items}
+                                        previewRestoreSelection={previewRestoreSelection}
+                                        exportSelectedItems={exportSelectedItems}
+                                        requestBatchLookup={requestBatchLookup}
+                                        setMergeSurvivorId={setMergeSurvivorId}
+                                        setMergeFieldSources={setMergeFieldSources}
+                                        setMergeError={setMergeError}
+                                        setMergeOpen={setMergeOpen}
+                                        runLifecycleAction={runLifecycleAction}
+                                        requestPermanentDeletion={requestPermanentDeletion}
+                                      />
+                                    )}
+                                  </>
                                 )}
-                              </>
+                              </div>
                             )}
-                          </div>
+                          </LiteratureOverviewBatch>
                         )
                       }}
                     </LiteratureSelectionBoundary>
@@ -2505,7 +2577,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </Button>
                         ) : (
                           <LiteratureAddMenu
+                            onImportZotero={() => setZoteroOpen(true)}
                             label={t('Add reference')}
+                            onAddLink={openLinkImport}
                             onAddReference={() => {
                               beginManualImport()
                             }}
@@ -2553,9 +2627,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }}
           />
         ) : null}
+        {zoteroOpen ? <LiteratureZoteroDialog onClose={() => setZoteroOpen(false)} /> : null}
         {recordImport ? (
           <LiteratureRecordImportDialog
             recordImport={recordImport}
+            onCloseAutoFocus={'items' in recordImport.source ? restoreLinkImportFocus : undefined}
             duplicatePolicy={duplicatePolicy}
             onDuplicatePolicyChange={setDuplicatePolicy}
             isImportingRecords={isImportingRecords}
@@ -2570,7 +2646,22 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           />
         ) : null}
 
+        {isAddingLink ? (
+          <LiteratureLinkImportDialog
+            onCloseAutoFocus={restoreLinkImportFocus}
+            onClose={() => setIsAddingLink(false)}
+            onBatchResolved={(items) => {
+              setIsAddingLink(false)
+              void previewResolvedImport(items)
+            }}
+            onResolved={(item, source) => {
+              setIsAddingLink(false)
+              beginLinkImport(item, source)
+            }}
+          />
+        ) : null}
         <LiteratureCreateItemDialog
+          onCloseAutoFocus={dialogItemEditor?.linkSource ? restoreLinkImportFocus : undefined}
           isCreatingItem={isCreatingItem}
           isSavingNewItem={isSavingNewItem}
           closeItemEditor={closeItemEditor}
@@ -2636,6 +2727,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           relatedDirection={relatedDirection}
           renderOverview={(selectedItem) => (
             <LiteratureDetailOverview
+              overviewRevision={overviewRevision}
+              overviewBatchGenerating={activeOverviewRequests.some(
+                (request) =>
+                  request.itemId === selectedItem.id &&
+                  request.expectedSourceKey === literatureOverviewSource(selectedItem).key &&
+                  request.language === (i18n.resolvedLanguage ?? i18n.language)
+              )}
               onRelated={(direction) => {
                 setRelatedDirection(direction)
                 changeDetailMode('related')

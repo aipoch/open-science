@@ -1,5 +1,7 @@
 export {
   INITIAL_SETTINGS_ROUTE,
+  computeAccountProviderForBackend,
+  computeTargetAddLabels,
   settingsPanelRoute,
   isAgentRepairCheck,
   getEnvironmentRepairPanel

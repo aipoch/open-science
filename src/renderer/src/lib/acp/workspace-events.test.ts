@@ -32,7 +32,10 @@ import {
 } from '../../stores/session-store'
 import { buildWorkspaceHistoryReplay } from './history-preamble'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
-import { useWorkspaceOperationErrors } from './workspace-operation-error'
+import {
+  useWorkspaceElicitationFailures,
+  useWorkspaceOperationErrors
+} from './workspace-operation-error'
 import {
   applyWorkspaceRuntimeEvent,
   applyWorkspaceRuntimeEventBatch,
@@ -175,6 +178,7 @@ describe('workspace runtime events', () => {
     resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     useWorkspaceOperationErrors.setState({ errors: {} })
+    useWorkspaceElicitationFailures.setState({ failures: {} })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.getState().appendUserMessage({
@@ -229,6 +233,8 @@ describe('workspace runtime events', () => {
   it.each([
     'older-prompt',
     'inactive-branch',
+    'inactive-frame',
+    'inactive-message-branch',
     'missing-prompt',
     'terminal',
     'commit-failure'
@@ -246,7 +252,8 @@ describe('workspace runtime events', () => {
         elicitation: {
           message: 'Continue?',
           fields: [],
-          state: 'pending',
+          state: 'answered',
+          continuationPending: true,
           durable: {
             kind: 'agent-user-choice',
             requestId: 'choice',
@@ -271,11 +278,14 @@ describe('workspace runtime events', () => {
           level: 'error',
           promptMessageId: scenario === 'missing-prompt' ? undefined : originalPrompt,
           title: scenario === 'terminal' ? 'Prompt failed' : 'Could not continue the Agent task',
+          agentFrameId: scenario === 'inactive-frame' ? 'another-frame' : undefined,
+          messageBranchId: scenario === 'inactive-message-branch' ? 'another-branch' : undefined,
           terminalCommitFailure: scenario === 'commit-failure' ? 'storage' : undefined,
           text: 'Failure belongs elsewhere'
         })
       )
       expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(useWorkspaceElicitationFailures.getState().failures).toEqual({})
       expect(useSessionStore.getState().sessions[0]).toEqual(before)
     }
   )
@@ -382,6 +392,7 @@ describe('workspace runtime events', () => {
         })
       )
       expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(useWorkspaceElicitationFailures.getState().failures).toEqual({})
       expect(useSessionStore.getState().sessions[0]).toEqual(before)
     }
   )
@@ -1274,7 +1285,7 @@ describe('workspace runtime events', () => {
     })
     // An opaque ACP-layer failure (no providerError tag, not app-crafted) stays reportable: the event
     // path defers to the text tier rather than suppressing the button.
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('internal')
   })
 
   it('retains a cancelled prompt as an interrupted turn instead of completing it', async () => {
@@ -1676,7 +1687,7 @@ describe('workspace runtime events', () => {
       status: 'idle',
       compacting: undefined,
       error: undefined,
-      errorReportable: undefined,
+      failure: undefined,
       activities: [
         expect.objectContaining({ status: 'failed', title: 'Context compaction failed' })
       ]
@@ -1811,7 +1822,7 @@ describe('workspace runtime events', () => {
     expect(session.error).toContain('Request too large')
     // A non-recovered overflow (providerError=false) is a client-side/size failure the text tier
     // recognizes as expected — it must NOT be forced reportable by the event path.
-    expect(session.errorReportable).toBe(false)
+    expect(session.failure?.category).toBe('input')
   })
 
   it('hides the report button for a provider-tagged error even when its text looks reportable', async () => {
@@ -1827,7 +1838,7 @@ describe('workspace runtime events', () => {
         id: 'event-provider',
         kind: 'error',
         level: 'error',
-        providerError: true,
+        failure: { category: 'service' as const, diagnostics: {} },
         title: 'Prompt failed',
         text: 'Internal error: upstream exploded'
       })
@@ -1836,7 +1847,7 @@ describe('workspace runtime events', () => {
     expect(applied).toBe(true)
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
-    expect(session.errorReportable).toBe(false)
+    expect(session.failure?.category).toBe('service')
   })
 
   it('projects a Claude Code mid-response connection closure as a resumable interrupted turn', async () => {
@@ -1858,7 +1869,11 @@ describe('workspace runtime events', () => {
         id: 'event-mid-response-closed',
         kind: 'error',
         level: 'error',
-        providerError: true,
+        failure: {
+          category: 'service' as const,
+          reason: 'service/response-interrupted',
+          diagnostics: {}
+        },
         promptMessageId,
         title: 'Prompt failed',
         text: errorText,
@@ -1878,7 +1893,7 @@ describe('workspace runtime events', () => {
         promptMessageId
       }
     })
-    expect(session.errorReportable).toBeUndefined()
+    expect(session.failure).toBeUndefined()
     expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
     expect(session.messages[1]).toMatchObject({
       content: 'The first result is complete. Next I will',

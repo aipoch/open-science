@@ -1,6 +1,6 @@
 import { NETWORK_APPROVAL_REQUIRED, NETWORK_POLICY_BLOCKED } from './gateway/recovery-context.js'
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 
@@ -58,6 +58,10 @@ type NetworkRuntimeConfig = Readonly<{
 }>
 
 type NetworkAskCallback = (request: {
+  protocol?: 'http' | 'https'
+  addresses?: readonly string[]
+  reason?: string
+  policyAllowed?: boolean
   host: string
   port: number
   commandId?: string
@@ -125,6 +129,7 @@ type RuntimeContext = {
   filesystem: FilesystemLayout
   gateway?: CommandGateway
   releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
+  releaseProcessTreeProof?: () => Promise<void>
   platformOwnsProcesses?: boolean
   independentCommandAdmission?: boolean
   executionActive: boolean
@@ -183,7 +188,8 @@ const decide = async (
   host: string,
   port: number,
   purpose: 'probe' | 'block' = 'block',
-  connectionAlive?: () => boolean
+  connectionAlive?: () => boolean,
+  protocol: 'http' | 'https' = 'https'
 ): Promise<GatewayDecision> => {
   const context = commandContexts.get(commandId)
   const epoch = context?.epoch
@@ -199,9 +205,10 @@ const decide = async (
     violations.record(commandId, `deny network-outbound ${host}:${port} (policy unavailable)`)
     return { allowed: false, message: NETWORK_POLICY_BLOCKED }
   }
-  const verdict = await policy.inspect(host, port)
+  const verdict = await policy.inspect(host, port, protocol)
   if (!current()) return expired
-  if (verdict.kind === 'allow') return { allowed: true, address: verdict.address }
+  if (verdict.kind === 'allow' && !verdict.addresses)
+    return { allowed: true, address: verdict.address }
   if (verdict.kind === 'deny') {
     violations.record(commandId, `deny network-outbound ${host}:${port} (${verdict.reason})`)
     return {
@@ -213,7 +220,15 @@ const decide = async (
   try {
     allowed =
       (await approval?.({
-        host: verdict.host,
+        protocol,
+        host: verdict.host ?? host,
+        ...(verdict.addresses
+          ? {
+              addresses: verdict.addresses,
+              policyAllowed: verdict.kind === 'allow',
+              reason: verdict.kind === 'ask' ? verdict.reason : undefined
+            }
+          : {}),
         port,
         commandId,
         purpose,
@@ -225,8 +240,12 @@ const decide = async (
   if (!current()) return expired
   if (allowed) return { allowed: true, address: verdict.address }
   if (purpose === 'probe')
-    return { allowed: false, source: verdict.source, address: verdict.address }
-  violations.record(commandId, `deny network-outbound ${verdict.host}:${port} (not approved)`)
+    return {
+      allowed: false,
+      source: verdict.kind === 'ask' ? verdict.source : 'explicit',
+      address: verdict.address
+    }
+  violations.record(commandId, `deny network-outbound ${host}:${port} (not approved)`)
   return {
     allowed: false,
     message: NETWORK_APPROVAL_REQUIRED
@@ -271,6 +290,11 @@ const wrap = async (
 ): Promise<{
   argv: string[]
   env: NodeJS.ProcessEnv
+  processTreeProof?: Readonly<{
+    path: string
+    token: string
+    requestPath: string
+  }>
   confirmProcessTreeTermination?: () => Promise<boolean>
   requestProcessTreeTermination?: () => Promise<boolean>
   confirmProcessState?: () => Promise<SandboxProcessState>
@@ -296,8 +320,8 @@ const wrap = async (
       throw new Error('Notebook WSL2 sandbox target requires a Windows host.')
     }
     const gateway = await CommandGateway.open({
-      decide: (host, port, purpose, canResume) =>
-        decide(request.commandId, host, port, purpose, canResume),
+      decide: (host, port, purpose, canResume, protocol) =>
+        decide(request.commandId, host, port, purpose, canResume, protocol),
       credentials,
       ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
       parentProxy: parentSettings(config)
@@ -394,6 +418,9 @@ const wrap = async (
       username: `notebook-${request.commandId}`,
       password: randomBytes(32).toString('base64url')
     }
+    if (process.platform === 'win32' && config.windowsOwnershipRoot) {
+      await mkdir(config.windowsOwnershipRoot, { recursive: true, mode: 0o700 })
+    }
     let assertWindowsSpawnAdmission: (() => void) | undefined
     let windowsGatewayPort = windowsProtectedGatewayPort
     if (process.platform === 'win32' && request.windowsProtectionRequired !== undefined) {
@@ -437,8 +464,8 @@ const wrap = async (
       }
     }
     gateway = await CommandGateway.open({
-      decide: (host, port, purpose, canResume) =>
-        decide(request.commandId, host, port, purpose, canResume),
+      decide: (host, port, purpose, canResume, protocol) =>
+        decide(request.commandId, host, port, purpose, canResume, protocol),
       ...(certificateAuthority
         ? {
             inspection: {
@@ -519,25 +546,30 @@ const wrap = async (
       // Standard mode has no AppContainer, but opted-in process trees still need reliable
       // process-tree ownership so a normal leader exit cannot poison the next cleanup attempt.
       if (!windowsGatewayPort && request.superviseProcessTree) {
+        const launch = windowsSupervisedLaunch({
+          ...launchRequest,
+          cwd: request.cwd,
+          hostPath: config.windowsHostPath,
+          ownershipRoot: config.windowsOwnershipRoot
+        })
+        context.releaseProcessTreeProof = launch.releaseProcessTreeProof
         return {
-          ...windowsSupervisedLaunch({
-            ...launchRequest,
-            cwd: request.cwd,
-            hostPath: config.windowsHostPath
-          }),
+          ...launch,
           ...spawnAdmission
         }
       }
       if (!windowsGatewayPort) return { ...windowsStandardLaunch(launchRequest), ...spawnAdmission }
+      const launch = windowsLaunch({
+        ...launchRequest,
+        cwd: request.cwd,
+        filesystem,
+        hostPath: config.windowsHostPath,
+        installationId: config.installationId,
+        ownershipRoot: config.windowsOwnershipRoot
+      })
+      context.releaseProcessTreeProof = launch.releaseProcessTreeProof
       return {
-        ...windowsLaunch({
-          ...launchRequest,
-          cwd: request.cwd,
-          filesystem,
-          hostPath: config.windowsHostPath,
-          installationId: config.installationId,
-          ownershipRoot: config.windowsOwnershipRoot
-        }),
+        ...launch,
         ...spawnAdmission
       }
     }
@@ -584,9 +616,15 @@ const closeContext = async (
         }
   const processState =
     platformCleanup.processState ??
+    processOutcome.processState ??
     (context.platformOwnsProcesses && platformCleanup.processesTerminated
-      ? (processOutcome.processState ?? 'started-and-reaped')
-      : processOutcome.processState)
+      ? 'started-and-reaped'
+      : context.releaseProcessTreeProof && processOutcome.processesTerminated
+        ? 'started-and-reaped'
+        : undefined)
+  const [processTreeProof] = await Promise.allSettled([
+    processState !== 'termination-unknown' ? context.releaseProcessTreeProof?.() : undefined
+  ])
   const callerProcessesTerminated = processStateForOutcome(processOutcome) !== 'termination-unknown'
   const processesTerminated = context.platformOwnsProcesses
     ? platformCleanup.processesTerminated
@@ -596,12 +634,15 @@ const closeContext = async (
     ...(processState !== undefined ? { processState } : {}),
     networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
     temporaryResourcesRemoved:
-      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled',
+      platformCleanup.temporaryResourcesRemoved &&
+      trustBundle.status === 'fulfilled' &&
+      processTreeProof.status === 'fulfilled',
     ...(context.independentCommandAdmission &&
     network.status === 'fulfilled' &&
     platformCleanup.networkClosed &&
     platformCleanup.temporaryResourcesRemoved &&
-    trustBundle.status === 'fulfilled'
+    trustBundle.status === 'fulfilled' &&
+    processTreeProof.status === 'fulfilled'
       ? { admission: 'independent-command-allowed' as const }
       : {})
   }

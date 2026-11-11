@@ -12,6 +12,7 @@ import type {
   AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
 import { retainInitializeCapabilities } from './native-follow-up'
+import { PROVIDER_NOTICE_META_KEY } from './provider-session-notice'
 
 type LifecycleEvent = AcpRuntimeEventInput
 type TransferredConnection = ReturnType<AcpAgentConnectionCandidate['transferTo']>
@@ -35,6 +36,8 @@ const resolveFallbackProviderConfiguration = async (
 
 type AcpConnectionLifecycleWorkflowOptions = Readonly<{
   appVersion: string
+  separateProviderNotices?: boolean
+  toolLess?: boolean
   defaultCwd: string
   currentConnection: () => ClientConnection | undefined
   currentStatus: () => AcpStateSnapshot['status']
@@ -141,6 +144,7 @@ class AcpConnectionLifecycleWorkflow {
     let candidate: AcpAgentConnectionCandidate | undefined
     let transferred: TransferredConnection | undefined
     let spawnedFramework = this.options.currentFramework()
+    let connectionPhase = 'disconnect'
 
     try {
       this.options.invalidatePendingSessionStartups()
@@ -152,12 +156,15 @@ class AcpConnectionLifecycleWorkflow {
       this.options.setStatus('connecting')
       log.info('connecting agent', this.options.diagnosticContext(spawnedFramework, generation))
 
+      connectionPhase = 'open-candidate'
       candidate = await this.options.openCandidate(attempt, (framework) => {
         spawnedFramework = framework
       })
+      connectionPhase = 'transfer'
       transferred = candidate.transferTo(attempt)
       candidate = undefined
 
+      connectionPhase = 'initialize'
       const initResult = await transferred.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
         clientInfo: {
@@ -165,20 +172,35 @@ class AcpConnectionLifecycleWorkflow {
           version: this.options.appVersion
         },
         clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
           session: { configOptions: { boolean: {} } },
-          plan: {},
-          elicitation: { form: {} }
+          ...(!this.options.toolLess && {
+            fs: { readTextFile: true, writeTextFile: true },
+            plan: {},
+            elicitation: { form: {} }
+          }),
+          ...(this.options.separateProviderNotices === true &&
+          (spawnedFramework === 'codex' || spawnedFramework === 'claude-code')
+            ? {
+                _meta: {
+                  [PROVIDER_NOTICE_META_KEY]: { version: 1 },
+                  ...(spawnedFramework === 'codex'
+                    ? { jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } } }
+                    : {})
+                }
+              }
+            : {})
         }
       })
       attempt.assertCurrent()
 
       const initializeMaterial = transferred.backendAttempt.consumeInitializeMaterial()
       if (initializeMaterial?.authentication) {
+        connectionPhase = 'authenticate'
         await transferred.authenticate(initializeMaterial.authentication)
         attempt.assertCurrent()
       }
       if (initializeMaterial?.providerConfiguration) {
+        connectionPhase = 'provider-configuration'
         try {
           await transferred.setProvider(initializeMaterial.providerConfiguration)
           attempt.assertCurrent()
@@ -198,6 +220,7 @@ class AcpConnectionLifecycleWorkflow {
         }
       }
 
+      connectionPhase = 'publish'
       const handle = attempt.publish(retainInitializeCapabilities(initResult, spawnedFramework))
       log.info('agent initialized', {
         protocolVersion: initResult.protocolVersion,
@@ -233,7 +256,8 @@ class AcpConnectionLifecycleWorkflow {
           this.options.updateError(errorMessage(cause))
           safeLogError('agent connection failed', {
             ...diagnosticErrorFields(cause),
-            ...this.options.diagnosticContext(spawnedFramework, generation)
+            ...this.options.diagnosticContext(spawnedFramework, generation),
+            connectionPhase
           })
           try {
             this.options.pushEvent({

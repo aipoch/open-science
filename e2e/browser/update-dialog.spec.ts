@@ -372,19 +372,19 @@ test('keeps manual instructions and package reveal available during restricted i
   ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 1 })
 })
 
-test('returns from About instructions on Escape without closing Settings', async ({ page }) => {
+test('offers external manual installation guidance in About', async ({ page }) => {
   await page.goto('/update-dialog.html?settings&continuous&short')
   const dialog = page.getByRole('dialog', { name: 'General', exact: true })
-  const instructions = dialog
-    .getByTestId('manual-update-links')
-    .getByRole('button', { name: 'Installation instructions', exact: true })
-  await instructions.click()
-  await expect(dialog.getByRole('button', { name: 'Back to settings', exact: true })).toBeFocused()
-  await expect(page.getByRole('dialog')).toHaveCount(1)
-  await page.keyboard.press('Escape')
-  await expect(dialog).toBeVisible()
-  await expect(instructions).toBeFocused()
-  await expect(dialog.getByText('About', { exact: true })).toBeVisible()
+  const instructions = dialog.getByRole('link', {
+    name: 'Open manual installation and update guidance in your browser',
+    exact: true
+  })
+  await expect(instructions).toHaveAttribute(
+    'href',
+    'https://www.aipoch.com/docs/guides/installation/#manual-update'
+  )
+  await expect(instructions).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Back to settings', exact: true })).toHaveCount(0)
 })
 
 test('offers manual links in check failure prose and preserves retry without release notes', async ({
@@ -449,16 +449,13 @@ for (const query of ['continuous&stage=downloading', 'short']) {
 }
 
 for (const width of [320, 560]) {
-  test(`aligns About manual links with version text at ${width}px`, async ({ page }) => {
+  test(`keeps About resource links within the available width at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 620 })
     await page.goto('/update-dialog.html?settings&continuous&short')
     const dialog = page.getByRole('dialog', { name: 'General', exact: true })
-    const appName = dialog.getByText('Open-Science', { exact: true })
-    const resources = dialog.getByTestId('manual-update-links')
-    const website = resources.getByRole('link', { name: 'Download from website', exact: true })
-    const identityBox = (await appName.boundingBox())!
-    const linkBox = (await website.boundingBox())!
-    expect(Math.abs(identityBox.x - linkBox.x)).toBeLessThan(1)
+    const website = dialog.getByRole('link', { name: 'Download from website', exact: true })
+    await expect(website).toBeInViewport({ ratio: 1 })
+    expect(await website.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
     expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
   })
 }
@@ -500,32 +497,3 @@ test('keeps instructions open when a background update leaves the legacy error s
   ).toBeFocused()
   await expect(dialog.getByRole('button', { name: /^Download update/ })).toBeVisible()
 })
-
-for (const navigation of ['keyboard', 'pointer']) {
-  test(`returns from About instructions after ${navigation} focus leaves the guide`, async ({
-    page
-  }, testInfo) => {
-    await page.goto('/update-dialog.html?settings&continuous&short')
-    const dialog = page.getByRole('dialog', { name: 'General', exact: true })
-    const instructions = dialog
-      .getByTestId('manual-update-links')
-      .getByRole('button', { name: 'Installation instructions', exact: true })
-    await instructions.click()
-    await expect(
-      dialog.getByRole('button', { name: 'Back to settings', exact: true })
-    ).toBeFocused()
-    const surroundingControl = dialog.getByRole('button', { name: 'Appearance', exact: true })
-    if (navigation === 'keyboard') await page.keyboard.press('Shift+Tab')
-    else await surroundingControl.click()
-    await expect(surroundingControl).toBeFocused()
-    await page.keyboard.press('Escape')
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByRole('button', { name: 'Back to settings', exact: true })).toHaveCount(
-      0
-    )
-    await expect(instructions).toBeFocused()
-    await page.screenshot({
-      path: testInfo.outputPath(`settings-guide-escape-after-${navigation}.png`)
-    })
-  })
-}

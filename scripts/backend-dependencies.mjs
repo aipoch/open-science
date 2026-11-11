@@ -1,6 +1,55 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { builtinModules } from 'node:module'
-import { posix } from 'node:path'
+import { readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { join, posix } from 'node:path'
+
+// Standard inline maps keep diagnostics while avoiding a second installed file per module.
+// Only rewrite audited desktop copies, retaining every executable byte and map byte.
+export async function inlineDesktopDependencyMaps(manifest, directory) {
+  const versions = {
+    '@modelcontextprotocol/sdk': '1.31.0',
+    ajv: '8.20.0',
+    tar: '7.5.22',
+    '@agentclientprotocol/sdk': '1.3.0'
+  }
+  if (!Object.hasOwn(versions, manifest.name) || versions[manifest.name] !== manifest.version)
+    return 0
+  let count = 0
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name !== 'node_modules') count += await inlineDesktopDependencyMaps(manifest, file)
+      continue
+    }
+    if (!entry.isFile() || !/\.(?:js|mjs|cjs)$/.test(entry.name)) continue
+    const code = await readFile(file, 'utf8')
+    const match = code.match(/\/\/# sourceMappingURL=([^\s]+)(\r?\n)?$/)
+    if (!match || match[1] !== `${entry.name}.map`) continue
+    const mapFile = `${file}.map`
+    const map = await readFile(mapFile).catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+      return undefined
+    })
+    if (!map) continue
+    let parsed
+    try {
+      parsed = JSON.parse(map.toString('utf8'))
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
+      continue
+    }
+    // Indexed maps can contain relative map URLs whose base would change in a data URL.
+    if (parsed?.version !== 3 || !Array.isArray(parsed.sources) || parsed.sections) continue
+    const replacement = match[0].replace(
+      match[1],
+      `data:application/json;base64,${map.toString('base64')}`
+    )
+    await writeFile(file, code.slice(0, match.index) + replacement)
+    await unlink(mapFile)
+    count++
+  }
+  return count
+}
 
 export const isElectronPackage = (name) =>
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
@@ -108,7 +157,7 @@ export const isShippableDependencyPath = (relativePath) => {
 // extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
-export function createDesktopDependencyFilter(manifest, { localTranslationWasm = false } = {}) {
+export function createDesktopDependencyFilter(manifest) {
   // These alternate distributions have no consumers in the packaged application. Keep the
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
   const unusedDistributions = {
@@ -120,12 +169,14 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
     'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
     'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/
   }[`${manifest.name}@${manifest.version}`]
+  const zod = manifest.name === 'zod' && ['4.6.5', '4.6.7'].includes(manifest.version)
   const runtimeEntries = []
   const collect = (value) => {
     if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))
     else if (value && typeof value === 'object')
       for (const [key, entry] of Object.entries(value))
-        if (key !== 'types' && !key.startsWith('types@')) collect(entry)
+        if (key !== 'types' && !key.startsWith('types@') && !(zod && key === '@zod/source'))
+          collect(entry)
   }
   for (const field of ['main', 'module', 'bin', 'exports', 'imports', 'browser'])
     collect(manifest[field])
@@ -138,6 +189,12 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
     'example',
     'examples'
   ])
+  if (zod) developmentRoots.add('src')
+  for (const [name, version, directory] of [
+    ['ajv', '8.20.0', 'lib'],
+    ['entities', '6.0.1', 'src']
+  ])
+    if (manifest.name === name && manifest.version === version) developmentRoots.add(directory)
   return (relativePath, isDirectory) => {
     // Traverse excluded roots so nested redistribution notices are not lost. Keep first-party
     // artifacts, SDK declarations and diagnostic maps under their existing files allowlists.
@@ -147,16 +204,9 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
     if (unusedDistributions?.test(path)) return false
-    // The fallback Transformers entry still imports WebGPU. Prune these only after the
-    // dedicated worker has replaced it with the existing WASM implementation.
-    if (
-      localTranslationWasm &&
-      manifest.name === 'onnxruntime-web' &&
-      manifest.version === '1.26.0-dev.20260416-b7804b056c' &&
-      (/^dist\/ort(?:\.(?:all|webgl|webgpu|jspi))?(?:\.bundle)?\.min\.(?:js|mjs)$/.test(path) ||
-        /^lib\/.*\.ts$/.test(path))
-    )
-      return false
+    // Zod's source condition is opt-in development only; its locale wildcard also matches
+    // declarations. Neither is used by packaged Node's normal import/require resolution.
+    if (zod && /^v4\/locales\/[^/]+\.d\.(?:ts|cts)$/.test(path)) return false
     if (runtimeEntries.some((entry) => posix.matchesGlob(path, entry))) return true
     if (/\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(path)) return false
     return (
@@ -197,11 +247,7 @@ export function assertBackendImports(metafiles, dependencies) {
 
 // Local file: dependencies are symlinks in development. Keep the independent packages' source/fixtures
 // out of shipped runtimes, using its deliberately literal top-level npm files allowlist.
-export function backendDependencyIncludes(
-  manifest,
-  relativePath,
-  { platform = process.platform, arch = process.arch } = {}
-) {
+export function backendDependencyIncludes(manifest, relativePath) {
   const parts = relativePath.split(/[\\/]/)
   const top = parts[0]
   if (!isShippableDependencyPath(relativePath)) return false
@@ -224,33 +270,10 @@ export function backendDependencyIncludes(
     /^dist\/(?:web|esm)\/.*\.(?:js|wasm|map)$/.test(path)
   )
     return false
-  if (
-    [
-      'pdfjs-dist',
-      '@huggingface/transformers',
-      'onnxruntime-node',
-      'onnxruntime-common',
-      'onnxruntime-web',
-      '@prisma/client',
-      'pdf-lib'
-    ].includes(name) &&
-    relativePath.endsWith('.map')
-  )
+  if (['pdfjs-dist', '@prisma/client', 'pdf-lib'].includes(name) && relativePath.endsWith('.map'))
     return false
   // This generated client uses the native library engine, not WASM query engines/compilers.
   if (name === '@prisma/client' && /^runtime[\\/]query_(?:engine|compiler)_bg\./.test(relativePath))
-    return false
-  // Local inference explicitly selects CPU WASM; WebGPU/JSPI/Asyncify binaries are unused.
-  if (
-    name === 'onnxruntime-web' &&
-    /^dist[\\/]ort-wasm-simd-threaded\.(?:jsep|jspi|asyncify)\.(?:mjs|wasm)$/.test(relativePath)
-  )
-    return false
-  // Package exports use the minified builds; these parallel development bundles are never loaded.
-  if (
-    name === 'onnxruntime-web' &&
-    /^dist[\\/]ort(?:\.(?:all|wasm|webgl|webgpu|jspi|node))?\.(?:mjs|js)$/.test(relativePath)
-  )
     return false
   // The full tokenizer embeds its encodings in WASM; separate JSON/JS encoders belong to lite.
   if (name === 'tiktoken' && top === 'encoders') return false
@@ -262,15 +285,9 @@ export function backendDependencyIncludes(
   // Match the existing desktop PDF.js exclusions; extraction still needs legacy/build and font data.
   if (name === 'pdfjs-dist' && ['build', 'web', 'image_decoders', 'types'].includes(top))
     return false
-  // Transformers imports the target native binding even when inference explicitly selects WASM.
-  if (name === 'onnxruntime-node' && top === 'bin' && parts[1] === 'napi-v6') {
-    if (parts[2] && parts[2] !== platform) return false
-    if (parts[3] && parts[3] !== arch) return false
-    // Linux npm installs download optional GPU providers; local translation selects WASM.
-    if (/^libonnxruntime_providers_(?:cuda|tensorrt)\.so$/.test(parts[4] ?? '')) return false
-  }
   if (
     ![
+      '@aipoch/agent-harness',
       '@aipoch/compute',
       '@aipoch/connector-builtins',
       '@aipoch/connector-core',

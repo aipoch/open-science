@@ -72,7 +72,7 @@ test('keeps every keyboard-selected settings result visible without moving input
   await expect(list).toBeVisible()
   await input.press('Enter')
   await expect(list).toBeHidden()
-  await expect(settings.locator('[data-settings-anchor="general.language"]')).toBeFocused()
+  await expect(settings.locator('[data-settings-anchor="appearance.language"]')).toBeFocused()
 })
 
 for (const mobile of [false, true]) {

@@ -64,11 +64,6 @@ const composeAcpRuntimeProviderSessionOwners = (
   const defaultProjectId = options.artifacts?.projectId || DEFAULT_UPLOAD_PROJECT_ID
   const updateCwd = (cwd: string): void => base.snapshotOwner.updateCwd(cwd)
   const emitState = (): void => session.publication.emitState()
-  const withOperation = <Result>(work: () => Promise<Result>): Promise<Result> => {
-    const barrier = lifecycle.modelChanges.barrier ?? base.connectionTransitions.barrier
-    if (barrier) return barrier.then(() => withOperation(work))
-    return base.generationActivity.withOperation(work)
-  }
   const capabilityPolicy =
     options.sessionCapabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
 
@@ -137,8 +132,9 @@ const composeAcpRuntimeProviderSessionOwners = (
   })
   const sessionDeletion = new AcpSessionDeletionWorkflow({
     registry: session.sessionRegistry,
-    withOperation,
+    withOperation: (work) => lifecycle.sessionCleanup.run(work),
     currentConnection,
+    currentGeneration: () => base.connectionResources.epoch,
     supportsSessionDelete: () => base.connectionResources.capabilities.delete,
     supportsSessionClose: () => base.connectionResources.capabilities.close,
     permission: session.permissionContext,

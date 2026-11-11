@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   broadcast: vi.fn(),
   visionDelete: vi.fn(),
   visionReconcile: vi.fn(),
+  harnessDelete: vi.fn(),
+  harnessReconcile: vi.fn(),
   archiveOwner: {
     withProjectDeletion: vi.fn(async (_id, operation) => operation()),
     restoreProjectDeletion: vi.fn(),
@@ -44,6 +46,12 @@ vi.mock('../acp/vision-evidence-repository', () => ({
     reconcileSessions = mocks.visionReconcile
   }
 }))
+vi.mock('../harness-acp/storage-cleanup', () => ({
+  HarnessStorageCleanup: class {
+    commit = mocks.harnessDelete
+    reconcile = mocks.harnessReconcile
+  }
+}))
 vi.mock('../desktop-surface-declarations', () => ({}))
 
 import { composeProjectLifecycle } from './project-lifecycle'
@@ -69,6 +77,7 @@ const fixture = (() => {
     broadcast: vi.fn()
   })
   const dependencies = {
+    researchFilmLifecycle: { deleteSessions: vi.fn(), reconcileSessions: vi.fn() },
     applicationEvents: {},
     notificationInbox: {
       setSessionAvailability: vi.fn(),
@@ -165,6 +174,8 @@ describe('Project lifecycle composition', () => {
     await handlers.reconcile(['session-1'], ['session-1'])
     await expect(broker.request(info)).resolves.toBe(false)
     expect(mocks.visionReconcile).toHaveBeenCalledWith(['session-1'])
+    expect(dependencies.researchFilmLifecycle.reconcileSessions).toHaveBeenCalledWith(['session-1'])
+    expect(mocks.harnessReconcile).toHaveBeenCalledWith(['session-1'])
     const clearHosts = vi.fn()
     result.sessionEnabledComputeHostsOwnerRef.current = { clear: clearHosts } as never
     mocks.visionDelete.mockRejectedValueOnce(new Error('projection unavailable'))
@@ -172,10 +183,12 @@ describe('Project lifecycle composition', () => {
     const next = broker.request(info)
     expect(broker.hasPendingForSession('session-1')).toBe(true)
     expect(clearHosts).toHaveBeenCalledWith(['session-1'])
+    expect(mocks.harnessDelete).toHaveBeenCalledWith(['session-1'])
     expect(dependencies.sideChatOwnerRef.current.invalidateParents).toHaveBeenCalledWith([
       'session-1'
     ])
     expect(dependencies.bookmarkRepository.deleteSessions).toHaveBeenCalledWith(['session-1'])
+    expect(dependencies.researchFilmLifecycle.deleteSessions).toHaveBeenCalledWith(['session-1'])
     expect(dependencies.notificationInbox.invalidateSessions).toHaveBeenCalledWith(['session-1'])
     await handlers.commit(['session-1'])
     await expect(next).resolves.toBe(false)
@@ -233,6 +246,27 @@ describe('Project lifecycle composition', () => {
     mocks.archiveOwner.setMarkReadSessions.mock.calls[0][0](['session-1'])
     expect(d.notificationInbox.markSessionsRead).toHaveBeenCalledWith(['session-1'])
   })
+
+  it.each(['pendingPermissions', 'pendingElicitations'] as const)(
+    'protects a session waiting for %s after the asynchronous job check',
+    async (kind) => {
+      const { dependencies: d, runtime } = fixture()
+      d.getActiveSideChatSessions.mockReturnValue([])
+      const activity = mocks.archive.mock.calls[0][2]
+      const jobCheck = Promise.withResolvers<number>()
+      d.computeJobActivityRef.current.countNonTerminalBySession.mockReturnValueOnce(
+        jobCheck.promise
+      )
+      const result = activity.isSessionBusy('project-1', 'session-1')
+      runtime.getSnapshot.mockReturnValue({
+        promptInFlightSessionIds: [],
+        [kind]: [{ sessionId: 'session-1' }]
+      })
+      jobCheck.resolve(0)
+      await expect(result).resolves.toBe(true)
+      await expect(activity.isSessionBusy('project-1', 'unrelated')).resolves.toBe(false)
+    }
+  )
 
   it('routes relays and file commands to the active owners with their original identities', async () => {
     const { dependencies: d, runtime } = fixture()

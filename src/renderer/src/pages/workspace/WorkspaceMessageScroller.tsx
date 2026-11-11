@@ -14,6 +14,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import {
+  createProjectMarketplacePreviewItem,
   createSessionReviewerPreviewItem,
   createSessionSubagentsPreviewItem,
   usePreviewWorkbenchStore
@@ -30,7 +31,6 @@ import {
 } from '@/stores/search-message-focus-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
-import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowDownIcon, ChevronRight } from 'lucide-react'
 import {
   Fragment,
@@ -93,6 +93,7 @@ import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
+import { createMessageFileReferenceResolver } from './message-working-files'
 import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
@@ -140,6 +141,7 @@ type WorkspaceMessageScrollerProps = {
   credentialPending?: boolean
   visiblePermissionPending?: boolean
   isResumingSession?: boolean
+  sendPreparing?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
   onStartResearch?: (prompt: string) => void
@@ -158,6 +160,7 @@ type WorkspaceMessageScrollerProps = {
   forkSourceContent?: ReactNode
   trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
+  pendingElicitationControl?: { activityId: string; onReveal: () => void }
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
@@ -534,6 +537,7 @@ const WorkspaceMessageScrollerImpl = ({
   credentialPending = false,
   visiblePermissionPending = false,
   isResumingSession = false,
+  sendPreparing = false,
   notebookReference,
   onSendEditedMessage,
   onOpenLibraryMention,
@@ -551,6 +555,7 @@ const WorkspaceMessageScrollerImpl = ({
   forkSourceContent,
   trailingContent,
   pendingElicitations = [],
+  pendingElicitationControl,
   handoffLifecycleSource,
   onRetryHandoff,
   reportPresentationRevealing = false,
@@ -657,7 +662,13 @@ const WorkspaceMessageScrollerImpl = ({
   const currentPresentationScopeId = currentSessionId
     ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
     : undefined
-  const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
+  const { artifactsForMessage } = useWorkspaceArtifactVisibility(activeSession)
+  const [resolveFileReferences] = useState(createMessageFileReferenceResolver)
+  const notebookRoot = notebookReference?.notebookSessionRoot
+  const fileReferencesByMessage = useMemo(
+    () => resolveFileReferences(activeSession, artifactsForMessage, notebookRoot),
+    [resolveFileReferences, activeSession, artifactsForMessage, notebookRoot]
+  )
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main. Announce that this transcript is
   // searchable, and expand a bounded transcript before native find scans the main renderer document.
@@ -895,17 +906,20 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
-  const [pauseState, setPauseState] = useState<{ scopeId: string | undefined; paused: boolean }>({
-    scopeId: undefined,
-    paused: false
+  const [scrollState, setScrollState] = useState({
+    scopeId: undefined as string | undefined,
+    paused: false,
+    away: false
   })
-  const followingPaused = pauseState.scopeId === currentPresentationScopeId && pauseState.paused
-  const handlePauseChange = useCallback(
-    (paused: boolean): void => {
-      setPauseState((current) =>
-        current.scopeId === currentPresentationScopeId && current.paused === paused
+  const followingPaused = scrollState.scopeId === currentPresentationScopeId && scrollState.paused
+  const handleScrollStateChange = useCallback(
+    (paused: boolean, away: boolean): void => {
+      setScrollState((current) =>
+        current.scopeId === currentPresentationScopeId &&
+        current.paused === paused &&
+        current.away === away
           ? current
-          : { scopeId: currentPresentationScopeId, paused }
+          : { scopeId: currentPresentationScopeId, paused, away }
       )
     },
     [currentPresentationScopeId]
@@ -917,6 +931,10 @@ const WorkspaceMessageScrollerImpl = ({
     messageScrollerViewportRef,
     followingPaused
   )
+  // A newly mounted prompt anchor would pull a reader out of history on send.
+  const skipScrollAnchorOnMount =
+    !transcriptWindow.isFollowingEnd ||
+    (scrollState.scopeId === currentPresentationScopeId && scrollState.away)
   const pendingProcessReveal = useRef<{ scopeId: string | undefined; id: string }>(undefined)
   const revealWindowMessage = transcriptWindow.revealMessage
   const revealTranscriptItem = useCallback(
@@ -1281,7 +1299,10 @@ const WorkspaceMessageScrollerImpl = ({
       )
     )
   }, [conversationItems])
-  const agentLoadingPhase = getAgentLoadingPhase(activeSession, { credentialPending })
+  const agentLoadingPhase = getAgentLoadingPhase(activeSession, {
+    credentialPending,
+    sendPreparing
+  })
   const [terminalAnnouncement, setTerminalAnnouncement] = useState<
     TerminalAnnouncement | undefined
   >()
@@ -1554,17 +1575,21 @@ const WorkspaceMessageScrollerImpl = ({
     [currentProjectId, currentSessionId, showMentionNotice]
   )
 
-  // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
+  // Reveal Skill details beside the conversation, warning when the Skill no longer exists.
   const onOpenSkillMention = useCallback(
     async (skillId: string, name: string): Promise<void> => {
+      const projectId = useNavigationStore.getState().activeProjectId
       const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
+      if (useNavigationStore.getState().activeProjectId !== projectId) return
 
       if (!detail) {
         showMentionNotice(`Skill "${name}" is no longer available.`)
         return
       }
 
-      useSettingsStore.getState().openSettingsToSkill(skillId)
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createProjectMarketplacePreviewItem(skillId))
     },
     [showMentionNotice]
   )
@@ -1671,7 +1696,7 @@ const WorkspaceMessageScrollerImpl = ({
         <MessageScrollerFollowIntent
           active={scrollIntentActive}
           onChange={onScrollFollowingChange}
-          onPauseChange={handlePauseChange}
+          onScrollStateChange={handleScrollStateChange}
         />
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
           <AnnotationMessageReveal
@@ -1848,7 +1873,7 @@ const WorkspaceMessageScrollerImpl = ({
                 }
 
                 if (item.type === 'message') {
-                  const artifacts = artifactVisibility.artifactsForMessage(item.message)
+                  const artifacts = artifactsForMessage(item.message)
                   // Jobs pre-assigned to this slot: each job appears in exactly one slot.
                   const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
                   const messageNode = conversationMessageById.get(item.message.id)
@@ -1889,7 +1914,10 @@ const WorkspaceMessageScrollerImpl = ({
                       ? 'pt-2'
                       : undefined,
                     projectId: currentProjectId,
+                    workspaceCwd: activeSession?.cwd,
+                    notebookReference,
                     isPackageSession: Boolean(activeSession?.packageOrigin),
+                    deletedDiscussionSourceId: activeSession?.deletedDiscussionSourceId,
                     onPreviewArtifact,
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
@@ -1923,6 +1951,7 @@ const WorkspaceMessageScrollerImpl = ({
                           }
                         : undefined,
                     artifacts,
+                    fileReferences: fileReferencesByMessage.get(item.message.id) ?? [],
                     reviewerCorrectionState: (() => {
                       const response = responseByPromptMessageId.get(item.message.id)
                       if (response?.status === 'complete') return 'completed'
@@ -1935,7 +1964,8 @@ const WorkspaceMessageScrollerImpl = ({
                       if (runIsActive) return response ? 'responding' : 'waiting'
                       return 'failed'
                     })(),
-                    disableScrollAnchor: windowFindOpen
+                    disableScrollAnchor: windowFindOpen,
+                    skipScrollAnchorOnMount
                   }
                   if (item.message.role === 'agent') {
                     const nextConversationItem = conversationItems[itemIndex + 1]
@@ -2192,6 +2222,11 @@ const WorkspaceMessageScrollerImpl = ({
                             key={elicitationRequest?.requestId ?? item.activity.id}
                             elicitation={item.activity.elicitation}
                             request={elicitationRequest}
+                            onReveal={
+                              pendingElicitationControl?.activityId === item.activity.id
+                                ? pendingElicitationControl.onReveal
+                                : undefined
+                            }
                             variant={
                               item.activity.elicitation.state === 'pending'
                                 ? 'pending-placeholder'
@@ -2265,7 +2300,9 @@ const WorkspaceMessageScrollerImpl = ({
                 <WorkspaceMessageItem
                   message={optimisticMessage}
                   isPackageSession={Boolean(activeSession?.packageOrigin)}
+                  deletedDiscussionSourceId={activeSession?.deletedDiscussionSourceId}
                   disableScrollAnchor={windowFindOpen}
+                  skipScrollAnchorOnMount={skipScrollAnchorOnMount}
                   projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}
                   onPreviewArtifactModal={onPreviewArtifactModal}
@@ -2313,6 +2350,7 @@ const WorkspaceMessageScrollerImpl = ({
             <MessageScrollerButton
               ref={handleScrollToFirstMessageButtonRef}
               direction="start"
+              behavior="instant"
               onClick={() => {
                 const firstMessage = conversationItems.find((item) => item.type === 'message')
                 if (firstMessage?.type === 'message') {
@@ -2351,6 +2389,8 @@ const WorkspaceMessageScrollerImpl = ({
           ) : null}
 
           <MessageScrollerButton
+            aria-label={t('Scroll to end')}
+            behavior="instant"
             onClick={() => {
               // The primitive's click handler measures the end immediately after this callback.
               flushSync(() => {
@@ -2360,7 +2400,19 @@ const WorkspaceMessageScrollerImpl = ({
             }}
             size="icon-lg"
             className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
-          />
+          >
+            {optimisticMessage || agentLoadingPhase !== 'hidden' || presentationRevealing ? (
+              <span aria-hidden="true" className="flex items-center gap-0.5">
+                {[0, 1, 2].map((index) => (
+                  <span
+                    key={index}
+                    className="size-1 rounded-full bg-current motion-safe:animate-[scroll-indicator-wave_1.2s_ease-in-out_infinite]"
+                    style={{ animationDelay: `${index * 120}ms` }}
+                  />
+                ))}
+              </span>
+            ) : undefined}
+          </MessageScrollerButton>
           <div
             data-testid="message-completion-live-region"
             aria-live="polite"
@@ -2469,6 +2521,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.forkSourceContent === next.forkSourceContent &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
+  previous.sendPreparing === next.sendPreparing &&
   previous.onAddAnnotation === next.onAddAnnotation &&
   previous.onRemoveAnnotation === next.onRemoveAnnotation &&
   previous.onUpdateAnnotationNote === next.onUpdateAnnotationNote &&
@@ -2478,6 +2531,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.notebookReference ? resolveProjectId(previous.notebookReference) : undefined) ===
     (next.notebookReference ? resolveProjectId(next.notebookReference) : undefined) &&
   previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
+  previous.notebookReference?.dataRoot === next.notebookReference?.dataRoot &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 
 const WorkspaceMessageScroller = memo((props: WorkspaceMessageScrollerProps) => {

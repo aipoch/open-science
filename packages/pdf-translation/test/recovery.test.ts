@@ -1,6 +1,7 @@
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { expect, it } from 'vitest'
 import { pdfTranslationCheckpointSchema, type PdfTranslationCheckpoint } from '../src/contracts.js'
+import { createHash } from 'node:crypto'
 import {
   reconcilePdfTranslationCheckpoint,
   pdfTranslationSourceIndices,
@@ -8,6 +9,7 @@ import {
   normalizePdfTranslationText,
   normalizePdfTranslationScriptMarkup,
   pdfTranslationHasCommentary,
+  pdfTranslationIntroducesReplacementCharacters,
   pdfTranslationIntroducesMathMarkup,
   pdfTranslationCopiesNeighborFormula,
   pdfTranslationCopiesEnglishProse,
@@ -35,6 +37,92 @@ const saved: PdfTranslationCheckpoint = {
   translations: ['标题', '旧段落', '重复', '不变'],
   translatedSourceIndices: [0, 1, 2, 3]
 }
+
+it.each([false, true])(
+  'restores accepted Unicode targets using their saved mode: %s',
+  (contentFirst) => {
+    const sources = ['The scale is 10⁻².', 'A. B. Author, Journal 8, 24 (2020)'],
+      translations = ['尺度为10⁻²。', 'A. B. Author，Journal 8，24 (2020)'],
+      units = sources.map((source, index) => ({
+        id: `unit-${index}`,
+        source,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.1, y: 0.1 + index * 0.2, width: 0.8, height: 0.1 },
+            items: [{ index, text: source }]
+          }
+        ]
+      })),
+      hash = (text: string): string => createHash('sha256').update(text).digest('hex'),
+      checkpoint: PdfTranslationCheckpoint = {
+        ...saved,
+        contentFirst,
+        sources,
+        translations,
+        translatedSourceIndices: [0, 1],
+        layoutSnapshot: {
+          version: 1,
+          parserVersion: 'pdfjs-paragraph-layout-6',
+          fingerprint: 'fp',
+          pages: [{ width: 100, height: 100 }],
+          units,
+          coverage: {
+            pageCount: 1,
+            textItemCount: 2,
+            includedItemCount: 2,
+            excludedItemCount: 0,
+            pagesWithoutText: [],
+            exclusions: [],
+            warnings: []
+          }
+        },
+        layoutReports: sources.map((text, sourceIndex) => ({
+          sourceIndex,
+          sourceHash: hash(text),
+          translationHash: hash(translations[sourceIndex]),
+          generatedAt: 1
+        }))
+      },
+      before = structuredClone(checkpoint),
+      expected = contentFirst ? translations : ['尺度为10^(-2)。', sources[1]],
+      reconciled = reconcilePdfTranslationCheckpoint(checkpoint, 'fp', sources)!
+    expect(reconciled.translations).toEqual(expected)
+    expect(reconciled.translatedSourceIndices).toEqual([0, 1])
+    expect(reconciled.layoutSnapshot).toBe(checkpoint.layoutSnapshot)
+    expect(reconciled.layoutReports).toEqual(contentFirst ? checkpoint.layoutReports : undefined)
+    if (contentFirst) expect(reconciled).toBe(checkpoint)
+    expect(checkpoint).toEqual(before)
+    expect(reconcilePdfTranslationCheckpoint(reconciled, 'fp', sources)).toBe(reconciled)
+    expect(reconcilePdfTranslationCheckpoint(checkpoint, 'other', sources)).toBeUndefined()
+    expect(
+      reconcilePdfTranslationCheckpoint(checkpoint, 'fp', ['Changed source', sources[1]])
+    ).toBeUndefined()
+  }
+)
+
+it('trims content-first targets while retaining recovery validation', () => {
+  const source = 'The scale is 10⁻².',
+    checkpoint = {
+      ...saved,
+      contentFirst: true,
+      sources: [source],
+      translatedSourceIndices: [0],
+      translations: ['  尺度为10⁻²。\n']
+    },
+    before = structuredClone(checkpoint),
+    restored = reconcilePdfTranslationCheckpoint(checkpoint, 'fp', [source])!
+  expect(restored.translations).toEqual(['尺度为10⁻²。'])
+  expect(reconcilePdfTranslationCheckpoint(restored, 'fp', [source])).toBe(restored)
+  expect(
+    reconcilePdfTranslationCheckpoint(
+      { ...checkpoint, sources: ['Dose was 5 mg.'], translations: ['剂量为5千克。'] },
+      'fp',
+      ['Dose was 5 mg.']
+    )?.translations
+  ).toEqual([])
+  expect(checkpoint).toEqual(before)
+})
 
 it.each([[1, 1], [3, 1], [0, 9], [-1, 1], [1]])(
   'rejects invalid translated source indices %j',
@@ -708,4 +796,191 @@ it('handles long malformed script, footnote and contact tokens without rescannin
       'Chinese'
     )
   ).toBe(false)
+})
+
+it.each([
+  ['Ethics Statement', '伦理声明'],
+  ['Open Science', '开放科学'],
+  ['Open Science Statement', '开放科学声明'],
+  ['Training Details', '训练细节'],
+  ['Additional Results', '补充结果'],
+  ['Implementation Details', '实现细节'],
+  ['Data Availability', '数据可用性'],
+  ['Ethical Considerations', '伦理考量'],
+  ['A.1 Ethics Statement', 'A.1 伦理声明'],
+  ['A.2 Open Science Statement', 'A.2 开放科学声明'],
+  ['3.1 Training Details', '3.1 训练细节'],
+  ['3.2. Ablation Study', '3.2. 消融研究'],
+  ['  ETHICS\t STATEMENT  ', '伦理声明']
+])('translates a complete academic heading and rejects copied English: %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, target, 'Chinese')).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+})
+
+it.each([
+  ['A.1 Ethics Statement', 'A.1 伦理 Statement'],
+  ['Open Science Statement', 'Open Science 声明'],
+  ['Training Details', '训练 Details']
+])('rejects an untranslated word within a known complete heading: %s', (source, target) => {
+  expect(pdfTranslationCopiesEnglishProse(source, target, 'Chinese')).toBe(true)
+})
+
+it.each([
+  ['Open Science Foundation', '开放科学基金会'],
+  ['Ethics Statement Initiative', '伦理声明倡议'],
+  ['Training Details Institute', '训练细节研究所'],
+  ['Additional Results Lab', '补充结果实验室'],
+  ['Implementation Details Association', '实现细节协会'],
+  ['Data Availability Foundation', '数据可用性基金会'],
+  ['Ablation Study Foundation', '消融研究基金会'],
+  ['EthicsStatement', '伦理声明'],
+  ['OpenScience', '开放科学'],
+  ['ABC Ethics Statement', 'ABC 伦理声明'],
+  ['Ada River*', '河某']
+])('keeps unknown identities containing academic heading words: %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
+  expect(pdfTranslationDropsStandaloneProperName(source, source)).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(false)
+})
+
+it.each([
+  ['SUPPLEMENTAL MATERIAL', '补充材料'],
+  ['Supplemental Material', '补充材料'],
+  ['Weighting Scheme', '权重方案'],
+  ['Human Immunodeficiency Virus', '人类免疫缺陷病毒'],
+  ['Non-Hispanic Black', '非西班牙裔黑人'],
+  ['Non-Hispanic White', '非西班牙裔白人'],
+  ['SEX-BASED ANALYSES', '基于性别的分析'],
+  ['COMPETING INTERESTS STATEMENT', '利益冲突声明'],
+  ['CONTRIBUTORSHIP STATEMENT', '作者贡献声明'],
+  ['Structural Metadata', '结构元数据'],
+  ['Technical Metadata', '技术元数据'],
+  ['Declarative Metadata', '声明元数据'],
+  ['Operation Registry', '操作注册表'],
+  ['Schema Registry', '模式注册表'],
+  ['Any Technology', '任意技术'],
+  ['Industry API', '行业 API'],
+  ['INDUSTRY API', '行业 API'],
+  ['ABC Domain', 'ABC 域'],
+  ['ABC Information Record', 'ABC 信息记录']
+])('translates a complete generic diagram role while retaining identifiers: %s', (source, text) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, text)).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+})
+it.each([
+  ['Supplemental Material Foundation', '补充材料基金会'],
+  ['Weighting Scheme Labs', '权重方案实验室'],
+  ['Human Immunodeficiency Virus Foundation', '人类免疫缺陷病毒基金会'],
+  ['Non-Hispanic Blue', '非西班牙裔蓝色'],
+  ['Sex-Based Analyses Lab', '基于性别的分析实验室'],
+  ['Competing Interests Statement Foundation', '利益冲突声明基金会'],
+  ['ABC Weighting Scheme', 'ABC 权重方案'],
+  ['Structural Metadata Institute', '结构元数据研究所'],
+  ['Metadata Registry Foundation', '元数据注册表基金会'],
+  ['Any Technology Labs', '任意技术实验室'],
+  ['Blue Domain', '蓝域'],
+  ['ABC Domain', '字母域'],
+  ['ABC Domain', 'ABC1 域'],
+  ['ABC Domain', '_ABC 域'],
+  ['ABC Information Record', '信息记录']
+])('retains unknown containing names and complete diagram acronyms: %s', (source, text) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, text)).toBe(true)
+})
+it.each([
+  ['Industry API', '行业接口'],
+  ['Industry API', '行业 API2'],
+  ['Industry API', '行业 XAPI'],
+  ['Industry API Labs', '行业 API 实验室'],
+  ['Example API', '示例 API'],
+  ['Val Precision Labs', '验证精确率实验室']
+])(
+  'keeps complete identifiers and unknown names beside ordinary role words: %s',
+  (source, text) => {
+    expect(pdfTranslationDropsStandaloneProperName(source, text)).toBe(true)
+  }
+)
+it.each([
+  ['Industry API', 'IndustryAPI'],
+  ['Industry API', 'Industry API 行业'],
+  ['Industry API', '行业 IndustryAPI']
+])(
+  'rejects copied ordinary label words despite typography or added Chinese: %s',
+  (source, text) => {
+    expect(pdfTranslationCopiesEnglishProse(source, text, 'Chinese')).toBe(true)
+  }
+)
+it.each([
+  [
+    'Prediction accuracy - 87% of cases were correct.',
+    '预测准确率为87%，这些情况判断正确。',
+    false
+  ],
+  [
+    'Detection completeness - 85% of cases were identified.',
+    '检测完整性为85%，这些情况已识别。',
+    false
+  ],
+  ['Prediction accuracy - 87% of cases were correct.', '预测准确率为−87%。', true],
+  ['The change in accuracy - 5% was measured.', '准确率变化为5%。', true],
+  ['The change in prediction accuracy - 5% of cases was measured.', '预测准确率变化为5%。', true],
+  ['Prediction accuracy - 5%', '预测准确率为5%。', true],
+  ['The accuracy was -87%.', '准确率为87%。', true],
+  ['The accuracy was −87%.', '准确率为87%。', true],
+  ['The accuracy change was - 5%.', '准确率变化为5%。', true],
+  ['Prediction accuracy -87% of cases were correct.', '预测准确率为87%。', true],
+  ['Prediction accuracy − 87% of cases were correct.', '预测准确率为87%。', true],
+  ['The change was - 5 units.', '变化为5个单位。', true],
+  ['The expression is x - 5.', '该表达式为x - 5。', false]
+])('distinguishes a metric separator from a unary numeric sign: %s', (source, text, changed) => {
+  expect(pdfTranslationChangesNumericSigns(source, text)).toBe(changed)
+})
+
+it.each([
+  ['The response remains readable.', '回复应保持可�读。', true],
+  ['The damaged label reads �.', '损坏的标签显示为�。', false],
+  ['The damaged label reads �.', '损坏的标签显示为��。', true],
+  ['The response remains readable.', '回复应保持可读。', false]
+])('rejects only newly introduced replacement glyphs: %s', (source, translation, expected) => {
+  expect(pdfTranslationIntroducesReplacementCharacters(source, translation)).toBe(expected)
+})
+
+it('drops a damaged saved response while preserving an original replacement-symbol literal', () => {
+  const checkpoint = {
+    ...saved,
+    sources: ['The response remains readable.', 'The damaged label reads �.'],
+    translations: ['回复应保持可�读。', '损坏的标签显示为�。'],
+    translatedSourceIndices: [0, 1]
+  }
+  const restored = reconcilePdfTranslationCheckpoint(checkpoint, 'fp', checkpoint.sources)
+  expect(restored?.translatedSourceIndices).toEqual([1])
+  expect(restored?.translations).toEqual(['损坏的标签显示为�。'])
+})
+
+it.each([
+  ['ABC Concepts', 'ABC 概念'],
+  ['Overall XYZ', '总体 XYZ'],
+  ['AB Coordinates', 'AB 坐标'],
+  ['Training Setting', '训练设置'],
+  ['Rendered Input', '渲染输入'],
+  ['THE CODE', '代码'],
+  ['Gaussian Map', '高斯映射'],
+  ['ABC2 Concepts', 'ABC2 概念']
+])('localizes the ordinary label %s while retaining its exact identifier', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(false)
+  expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+})
+it.each([
+  ['ABC Concepts', '概念'],
+  ['ABC Concepts', 'abc 概念'],
+  ['ABC Concepts', 'XABC 概念'],
+  ['ABC Concepts', 'ABC1 概念'],
+  ['ABC Concepts', '_ABC 概念'],
+  ['ABC2 Concepts', 'ABC 概念'],
+  ['Jane Doe', '简·多'],
+  ['RenderedImage', '渲染图像'],
+  ['ABC Concepts Institute', 'ABC 概念研究所'],
+  ['Defense Setting Foundation', '防御设置基金会']
+])('preserves complete identifiers and unknown names in %s', (source, target) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
 })

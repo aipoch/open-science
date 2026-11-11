@@ -1,6 +1,7 @@
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
@@ -81,26 +82,36 @@ type RpcResponse = {
 type SkillImportRpcParams = { attachmentUri: string; turnToken: string } | { githubUrl: string }
 
 const createSkillImportMcpServer = (handler: SkillImportMcpHandler): ModelContextProtocolServer => {
-  const server = new ModelContextProtocolServer({
-    name: SKILL_IMPORT_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: SKILL_IMPORT_MCP_SERVER_NAME, version: '1.0.0' })
+  )
 
   server.registerTool(
     REQUEST_SKILL_IMPORT_TOOL_NAME,
     requestSkillImportToolDefinition,
     async ({ attachment_uri, turn_token, github_url }) => {
       if (github_url && (attachment_uri || turn_token)) {
-        throw new Error('Skill import accepts exactly one source.')
+        throw new Error(
+          `SKILL_IMPORT_SOURCE_INVALID: Pass github_url alone, or attachment_uri with turn_token, not both. ${TOOL_ARGUMENT_RECOVERY}`
+        )
       }
       if (!github_url && (!attachment_uri || !turn_token)) {
         throw new Error(
-          'Skill import requires either github_url or both attachment_uri and turn_token.'
+          `SKILL_IMPORT_SOURCE_INVALID: Pass either github_url, or both attachment_uri and turn_token from the eligible attachment. ${TOOL_ARGUMENT_RECOVERY}`
         )
       }
-      const result = github_url
-        ? await handler.requestGitHubImport(github_url)
-        : await handler.requestImport(attachment_uri!, turn_token!)
+      let result: ConversationSkillImportResult
+      try {
+        result = github_url
+          ? await handler.requestGitHubImport(github_url)
+          : await handler.requestImport(attachment_uri!, turn_token!)
+      } catch (error) {
+        // The application checked the exact source; a guessed alternative cannot fix it.
+        throw new Error(
+          `SKILL_IMPORT_FAILED: ${error instanceof Error ? error.message : String(error)} Do not retry with a guessed URI, URL, or token; tell the user what failed.`,
+          { cause: error }
+        )
+      }
       // Keep every affected Skill name, but state identical batch failure guidance only once.
       const groupedErrors = new Map<string, string[]>()
       for (const entry of result.errors ?? []) {

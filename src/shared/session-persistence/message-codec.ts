@@ -31,6 +31,7 @@ import {
   isRecord
 } from './primitives'
 import { sanitizeTurnOutcome } from './turn-outcome'
+import { harnessTurnJournalSchema } from '../harness-turn-contract'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
 
@@ -431,6 +432,15 @@ export const sanitizeMessage = (
   if (hasMatchingModelCallTotals) sanitized.modelCallUsage = modelCallUsage
   if (contextWindowSamples.length > 0) sanitized.contextWindowSamples = contextWindowSamples
   if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true
+  if (role === 'agent') {
+    const journal = harnessTurnJournalSchema.safeParse(message.harnessTurn)
+    if (journal.success) sanitized.harnessTurn = journal.data
+    if (
+      message.harnessTurnInvalid === true ||
+      (message.harnessTurn !== undefined && !journal.success)
+    )
+      sanitized.harnessTurnInvalid = true
+  }
   if (structuredOutputEvidence) sanitized.structuredOutputEvidence = structuredOutputEvidence
   if (
     message.structuredOutputEvidenceInvalid === true ||

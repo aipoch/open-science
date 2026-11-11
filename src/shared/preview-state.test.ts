@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createComputeOutputPreviewKey } from './compute'
 
 import {
   createEmptyPersistedPreviewState,
@@ -188,6 +189,28 @@ describe('normalizePersistedPreviewState item sanitization', () => {
 
     expect(stringTitle.items[0]?.title).toBe(validItem.name)
     expect(badPath.items).toEqual([])
+  })
+
+  it('restores long archived-output locators only within their owning project and Session', () => {
+    const key = createComputeOutputPreviewKey({
+      projectId: 'project-1',
+      sessionId: validItem.sessionId,
+      jobId: 'job-1',
+      path: 'hpc/job-1/featured/' + '研究/'.repeat(80) + 'report.md'
+    })
+    const archived = { ...validItem, source: 'compute-output', id: key, path: key }
+    const value = { items: [{ ...archived, artifactId: 'foreign-artifact' }], activeItemId: key }
+    expect(normalizePersistedPreviewState(value, 'project-1')).toMatchObject({
+      items: [archived],
+      activeItemId: key
+    })
+    expect(normalizePersistedPreviewState(value, 'project-1').items[0]).not.toHaveProperty(
+      'artifactId'
+    )
+    expect(normalizePersistedPreviewState(value, 'other-project').items).toEqual([])
+    expect(
+      normalizePersistedPreviewState({ items: [{ ...archived, sessionId: 'other-session' }] }).items
+    ).toEqual([])
   })
 
   it('drops oversized required strings and omits oversized optional strings', () => {

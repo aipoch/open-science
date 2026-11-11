@@ -19,15 +19,22 @@ import {
   createArtifactMcpEnvironmentFromProcess,
   createArtifactMcpServerConfig,
   toWriteArtifactToolResult,
+  writeArtifactFileInputSchema,
   writeArtifactFileToolDefinition,
   writeArtifactFileForCurrentRun as saveThroughMcp,
   type ArtifactMcpEnvironment
 } from './mcp-server'
 
 import { createArtifactSaveFixture } from './save-test-fixtures'
+import type { ArtifactWriteSource } from '../../shared/artifacts'
 
 let activeFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined
 let storageRoot: string | undefined
+const inlineSource = (content: string): ArtifactWriteSource => ({
+  kind: 'inline',
+  content,
+  encoding: 'utf8'
+})
 
 const createStorageRoot = async (): Promise<string> => {
   activeFixture = await createArtifactSaveFixture()
@@ -101,9 +108,30 @@ afterEach(async () => {
 })
 
 describe('artifact MCP server', () => {
+  it('explains how to republish existing files after authorization expiry and subsequent retries', async () => {
+    let now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    await createStorageRoot()
+    const fixture = activeFixture!
+    const env = await fixture.environment()
+    now += 2 * 60 * 60 * 1_000 + 1
+    for (const reason of ['Artifact RPC capability expired.', 'Invalid notebook RPC token.']) {
+      await expect(
+        saveThroughMcp(fixture.compatibilityRepository, env, {
+          filename: 'report.md',
+          source: inlineSource('# Report')
+        })
+      ).rejects.toThrow(
+        'Artifact publication authorization has expired or is no longer active. Start a new conversation turn and retry publishing the existing file, preserving any producerRunId. Do not regenerate the file or drop provenance to retry. ' +
+          reason
+      )
+    }
+    expect(await fixture.client.artifactVersion.count()).toBe(0)
+  })
+
   it('directs small text artifacts to inline publication without a prior disk write', () => {
     expect(writeArtifactFileToolDefinition.description).toContain(
-      'For small generated text such as Markdown or plain text, pass inline content directly'
+      '{kind:"inline", content} for small generated text such as Markdown or plain text'
     )
     expect(writeArtifactFileToolDefinition.description).not.toContain(
       'The file must ALREADY EXIST on disk before you call this.'
@@ -132,15 +160,24 @@ describe('artifact MCP server', () => {
     ).toMatchObject({ filename: 'plot.png', producerRunId: 'notebook-run-1' })
   })
 
-  it('keeps legacy content and encoding input working for the current run', async () => {
+  it('rejects the removed top-level content input with the source shape to use', async () => {
+    const legacy = writeArtifactFileInputSchema.safeParse({
+      filename: 'plot.svg',
+      content: '<svg />',
+      encoding: 'utf8'
+    })
+    expect(legacy.error?.issues.map(({ path, message }) => [path, message])).toEqual([
+      [['content'], expect.stringContaining('source: {kind:"inline", content, encoding?}')],
+      [['encoding'], expect.stringContaining('source: {kind:"inline", content, encoding?}')]
+    ])
+
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     const environment = await createEnvironment(root)
     const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
       filename: 'plot.svg',
       mimeType: 'image/svg+xml',
-      content: '<svg />',
-      encoding: 'utf8'
+      source: inlineSource('<svg />')
     })
 
     expect(artifact).toMatchObject({
@@ -418,13 +455,12 @@ describe('artifact MCP server', () => {
     await expect(
       writeArtifactFileForCurrentRun(repository, environment, {
         filename: 'plot.svg',
-        content: '<svg />',
-        encoding: 'utf8'
+        source: inlineSource('<svg />')
       })
-    ).rejects.toThrow(/active artifact run/)
+    ).rejects.toThrow(/ARTIFACT_RUN_UNAVAILABLE: No active Artifact run/)
   })
 
-  it('rejects a bare filename with no source/content outside a notebook turn', async () => {
+  it('rejects a bare filename with no source outside a notebook turn', async () => {
     // Without a notebook data dir in the handoff there is no base to resolve a bare filename against,
     // so the convenience default must NOT silently fall back to the MCP process cwd — keep the clear
     // contract error (an artifacts-enabled, notebook-disabled session hits this path).
@@ -434,7 +470,7 @@ describe('artifact MCP server', () => {
 
     await expect(
       writeArtifactFileForCurrentRun(repository, environment, { filename: 'plot.svg' })
-    ).rejects.toThrow(/requires source or content/i)
+    ).rejects.toThrow(/ARTIFACT_SOURCE_REQUIRED: write_artifact_file requires source/)
   })
 
   it('builds an ACP stdio MCP server config for the artifact tool process', () => {

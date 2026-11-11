@@ -187,6 +187,29 @@ describe('LiteraturePdfImporter', () => {
     )
     expect(inspect).not.toHaveBeenCalled()
     expect(parse).not.toHaveBeenCalled()
+  })
+
+  it('cleans unattached content and staging when catalog attachment fails', async () => {
+    const { importer, options, path } = await setup()
+    vi.mocked(options.catalog.attachContent).mockRejectedValueOnce(new Error('Attachment failed'))
+    await expect(
+      importer.import({ itemId: item.id, attachment: attachment(path) })
+    ).rejects.toThrow('Attachment failed')
+    expect(options.content.sweep).toHaveBeenCalledWith({
+      contentIds: ['blob-1'],
+      createdBefore: expect.any(Date)
+    })
+    expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
+  })
+
+  it('retains attached content when only the receipt reread fails and still releases staging', async () => {
+    const { importer, options, path } = await setup()
+    vi.mocked(options.catalog.get).mockResolvedValueOnce(undefined)
+    await expect(
+      importer.import({ itemId: item.id, attachment: attachment(path) })
+    ).rejects.toThrow('unavailable after importing')
+    expect(options.catalog.attachContent).toHaveBeenCalled()
+    expect(options.content.sweep).not.toHaveBeenCalled()
     expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
   })
 

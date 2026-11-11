@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/shared/harness-turn-contract.ts",
+    "src/shared/harness-turn-contract.test.ts",
     "src/shared/acp-usage-contract.ts",
     "src/shared/conversation-command-contract.ts",
     "src/shared/delegated-caller-source.ts",
@@ -20,6 +22,7 @@
     "src/shared/side-chat.ts"
   ],
   "interfacePaths": [
+    "src/shared/harness-turn-contract.ts",
     "src/shared/delegated-caller-source.ts",
     "src/shared/permission-grants.ts",
     "src/shared/preview-state.ts",
@@ -29,9 +32,13 @@
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {
-    "owner": ["src/shared/preview-state.test.ts"],
+    "owner": ["src/shared/harness-turn-contract.test.ts", "src/shared/preview-state.test.ts"],
     "contract": [],
     "consumer": [
+      "src/main/notebook/harness-tools.integration.test.ts",
+      "src/renderer/src/stores/session-store-compaction-gate.test.ts",
+      "src/main/settings/harness-turn-journal.test.ts",
+      "scripts/agent-harness-smoke.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
       "src/main/notebook/windows-runtime-components.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
@@ -47,7 +54,7 @@
       "src/shared/local-fs.test.ts",
       "src/shared/locale.test.ts",
       "src/shared/managed-file-versions.test.ts",
-      "src/shared/media-overflow.test.ts",
+      "src/shared/failure/input.test.ts",
       "src/shared/memory.test.ts",
       "src/shared/node-install-hint.test.ts",
       "src/shared/notebook-env.typecheck.test.ts",
@@ -67,7 +74,7 @@
       "src/shared/remote-fs.test.ts",
       "src/shared/renderer-contract.test.ts",
       "src/shared/renderer-contracts/definition.test.ts",
-      "src/shared/run-error-classification.test.ts",
+      "src/shared/failure/legacy-recognition.test.ts",
       "src/shared/search-text.test.ts",
       "src/shared/session-configuration.test.ts",
       "src/shared/session-persistence.architecture.test.ts",

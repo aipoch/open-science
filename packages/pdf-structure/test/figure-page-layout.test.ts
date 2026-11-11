@@ -12,7 +12,8 @@ const {
   associateAdjacentFigure,
   associateUnnumberedFigure,
   resolveFigureCaption,
-  associateGraphicalAbstract
+  associateGraphicalAbstract,
+  recoverCaptionedPanelGrid
 } = await import(pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href)
 const { excludeRepeatedMarginContent } = await import(
   pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
@@ -137,6 +138,24 @@ it('stops a lower figure from claiming graphics above an intervening figure capt
   expect(figures).toHaveLength(2)
   expect(figures[1].rect[1]).toBeGreaterThan(210)
   expect(figures[1].rect[3]).toBeLessThan(500)
+})
+
+it('drops a nested reason-only caption from a resolved side-by-side figure', () => {
+  const captions = [
+    { page: 1, lines: ['Figure 1. Outer caption'], rect: [100, 400, 500, 418] },
+    { page: 1, lines: ['Figure 1. Inner prose'], rect: [260, 300, 340, 318] }
+  ]
+  const source = {
+    ...page,
+    graphicsBounds: [
+      graphic('image', [0.15, 0.15, 0.4, 0.5]),
+      graphic('image', [0.6, 0.15, 0.85, 0.5])
+    ]
+  }
+  const figures = associateFigures(source, captions)
+  expect(figures).toHaveLength(1)
+  expect(figures[0]).toMatchObject({ caption: captions[0], rect: expect.any(Array) })
+  expect(figures[0].reason).toBeUndefined()
 })
 
 it('drops an unresolved duplicate when an adjacent page resolved the caption', () => {
@@ -885,6 +904,33 @@ it('keeps all raster panels across a shared native axis-title line below a table
   expect(figure.rect[1]).toBeGreaterThan(257)
   expect(figure.rect[3]).toBeGreaterThan(602)
   expect(figure.rect[3]).toBeLessThan(figure.caption.rect[1])
+})
+
+it('uses a nearby panel heading only when a table caption does not own the upper crop', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. (a) Upper panel (b) Lower panel.'],
+    rect: [100, 700, 500, 720]
+  }
+  const upper = [100, 300, 500, 500]
+  const figure = { caption, rect: [100, 520, 500, 650] }
+  const base = {
+    ...page,
+    lines: [{ text: '(a) Upper panel', x: 120, y: 280, width: 120, height: 10 }],
+    graphicsBounds: [
+      graphic(
+        'path',
+        upper.map((value, index) => value / (index % 2 ? 800 : 600))
+      )
+    ]
+  }
+  expect(recoverCaptionedPanelGrid(base, figure, [caption], [upper])).toBeDefined()
+  const tableCaption = {
+    page: 1,
+    lines: ['Table 2. Separate data.'],
+    rect: [110, 40, 300, 55]
+  }
+  expect(recoverCaptionedPanelGrid(base, figure, [caption, tableCaption], [upper])).toBeUndefined()
 })
 
 it('recovers a native panel grid when a table detector crop covers the plate', () => {

@@ -59,6 +59,27 @@ const diagnosticMessage = (
   translate: NativeTranslator
 ): string => {
   switch (diagnostic.code) {
+    case 'secret-timeout':
+      return translate(
+        'System credential authorization timed out. Retry startup and respond to the system authorization prompt.'
+      )
+    case 'secret-start-failed':
+      return translate(
+        'The system credential helper could not complete its operation. Check the diagnostic code and retry startup.'
+      )
+    case 'secret-exit-failed':
+    case 'secret-signalled':
+      return translate(
+        'The system credential helper failed. The exact authorization or key status is unknown.'
+      )
+    case 'secret-empty-response':
+    case 'secret-empty-plaintext':
+    case 'secret-write-failed':
+      return translate(
+        'The system credential helper returned no data. Security software may be blocking it. Allow Open-Science and retry startup.'
+      )
+    case 'secret-dpapi-failed':
+      return translate('Windows could not decrypt the existing credential key.')
     case 'inventory-failed':
       return inventoryMessage(diagnostic, translate)
     case 'profile-read-failed':
@@ -97,28 +118,48 @@ export const credentialRecoveryMessage = (
   const i18n = createNativeI18n(resolveLocale('system', systemLanguages))
   const translate = i18n.t.bind(i18n)
   const inventoryFailure = error.reason === 'ciphertext-inventory-unavailable'
-  const title = inventoryFailure
-    ? translate('Startup data inspection failed')
-    : translate('Credential storage needs recovery')
-  const description = inventoryFailure
-    ? translate(
-        'Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.'
-      )
-    : error.reason === 'unsupported-ciphertext-version'
+  const secretFailure = error.reason === 'native-secret-operation-failed'
+  // Windows DPAPI has no authorization prompt, so these failures get no authorization advice.
+  const promptlessSecretFailure =
+    secretFailure &&
+    [
+      'secret-empty-response',
+      'secret-empty-plaintext',
+      'secret-write-failed',
+      'secret-dpapi-failed'
+    ].includes(error.diagnostic?.code ?? '')
+  const title = secretFailure
+    ? translate('System credential access failed')
+    : inventoryFailure
+      ? translate('Startup data inspection failed')
+      : translate('Credential storage needs recovery')
+  const description = secretFailure
+    ? promptlessSecretFailure
       ? translate(
-          'This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.'
+          'Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.'
         )
-      : error.reason.startsWith('linux-')
+      : translate(
+          'Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.'
+        )
+    : inventoryFailure
+      ? translate(
+          'Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.'
+        )
+      : error.reason === 'unsupported-ciphertext-version'
         ? translate(
-            'Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.'
+            'This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.'
           )
-        : error.reason.includes('unsupported')
+        : error.reason.startsWith('linux-')
           ? translate(
-              'Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.'
+              'Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.'
             )
-          : translate(
-              'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
-            )
+          : error.reason.includes('unsupported')
+            ? translate(
+                'Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.'
+              )
+            : translate(
+                'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
+              )
   const code = error.probe?.reason ? `${error.reason} / ${error.probe.reason}` : error.reason
   const diagnostic = error.diagnostic
   const details = diagnostic
@@ -128,6 +169,9 @@ export const credentialRecoveryMessage = (
         ...(diagnostic.systemCode !== undefined ? [`SYSTEM_ERROR: ${diagnostic.systemCode}`] : []),
         ...('osStatus' in diagnostic && diagnostic.osStatus !== undefined
           ? [`WINDOWS_ERROR: ${diagnostic.osStatus}`]
+          : []),
+        ...('signal' in diagnostic && diagnostic.signal
+          ? [`HELPER_SIGNAL: ${diagnostic.signal}`]
           : []),
         ...('exitCode' in diagnostic && diagnostic.exitCode !== undefined
           ? [`HELPER_EXIT: ${diagnostic.exitCode}`]

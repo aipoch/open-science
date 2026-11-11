@@ -1,3 +1,4 @@
+import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
 import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
@@ -24,6 +25,7 @@ import {
   type ScanRepoRequest,
   type InstallClaudeRequest,
   type InstallCodeBuddyRequest,
+  type InstallPiRequest,
   type InstallCodexRequest,
   type InstallOpencodeRequest,
   type ClaudeInstallEvent,
@@ -58,6 +60,7 @@ import {
   type SetShowNotificationContentRequest,
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
+  type SetPromptOptimizationModelRequest,
   type SetReviewerModelRequest,
   type SetSessionDetailsModelRequest,
   type SetSubagentModelRequest,
@@ -158,6 +161,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:install-codebuddy', (_event, request: InstallCodeBuddyRequest) =>
     snapshotCommits.projectAfter(service.installCodeBuddy(request, broadcastInstallEvent))
   )
+  ipcMainHandle('settings:install-pi', (_event, request: InstallPiRequest) =>
+    snapshotCommits.projectAfter(service.installPi(request, broadcastInstallEvent))
+  )
   ipcMainHandle('settings:install-codex', (_event, request: InstallCodexRequest) =>
     snapshotCommits.projectAfter(service.installCodex(request, broadcastInstallEvent))
   )
@@ -182,6 +188,9 @@ const registerSettingsIpcHandlers = ({
     snapshotCommits.currentSnapshotAfter(
       workflows.runtime.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
     )
+  )
+  ipcMainHandle('settings:uninstall-pi', () =>
+    snapshotCommits.currentSnapshotAfter(workflows.runtime.uninstallRuntime('uninstallPi', 'pi'))
   )
 
   ipcMainHandle('settings:uninstall-codex', () =>
@@ -226,6 +235,13 @@ const registerSettingsIpcHandlers = ({
     const configuration = readReviewerModel(request)
     return snapshotCommits.currentSnapshotAfter(service.setReviewerModel(configuration))
   })
+  ipcMainHandle(
+    'settings:set-prompt-optimization-model',
+    async (_event, request: SetPromptOptimizationModelRequest) =>
+      snapshotCommits.currentSnapshotAfter(
+        service.setPromptOptimizationModel(readSubagentModel(request))
+      )
+  )
   ipcMainHandle(
     'settings:set-session-details-model',
     async (_event, request: SetSessionDetailsModelRequest) => {
@@ -360,6 +376,10 @@ const registerSettingsIpcHandlers = ({
     (_event, request: PrivateDestinationRequest) =>
       service.reviewNotebookPrivateDestination(request)
   )
+  ipcMainHandle('settings:get-source-link-metadata', (_event, url: string) =>
+    readSourceLinkMetadata(url)
+  )
+  ipcMainHandle('settings:get-source-link-image', (_event, url: string) => readSourceLinkImage(url))
   ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
   ipcMainHandle('settings:get-wsl2-bash-preview-status', () => service.getWsl2BashPreviewStatus())
   ipcMainHandle('settings:get-wsl-setup-status', () => service.getWslSetupStatus())

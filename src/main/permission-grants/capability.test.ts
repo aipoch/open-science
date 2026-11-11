@@ -237,6 +237,16 @@ describe('capabilityFromLegacyCategory', () => {
     }
   )
 
+  it.each(['list_pdf_annotations', 'locate_pdf_annotation_target', 'create_pdf_annotation'])(
+    'admits the registered PDF annotation method %s to remembered permission scopes',
+    (method) => {
+      expect(capabilityFromLegacyCategory(`mcp:open-science-literature/${method}`)).toEqual({
+        kind: 'mcp_tool',
+        key: `mcp:open-science-literature/${method}`
+      })
+    }
+  )
+
   it.each([
     ['CreateAgent', 'customize:agent_create'],
     ['agent_update', 'customize:agent_update'],

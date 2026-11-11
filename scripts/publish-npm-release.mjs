@@ -10,10 +10,15 @@ import { runtimeTargets, runtimePackageName } from '../packages/open-science/run
 
 const registry = 'https://registry.npmjs.org'
 
-// npm registry visibility can lag minutes behind a successful publish; the run
-// must outlast that lag, and concurrent reruns must converge instead of E403-failing.
-export const VISIBILITY_ATTEMPTS = 30
+// npm registry visibility can lag tens of minutes behind a successful publish. Keep polling
+// within a bounded budget that fits the publish job timeout; whatever is still invisible
+// afterwards is reported as pending (the staged bytes commit eventually) instead of failing
+// the run, and concurrent reruns must converge instead of E403/E409-failing.
+export const VISIBILITY_ATTEMPTS = 120
 export const VISIBILITY_INTERVAL_MS = 10_000
+// Shared by every package in a batch (platforms poll concurrently, the entry sequentially), so
+// a fresh batch always finishes polling before the workflow job timeout kills the run.
+export const VISIBILITY_BUDGET_MS = 40 * 60_000
 
 // A successful stable Release is the authority for historical and future npm publications.
 // The workflow revision and the package source revision are deliberately separate.
@@ -164,7 +169,17 @@ async function registryPackage(name) {
   return response.json()
 }
 
-export async function waitForPublished(pkg, lookup, delay = setTimeout) {
+const visibilityError = (name, version) =>
+  Object.assign(new Error(`Published version is not visible in the registry: ${name}@${version}`), {
+    code: 'ERR_NPM_VISIBILITY'
+  })
+
+export async function waitForPublished(
+  pkg,
+  lookup,
+  delay = setTimeout,
+  deadlineAt = Date.now() + VISIBILITY_BUDGET_MS
+) {
   const { name, version } = pkg.manifest
   for (let attempt = 0; attempt < VISIBILITY_ATTEMPTS; attempt++) {
     const published = (await lookup(name))?.versions?.[version]
@@ -176,11 +191,11 @@ export async function waitForPublished(pkg, lookup, delay = setTimeout) {
       )
       return
     }
-    if (attempt < VISIBILITY_ATTEMPTS - 1) await delay(VISIBILITY_INTERVAL_MS)
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) throw visibilityError(name, version)
+    if (attempt < VISIBILITY_ATTEMPTS - 1) await delay(Math.min(VISIBILITY_INTERVAL_MS, remaining))
   }
-  throw new Error(
-    `Published version is not visible in the registry after ${VISIBILITY_ATTEMPTS} checks: ${name}@${version}`
-  )
+  throw visibilityError(name, version)
 }
 
 export function publishTarball(pkg, npmCli = process.env.npm_execpath) {
@@ -236,6 +251,7 @@ export async function publishPackages(
   // Finish the complete batch preflight before starting any immutable registry write.
   const plan = await publishPlan(packages, lookup)
   const entry = plan.at(-1)
+  const deadlineAt = Date.now() + VISIBILITY_BUDGET_MS
   const publishMissing = async (pkg) => {
     if (pkg.published) {
       console.log(`Already published with matching integrity: ${pkg.manifest.name}`)
@@ -245,10 +261,10 @@ export async function publishPackages(
       await publish(pkg)
     } catch (error) {
       // Between preflight and publish, a concurrent rerun can land the same immutable
-      // version; npm then rejects with E403 while the registry still lags. Poll the
-      // same bounded visibility window before treating the race as fatal.
+      // version; npm then rejects with E403 while the registry still lags. Poll within the
+      // remaining visibility budget before treating the race as fatal.
       try {
-        await waitForPublished(pkg, lookup, delay)
+        await waitForPublished(pkg, lookup, delay, deadlineAt)
       } catch {
         throw error
       }
@@ -259,10 +275,20 @@ export async function publishPackages(
     plan.slice(0, -1).map(async (pkg) => {
       try {
         await publishMissing(pkg)
-        await waitForPublished(pkg, lookup, delay)
       } catch (error) {
         throw new Error(`${pkg.manifest.name}: ${error.message}`, { cause: error })
       }
+      // Upload succeeded; only visibility lags. That is recoverable registry lag, not a
+      // publication failure, so report it as pending instead of failing the batch. Anything
+      // else (integrity mismatch, lookup failure) stays fatal.
+      try {
+        await waitForPublished(pkg, lookup, delay, deadlineAt)
+      } catch (error) {
+        if (error?.code !== 'ERR_NPM_VISIBILITY')
+          throw new Error(`${pkg.manifest.name}: ${error.message}`, { cause: error })
+        return pkg.manifest.name
+      }
+      return null
     })
   )
   const errors = results
@@ -273,8 +299,17 @@ export async function publishPackages(
       errors,
       `Platform publication failed; entry package blocked:\n${errors.map((error) => error.message).join('\n')}`
     )
+  const pending = results
+    .map((result) => (result.status === 'fulfilled' ? result.value : null))
+    .filter(Boolean)
   await publishMissing(entry)
-  await waitForPublished(entry, lookup, delay)
+  try {
+    await waitForPublished(entry, lookup, delay, deadlineAt)
+  } catch (error) {
+    if (error?.code !== 'ERR_NPM_VISIBILITY') throw error
+    pending.push(entry.manifest.name)
+  }
+  return pending
 }
 
 async function main() {
@@ -307,8 +342,13 @@ async function main() {
     assert.equal(process.env.GITHUB_EVENT_NAME, 'push')
     assert.equal(process.env.GITHUB_REF, `refs/tags/v${version}`)
   }
-  if (publish) await publishPackages(packages)
-  else if (mode === '--verify-release') await publishPlan(packages, registryPackage)
+  if (publish) {
+    const pending = await publishPackages(packages)
+    if (pending.length)
+      console.log(
+        `::warning::Staged but not yet visible in the registry (commit pending; re-run this workflow to verify): ${pending.join(', ')}`
+      )
+  } else if (mode === '--verify-release') await publishPlan(packages, registryPackage)
   // Build-time checks are local: registry availability must not block a GitHub Release.
   console.log(`Verified ${packages.length} npm packages at ${version} from ${sourceSha}`)
 }

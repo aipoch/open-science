@@ -304,7 +304,7 @@ export const projectElicitationRevision = (
     activeRun: undefined,
     agentStatus: undefined,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     interrupted: undefined,
     filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
     updatedAt: now
@@ -412,6 +412,7 @@ export const copySnapshotMessage = (
   annotations: message.annotations?.map((annotation) => structuredClone(annotation)),
   turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
   modelCallUsage: message.modelCallUsage?.map((call) => ({ ...call })),
+  harnessTurn: message.harnessTurn ? structuredClone(message.harnessTurn) : undefined,
   sortIndex
 })
 

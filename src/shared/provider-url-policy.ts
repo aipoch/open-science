@@ -39,3 +39,12 @@ export const getCustomProviderBaseUrlError = (
 
   return undefined
 }
+
+export const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
+  if (!value) return false
+  try {
+    return new URL(value).hostname.toLowerCase() === 'api.openai.com'
+  } catch {
+    return false
+  }
+}

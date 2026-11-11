@@ -28,7 +28,7 @@ import {
 } from './desktop-startup-recovery'
 import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../shared/runtime-startup'
 import { projectDiagnosticError } from './session-diagnostics/detail'
-import { DesktopBackendStartupError } from './backend-startup'
+import { DesktopBackendStartupError, type BackendStartupStatus } from './backend-startup'
 import { recoverDesktopBackendStartup } from './backend-startup-recovery'
 import { createDesktopRecoveryEventBuffer } from './desktop-recovery-event-buffer'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
@@ -90,8 +90,10 @@ import {
   prepareCredentialValidation
 } from './credential-identity/bootstrap'
 import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
+import { recoveryCredentialInventoryOptions } from './credential-identity/recovery-inventory'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
+import { resolveDataRoot } from './storage-root'
 import {
   startOrAttachDesktopBackend,
   desktopBackendPaths,
@@ -100,6 +102,7 @@ import {
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
+import { createElectronSessionDiagnosticsFallback } from './session-diagnostics/electron-fallback'
 import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
@@ -510,7 +513,13 @@ async function startDesktop(): Promise<void> {
     process.platform === 'win32' ? { light: trayLightWindows, dark: trayDarkWindows } : undefined
 
   startupDiagnostics?.phase('load-native-shell')
-  const { createMainWindow, configureMainWindow, isMainWindow } = await import('./windows')
+  const {
+    createMainWindow,
+    configureMainWindow,
+    isMainWindow,
+    isConnectMobileWindow,
+    openConnectMobileWindow
+  } = await import('./windows')
   const { applyInterfaceScaleShortcut, installWindowShortcuts } = await import('./window-shortcuts')
   const { registerWindowZoomIpcHandler, registerWindowCloseIpcHandler } =
     await import('./window-ipc')
@@ -531,7 +540,15 @@ async function startDesktop(): Promise<void> {
     notifyRendererSessionPersistenceFlushAborted,
     rendererSessionPersistenceFlushBlocksShutdown
   } = await import('./session-persistence/renderer-flush')
-  const { installSystemLifecycleAdapters } = await import('./system-lifecycle-adapters')
+  const { installSystemLifecycleAdapters, installResourceActivityRelay } =
+    await import('./system-lifecycle-adapters')
+  const resourceActivityRelay = installResourceActivityRelay({
+    app,
+    powerMonitor,
+    hasFocusedWindow: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    send: (state) => client?.resourceActivity?.(state)
+  })
+  app.once('will-quit', () => resourceActivityRelay.dispose())
   if (process.platform === 'darwin')
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
@@ -556,6 +573,7 @@ async function startDesktop(): Promise<void> {
   registerWindowsTitleBarIpc({ isMainWindow })
   registerWindowCloseIpcHandler()
   registerWindowFindIpcHandlers()
+  ipcMainHandle('window:open-connect-mobile', () => openConnectMobileWindow())
   startupDiagnostics?.phase('native-shell-configured')
   let requestSystemShutdown = (): void => app.quit()
   const system = installSystemLifecycleAdapters({
@@ -572,9 +590,20 @@ async function startDesktop(): Promise<void> {
     const window = BrowserWindow.fromWebContents(sender)
     return Boolean(window && isMainWindow(window))
   }
+  const isApplicationCommandWindow = (sender: WebContents): boolean => {
+    const window = BrowserWindow.fromWebContents(sender)
+    return Boolean(window && (isMainWindow(window) || isConnectMobileWindow(window)))
+  }
   let getMainWindow = (): BrowserWindow | undefined => undefined
   let isMainWindowHidden = (): boolean => false
   let relay: ReturnType<typeof installDesktopRuntimeElectronAdapter> | undefined
+  let recoveryDiagnosticsFallback:
+    ReturnType<typeof createElectronSessionDiagnosticsFallback> | undefined
+  const recoveryDiagnosticChannels = new Set([
+    'sessions:inspect-diagnostics',
+    'sessions:export-diagnostics',
+    'sessions:cancel-diagnostics'
+  ])
   let plannedRelaunch = false
   let relaunchConfirmation: Promise<void> | undefined
   let updateCommitted = false
@@ -584,6 +613,9 @@ async function startDesktop(): Promise<void> {
     if (lease) shutdownLease = lease
   }
   app.once('will-quit', () => shutdownLease?.release())
+  app.once('will-quit', () => {
+    void recoveryDiagnosticsFallback?.close()
+  })
   let preview: Awaited<ReturnType<typeof createDesktopPreviewProxy>> | undefined
   let tray: ReturnType<typeof createAppTray>
   let icons: ReturnType<typeof createAppIconController> | undefined = undefined
@@ -732,7 +764,33 @@ async function startDesktop(): Promise<void> {
         },
         release: (id) => attached.release(id)
       },
-      isApplicationWindow
+      isApplicationCommandWindow,
+      (_document, channel, args) => {
+        if (
+          !recovery ||
+          recovery.state().phase === 'connected' ||
+          !recoveryDiagnosticChannels.has(channel)
+        )
+          return undefined
+        recoveryDiagnosticsFallback ??= createElectronSessionDiagnosticsFallback({
+          configRoot,
+          dataRoot: client?.runtimeInfo().startupOptions.dataRoot ?? resolveDataRoot(),
+          chooseDestination: async (defaultName) => {
+            const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+            return result.canceled ? undefined : result.filePath
+          }
+        })
+        switch (channel) {
+          case 'sessions:inspect-diagnostics':
+            return recoveryDiagnosticsFallback.inspect(args[0] as never)
+          case 'sessions:export-diagnostics':
+            return recoveryDiagnosticsFallback.export(args[0] as never)
+          case 'sessions:cancel-diagnostics':
+            return recoveryDiagnosticsFallback.cancel(args[0] as never)
+          default:
+            return undefined
+        }
+      }
     )
   }
   const publishStartup = (next: DatabaseStartupState): void => {
@@ -1142,10 +1200,23 @@ async function startDesktop(): Promise<void> {
           recovery?.disconnect(attached)
       }
     })
+    attached.resourceActivity?.(resourceActivityRelay.state())
     return attached
   }
   let repairAuthorization: Awaited<ReturnType<typeof readServiceLifetime>>
   let repairStartupOptions: RuntimeStartupOptions | undefined
+  const reportRecoveryStartup = (status: BackendStartupStatus & { elapsedMs: number }): void => {
+    // Persist progress even when a recovery deadline cancels the launch before it throws.
+    // Inventory diagnostics belong to the transient recovery surface, not the log sink.
+    bootstrapLog.info('backend recovery startup status', {
+      requestId: status.attemptId,
+      startupStage: status.stage,
+      status: status.kind,
+      errorCategory: status.code,
+      credentialReason: status.reason,
+      elapsedMs: status.elapsedMs
+    })
+  }
   const repairBackend = async (signal: AbortSignal): Promise<void> => {
     let config =
       client?.runtimeInfo().startupOptions ?? preservedStartupOptions ?? repairStartupOptions
@@ -1167,12 +1238,17 @@ async function startDesktop(): Promise<void> {
     else {
       if (config) validatePreservedConfiguration(config)
       launch = await startOrAttachDesktopBackend({
+        onStatus: reportRecoveryStartup,
         configRoot,
         profilePath,
         version: app.getVersion(),
         ...initialBackendPaths,
         packaged: app.isPackaged,
         signal,
+        ...recoveryCredentialInventoryOptions(
+          startupCredentialCiphertexts,
+          startupCredentialInventoryCapturedAt
+        ),
         beforeLaunch: async () => {
           signal.throwIfAborted()
           assertDesktopRuntimeRestartAllowed(
@@ -1250,12 +1326,17 @@ async function startDesktop(): Promise<void> {
         await verifyRestartIntent()
         const config = client!.runtimeInfo().startupOptions
         launch = await startOrAttachDesktopBackend({
+          onStatus: reportRecoveryStartup,
           configRoot,
           profilePath,
           version: app.getVersion(),
           ...initialBackendPaths,
           packaged: app.isPackaged,
           signal,
+          ...recoveryCredentialInventoryOptions(
+            startupCredentialCiphertexts,
+            startupCredentialInventoryCapturedAt
+          ),
           beforeLaunch: verifyRestartIntent,
           timeoutMs: 10_000,
           args: [
@@ -1499,6 +1580,16 @@ async function startDesktop(): Promise<void> {
     client: () => client!,
     currentVersion: app.getVersion(),
     allowedProcessIds: allowedInstallationProcessIds,
+    ...(process.platform === 'win32'
+      ? {
+          ownedRuntimeProcessIds: async (runtime): Promise<number[]> => {
+            const pids = await runtime.invokeHost('desktop:update-owned-processes')
+            if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+              throw new Error('The service returned invalid process ownership evidence.')
+            return pids as number[]
+          }
+        }
+      : {}),
     preparedDebGate: () => preparedMacInstallation?.debGate,
     verifyInstallerReady: async () => {
       const gate = preparedMacInstallation?.debGate

@@ -24,6 +24,8 @@ export function resolveNestedScriptGroups(
   label: string
   sourceIndices: number[]
   baselineIndex?: number
+  indexedProduct?: true
+  nativeScriptGroup?: true
   scriptOnly?: true
 }>
 export function resolveScientificScriptSpans(

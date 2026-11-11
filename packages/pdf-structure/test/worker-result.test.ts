@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, symlink, unlink, truncate } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, rmdir, symlink, unlink, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolve } from './paths'
@@ -75,6 +75,110 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it('retains an unresolved scanned table caption in diagnostics without inventing cells', async () => {
+    await save({
+      ...raw(),
+      figures: [],
+      tables: [
+        {
+          id: 'p1-unresolved-1',
+          page: 1,
+          caption: { text: 'TABLE 1 Unbounded scan', rect: [50, 60, 250, 80] },
+          sourceViewport: { width: 600, height: 800 },
+          grid: [],
+          cells: [],
+          unassigned: [],
+          issues: ['no-source-cell-grid']
+        }
+      ]
+    })
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements).toEqual([])
+    expect(result.issues).toContainEqual({
+      code: 'unresolved-region',
+      detail: 'TABLE 1 Unbounded scan'
+    })
+  })
+  it('retains a captioned math table as review-only without inventing cells', async () => {
+    const table = rawTable()
+    Object.assign(table, {
+      caption: {
+        text: 'Table 3: Incremental posterior covariance updates.',
+        rect: [60, 80, 540, 120]
+      },
+      grid: [],
+      cells: [],
+      unassigned: [],
+      issues: ['no-source-cell-grid']
+    })
+    await save({ ...raw(), figures: [], tables: [table] })
+    const result = await readWorkerResult(root, identity, new Map()),
+      element = result.elements[0]
+    expect(element).toMatchObject({
+      kind: 'table',
+      caption: { text: 'Table 3: Incremental posterior covariance updates.' },
+      issues: [{ code: 'no-source-cell-grid', detail: 'no-source-cell-grid' }]
+    })
+    expect('table' in element).toBe(false)
+    expect(result.issues).toContainEqual({
+      code: 'candidate-results',
+      detail:
+        'Candidate extraction can miss figures, tables, captions or cell content. Verify against the PDF.'
+    })
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+  })
+  it.each(['bounded', 'legacy', 'outside-viewport'] as const)(
+    'decodes independent table-part crops without deriving them from cells: %s',
+    async (mode) => {
+      const parts = [0, 1].map((index) => {
+        const data = rawTable(),
+          scale = index + 1
+        data.sourceViewport = { width: 600 * scale, height: 800 * scale }
+        for (const cell of data.cells) {
+          cell.sourceRects = cell.sourceRects.map((rect) =>
+            rect.map((value, n) => (value + (n % 2 ? index * 240 : 0)) * scale)
+          )
+          for (const source of cell.sourceItems) source.index += index * 100
+        }
+        return {
+          ...data,
+          title: `${index + 1}. Group`,
+          ...(mode === 'legacy'
+            ? {}
+            : {
+                cropRects: [
+                  [60, 80 + index * 240, 300, 240 + index * 160].map((value) => value * scale)
+                ]
+              })
+        }
+      })
+      if (mode === 'outside-viewport') parts[0].cropRects![0][0] = -1
+      const value = raw(),
+        candidate = (value.figures as Record<string, unknown>[])[0]
+      const payload = { ...value, figures: [], tables: [{ ...candidate, parts }] }
+      await writeFile(join(root, 'structure.json'), serializeWorkerResult(payload))
+      if (mode === 'outside-viewport') {
+        await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('part boundary')
+        return
+      }
+      const result = await readWorkerResult(root, identity, new Map())
+      expect(result.elements[0].tableParts!.map((part) => part.regions)).toEqual(
+        mode === 'legacy'
+          ? [undefined, undefined]
+          : [
+              [{ page: 1, x: 0.1, y: 0.1, width: 0.4, height: expect.closeTo(0.2) }],
+              [{ page: 1, x: 0.1, y: 0.4, width: 0.4, height: expect.closeTo(0.1) }]
+            ]
+      )
+      expect(
+        result.elements[0].tableParts!.map((part) =>
+          part.table.cells.flatMap((cell) => cell.sourceItems ?? [])
+        )
+      ).toEqual(parts.map((part) => part.cells.flatMap((cell) => cell.sourceItems)))
+      expect(parsePdfStructureResult(result, identity)).toEqual(result)
+    }
+  )
+
   it('retains bounded unreliable mathematical origins on their own table', async () => {
     const table = rawTable(),
       origins = structuredClone(table.cells[0].sourceItems)
@@ -234,6 +338,43 @@ describe('worker result boundary', () => {
   )
 
   it.each(['nodes', 'text'])(
+    'retains complete small origin bundles beside an oversized %s bundle',
+    async (budget) => {
+      const value = raw()
+      const figure = (value.figures as Record<string, unknown>[])[0]
+      const small = {
+        ...figure,
+        sourceItems: [{ pageNumber: 1, index: 10000, text: 'Native label' }]
+      }
+      const large = {
+        ...figure,
+        id: 'large-algorithm',
+        thumbnail: 'thumbnails/large-algorithm.png',
+        nativeBody: {
+          kind: 'algorithm',
+          sourceItems: Array.from({ length: budget === 'nodes' ? 8192 : 12 }, (_, index) => ({
+            pageNumber: 1,
+            index,
+            text: budget === 'text' ? 'x'.repeat(190000) : 'x'
+          }))
+        }
+      }
+      value.figures = [small]
+      value.algorithms = [large]
+      await writeFile(join(root, 'thumbnails/large-algorithm.png'), png)
+      await save(value)
+      const result = await readWorkerResult(root, identity, new Map())
+      expect(result.elements.find((element) => element.kind === 'figure')?.sourceItems).toEqual(
+        small.sourceItems
+      )
+      expect(
+        result.elements.find((element) => element.kind === 'algorithm')?.nativeBody
+      ).toBeUndefined()
+      expect(parsePdfStructureResult(result, identity)).toEqual(result)
+    }
+  )
+
+  it.each(['nodes', 'text'])(
     'omits the complete optional body proof when its %s budget is exceeded',
     async (budget) => {
       const value = raw(),
@@ -256,6 +397,137 @@ describe('worker result boundary', () => {
       expect(result.elements[0].nativeBody).toBeUndefined()
     }
   )
+
+  it.each(['wrong-page', 'duplicate', 'negative-index', 'oversized-string'])(
+    'rejects invalid evidence before omitting an oversized bundle: %s',
+    async (change) => {
+      const value = raw()
+      const sourceItems = Array.from({ length: 8192 }, (_, index) => ({
+        pageNumber: 1,
+        index,
+        text: 'x'
+      }))
+      if (change === 'wrong-page') sourceItems[0].pageNumber = 2
+      if (change === 'duplicate') sourceItems[1].index = 0
+      if (change === 'negative-index') sourceItems[0].index = -1
+      if (change === 'oversized-string') sourceItems[0].text = 'x'.repeat(262145)
+      value.algorithms = [
+        {
+          ...(value.figures as Record<string, unknown>[])[0],
+          nativeBody: { kind: 'algorithm', sourceItems }
+        }
+      ]
+      value.figures = []
+      await save(value)
+      await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
+    }
+  )
+
+  it('omits all parts and mathematical annotations of one oversized element together', async () => {
+    const parts = [0, 1].map((index) => {
+      const table = rawTable()
+      for (const cell of table.cells)
+        for (const source of cell.sourceItems) source.index += index * 10000
+      return { ...table, title: `Part ${index + 1}` }
+    })
+    parts[0].cells[0].sourceItems = Array.from({ length: 8192 }, (_, index) => ({
+      pageNumber: 1,
+      index: index + 10,
+      text: 'x'
+    }))
+    const first = parts[1].cells[0].sourceItems[0]
+    Object.assign(parts[1], {
+      unreliableMathSourceItems: [first],
+      issues: ['native-table-structure-ambiguous']
+    })
+    const value = raw()
+    value.figures = []
+    value.tables = [
+      {
+        ...(raw().figures as Record<string, unknown>[])[0],
+        parts
+      }
+    ]
+    await save(value)
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].tableParts).toHaveLength(2)
+    for (const part of result.elements[0].tableParts!) {
+      expect(part.table.unreliableMathSourceItems).toBeUndefined()
+      expect(part.table.cells.map((cell) => cell.text)).toEqual(['=', '10'])
+      expect(part.table.cells.every((cell) => cell.sourceItems === undefined)).toBe(true)
+    }
+  })
+
+  it('budgets complete source segments after raw-to-public geometry conversion', async () => {
+    const table = rawTable()
+    const first = { ...table.cells[0], sourceItems: undefined }
+    Object.assign(first, {
+      sourceSegments: Array.from({ length: 1900 }, (_, index) => ({
+        pageNumber: 1,
+        index: index + 10,
+        text: 'x',
+        start: 0,
+        end: 1,
+        rect: [60 + index / 1000, 100, 80 + index / 1000, 120]
+      })),
+      sourceRects: Array.from({ length: 1900 }, (_, index) => [
+        60 + index / 1000,
+        100,
+        80 + index / 1000,
+        120
+      ])
+    })
+    const value = raw()
+    const figure = (value.figures as Record<string, unknown>[])[0]
+    value.figures = [
+      { ...figure, sourceItems: [{ pageNumber: 1, index: 10000, text: 'Native label' }] }
+    ]
+    value.tables = [
+      {
+        ...table,
+        id: 'segment-table',
+        thumbnail: 'thumbnails/segment-table.png',
+        cells: [first, table.cells[1]]
+      }
+    ]
+    expect(() => checkPdfStructureDecodingBudget(value)).not.toThrow()
+    await writeFile(join(root, 'thumbnails/segment-table.png'), png)
+    await save(value)
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].sourceItems).toHaveLength(1)
+    const cells = result.elements[1].table!.cells
+    expect(cells[0].sourceSegments).toBeUndefined()
+    expect(cells[1].sourceItems).toBeUndefined()
+    expect(cells.map((cell) => cell.text)).toEqual(['=', '10'])
+  })
+
+  it('retains a small element source bundle when worker serialization exceeds its byte budget', () => {
+    const value = raw()
+    const figure = (value.figures as Record<string, unknown>[])[0]
+    Object.assign(figure, {
+      sourceItems: [{ pageNumber: 1, index: 10000, text: 'Native label' }]
+    })
+    value.algorithms = [
+      {
+        ...figure,
+        id: 'large-algorithm',
+        sourceItems: undefined,
+        nativeBody: {
+          kind: 'algorithm',
+          sourceItems: Array.from({ length: 16 }, (_, index) => ({
+            pageNumber: 1,
+            index,
+            text: '中'.repeat(200000)
+          }))
+        }
+      }
+    ]
+    const serialized = serializeWorkerResult(value)
+    const result = JSON.parse(serialized)
+    expect(result.figures[0].sourceItems).toEqual(figure.sourceItems)
+    expect(result.algorithms[0].nativeBody).toBeUndefined()
+    expect(Buffer.byteLength(serialized)).toBeLessThanOrEqual(8 * 1024 ** 2)
+  })
 
   it('omits the complete optional body proof when its serialized UTF-8 budget is exceeded', async () => {
     const value = raw()
@@ -591,11 +863,30 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
   })
-  it.each(['algorithm', 'graphical-table', 'open-rule-table'])(
+  it.each([
+    'table',
+    'algorithm',
+    'graphical-table',
+    'open-rule-table',
+    'native-ordinary-three-line'
+  ])(
     'accounts for and cleans %s thumbnails while retaining unexpected scratch files',
     async (kind) => {
       const originalBytes = await inspectScratch(root)
-      await writeFile(join(root, `thumbnails/p1-${kind}-0.png`), png)
+      let id = `p1-${kind}-0`
+      if (kind === 'native-ordinary-three-line') {
+        const { ordinaryExample } = await import(
+            pathToFileURL(resolve('test/ordinary-three-line-fixture.mjs')).href
+          ),
+          { recoverOrdinaryThreeLineTables } = await import(
+            pathToFileURL(resolve('resources/literature-pdf-native-ordinary-three-line.mjs')).href
+          ),
+          example = ordinaryExample(),
+          [proof] = recoverOrdinaryThreeLineTables(example.page, example.tokens, example.context)
+        expect(proof).toBeDefined()
+        id = proof.table.id
+      }
+      await writeFile(join(root, `thumbnails/${id}.png`), png)
       expect(await inspectScratch(root)).toBe(originalBytes + png.length)
       await writeFile(join(root, 'thumbnails/unowned.png'), png)
       await expect(inspectScratch(root)).rejects.toThrow('Unexpected PDF scratch')
@@ -894,3 +1185,34 @@ describe('worker result boundary', () => {
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('decoding budget')
   })
 })
+
+it.each(['bottom-strip', 'native-marker'])(
+  'accounts for and cleans only the existing table PNG %s transaction',
+  async (suffix) => {
+    const originalBytes = await inspectScratch(root),
+      pending = `page-1-table-0.png.${suffix}.pending`,
+      file = join(root, 'thumbnails', pending)
+    await writeFile(file, png)
+    expect(await inspectScratch(root, false)).toBe(originalBytes + png.length)
+    for (const name of [
+      `p1-figure-0.png.${suffix}.pending`,
+      `p1-algorithm-0.png.${suffix}.pending`,
+      `p1-table-0.png.${suffix}.pending`,
+      `page-1-table-0.png.other.pending`,
+      'page-1-table-0.png.pending',
+      pending + '.extra'
+    ]) {
+      const unexpected = join(root, 'thumbnails', name)
+      await writeFile(unexpected, png)
+      await expect(inspectScratch(root, false)).rejects.toThrow('Unexpected PDF scratch')
+      await unlink(unexpected)
+    }
+    await unlink(file)
+    await mkdir(file)
+    await expect(inspectScratch(root, false)).rejects.toThrow('Unexpected PDF scratch')
+    await rmdir(file)
+    await writeFile(file, png)
+    expect(await inspectScratch(root, true)).toBe(originalBytes + png.length)
+    expect(await inspectScratch(root, false)).toBe(0)
+  }
+)

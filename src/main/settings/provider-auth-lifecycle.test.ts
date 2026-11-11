@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 }))
 
 const codexFiles = vi.hoisted(() => ({
+  openSession: vi.fn(),
   ensureAuthHome: vi.fn(async () => undefined),
   importAuthentication: vi.fn(async () => undefined)
 }))
@@ -35,6 +36,7 @@ vi.mock('./codex-auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./codex-auth')>()
   return {
     ...actual,
+    openCodexAuthSession: codexFiles.openSession,
     ensureCodexAuthHome: codexFiles.ensureAuthHome,
     importCodexAuthentication: codexFiles.importAuthentication
   }
@@ -218,6 +220,138 @@ describe('ProviderAuthLifecycleOwner', () => {
 
     await expect(defaultAuthOwner.isProviderKeyUsable(stored)).resolves.toBe(true)
     expect(runtimeResolver).not.toHaveBeenCalled()
+  })
+
+  it('uses the paired native path prepared for a built-in Agent login', async () => {
+    await repository.setAgentFramework('open-science-agent')
+    await storeCodexProvider('isolated')
+    const payload = Buffer.from(
+      JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })
+    ).toString('base64url')
+    const token = `header.${payload}.signature`
+    const authenticate = vi.fn(async () =>
+      storeAppCodexAuth(
+        JSON.stringify({
+          auth_mode: 'chatgpt',
+          tokens: {
+            access_token: token,
+            id_token: token,
+            refresh_token: 'refresh',
+            account_id: 'account-one'
+          }
+        })
+      )
+    )
+    let signedIn = false
+    codexFiles.openSession.mockResolvedValueOnce({
+      initialize: async () => ({ authMethods: [{ id: 'chat-gpt' }] }),
+      status: async () => ({ type: signedIn ? 'chat-gpt' : 'unauthenticated' }),
+      authenticateChatGpt: async () => {
+        await authenticate()
+        signedIn = true
+      },
+      close: vi.fn(),
+      logout: vi.fn()
+    })
+    const runtimeResolver = vi.fn(async () => {
+      await repository.setCodexInfo({
+        resolvedPath: '/prepared/adapter',
+        nativePath: '/prepared/native'
+      })
+      return '/prepared/adapter'
+    })
+    const projection = new ProviderRuntimeProjectionOwner()
+    const defaultOwner = new ProviderAuthLifecycleOwner({
+      repository,
+      storageRoot: dir,
+      userClaudeDir: join(dir, 'user-claude'),
+      userCodexDir: join(dir, 'user-codex'),
+      resolveCodexExecutable: runtimeResolver,
+      resolveCodexProxyEnvironment: async () => undefined,
+      runClaudeSubscriptionProbe,
+      resolveProvider: (provider, model) => projection.resolveProvider(provider, model),
+      claudeIsolatedAuth,
+      claudeSharedAuth
+    })
+    await expect(defaultOwner.loginIsolatedCodex()).resolves.toMatchObject({
+      ok: true,
+      applied: true
+    })
+    expect(authenticate).toHaveBeenCalledOnce()
+    expect(codexFiles.openSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapterPath: '/prepared/adapter',
+        nativePath: '/prepared/native'
+      })
+    )
+    await defaultOwner.dispose()
+  })
+
+  it.each(['login', 'quiesce'] as const)(
+    'prevents credential refresh while %s owns authentication',
+    async (operation) => {
+      await repository.setAgentFramework('open-science-agent')
+      const stored = await storeCodexProvider('isolated')
+      const token = `header.${Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url')}.signature`
+      await storeAppCodexAuth(
+        JSON.stringify({
+          auth_mode: 'chatgpt',
+          last_refresh: new Date().toISOString(),
+          tokens: {
+            id_token: token,
+            access_token: token,
+            refresh_token: 'refresh',
+            account_id: 'account-one'
+          }
+        })
+      )
+      const login = deferred<CodexAuthStatus>()
+      vi.mocked(codexAuth.loginIsolated).mockReturnValueOnce(login.promise)
+      const held = operation === 'quiesce' ? owner.quiesceCodexHarnessCredentials() : undefined
+      const pending = operation === 'login' ? owner.loginIsolatedCodex() : undefined
+      if (pending) await vi.waitFor(() => expect(codexAuth.loginIsolated).toHaveBeenCalledOnce())
+      const settings = await repository.getSettings()
+      const projection = new ProviderRuntimeProjectionOwner()
+      await expect(
+        owner.validateProviderAuth(projection.resolveProvider(stored), settings, stored)
+      ).resolves.toMatchObject({
+        ok: false,
+        applied: false,
+        message: 'The Codex subscription connection is no longer available.'
+      })
+      expect(resolveCodexExecutable).not.toHaveBeenCalled()
+      expect(await owner.isProviderKeyUsable(stored, 'open-science-agent')).toBe(false)
+      held?.release()
+      login.resolve({ mode: 'isolated', supported: true, authenticated: false })
+      await pending
+    }
+  )
+
+  it('reports failed token refresh as authentication failure rather than compatibility', async () => {
+    await repository.setAgentFramework('open-science-agent')
+    const stored = await storeCodexProvider('isolated')
+    const token = `header.${Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url')}.signature`
+    await storeAppCodexAuth(
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        last_refresh: new Date().toISOString(),
+        tokens: {
+          id_token: token,
+          access_token: token,
+          refresh_token: 'revoked',
+          account_id: 'account-one'
+        }
+      })
+    )
+    vi.mocked(resolveCodexExecutable).mockRejectedValueOnce(new Error('Refresh runtime failed'))
+    const settings = await repository.getSettings()
+    const projection = new ProviderRuntimeProjectionOwner()
+    await expect(
+      owner.validateProviderAuth(projection.resolveProvider(stored), settings, stored)
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'auth'
+    })
   })
 
   it('rejects a missing app-owned Codex credential', async () => {

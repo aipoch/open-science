@@ -1094,6 +1094,8 @@ describe('production delegated-work composition', () => {
         finish(request, attempt, false)
       )
       const runtime = {
+        withPromptAdmission: async (work: () => Promise<unknown>) => work(),
+        requestIdleRelease: () => undefined,
         getState: () => snapshot,
         getSnapshot: () => snapshot,
         getActivePromptSessions: () => [],
@@ -1237,6 +1239,7 @@ describe('production delegated-work composition', () => {
   )
 
   it('runs same-turn collect and staggered settlement wakes through ACP admission and terminal callbacks', async () => {
+    const realSetTimeout = setTimeout
     vi.useFakeTimers()
     root = await mkdtemp(join(tmpdir(), 'delegated-production-acp-settlement-chain-'))
     const productionDispatch: {
@@ -1249,6 +1252,19 @@ describe('production delegated-work composition', () => {
       undefined,
       { settlementContinuations: { dispatch: (request) => productionDispatch.current!(request) } }
     )
+    // Reproduce filesystem startup exceeding expect.poll's default 1 s on hosted Windows.
+    const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+    vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => realSetTimeout(resolve, 1200))
+      return startAttemptRuntime(...args)
+    })
+    const executionStarted = Promise.withResolvers<void>()
+    const run = harness.execution.run.bind(harness.execution)
+    vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+      const handle = run(...args)
+      executionStarted.resolve()
+      return handle
+    })
     const snapshot: AcpStateSnapshot = {
       status: 'connected',
       cwd: '/workspace',
@@ -1319,6 +1335,8 @@ describe('production delegated-work composition', () => {
       return runTurn(request, promptAttemptId, completion)
     })
     const runtime = {
+      withPromptAdmission: async (work: () => Promise<unknown>) => work(),
+      requestIdleRelease: () => undefined,
       getSnapshot: () => snapshot,
       sendPrompt,
       sendAppContinuation
@@ -1353,8 +1371,10 @@ describe('production delegated-work composition', () => {
       text: 'Coordinate and collect',
       provenanceContext: { promptMessageId: harness.caller.originMessageId }
     })
-    await expect.poll(() => sameTurnHandle).toBeDefined()
-    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    // Wait for execution readiness within the test budget, not a 1 s filesystem deadline.
+    await executionStarted.promise
+    expect(sameTurnHandle).toBeDefined()
+    expect(harness.execution.controls()).toHaveLength(1)
     harness.execution.control(sameTurnHandle!.attemptId).accept()
     harness.execution.control(sameTurnHandle!.attemptId).complete('same-turn model result')
     await vi.advanceTimersByTimeAsync(100)
@@ -1845,15 +1865,17 @@ describe('production delegated-work composition', () => {
         )
       ).rejects.toMatchObject({ code: 'admission_rejection' })
       expect(harness.execution.reservationCounts()).toEqual([])
+      // Verify naming after collection without a separate startup polling deadline.
+      harness.execution.plan({ status: 'completed', response: 'first complete' })
+      harness.execution.plan({ status: 'completed', response: 'second complete' })
       const first = await harness.composition.host.delegate(
         { ...harness.caller, toolInvocationId: 'call-codex-named' },
         { task, name: 'Source audit' },
         { wait: false }
       )
-      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
-      harness.execution.controls()[0].accept()
-      harness.execution.controls()[0].complete('first complete')
-      await harness.composition.host.collect(harness.caller, [first.children[0].frameId])
+      await expect(
+        harness.composition.host.collect(harness.caller, [first.children[0].frameId])
+      ).resolves.toMatchObject([{ status: 'completed', response: 'first complete' }])
       const reopened = harness.reopen()
       compositions.push(reopened)
       const second = await reopened.host.delegate(
@@ -1861,10 +1883,9 @@ describe('production delegated-work composition', () => {
         { task, name: 'Source audit 2' },
         { wait: false }
       )
-      await expect.poll(() => harness.execution.controls()).toHaveLength(2)
-      harness.execution.controls()[1].accept()
-      harness.execution.controls()[1].complete('second complete')
-      await reopened.host.collect(harness.caller, [second.children[0].frameId])
+      await expect(
+        reopened.host.collect(harness.caller, [second.children[0].frameId])
+      ).resolves.toMatchObject([{ status: 'completed', response: 'second complete' }])
 
       expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
       expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })

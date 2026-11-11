@@ -18,13 +18,14 @@ import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
-
 import {
   derivedConsumersPath,
   loadDerivedConsumers,
   withDerivedConsumers,
   usesReviewedBoundary
 } from './module-graph/policy.mjs'
+
+const GIT_OUTPUT_MAX_BUFFER = 128 * 1024 * 1024
 
 // When the committed index is absent (runtime-generated), generate it lazily so preflight
 // (git-archived code without node_modules) never imports the typescript dependency.
@@ -39,7 +40,8 @@ async function loadOrGenerateDerivedConsumers(
     revision &&
     execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
       cwd,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      maxBuffer: GIT_OUTPUT_MAX_BUFFER
     }).trim() === derivedConsumersPath
   if (!revision || committedAtRevision) {
     const loaded = loadDerivedConsumers()
@@ -363,6 +365,68 @@ function isPortableVitestFile(path) {
   )
 }
 
+function hasC8FileIgnore(path, cwd = process.cwd()) {
+  try {
+    return /^\s*\/\*\s*c8 ignore file\s*\*\//u.test(readFileSync(resolve(cwd, path), 'utf8'))
+  } catch {
+    return false
+  }
+}
+
+// PR and queue full plans defer the complete portable suite to scheduled acceptance. They still
+// run the declared closure of each owned change, so a full marker or a global input cannot remove
+// its owner, contract and consumer tests before merge. Deleted paths and paths that only resolve
+// to full validation remain covered by the deferred suite. The floor uses declared evidence only:
+// graph candidates are collected for every changed path, including those the floor excludes, and
+// trusted preflight has no graph, so both sides must select the same files.
+const declaredFloorGraph = Object.freeze({
+  status: 'not-used',
+  reason: 'full-plan floor uses declared module evidence only',
+  testFiles: []
+})
+
+export function createFullPlanFloor(changes, manifest = defaultManifest, registrationModules = []) {
+  const graph = declaredFloorGraph
+  const modules = Object.fromEntries(
+    Object.entries(manifest.modules).map(([moduleId, module]) => {
+      const floorModule = { ...module }
+      delete floorModule.fullTestReason
+      return [moduleId, floorModule]
+    })
+  )
+  const floorManifest = { ...manifest, modules }
+  // Each change joins the floor only when it has its own bounded selection, so one unowned or
+  // global path cannot remove the floor of the owned changes beside it. A rename joins only when
+  // both its source and destination are bounded, and selects both owners. Deleted, type-changed,
+  // unmerged and unknown changes add no floor.
+  const bounded = (path) =>
+    createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      graph,
+      floorManifest,
+      registrationModules
+    ).mode === 'selective'
+  const floorChanges = changes.flatMap((change) => {
+    if (['added', 'modified', 'copied'].includes(change.status)) {
+      return bounded(change.path) ? [{ path: change.path, status: 'modified' }] : []
+    }
+    if (change.status === 'renamed' && bounded(change.path) && bounded(change.previousPath)) {
+      return [change.previousPath, change.path].map((path) => ({ path, status: 'modified' }))
+    }
+    return []
+  })
+  const plan = createAffectedTestPlan(floorChanges, graph, floorManifest, registrationModules)
+  if (plan.mode !== 'selective' || plan.testFiles.length === 0) return undefined
+  return {
+    ...plan,
+    floorPaths: sorted(floorChanges.map(({ path }) => path)),
+    reasonChains: sorted([
+      ...plan.reasonChains,
+      'full plan -> declared module test floor; complete portable suite deferred to scheduled acceptance'
+    ])
+  }
+}
+
 export function collectCodeGraphTests(
   paths,
   { cwd = process.cwd(), execute = execFileSync, pathExists = existsSync } = {}
@@ -401,8 +465,15 @@ export function collectCodeGraphTests(
 }
 
 function changesFromGit(base, head, { cwd = process.cwd(), execute = execFileSync } = {}) {
-  const mergeBase = execute('git', ['merge-base', base, head], { cwd, encoding: 'utf8' }).trim()
-  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], { cwd })
+  const mergeBase = execute('git', ['merge-base', base, head], {
+    cwd,
+    encoding: 'utf8',
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  }).trim()
+  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], {
+    cwd,
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  })
   return parseNameStatus(diff.toString('utf8'))
 }
 
@@ -523,7 +594,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (arguments_.includes('--coverage-changed') && !coverageChanged) {
     throw new Error('--coverage-changed requires a Git revision')
   }
-  const { plan, changes } = await resolveAffectedTestPlan(base, head, { tier, ...options })
+  const { plan, changes } = await resolveAffectedTestPlan(base, head, {
+    tier,
+    fullFloor: arguments_.includes('--full-floor'),
+    ...options
+  })
   if (arguments_.includes('--require-selective') && plan.mode !== 'selective') {
     throw new Error(
       `Selective test plan required; refusing full execution.\n${formatModuleTestPlan(plan)}`
@@ -548,13 +623,19 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     : []
   const coveragePaths = sorted(
     coverageChanges
-      .filter(({ path, status }) => status !== 'deleted' && /^src\/.*\.tsx?$/.test(path))
+      .filter(
+        ({ path, status }) =>
+          status !== 'deleted' &&
+          /^src\/.*\.tsx?$/.test(path) &&
+          !hasC8FileIgnore(path, options.cwd ?? process.cwd())
+      )
       .map(({ path }) => path)
   )
+  const collectChangedCoverage = coverageChanged && coveragePaths.length > 0
   return executeModuleTestPlan(plan, {
     ...options,
-    environment,
-    testArguments: coverageChanged
+    environment: collectChangedCoverage ? environment : options.environment,
+    testArguments: collectChangedCoverage
       ? [
           '--coverage',
           ...(coveragePaths.length > 0 ? coveragePaths : ['__no_changed_sources__']).map(
@@ -568,7 +649,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
 
 // The plan `affected` executes for a revision range, including CodeGraph and host/package
 // refinement. Shadow reports compare against this, not the unrefined registered plan.
-export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...options } = {}) {
+export async function resolveAffectedTestPlan(
+  base,
+  head,
+  { tier = 'queue', fullFloor = false, ...options } = {}
+) {
   const derivedConsumers =
     options.derivedConsumers ??
     (await loadOrGenerateDerivedConsumers(
@@ -587,6 +672,16 @@ export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...o
   )
   const graph = collectCodeGraphTests(paths, options)
   let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules, registrationOnly)
+  // Trusted preflight selected the floor for a full plan. Run it as declared, without narrowing
+  // refinements, which evaluate the complete change set the floor excludes. Changed-source
+  // coverage is limited to the floor's changes; the deferred suite covers the remainder.
+  if (fullFloor && plan.mode === 'full') {
+    const floor = createFullPlanFloor(changes, manifest, registrationModules)
+    if (floor) {
+      const floorChanges = changes.filter(({ path }) => floor.floorPaths.includes(path))
+      return { plan: floor, changes: floorChanges, manifest, registrationModules, registrationOnly }
+    }
+  }
   // Documentation and trusted additive records do not turn a source boundary into a
   // mixed product change. Keep their plan evidence and capability selection intact.
   const sourceChanges = changes.filter((change) => {

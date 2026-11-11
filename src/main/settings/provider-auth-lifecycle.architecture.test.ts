@@ -90,6 +90,7 @@ describe('Provider authentication lifecycle ownership', () => {
 
   it('locks the owner interface and compatibility exports', () => {
     expect(publicOperations()).toEqual([
+      'bindCodexHarnessConnection',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',
       'cancelCodexLogin',
@@ -106,6 +107,7 @@ describe('Provider authentication lifecycle ownership', () => {
       'logoutIsolatedClaude',
       'logoutIsolatedCodex',
       'prepareCodexProviderUpsert',
+      'quiesceCodexHarnessCredentials',
       'serializeAccountMutation',
       'validateProviderAuth'
     ])

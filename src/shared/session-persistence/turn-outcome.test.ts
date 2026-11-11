@@ -47,11 +47,17 @@ const fixture = (): PersistedChatSession =>
   })
 const outcomes: TurnOutcome[] = [
   { kind: 'completed', settledAt: 2 },
-  { kind: 'failed', settledAt: 2, error: 'Bad input', errorReportable: false },
+  {
+    kind: 'failed',
+    settledAt: 2,
+    error: 'Bad input',
+    failure: { category: 'service' as const, diagnostics: {} }
+  },
   {
     kind: 'failed',
     settledAt: 2,
     error: 'Publication failed',
+    failure: { category: 'internal', diagnostics: {} },
     recovery: 'retry-artifact-publication'
   },
   { kind: 'cancelled', settledAt: 2, recovery: 'resume' },
@@ -60,9 +66,15 @@ const outcomes: TurnOutcome[] = [
     settledAt: 2,
     cause: 'app-restart',
     recovery: 'resume',
-    errorReportable: false
+    failure: { category: 'service' as const, diagnostics: {} }
   },
-  { kind: 'interrupted', settledAt: 2, cause: 'connection-lost', recovery: 'resume' }
+  {
+    kind: 'interrupted',
+    settledAt: 2,
+    cause: 'connection-lost',
+    recovery: 'resume',
+    failure: { category: 'session', diagnostics: {} }
+  }
 ]
 
 describe('Turn Outcome persistence and legacy reads', () => {
@@ -97,7 +109,7 @@ describe('Turn Outcome persistence and legacy reads', () => {
       settledAt: 1,
       cause: 'app-restart',
       recovery: 'resume',
-      errorReportable: true
+      errorReportable: 'invalid'
     },
     { kind: 'interrupted', settledAt: 1, cause: 'terminal-commit-failed', recovery: 'resume' }
   ])('rejects malformed or live-only JSON %#', (value) =>
@@ -109,7 +121,11 @@ describe('Turn Outcome persistence and legacy reads', () => {
     (kind) => {
       const session = fixture()
       if (kind === 'failed')
-        Object.assign(session, { status: 'error', error: 'Failure', errorReportable: true })
+        Object.assign(session, {
+          status: 'error',
+          error: 'Failure',
+          failure: { category: 'internal' as const, diagnostics: {} }
+        })
       if (kind === 'cancelled' || kind === 'interrupted')
         session.resumeRecovery = {
           kind: 'resume-required',

@@ -16,6 +16,7 @@ export const runtimeUpdateState = (status: UpdateStatus): string => {
   }
   if (r?.installation === 'incomplete') return 'S14'
   if (r && ['pending', 'unknown'].includes(r.installation)) return 'S13'
+  if (reason === 'installation-busy' && r?.detail === 'foreign-process') return 'S36'
   if (r?.runtime === 'stopped-clean' && r.canRetryInstall) return 'S10'
   if (reason === 'runtime-stop-unclean' || r?.runtime === 'stopped-unclean') return 'S11'
   if (reason === 'runtime-stop-timeout') return 'S09'

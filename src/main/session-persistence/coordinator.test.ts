@@ -895,7 +895,7 @@ describe('SessionPersistenceCoordinator', () => {
       createSession({
         revision: 3,
         status: 'running',
-        errorReportable: false,
+        failure: { category: 'service' as const, diagnostics: {} },
         agentFrameworkId: 'codex',
         activeRun: { promptMessageId: prompt.id, startedAt: 1 },
         runtimeContext: { version: 1, revision: 2 },
@@ -986,7 +986,7 @@ describe('SessionPersistenceCoordinator', () => {
       activeRun: undefined,
       taskRunCommitId: 'task-run'
     })
-    expect(durable.errorReportable).toBeUndefined()
+    expect(durable.failure).toBeUndefined()
     expect(durable.runtimeContext).toEqual({ version: 1, revision: 2 })
     expect(durable.messages.map(({ id }) => id)).toEqual([
       prompt.id,
@@ -1163,7 +1163,7 @@ describe('SessionPersistenceCoordinator', () => {
       messageId: taskMessage.id,
       artifacts: [{ id: 'partial-artifact', kind: 'workspace-file', path: '/partial.txt' }],
       error: 'Provider failed',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       updatedAt: 9
     })
 
@@ -1172,7 +1172,7 @@ describe('SessionPersistenceCoordinator', () => {
       status: 'error',
       activeRun: undefined,
       error: 'Provider failed',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       taskRunCommitId: 'task-run',
       runtimeContext: { version: 1, revision: 4 }
     })
@@ -7994,3 +7994,53 @@ describe('discarding damaged Session recovery authority', () => {
     expect(repository.loadAllWithDiagnostics).toHaveBeenCalledOnce()
   })
 })
+
+it.each(['session', 'project'] as const)(
+  'drains derived work before acquiring the %s deletion lock',
+  async (kind) => {
+    const repository = createSessionRepository()
+    const stopped = async <T>(operation: () => Promise<T>): Promise<T> => {
+      // A publisher already owns or needs this same lane. Draining under the deletion lock deadlocks.
+      await coordinator.runSessionMutation('project-1', 'session-1', async () => undefined)
+      return operation()
+    }
+    const entered = vi.fn()
+    const work = {
+      withSessionStopped<T>(
+        _project: string,
+        _session: string,
+        operation: () => Promise<T>
+      ): Promise<T> {
+        entered('session')
+        return stopped(operation)
+      },
+      withProjectStopped<T>(_project: string, operation: () => Promise<T>): Promise<T> {
+        entered('project')
+        return stopped(operation)
+      }
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      work
+    )
+    if (kind === 'session') {
+      await coordinator.deleteSession('project-1', 'session-1')
+      expect(entered).toHaveBeenCalledExactlyOnceWith('session')
+    } else {
+      await coordinator.deleteProjectSessions('project-1')
+      expect(entered).toHaveBeenCalledExactlyOnceWith('project')
+    }
+  }
+)

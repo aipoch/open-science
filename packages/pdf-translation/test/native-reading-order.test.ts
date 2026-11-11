@@ -1,3 +1,4 @@
+import { nativeStaggeredColumnBodyOrder } from '../src/reader/reference-columns.js'
 import { resolve } from './paths.js'
 import { expect, it, onTestFinished } from 'vitest'
 import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib'
@@ -369,3 +370,206 @@ it.each([false, true])(
     ).rejects.toMatchObject({ failure: { code: 'source-mismatch' } })
   }
 )
+
+type ProvedColumnPage = import('../src/reader/layout.js').PdfLayoutPage & {
+  nativeReferenceEvidence: Extract<
+    NonNullable<import('../src/reader/layout.js').PdfLayoutPage['nativeReferenceEvidence']>,
+    { complete: true }
+  >
+}
+
+function staggeredBodyFixture(): {
+  page: ProvedColumnPage
+  blocks: Parameters<typeof nativeStaggeredColumnBodyOrder>[0]
+} {
+  const items: PdfLayoutTextItem[] = []
+  const add = (str: string, x: number, y: number, width = 248, size = 10): void => {
+    items.push({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      transform: [size, 0, 0, size, x, y],
+      fontName: 'Body',
+      fontAscent: 0.7,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: true
+    })
+  }
+  const line = (x: number, y: number, tag: string): void =>
+    add(tag + ' ordinary words form one complete native line', x, y)
+  add('Table 1: An independent top region.', 40, 760)
+  add('A1 A2 A3 A4 A5 A6', 180, 730, 124, 8)
+  line(40, 650, 'First left')
+  line(40, 638, 'First left continuation.')
+  add('A. Left topic', 40, 550, 180)
+  line(40, 530, 'Second left')
+  line(40, 518, 'Second left continuation.')
+  add('B. Left final topic', 40, 130, 220)
+  line(40, 110, 'Left final record')
+  line(40, 98, 'Left final continuation.')
+  add('Table 2: Another independent top region.', 310, 760)
+  add('purpose bridge.', 310, 730, 120, 8)
+  add('Feature value', 310, 640, 100, 8)
+  line(310, 600, 'Right first continuation')
+  line(310, 588, 'First right continuation.')
+  add('C. Right topic', 310, 450, 180)
+  line(310, 430, 'Second right')
+  line(310, 418, 'Second right continuation.')
+  add('IV. Right final section', 310, 130, 230)
+  line(310, 110, 'Right final record')
+  line(310, 98, 'Right final continuation.')
+  const page: ProvedColumnPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items,
+    nativeReferenceEvidence: {
+      complete: true,
+      fonts: { Body: { ascent: 0.7, descent: -0.2, vertical: false, nativeMetrics: true } },
+      rules: []
+    }
+  }
+  const groups = [
+    [0],
+    [1, 11],
+    [2, 3],
+    [4],
+    [5, 6],
+    [7],
+    [8, 9],
+    [10],
+    [12],
+    [13, 14],
+    [15],
+    [16, 17],
+    [18],
+    [19, 20]
+  ]
+  const blocks = groups.map((indices) => {
+    const source = indices.map((index) => ({
+      ...items[index],
+      transform: [...items[index].transform],
+      index,
+      key: `1:${index}`,
+      page: 1,
+      font: items[index].height,
+      unsupported: false
+    }))
+    const x = Math.min(...source.map((i) => i.transform[4]))
+    const right = Math.max(...source.map((i) => i.transform[4] + i.width))
+    const y = Math.min(...source.map((i) => 800 - i.transform[5] - i.height * 0.85))
+    const bottom = Math.max(...source.map((i) => 800 - i.transform[5] + i.height * 0.25))
+    return {
+      source: source.map((i) => i.str).join(' '),
+      items: source,
+      x,
+      y,
+      right,
+      bottom,
+      font: source[0].height,
+      lines: source.map((i) => ({
+        items: [i],
+        baseline: 800 - i.transform[5],
+        x: i.transform[4],
+        y: 800 - i.transform[5] - i.height * 0.85
+      })),
+      risks: []
+    }
+  })
+  return { page, blocks }
+}
+
+it('orders proved body slots after unequal independent prefixes without changing their owners', () => {
+  const { page, blocks } = staggeredBodyFixture()
+  const before = structuredClone({ page, blocks })
+  const order = (values: typeof blocks): typeof blocks =>
+    [...values].sort((a, b) => a.y - b.y || a.x - b.x)
+  const old = order(blocks),
+    result = nativeStaggeredColumnBodyOrder(blocks, page, order)!
+  expect(result).toBeDefined()
+  expect(result.indexOf(blocks[6])).toBeLessThan(result.indexOf(blocks[9]))
+  for (const prefix of [blocks[0], blocks[1], blocks[7], blocks[8]])
+    expect(result.indexOf(prefix)).toBe(old.indexOf(prefix))
+  expect(new Set(result)).toEqual(new Set(blocks))
+  expect({ page, blocks }).toEqual(before)
+})
+
+it.each([
+  'raw-literal',
+  'raw-transform',
+  'raw-array',
+  'equal-font',
+  'block-array',
+  'equal-block',
+  'page-prototype',
+  'items-prototype',
+  'font-prototype',
+  'transform-prototype'
+] as const)('withdraws a body permutation when the ordering callback changes %s', (fault) => {
+  const { page, blocks } = staggeredBodyFixture()
+  let first = true
+  const result = nativeStaggeredColumnBodyOrder(blocks, page, (values) => {
+    if (first) {
+      first = false
+      if (fault === 'raw-literal') page.items[2].str += ' changed'
+      if (fault === 'raw-transform') page.items[2].transform[4] += 1
+      if (fault === 'raw-array') page.items = [...page.items]
+      if (fault === 'equal-font')
+        page.nativeReferenceEvidence!.fonts.Body = { ...page.nativeReferenceEvidence!.fonts.Body }
+      if (fault === 'block-array') blocks[2].items = [...blocks[2].items]
+      if (fault === 'page-prototype') Object.setPrototypeOf(page, Object.create(null))
+      if (fault === 'items-prototype') Object.setPrototypeOf(page.items, Object.create(null))
+      if (fault === 'font-prototype')
+        Object.setPrototypeOf(page.nativeReferenceEvidence!.fonts.Body, Object.create(null))
+      if (fault === 'transform-prototype')
+        Object.setPrototypeOf(page.items[2].transform, Object.create(null))
+      if (fault === 'equal-block') return values.map((block) => ({ ...block }))
+    }
+    return [...values].sort((a, b) => a.y - b.y || a.x - b.x)
+  })
+  expect(result).toBeUndefined()
+})
+
+it.each([
+  'missing-census',
+  'duplicate-census',
+  'zero-metrics',
+  'missing-prefix-caption',
+  'cross-lane-body',
+  'prefix-overlap',
+  'risk'
+] as const)('declines an unclosed staggered body proof: %s', (fault) => {
+  const { page, blocks } = staggeredBodyFixture()
+  if (fault === 'missing-census') blocks.splice(3, 1)
+  if (fault === 'duplicate-census') blocks.push(blocks[3])
+  if (fault === 'zero-metrics') page.nativeReferenceEvidence!.fonts.Body.ascent = 0
+  if (fault === 'missing-prefix-caption') {
+    page.items[10].str = 'Independent top region.'
+    blocks[7].items[0].str = page.items[10].str
+    blocks[7].source = page.items[10].str
+  }
+  if (fault === 'cross-lane-body') blocks[2].right = 400
+  if (fault === 'prefix-overlap') page.items[1].transform[5] = 500
+  if (fault === 'risk') blocks[2].risks.push('overlapping-native-source')
+  expect(
+    nativeStaggeredColumnBodyOrder(blocks, page, (values) =>
+      [...values].sort((a, b) => a.y - b.y || a.x - b.x)
+    )
+  ).toBeUndefined()
+})
+
+it('keeps complete native columns through the extraction seam after mixed prefix rows', () => {
+  const { page } = staggeredBodyFixture(),
+    before = structuredClone(page)
+  const result = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+  const left = result.units.findIndex((u) => u.items.includes('1:8'))
+  const right = result.units.findIndex((u) => u.items.includes('1:13'))
+  expect(left).toBeLessThan(right)
+  expect(result.units.flatMap((u) => u.items).toSorted()).toEqual(
+    page.items.map((_, index) => `1:${index}`).toSorted()
+  )
+  expect(page).toEqual(before)
+})

@@ -45,6 +45,7 @@ import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
+import * as windowsOwnedProcess from '../process-tree-windows'
 import { shellNpmPaths } from './shell-npm-environment'
 import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 
@@ -524,6 +525,65 @@ afterEach(async () => {
   }
 })
 
+it.skipIf(!python3).each([
+  { kind: 'python' as const, owned: true },
+  { kind: 'repl' as const, owned: false },
+  { kind: 'repl' as const, owned: true }
+])(
+  'suppresses only the proxy advisory for $kind with ownership $owned',
+  async ({ kind, owned }) => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-proxy-warning-', process.platform)
+    const preload = join(cwdDir, 'warnings.cjs')
+    // Emit the same advisory on newer Node versions where EnvHttpProxyAgent is already stable.
+    await writeFile(
+      preload,
+      `process.emitWarning('EnvHttpProxyAgent is experimental', { code: 'UNDICI-EHPA' })
+process.emitWarning('keep this diagnostic', { code: 'OTHER_WARNING' })`
+    )
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+    await owner.ensureReady()
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      replLoopPath: REPL_LOOP,
+      platform: process.platform,
+      processLifecycle: owned ? owner : undefined,
+      laneKey: owned ? '["project","session","root",null,null]' : undefined,
+      processSandbox: {
+        wrap: async (invocation) => ({
+          ...invocation,
+          env: {
+            ...invocation.env,
+            NODE_USE_ENV_PROXY: '1',
+            HTTP_PROXY: 'http://127.0.0.1:9',
+            NODE_OPTIONS: `--require ${JSON.stringify(preload)}`
+          },
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      }
+    })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: kind === 'repl' ? 'repl' : undefined,
+        sessionId: 'session',
+        projectId: 'project',
+        code: kind === 'repl' ? 'console.log("saved")' : 'saved'
+      })
+      expect(result.status, result.stderr || result.traceback).toBe('completed')
+      expect(result.stdout).toContain('saved')
+      expect(result.stderr).toContain('OTHER_WARNING')
+      expect(result.stderr).not.toContain('UNDICI-EHPA')
+    } finally {
+      await executor.shutdown()
+    }
+  }
+)
+
 it.each([false, true])(
   'hides Windows kernel consoles with durable ownership %s while preserving execution and cleanup',
   async (owned) => {
@@ -532,6 +592,7 @@ it.each([false, true])(
     await lifecycle.ensureReady()
     const spawn = vi.mocked(childProcess.spawn)
     spawn.mockClear()
+    const ownedSpawn = vi.spyOn(windowsOwnedProcess, 'spawnWindowsOwnedProcess')
     const executor = new NotebookKernelExecutor({
       replLoopPath: REPL_LOOP,
       platform: 'win32',
@@ -560,13 +621,19 @@ it.each([false, true])(
       })
       expect(result.status, result.stderr || result.traceback).toBe('completed')
       expect(result.stdout).toContain('CONSOLE_TEST_READY')
-      expect(spawn).toHaveBeenCalledWith(
+      const expectedArgs = [
         process.execPath,
         expect.arrayContaining([
           expect.stringContaining(owned ? 'kernel_process_host.js' : 'repl_loop.js')
         ]),
         expect.objectContaining({ windowsHide: true, detached: false })
-      )
+      ]
+      if (owned && process.platform === 'win32') {
+        expect(ownedSpawn).toHaveBeenCalledWith(
+          expect.stringMatching(/^Local\\OpenScience\.Notebook\./),
+          ...expectedArgs
+        )
+      } else expect(spawn).toHaveBeenCalledWith(...expectedArgs)
     } finally {
       await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
     }
@@ -869,6 +936,22 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(request.inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
       expect(beginExecution).toHaveBeenCalledTimes(2)
+      expect(beginExecution).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          commandText: 'wrapped',
+          executionReference: expect.any(String),
+          signal: requestController.signal,
+          onNetworkWaitChange: expect.any(Function)
+        })
+      )
+      expect(beginExecution).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          commandText: 'wrapped again',
+          executionReference: expect.any(String)
+        })
+      )
       expect(endExecution).toHaveBeenCalledTimes(2)
       expect(annotateStderr).toHaveBeenCalled()
     } finally {
@@ -5552,6 +5635,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       await mkdir(inputRoot, { recursive: true })
       await writeFile(inputPath, 'verified input')
       await writeFile(replLoopPath, await readFile(REPL_LOOP))
+      // Keep the fixture's module scope local even when isolated temporary files live in a repo.
+      await writeFile(join(inputRoot, 'package.json'), JSON.stringify({ type: 'commonjs' }))
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: resolve(
           import.meta.dirname,
@@ -5704,7 +5789,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         expect(wrap).toHaveBeenCalledWith(
           expect.objectContaining({
             executable: process.execPath,
-            args: ['--preserve-symlinks-main', REPL_LOOP],
+            args: ['--disable-warning=UNDICI-EHPA', '--preserve-symlinks-main', REPL_LOOP],
             env: expect.objectContaining({
               NODE_OPTIONS: '--preserve-symlinks --preserve-symlinks-main'
             })

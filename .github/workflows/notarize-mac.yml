@@ -301,45 +301,12 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"
 
-      # Stapling repackaged the zip (new bytes), so the build-time feed — written over the PRE-staple
-      # zip — now carries a stale sha512/size that would fail the updater's signature check. The build
-      # runs the default `latest` channel, so it emits `latest-mac.yml` per arch; drop that stale copy
-      # and regenerate a per-arch intermediate `${arch}-mac.yml` from the stapled zip (recompute sha512
-      # base64 + size, minimal zip-only feed, no blockmap -> full-zip mac updates for v1). The publish
-      # job merges the two arch intermediates into the single `latest-mac.yml` the updater polls.
-      # Derived purely from the final stapled zip in this unpublished run.
+      # Rebuild both the feed and ZIP blockmap after the last change to the app archive.
       - name: Regenerate mac update feed
         if: steps.gate.outputs.enabled == 'true'
-        env:
-          ARCH: ${{ matrix.arch }}
         run: |
-          set -euo pipefail
           rm -f mac/latest-mac.yml
-          node -e '
-            const fs = require("fs"), crypto = require("crypto"), path = require("path");
-            const arch = process.env.ARCH;
-            const zips = fs.readdirSync("mac").filter((f) => f.endsWith(`-mac-${arch}.zip`));
-            if (zips.length !== 1) {
-              console.error(`::error::expected exactly one mac-${arch} zip, found ${zips.length}`);
-              process.exit(1);
-            }
-            const zip = zips[0];
-            const buf = fs.readFileSync(path.join("mac", zip));
-            const sha512 = crypto.createHash("sha512").update(buf).digest("base64");
-            const m = zip.match(/-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-mac-/);
-            const version = m ? m[1] : "0.0.0";
-            const yml =
-              `version: ${version}\n` +
-              `files:\n` +
-              `  - url: ${zip}\n` +
-              `    sha512: ${sha512}\n` +
-              `    size: ${buf.length}\n` +
-              `path: ${zip}\n` +
-              `sha512: ${sha512}\n` +
-              `releaseDate: ${JSON.stringify(new Date().toISOString())}\n`;
-            fs.writeFileSync(path.join("mac", `${arch}-mac.yml`), yml);
-            process.stdout.write(yml);
-          '
+          node scripts/regenerate-mac-feed.mjs mac "${{ matrix.arch }}"
 
       # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
       # package certification signal already established by the separate smoke job.
@@ -383,10 +350,7 @@ jobs:
             mac/database-migration-certification-macos-${{ matrix.arch }}.json
           if-no-files-found: error
 
-      # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the
-      # regenerated ${arch}-mac.yml feed, so the publish job's merge-multiple download picks them up.
-      # overwrite deletes the prior artifacts of this name in the run. The stale mac blockmap is dropped
-      # (v1 does full-zip mac updates), leaving the dmg, zip, and per-arch feed.
+      # Publish only the final ZIP's blockmap alongside the stapled installers and feed.
       - name: Re-emit stapled artifact (for publish)
         if: steps.gate.outputs.enabled == 'true' && inputs.from_run
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -397,5 +361,6 @@ jobs:
           path: |
             mac/*-mac-*.dmg
             mac/*-mac-*.zip
+            mac/*-mac-*.zip.blockmap
             mac/*-mac.yml
           if-no-files-found: error

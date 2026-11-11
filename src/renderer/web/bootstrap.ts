@@ -9,6 +9,7 @@ import {
   preserveComposerDraftsForRecovery
 } from '@/pages/workspace/composer-draft-storage'
 import { createElement } from 'react'
+import type { z } from 'zod'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
@@ -71,6 +72,8 @@ const WEB_BLOB_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 const EVENT_CONNECTION_ATTEMPTS = 8
 const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
+  'literature:overview-batch',
+  'literature:collect',
   'storage:migrate',
   'notebook:execute',
   'notebook:run-cell',
@@ -84,6 +87,19 @@ const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
   'settings:install-codex',
   'settings:install-opencode'
 ])
+
+// LAN access uses HTTP. Browsers keep getRandomValues available there but hide randomUUID.
+if (!crypto.randomUUID) {
+  Object.defineProperty(crypto, 'randomUUID', {
+    value: (): `${string}-${string}-${string}-${string}-${string}` => {
+      const bytes = crypto.getRandomValues(new Uint8Array(16))
+      bytes[6] = (bytes[6] & 0x0f) | 0x40
+      bytes[8] = (bytes[8] & 0x3f) | 0x80
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+    }
+  })
+}
 
 const clientId = sessionStorage.getItem('open-science-web-client') ?? crypto.randomUUID()
 sessionStorage.setItem('open-science-web-client', clientId)
@@ -526,11 +542,23 @@ const webManagedFileSizeLimitError = (): Error =>
     name: WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
   })
 
+const MAX_BOOTSTRAP_ISSUES = 3
+
+// A stale Web bundle fails on one issue per unknown channel, so only the first few are listed.
+const describeBootstrapIssues = (issues: readonly z.core.$ZodIssue[]): string => {
+  const shown = issues
+    .slice(0, MAX_BOOTSTRAP_ISSUES)
+    .map((issue) => (issue.path.length ? `${issue.path.join('.')}: ` : '') + issue.message)
+  const hidden = issues.length - shown.length
+  return shown.join('; ') + (hidden > 0 ? ` (+${hidden} more)` : '')
+}
+
 const installWebApi = async (): Promise<EventCursor> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
     throw new Error(
-      `Incompatible Open-Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
+      `Incompatible Open-Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}. ` +
+        describeBootstrapIssues(parsedBootstrap.error.issues)
     )
   }
   const bootstrap = parsedBootstrap.data
@@ -589,6 +617,7 @@ const installWebApi = async (): Promise<EventCursor> => {
                 ...(request.versionId ? { versionId: request.versionId } : {})
               }
               break
+            case 'compute-output':
             case 'notebook-input':
             case 'literature':
             case 'local':

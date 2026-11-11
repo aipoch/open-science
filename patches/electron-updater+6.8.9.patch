@@ -1,3 +1,21 @@
+diff --git a/node_modules/electron-updater/out/NsisUpdater.js b/node_modules/electron-updater/out/NsisUpdater.js
+index 6fb70b4..17529a0 100644
+--- a/node_modules/electron-updater/out/NsisUpdater.js
++++ b/node_modules/electron-updater/out/NsisUpdater.js
+@@ -105,6 +105,13 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+             return false;
+         }
+         const args = ["--updated"];
++        if (this.openScienceUpdateOperation != null) {
++            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(this.openScienceUpdateOperation)) {
++                this.dispatchError(new Error("Invalid Open-Science update operation"));
++                return false;
++            }
++            args.push(`--open-science-update-operation=${this.openScienceUpdateOperation}`);
++        }
+         if (options.isSilent) {
+             args.push("/S");
+         }
 diff --git a/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js b/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
 index c6e948a..92f29c0 100644
 --- a/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
@@ -178,20 +196,71 @@ index 56adc38..e28610c 100644
  }
  function checkIsRangesSupported(response, reject) {
      // Electron net handles redirects automatically, our NodeJS test server doesn't use redirects - so, we don't check 3xx codes.
-diff --git a/node_modules/electron-updater/out/NsisUpdater.js b/node_modules/electron-updater/out/NsisUpdater.js
---- a/node_modules/electron-updater/out/NsisUpdater.js
-+++ b/node_modules/electron-updater/out/NsisUpdater.js
-@@ -114,6 +114,13 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
-             return false;
-         }
-         const args = ["--updated"];
-+        if (this.openScienceUpdateOperation != null) {
-+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(this.openScienceUpdateOperation)) {
-+                this.dispatchError(new Error("Invalid Open-Science update operation"));
-+                return false;
-+            }
-+            args.push(`--open-science-update-operation=${this.openScienceUpdateOperation}`);
-+        }
-         if (options.isSilent) {
-             args.push("/S");
-         }
+diff --git a/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js b/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
+index c9a579e..3324424 100644
+--- a/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
++++ b/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
+@@ -3,18 +3,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.verifySignature = verifySignature;
+ const builder_util_runtime_1 = require("builder-util-runtime");
+ const child_process_1 = require("child_process");
+-const os = require("os");
+ const path = require("path");
+ function preparePowerShellExec(command, timeout) {
+-    // https://github.com/electron-userland/electron-builder/issues/2421
+-    // https://github.com/electron-userland/electron-builder/issues/2535
+-    // Resetting PSModulePath is necessary https://github.com/electron-userland/electron-builder/issues/7127
+-    // semicolon wont terminate the set command and run chcp thus leading to verification errors on certificats with special chars like german umlauts, so rather
+-    //   join commands using & https://github.com/electron-userland/electron-builder/issues/8162
+-    const executable = `set "PSModulePath=" & chcp 65001 >NUL & powershell.exe`;
+-    const args = ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", command];
++    // Windows PowerShell is an OS component. Neither executable discovery nor UTF-8 output
++    // requires a shell, chcp, or a trusted PATH. Retain the upstream PSModulePath isolation.
++    const windowsRoot = process.env.SystemRoot || process.env.WINDIR;
++    const executable = windowsRoot ? path.win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
++    const args = ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); " + command];
+     const options = {
+-        shell: true,
++        windowsHide: true,
++        encoding: "utf8",
++        env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "psmodulepath")), PSModulePath: "" },
+         timeout,
+     };
+     return [executable, args, options];
+@@ -44,7 +43,7 @@ function verifySignature(publisherNames, unescapedTempUpdateFile, logger) {
+         // https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+         const tempUpdateFile = unescapedTempUpdateFile.replace(/'/g, "''");
+         logger.info(`Verifying signature ${tempUpdateFile}`);
+-        (0, child_process_1.execFile)(...preparePowerShellExec(`"Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress"`, 20 * 1000), (error, stdout, stderr) => {
++        (0, child_process_1.execFile)(...preparePowerShellExec(`Get-AuthenticodeSignature -LiteralPath '${tempUpdateFile}' | ConvertTo-Json -Compress`, 20 * 1000), (error, stdout, stderr) => {
+             var _a;
+             try {
+                 if (error != null || stderr) {
+@@ -117,17 +116,7 @@ function parseOut(out) {
+     return data;
+ }
+ function handleError(logger, error, stderr, reject) {
+-    if (isOldWin6()) {
+-        logger.warn(`Cannot execute Get-AuthenticodeSignature: ${error || stderr}. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.`);
+-        return;
+-    }
+-    try {
+-        (0, child_process_1.execFileSync)(...preparePowerShellExec("ConvertTo-Json test", 10 * 1000));
+-    }
+-    catch (testError) {
+-        logger.warn(`Cannot execute ConvertTo-Json: ${testError.message}. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.`);
+-        return;
+-    }
++    // Failure to inspect a signature is not evidence that an update is trusted.
+     if (error != null) {
+         reject(error);
+     }
+@@ -135,8 +124,4 @@ function handleError(logger, error, stderr, reject) {
+         reject(new Error(`Cannot execute Get-AuthenticodeSignature, stderr: ${stderr}. Failing signature validation due to unknown stderr.`));
+     }
+ }
+-function isOldWin6() {
+-    const winVersion = os.release();
+-    return winVersion.startsWith("6.") && !winVersion.startsWith("6.3");
+-}
+ //# sourceMappingURL=windowsExecutableCodeSignatureVerifier.js.map

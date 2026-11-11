@@ -49,7 +49,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "zod": "^4.6.5",
+    "zod": "^4.6.6",
     "pdf-lib": "1.17.1",
     "fontkit": "2.0.4",
     "@embedpdf/pdfium": "2.15.1",
@@ -59,7 +59,7 @@
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "@napi-rs/canvas": "0.1.100"
   }
 }

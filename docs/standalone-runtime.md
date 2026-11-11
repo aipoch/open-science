@@ -286,8 +286,19 @@ Development commands:
 Desktop packaging's `beforePack` hook builds/stages the backend and ordinary Node, even when CI
 invokes electron-builder directly. It refuses cross-OS/architecture packaging. The pinned executable
 and SHA-256 values are in `build/node-runtime.json`; the runtime is Node 22.23.4 to retain the
-application's macOS deployment range. Only the executable and license are staged, not npm/headers.
+application's macOS deployment range. Staging includes Node, its license, and a trimmed npm tree
+under `node_modules/npm`, with official npm/npx launchers beside Node. npm runtime code, package
+metadata, templates and licenses are retained; documentation, man pages, README/changelog files
+and Node headers are omitted. The staging receipt covers the retained files; older Node-only
+receipts or missing/corrupt files trigger restaging.
 The source Node metadata comes from [official Node checksums](https://nodejs.org/dist/v22.23.4/SHASUMS256.txt).
+
+Local stdio MCP Connectors preserve explicit executable paths and prefer npm/npx found on their
+configured, augmented PATH. When a bare npm/npx command is absent, desktop and bundled CLI archive
+hosts use the staged npm CLI with the matching Node, including for child processes. A command that
+starts and fails is not retried with the bundled version. Ordinary Node/Web installations without
+the staged bundle retain their installed-command behavior. npm keeps its configurable download
+cache/log behavior; this fallback does not install a system runtime or change global PATH.
 
 `OPEN_SCIENCE_WEB_PORT` selects the Web port. CLI/Web starts default to 44100; desktop-owned
 backends default to a system-assigned free port so independent profiles can run concurrently.
@@ -309,9 +320,9 @@ open-science start --no-open --password-store=gnome-libsecret
 
 Missing or locked secure storage fails explicitly. Existing Linux headless `--credential-store=file`
 is an explicit plaintext opt-in, never an automatic fallback, and does not enable Compute's
-OS-protected credentials. At this baseline, desktop attachment verifies backend generation/version but does not enforce
-credential-store compatibility. A desktop can attach to an explicitly file-mode backend, so
-attachment must not be interpreted as proof of OS-encrypted credential writes.
+OS-protected credentials. In 1.2.0, desktop attachment verifies the backend generation and version.
+A desktop can attach to a backend started in file mode. Check the backend’s credential-store
+setting before relying on OS-encrypted writes.
 
 Linux Notebook isolation still requires bubblewrap and permitted unprivileged user namespaces.
 Missing sandbox support is an error; the Node host does not disable protection. Source Linux
@@ -466,8 +477,10 @@ These are retained compatibility paths, not a request to migrate user data:
   After diagnostics initialization, Node mirrors application records as single-line JSON when stdout
   is redirected, including these launch files; interactive terminals retain readable text. These
   captures can still contain raw startup errors and third-party stderr, so they are not strict JSONL
-  files. Use config-root `logs/main.log` for canonical structured records. Existing capture filenames,
-  permissions and retention are unchanged; old captures are not rewritten.
+  files. Use config-root `logs/main.log` for canonical structured records.
+  Each time the desktop launcher creates a backend startup log, it keeps the newest 20
+  `logs/desktop-backend-*.log` files and removes older ones, including files from earlier versions.
+  It retains older logs that are still open or whose use it cannot verify, and retries on a later launch.
 - Proven-new Windows profiles initialize the existing `Local State.os_crypt.encrypted_key` under
   the bootstrap lock before Chromium starts. No replacement of an existing key is permitted.
 - Linux AppImage cache `~/.cache/open-science/appimage-cli/<sha256>/complete.json` (or XDG cache

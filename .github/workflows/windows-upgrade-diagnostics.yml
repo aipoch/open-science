@@ -102,12 +102,10 @@ jobs:
           }
           prepare().catch(error => { console.error(error); process.exitCode = 1 })
           NODE
-      # This elevated runner covers Unicode profiles, copy publication and extractor failures.
-      # Move-only and absolute-path-boundary fixtures require their ordinary-user environment.
+      # Copy publication now supports long paths even on this elevated runner. Keep every native
+      # copy/error fixture active; only explicitly gated move-only cases need an ordinary user.
       - name: Test native installer publication
-        run: >-
-          npx vitest run scripts/windows-install-publication.test.ts
-          -t "real Windows payload publication|handles (unicode-profile|valid|copy-fallback|truncated|corrupt|warning|cancelled|launch-failure|universal-x64) archives"
+        run: npx vitest run scripts/windows-install-publication.test.ts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

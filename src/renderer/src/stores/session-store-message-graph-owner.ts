@@ -1,3 +1,4 @@
+import { discussionParentForFirstMessage } from '../../../shared/replay-reference'
 import type { StoreApi } from 'zustand'
 import {
   activateConversationBranch,
@@ -130,7 +131,7 @@ export const createSessionMessageGraphOwner = <
           awaitingFirstAgentOutput: true,
           agentStatus: undefined,
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           pendingHistoryReplay: contextReset
             ? (session.pendingHistoryReplay ?? {
                 kind: 'before-message',
@@ -350,7 +351,7 @@ export const createSessionMessageGraphOwner = <
                   resumeRecovery: undefined,
                   agentStatus: undefined,
                   error: undefined,
-                  errorReportable: undefined,
+                  failure: undefined,
                   compacting: undefined,
                   messages: session.messages.map((message) =>
                     message.id === existingMessage.id
@@ -433,7 +434,7 @@ export const createSessionMessageGraphOwner = <
                 ...sessionDetails.prepareExistingSessionDetails(existingSession, userMessage),
                 agentStatus: undefined,
                 error: undefined,
-                errorReportable: undefined,
+                failure: undefined,
                 compacting: undefined,
                 messages: nextMessages,
                 pendingContextReplayMessageId: replayPromptIndex >= 0 ? userMessage.id : undefined,
@@ -466,7 +467,11 @@ export const createSessionMessageGraphOwner = <
       const newSession: ChatSession = {
         id: sessionId,
         projectId: projectId ?? '',
+        parentSessionId: isPending
+          ? discussionParentForFirstMessage(projectId, annotations)
+          : undefined,
         isPending: isPending ? true : undefined,
+        firstPromptDraft: isPending ? true : undefined,
         delegationPolicyAuthorityPending:
           isPending && delegationPolicy !== undefined ? true : undefined,
         ...sessionDetails.prepareNewRootSessionDetails(
@@ -590,6 +595,7 @@ export const createSessionMessageGraphOwner = <
       projectId: source.projectId,
       branchSource: createSessionBranchSource(source, sourceMessage?.id),
       isPending: true,
+      firstPromptDraft: userMessage ? true : undefined,
       delegationPolicyAuthorityPending: true,
       title: sourceMessage
         ? source.title
@@ -672,6 +678,7 @@ export const createSessionMessageGraphOwner = <
       ...pendingSession,
       id: sessionId,
       isPending: false,
+      pendingRetryable: undefined,
       pendingBindingSessionId: undefined,
       ...(pendingSession.conversationGraph
         ? {
@@ -850,7 +857,7 @@ export const createSessionMessageGraphOwner = <
           activeRun: undefined,
           agentStatus: undefined,
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           interrupted: undefined,
           branchContextResetRequired: true,
           pendingContextReplayMessageId: removed.some(
@@ -977,7 +984,7 @@ export const createSessionMessageGraphOwner = <
           status: 'idle',
           activeRun: undefined,
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           branchContextResetRequired: true,
           filesRevision: (session.filesRevision ?? 0) + 1,
           updatedAt: Date.now()

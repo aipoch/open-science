@@ -84,6 +84,25 @@ describe('opencode-detect', () => {
     expect(result).toBeUndefined()
   })
 
+  it('continues discovery after a failed candidate probe without swallowing cancellation', async () => {
+    const controller = new AbortController()
+    const deps = createDeps(
+      { '/usr/bin/opencode': '', '/usr/local/bin/opencode': '1.19.1' },
+      {
+        getVersion: async (candidate, signal) => {
+          signal?.throwIfAborted()
+          if (candidate === '/usr/bin/opencode') throw new Error('failed candidate')
+          return '1.19.1'
+        }
+      }
+    )
+    await expect(detectOpencode(deps, controller.signal)).resolves.toMatchObject({
+      version: '1.19.1'
+    })
+    controller.abort(new Error('cancelled'))
+    await expect(detectOpencode(deps, controller.signal)).rejects.toThrow('cancelled')
+  })
+
   it('tolerates a failing npm bin resolution', async () => {
     const result = await detectOpencode(
       createDeps(

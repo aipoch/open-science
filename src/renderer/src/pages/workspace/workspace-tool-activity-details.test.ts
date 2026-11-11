@@ -147,6 +147,53 @@ describe('workspace tool activity details', () => {
     expect(getToolDisplayName(createActivity({ toolKind: undefined }))).toBe('Tool')
   })
 
+  it.each([
+    ['list_pdf_annotations', 'list', { annotations: [{ id: 'a1', kind: 'highlight' }], total: 1 }],
+    [
+      'locate_pdf_annotation_target',
+      'locate',
+      { targets: [{ targetRef: 'target-1', kind: 'text', pageNumber: 2, quote: 'Result' }] }
+    ],
+    ['create_pdf_annotation', 'create', { id: 'a2', kind: 'highlight', pageNumber: 2 }]
+  ] as const)(
+    'projects %s into a Literature annotation card summary',
+    (tool, operation, output) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: `mcp__open-science-literature__${tool}`,
+          rawInput: { documentId: 'paper-1' },
+          rawOutput: output
+        })
+      )
+      expect(details?.displayName).toBe('Reading')
+      expect(details?.sections).toContainEqual(
+        expect.objectContaining({
+          kind: 'literature',
+          summary: expect.objectContaining({
+            annotation: expect.objectContaining({ operation, documentId: 'paper-1' })
+          })
+        })
+      )
+    }
+  )
+
+  it.each(['list_pdf_annotations', 'locate_pdf_annotation_target', 'create_pdf_annotation'])(
+    'preserves %s failures as visible Literature errors',
+    (tool) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: `mcp__open-science-literature__${tool}`,
+          rawOutput: { error: { code: 'PDF_ANNOTATION_FAILED', message: 'Target unavailable.' } }
+        })
+      )
+      const section = details?.sections.find((entry) => entry.kind === 'literature')
+      expect(section).toBeDefined()
+      if (!section || section.kind !== 'literature') throw new Error('literature section required')
+      expect(section.summary.error).toBe('Target unavailable.')
+      expect(section.summary.annotation).toBeUndefined()
+    }
+  )
+
   it('keeps native Skill instruction documents out of expandable activity details', () => {
     const activity = createActivity({
       title: 'Loaded skill: mcp-pubmed',
@@ -1019,6 +1066,38 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]).toMatchObject({ label: 'Output', text: '5 rows returned' })
   })
 
+  it.each(['read_tool_result', 'mcp__open_science_notebook__read_tool_result'])(
+    'uses a shared card for result-reader calls: %s',
+    (providerToolName) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName,
+          rawInput: { invocationId: 'invocation-1', offset: 0, limit: 2000 },
+          rawOutput: 'Tool is unavailable'
+        })
+      )
+
+      expect(details?.displayName).toBe('Read tool result')
+      expect(details?.sections).toEqual([
+        expect.objectContaining({ kind: 'code', label: 'Input' }),
+        expect.objectContaining({ kind: 'code', label: 'Output', text: 'Tool is unavailable' })
+      ])
+    }
+  )
+
+  it('keeps unknown MCP calls on the generic expandable card', () => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'mcp__open_science_notebook__future_tool',
+        rawInput: { query: 'value' },
+        rawOutput: { ok: true }
+      })
+    )
+
+    expect(details?.displayName).toBe('mcp__open_science_notebook__future_tool')
+    expect(details?.sections).toHaveLength(2)
+  })
+
   it('renders memory category reads with a friendly name instead of the raw MCP identity', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__list_memory_categories',
@@ -1822,6 +1901,33 @@ describe('workspace tool activity details', () => {
     expect(details?.subtitle).toBe('WebSearch, WebFetch, CronCreate')
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('WebSearch')
   })
+
+  it.each(['in_progress', 'completed', 'failed'] as const)(
+    'presents Pi tool discovery as tool search when %s',
+    (status) => {
+      const text = status === 'failed' ? 'Discovery failed' : 'No matching tools found.'
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: 'tool_search',
+          title: "tool_search 'skills'",
+          toolKind: 'search',
+          status,
+          rawInput: { query: 'skills' },
+          ...(status === 'in_progress'
+            ? {}
+            : {
+                toolContent: [
+                  { type: 'content' as const, content: { type: 'text' as const, text } }
+                ]
+              })
+        })
+      )
+      expect(details?.displayName).toBe('Tool search')
+      expect(details?.subtitle).toBe('skills')
+      expect(details?.sections).toHaveLength(status === 'in_progress' ? 0 : 1)
+      if (status === 'failed') expect(details?.sections[0]).toMatchObject({ label: 'Output', text })
+    }
+  )
 
   it('keeps a ToolSearch wrapper without results as a plain chip', () => {
     const activity = createActivity({ providerToolName: 'ToolSearch', title: 'ToolSearch' })

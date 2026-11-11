@@ -37,7 +37,10 @@ function colors(o) {
   return { texts, paths }
 }
 
-function prove({ table, items, rows, columnRects, spans, rules, context }) {
+function nativeSectionEvidence(
+  { table, items, rows, columnRects, spans, rules, context },
+  completeClaims = false
+) {
   const p = context?.sourcePage,
     c = context?.nativeGlyphContext,
     s = context?.viewport?.scale,
@@ -86,7 +89,16 @@ function prove({ table, items, rows, columnRects, spans, rules, context }) {
         ]
       : []
   )
-  const inventory = nativePageTextPacketInventory(p, tokens, c, true)
+  const inventory = completeClaims
+    ? nativePageTextPacketInventory(
+        p,
+        tokens,
+        c,
+        true,
+        new Set(items.map((i) => i.sourceItem?.index)),
+        true
+      )
+    : nativePageTextPacketInventory(p, tokens, c, true)
   if (
     !inventory ||
     !completeNativeNodeGlyphProgram(p, tokens, collectClosedFigureFrames(c.operators, v), c)
@@ -199,6 +211,14 @@ function prove({ table, items, rows, columnRects, spans, rules, context }) {
     if (!group) groups.push((group = []))
     group.push(paint)
   }
+  return { p, c, s, v, inventory, glyphs, ink, records, bound, paints, groups, color }
+}
+
+function prove(input) {
+  const { items, rows, columnRects, spans } = input
+  const e = nativeSectionEvidence(input)
+  if (!e) return
+  const { s, inventory, glyphs, ink, bound, paints, groups, color } = e
   const frames = groups
     .filter(
       (g) =>
@@ -394,6 +414,197 @@ function prove({ table, items, rows, columnRects, spans, rules, context }) {
 export function proveNativeFencedSectionRows(input) {
   try {
     return prove(input)
+  } catch {
+    return undefined
+  }
+}
+
+function proveTerminal(input) {
+  const { table, items, rows, columnRects, cells, unassigned, captions } = input
+  if (
+    !Array.isArray(cells) ||
+    !Array.isArray(unassigned) ||
+    unassigned.length !== 1 ||
+    !Array.isArray(captions)
+  )
+    return
+  const e = nativeSectionEvidence(input, true)
+  if (!e) return
+  const { p, s, inventory, glyphs, ink, records, bound, paints, groups, color } = e
+  const strictInside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] : n <= a[i]))
+  const candidates = []
+  for (const group of groups.filter((g) => g.length === 4)) {
+    const fences = group.slice().sort((a, b) => a.rule[1] - b.rule[1])
+    const frame = [fences[0].rule[0], fences[0].rule[1], fences[0].rule[2], fences.at(-1).rule[1]]
+    if (
+      !valid(frame) ||
+      fences.some((f) => f.rule[0] !== frame[0] || f.rule[2] !== frame[2]) ||
+      fences.some((f, i) => i && f.rule[1] === fences[i - 1].rule[1]) ||
+      !columnRects.every((col) => {
+        const x = (col[0] + col[2]) / 2 / s
+        return x > frame[0] && x < frame[2]
+      }) ||
+      !items.every((item) =>
+        strictInside(
+          frame,
+          item.rect.map((n) => n / s)
+        )
+      ) ||
+      paints.some((q) => over(q.box, frame) && (!q.opaque || !fences.includes(q))) ||
+      inventory.evidence.images.some((i) => !valid(i.rect) || over(i.rect, frame))
+    )
+      continue
+    const active = inventory.records.filter((r) => valid(ink(r)) && over(ink(r), frame))
+    if (
+      active.length !== items.length ||
+      active.some(
+        (r) =>
+          !bound.has(r.index) ||
+          r.advanceComplete !== true ||
+          r.foreignSourceNormalized ||
+          !strictInside(frame, ink(r)) ||
+          r.part.some((z) =>
+            /\s/u.test(z.c)
+              ? valid(z.g.ink)
+              : !valid(z.g.ink) ||
+                color.texts.get(z.g.i)?.toLowerCase() === '#ffffff' ||
+                inventory.records.filter((q) => q.part.some((p) => p.g === z.g)).length !== 1
+          )
+      ) ||
+      inventory.glyphs.some(
+        (g) => valid(g.ink) && over(g.ink, frame) && !active.some((r) => glyphs(r).includes(g))
+      )
+    )
+      continue
+    const labelItems = items.filter((i) => unassigned.includes(i.text))
+    if (labelItems.length !== 1) continue
+    const item = labelItems[0],
+      heading = records.get(item.sourceItem.index),
+      h = item.height
+    if (
+      !/^\p{L}[\p{L}\p{M}\s]+$/u.test(item.text) ||
+      item.text.length < 12 ||
+      !captions.filter(
+        (q) =>
+          /^Table\s+[\p{N}IVX]+[.:]/u.test(q.lines?.[0] ?? '') &&
+          valid(q.rect) &&
+          q.rect[3] <= table.cropRect[1] &&
+          table.cropRect[1] - q.rect[3] <= h * 2 &&
+          Math.min(q.rect[2], frame[2] * s) - Math.max(q.rect[0], frame[0] * s) >=
+            (frame[2] - frame[0]) * s * 0.8
+      ).length
+    )
+      continue
+    const upper = fences.at(-2),
+      lower = fences.at(-1),
+      band = [upper.rule[0], upper.ink[3], lower.rule[2], lower.ink[1]]
+    if (!valid(band) || !strictInside(band, heading.rect) || !strictInside(band, ink(heading)))
+      continue
+    const peers = cells.filter(
+      (cell) => cell.column === 0 && cell.colSpan === columnRects.length && cell.rowSpan === 1
+    )
+    if (
+      peers.length !== 2 ||
+      peers.some(
+        (cell) =>
+          cell.sourceItems?.length !== 1 ||
+          cell.sourceTokens?.length !== 1 ||
+          cell.sourceRects?.length !== 1 ||
+          cell.sourceItems[0].pageNumber !== p.pageNumber
+      )
+    )
+      continue
+    const peerRecords = peers.map((cell) => records.get(cell.sourceItems[0].index))
+    if (
+      peerRecords.some(
+        (r, i) =>
+          !r ||
+          peers[i].text !== r.r.str ||
+          !bound.has(r.index) ||
+          r.r.fontName !== heading.r.fontName ||
+          r.r.height !== heading.r.height ||
+          !equal(r.r.transform.slice(0, 4), heading.r.transform.slice(0, 4)) ||
+          !near(r.rect[0], heading.rect[0]) ||
+          r.rect[3] >= band[1] ||
+          !equal(peers[i].sourceRects[0], bound.get(r.index).rect)
+      )
+    )
+      continue
+    const block = active.filter((r) => over(ink(r), band))
+    if (
+      block.length !== columnRects.length + 1 ||
+      block.some((r) => !strictInside(band, r.rect) || !strictInside(band, ink(r)))
+    )
+      continue
+    const body = block.filter((r) => r !== heading),
+      last = rows.length - 1,
+      row = rows[last]
+    if (
+      body.length !== columnRects.length ||
+      body.some(
+        (r) =>
+          r.rect[1] <= heading.rect[3] ||
+          !near(r.rect[3], body[0].rect[3]) ||
+          r.r.fontName === heading.r.fontName
+      ) ||
+      item.rect[1] <= rows[last - 1].rect[3] ||
+      item.rect[3] >= row.rect[1] ||
+      peers.some((cell) => cell.row >= last) ||
+      cells.some((cell) => cell.rowSpan !== 1)
+    )
+      continue
+    const rowCells = cells.filter((cell) => cell.row === last).sort((a, b) => a.column - b.column)
+    if (
+      rowCells.length !== columnRects.length ||
+      rowCells.some(
+        (cell, col) =>
+          cell.column !== col ||
+          cell.colSpan !== 1 ||
+          cell.sourceItems?.length !== 1 ||
+          cell.sourceRects?.length !== 1 ||
+          cell.sourceTokens?.length !== 1
+      )
+    )
+      continue
+    const data = rowCells.map((cell) => records.get(cell.sourceItems[0].index))
+    if (
+      new Set(data).size !== body.length ||
+      data.some(
+        (r, col) =>
+          !r ||
+          !body.includes(r) ||
+          rowCells[col].sourceItems[0].pageNumber !== p.pageNumber ||
+          rowCells[col].text !== r.r.str ||
+          !equal(rowCells[col].sourceRects[0], bound.get(r.index).rect) ||
+          !strictInside(
+            [columnRects[col][0], row.rect[1], columnRects[col][2], row.rect[3]],
+            r.rect.map((n) => n * s)
+          ) ||
+          (col > 1 && !/^[<>≤≥−+-]?(?:\d|\.\d)[\d.,%°()±–−+\-/]*$/u.test(r.r.str))
+      )
+    )
+      continue
+    const claims = cells.flatMap((cell) => cell.sourceItems ?? [])
+    if (
+      new Set(claims.map((q) => q.index)).size !== claims.length ||
+      claims.length + 1 !== active.length ||
+      claims.some((q) => q.pageNumber !== p.pageNumber || records.get(q.index)?.r.str !== q.text) ||
+      active.some((r) => r !== heading && !claims.some((q) => q.index === r.index))
+    )
+      continue
+    candidates.push({
+      item,
+      insertAt: last,
+      rect: [columnRects[0][0], item.rect[1], columnRects.at(-1)[2], item.rect[3]]
+    })
+  }
+  return candidates.length === 1 ? candidates[0] : undefined
+}
+
+// A terminal whole section Source is separate from the existing multi-record family.
+export function proveNativeTerminalFencedSection(input) {
+  try {
+    return proveTerminal(input)
   } catch {
     return undefined
   }

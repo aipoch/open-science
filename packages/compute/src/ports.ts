@@ -3,7 +3,8 @@ import type {
   ComputeJob,
   ComputeJobIntegrityIssue,
   ComputeJobRemoteCleanupDisposition,
-  ComputeJobStatus
+  ComputeJobStatus,
+  JobError
 } from './model'
 
 export type ComputeJobOwner = Readonly<{
@@ -24,6 +25,7 @@ export type UpdateJobRequest = {
   stdoutTail?: string | null
   stderrTail?: string | null
   errorCode?: string | null
+  errorMessage?: string | null
   // lastPollError is set when SSH connectivity fails during polling (not a job failure).
   lastPollError?: string | null
   // retryAfterUserAction is an in-memory hint; always true for poll connectivity errors.
@@ -90,7 +92,7 @@ export type ComputeJobOperationKind = 'cancel'
 
 export type ComputeJobOperationPhase = 'active' | 'settled'
 
-export type ComputeJobOperationOutcome = 'fulfilled' | 'superseded'
+export type ComputeJobOperationOutcome = 'fulfilled' | 'superseded' | 'failed'
 
 export type ComputeJobOperationRecord = Readonly<{
   id: string
@@ -106,6 +108,14 @@ export type ComputeJobOperationRecord = Readonly<{
   createdAt: Date
   settledAt: Date | null
   updatedAt: Date
+  errorCode?: string | null
+  errorMessage?: string | null
+}>
+
+export type ComputeJobOperationSettlement = Readonly<{
+  outcome: 'superseded' | 'failed'
+  job?: UpdateJobRequest
+  error?: JobError
 }>
 
 export type ComputeJobOperationScope = Readonly<{
@@ -142,6 +152,11 @@ export interface ComputeJobOperationRepository {
     remoteWorkdirAbsent?: boolean
   ): Promise<boolean>
   retry(claim: ClaimedComputeJobOperation, now: Date, eligibleAt: Date): Promise<boolean>
+  settle(
+    claim: ClaimedComputeJobOperation,
+    now: Date,
+    settlement: ComputeJobOperationSettlement
+  ): Promise<ComputeJobOperationRecord | null>
 }
 
 export type SessionComputePolicy =

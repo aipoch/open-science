@@ -1,3 +1,4 @@
+import type { ManagedPreviewSource } from '../../../shared/preview-resources'
 import type { NotebookSessionReference } from '../../../shared/notebook'
 import type { ProjectFileOriginSession } from '../../../shared/project-files'
 import type { FindingLocator } from '../../../shared/reviewer'
@@ -26,7 +27,7 @@ export type PreviewFileFormat =
 // Distinguishes generated artifacts from user uploads, notebook inputs, and local ("This computer")
 // files when preview readers and header actions differ. 'local' files live outside app storage:
 // their path is an absolute filesystem path read via window.api.localFs.
-export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
+export type PreviewFileSource = ManagedPreviewSource
 
 type PreviewItemBase = {
   id: string
@@ -38,6 +39,7 @@ type PreviewItemBase = {
 export type PreviewFileItem = PreviewItemBase & {
   type: 'file'
   source?: PreviewFileSource
+  fromNotebookDataLink?: boolean
   path: string
   format: PreviewFileFormat
   name: string
@@ -57,10 +59,13 @@ export type PreviewToolItem = PreviewItemBase & {
   sideChatId?: string
   // A message chip can request a transient Library scope without changing the durable tab format.
   libraryScopeRequest?: { section?: 'inbox'; collectionId?: string; collectionName?: string }
+  // Runtime-only reveal request; a fresh object also reopens the same Skill after Back.
+  skillDetailRequest?: { skillId: string }
   toolKind?:
     | 'notebook'
     | 'files'
     | 'library'
+    | 'marketplace'
     | 'compute'
     | 'reviewer'
     | 'plan'

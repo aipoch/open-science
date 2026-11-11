@@ -1,7 +1,7 @@
-import { BatchActionDock, BatchSelectionActions } from './BatchActionDock'
+import { ResourceCatalogActions } from '../marketplace/ResourceCenterModeTabs'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ChevronDown, Download, ListChecks, LoaderCircle, RefreshCw } from 'lucide-react'
+import { ChevronDown, Download, LoaderCircle, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { SettingsSegmentedControl } from './SettingsSegmentedControl'
@@ -12,10 +12,9 @@ import type {
 
 export type MarketplaceBatchMode = 'install' | 'update' | undefined
 
-// Progress is a projection only. Closing/unmounting Settings never stops the main-process job.
+// Progress is a projection only. Unmounting the catalog never stops the main-process job.
 export function SkillMarketplaceBatchControls({
   expanded,
-  heading,
   onOpen,
   onExit,
   onRefresh,
@@ -35,7 +34,6 @@ export function SkillMarketplaceBatchControls({
   children
 }: {
   expanded: boolean
-  heading?: React.ReactNode
   onOpen: () => void
   onExit: () => void
   onRefresh?: () => void
@@ -52,7 +50,7 @@ export function SkillMarketplaceBatchControls({
   onClearSelection: () => void
   onBusyChange: (busy: boolean) => void
   onChanged: () => void
-  children?: (selection: React.ReactNode) => React.ReactNode
+  children: (selection: React.ReactNode, toolbarActions: React.ReactNode) => React.ReactNode
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [batch, setBatch] = useState<SkillMarketplaceBatch | null>(null)
@@ -163,7 +161,7 @@ export function SkillMarketplaceBatchControls({
   const confirm = (value: SkillMarketplaceBatchRequest): void => {
     confirmTrigger.current =
       document.activeElement instanceof HTMLElement &&
-      document.activeElement.closest('[data-slot="skill-marketplace-batch-dock"]')
+      document.activeElement.closest('[data-slot="skill-marketplace-selection"]')
         ? document.activeElement
         : selectionAction.current
     setDraft(structuredClone(value))
@@ -248,67 +246,48 @@ export function SkillMarketplaceBatchControls({
           disabled={selectionLocked || !filteredCount}
           onChange={(event) => (event.target.checked ? onSelectFiltered() : onClearSelection())}
         />
-        <span>{t('Select all filtered results ({{total}})', { total: filteredCount })}</span>
+        <span>{t('Select all')}</span>
       </label>
     ) : null
-  if (!expanded && !heading && !active) return <>{children?.(null)}</>
-  return (
-    <div
-      className={expanded ? 'skill-marketplace-batch-layout' : 'space-y-4'}
-      data-slot="skill-marketplace-batch"
+  const toolbarActions = (
+    <ResourceCatalogActions
+      onRefresh={onRefresh}
+      refreshing={refreshing}
+      refreshDisabled={expanded && selectionLocked}
+      items={
+        expanded
+          ? [{ label: t('Exit selection'), onSelect: onExit, disabled: pending }]
+          : [{ label: t('Batch manage'), onSelect: onOpen }]
+      }
     >
-      <div className={expanded ? 'skill-marketplace-batch-scroll space-y-4 p-5' : 'space-y-4'}>
-        {heading || expanded || active ? (
-          <div
-            className="flex flex-wrap items-center justify-between gap-2"
-            data-slot="skill-marketplace-header"
-          >
-            {heading}
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" onClick={expanded ? onExit : onOpen}>
-                {expanded ? (
-                  <ArrowLeft data-icon="inline-start" aria-hidden="true" />
-                ) : (
-                  <ListChecks data-icon="inline-start" aria-hidden="true" />
-                )}
-                {expanded ? t('Back to Marketplace') : t('Batch manage')}
-                {!expanded && active ? (
-                  <>
-                    <LoaderCircle
-                      className="size-3.5 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                    <span role="status" className="tabular-nums">
-                      {finished}/{batch.items.length}
-                    </span>
-                  </>
-                ) : null}
-              </Button>
-              {onRefresh ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onRefresh}
-                  disabled={refreshing || (expanded && selectionLocked)}
-                >
-                  <RefreshCw
-                    className={
-                      refreshing ? 'size-4 animate-spin motion-reduce:animate-none' : 'size-4'
-                    }
-                    aria-hidden="true"
-                  />
-                  {t('Refresh')}
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-        {expanded && showSelection ? (
+      {active && !expanded ? (
+        <Button variant="ghost" size="sm" onClick={onOpen}>
+          <LoaderCircle
+            className="size-3.5 animate-spin motion-reduce:animate-none"
+            data-icon="inline-start"
+            aria-hidden="true"
+          />
+          {t('Batch manage')}
+          <span role="status" className="tabular-nums">
+            {finished}/{batch.items.length}
+          </span>
+        </Button>
+      ) : null}
+    </ResourceCatalogActions>
+  )
+  const selectionBar = expanded ? (
+    <section
+      aria-label={t('Selected resources')}
+      data-slot="skill-marketplace-selection"
+      className="-mx-5 -mb-3 mt-3 max-h-[40vh] overflow-y-auto border-t border-primary/20 bg-primary/5 px-5 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {showSelection ? (
           <fieldset disabled={selectionLocked} className="min-w-0">
             <SettingsSegmentedControl
               value={mode ?? 'install'}
               ariaLabel={t('Batch operation')}
-              columnWidth="min(10rem, calc((100cqw - 2.75rem) / 2))"
+              columnWidth="min(9rem, calc((100cqw - 2.75rem) / 2))"
               segmentClassName="px-3 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 disabled:opacity-50"
               onValueChange={(value) => {
                 if (!selectionLocked) onModeChange(value)
@@ -317,11 +296,8 @@ export function SkillMarketplaceBatchControls({
                 {
                   value: 'install',
                   label: (
-                    <span
-                      className="flex min-w-0 items-center gap-2 whitespace-nowrap"
-                      title={t('Not installed')}
-                    >
-                      <span className="truncate">{t('Not installed')}</span>
+                    <span className="flex min-w-0 items-center gap-2" title={t('Not installed')}>
+                      <span className="min-w-0 break-words">{t('Not installed')}</span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">
                         {modeCounts.install}
                       </span>
@@ -331,11 +307,8 @@ export function SkillMarketplaceBatchControls({
                 {
                   value: 'update',
                   label: (
-                    <span
-                      className="flex min-w-0 items-center gap-2 whitespace-nowrap"
-                      title={t('Updates')}
-                    >
-                      <span className="truncate">{t('Updates')}</span>
+                    <span className="flex min-w-0 items-center gap-2" title={t('Updates')}>
+                      <span className="min-w-0 break-words">{t('Updates')}</span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">
                         {modeCounts.update}
                       </span>
@@ -346,239 +319,255 @@ export function SkillMarketplaceBatchControls({
             />
           </fieldset>
         ) : null}
-        {children ? children(selection) : selection}
+        {selection}
+        {selectedCount > 0 ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={selectionLocked}
+            aria-label={t('Clear selection')}
+            onClick={() => {
+              onClearSelection()
+              selectAll.current?.focus({ preventScroll: true })
+            }}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        ) : null}
+        {showSelection ? (
+          <span role="status" className="text-sm font-medium tabular-nums">
+            {t('{{selectedCount}} selected', { selectedCount })}
+          </span>
+        ) : null}
+        <div className="ml-auto flex items-center gap-2">
+          {showSelection && !draft && !showProgress ? (
+            <Button
+              ref={selectionAction}
+              size="sm"
+              disabled={selectionLocked || !selectedCount}
+              onClick={() => request && confirm(request)}
+            >
+              {mode === 'update' ? (
+                <RefreshCw data-icon="inline-start" aria-hidden="true" />
+              ) : (
+                <Download data-icon="inline-start" aria-hidden="true" />
+              )}
+              {mode === 'update' ? t('Update…') : t('Install…')}
+            </Button>
+          ) : null}
+          <Button variant="ghost" size="sm" disabled={pending} onClick={onExit}>
+            <X data-icon="inline-start" aria-hidden="true" />
+            {t('Exit selection')}
+          </Button>
+        </div>
       </div>
-      {expanded && (error || draft || showProgress || (showSelection && selectedCount > 0)) ? (
-        <BatchActionDock data-slot="skill-marketplace-batch-dock">
-          <div className="space-y-3">
-            {expanded && error ? (
-              <ErrorNotice
-                role="alert"
-                tone="amber"
-                title={error}
-                secondaryButton={{ label: t('Dismiss'), onClick: () => setError(undefined) }}
-              />
-            ) : null}
-            {draft ? (
-              <section
-                data-slot="skill-marketplace-batch-review"
-                data-testid="skill-marketplace-batch-confirm"
-                aria-label={t('Review selection')}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape' && !pending) {
-                    event.stopPropagation()
-                    restoreActionFocus.current = true
-                    setDraft(undefined)
-                  }
-                }}
-                className="space-y-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h4 ref={reviewHeading} tabIndex={-1} className="text-sm font-medium">
-                    {t('Review selection')} / {draft.items.length}
-                  </h4>
-                  <div className="ml-auto flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => {
-                        restoreActionFocus.current = true
-                        setDraft(undefined)
-                      }}
-                    >
-                      {t('Cancel', { ns: 'common' })}
-                    </Button>
-                    <Button
-                      size="sm"
-                      disabled={pending || disabled}
-                      onClick={() => void start()}
-                      aria-busy={Boolean(pending)}
-                    >
-                      <span key={String(pending)} className="button-feedback">
-                        {pending ? (
-                          <LoaderCircle
-                            aria-hidden="true"
-                            className="size-4 animate-spin motion-reduce:animate-none"
-                          />
-                        ) : null}
-                        {draft.items.some(({ expectedVersion }) => expectedVersion !== null)
-                          ? t('Update selected')
-                          : t('Install selected')}
-                      </span>
-                    </Button>
-                  </div>
-                </div>
-                <details className="skill-marketplace-disclosure">
-                  <summary>
-                    <span>{t('Details')}</span>
-                    <ChevronDown aria-hidden="true" className="size-4" />
-                  </summary>
-                  <div className="mb-3 space-y-2 text-xs text-muted-foreground">
-                    <p>
-                      {t(
-                        'Installing downloads and verifies the package. Bundled scripts are not run during installation.'
-                      )}
-                    </p>
-                    <p>
-                      {t(
-                        'Installation continues when Settings is closed. Quitting the app stops the queue.'
-                      )}
-                    </p>
-                  </div>
-                  <ul className="max-h-40 overflow-auto space-y-1 text-xs">
-                    {draft.items.map(({ id, version, expectedVersion }) => (
-                      <li key={id} className="break-words">
-                        {id}: {expectedVersion ? `${expectedVersion} → ` : ''}
-                        {version}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              </section>
-            ) : showProgress && batch ? (
-              <section className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 ref={progressHeading} tabIndex={-1} className="text-sm font-medium">
-                    {active
-                      ? t('Batch installation')
-                      : batch.status === 'stopped'
-                        ? t('Batch stopped')
-                        : t('Batch complete')}
-                  </h4>
-                  <div className="ml-auto flex items-center gap-3">
-                    <span role="status" className="text-xs tabular-nums">
-                      {finished}/{batch.items.length}
+      {error || draft || showProgress ? (
+        <div
+          className="mt-3 border-t border-primary/20 pt-3 space-y-3"
+          data-slot="skill-marketplace-batch-feedback"
+        >
+          {expanded && error ? (
+            <ErrorNotice
+              role="alert"
+              tone="amber"
+              title={error}
+              secondaryButton={{ label: t('Dismiss'), onClick: () => setError(undefined) }}
+            />
+          ) : null}
+          {draft ? (
+            <section
+              data-slot="skill-marketplace-batch-review"
+              data-testid="skill-marketplace-batch-confirm"
+              aria-label={t('Review selection')}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && !pending) {
+                  event.stopPropagation()
+                  restoreActionFocus.current = true
+                  setDraft(undefined)
+                }
+              }}
+              className="space-y-2"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h4 ref={reviewHeading} tabIndex={-1} className="text-sm font-medium">
+                  {t('Review selection')} / {draft.items.length}
+                </h4>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() => {
+                      restoreActionFocus.current = true
+                      setDraft(undefined)
+                    }}
+                  >
+                    {t('Cancel', { ns: 'common' })}
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={pending || disabled}
+                    onClick={() => void start()}
+                    aria-busy={Boolean(pending)}
+                  >
+                    <span key={String(pending)} className="button-feedback">
+                      {pending ? (
+                        <LoaderCircle
+                          aria-hidden="true"
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                        />
+                      ) : null}
+                      {draft.items.some(({ expectedVersion }) => expectedVersion !== null)
+                        ? t('Update selected')
+                        : t('Install selected')}
                     </span>
-                    {!active ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="shrink-0"
-                        onClick={() => {
-                          setDismissedBatchId(batch.id)
-                          selectAll.current?.focus({ preventScroll: true })
-                        }}
-                      >
-                        {t('Done')}
-                      </Button>
-                    ) : null}
-                  </div>
+                  </Button>
                 </div>
-                <progress
-                  className="h-1.5 w-full accent-primary"
-                  value={finished}
-                  max={batch.items.length}
-                  aria-label={t('Batch installation')}
-                />
-                {failed ? (
-                  <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                    {t('Failed: {{total}}', { total: failed })}
+              </div>
+              <details className="skill-marketplace-disclosure">
+                <summary>
+                  <span>{t('Details')}</span>
+                  <ChevronDown aria-hidden="true" className="size-4" />
+                </summary>
+                <div className="mb-3 space-y-2 text-xs text-muted-foreground">
+                  <p>
+                    {t(
+                      'Installing downloads and verifies the package. Bundled scripts are not run during installation.'
+                    )}
                   </p>
-                ) : null}
-                {active ? (
-                  <p className="text-xs text-muted-foreground">
+                  <p>
                     {t(
                       'Installation continues when Settings is closed. Quitting the app stops the queue.'
                     )}
                   </p>
-                ) : null}
-                {active || failed ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {active ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="ml-auto"
-                        disabled={pending || batch.status === 'stopping'}
-                        onClick={() => void stop()}
-                      >
-                        {batch.status === 'stopping'
-                          ? t('Stopping…')
-                          : t('Stop after current item')}
-                      </Button>
-                    ) : null}
-                    {!active && batch.items.some(({ status }) => status === 'failed') ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={disabled || !ready || pending}
-                        onClick={() =>
-                          confirm({
-                            snapshotId: batch.snapshotId,
-                            items: batch.items
-                              .filter(({ status }) => status === 'failed')
-                              .map(({ id, version, expectedVersion }) => ({
-                                id,
-                                version,
-                                expectedVersion
-                              }))
-                          })
-                        }
-                      >
-                        {t('Retry failed items')}
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {batch.refreshFailed ? (
-                  <ErrorNotice
-                    tone="amber"
-                    title={t(
-                      'Skills were installed, but runtime refresh failed. Restart the app to reload them.'
-                    )}
-                  />
-                ) : null}
-                <details className="skill-marketplace-disclosure">
-                  <summary>
-                    <span>{t('Details')}</span>
-                    <ChevronDown className="size-4" aria-hidden="true" />
-                  </summary>
-                  <ul className="max-h-60 space-y-2 overflow-auto pt-2 text-xs">
-                    {batch.items.map((item) => (
-                      <li key={item.id} className="flex items-start justify-between gap-3">
-                        <span className="min-w-0 break-words">
-                          {item.id} <span className="text-muted-foreground">{item.version}</span>
-                        </span>
-                        <span className="shrink-0 text-right">
-                          {labels[item.status]}
-                          {item.result && !item.result.ok ? (
-                            <span className="block text-muted-foreground">{item.result.error}</span>
-                          ) : null}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              </section>
-            ) : showSelection && selectedCount > 0 ? (
-              <BatchSelectionActions
-                selectedCount={selectedCount}
-                disabled={selectionLocked}
-                onClear={() => {
-                  onClearSelection()
-                  selectAll.current?.focus({ preventScroll: true })
-                }}
-              >
-                <Button
-                  ref={selectionAction}
-                  size="sm"
-                  className="ml-auto"
-                  disabled={selectionLocked}
-                  onClick={() => request && confirm(request)}
-                >
-                  {mode === 'update' ? (
-                    <RefreshCw data-icon="inline-start" aria-hidden="true" />
-                  ) : (
-                    <Download data-icon="inline-start" aria-hidden="true" />
+                </div>
+                <ul className="max-h-40 overflow-auto space-y-1 text-xs">
+                  {draft.items.map(({ id, version, expectedVersion }) => (
+                    <li key={id} className="break-words">
+                      {id}: {expectedVersion ? `${expectedVersion} → ` : ''}
+                      {version}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </section>
+          ) : showProgress && batch ? (
+            <section className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 ref={progressHeading} tabIndex={-1} className="text-sm font-medium">
+                  {active
+                    ? t('Batch installation')
+                    : batch.status === 'stopped'
+                      ? t('Batch stopped')
+                      : t('Batch complete')}
+                </h4>
+                <div className="ml-auto flex items-center gap-3">
+                  <span role="status" className="text-xs tabular-nums">
+                    {finished}/{batch.items.length}
+                  </span>
+                  {!active ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => {
+                        setDismissedBatchId(batch.id)
+                        selectAll.current?.focus({ preventScroll: true })
+                      }}
+                    >
+                      {t('Done')}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <progress
+                className="h-1.5 w-full accent-primary"
+                value={finished}
+                max={batch.items.length}
+                aria-label={t('Batch installation')}
+              />
+              {failed ? (
+                <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                  {t('Failed: {{total}}', { total: failed })}
+                </p>
+              ) : null}
+              {active ? (
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    'Installation continues when Settings is closed. Quitting the app stops the queue.'
                   )}
-                  {mode === 'update' ? t('Update…') : t('Install…')}
-                </Button>
-              </BatchSelectionActions>
-            ) : null}
-          </div>
-        </BatchActionDock>
+                </p>
+              ) : null}
+              {active || failed ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {active ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto"
+                      disabled={pending || batch.status === 'stopping'}
+                      onClick={() => void stop()}
+                    >
+                      {batch.status === 'stopping' ? t('Stopping…') : t('Stop after current item')}
+                    </Button>
+                  ) : null}
+                  {!active && batch.items.some(({ status }) => status === 'failed') ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={disabled || !ready || pending}
+                      onClick={() =>
+                        confirm({
+                          snapshotId: batch.snapshotId,
+                          items: batch.items
+                            .filter(({ status }) => status === 'failed')
+                            .map(({ id, version, expectedVersion }) => ({
+                              id,
+                              version,
+                              expectedVersion
+                            }))
+                        })
+                      }
+                    >
+                      {t('Retry failed items')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+              {batch.refreshFailed ? (
+                <ErrorNotice
+                  tone="amber"
+                  title={t(
+                    'Skills were installed, but runtime refresh failed. Restart the app to reload them.'
+                  )}
+                />
+              ) : null}
+              <details className="skill-marketplace-disclosure">
+                <summary>
+                  <span>{t('Details')}</span>
+                  <ChevronDown className="size-4" aria-hidden="true" />
+                </summary>
+                <ul className="max-h-60 space-y-2 overflow-auto pt-2 text-xs">
+                  {batch.items.map((item) => (
+                    <li key={item.id} className="flex items-start justify-between gap-3">
+                      <span className="min-w-0 break-words">
+                        {item.id} <span className="text-muted-foreground">{item.version}</span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        {labels[item.status]}
+                        {item.result && !item.result.ok ? (
+                          <span className="block text-muted-foreground">{item.result.error}</span>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </section>
+          ) : null}
+        </div>
       ) : null}
-    </div>
-  )
+    </section>
+  ) : null
+  return <>{children(selectionBar, toolbarActions)}</>
 }

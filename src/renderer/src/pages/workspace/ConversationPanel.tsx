@@ -1,3 +1,15 @@
+import { usePromptOptimization } from './composer/use-prompt-optimization'
+
+import { ResearchVideoButton } from '../../components/research-video-button'
+import type { TFunction } from 'i18next'
+import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
+import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
+import {
+  formatNoticeDiagnostics,
+  noticePresentation,
+  type NoticeActionHandlers
+} from '@/lib/composer-notice/catalog'
 import {
   SplitButton,
   SplitButtonGroup,
@@ -6,8 +18,10 @@ import {
   SplitButtonContent
 } from '@/components/ui/split-button'
 import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
-import { isAgentAuthenticationRequired } from './agent-authentication-error'
-import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
+import {
+  pendingWorkspaceElicitations,
+  useWorkspaceElicitationFailures
+} from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
@@ -20,22 +34,23 @@ import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { composerContextRowClassName } from './SessionDiscussionBar'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
+import { discussionDraftAnnotations } from './discussion-send-context'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
 import { SessionHeaderMenu } from './SessionHeaderMenu'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { isImportedSession } from './session-action-menu'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { mentionProjectFile } from './project-file-mention'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { createSessionReplayItem, DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { NotificationBell } from '@/components/NotificationBell'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
-import { DiagnosticDetails } from '@/components/diagnostic-details'
-import { ErrorNotice } from '@/components/error-notice'
+import { SpecialistUnavailableNotice } from './SpecialistUnavailableNotice'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { Button } from '@/components/ui/button'
 import {
@@ -63,9 +78,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import { Popover as PopoverPrimitive } from 'radix-ui'
-import type { TFunction } from 'i18next'
 import {
-  AlertTriangle,
   ArrowUp,
   BookMarked,
   BookOpen,
@@ -74,7 +87,6 @@ import {
   ChevronRight,
   CircleHelp,
   FileText,
-  Flag,
   GitBranch,
   ListChecks,
   Loader2,
@@ -88,6 +100,8 @@ import {
   ScanEye,
   Square,
   Stethoscope,
+  Undo2,
+  WandSparkles,
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -108,23 +122,12 @@ import type { AcpContextUsage } from '../../../../shared/acp-usage-contract'
 import type { TextAnnotation } from '../../../../shared/annotation-contract'
 import { validateAnnotations, type AnnotationValidationError } from '../../../../shared/annotations'
 import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
-import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
-import {
-  isCodexCliCompatibilityError,
-  isUnsupportedCodexAcpVersionError
-} from '../../../../shared/codex-runtime'
 import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type {
   PermissionProfileId,
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import {
-  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
-  isReportableRunFailure,
-  isSpecialistCapabilityReadFailure,
-  visionRunFailureMessage
-} from '../../../../shared/run-error-classification'
 import {
   MAX_SESSION_PDF_CONTEXTS,
   latestOutcomePrompt,
@@ -152,17 +155,15 @@ import { ReadingContextPicker } from './ReadingContextPicker'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
 import { SessionBackgroundActivity } from './SessionBackgroundActivity'
-import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
-import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
+import { type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
 import { WorkspaceElicitationCard, WorkspaceElicitationRecovery } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
-import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
 import { BookmarksPopover } from './bookmarks/BookmarksPopover'
 import { useBookmarks } from './bookmarks/bookmark-context'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
@@ -170,13 +171,14 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import {
   appendArtifactMention,
   docFromText,
+  docFromMessageParts,
   docToSkillIds,
   docToText,
   pastedTextAttachmentDomId,
   pastedTextPreviewName,
   type ComposerPastedTextNode
 } from './composer/composer-doc'
-import { normalizeRunFailureError, type SessionReportSubject } from './error-report'
+import { type SessionReportSubject } from './error-report'
 import { FileTypeIcon } from './file-type-icon'
 import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
@@ -197,39 +199,7 @@ import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-stat
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { resolveSessionRecoveryPresentation } from './workspace-session-recovery'
 
-const localizeVisionRunFailure = (
-  error: string | null | undefined,
-  t: TFunction
-): string | undefined => {
-  switch (visionRunFailureMessage(error)) {
-    case VISION_MODEL_NOT_CONFIGURED_MESSAGE:
-      return t(
-        "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
-      )
-    case 'The attached image is too large to prepare for the Vision model.':
-      return t('The attached image is too large to prepare for the Vision model.')
-    case 'The attached image is invalid.':
-      return t('The attached image is invalid.')
-    case 'The current images exceed the Vision evidence request budget.':
-      return t('The current images exceed the Vision evidence request budget.')
-    case 'The current Vision evidence exceeds the request budget.':
-      return t('The current Vision evidence exceeds the request budget.')
-    case 'The Vision model returned invalid image evidence.':
-      return t('The Vision model returned invalid image evidence.')
-    default:
-      return undefined
-  }
-}
-
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
-
-const localizeSpecialistReadFailure = (
-  error: string | null | undefined,
-  t: TFunction
-): string | undefined =>
-  isSpecialistCapabilityReadFailure(error)
-    ? t('The Specialist Skills or Connectors could not be loaded. Try sending again.')
-    : undefined
 
 const composerIconButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-50',
@@ -275,8 +245,9 @@ const attachmentLimitsText = (t: TFunction): string =>
 
 const ResizableElicitationComposer = ({
   children,
-  choice
-}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
+  choice,
+  collapsed
+}: React.PropsWithChildren<{ choice: boolean; collapsed: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -287,6 +258,7 @@ const ResizableElicitationComposer = ({
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
       contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
+      collapsed={collapsed}
     >
       {children}
     </ResizableBottomPanel>
@@ -365,7 +337,9 @@ type ConversationPanelView = {
   composerFocusKey?: string
   canEditDraft: boolean
   canEditLocalDraft?: boolean
+  sendPreparing?: boolean
   persistenceBlocked?: boolean
+  persistenceIssue?: SessionWriteIssue
   actionError: string | null
   sideChatDisabledReason?: string
   sessionImport?: { projectId: string; projectName?: string; canImport: boolean }
@@ -469,6 +443,8 @@ type ConversationPanelWorkflows = {
 type ConversationPanelSessionTools = {
   menuBindings?: React.ComponentProps<typeof SessionHeaderMenu>['bindings']
   exportDiagnostics?: (session: ChatSession) => void
+  newConversation?: () => void
+  reviewPersistence?: () => void
   togglePin?: (session: ChatSession) => void
   editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
@@ -500,45 +476,6 @@ type ConversationPanelProps = {
   submissions: ConversationSubmissions
 }
 
-const renderConversationError = (
-  children: React.ReactNode,
-  onDismiss: () => void,
-  dismissLabel: string,
-  retryable = false
-): React.JSX.Element =>
-  retryable ? (
-    <ErrorNotice
-      className="mb-2"
-      tone="amber"
-      icon={AlertTriangle}
-      content={children}
-      dismissButton={{ label: dismissLabel, onClick: onDismiss }}
-    />
-  ) : (
-    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label={dismissLabel}
-        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
-      >
-        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-      </button>
-      {children}
-    </div>
-  )
-
-const DismissibleConversationError = ({
-  children
-}: {
-  children: (onDismiss: () => void) => React.ReactNode
-}): React.JSX.Element | null => {
-  const [dismissed, setDismissed] = useState(false)
-  if (dismissed) return null
-  const onDismiss = (): void => setDismissed(true)
-  return <>{children(onDismiss)}</>
-}
-
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
   view,
@@ -564,6 +501,7 @@ const ConversationPanel = ({
     canEditDraft,
     canEditLocalDraft = canEditDraft,
     persistenceBlocked,
+    persistenceIssue,
     actionError,
     sideChatDisabledReason,
     sessionImport
@@ -580,6 +518,7 @@ const ConversationPanel = ({
       attachments,
       transfers: attachmentTransfers,
       error: composerError,
+      errorFailure: composerFailure,
       errorDetail: composerErrorDetail,
       historyStatus,
       isHistoryBrowsing,
@@ -610,6 +549,9 @@ const ConversationPanel = ({
       dismissAutomaticReading
     }
   } = composer
+  const discussionAnnotations = discussionDraftAnnotations(activeSession, annotations).filter(
+    (item) => replayAnnotationTarget(item)
+  )
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
   const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
@@ -664,8 +606,11 @@ const ConversationPanel = ({
   )
   const onValidatedDraftDocChange = (
     nextDoc: Parameters<typeof onDraftDocChange>[0],
-    caret?: Parameters<typeof onDraftDocChange>[1]
+    caret?: Parameters<typeof onDraftDocChange>[1],
+    userEdit = true
   ): void => {
+    if (userEdit && JSON.stringify(nextDoc) !== JSON.stringify(draftDoc))
+      promptOptimization.edited()
     if (caret) onDraftDocChange(nextDoc, caret)
     else onDraftDocChange(nextDoc)
     const validation = validateAnnotations(annotations, docToText(nextDoc))
@@ -772,15 +717,18 @@ const ConversationPanel = ({
   const onSpecialistChange = specialist.actions.selectSpecialist
   const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
   const onReconfigureUseNone = specialist.actions.useMainAgent
-  const onSendMessage = (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds })
+  const submitOptimizedDraft: typeof submitDraft = (options) => {
+    submitDraft({ ...options, onAccepted: promptOptimization.sent })
+  }
+  const onSendMessage = (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds })
   const onPlanFirst = (forcedSkillIds: string[]): void =>
-    submitDraft({ forcedSkillIds, mode: 'plan-first' })
+    submitOptimizedDraft({ forcedSkillIds, mode: 'plan-first' })
   const onBranchInNewSession = activeSession
-    ? (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds, mode: 'branch' })
+    ? (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds, mode: 'branch' })
     : undefined
   const onReconfigureRetry = (): void => {
     if (specialist.actions.retrySpecialistSelection()) return
-    submitDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
+    submitOptimizedDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
   }
 
   const specialistItems = useSpecialistStore((state) => state.items)
@@ -982,30 +930,8 @@ const ConversationPanel = ({
       ? activePendingPlan
       : undefined
   const resolveRunError = useCallback(
-    (error: string | undefined): string => {
-      switch (error) {
-        case 'This turn was interrupted. Resume to continue.':
-          return t('This turn was interrupted. Resume to continue.')
-        case 'ACP connection closed':
-        case 'Connection lost — Resume to reconnect and continue.':
-          return t('Connection lost — Resume to reconnect and continue.')
-        case 'Session was interrupted before the app closed.':
-          return t('Session was interrupted before the app closed.')
-        default:
-          return (
-            (isClaudeCliCompatibilityError(error ?? '')
-              ? t(
-                  'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
-                )
-              : undefined) ??
-            localizeImageAnnotationSourceError(error, t) ??
-            localizeVisionRunFailure(error, t) ??
-            (error?.trim()
-              ? normalizeRunFailureError(error)
-              : t('The run failed with no error message.'))
-          )
-      }
-    },
+    (error: string | undefined): string =>
+      error?.trim() || t('The run failed with no error message.'),
     [t]
   )
   const latestTurnAnchor = activeSession ? latestOutcomePrompt(activeSession) : undefined
@@ -1025,103 +951,141 @@ const ConversationPanel = ({
     !preparationNoticeBaseline.promptMessageId
       ? preparationNoticeBaseline.state
       : activeSession
-  const sessionRecovery = resolveSessionRecoveryPresentation(activeSession)
+  const sessionRecovery = resolveSessionRecoveryPresentation(
+    activeSession,
+    persistenceIssue?.terminalScopes
+  )
   const showSessionRecovery = Boolean(sessionRecovery || isResuming)
-  let recoveryMessage: string
-  if (sessionRecovery?.error) {
-    recoveryMessage = resolveRunError(sessionRecovery.error)
-  } else if (sessionRecovery?.cause === 'cancelled') {
-    recoveryMessage = t('This turn was interrupted. Resume to continue.')
-  } else if (sessionRecovery?.cause === 'connection-lost') {
-    recoveryMessage = t('Connection lost — Resume to reconnect and continue.')
-  } else if (sessionRecovery?.cause === 'app-restart') {
-    recoveryMessage = t('Session was interrupted before the app closed.')
-  } else {
-    recoveryMessage = t('This session was interrupted.')
-  }
   const resolvedRunError = resolveRunError(legacyDisplayState?.error)
   // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
-  const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const showLegacyRunError =
+    !isImported && legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
   const contextResetNotice = useWorkspaceOperationErrors((state) =>
     activeSession ? state.contextResets?.[activeSession.id] : false
   )
+  useNoticeCountdown(
+    contextResetNotice ? 6000 : undefined,
+    false,
+    () => {
+      if (!activeSession) return
+      useWorkspaceOperationErrors.setState(({ contextResets }) => {
+        const next = { ...contextResets }
+        delete next[activeSession.id]
+        return { contextResets: next }
+      })
+    },
+    contextResetNotice ? activeSession?.id : undefined
+  )
+  const persistenceSizeLimit = !persistenceIssue || persistenceIssue.kind === 'size-limit'
+  const persistenceChecking = persistenceIssue?.state === 'checking'
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
-  const resumeDiagnostic =
-    operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
+  const operationFailure = useWorkspaceOperationErrors((state) =>
+    activeSession && state.errors[activeSession.id] === actionError
+      ? state.failures?.[activeSession.id]
+      : undefined
+  )
+  const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
+  const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
+  const optimizationModelConfiguration =
+    promptOptimizationModel.mode === 'fixed'
+      ? {
+          providerId: promptOptimizationModel.providerId,
+          model: promptOptimizationModel.model,
+          reasoningEffort: promptOptimizationModel.reasoningEffort
+        }
+      : modelConfiguration
+  const promptOptimization = usePromptOptimization({
+    projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
+    // WorkspacePage keys this panel by composer identity, preserving its own Session binding.
+    sessionKey: 'composer',
+    modelConfiguration:
+      promptOptimizationModel.mode === 'fixed'
+        ? optimizationModelConfiguration
+        : modelUnavailable
+          ? undefined
+          : optimizationModelConfiguration,
+    attachmentIds: attachments.map(({ id }) => id),
+    transferIds: attachmentTransfers.map(({ transferId }) => transferId),
+    doc: draftDoc,
+    onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
+  })
+
+  const composerNotices = useComposerNotices({
+    sessionId: activeSession?.id,
+    authenticationResolved: view.authenticationRecovery?.required === false,
+    compacting: activeSession?.compacting,
+    turn: isImported ? undefined : currentTurnOutcome,
+    recovery: showSessionRecovery ? (sessionRecovery ?? {}) : undefined,
+    legacy:
+      showLegacyRunError && !showSessionRecovery
+        ? { ...legacyDisplayState, error: resolvedRunError, updatedAt: activeSession?.updatedAt }
+        : undefined,
+    operations: [
+      {
+        id: 'prompt-optimization',
+        message: promptOptimization.tooLong
+          ? t('Shorten your question to optimize it (maximum 16,000 characters).')
+          : promptOptimization.notice === 'failed'
+            ? t('Could not optimize your question. Your draft was kept. Please try again.')
+            : promptOptimization.notice === 'changed'
+              ? t('Your input changed while optimizing. Please try again.')
+              : undefined,
+        failure: {
+          category:
+            promptOptimization.tooLong || promptOptimization.notice !== 'failed'
+              ? 'input'
+              : 'service',
+          reason: promptOptimization.tooLong
+            ? 'input/prompt-optimization-too-long'
+            : promptOptimization.notice === 'failed'
+              ? 'service/prompt-optimization'
+              : 'input/prompt-optimization-changed',
+          diagnostics:
+            !promptOptimization.tooLong && promptOptimization.notice === 'failed'
+              ? (promptOptimization.diagnostics ?? {})
+              : {}
+        }
+      },
+      {
+        id: 'action',
+        message: actionError,
+        failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
+        detail:
+          operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
+        occurredAt: operationDiagnostic?.occurredAt
+      },
+      {
+        id: 'composer',
+        message:
+          composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
+            ? composerError
+            : undefined,
+        failure: composerFailure,
+        detail: composerErrorDetail
+      },
+      {
+        id: 'authentication',
+        message: view.authenticationRecovery?.required ? 'Authentication required' : undefined,
+        blocksSend: true
+      },
+      {
+        id: 'reconfigure',
+        code: 'specialist-reconfigure-failed',
+        message:
+          !specialistSwitchInFlight && reconfigureError
+            ? reconfigureError.message ||
+              reconfigureError.reason ||
+              'The agent session could not be reconfigured.'
+            : undefined
+      }
+    ]
+  })
   const authenticationRequired =
-    view.authenticationRecovery?.required ??
-    [
-      actionError,
-      composerError,
-      currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
-      showLegacyRunError ? legacyDisplayState?.error : undefined
-    ].some(isAgentAuthenticationRequired)
-  const resolvedActionError = isAgentAuthenticationRequired(actionError)
-    ? undefined
-    : ((isClaudeCliCompatibilityError(actionError ?? '')
-        ? t(
-            'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
-          )
-        : undefined) ??
-      localizeImageAnnotationSourceError(actionError, t) ??
-      localizeVisionRunFailure(actionError, t) ??
-      localizeSpecialistReadFailure(actionError, t) ??
-      actionError)
-  let resumeErrorDescription = resolvedActionError
-  if (resumeDiagnostic && resolvedActionError) {
-    if (resumeDiagnostic.detail.includes('Previous agent cleanup is unconfirmed.')) {
-      resumeErrorDescription = t(
-        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
-      )
-    } else if (/timed out/i.test(resumeDiagnostic.detail)) {
-      resumeErrorDescription = t(
-        'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
-      )
-    } else if (
-      /Runtime Segment does not match the adopted Agent context/i.test(resumeDiagnostic.detail)
-    ) {
-      resumeErrorDescription = t(
-        'The selected agent could not be attached to this conversation. Try Resume again.'
-      )
-    } else if (isReportableRunFailure(actionError)) {
-      resumeErrorDescription = t('Your conversation is preserved. Try Resume again.')
-    }
-  }
-  const errorKey = JSON.stringify([
-    activeSession?.id,
-    legacyDisplayState?.status === 'error' ? legacyDisplayState.error : null,
-    actionError,
-    // An explicit recovery attempt must reveal its failure even when the provider
-    // returns the same diagnostic that the user previously dismissed.
-    isResuming
-  ])
-  const showVisionModelSettings =
-    visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
-    (showLegacyRunError &&
-      visionRunFailureMessage(legacyDisplayState?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE)
-  const hasUnsupportedCodexRunError =
-    isUnsupportedCodexAcpVersionError(legacyDisplayState?.error) ||
-    isCodexCliCompatibilityError(legacyDisplayState?.error)
-  const showLegacyRunErrorRow =
-    !isAgentAuthenticationRequired(legacyDisplayState?.error) &&
-    showLegacyRunError &&
-    (!showSessionRecovery || hasUnsupportedCodexRunError)
-  const showCodexSettings =
-    isUnsupportedCodexAcpVersionError(actionError) ||
-    isCodexCliCompatibilityError(actionError) ||
-    (showLegacyRunError && hasUnsupportedCodexRunError)
-  // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
-  // reportability is resolved at failure time and persisted on the Turn Outcome (errorReportable):
-  // a model-provider error is tagged non-reportable at the ACP layer, and an app-crafted reminder is
-  // recognized by its own text. The Session-level flag is only read for legacy display; fall back to
-  // classifying the raw error for sessions persisted before the flag existed (undefined).
-  const isRunErrorReportable =
-    !hasUnsupportedCodexRunError &&
-    (legacyDisplayState?.errorReportable ?? isReportableRunFailure(legacyDisplayState?.error))
+    view.authenticationRecovery?.required ?? composerNotices.authenticationRequired
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
     : undefined
@@ -1169,11 +1133,28 @@ const ConversationPanel = ({
   const pendingElicitationActivity = pendingElicitationRequest
     ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
     : undefined
+  const continuationFailure = useWorkspaceElicitationFailures((state) =>
+    activeSession ? state.failures[activeSession.id] : undefined
+  )
+  const failedContinuation =
+    pendingElicitationActivity?.elicitation?.continuationPending &&
+    !pendingElicitationActivity.elicitation.continuationRecovery &&
+    continuationFailure?.requestId === pendingElicitationRequest?.requestId
+      ? continuationFailure
+      : undefined
   const pendingElicitation: ElicitationProjection | undefined =
     pendingElicitationActivity?.elicitation &&
     (pendingElicitationActivity.elicitation.state === 'pending' ||
+      pendingElicitationActivity.elicitation.continuationPending ||
       pendingElicitationActivity.elicitation.continuationRecovery)
-      ? pendingElicitationActivity.elicitation
+      ? {
+          ...pendingElicitationActivity.elicitation,
+          ...(failedContinuation
+            ? {
+                continuationRecovery: { error: failedContinuation.error }
+              }
+            : {})
+        }
       : !pendingElicitationActivity && pendingElicitationRequest
         ? {
             message: pendingElicitationRequest.message,
@@ -1232,6 +1213,26 @@ const ConversationPanel = ({
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
   const ordinaryComposerBlocked = Boolean(
     blockingInteraction || packageLocked || authenticationRequired
+  )
+  const pendingChoiceQuestions = resolveAgentUserChoiceQuestions(
+    pendingElicitationRequest?.fields ?? pendingElicitation?.fields ?? []
+  )
+  const elicitationPresentationKey = pendingElicitationRequest
+    ? `${activeSession?.id}:${pendingElicitationRequest.requestId}`
+    : undefined
+  const [elicitationPresentation, setElicitationPresentation] = useState<{
+    key: string | undefined
+    collapsed: boolean
+    focusRequestId: number
+  }>({ key: undefined, collapsed: false, focusRequestId: 0 })
+  const elicitationCollapsed =
+    elicitationPresentation.key === elicitationPresentationKey && elicitationPresentation.collapsed
+  const canRevealElicitation = Boolean(
+    pendingChoiceQuestions &&
+    blockingInteraction === 'elicitation' &&
+    !pendingElicitation?.continuationRecovery &&
+    !authenticationRequired &&
+    !packageLocked
   )
 
   useEffect(() => {
@@ -1313,19 +1314,6 @@ const ConversationPanel = ({
   })
   const artifactRetryingPromptMessageId = workflows.artifactFinalization.retryingPromptMessageId
   const artifactRetryDisabled = isImported || workflows.artifactFinalization.running
-  const settingsAction = useCallback(
-    (error: string | undefined): { label: string; onClick: () => void } | undefined => {
-      const vision = visionRunFailureMessage(error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
-      const codex = isUnsupportedCodexAcpVersionError(error) || isCodexCliCompatibilityError(error)
-      return vision || codex
-        ? {
-            label: vision ? t('Model settings') : t('Agent settings'),
-            onClick: () => openSettingsToPanel(vision ? 'model' : 'agent')
-          }
-        : undefined
-    },
-    [openSettingsToPanel, t]
-  )
   const turnOutcomeActions = useMemo<TurnOutcomeActions>(
     () => ({
       artifactRetryingPromptMessageId,
@@ -1333,11 +1321,93 @@ const ConversationPanel = ({
       onRetryArtifact: (promptMessageId) =>
         turnOutcomeHandlersRef.current.retryArtifact(promptMessageId),
       resolveError: resolveRunError,
-      onReportError: (error) => turnOutcomeHandlersRef.current.reportError(error),
-      settingsAction
+      onReportError: (error) => turnOutcomeHandlersRef.current.reportError(error)
     }),
-    [artifactRetryDisabled, artifactRetryingPromptMessageId, resolveRunError, settingsAction]
+    [artifactRetryDisabled, artifactRetryingPromptMessageId, resolveRunError]
   )
+
+  const noticeHandlers: NoticeActionHandlers = {
+    resume: {
+      run: () => handleResume(),
+      busy: isResuming,
+      disabled: () => !canResumeSession || isResuming || isStopping || rootTurnBusy
+    },
+    retry: {
+      available: (notice) =>
+        notice.operation === 'reconfigure' ||
+        notice.recovery === 'retry-artifact-publication' ||
+        Boolean(notice.promptMessageId) ||
+        (notice.operation === 'action' && operationDiagnostic?.operation === 'resume'),
+      run: async (notice) => {
+        if (notice.operation === 'reconfigure') return onReconfigureRetry()
+        if (notice.recovery === 'retry-artifact-publication' && notice.promptMessageId)
+          return turnOutcomeHandlers.retryArtifact(notice.promptMessageId)
+        if (notice.promptMessageId) {
+          const prompt = activeSession?.messages.find(({ id }) => id === notice.promptMessageId)
+          if (!prompt) return
+          const result = await conversation.actions.revise(
+            prompt.id,
+            prompt.parts?.length ? docFromMessageParts(prompt.parts) : docFromText(prompt.content),
+            prompt.annotations ?? []
+          )
+          if (!result.ok)
+            throw new Error(
+              result.displayMessage ??
+                t('The action could not be completed. See details and try again.')
+            )
+          return
+        }
+        return handleResume()
+      },
+      disabled: (notice) =>
+        notice.operation === 'reconfigure'
+          ? specialistSwitchInFlight
+          : notice.recovery === 'retry-artifact-publication'
+            ? artifactRetryDisabled
+            : notice.promptMessageId
+              ? isImported || !conversation.availability.revise || rootTurnBusy
+              : !canResumeSession || isResuming || isStopping || rootTurnBusy
+    },
+    'open-provider-settings': {
+      run: (notice) => {
+        if (notice.failure.reason === 'configuration/auth-failed' && view.authenticationRecovery)
+          view.authenticationRecovery.openSettings()
+        else
+          openSettingsToPanel(
+            notice.failure.reason === 'configuration/claude-cli' ||
+              notice.failure.reason === 'configuration/codex-cli' ||
+              notice.failure.reason === 'configuration/codex-adapter'
+              ? 'agent'
+              : 'model'
+          )
+      }
+    },
+    'open-environment': {
+      run: () => openSettingsToPanel('runtimes')
+    },
+    compact: { run: () => onCompactContext(), disabled: () => !canCompactContext },
+    'remove-attachments': {
+      run: () => {
+        attachments.forEach(onRemoveAttachment)
+      },
+      disabled: () => !canEditDraft || attachments.length === 0
+    },
+    ...(sessionTools.newConversation
+      ? { 'new-session': { run: () => sessionTools.newConversation?.() } }
+      : {}),
+    ...(activeSession && sessionTools.exportDiagnostics
+      ? { 'export-diagnostics': { run: () => sessionTools.exportDiagnostics?.(activeSession) } }
+      : {}),
+    'open-agent-settings': { run: () => openSettingsToPanel('agent') },
+    'choose-specialist': { run: () => onReconfigureChooseOther() },
+    'use-main-agent': { run: () => onReconfigureUseNone() },
+    report: {
+      run: (notice) => {
+        const copy = noticePresentation(notice.failure)
+        openReportDialog(formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey)))
+      }
+    }
+  }
 
   // Submits the current doc, passing the ids of any skills picked as inline chips.
   const handleWslSetupCommand = async (): Promise<void> => {
@@ -1497,8 +1567,9 @@ const ConversationPanel = ({
       : t('Opens an empty Side chat; keeps your draft.'))
   const handleSideChat = (): void => {
     if (!canOpenSideChat) return
-    if (sendsSideChatDraft) onStartSideChat()
-    else sideChatController.createDraft?.()
+    if (sendsSideChatDraft) {
+      onStartSideChat(promptOptimization.sent)
+    } else sideChatController.createDraft?.()
   }
   const sideChatMenuItems = (
     <>
@@ -1527,6 +1598,12 @@ const ConversationPanel = ({
     </>
   )
 
+  const handleStageAttachmentFiles = (files: File[]): void => {
+    if (files.length === 0) return
+    promptOptimization.edited()
+    onStageAttachmentFiles(files)
+  }
+
   // Converts the hidden file input selection into the shared staging callback.
   const handleAttachmentInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const files = Array.from(event.target.files ?? [])
@@ -1535,7 +1612,7 @@ const ConversationPanel = ({
     event.target.value = ''
 
     if (files.length > 0) {
-      onStageAttachmentFiles(files)
+      handleStageAttachmentFiles(files)
     }
   }
 
@@ -1548,10 +1625,11 @@ const ConversationPanel = ({
     if (files.length === 0) return
 
     event.preventDefault()
-    onStageAttachmentFiles(files)
+    handleStageAttachmentFiles(files)
   }
 
   const handleRemoveAttachment = (attachment: (typeof attachments)[number]): void => {
+    promptOptimization.edited()
     onRemoveAttachment(attachment)
     if (pastedTextByAttachmentId.has(attachment.id)) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -1559,6 +1637,7 @@ const ConversationPanel = ({
   }
 
   const handleCancelAttachmentTransfer = (transfer: (typeof attachmentTransfers)[number]): void => {
+    promptOptimization.edited()
     onCancelAttachmentTransfer(transfer)
     if (transfer.pastedTextId) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -1596,7 +1675,7 @@ const ConversationPanel = ({
         projectName={sessionImport?.projectName ?? t('Project')}
         canImport={sessionImport?.canImport ?? false}
         canAttach={canEditDraft && !isUploadingAttachments && !ordinaryComposerBlocked}
-        onFiles={onStageAttachmentFiles}
+        onFiles={handleStageAttachmentFiles}
         data-testid="workspace-file-drop-zone"
         className="relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-10 p-[6px] pl-4 max-md:p-0"
         data-session-id={activeSession?.id ?? ''}
@@ -1624,6 +1703,7 @@ const ConversationPanel = ({
                 sourceSession={sourceSession}
                 onOpenSession={sessionTools.openSession}
                 onEdit={sessionTools.editSession}
+                canTogglePin={!isImportedSession(activeSession)}
                 onTogglePin={sessionTools.togglePin}
               />
             ) : (
@@ -1664,17 +1744,43 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
-          {activeSession && (
-            <SessionHeaderMenu
-              key={activeSession.id}
-              session={activeSession}
-              bindings={sessionTools.menuBindings}
-              createSideChat={sideChatController.createDraft}
-              credentialPending={pendingCredentialRequest !== undefined}
-              rootPermissionPending={presentedRootPermissionPending}
-              disabledReason={openSideChatReason}
-            />
-          )}
+          {activeSession &&
+            !activeSession.firstPromptDraft &&
+            !activeSession.isPending &&
+            (isImported ? (
+              <SessionHeaderMenu
+                session={activeSession}
+                bindings={sessionTools.menuBindings}
+                createSideChat={sideChatController.createDraft}
+                credentialPending={pendingCredentialRequest !== undefined}
+                rootPermissionPending={presentedRootPermissionPending}
+                disabledReason={openSideChatReason}
+                key={activeSession.id}
+              />
+            ) : (
+              <ResearchVideoButton
+                key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
+                projectId={activeSession.projectId}
+                sessionId={activeSession.id}
+                branchId={
+                  activeSession.conversationGraph?.frames.find(
+                    (frame) => frame.id === activeSession.conversationGraph?.rootFrameId
+                  )?.activeBranchId
+                }
+                renderTrigger={(openResearchExplanation, researchVideoTriggerState) => (
+                  <SessionHeaderMenu
+                    session={activeSession}
+                    bindings={sessionTools.menuBindings}
+                    createSideChat={sideChatController.createDraft}
+                    credentialPending={pendingCredentialRequest !== undefined}
+                    rootPermissionPending={presentedRootPermissionPending}
+                    disabledReason={openSideChatReason}
+                    openResearchExplanation={openResearchExplanation}
+                    researchVideoTriggerState={researchVideoTriggerState}
+                  />
+                )}
+              />
+            ))}
           <PackageExportProgressButton />
           <PackageOperationIndicator />
           <NotificationBell className="md:hidden" />
@@ -1735,11 +1841,25 @@ const ConversationPanel = ({
               visiblePermissionPending={!isImported && pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
               isResumingSession={isResuming}
+              sendPreparing={view.sendPreparing}
               notebookReference={notebookReference}
               onSendEditedMessage={onSendEditedMessage}
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
               pendingElicitations={sessionPendingElicitations}
+              pendingElicitationControl={
+                canRevealElicitation && pendingElicitationRequest
+                  ? {
+                      activityId: pendingElicitationRequest.toolCallId,
+                      onReveal: () =>
+                        setElicitationPresentation((current) => ({
+                          key: elicitationPresentationKey,
+                          collapsed: false,
+                          focusRequestId: current.focusRequestId + 1
+                        }))
+                    }
+                  : undefined
+              }
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
@@ -1782,178 +1902,83 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
-                {persistenceBlocked ? (
-                  <ErrorNotice
-                    inline
-                    role="alert"
-                    title={t('Conversation storage limit reached')}
-                    description={t(
-                      'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
-                    )}
-                  />
-                ) : null}
-                {currentTurnOutcome &&
-                !(
-                  currentTurnOutcome.outcome.kind === 'failed' &&
-                  isAgentAuthenticationRequired(currentTurnOutcome.outcome.error)
-                ) ? (
-                  <TurnOutcomeNotice
-                    promptMessageId={currentTurnOutcome.promptMessageId}
-                    outcome={currentTurnOutcome.outcome}
-                    actions={turnOutcomeActions}
-                  />
-                ) : null}
+                <ComposerNoticeSlot
+                  draftConflict={
+                    composerError === DISCUSSION_DRAFT_CONFLICT
+                      ? {
+                          description: t(
+                            'Send or clear your current draft before starting a discussion.'
+                          ),
+                          dismissButton: {
+                            label: t('Dismiss'),
+                            onClick: () => onSetComposerError(null)
+                          }
+                        }
+                      : undefined
+                  }
+                  notices={composerNotices.notices}
+                  handlers={noticeHandlers}
+                  onDismiss={composerNotices.dismiss}
+                  persistence={
+                    persistenceBlocked
+                      ? {
+                          role: persistenceChecking ? 'status' : 'alert',
+                          level: persistenceChecking ? 'info' : 'error',
+                          title: persistenceSizeLimit
+                            ? t('Conversation storage limit reached')
+                            : persistenceChecking
+                              ? t('Checking conversation storage…')
+                              : t('Conversation storage needs attention'),
+                          description: persistenceSizeLimit
+                            ? t(
+                                'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+                              )
+                            : persistenceChecking
+                              ? t(
+                                  'The connection changed while saving. Checking which conversation changes were saved.'
+                                )
+                              : persistenceIssue.kind === 'conflict'
+                                ? t(
+                                    'This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.'
+                                  )
+                                : persistenceIssue.kind === 'connection'
+                                  ? t(
+                                      'Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.'
+                                    )
+                                  : t(
+                                      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
+                                    ),
+                          primaryButton:
+                            persistenceSizeLimit && sessionTools.newConversation
+                              ? {
+                                  label: t('New conversation'),
+                                  onClick: sessionTools.newConversation
+                                }
+                              : !persistenceChecking && sessionTools.reviewPersistence
+                                ? {
+                                    label: t('Review recovery options'),
+                                    onClick: sessionTools.reviewPersistence
+                                  }
+                                : undefined
+                        }
+                      : undefined
+                  }
+                />
                 {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
                     key={`${activeSession.id}:${String(activeSession.runtimeContext?.revision)}`}
                     session={activeSession}
                   />
                 ) : null}
-                {composerError &&
-                !isAgentAuthenticationRequired(composerError) &&
-                composerError !== actionError ? (
-                  <div role="alert" className="mb-2">
-                    <ErrorNotice
-                      inline
-                      icon={AlertTriangle}
-                      tone={isSpecialistCapabilityReadFailure(composerError) ? 'amber' : 'red'}
-                      title={localizeSpecialistReadFailure(composerError, t) ?? composerError}
-                    />
-                  </div>
-                ) : null}
-                {composerError && composerErrorDetail ? (
-                  <DiagnosticDetails detail={composerErrorDetail} />
-                ) : null}
-                {showSessionRecovery && !authenticationRequired ? (
-                  <SessionInterruptedBanner
-                    message={
-                      hasUnsupportedCodexRunError
-                        ? t('This session was interrupted.')
-                        : recoveryMessage
-                    }
-                    isDisabled={!canResumeSession || isStopping || rootTurnBusy}
-                    isResuming={isResuming}
-                    onResume={() => void handleResume()}
-                  />
-                ) : null}
                 {contextResetNotice ? (
-                  <ErrorNotice
-                    inline
-                    level="info"
-                    className="mb-2"
-                    description={t(
-                      'Continuing in a new context using your saved conversation history.'
-                    )}
-                    dismissButton={{
-                      label: t('Dismiss'),
-                      onClick: () =>
-                        useWorkspaceOperationErrors.setState((state) => ({
-                          contextResets: { ...state.contextResets, [activeSession!.id]: false }
-                        }))
-                    }}
-                  />
+                  <p role="status" className="mb-2 text-sm text-muted-foreground">
+                    {t('Continuing in a new context using your saved conversation history.')}
+                  </p>
                 ) : null}
                 {activeSession?.compacting ? (
-                  // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
-                  // while the agent context is reset and the conversation is replayed as text.
-                  <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
-                    <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
+                  <p role="status" className="mb-2 text-sm text-muted-foreground">
                     {t('Compacting conversation to fit the context limit…')}
-                  </div>
-                ) : resolvedActionError || showLegacyRunErrorRow ? (
-                  <DismissibleConversationError key={errorKey}>
-                    {(onDismiss) => (
-                      <>
-                        {resolvedActionError && resumeDiagnostic ? (
-                          <ErrorNotice
-                            dismissButton={{ label: t('Dismiss error'), onClick: onDismiss }}
-                            data-testid="resume-operation-error"
-                            className="mb-2"
-                            title={t('Could not resume this conversation')}
-                            description={resumeErrorDescription ?? undefined}
-                            secondaryButton={
-                              activeSession && sessionTools.exportDiagnostics
-                                ? {
-                                    label: t('Export diagnostics…'),
-                                    onClick: () => sessionTools.exportDiagnostics?.(activeSession)
-                                  }
-                                : undefined
-                            }
-                          >
-                            <DiagnosticDetails
-                              key={resumeDiagnostic.detail}
-                              detail={resumeDiagnostic.detail}
-                              copyable
-                            />
-                          </ErrorNotice>
-                        ) : null}
-                        {(resolvedActionError && !resumeDiagnostic) ||
-                        showLegacyRunErrorRow ||
-                        showVisionModelSettings ||
-                        showCodexSettings
-                          ? renderConversationError(
-                              <>
-                                {/* Keep a coexisting run failure and its report affordance visible. */}
-                                {resolvedActionError && !resumeDiagnostic ? (
-                                  <span className="min-w-0 break-words pr-6">
-                                    {resolvedActionError}
-                                  </span>
-                                ) : null}
-                                {showLegacyRunErrorRow ? (
-                                  <div className="flex flex-col items-stretch gap-2">
-                                    <span className="min-w-0 break-words pr-6">
-                                      {resolvedRunError}
-                                    </span>
-                                    {/* Actions stay with the run's own error, so the shown and reported text are
-                            always the same error. Shown only for an unknown failure — a recognized one
-                            (app guidance or a known provider error) keeps its message but is not a bug
-                            worth a GitHub issue. */}
-                                    {isRunErrorReportable ? (
-                                      <div className="flex flex-wrap items-center justify-end gap-1 self-end">
-                                        <button
-                                          type="button"
-                                          onClick={() => openReportDialog()}
-                                          className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                                          aria-label={t('Report this error')}
-                                        >
-                                          <Flag
-                                            className="size-3"
-                                            strokeWidth={2.2}
-                                            aria-hidden="true"
-                                          />
-                                          {t('Report error')}
-                                        </button>
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                ) : null}
-                                {showVisionModelSettings || showCodexSettings ? (
-                                  <div>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        openSettingsToPanel(
-                                          showVisionModelSettings ? 'model' : 'agent'
-                                        )
-                                      }
-                                      className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                                    >
-                                      {showVisionModelSettings
-                                        ? t('Model settings')
-                                        : t('Agent settings')}
-                                    </button>
-                                  </div>
-                                ) : null}
-                              </>,
-                              onDismiss,
-                              t('Dismiss error'),
-                              isSpecialistCapabilityReadFailure(actionError) &&
-                                !showLegacyRunErrorRow
-                            )
-                          : null}
-                      </>
-                    )}
-                  </DismissibleConversationError>
+                  </p>
                 ) : null}
 
                 {settingsLoaded ? (
@@ -2030,7 +2055,7 @@ const ConversationPanel = ({
                           : 'jobs'
                     }
                     className={cn(
-                      'flex px-2',
+                      'relative flex min-w-0 px-2',
                       notebookReference || messageQueue.items.length > 0 || hasBookmarkEntry
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card',
@@ -2102,63 +2127,6 @@ const ConversationPanel = ({
                     )}
                   />
 
-                  {!specialistSwitchInFlight && reconfigureError ? (
-                    <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
-                      <ErrorNotice
-                        role="alert"
-                        className="rounded-xl"
-                        title={
-                          reconfigureError.committed &&
-                          !reconfigureError.reason &&
-                          !reconfigureError.message
-                            ? t('Specialist switch is pending for {{name}}', {
-                                name: reconfigureError.specialistName
-                              })
-                            : t('Could not switch to {{name}}', {
-                                name: reconfigureError.specialistName
-                              })
-                        }
-                        content={
-                          <>
-                            <p>
-                              {reconfigureError.reason === 'runtime-application-failed'
-                                ? t('The Agent runtime could not apply the selected Specialist.')
-                                : reconfigureError.reason === 'pending-state-clear-failed'
-                                  ? t(
-                                      'The Specialist was applied, but its completion state could not be saved.'
-                                    )
-                                  : reconfigureError.committed && !reconfigureError.message
-                                    ? t(
-                                        'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
-                                      )
-                                    : reconfigureError.message ||
-                                      t(
-                                        'The agent session could not be reconfigured. Your draft has been preserved.'
-                                      )}
-                            </p>
-                            {reconfigureError.reason || reconfigureError.message ? (
-                              <p className="text-xs">
-                                {t('Your draft and queued messages are preserved.')}
-                              </p>
-                            ) : null}
-                          </>
-                        }
-                      >
-                        <div className="flex flex-wrap gap-2">
-                          <Button size="sm" onClick={onReconfigureRetry}>
-                            {t('Retry')}
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={onReconfigureChooseOther}>
-                            {t('Choose another specialist')}
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={onReconfigureUseNone}>
-                            {t('Use None (Main Agent)')}
-                          </Button>
-                        </div>
-                      </ErrorNotice>
-                    </div>
-                  ) : null}
-
                   {ordinaryComposerBlocked &&
                   (!authenticationRequired || pendingElicitation?.continuationRecovery) ? (
                     <div
@@ -2204,11 +2172,8 @@ const ConversationPanel = ({
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
-                          choice={Boolean(
-                            resolveAgentUserChoiceQuestions(
-                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
-                            )
-                          )}
+                          choice={Boolean(pendingChoiceQuestions)}
+                          collapsed={elicitationCollapsed}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }
@@ -2217,6 +2182,22 @@ const ConversationPanel = ({
                             elicitation={pendingElicitation}
                             request={pendingElicitationRequest}
                             embedded
+                            collapsed={elicitationCollapsed}
+                            onCollapsedChange={
+                              pendingChoiceQuestions
+                                ? (collapsed) =>
+                                    setElicitationPresentation((current) => ({
+                                      ...current,
+                                      key: elicitationPresentationKey,
+                                      collapsed
+                                    }))
+                                : undefined
+                            }
+                            focusRequestId={
+                              elicitationPresentation.key === elicitationPresentationKey
+                                ? elicitationPresentation.focusRequestId
+                                : 0
+                            }
                             onRespond={onRespondToElicitation}
                             editDraft={
                               pendingElicitationActivity
@@ -2284,15 +2265,53 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-2xl bg-bg-200 p-2"
+                        className="relative z-10 rounded-2xl border border-border-200/70 bg-bg-200 p-2.5"
                         aria-label={t('Imported research history')}
                       >
-                        <div className="flex flex-wrap items-center gap-2">
-                          {sessionForkAvailable() ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                            <SessionDiscussionButton
+                              key={activeSession.id}
+                              projectId={activeSession.projectId}
+                              sessionId={activeSession.id}
+                            />
                             <Button
                               variant="outline"
                               size="sm"
                               className="px-2 text-xs"
+                              aria-controls="right-panel"
+                              onClick={() => {
+                                usePreviewWorkbenchStore
+                                  .getState()
+                                  .upsertAndActivateItem(
+                                    createSessionReplayItem(
+                                      activeSession.projectId,
+                                      activeSession.id,
+                                      activeSession.title
+                                    )
+                                  )
+                              }}
+                            >
+                              <Play className="size-4" aria-hidden="true" />
+                              {t('View replay')}
+                            </Button>
+                            <ResearchVideoButton
+                              key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
+                              projectId={activeSession.projectId}
+                              sessionId={activeSession.id}
+                              branchId={
+                                activeSession.conversationGraph?.frames.find(
+                                  (frame) =>
+                                    frame.id === activeSession.conversationGraph?.rootFrameId
+                                )?.activeBranchId
+                              }
+                            />
+                          </div>
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="w-full px-3 text-xs font-semibold sm:w-auto"
                               onClick={() => {
                                 void forkSession(activeSession)
                               }}
@@ -2301,31 +2320,6 @@ const ConversationPanel = ({
                               {t('Fork to continue')}
                             </Button>
                           ) : null}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="px-2 text-xs"
-                            aria-controls="right-panel"
-                            onClick={() => {
-                              usePreviewWorkbenchStore
-                                .getState()
-                                .upsertAndActivateItem(
-                                  createSessionReplayItem(
-                                    activeSession.projectId,
-                                    activeSession.id,
-                                    activeSession.title
-                                  )
-                                )
-                            }}
-                          >
-                            <Play className="size-4" aria-hidden="true" />
-                            {t('View replay')}
-                          </Button>
-                          <SessionDiscussionButton
-                            key={activeSession.id}
-                            projectId={activeSession.projectId}
-                            sessionId={activeSession.id}
-                          />
                         </div>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
                           <details className="group/exclusions mt-1 text-xs text-muted-foreground">
@@ -2357,29 +2351,6 @@ const ConversationPanel = ({
                           </details>
                         ) : null}
                       </section>
-                    ) : authenticationRequired ? (
-                      <ErrorNotice
-                        icon={LockKeyhole}
-                        tone="amber"
-                        title={
-                          view.authenticationRecovery?.provider &&
-                          ['custom', 'official'].includes(view.authenticationRecovery.provider.type)
-                            ? t('Update credential')
-                            : t('Sign in to continue this conversation')
-                        }
-                        description={t(
-                          'Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.'
-                        )}
-                        primaryButton={{
-                          label: view.authenticationRecovery?.provider
-                            ? t('Open account settings')
-                            : t('Model settings'),
-                          onClick: () =>
-                            view.authenticationRecovery
-                              ? view.authenticationRecovery.openSettings()
-                              : openSettingsToPanel('model')
-                        }}
-                      />
                     ) : (
                       <form
                         ref={composerFormRef}
@@ -2438,7 +2409,7 @@ const ConversationPanel = ({
                             aria-hidden="true"
                           />
                         ) : null}
-                        {annotations.some((annotation) => replayAnnotationTarget(annotation)) ||
+                        {discussionAnnotations.length > 0 ||
                         activeSession?.runtimeContext?.sessionContext?.bindings.length ||
                         pdfContext.bindings.length > 0 ||
                         pdfContext.automaticAttachmentCount > 0 ? (
@@ -2447,9 +2418,8 @@ const ConversationPanel = ({
                             data-testid="composer-context-header"
                           >
                             <AnnotationDraftCards
-                              annotations={annotations.filter((annotation) =>
-                                replayAnnotationTarget(annotation)
-                              )}
+                              annotations={discussionAnnotations}
+                              fixedParent={Boolean(activeSession?.parentSessionId)}
                               disabled={!canEditDraft || pdfContext.isPending}
                               onReveal={requestAnnotationReveal}
                               onUpdateNote={onUpdateAnnotationNote}
@@ -2461,6 +2431,7 @@ const ConversationPanel = ({
                             ) ? (
                               <SessionDiscussionSource
                                 key={activeSession.id}
+                                parentSessionId={activeSession.parentSessionId}
                                 projectId={activeSession.projectId}
                                 sessionId={activeSession.id}
                                 context={activeSession.runtimeContext}
@@ -2818,7 +2789,10 @@ const ConversationPanel = ({
                                         type="button"
                                         className={pastedTextRestoreButtonClassName}
                                         disabled={!canEditDraft}
-                                        onClick={() => onRestorePastedText(pastedText.id)}
+                                        onClick={() => {
+                                          promptOptimization.edited()
+                                          onRestorePastedText(pastedText.id)
+                                        }}
                                       >
                                         <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
                                           {pastedTextPreviewName(pastedText.text)}
@@ -2986,10 +2960,21 @@ const ConversationPanel = ({
                               onDocChange={onValidatedDraftDocChange}
                               onSubmit={handleSubmit}
                               onPaste={handleMessageDraftPaste}
-                              onLongTextPaste={onStagePastedText}
+                              onLongTextPaste={(...args) => {
+                                promptOptimization.edited()
+                                onStagePastedText(...args)
+                              }}
                               onLocatePastedText={handleLocatePastedText}
-                              onUndo={onUndo}
-                              onRedo={onRedo}
+                              onUndo={(...args) => {
+                                const changed = onUndo(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
+                              onRedo={(...args) => {
+                                const changed = onRedo(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
                               disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
@@ -3002,7 +2987,11 @@ const ConversationPanel = ({
                               onSelectWslSetup={() => void handleWslSetupCommand()}
                               isHistoryBrowsing={isHistoryBrowsing}
                               historyStatus={historyStatus}
-                              onNavigateHistory={onNavigateHistory}
+                              onNavigateHistory={(...args) => {
+                                const changed = onNavigateHistory(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
                               mentionPreviewContext={
                                 activeSession
                                   ? {
@@ -3017,7 +3006,7 @@ const ConversationPanel = ({
                             />
                           </div>
 
-                          <div className="@container/composer flex items-center gap-1">
+                          <div className="flex flex-wrap items-center gap-1">
                             {/* The + button opens a dropdown for attachments and session actions. */}
                             <DropdownMenu>
                               <>
@@ -3294,6 +3283,64 @@ const ConversationPanel = ({
                               openRequest={agentControlsOpenRequest}
                               computeOpenRequest={computeControlsOpenRequest}
                             />
+
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className={cn(composerIconButtonClassName, 'group/optimize')}
+                                  aria-label={
+                                    promptOptimization.pending
+                                      ? t('Cancel optimization')
+                                      : promptOptimization.canUndo
+                                        ? t('Undo optimization')
+                                        : t('Optimize question')
+                                  }
+                                  disabled={
+                                    !promptOptimization.pending &&
+                                    (!canEditLocalDraft ||
+                                      (!promptOptimization.canUndo &&
+                                        !promptOptimization.canOptimize))
+                                  }
+                                  onClick={() => {
+                                    if (promptOptimization.pending) promptOptimization.cancel()
+                                    else if (promptOptimization.canUndo) promptOptimization.undo()
+                                    else void promptOptimization.optimize()
+                                  }}
+                                >
+                                  {promptOptimization.pending ? (
+                                    <>
+                                      <Loader2
+                                        className="size-4 animate-spin motion-reduce:animate-none group-hover/optimize:hidden group-focus-visible/optimize:hidden"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                      <Square
+                                        className="hidden size-3 fill-current group-hover/optimize:block group-focus-visible/optimize:block"
+                                        aria-hidden="true"
+                                      />
+                                    </>
+                                  ) : promptOptimization.canUndo ? (
+                                    <Undo2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  ) : (
+                                    <WandSparkles
+                                      className="size-4"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="text-[11px]">
+                                {promptOptimization.pending
+                                  ? t('Cancel optimization')
+                                  : promptOptimization.canUndo
+                                    ? t('Undo optimization')
+                                    : t('Optimize question')}
+                              </TooltipContent>
+                            </Tooltip>
 
                             <ComposerSpecialistPicker
                               selectedId={specialistId}
@@ -3639,24 +3686,12 @@ const ConversationPanel = ({
                                   }
                                 }}
                               >
-                                <ErrorNotice
-                                  inline
-                                  role="status"
-                                  data-testid="specialist-unavailable-notice"
-                                  title={t('This Specialist is no longer available')}
-                                  description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
-                                  primaryButton={{
-                                    label: t('Choose Specialist'),
-                                    variant: 'default',
-                                    onClick: () => {
-                                      setSpecialistNoticeTarget(undefined)
-                                      setAgentControlsOpenRequest((request) => request + 1)
-                                    }
+                                <SpecialistUnavailableNotice
+                                  onChoose={() => {
+                                    setSpecialistNoticeTarget(undefined)
+                                    setAgentControlsOpenRequest((request) => request + 1)
                                   }}
-                                  dismissButton={{
-                                    label: t('Close'),
-                                    onClick: () => setSpecialistNoticeTarget(undefined)
-                                  }}
+                                  onDismiss={() => setSpecialistNoticeTarget(undefined)}
                                 />
                                 <PopoverPrimitive.Arrow
                                   width={12}

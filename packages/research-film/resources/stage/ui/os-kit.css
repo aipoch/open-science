@@ -1,0 +1,351 @@
+/* Layout glue for os-kit.js. Visual styling comes from os-app.css (the app's own stylesheet) through the real class names;
+   this file only sets what the app computes at runtime (window size, rail width, scroll areas) using the app's tokens. */
+.osk-window {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-align: left;
+  letter-spacing: normal;
+}
+.osk-wide {
+  width: 1536px;
+  height: 864px;
+}
+.osk-compact {
+  width: 720px;
+  height: 1280px;
+}
+.osk-titlebar {
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+}
+.osk-lights {
+  display: flex;
+  gap: 8px;
+}
+.osk-lights i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: inset 0 0 0 0.5px #0000001f;
+}
+.osk-lights i:nth-child(2) {
+  background: #febc2e;
+}
+.osk-lights i:nth-child(3) {
+  background: #28c840;
+}
+.osk-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* sidebar rail */
+.osk-sidebar {
+  width: 224px;
+  flex: none;
+  padding: 0 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+}
+.osk-nav {
+  padding-top: 6px;
+}
+.osk-sessions {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  padding: 0 6px;
+}
+.osk-section-label {
+  padding: 10px 10px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-300);
+}
+.osk-session-row {
+  height: 32px;
+}
+.osk-dot-idle {
+  box-shadow: inset 0 0 0 1.25px var(--text-300);
+}
+.osk-dot-running {
+  background: var(--session-running);
+}
+.osk-dot-done {
+  background: var(--success-000);
+}
+.osk-rail-foot {
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+/* conversation */
+.osk-conv {
+  flex: 1;
+  padding: 6px 6px 0 16px;
+}
+.osk-compact .osk-conv {
+  padding: 0;
+}
+.osk-header {
+  height: 40px;
+  flex: none;
+  padding: 0 8px;
+}
+.osk-compact .osk-header {
+  height: 52px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border-200);
+}
+.osk-scroller {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.osk-thread {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 12px 24px 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  will-change: transform;
+}
+.osk-compact .osk-thread {
+  padding: 16px 20px 420px;
+  gap: 20px;
+}
+.osk-group-wrap {
+  margin-top: 10px;
+}
+.osk-tool-row {
+  color: var(--text-000);
+}
+
+/* composer */
+.osk-composer {
+  position: absolute;
+  left: 16px;
+  right: 6px;
+  bottom: 10px;
+  padding: 0 24px;
+}
+.osk-compact .osk-composer {
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  padding: 0 16px;
+}
+.osk-composer-card {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 12px 10px 8px 14px;
+}
+.osk-composer-input {
+  font-size: 14px;
+  padding: 0 2px 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.osk-compact .osk-composer-input {
+  font-size: 15px;
+}
+
+/* generated files */
+.osk-art-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 30rem;
+}
+.osk-art-card {
+  overflow: hidden;
+}
+.osk-art-thumb {
+  height: 54px;
+  display: grid;
+  place-items: center;
+}
+.osk-art-more {
+  min-height: 84px;
+}
+
+/* right preview panel */
+.osk-panel {
+  width: 41%;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--color-border-200);
+  background: var(--bg-000);
+  padding: 6px 10px 10px;
+}
+.osk-tabbar {
+  height: 34px;
+  font-size: 12px;
+  flex: none;
+}
+.osk-tab {
+  height: 28px;
+  padding: 0 8px;
+  max-width: 200px;
+}
+.osk-file-head {
+  height: 36px;
+  flex: none;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--color-border-200);
+}
+.osk-file-ver {
+  height: 30px;
+  flex: none;
+  padding: 0 6px;
+}
+.osk-file-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 14px;
+  font: 12px/1.65 var(--font-mono);
+  white-space: pre;
+  color: var(--text-000);
+}
+.osk-panel.osk-panel-custom .osk-file-head,
+.osk-panel.osk-panel-custom .osk-file-ver {
+  display: none;
+}
+.osk-panel.osk-panel-custom .osk-file-body {
+  padding: 0;
+  font: inherit;
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-200);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+/* editorial highlight (video layer, not part of the app) */
+mark.osk-hl {
+  --p: 0;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  margin: 0 -2px;
+  background: linear-gradient(
+    90deg,
+    #fbdd67 0 calc(var(--p) * 100%),
+    transparent calc(var(--p) * 100%)
+  );
+}
+
+/* Import Session package dialog (positioned inside the window instead of fixed to the viewport) */
+.osk-dialog-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+}
+.osk-overlay {
+  position: absolute;
+  inset: 0;
+}
+.osk-dialog {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100% - 2rem));
+}
+.osk-meter {
+  min-height: 8px;
+}
+.osk-indet {
+  position: relative;
+}
+
+/* replay panel */
+.osk-replay {
+  height: 100%;
+}
+.osk-replay-head {
+  height: 44px;
+  flex: none;
+  padding: 0 12px;
+}
+.osk-replay-transcript {
+  flex: 1;
+}
+.osk-replay-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  will-change: transform;
+}
+.osk-source {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border-200);
+}
+.osk-thumb {
+  position: absolute;
+  top: 6px;
+}
+.osk-play {
+  margin-right: 2px;
+}
+.osk-replay-time {
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+/* project menu placement + separator */
+.osk-menu {
+  position: absolute;
+  width: 288px;
+  z-index: 40;
+}
+.osk-menu-sep {
+  height: 1px;
+  margin: 4px -6px;
+  background: var(--border);
+}
+.osk-menu [role='menuitem'].osk-hi {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+/* inline figures in agent messages */
+.osk-md-img {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--color-border-200);
+  border-radius: 8px;
+  margin: 6px 0;
+}
+.osk-file-body img.osk-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+}

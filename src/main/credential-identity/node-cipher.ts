@@ -13,7 +13,12 @@ import {
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { SecureStorageCipher } from './cipher-contract'
-import { CredentialIdentityError, type CredentialIdentity } from './identity-contract'
+import {
+  CREDENTIAL_AUTHORIZATION_TIMEOUT_MS,
+  CredentialIdentityError,
+  type CredentialIdentity
+} from './identity-contract'
+import { credentialSystemCode, nativeSecretDiagnosticSchema } from './diagnostic'
 
 // Electron 43.7.5's pinned OSCrypt sync format; no new ciphertext envelope is persisted.
 // https://github.com/electron/electron/blob/v43.7.5/patches/chromium/revert_oscrypt_remove_sync_backend.patch
@@ -23,27 +28,80 @@ export type NodeSecretOperations = {
   unprotect(value: Buffer): Buffer
 }
 
-const nativeSecret = (
-  operation: string,
-  args: string[],
-  input: Buffer = Buffer.alloc(0)
-): Buffer => {
+const helperFailureCodes: Partial<
+  Record<number, 'secret-dpapi-failed' | 'secret-empty-plaintext' | 'secret-write-failed'>
+> = {
+  3: 'secret-dpapi-failed',
+  4: 'secret-empty-plaintext',
+  5: 'secret-write-failed'
+}
+// DPAPI calls have no side effects, so a lost or empty response is retried once before startup
+// stops. A reported DPAPI error is deterministic and is not retried.
+const retriedCodes = new Set([
+  'secret-empty-response',
+  'secret-empty-plaintext',
+  'secret-write-failed'
+])
+
+const runNativeSecret = (operation: string, args: string[], input: Buffer): Buffer => {
   const { secretExecutablePath } = createRequire(import.meta.url)(
     '@aipoch/credential-identity-probe-native'
   ) as { secretExecutablePath: string }
   const executable = secretExecutablePath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1')
   const result = spawnSync(executable, [operation, ...args], {
     input,
-    timeout: 30_000,
+    timeout:
+      operation === 'read-key' || operation === 'create-key'
+        ? CREDENTIAL_AUTHORIZATION_TIMEOUT_MS
+        : 30_000,
+    killSignal: 'SIGKILL',
     maxBuffer: 65536,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'ignore']
   })
   if (result.error || result.status !== 0 || result.signal || result.stdout.length === 0) {
+    const helperCode = result.status !== null ? helperFailureCodes[result.status] : undefined
+    // The DPAPI failure exit carries only a decimal Windows error number on stdout.
+    const osText = helperCode === 'secret-dpapi-failed' ? result.stdout?.toString('ascii') : ''
+    const osStatus = osText && /^\d{1,10}$/u.test(osText) ? Number(osText) : undefined
     result.stdout?.fill(0)
-    throw new CredentialIdentityError('native-secret-operation-failed')
+    const systemCode = credentialSystemCode(result.error)
+    const signal = nativeSecretDiagnosticSchema.shape.signal.safeParse(result.signal)
+    throw new CredentialIdentityError('native-secret-operation-failed', undefined, {
+      code:
+        systemCode === 'ETIMEDOUT'
+          ? 'secret-timeout'
+          : result.error
+            ? 'secret-start-failed'
+            : result.signal
+              ? 'secret-signalled'
+              : (helperCode ??
+                (result.status !== 0 ? 'secret-exit-failed' : 'secret-empty-response')),
+      ...(systemCode ? { systemCode } : {}),
+      ...(osStatus !== undefined && osStatus <= 0xffffffff ? { osStatus } : {}),
+      ...(result.status !== null ? { exitCode: result.status } : {}),
+      ...(result.signal ? { signal: signal.success ? signal.data : ('UNKNOWN' as const) } : {})
+    })
   }
   return result.stdout
+}
+
+const nativeSecret = (
+  operation: string,
+  args: string[],
+  input: Buffer = Buffer.alloc(0)
+): Buffer => {
+  try {
+    return runNativeSecret(operation, args, input)
+  } catch (error) {
+    if (
+      (operation !== 'protect' && operation !== 'unprotect') ||
+      !(error instanceof CredentialIdentityError) ||
+      !retriedCodes.has(error.diagnostic?.code ?? '')
+    )
+      throw error
+    return runNativeSecret(operation, args, input)
+  }
 }
 
 const secretOperations: NodeSecretOperations = {
@@ -147,10 +205,12 @@ export function createNodeSecureStorageCipher(
     },
     decryptString(value) {
       if (identity.backend === 'windows-dpapi') {
+        // GCM and DPAPI authenticate before decoding. Match Electron's UTF-8 replacement
+        // semantics for cookie payloads that contain a binary domain digest.
         if (value.subarray(0, 3).toString() !== 'v10') {
           const plaintext = operations.unprotect(value)
           try {
-            return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+            return plaintext.toString('utf8')
           } finally {
             plaintext.fill(0)
           }
@@ -163,7 +223,7 @@ export function createNodeSecureStorageCipher(
           decipher.final()
         ])
         try {
-          return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+          return plaintext.toString('utf8')
         } finally {
           plaintext.fill(0)
         }

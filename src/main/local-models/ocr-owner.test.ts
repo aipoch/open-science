@@ -1,0 +1,290 @@
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, it, vi } from 'vitest'
+import type { LocalModelSnapshot, OcrLanguage } from '../../shared/local-models'
+import { createLocalOcrModelOwner } from './ocr-owner'
+import type { LocalModelOwner, LocalModelUse } from './owner'
+
+const snapshot = (overrides: Partial<LocalModelSnapshot> = {}): LocalModelSnapshot => ({
+  availability: 'ready',
+  recommendedRevision: 'v1',
+  installedRevision: 'v1',
+  downloadBytes: 0,
+  installedBytes: 1,
+  hasFiles: true,
+  inUse: false,
+  transferredBytes: 0,
+  updateAvailable: false,
+  ...overrides
+})
+
+const owner = (code: string): LocalModelOwner => {
+  const asset = {
+    file: `${code}.traineddata.gz`,
+    path: `/models/${code}.traineddata.gz`,
+    size: 1,
+    sha256: 'a'.repeat(64)
+  }
+  const use: LocalModelUse = {
+    revision: `${code}-v1`,
+    assets: [asset],
+    release: vi.fn()
+  }
+  return {
+    acquireUse: vi.fn(async () => use),
+    close: vi.fn(async () => undefined),
+    getSnapshot: vi.fn(async () => snapshot()),
+    install: vi.fn(async () => snapshot()),
+    cancel: vi.fn(async () => snapshot()),
+    remove: vi.fn(async () => snapshot())
+  }
+}
+
+const roots: string[] = []
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+it('installs and acquires only the selected OCR language packs', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-'))
+  roots.push(root)
+  const base = owner('runtime')
+  const packs = Object.fromEntries(
+    ['eng', 'chi_sim', 'deu'].map((code) => [code, owner(code)])
+  ) as Parameters<typeof createLocalOcrModelOwner>[0]['languagePacks']
+  const ocr = createLocalOcrModelOwner({
+    base,
+    languagePacks: packs,
+    defaultLanguages: ['eng', 'deu'],
+    dataRoot: () => root
+  })
+
+  await ocr.install()
+  expect(base.install).toHaveBeenCalledOnce()
+  expect(packs.eng).toBeDefined()
+  expect(packs.deu).toBeDefined()
+  expect(packs.chi_sim).toBeDefined()
+  expect(packs.eng!.install).toHaveBeenCalledOnce()
+  expect(packs.deu!.install).toHaveBeenCalledOnce()
+  expect(packs.chi_sim!.install).not.toHaveBeenCalled()
+
+  const use = await ocr.acquireUse()
+  expect(use.languages).toEqual(['eng', 'deu'])
+  expect(use.assets.map((asset) => asset.file)).toEqual([
+    'runtime.traineddata.gz',
+    'eng.traineddata.gz',
+    'deu.traineddata.gz'
+  ])
+
+  expect(ocr.setOcrLanguages).toBeDefined()
+  await ocr.setOcrLanguages!(['eng', 'chi_sim'])
+  expect(
+    JSON.parse(await readFile(join(root, 'models/ocr/languages.json'), 'utf8')).languages
+  ).toEqual(['eng', 'chi_sim'])
+})
+
+it('rejects OCR use when no selected language pack is installed', async () => {
+  const unavailable = owner('eng')
+  unavailable.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'notInstalled',
+      installedRevision: undefined,
+      installedBytes: 0,
+      hasFiles: false
+    })
+  )
+  const ocr = createLocalOcrModelOwner({
+    base: owner('runtime'),
+    languagePacks: { eng: unavailable },
+    defaultLanguages: ['eng'],
+    dataRoot: () => tmpdir()
+  })
+
+  await expect(ocr.acquireUse()).rejects.toThrow('Local model is not installed.')
+})
+
+it('keeps a fresh OCR installation labeled as install', async () => {
+  const base = owner('runtime')
+  base.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'notInstalled',
+      installedRevision: undefined,
+      installedBytes: 0,
+      hasFiles: false
+    })
+  )
+  const pack = owner('eng')
+  pack.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'notInstalled',
+      installedRevision: undefined,
+      installedBytes: 0,
+      hasFiles: false
+    })
+  )
+  const ocr = createLocalOcrModelOwner({
+    base,
+    languagePacks: { eng: pack },
+    defaultLanguages: ['eng'],
+    dataRoot: () => tmpdir()
+  })
+
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    availability: 'notInstalled',
+    updateAvailable: false
+  })
+})
+
+it('refreshes locale-derived defaults until the user saves a selection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-defaults-'))
+  roots.push(root)
+  let defaults: OcrLanguage[] = ['eng', 'deu']
+  const ocr = createLocalOcrModelOwner({
+    base: owner('runtime'),
+    languagePacks: { eng: owner('eng'), deu: owner('deu'), fra: owner('fra') },
+    defaultLanguages: () => defaults,
+    dataRoot: () => root
+  })
+
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'deu']
+  })
+  defaults = ['eng', 'fra']
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'fra']
+  })
+
+  await ocr.setOcrLanguages!(['eng', 'deu'])
+  defaults = ['eng', 'fra']
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'deu']
+  })
+})
+
+it('ignores oversized selections and rejects selection symlinks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-selection-'))
+  roots.push(root)
+  const directory = join(root, 'models', 'ocr')
+  await mkdir(directory, { recursive: true })
+  await expect(
+    (async () => {
+      await writeFile(join(directory, 'languages.json'), 'x'.repeat(16 * 1024 + 1))
+      const ocr = createLocalOcrModelOwner({
+        base: owner('runtime'),
+        languagePacks: {},
+        defaultLanguages: ['eng'],
+        dataRoot: () => root
+      })
+      await expect(ocr.getSnapshot()).resolves.toMatchObject({
+        selectedOcrLanguages: ['eng']
+      })
+      await rm(join(directory, 'languages.json'))
+      await writeFile(join(directory, 'selection-target.json'), '{"schemaVersion":1}')
+      await symlink('selection-target.json', join(directory, 'languages.json'))
+      const symlinked = createLocalOcrModelOwner({
+        base: owner('runtime'),
+        languagePacks: {},
+        defaultLanguages: ['eng'],
+        dataRoot: () => root
+      })
+      await symlinked.getSnapshot()
+    })()
+  ).rejects.toThrow('Unsafe OCR model selection file.')
+})
+
+it.each(['ocr-7ed9791930e614a1', 'ocr-74bc858287ce927b'])(
+  'upgrades legacy OCR worker %s before saving a language selection',
+  async (legacyRevision) => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-legacy-'))
+    roots.push(root)
+    const base = owner('runtime')
+    let installedRevision = legacyRevision
+    let installing = false
+    base.getSnapshot = vi.fn(async () =>
+      snapshot({ installedRevision, availability: installing ? 'installing' : 'ready' })
+    )
+    base.install = vi.fn(async () => {
+      installing = true
+      setTimeout(() => {
+        installedRevision = 'runtime-v1'
+        installing = false
+      }, 20)
+      return snapshot({ installedRevision, availability: 'installing' })
+    })
+    const ocr = createLocalOcrModelOwner({
+      base,
+      languagePacks: { eng: owner('eng'), deu: owner('deu') },
+      defaultLanguages: ['eng', 'deu'],
+      dataRoot: () => root
+    })
+
+    await expect(ocr.getSnapshot()).resolves.toMatchObject({
+      selectedOcrLanguages: ['eng', 'chi_sim']
+    })
+    await ocr.setOcrLanguages!(['eng', 'deu'])
+    expect(base.install).toHaveBeenCalledOnce()
+    await expect(ocr.getSnapshot()).resolves.toMatchObject({
+      selectedOcrLanguages: ['eng', 'deu']
+    })
+  }
+)
+
+it('aggregates runtime and language-pack download progress', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-progress-'))
+  roots.push(root)
+  const base = owner('runtime')
+  base.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'installing',
+      installedRevision: undefined,
+      downloadBytes: 100,
+      transferredBytes: 40,
+      downloadProgress: {
+        phase: 'downloading',
+        transferred: 40,
+        total: 100,
+        percent: 40,
+        bytesPerSecond: 10,
+        attempt: 1
+      }
+    })
+  )
+  const pack = owner('deu')
+  pack.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'installing',
+      installedRevision: undefined,
+      downloadBytes: 60,
+      transferredBytes: 20,
+      downloadProgress: {
+        phase: 'reconnecting',
+        transferred: 20,
+        total: 60,
+        percent: 33,
+        bytesPerSecond: 5,
+        attempt: 2
+      }
+    })
+  )
+  const ocr = createLocalOcrModelOwner({
+    base,
+    languagePacks: { deu: pack },
+    defaultLanguages: ['eng', 'deu'],
+    dataRoot: () => root
+  })
+
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    downloadBytes: 160,
+    transferredBytes: 60,
+    downloadProgress: {
+      phase: 'downloading',
+      transferred: 60,
+      total: 160,
+      percent: 38,
+      bytesPerSecond: 15,
+      etaSeconds: 7,
+      attempt: 2
+    }
+  })
+})

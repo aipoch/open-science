@@ -1,4 +1,20 @@
 import type {
+  ComputeAccountOperation,
+  ComputePythonSelect,
+  ComputePythonResult,
+  ComputePythonSnapshot
+} from '../../shared/compute-python-runtime'
+import type { ComputeAccountProvider, ComputeAccountStatus } from '../../shared/compute-accounts'
+import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../../shared/artifacts'
+import type {
+  KubernetesTarget,
+  KubernetesTargetConfig,
+  ExternalComputeTargetConfig
+} from '../../shared/compute'
+import type { HostedTarget, HostedTargetConfig } from '../../shared/compute'
+import type { RayTarget, RayTargetConfig } from '../../shared/compute'
+import type { ModalTarget, ModalTargetConfig } from '../../shared/compute'
+import type {
   CancelComputeJobRequest,
   ComputeExecutionMode,
   ComputeHost,
@@ -31,6 +47,45 @@ import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
 
 export type ComputeHandlers = {
+  getComputePythonRuntime: (provider: ComputeAccountProvider) => Promise<ComputePythonSnapshot>
+  selectComputePythonRuntime: (
+    provider: ComputeAccountProvider,
+    request: ComputePythonSelect
+  ) => Promise<ComputePythonResult>
+  accountStatus: (
+    provider: ComputeAccountProvider,
+    force?: boolean
+  ) => Promise<ComputeAccountStatus>
+  connectAccount: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  useLocalAccount: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  cancelAccountConnection: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  disconnectAccount: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  listRayTokens: () => Promise<string[]>
+  setRayToken: (endpoint: string, token: string) => Promise<void>
+  removeRayToken: (endpoint: string) => Promise<void>
+  verifyTarget: (providerId: string) => Promise<void>
+  updateTarget: (providerId: string, config: ExternalComputeTargetConfig) => Promise<void>
+  listKubernetesTargets: () => Promise<KubernetesTarget[]>
+  createKubernetesTarget: (config: KubernetesTargetConfig) => Promise<KubernetesTarget>
+  listHostedTargets: () => Promise<HostedTarget[]>
+  createHostedTarget: (config: HostedTargetConfig) => Promise<HostedTarget>
+  listRayTargets: () => Promise<RayTarget[]>
+  createRayTarget: (config: RayTargetConfig) => Promise<RayTarget>
+  readOutputPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
+  listModalTargets: () => Promise<ModalTarget[]>
+  createModalTarget: (config: ModalTargetConfig) => Promise<ModalTarget>
   list: () => Promise<ComputeHost[]>
   get: (providerId: string) => Promise<ComputeHost | null>
   create: (request: CreateComputeHostRequest) => Promise<ComputeHost>

@@ -1,10 +1,325 @@
 import type { PdfLayoutPage, PdfLayoutTextItem, PdfTranslationLayout } from './layout.js'
+import {
+  nativeReferenceRolePageFonts,
+  nativeReferenceRoleFontsCurrent,
+  nativeReferenceRoleRowClosed
+} from './native-reference-evidence.js'
 
 type Unit = PdfTranslationLayout['units'][number]
 type Box = { x: number; y: number; right: number; bottom: number }
 type Entry = { item: PdfLayoutTextItem; index: number; key: string; owner: Unit }
 type Row = { baseline: number; entries: Entry[] }
 type RecordProof = { complete: boolean; owners: Unit[]; wraps: number[] }
+const ownedReferenceRoles = new WeakMap<object, { owners: Set<Unit>; current: () => boolean }>()
+const ownedReferenceChecks = new WeakMap<readonly PdfLayoutPage[], (() => boolean)[]>()
+
+/** A bounded logical range across native page/column transitions. No geometry
+ * or text permission is inferred from these reference-only owners. */
+export function nativeOwnedUnheadedReferenceRoles(
+  units: Unit[],
+  pages: PdfLayoutPage[]
+): object | undefined {
+  const owners = new Map<string, Unit>()
+  for (const unit of units)
+    for (const key of unit.items) {
+      if (owners.has(key)) return
+      owners.set(key, unit)
+    }
+  for (let at = 0; at + 1 < pages.length; at++) {
+    const pair = pages.slice(at, at + 2),
+      first = pair[0],
+      second = pair[1],
+      begin = first.items.findIndex((item) => item.str === '[1]')
+    if (
+      begin < 0 ||
+      second.page !== first.page + 1 ||
+      pair.some((p) => p.rotation !== 0 || p.items.length > 10000)
+    )
+      continue
+    const before = first.items.slice(0, begin).filter((item) => item.str.trim()),
+      prior = before.at(-1)
+    if (
+      !prior ||
+      !/[.!?]$/u.test(prior.str) ||
+      before.some((item) =>
+        /\b(?:reference|citation|bibliograph\w*)\s+examples?\b/iu.test(item.str)
+      )
+    )
+      continue
+    const expectedSize = first.items[begin].height
+    const entries = pair.flatMap((page, n) =>
+      page.items.flatMap((item, index) => {
+        const f = page.nativeFolioFontEvidence,
+          witness = f?.complete ? f.fonts[item.fontName!] : undefined,
+          firstNonempty = page.items.findIndex((item) => item.str.trim()),
+          middle = item.transform[4] + item.width / 2,
+          folio =
+            index === firstNonempty &&
+            item.str === String(page.page) &&
+            page.height - item.transform[5] < page.height * 0.08 &&
+            item.height > expectedSize * 1.05 &&
+            item.width > 0 &&
+            item.width < item.height * 3 &&
+            (middle > page.width * 0.85 ||
+              middle < page.width * 0.15 ||
+              Math.abs(middle - page.width / 2) < item.height) &&
+            witness?.nativeMetrics === true &&
+            witness.ascent === item.fontAscent &&
+            witness.descent === item.fontDescent &&
+            page.items.every(
+              (other, i) =>
+                i === index ||
+                !other.str.trim() ||
+                page.height - other.transform[5] - other.height >
+                  page.height - item.transform[5] + item.height
+            )
+        return item.str.trim() && (n ? !folio : index >= begin)
+          ? [
+              {
+                item,
+                index,
+                key: `${page.page}:${index}`,
+                owner: owners.get(`${page.page}:${index}`)!,
+                page
+              }
+            ]
+          : []
+      })
+    )
+    const font = entries[0]?.item.height
+    if (
+      !(font > 0) ||
+      prior.height <= font ||
+      entries.length > 10000 ||
+      entries.some(
+        (e) => !e.owner || !valid(e.item) || Math.abs(e.item.height - font) > font * 0.02
+      )
+    )
+      continue
+    const starts = entries.flatMap((e, index) => (/^\[\d{1,4}\]$/u.test(e.item.str) ? [index] : []))
+    if (
+      starts.length < 3 ||
+      starts.length > 256 ||
+      starts.some((index, n) => Number(marker(entries[index].item.str)![1]) !== n + 1)
+    )
+      continue
+    const columns: number[] = []
+    for (const index of starts) {
+      const body = entries[index + 1]
+      if (
+        !body ||
+        body.page !== entries[index].page ||
+        Math.abs(body.item.transform[5] - entries[index].item.transform[5]) > font * 0.02
+      )
+        continue
+      if (!columns.some((x) => Math.abs(x - body.item.transform[4]) < font * 0.05))
+        columns.push(body.item.transform[4])
+    }
+    columns.sort((a, b) => a - b)
+    if (columns.length !== 2 || columns[1] - columns[0] < font * 10) continue
+    const column = (e: (typeof entries)[number]): number =>
+      e.item.transform[4] >= columns[1] - font * 3 ? 1 : 0
+    const nativeRows: (typeof entries)[] = [],
+      lane = new Map<(typeof entries)[number], number>()
+    for (const e of entries) {
+      const previous = nativeRows.at(-1),
+        head = previous?.[0]
+      if (
+        head &&
+        head.page === e.page &&
+        Math.abs(head.item.transform[5] - e.item.transform[5]) < font * 0.02
+      )
+        previous!.push(e)
+      else nativeRows.push([e])
+    }
+    for (const row of nativeRows) for (const e of row) lane.set(e, column(row[0]))
+    const records = starts.map((index, n) => entries.slice(index, starts[n + 1] ?? entries.length))
+    const complete = records.every((record) => {
+      const s = text(record),
+        last = record.at(-1)!.item.str.trim(),
+        tail = last === '.' ? (record.at(-2)?.item.str.trim() ?? '') : last,
+        rows: (typeof record)[] = []
+      const author =
+        /^\[\d{1,4}\]\s*(?:\p{Lu}\.\s*){1,4}\p{Lu}[\p{L}\p{M}’'`´¨ˆ˝^.-]+(?:,|\s+and\s+|\s*&\s*)/u
+      if (
+        record.length > 600 ||
+        s.length > 4000 ||
+        !author.test(s) ||
+        !/[.]$/u.test(last) ||
+        !dated(tail)
+      )
+        return false
+      for (const e of record) {
+        const previous = rows.at(-1),
+          head = previous?.[0]
+        if (e.item.transform[4] < 0 || e.item.transform[4] + e.item.width > e.page.width)
+          return false
+        // A native line can overflow its column; only its first Source selects
+        // the lane. A real lane transition begins a different closed line.
+        if (
+          head &&
+          head.page === e.page &&
+          Math.abs(head.item.transform[5] - e.item.transform[5]) < font * 0.02
+        )
+          previous!.push(e)
+        else rows.push([e])
+      }
+      if (rows[0][0] !== record[0]) return false
+      return rows.every((row, n) => {
+        const head = row[0],
+          col = column(head),
+          previous = rows[n - 1]?.[0]
+        if (
+          !nativeReferenceRoleRowClosed(
+            head.page,
+            row.map((e) => e.index)
+          )
+        )
+          return false
+        if (n && Math.abs(head.item.transform[4] - columns[col]) > font * 0.05) return false
+        if (
+          !n &&
+          (record[1].item.transform[4] - head.item.transform[4] < font * 0.8 ||
+            record[1].item.transform[4] - head.item.transform[4] > font * 3)
+        )
+          return false
+        if (!previous) return true
+        if (previous.page === head.page && column(previous) === col)
+          return (
+            previous.item.transform[5] - head.item.transform[5] >= font * 0.8 &&
+            previous.item.transform[5] - head.item.transform[5] <= font * 2.2
+          )
+        const preceding = rows[n - 1].at(-1)!
+        return (
+          entries
+            .filter((e) => e.page === preceding.page && lane.get(e) === column(rows[n - 1][0]))
+            .at(-1) === preceding &&
+          entries.find((e) => e.page === head.page && lane.get(e) === col) === head &&
+          (previous.page === head.page
+            ? column(previous) === 0 && col === 1
+            : previous.page.page + 1 === head.page.page && col === 0)
+        )
+      })
+    })
+    if (!complete) continue
+    const following = pages[at + 2],
+      next = following?.items.find((item) => item.str.trim() && item.str !== String(following.page))
+    if (
+      following &&
+      (!next || !/^(?:Appendix\s+[A-Z]|(?:\d+(?:\.\d+)*|[IVX]+)[.:]\s+\p{Lu})/u.test(next.str))
+    )
+      continue
+    const keys = new Set(entries.map((e) => e.key)),
+      selectedOwners = new Set(entries.map((e) => e.owner))
+    if (
+      [...selectedOwners].some(
+        (unit) =>
+          unit.items.some((key) => !keys.has(key)) ||
+          unit.items.some(
+            (key, n) => unit.originalStrings[n] !== entries.find((e) => e.key === key)?.item.str
+          )
+      )
+    )
+      continue
+    const domains = pair.map((page) => ({
+      page,
+      bounds: union(entries.filter((e) => e.page === page).map((e) => box(page, e.item)))
+    }))
+    if (
+      domains.some(({ page, bounds }) =>
+        page.items.some((item, index) => {
+          if (!item.str.trim() || keys.has(`${page.page}:${index}`)) return false
+          if (![...item.transform, item.width, item.height].every(Number.isFinite)) return true
+          const advance = {
+            x: item.transform[4],
+            y: page.height - item.transform[5] - item.height,
+            right: item.transform[4] + item.width,
+            bottom: page.height - item.transform[5]
+          }
+          return overlaps(advance, bounds)
+        })
+      )
+    )
+      continue
+    const witnesses = pair.map((page) =>
+      nativeReferenceRolePageFonts(
+        page,
+        entries.filter((e) => e.page === page).map((e) => e.index)
+      )
+    )
+    if (witnesses.some((w) => !w)) continue
+    const pageRefs = [...pages],
+      boundarySnapshot = JSON.stringify(following),
+      followingItems = following?.items,
+      nextItem = next,
+      snapshots = [...selectedOwners].map((unit) => ({
+        unit,
+        items: unit.items,
+        originals: unit.originalStrings,
+        fragments: unit.fragments,
+        value: JSON.stringify([
+          unit.id,
+          unit.kind,
+          unit.risks,
+          unit.referenceBoundary,
+          unit.source,
+          unit.items,
+          unit.originalStrings,
+          unit.fragments
+        ])
+      })),
+      current = (): boolean =>
+        pages.length === pageRefs.length &&
+        pages.every((page, n) => page === pageRefs[n]) &&
+        witnesses.every((w) => nativeReferenceRoleFontsCurrent(w!)) &&
+        snapshots.every(
+          (s) =>
+            units.includes(s.unit) &&
+            s.unit.items === s.items &&
+            s.unit.originalStrings === s.originals &&
+            s.unit.fragments === s.fragments &&
+            JSON.stringify([
+              s.unit.id,
+              s.unit.kind,
+              s.unit.risks,
+              s.unit.referenceBoundary,
+              s.unit.source,
+              s.unit.items,
+              s.unit.originalStrings,
+              s.unit.fragments
+            ]) === s.value
+        ) &&
+        pages[at + 2] === following &&
+        following?.items === followingItems &&
+        (!following || following.items.includes(nextItem!)) &&
+        JSON.stringify(following) === boundarySnapshot
+    if (!current()) continue
+    const proof = Object.freeze({})
+    ownedReferenceRoles.set(proof, {
+      owners: new Set([...selectedOwners].filter((unit) => !unit.sourceOnly && !unit.preserve)),
+      current
+    })
+    ownedReferenceChecks.set(pages, [...(ownedReferenceChecks.get(pages) ?? []), current])
+    return proof
+  }
+}
+
+export function hasNativeOwnedReferenceRole(proof: object | undefined, unit: Unit): boolean {
+  try {
+    const data = proof && ownedReferenceRoles.get(proof)
+    return !!data && data.owners.has(unit) && data.current()
+  } catch {
+    return false
+  }
+}
+
+export function nativeOwnedReferenceRolesCurrent(pages: readonly PdfLayoutPage[]): boolean {
+  try {
+    return ownedReferenceChecks.get(pages)?.every((check) => check()) ?? true
+  } catch {
+    return false
+  }
+}
 const marker = (s: string): RegExpMatchArray | null => s.match(/^\[(\d{1,4})\]\s*/u)
 const dated = (s: string): boolean => /\b(?:18|19|20)\d{2}\b/u.test(s)
 const valid = (i: PdfLayoutTextItem): boolean =>

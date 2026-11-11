@@ -125,7 +125,7 @@ it.each(['regressions', 'delegation'])(
   }
 )
 
-it('partitions complete supplemental discovery into capacity and three disjoint ordinary shards', () => {
+it('partitions complete supplemental discovery into capacity and six disjoint ordinary shards', () => {
   const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
   const args = scripts['test:e2e:regressions'].split(/\s+/).slice(2)
   const collect = (selection: string[]): string[] => {
@@ -158,7 +158,9 @@ it('partitions complete supplemental discovery into capacity and three disjoint 
   const original = collect([])
   const groups = [
     collect(['--grep', '@capacity']),
-    ...[1, 2, 3].map((shard) => collect(['--grep-invert', '@capacity', `--shard=${shard}/3`]))
+    ...[1, 2, 3, 4, 5, 6].map((shard) =>
+      collect(['--grep-invert', '@capacity', `--shard=${shard}/6`])
+    )
   ]
   for (const group of groups) expect(group.length).toBeGreaterThan(0)
   const partition = groups.flat()

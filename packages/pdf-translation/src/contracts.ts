@@ -213,12 +213,17 @@ const pdfGenerationCodes = [
 export type PdfGenerationFailure = Readonly<{
   code: (typeof pdfGenerationCodes)[number]
   pageNumber?: number
+  pageLocal?: true
 }>
 export function isPdfGenerationFailure(value: unknown): value is PdfGenerationFailure {
   if (!value || typeof value !== 'object') return false
-  const { code, pageNumber } = value as PdfGenerationFailure
+  const { code, pageNumber, pageLocal } = value as PdfGenerationFailure
   return (
     pdfGenerationCodes.includes(code) &&
+    (pageLocal === undefined ||
+      (pageLocal === true &&
+        pageNumber !== undefined &&
+        ['annotations', 'unsupported-layout', 'source-mismatch'].includes(code))) &&
     (pageNumber === undefined ||
       (Number.isInteger(pageNumber) && pageNumber >= 1 && pageNumber <= 500))
   )
@@ -226,14 +231,22 @@ export function isPdfGenerationFailure(value: unknown): value is PdfGenerationFa
 // Match the existing Electron error transport: no raw engine error or document text crosses IPC.
 export class PdfGenerationError extends Error {
   constructor(readonly failure: PdfGenerationFailure) {
-    super(`[pdf-generation:${failure.code}:${failure.pageNumber ?? 0}]`)
+    super(
+      `[pdf-generation:${failure.code}:${failure.pageNumber ?? 0}]${failure.pageLocal ? '[pdf-page-local]' : ''}`
+    )
   }
 }
 export function pdfGenerationFailure(error: unknown): PdfGenerationFailure {
   const match =
-    error instanceof Error ? error.message.match(/\[pdf-generation:([a-z-]+):(\d+)\]/) : null
+    error instanceof Error
+      ? error.message.match(/\[pdf-generation:([a-z-]+):(\d+)\](\[pdf-page-local\])?/)
+      : null
   const failure = match
-    ? { code: match[1], ...(Number(match[2]) ? { pageNumber: Number(match[2]) } : {}) }
+    ? {
+        code: match[1],
+        ...(match[3] ? { pageLocal: true } : {}),
+        ...(Number(match[2]) ? { pageNumber: Number(match[2]) } : {})
+      }
     : undefined
   return isPdfGenerationFailure(failure) ? failure : { code: 'worker-failed' }
 }

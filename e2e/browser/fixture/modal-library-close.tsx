@@ -100,6 +100,11 @@ window.api = {
     })
   },
   literature: {
+    overviewBatch: async () => null,
+    studySnapshot: async (request: { expectedSourceKey: string }) => ({
+      sourceKey: request.expectedSourceKey,
+      issue: 'not-generated' as const
+    }),
     onChanged: () => () => {},
     get: async () => reference,
     search: async (request: { scope: string }) => ({

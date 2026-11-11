@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type {
   LiteratureDuplicatePolicy,
+  LiteratureRecordImportSource,
   LiteratureRecordImportResult
 } from '@aipoch/literature-library/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
@@ -21,7 +22,7 @@ import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
 export type RecordImportDraft = Readonly<{
   reading?: boolean
   fileName: string
-  content: string
+  source: LiteratureRecordImportSource
   preview?: LiteratureRecordImportResult
   error?: string
   failedCount?: number
@@ -34,6 +35,7 @@ export const LiteratureRecordImportDialog = ({
   itemDescription,
   itemTypeLabels,
   onClose,
+  onCloseAutoFocus,
   duplicatePolicy,
   onDuplicatePolicyChange,
   onImport,
@@ -45,11 +47,12 @@ export const LiteratureRecordImportDialog = ({
   itemDescription: (item: LiteratureItemInput) => string
   itemTypeLabels: Record<LiteratureItemType, string>
   onClose: () => void
+  onCloseAutoFocus?: (event: Event) => void
   duplicatePolicy: LiteratureDuplicatePolicy
   onDuplicatePolicyChange: (value: LiteratureDuplicatePolicy) => void
   onImport: (selectedItemIndexes?: number[]) => void
   onPreviewSelection: (
-    content: string,
+    source: LiteratureRecordImportSource,
     selectedItemIndexes: number[]
   ) => Promise<LiteratureRecordImportResult>
 }): React.JSX.Element => {
@@ -57,10 +60,10 @@ export const LiteratureRecordImportDialog = ({
   const [recordImportVisibleCount, setRecordImportVisibleCount] = useState(
     LITERATURE_IMPORT_PREVIEW_PAGE_SIZE
   )
-  const [selectionSource, setSelectionSource] = useState(recordImport.content)
+  const [selectionSource, setSelectionSource] = useState(recordImport.source)
   const [excludedIndexes, setExcludedIndexes] = useState<Set<number>>(new Set())
-  if (selectionSource !== recordImport.content) {
-    setSelectionSource(recordImport.content)
+  if (selectionSource !== recordImport.source) {
+    setSelectionSource(recordImport.source)
     setExcludedIndexes(new Set())
   }
   const selectedIndexes = (recordImport.preview?.items ?? [])
@@ -71,7 +74,7 @@ export const LiteratureRecordImportDialog = ({
     excludedIndexes.size > 0 && selectedIndexes.length > 0 && !recordImport.preview?.imported
   const [selectionResult, setSelectionResult] = useState<{
     key: string
-    content: string
+    source: LiteratureRecordImportSource
     basePreview?: LiteratureRecordImportResult
     preview?: LiteratureRecordImportResult
     failed?: boolean
@@ -84,7 +87,7 @@ export const LiteratureRecordImportDialog = ({
   const [retrySelection, setRetrySelection] = useState(0)
   const currentSelectionResult =
     selectionResult?.key === selectionKey &&
-    selectionResult.content === recordImport.content &&
+    selectionResult.source === recordImport.source &&
     selectionResult.basePreview === recordImport.preview
       ? selectionResult
       : undefined
@@ -93,14 +96,14 @@ export const LiteratureRecordImportDialog = ({
   useEffect(() => {
     if (!needsPreview) return
     let active = true
-    const content = recordImport.content
+    const source = recordImport.source
     const basePreview = recordImport.preview
-    void onPreviewSelection(content, JSON.parse(selectionKey) as number[]).then(
+    void onPreviewSelection(source, JSON.parse(selectionKey) as number[]).then(
       (preview) => {
-        if (active) setSelectionResult({ key: selectionKey, content, basePreview, preview })
+        if (active) setSelectionResult({ key: selectionKey, source, basePreview, preview })
       },
       () => {
-        if (active) setSelectionResult({ key: selectionKey, content, basePreview, failed: true })
+        if (active) setSelectionResult({ key: selectionKey, source, basePreview, failed: true })
       }
     )
     return () => {
@@ -109,7 +112,7 @@ export const LiteratureRecordImportDialog = ({
   }, [
     needsPreview,
     selectionKey,
-    recordImport.content,
+    recordImport.source,
     recordImport.preview,
     onPreviewSelection,
     retrySelection
@@ -139,6 +142,7 @@ export const LiteratureRecordImportDialog = ({
       description={recordImport.fileName}
       busy={isImportingRecords}
       onClose={onClose}
+      onCloseAutoFocus={onCloseAutoFocus}
       footer={
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border-300/80 px-5 py-4">
           {recordImport.preview?.imported ? (
@@ -201,9 +205,11 @@ export const LiteratureRecordImportDialog = ({
             {recordImport.error ? <LiteratureErrorNotice title={recordImport.error} /> : null}
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded border border-border-300/80 px-2 py-1 font-medium">
-                {recordImport.preview.format === 'nbib'
-                  ? t('PubMed NBIB')
-                  : recordImport.preview.format.toUpperCase()}
+                {recordImport.preview.format === 'items'
+                  ? t('Pasted references')
+                  : recordImport.preview.format === 'nbib'
+                    ? t('PubMed NBIB')
+                    : recordImport.preview.format.toUpperCase()}
               </span>
               <span>
                 {t('{{count}} references', {

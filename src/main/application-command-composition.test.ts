@@ -256,6 +256,7 @@ describe('application command composition', () => {
       'literature:add-pdf',
       'literature:cancel-pdf-import',
       'literature:citation-styles',
+      'literature:collect',
       'literature:complete-metadata',
       'literature:export-record',
       'literature:format-document',
@@ -268,10 +269,12 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:overview-batch',
       'literature:publication-check',
       'literature:related',
       'literature:search',
       'literature:sources',
+      'literature:study-snapshot',
       'literature:supplement-attachment',
       'literature:supplement-attachment-progress',
       'literature:supplements',
@@ -297,14 +300,20 @@ describe('application command composition', () => {
       'pdf-structure:parse',
       'pdf-structure:read-cached',
       'pdf-structure:read-thumbnail',
+      'projects:cancel-prompt-optimization',
       'projects:create',
       'projects:delete',
       'projects:get',
       'projects:list',
       'projects:list-deletion-cleanup',
+      'projects:optimize-prompt',
+      'projects:record-optimization-event',
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'resource-recording:get-state',
+      'resource-recording:start',
+      'resource-recording:stop',
       'session-replay:get',
       'session-replay:get-selection-snapshot',
       'session-replay:list',
@@ -329,6 +338,7 @@ describe('application command composition', () => {
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
       'sessions:use-case-catalog',
+      'sessions:use-case-introduction',
       'settings:get-settings',
       'tags:create',
       'tags:delete',
@@ -345,6 +355,33 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.localWeb.commandNames()).toEqual(expectedLocalWebCommands())
+  })
+
+  it('keeps research film generation and export desktop-only without conversation progress', async () => {
+    const composition = createApplicationCommandComposition(dependencies())
+    for (const name of [
+      'preview-resources:export-research-video',
+      'preview-resources:cancel-research-video-export',
+      'preview-resources:research-video-progress',
+      'research-video:start',
+      'research-video:status',
+      'research-video:remove',
+      'research-video:cancel'
+    ]) {
+      expect(composition.desktop.commandNames()).toContain(name)
+      expect(composition.localWeb.commandNames()).not.toContain(name)
+      expect(composition.remoteWeb.commandNames()).not.toContain(name)
+      expect(composition.task.commandNames()).not.toContain(name)
+    }
+    for (const surface of [
+      composition.desktop,
+      composition.localWeb,
+      composition.remoteWeb,
+      composition.task
+    ]) {
+      expect(surface.commandNames()).not.toContain('research-video:progress')
+    }
+    await composition.dispose()
   })
 
   it('partitions remote Web dispatch from fail-closed pre-dispatch rejections', async () => {

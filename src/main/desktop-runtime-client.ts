@@ -8,10 +8,14 @@ import {
   readServiceLifetime,
   serviceStopDeadline,
   LOCAL_SERVICE_STOP_ESCALATION_MS,
+  LOCAL_SERVICE_STOP_BUDGET_MS,
   type ServiceLifetimeSnapshot,
   type ServiceStopOptions
 } from './local-service-lifetime'
-import { DesktopRuntimeDisconnectedError } from '../shared/desktop-runtime-recovery'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError
+} from '../shared/desktop-runtime-recovery'
 import { randomUUID } from 'node:crypto'
 import { desktopRuntimeInfoSchema, type DesktopRuntimeInfo } from './desktop-runtime-info'
 import { waitForRuntimeStopped } from './runtime-stop-confirmation'
@@ -150,6 +154,7 @@ export type DesktopRuntimeClient = Readonly<{
   release(clientId: string): void
   notificationAction(token: string, action: 'clicked' | 'closed'): void
   notificationView(reason: 'view' | 'focus' | 'window-created', visibleSessionId?: string): void
+  resourceActivity?(state: { foreground: boolean; suspended: boolean }): void
   close(): void
   quit(options?: ServiceStopOptions): Promise<RuntimeDirectoryLease | undefined>
 }>
@@ -184,6 +189,8 @@ export async function connectDesktopRuntime(options: {
     }
   >()
   let supportsPayload = false
+  let supportsResourceActivity = false
+  let lastResourceActivity: { foreground: boolean; suspended: boolean } | undefined
   let requestId = 0
   let channels: readonly string[] = []
   let cursor: { streamId: string; latestSequence: number } | undefined
@@ -274,7 +281,7 @@ export async function connectDesktopRuntime(options: {
   timer.unref()
   const send = (message: unknown, onSent?: () => void): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
-      throw new DesktopRuntimeDisconnectedError('Desktop runtime is disconnected.', {
+      throw new DesktopRuntimeWriteNotSubmittedError('Desktop runtime is disconnected.', {
         cause: disconnectCause
       })
     const serialized = stringifyRpcJson(message)
@@ -404,6 +411,8 @@ export async function connectDesktopRuntime(options: {
         )
           throw new Error('The original Runtime configuration changed during control refresh.')
         runtimeInfo = next
+        if (supportsResourceActivity && lastResourceActivity)
+          send({ kind: 'resource-activity', ...lastResourceActivity })
         // Keep the existing event cursor, documents, native request IDs and pending requests.
         const completed = refreshing
         refreshing = undefined
@@ -417,6 +426,8 @@ export async function connectDesktopRuntime(options: {
         startupState = bootstrap.startup ?? { phase: 'ready' }
         runtimePid = bootstrap.pid
         supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
+        supportsResourceActivity =
+          bootstrap.rpcCapabilities?.includes('resource-activity-v1') ?? false
         channels = Object.freeze([...bootstrap.rpcChannels])
         cursor = bootstrap.eventStream
         runtimeInfo = desktopRuntimeInfoSchema.parse(
@@ -609,7 +620,7 @@ export async function connectDesktopRuntime(options: {
   const waitForStoppedEvidence = (
     signal?: AbortSignal,
     requireCleanExit = !runtimeInfo.lifetime,
-    timeoutMs = runtimeInfo.lifetime ? 20_000 : 15_000,
+    timeoutMs = runtimeInfo.lifetime ? LOCAL_SERVICE_STOP_BUDGET_MS : 15_000,
     deadlineAt = Date.now() + timeoutMs
   ): Promise<RuntimeDirectoryLease> => {
     return waitForRuntimeStopped({
@@ -651,7 +662,7 @@ export async function connectDesktopRuntime(options: {
   const waitForStopped = async (
     signal?: AbortSignal,
     requireCleanExit = !runtimeInfo.lifetime,
-    timeoutMs = runtimeInfo.lifetime ? 20_000 : 15_000
+    timeoutMs = runtimeInfo.lifetime ? LOCAL_SERVICE_STOP_BUDGET_MS : 15_000
   ): Promise<RuntimeDirectoryLease> => {
     if (!runtimeInfo.lifetime) return waitForStoppedEvidence(signal, requireCleanExit, timeoutMs)
     const deadlineAt = serviceStopDeadline(Date.now() + timeoutMs)
@@ -867,6 +878,10 @@ export async function connectDesktopRuntime(options: {
             visibleSessionId
           })
         )
+    },
+    resourceActivity: (state) => {
+      lastResourceActivity = { ...state }
+      if (!closed && supportsResourceActivity) send({ kind: 'resource-activity', ...state })
     },
     notificationAction: (token, action) => {
       if (!closed) send({ kind: 'notification-action', token, action })

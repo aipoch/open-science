@@ -4,7 +4,9 @@ const PRODUCTION_DELEGATED_WORK_FRAMEWORKS: readonly AgentFrameworkId[] = Object
   'claude-code',
   'opencode',
   'codex',
-  'codebuddy'
+  'codebuddy',
+  'pi',
+  'open-science-agent'
 ])
 
 const productionDelegatedWorkFrameworks = (): readonly AgentFrameworkId[] =>

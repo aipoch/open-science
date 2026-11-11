@@ -58,7 +58,7 @@ const cases = [
 ] as const
 
 // Exercise the real provider observation/restoration seam, without stamping trusted symbols in tests.
-describe.each(['claude-code', 'codebuddy', 'opencode', 'codex'] as const)(
+describe.each(['claude-code', 'codebuddy', 'opencode', 'codex', 'open-science-agent'] as const)(
   '%s Auto operation identity correlation',
   (framework) => {
     it.each(cases)(

@@ -22,7 +22,7 @@ import {
   resolveProviderReasoningEffortProfile
 } from '../../shared/provider-reasoning-effort'
 
-import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
+import { buildConfiguredModelUnavailableMessage } from '../../shared/failure/messages'
 import type { ProviderView } from '../../shared/settings'
 import {
   isClaudeSubscriptionProvider,
@@ -75,6 +75,7 @@ const requiresNativeResponsesCompatibility = (
 // and ephemeral runtime targets without mutating durable selection or entering account lifecycles.
 class ProviderRuntimeProjectionOwner {
   resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ModelProtocol[] {
+    if (isCodexSubscriptionProvider(provider.type)) return ['responses']
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
@@ -140,6 +141,39 @@ class ProviderRuntimeProjectionOwner {
     selection: RuntimeProviderModelSelection,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
+    // Native Codex owns an omitted default; the built-in Agent must pin its model before launch.
+    const modelSelection =
+      framework.id === 'open-science-agent' &&
+      isCodexSubscriptionProvider(storedProvider.type) &&
+      selection.kind !== 'required' &&
+      (selection.kind !== 'configured' || !selection.requestedModel)
+        ? {
+            kind: 'configured' as const,
+            requestedModel: storedProvider.model ?? defaultVendorModel('openai')
+          }
+        : selection
+    const target = this.resolveProviderTarget(storedProvider, modelSelection)
+    return {
+      ...target,
+      frameworkCompatible: isProviderUsableByFramework(
+        { apiEndpoints: target.apiEndpoints, type: storedProvider.type },
+        framework
+      ),
+      needsChatResponsesToChatCompletionsBridge: requiresChatCompletionsBridge(
+        target.provider,
+        framework
+      ),
+      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
+        target.provider,
+        framework
+      )
+    }
+  }
+
+  resolveProviderTarget(
+    storedProvider: StoredProvider,
+    selection: RuntimeProviderModelSelection
+  ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
     if (
       selection.kind === 'configured' &&
@@ -189,13 +223,10 @@ class ProviderRuntimeProjectionOwner {
       apiEndpoints,
       provider,
       reasoningEffortProfile: resolveProviderReasoningEffortProfile(storedProvider, effectiveModel),
-      frameworkCompatible: isProviderUsableByFramework(
-        { apiEndpoints, type: storedProvider.type },
-        framework
-      ),
+      frameworkCompatible: false,
       modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
-      needsChatResponsesToChatCompletionsBridge: requiresChatCompletionsBridge(provider, framework),
-      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(provider, framework)
+      needsChatResponsesToChatCompletionsBridge: false,
+      needsNativeResponsesCompatibility: false
     }
   }
 

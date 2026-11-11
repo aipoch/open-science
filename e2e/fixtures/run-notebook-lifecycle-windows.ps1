@@ -34,7 +34,10 @@ try {
   Remove-Item -LiteralPath $reportPath -ErrorAction SilentlyContinue
   $env:PLAYWRIGHT_JSON_OUTPUT_NAME = $reportPath
   $env:OPEN_SCIENCE_MICROMAMBA_BIN = $fixtureBin
-  $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS = 'enabled'
+  $evidenceRoot = Join-Path $artifactRoot 'evidence'
+  New-Item -ItemType Directory -Force $evidenceRoot | Out-Null
+  $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS = Join-Path $evidenceRoot 'mutation-stages.jsonl'
+  Remove-Item -LiteralPath $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS -ErrorAction SilentlyContinue
   # All fixture executables use absolute paths. Avoid recursively granting the hosted runner's
   # unrelated tool trees to AppContainer, matching the mainline Notebook journey.
   $env:PATH = @(

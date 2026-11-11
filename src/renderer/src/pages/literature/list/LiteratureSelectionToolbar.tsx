@@ -35,10 +35,13 @@ import type { useSmartDecisionBatch } from '../collections/useSmartDecisionBatch
 import { type BatchLookupMode } from '../workflows/LiteratureBatchLookupDialog'
 import { LiteratureExportMenu } from './LiteratureLibraryMenus'
 import type { LiteratureSelectionStore } from './literature-selection'
+import type { ReferenceExportRequest } from '@aipoch/literature-library/client'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200
 
 export function LiteratureSelectionToolbar({
+  overviewActions,
+  overviewMenuAction,
   selectedItemCount,
   selection,
   allLoadedItemsSelected,
@@ -77,6 +80,8 @@ export function LiteratureSelectionToolbar({
   runLifecycleAction,
   requestPermanentDeletion
 }: {
+  overviewActions?: React.ReactNode
+  overviewMenuAction?: React.ReactNode
   selectedItemCount: number
   selection: ReturnType<LiteratureSelectionStore['getSnapshot']>
   allLoadedItemsSelected: boolean
@@ -110,7 +115,7 @@ export function LiteratureSelectionToolbar({
   addSelectedItemsToProject: (projectId: string) => Promise<void>
   items: LiteratureItemView[]
   previewRestoreSelection: () => Promise<void>
-  exportSelectedItems: (format: 'bibtex' | 'ris') => Promise<boolean>
+  exportSelectedItems: (format: ReferenceExportRequest['format']) => Promise<boolean>
   requestBatchLookup: (mode: BatchLookupMode) => Promise<void>
   setMergeSurvivorId: React.Dispatch<React.SetStateAction<string>>
   setMergeFieldSources: React.Dispatch<React.SetStateAction<Record<string, string>>>
@@ -159,6 +164,7 @@ export function LiteratureSelectionToolbar({
         >
           <X className="size-3.5" aria-hidden="true" />
         </Button>
+        {overviewActions}
         {smartDecisionBatch.progress &&
         smartDecisionBatch.progress.collectionId === collectionId ? (
           <>
@@ -243,10 +249,11 @@ export function LiteratureSelectionToolbar({
           </PopoverTrigger>
           <PopoverContent
             align="end"
-            className="w-64 max-w-[calc(100vw-2rem)] space-y-1 rounded-xl border border-border bg-bg-000 p-1.5 text-foreground [&_button]:h-8 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:shadow-none [&_button:hover]:bg-bg-200"
+            className="w-56 max-w-[calc(100vw-2rem)] space-y-1 rounded-lg border border-border bg-bg-000 p-1 text-foreground shadow-menu [&_button]:h-7 [&_button]:w-full [&_button]:justify-start [&_button]:rounded-md [&_button]:border-transparent [&_button]:bg-transparent [&_button]:px-2 [&_button]:py-1 [&_button]:shadow-none [&_button:hover]:bg-bg-200"
           >
             <LiteratureHoverMenuGroup>
-              <div className="flex flex-col gap-0.5">
+              <div className="flex flex-col">
+                {overviewMenuAction && <PopoverClose asChild>{overviewMenuAction}</PopoverClose>}
                 {section === 'library' ? (
                   <Button
                     type="button"
@@ -260,6 +267,7 @@ export function LiteratureSelectionToolbar({
                     {t('Read with agent')}
                   </Button>
                 ) : null}
+                {section === 'library' && <hr className="my-1 border-border" />}
                 {section === 'library' ? (
                   <LiteratureBatchDestinationMenus
                     collections={batchCollections}
@@ -273,23 +281,26 @@ export function LiteratureSelectionToolbar({
                     onSelectProject={(id) => void addSelectedItemsToProject(id)}
                   />
                 ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={
-                      isBatching ||
-                      (!selection.allMatchingSelected &&
-                        [...selection.selectedIds].every((id) =>
-                          items.some((item) => item.id === id && Boolean(item.mergedIntoItemId))
-                        ))
-                    }
-                    onClick={() => void previewRestoreSelection()}
-                  >
-                    <RotateCcw className="size-3.5" aria-hidden="true" />
-                    {t('Restore')}
-                  </Button>
+                  <PopoverClose asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        isBatching ||
+                        (!selection.allMatchingSelected &&
+                          [...selection.selectedIds].every((id) =>
+                            items.some((item) => item.id === id && Boolean(item.mergedIntoItemId))
+                          ))
+                      }
+                      onClick={() => void previewRestoreSelection()}
+                    >
+                      <RotateCcw className="size-3.5" aria-hidden="true" />
+                      {t('Restore')}
+                    </Button>
+                  </PopoverClose>
                 )}
+                <hr className="my-1 border-border" />
                 <LiteratureExportMenu
                   disabled={isBatching || section === 'trash'}
                   onExport={exportSelectedItems}

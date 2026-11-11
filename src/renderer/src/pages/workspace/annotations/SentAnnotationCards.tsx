@@ -17,6 +17,7 @@ type SentAnnotationCardView =
   | Readonly<{
       id: string
       kind: 'text' | 'replay'
+      sourceDeleted?: boolean
       content: string
       scopeLabel?: string
       source?: string
@@ -196,7 +197,9 @@ const SentAnnotationCard = ({
       <>
         <span className="flex min-w-0 items-center gap-2 text-xs">
           <MessagesSquare className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
-          <span className="shrink-0 font-medium">{t('Discuss')}</span>
+          <span className="shrink-0 font-medium">
+            {card.sourceDeleted ? t('Source deleted') : t('Discuss')}
+          </span>
           <span className="min-w-0 truncate text-muted-foreground">{card.content}</span>
         </span>
         {card.scopeLabel ? (
@@ -217,7 +220,7 @@ const SentAnnotationCard = ({
         data-sent-annotation-kind="replay"
         className="min-w-0 rounded-lg border border-border/70 bg-background/70"
       >
-        {onActivate ? (
+        {onActivate && !card.sourceDeleted ? (
           <button
             type="button"
             aria-label={t('Show annotation source')}

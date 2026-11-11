@@ -263,7 +263,7 @@ type TaskRunEventAccumulator = {
   imageBytes: number
   runtimeCancelled?: boolean
   terminalStop?: Pick<AcpRuntimeEvent, 'turnUsage' | 'modelCallUsage'>
-  runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'providerError'>
+  runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'failure'>
   activities: Map<string, PendingTaskRunActivity>
   artifactClaimIds: string[]
   publishedArtifacts: ArtifactFile[]
@@ -399,7 +399,7 @@ const accumulateTaskRunEvent = (
     }
   }
   if (event.kind === 'error' && event.text?.trim()) {
-    accumulator.runtimeError = { text: event.text, providerError: event.providerError }
+    accumulator.runtimeError = { text: event.text, failure: event.failure }
   }
   if (event.kind === 'artifact' && event.artifactClaimId) {
     accumulator.artifactClaimIds.push(event.artifactClaimId)
@@ -2175,6 +2175,7 @@ class TaskRunner {
         projectId: completed!.session.projectId,
         sessionId: completed!.session.id,
         promptMessageId: run.promptMessageId,
+        expectedRunStartedAt: acceptedSession.activeRun?.startedAt,
         taskRunCommitId: run.id,
         ...(completed!.runtimeTranscriptOwner === 'main'
           ? { messageId: completed!.messageId, artifacts: [] }
@@ -2258,11 +2259,12 @@ class TaskRunner {
       projectId: session.projectId,
       sessionId: session.id,
       promptMessageId: run.promptMessageId,
+      expectedRunStartedAt: session.activeRun?.startedAt,
       taskRunCommitId: run.id,
       messageId: completed?.messageId,
       artifacts: completed?.persistedArtifacts ?? [],
       error: message,
-      ...(runtimeError?.providerError ? { errorReportable: false } : {}),
+      failure: runtimeError?.failure,
       updatedAt: this.dependencies.now()
     }
     run.attention = undefined

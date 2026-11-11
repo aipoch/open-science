@@ -29,4 +29,33 @@ export type DocumentReference = Readonly<{
   checksum: string
   sizeBytes: number
 }>
-export type TextExtraction = Readonly<{ text: string; pageCount: number; truncated: boolean }>
+export type PdfTextCoverage = Readonly<{
+  textPages: readonly number[]
+  ocrPages: readonly number[]
+  unavailablePages: readonly number[]
+  uncheckedPages: readonly number[]
+  unverifiedPages?: readonly number[]
+}>
+/** Source text units and geometry; array order does not declare reading order or table cells. */
+export type PageTextLayout = Readonly<{
+  page: number
+  width: number
+  height: number
+  coordinateSystem: 'top-left'
+  blocks: readonly Readonly<{
+    id: number
+    text: string
+    bounds: readonly [number, number, number, number]
+  }>[]
+}>
+export type TextExtraction = Readonly<{
+  text: string
+  pageCount: number
+  truncated: boolean
+  coverage?: PdfTextCoverage
+  /** Source-owned physical page starts in the exact text, including any generated headers. */
+  pageStarts?: readonly Readonly<{ page: number; offset: number }>[]
+  warnings?: readonly string[]
+  pageLayouts?: readonly PageTextLayout[]
+  layoutOmittedPages?: readonly number[]
+}>

@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
 import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import { withApprovedHandoffOutcome } from './approved-handoff-outcome'
 import { createCodexCompletionGateRuntime } from './codex-completion-handoff'
 import {
   CompletionGateCoordinator,
@@ -256,10 +257,13 @@ describe('Codex approved handoff', () => {
 
     approvedBinding = approvedSpecialist.id
     const handoff = new CompletionGateCoordinator(
-      createCodexCompletionGateRuntime({
+      withApprovedHandoffOutcome(
         runtime,
-        resolveApprovedSpecialistId: () => approvedBinding
-      })
+        createCodexCompletionGateRuntime({
+          runtime,
+          resolveApprovedSpecialistId: () => approvedBinding
+        })
+      )
     )
     const context = {
       sessionId: 'codex-session',

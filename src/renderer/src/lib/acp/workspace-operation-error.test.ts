@@ -1,3 +1,4 @@
+import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../../../../shared/claude-runtime'
 import { useSettingsStore } from '@/stores/settings-store'
 import { beforeEach, expect, it } from 'vitest'
 import {
@@ -9,6 +10,7 @@ import {
 beforeEach(() =>
   useWorkspaceOperationErrors.setState({
     errors: {},
+    failures: {},
     providerValidations: {},
     providerTargets: {},
     diagnostics: {}
@@ -77,4 +79,41 @@ it('captures shared validation baselines when errors occur and clears only the i
   expect(useWorkspaceOperationErrors.getState().providerValidations).toEqual({
     second: { provider: 10 }
   })
+})
+
+it.each([
+  'Retry to stop the previous execution and reconnect.',
+  '重试以停止之前的执行并重新连接。',
+  'Réessayez pour arrêter l’exécution précédente et vous reconnecter.'
+])(
+  'classifies resume failure from its original exception independently of display locale: %s',
+  (displayMessage) => {
+    const rawError = new Error('The previous execution is still using this conversation.')
+    reportWorkspaceOperationError('session', displayMessage, { operation: 'resume', rawError })
+    expect(useWorkspaceOperationErrors.getState().failures.session).toMatchObject({
+      category: 'session',
+      reason: 'session/previous-execution-active'
+    })
+    expect(useWorkspaceOperationErrors.getState().errors.session).toBe(displayMessage)
+    expect(useWorkspaceOperationErrors.getState().diagnostics.session.detail).toBe(rawError.stack)
+    clearWorkspaceOperationError('session')
+    expect(useWorkspaceOperationErrors.getState().failures.session).toBeUndefined()
+  }
+)
+
+it('keeps an unrelated operation timeout outside session recovery', () => {
+  reportWorkspaceOperationError('session', 'The upload timed out.')
+  expect(useWorkspaceOperationErrors.getState().failures.session.category).not.toBe('session')
+})
+
+it('classifies exact runtime guidance from the exception message while retaining its stack for disclosure', () => {
+  const rawError = new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+  reportWorkspaceOperationError('session', '请更新智能体运行时。', {
+    operation: 'resume',
+    rawError
+  })
+  expect(useWorkspaceOperationErrors.getState().failures.session.reason).toBe(
+    'configuration/claude-cli'
+  )
+  expect(useWorkspaceOperationErrors.getState().diagnostics.session.detail).toBe(rawError.stack)
 })

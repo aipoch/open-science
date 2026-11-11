@@ -36,7 +36,7 @@ try {
   }
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...offline], source)
   npm(['run', 'typecheck'], source)
-  npm(['test', '--', '--maxWorkers=1'], source)
+  if (!process.argv.includes('--skip-tests')) npm(['test', '--', '--maxWorkers=1'], source)
   npm(['pack', '--pack-destination', temporary], source)
   const { version } = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
   const consumer = join(temporary, 'consumer')

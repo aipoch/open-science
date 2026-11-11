@@ -1,7 +1,540 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
-import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { createCanvas } from '@napi-rs/canvas'
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+
+// Two closed Forms have leading native panel markers; the first contains two
+// raster rows. The Type3 d1 clip is deliberately wider than its actual ink.
+async function withLeadingType3Forms(
+  inspect: (fixture: ReturnType<typeof JSON.parse>) => Promise<void>,
+  separateDocument = false,
+  ligature = false,
+  singleForm: '' | 'complete' | 'foreign-paint' | 'foreign-text' | 'second-form' = '',
+  captionScript: '' | 'raised' | 'baseline' | 'detached' = '',
+  curvedGlyph = false
+): Promise<void> {
+  const objects: string[] = [],
+    add = (s: string): number => objects.push(s),
+    stream = (s: string, dict = ''): number =>
+      add(`<< ${dict} /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`),
+    catalog = add(''),
+    pages = add(''),
+    ordinary = add(
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'
+    ),
+    charproc = stream(
+      curvedGlyph
+        ? '600 0 0 0 600 800 d1 50 50 m 50 650 450 650 450 50 c 50 50 l h f'
+        : '600 0 0 0 600 800 d1 50 50 450 650 re f'
+    ),
+    unicode = stream(
+      `/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Anonymous def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <4B> <${ligature ? '00660069' : '004B'}> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end`
+    ),
+    typed = add(
+      `<< /Type /Font /Subtype /Type3 /FontBBox [0 0 600 800] /FontMatrix [.001 0 0 .001 0 0] /CharProcs << /K ${charproc} 0 R >> /Encoding << /Type /Encoding /Differences [75 /K] >> /FirstChar 75 /LastChar 75 /Widths [600] /Resources << >> /ToUnicode ${unicode} 0 R >>`
+    ),
+    images = [
+      'ff000000ff000000ffffffff>',
+      '00ff000000ffffffffff0000>',
+      '0000ffffffff00ff0000ff00>',
+      'ffffff0000ffff000000ff00>'
+    ].map((pixels) =>
+      stream(
+        pixels,
+        '/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode'
+      )
+    ),
+    left = stream(
+      `q 45 0 0 35 60 250 cm /I0 Do Q q 45 0 0 35 120 250 cm /I1 Do Q q 45 0 0 35 60 190 cm /I2 Do Q q 45 0 0 35 120 190 cm /I3 Do Q BT /K 10 Tf 1 0 0 1 65 290 Tm (K) Tj 1 0 0 1 130 ${singleForm ? 187 : 230} Tm (K) Tj ET`,
+      `/Type /XObject /Subtype /Form /BBox [55 185 175 305] /Resources << /Font << /K ${typed} 0 R >> /XObject << ${images.map((id, i) => `/I${i} ${id} 0 R`).join(' ')} >> >>`
+    ),
+    right = stream(
+      '1 w 230 190 100 100 re S 230 240 m 330 240 l S BT /K 10 Tf 1 0 0 1 240 295 Tm (K) Tj ET',
+      `/Type /XObject /Subtype /Form /BBox [225 185 340 310] /Resources << /Font << /K ${typed} 0 R >> >>`
+    ),
+    footer = stream(
+      '20 30 10 10 re f',
+      '/Type /XObject /Subtype /Form /BBox [20 30 30 40] /Resources << >>'
+    ),
+    plateCaption = captionScript
+      ? `BT /T 10 Tf 1 0 0 1 50 160 Tm (Figure 1: 4) Tj /T 6 Tf 1 0 0 1 ${captionScript === 'detached' ? 110 : 97.8} ${captionScript === 'baseline' ? 160 : 163} Tm (2) Tj /T 10 Tf 1 0 0 1 ${captionScript === 'detached' ? 120 : 101.136} 160 Tm ( plate.) Tj ET`
+      : 'BT /T 10 Tf 1 0 0 1 50 160 Tm (Figure 1: Native plate.) Tj ET',
+    body = stream(
+      singleForm
+        ? `BT /T 10 Tf 1 0 0 1 55 350 Tm (Running header.) Tj ET q /A Do Q ${singleForm === 'foreign-paint' ? '70 220 10 10 re f' : singleForm === 'foreign-text' ? 'BT /T 10 Tf 1 0 0 1 70 220 Tm (Foreign.) Tj ET' : singleForm === 'second-form' ? 'q /B Do Q' : ''} ${plateCaption} q /C Do Q`
+        : 'BT /T 10 Tf 1 0 0 1 55 350 Tm (Running header.) Tj 1 0 0 1 50 310 Tm (a) Tj ET q /A Do Q BT /T 10 Tf 1 0 0 1 220 310 Tm (b) Tj ET q /B Do Q BT /T 10 Tf 1 0 0 1 50 160 Tm (Figure 1: Two native panels.) Tj ET q /C Do Q'
+    ),
+    pageId = add(
+      `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 400 400] /Resources << /Font << /T ${ordinary} 0 R >> /XObject << /A ${left} 0 R /B ${right} 0 R /C ${footer} 0 R >> >> /Contents ${body} 0 R >>`
+    )
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`
+  objects[pages - 1] = `<< /Type /Pages /Kids [${pageId} 0 R] /Count 1 >>`
+  let pdf = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [i, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${i + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((n) => `${String(n).padStart(10, '0')} 00000 n \n`)
+    .join(
+      ''
+    )}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const bytes = new Uint8Array(Buffer.from(pdf)),
+    sourceSha256 = createHash('sha256').update(bytes).digest('hex'),
+    loading = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      verbosity: 0,
+      standardFontDataUrl
+    }),
+    {
+      recordPaintedOperationBounds,
+      captureNativeFigureRenderContext,
+      matchNativeFigureRenderContext
+    } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href),
+    { collectGraphicsBounds } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+    ),
+    { tableTextToken } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+    ),
+    { nativeCertifiedFigurePixelCrop, nativeCertifiedFigurePixelPngSafe } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-figure-native-whole-paint-scope.mjs')).href
+    )
+  const canvas = createCanvas(600, 600)
+  let auxiliary: ReturnType<typeof getDocument> | undefined
+  try {
+    const document = await loading.promise,
+      nativePage = await document.getPage(1),
+      content = await nativePage.getTextContent(),
+      operators = await nativePage.getOperatorList(),
+      viewport = nativePage.getViewport({ scale: 1 }),
+      render = nativePage.render({
+        canvas: canvas as never,
+        canvasContext: canvas.getContext('2d') as never,
+        viewport: nativePage.getViewport({ scale: 1.5 }),
+        recordOperations: true
+      })
+    recordPaintedOperationBounds(render)
+    await render.promise
+    const graphics = collectGraphicsBounds(
+        render,
+        (nativePage as ReturnType<typeof JSON.parse>).recordedBBoxes
+      ),
+      snapshot = captureNativeFigureRenderContext(
+        render,
+        1,
+        content,
+        viewport,
+        graphics.graphicsBounds,
+        sourceSha256,
+        nativePage.commonObjs
+      ),
+      context = {
+        ...matchNativeFigureRenderContext(
+          snapshot,
+          1,
+          content,
+          viewport,
+          graphics.graphicsBounds,
+          sourceSha256
+        ),
+        pageNumber: 1,
+        sourceSha256
+      },
+      tokens = context.content.items
+        .filter((r: { str: string }) => r.str?.trim())
+        .map((r: unknown) => tableTextToken(r, viewport, 0)),
+      cap = tokens.find((t: { text: string }) => t.text.startsWith('Figure 1:')),
+      captionParts = captionScript
+        ? tokens.filter((t: ReturnType<typeof JSON.parse>) => t.rect[1] >= 225 && t.rect[3] <= 241)
+        : [cap],
+      caption = {
+        page: 1,
+        rect: [
+          Math.min(...captionParts.map((t: ReturnType<typeof JSON.parse>) => t.rect[0])),
+          Math.min(...captionParts.map((t: ReturnType<typeof JSON.parse>) => t.rect[1])),
+          Math.max(...captionParts.map((t: ReturnType<typeof JSON.parse>) => t.rect[2])),
+          Math.max(...captionParts.map((t: ReturnType<typeof JSON.parse>) => t.rect[3]))
+        ],
+        lines: [captionScript ? 'Figure 1: 4² plate.' : cap.text]
+      },
+      page = {
+        pageNumber: 1,
+        width: 400,
+        height: 400,
+        rotation: 0,
+        renderRotation: 0,
+        invalidGraphicsBounds: 0,
+        graphicsBounds: graphics.graphicsBounds,
+        lines: []
+      },
+      figure = { caption, rect: [60, 175, 165, 210] },
+      captions = [caption],
+      live = { nativePage, pageContent: content, operators },
+      fresh = (): ReturnType<typeof JSON.parse> =>
+        nativeCertifiedFigurePixelCrop(
+          page,
+          figure,
+          captions,
+          [],
+          tokens,
+          context,
+          [figure],
+          figure.rect,
+          live
+        )
+    if (separateDocument) {
+      auxiliary = getDocument({
+        data: new Uint8Array(Buffer.from(pdf)),
+        fontExtraProperties: true,
+        isEvalSupported: false,
+        useSystemFonts: false,
+        verbosity: 0,
+        standardFontDataUrl
+      })
+      live.nativePage = await (await auxiliary.promise).getPage(1)
+      live.pageContent = await live.nativePage.getTextContent()
+      live.operators = await live.nativePage.getOperatorList()
+    }
+    expect(context.glyphBounds).toBeUndefined()
+    expect(context.type3GlyphPrograms).toBeUndefined()
+    expect(context.pixelType3Programs).toHaveLength(1)
+    await inspect({
+      page,
+      figure,
+      captions,
+      tokens,
+      context,
+      live,
+      fresh,
+      nativeCertifiedFigurePixelPngSafe
+    })
+  } finally {
+    canvas.width = canvas.height = 0
+    await auxiliary?.destroy()
+    await loading.destroy()
+  }
+}
+
+it('preserves both raster rows and a sibling Form through complete Type3 preview evidence', async () => {
+  await withLeadingType3Forms(async (f) => {
+    const before = JSON.stringify([f.page, f.figure, f.tokens, f.context]),
+      plan = f.fresh()
+    expect(plan).toBeDefined()
+    expect(plan.rect[0]).toBeLessThan(50)
+    expect(plan.rect[1]).toBeLessThan(90)
+    expect(plan.rect[2]).toBeGreaterThan(330)
+    expect(plan.rect[3]).toBeGreaterThan(210)
+    expect(plan.rect[1]).toBeGreaterThan(70)
+    expect(plan.rect[3]).toBeLessThan(240)
+    expect(plan.sourceItems).toBeUndefined()
+    expect(JSON.stringify([f.page, f.figure, f.tokens, f.context])).toBe(before)
+    const { renderPdfCrop } = await import(
+        pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+      ),
+      png = await renderPdfCrop(f.live.nativePage, plan.rect)
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+  })
+})
+
+it('restores a single closed Type3 Form with its complete outer labels', async () => {
+  await withLeadingType3Forms(
+    async (f) => {
+      const before = JSON.stringify([f.page, f.figure, f.tokens, f.context]),
+        plan = f.fresh()
+      expect(plan).toBeDefined()
+      expect(plan.rect[1]).toBeLessThan(110)
+      expect(plan.rect[3]).toBeGreaterThan(212)
+      expect(plan.rect[1]).toBeGreaterThan(70)
+      expect(plan.rect[3]).toBeLessThan(240)
+      expect(plan.rect[2]).toBeLessThan(180)
+      expect(plan.sourceItems).toBeUndefined()
+      expect(JSON.stringify([f.page, f.figure, f.tokens, f.context])).toBe(before)
+      const { renderPdfCrop } = await import(
+          pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+        ),
+        png = await renderPdfCrop(f.live.nativePage, plan.rect)
+      expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    },
+    false,
+    false,
+    'complete'
+  )
+})
+
+it('proves a curved Type3 glyph through its exact native tight cache while retaining conservative ink', async () => {
+  await withLeadingType3Forms(
+    async (f) => {
+      const plan = f.fresh()
+      expect(plan).toBeDefined()
+      const { renderPdfCrop } = await import(
+        pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+      )
+      const png = await renderPdfCrop(f.live.nativePage, plan.rect)
+      expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    },
+    false,
+    false,
+    'complete',
+    '',
+    true
+  )
+})
+
+it.each(['perturbed', 'clipped-control-ink'] as const)(
+  'rejects a curved Type3 %s cache or clip',
+  async (mode) => {
+    await withLeadingType3Forms(
+      async (f) => {
+        const font = f.context.pixelType3Programs[0],
+          glyph = font.glyphs[0],
+          index = f.context.content.items.findIndex(
+            (r: ReturnType<typeof JSON.parse>) => r.fontName === font.fontName
+          ),
+          liveFont = f.live.nativePage.commonObjs.get(f.live.pageContent.items[index].fontName),
+          actual = liveFont.charProcOperatorList[glyph.operatorListId]
+        if (mode === 'clipped-control-ink') {
+          glyph.program.argsArray[0][5] = actual.argsArray[0][5] = 600
+        } else {
+          glyph.program.argsArray[1][2][3] = actual.argsArray[1][2][3] = 501
+        }
+        expect(f.fresh()).toBeUndefined()
+      },
+      false,
+      false,
+      'complete',
+      '',
+      true
+    )
+  }
+)
+
+it('binds a raised caption digit to its native display before restoring the complete plate', async () => {
+  await withLeadingType3Forms(
+    async (f) => {
+      const before = JSON.stringify([f.page, f.figure, f.tokens, f.context]),
+        plan = f.fresh()
+      expect(plan).toBeDefined()
+      expect(plan.rect[1]).toBeLessThan(110)
+      expect(plan.rect[3]).toBeGreaterThan(212)
+      expect(plan.sourceItems).toBeUndefined()
+      expect(f.tokens.some((t: ReturnType<typeof JSON.parse>) => t.text === '2')).toBe(true)
+      expect(f.tokens.some((t: ReturnType<typeof JSON.parse>) => t.text.includes('²'))).toBe(false)
+      const { renderPdfCrop } = await import(
+        pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+      )
+      const png = await renderPdfCrop(f.live.nativePage, plan.rect)
+      expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+      expect(JSON.stringify([f.page, f.figure, f.tokens, f.context])).toBe(before)
+    },
+    false,
+    false,
+    'complete',
+    'raised'
+  )
+})
+it.each(['baseline', 'detached'] as const)(
+  'refuses a caption superscript claimed from a %s native digit',
+  async (mode) => {
+    await withLeadingType3Forms(
+      async (f) => {
+        expect(f.fresh()).toBeUndefined()
+      },
+      false,
+      false,
+      'complete',
+      mode
+    )
+  }
+)
+it.each(['wrong-text', 'missing-source', 'partial-caption'] as const)(
+  'keeps the raised caption source proof closed with %s',
+  async (mode) => {
+    await withLeadingType3Forms(
+      async (f) => {
+        if (mode === 'wrong-text') f.figure.caption.lines[0] = 'Figure 1: 4³ plate.'
+        if (mode === 'missing-source')
+          f.tokens.splice(
+            f.tokens.findIndex((t: ReturnType<typeof JSON.parse>) => t.text === '2'),
+            1
+          )
+        if (mode === 'partial-caption') f.figure.caption.rect[2] = 100
+        expect(f.fresh()).toBeUndefined()
+      },
+      false,
+      false,
+      'complete',
+      'raised'
+    )
+  }
+)
+
+it.each(['foreign-paint', 'foreign-text', 'second-form'] as const)(
+  'refuses a single Type3 plate with native %s outside its complete scope',
+  async (mode) => {
+    await withLeadingType3Forms(
+      async (f) => {
+        expect(f.fresh()).toBeUndefined()
+      },
+      false,
+      false,
+      mode
+    )
+  }
+)
+
+it.each([
+  'missing-live',
+  'missing-occurrence',
+  'duplicate-occurrence',
+  'wrong-d1-advance',
+  'ink-outside-d1',
+  'open-path',
+  'missing-source',
+  'changed-source',
+  'foreign-font',
+  'foreign-paint',
+  'adjacent-caption',
+  'missing-marker',
+  'extra-form'
+])('refuses leading Type3 Form preview with %s', async (mode) => {
+  await withLeadingType3Forms(async (f) => {
+    const glyph = f.context.pixelType3Programs[0].glyphs[0]
+    if (mode === 'missing-live') f.live.nativePage = undefined
+    if (mode === 'missing-occurrence') glyph.occurrences.pop()
+    if (mode === 'duplicate-occurrence') glyph.occurrences.push(glyph.occurrences[0])
+    if (mode === 'wrong-d1-advance') glyph.program.argsArray[0][0]++
+    if (mode === 'ink-outside-d1') glyph.program.argsArray[0][4] = 100
+    if (mode === 'open-path')
+      glyph.program.argsArray[1][1][0] = glyph.program.argsArray[1][1][0].slice(0, -1)
+    if (mode === 'missing-source')
+      f.tokens.splice(
+        f.tokens.findIndex((t: { text: string }) => t.text === 'K'),
+        1
+      )
+    if (mode === 'changed-source')
+      f.context.content.items.find((r: { str: string }) => r.str === 'K').str = 'L'
+    if (mode === 'foreign-font') f.context.partialFontGlyphBounds[0].glyphs.pop()
+    if (mode === 'foreign-paint') {
+      const index = f.context.operators.fnArray.lastIndexOf(OPS.paintFormXObjectBegin)
+      f.context.operators.argsArray[index][0] = [1, 0, 0, 1, 100, 170]
+    }
+    if (mode === 'adjacent-caption')
+      f.captions.push({
+        page: 1,
+        rect: [180, 100, 250, 112],
+        lines: ['Figure 2: Another native object.']
+      })
+    if (mode === 'missing-marker')
+      f.context.content.items.find((r: { str: string }) => r.str === 'b').str = 'c'
+    if (mode === 'extra-form') {
+      const i = f.context.operators.fnArray.lastIndexOf(OPS.paintFormXObjectBegin)
+      f.context.operators.fnArray.splice(i, 0, OPS.paintFormXObjectBegin)
+      f.context.operators.argsArray.splice(i, 0, [
+        [1, 0, 0, 1, 0, 0],
+        [50, 90, 330, 210]
+      ])
+    }
+    expect(f.fresh()).toBeUndefined()
+  })
+})
+
+it.each(['path-reference', 'path-value', 'source-reference', 'late-snapshot'])(
+  'invalidates leading Type3 preview after live %s drift',
+  async (mode) => {
+    await withLeadingType3Forms(async (f) => {
+      const plan = f.fresh()
+      expect(plan).toBeDefined()
+      const { renderPdfCrop } = await import(
+          pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+        ),
+        { Path2D } = await import('@napi-rs/canvas'),
+        png = await renderPdfCrop(f.live.nativePage, plan.rect),
+        entry = f.context.pixelType3Programs[0],
+        font = f.live.nativePage.commonObjs.get(entry.fontName),
+        program = font.charProcOperatorList[entry.glyphs[0].operatorListId]
+      expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+      if (mode === 'path-reference')
+        program.argsArray[1][1][0] = new Path2D(program.argsArray[1][1][0])
+      if (mode === 'path-value') program.argsArray[1][1][0].rect(0, 0, 1000, 1000)
+      if (mode === 'source-reference') f.live.pageContent.items = [...f.live.pageContent.items]
+      if (mode === 'late-snapshot') entry.glyphs[0].program.argsArray[0][4]++
+      expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+    })
+  }
+)
+it.each(['complete', 'wrong-font-map', 'raw-path-drift', 'raw-reversion'])(
+  'binds separate-document leading Type3 fonts and first path execution: %s',
+  async (mode) => {
+    await withLeadingType3Forms(async (f) => {
+      const entry = f.context.pixelType3Programs[0],
+        index = f.context.content.items.findIndex(
+          (r: { fontName: string }) => r.fontName === entry.fontName
+        ),
+        actualName = f.live.pageContent.items[index].fontName,
+        program =
+          f.live.nativePage.commonObjs.get(actualName).charProcOperatorList[
+            entry.glyphs[0].operatorListId
+          ]
+      expect(actualName).not.toBe(entry.fontName)
+      const initialRaw = program.argsArray[1][1][0]
+      expect(ArrayBuffer.isView(program.argsArray[1][1][0])).toBe(true)
+      if (mode === 'wrong-font-map') {
+        f.live.pageContent.items[index].fontName = f.live.pageContent.items[0].fontName
+        expect(f.fresh()).toBeUndefined()
+        return
+      }
+      const plan = f.fresh()
+      expect(plan).toBeDefined()
+      if (mode === 'raw-path-drift') program.argsArray[1][1][0][1]++
+      const { renderPdfCrop } = await import(
+          pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+        ),
+        { Path2D } = await import('@napi-rs/canvas'),
+        png = await renderPdfCrop(f.live.nativePage, plan.rect)
+      expect(program.argsArray[1][1][0]).toBeInstanceOf(Path2D)
+      expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(
+        mode !== 'raw-path-drift'
+      )
+      if (mode === 'raw-reversion') {
+        program.argsArray[1][1][0] = initialRaw
+        expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+      }
+    }, true)
+  }
+)
+
+it('binds a native multi-character Type3 glyph literally without changing source text', async () => {
+  await withLeadingType3Forms(
+    async (f) => {
+      expect(f.context.pixelType3Programs[0].glyphs[0].unicode).toBe('fi')
+      expect(f.context.content.items.some((r: { str: string }) => r.str === 'fi')).toBe(true)
+      const before = JSON.stringify(f.context.content),
+        plan = f.fresh()
+      expect(plan).toBeDefined()
+      expect(plan.sourceItems).toBeUndefined()
+      expect(JSON.stringify(f.context.content)).toBe(before)
+    },
+    true,
+    true
+  )
+})
+
+const standardFontDataUrl =
+  join(
+    dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+    'standard_fonts'
+  ) + '/'
 const { collectClosedFigureFrames } = await import(
   pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
 )
@@ -2896,9 +3429,10 @@ it('validates the actual single-group PNG halo at both initial and retried scale
   expect(nativeSingleVectorGroupPng(new Uint8Array(32), candidate)).toBe(false)
 })
 
-const { nativeCaptionedFormScope } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-form.mjs')).href
-)
+const { nativeCaptionedFormScope, nativeCaptionedFormPixelCrop, nativeCaptionedFormPixelPngSafe } =
+  await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-form.mjs')).href
+  )
 
 // One native Form and one independent article rule reproduce a borrowed
 // paragraph. Its exact clip owns the picture, without claiming its labels.
@@ -3014,6 +3548,461 @@ it('isolates a whole captioned Form at the actual association seam without claim
   expect(result[0].sourceItems).toBeUndefined()
   expect(f.page).toEqual(before.page)
   expect(f.context).toEqual(before.context)
+})
+
+// The pixel-only family keeps large Forms separate from Source ownership.
+function pixelOnlyVectorForm(): ReturnType<typeof JSON.parse> {
+  const f = captionedVectorForm(300)
+  f.context.partialFontGlyphBounds = f.context.glyphBounds
+  delete f.context.glyphBounds
+  f.context.pageNumber = 1
+  f.context.sourceSha256 = 'a'.repeat(64)
+  return f
+}
+
+function formPixelPng(rect: number[], scale = 4): Uint8Array {
+  const bytes = Buffer.alloc(33)
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes)
+  bytes.writeUInt32BE(13, 8)
+  bytes.write('IHDR', 12)
+  bytes.writeUInt32BE(Math.ceil((rect[2] - rect[0]) * scale), 16)
+  bytes.writeUInt32BE(Math.ceil((rect[3] - rect[1]) * scale), 20)
+  return bytes
+}
+
+it('preserves a complete large Form as pixels while keeping exterior fonts and source claims strict', () => {
+  const f = pixelOnlyVectorForm(),
+    before = structuredClone(f),
+    plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  expect(plan).toEqual({ rect: [319.5, 59.5, 560.5, 300.5] })
+  expect(nativeCaptionedFormPixelPngSafe(plan, formPixelPng(plan.rect), plan.rect, f.page)).toBe(
+    true
+  )
+  expect(
+    nativeCaptionedFormPixelPngSafe({ ...plan }, formPixelPng(plan.rect), plan.rect, f.page)
+  ).toBe(false)
+  expect(nativeCaptionedFormPixelPngSafe(plan, formPixelPng(plan.rect, 1), plan.rect, f.page)).toBe(
+    false
+  )
+  expect(
+    nativeCaptionedFormScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'ordinary',
+  'identity-matrix',
+  'nested-marker',
+  'line-leading',
+  'character-spacing',
+  'empty-end-path',
+  'empty-text-end',
+  'unrecorded-inner-path'
+])(
+  'restores proven missing native Form glyph pixels without borrowing exterior text: %s',
+  (mode) => {
+    const f = pixelOnlyVectorForm(),
+      o = f.context.operators,
+      begin = o.fnArray.indexOf(OPS.paintFormXObjectBegin)
+    f.figure.rect = [319.5, 59.5, 360, 300.5]
+    if (mode === 'identity-matrix') o.argsArray[begin][0] = Float32Array.from([1, 0, 0, 1, 0, 0])
+    if (mode === 'line-leading' || mode === 'character-spacing') {
+      const show = o.fnArray.indexOf(OPS.showText, begin)
+      if (mode === 'line-leading') {
+        o.argsArray[show - 1][5] += 4
+        o.fnArray.splice(show, 0, OPS.setLeading, OPS.nextLine)
+        o.argsArray.splice(show, 0, [4], null)
+      } else {
+        o.fnArray.splice(show, 0, OPS.setCharSpacing)
+        o.argsArray.splice(show, 0, [0.001])
+      }
+    }
+    if (mode === 'empty-end-path' || mode === 'empty-text-end') {
+      o.fnArray.splice(begin + 1, 0, mode === 'empty-end-path' ? OPS.constructPath : OPS.endText)
+      o.argsArray.splice(
+        begin + 1,
+        0,
+        mode === 'empty-end-path' ? [OPS.endPath, [null], null] : null
+      )
+      for (const g of f.page.graphicsBounds) if (g.operationIndex > begin) g.operationIndex++
+    }
+    if (mode === 'unrecorded-inner-path') f.page.graphicsBounds.splice(1, 1)
+    if (mode === 'nested-marker') {
+      const end = o.fnArray.indexOf(OPS.paintFormXObjectEnd)
+      o.fnArray.splice(end, 0, OPS.paintFormXObjectEnd)
+      o.argsArray.splice(end, 0, [])
+      o.fnArray.splice(begin + 1, 0, OPS.paintFormXObjectBegin)
+      o.argsArray.splice(begin + 1, 0, [null, Float32Array.from([320, 500, 560, 740])])
+      for (const g of f.page.graphicsBounds)
+        if (g.operationIndex > begin) g.operationIndex += g.operationIndex < end ? 1 : 2
+    }
+    const before = structuredClone(f),
+      plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    expect(plan).toEqual({ rect: [319.5, 59.5, 560.5, 300.5] })
+    expect(nativeCaptionedFormPixelPngSafe(plan, formPixelPng(plan.rect), plan.rect, f.page)).toBe(
+      true
+    )
+    expect(f).toEqual(before)
+    expect(plan.sourceItems).toBeUndefined()
+    expect(
+      nativeCaptionedFormScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    ).toBeUndefined()
+  }
+)
+
+it('keeps a complete Form crop when only its unpainted native frame extends beyond publication', () => {
+  const f = pixelOnlyVectorForm()
+  f.figure.rect = [319.5, 59.5, 550, 300.5]
+  expect(
+    nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})
+
+it.each([
+  'unrecorded-exterior-path',
+  'unrecorded-path-without-bbox',
+  'unbalanced-form',
+  'unknown-glyph-clip',
+  'transparent-owned-glyph',
+  'wrong-spaced-source-position'
+])('keeps the old crop when a missing Form glyph lacks closed native proof: %s', (mode) => {
+  const f = pixelOnlyVectorForm(),
+    o = f.context.operators,
+    begin = o.fnArray.indexOf(OPS.paintFormXObjectBegin)
+  f.figure.rect = [319.5, 59.5, 360, 300.5]
+  if (mode === 'unrecorded-exterior-path') f.page.graphicsBounds.splice(0, 1)
+  if (mode === 'unrecorded-path-without-bbox') o.argsArray[begin][1] = null
+  if (mode === 'unbalanced-form')
+    o.fnArray[o.fnArray.indexOf(OPS.paintFormXObjectEnd)] = OPS.restore
+  if (mode === 'unknown-glyph-clip') {
+    const text = o.fnArray.indexOf(OPS.beginText, begin)
+    o.fnArray.splice(text, 0, OPS.clip, OPS.constructPath)
+    o.argsArray.splice(text, 0, null, [
+      OPS.endPath,
+      [Float32Array.from([0, 320, 500, 1, 560, 500, 1, 440, 740, 4])],
+      Float32Array.from([320, 500, 560, 740])
+    ])
+  }
+  if (mode === 'transparent-owned-glyph') {
+    const text = o.fnArray.indexOf(OPS.beginText, begin),
+      end = o.fnArray.indexOf(OPS.endText, text)
+    o.fnArray.splice(end + 1, 0, OPS.setGState)
+    o.argsArray.splice(end + 1, 0, [[['ca', 1]]])
+    o.fnArray.splice(text, 0, OPS.setGState)
+    o.argsArray.splice(text, 0, [[['ca', 0]]])
+  }
+  if (mode === 'wrong-spaced-source-position') {
+    const show = o.fnArray.indexOf(OPS.showText, begin)
+    o.fnArray.splice(show, 0, OPS.setCharSpacing)
+    o.argsArray.splice(show, 0, [4])
+  }
+  expect(
+    nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})
+
+it.each(['separate-fill', 'crossing-fill', 'near-fill', 'stroked-fill', 'missing-fill-bounds'])(
+  'retains physical foreign fill and its final PNG halo beside a complete Form: %s',
+  (mode) => {
+    const f = pixelOnlyVectorForm(),
+      g = f.page.graphicsBounds[0],
+      right = mode === 'crossing-fill' ? 320 : mode === 'near-fill' ? 319.1 : 318,
+      rect = [310, 145, right, 155],
+      o = f.context.operators
+    f.figure.rect = [319.5, 59.5, 360, 300.5]
+    g.normalizedRect = [309.5, 144.5, 319.55, 155.5].map((v, n) => v / (n % 2 ? 800 : 600))
+    o.argsArray[g.operationIndex] = [
+      mode === 'stroked-fill' ? OPS.fillStroke : OPS.fill,
+      [
+        Float32Array.from([
+          0,
+          rect[0],
+          800 - rect[1],
+          1,
+          rect[2],
+          800 - rect[1],
+          1,
+          rect[2],
+          800 - rect[3],
+          1,
+          rect[0],
+          800 - rect[3],
+          4
+        ])
+      ],
+      mode === 'missing-fill-bounds'
+        ? null
+        : Float32Array.from([rect[0], 800 - rect[3], rect[2], 800 - rect[1]])
+    ]
+    const plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    if (mode === 'separate-fill' || mode === 'near-fill') {
+      expect(plan).toEqual({ rect: [319.5, 59.5, 560.5, 300.5] })
+      expect(
+        nativeCaptionedFormPixelPngSafe(plan, formPixelPng(plan.rect), plan.rect, f.page)
+      ).toBe(mode === 'separate-fill')
+    } else expect(plan).toBeUndefined()
+  }
+)
+
+it.each(['disjoint', 'overlapping'])(
+  'keeps every independent native Form as a conservative foreign domain: %s',
+  (mode) => {
+    const f = pixelOnlyVectorForm(),
+      o = f.context.operators,
+      begin = o.fnArray.indexOf(OPS.paintFormXObjectBegin),
+      left = mode === 'disjoint' ? 40 : 330,
+      right = mode === 'disjoint' ? 180 : 550
+    f.figure.rect = [319.5, 59.5, 360, 300.5]
+    for (const g of f.page.graphicsBounds) if (g.operationIndex >= begin) g.operationIndex += 3
+    o.fnArray.splice(
+      begin,
+      0,
+      OPS.paintFormXObjectBegin,
+      OPS.constructPath,
+      OPS.paintFormXObjectEnd
+    )
+    o.argsArray.splice(
+      begin,
+      0,
+      [null, Float32Array.from([left - 5, 500, right + 5, 740])],
+      [
+        OPS.stroke,
+        [Float32Array.from([0, left, 700, 1, right, 600])],
+        Float32Array.from([left, 600, right, 700])
+      ],
+      []
+    )
+    f.page.graphicsBounds.push({
+      operationIndex: begin + 1,
+      kind: 'path',
+      normalizedRect: [left, 100, right, 200].map((v, n) => v / (n % 2 ? 800 : 600))
+    })
+    const plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    if (mode === 'disjoint') {
+      expect(plan).toEqual({ rect: [319.5, 59.5, 560.5, 300.5] })
+      expect(
+        nativeCaptionedFormPixelPngSafe(plan, formPixelPng(plan.rect), plan.rect, f.page)
+      ).toBe(true)
+    } else expect(plan).toBeUndefined()
+    expect(
+      nativeCaptionedFormScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    ).toBeUndefined()
+  }
+)
+
+it('rejects a real Type3 charproc that pops the surrounding Form clip', async () => {
+  const {
+      recordPaintedOperationBounds,
+      captureNativeFigureRenderContext,
+      matchNativeFigureRenderContext
+    } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href),
+    { collectGraphicsBounds } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+    ),
+    { tableTextToken } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+    ),
+    { renderPdfCrop } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+    ),
+    objects: string[] = [],
+    add = (text: string): number => objects.push(text),
+    stream = (text: string, dict = ''): number =>
+      add(`<< ${dict} /Length ${Buffer.byteLength(text)} >>\nstream\n${text}\nendstream`),
+    catalog = add(''),
+    pages = add(''),
+    face = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+    ids: number[] = []
+  for (const extraQ of ['', 'Q Q Q ']) {
+    const glyph = stream(`1000 0 d0 ${extraQ}1 0 0 rg 300 300 30 30 re f`),
+      font = add(
+        `<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [.001 0 0 .001 0 0] /FirstChar 65 /LastChar 65 /Widths [1000] /Encoding << /Type /Encoding /Differences [65 /A] >> /CharProcs << /A ${glyph} 0 R >> /Resources << >> >>`
+      ),
+      form = stream(
+        '0 1 0 rg 110 110 70 70 re f 115 115 10 10 re f 130 130 10 10 re f BT /F3 10 Tf 1 0 0 1 150 150 Tm (A) Tj ET',
+        `/Type /XObject /Subtype /Form /BBox [100 100 200 200] /Resources << /Font << /F3 ${font} 0 R >> >>`
+      ),
+      content = stream(
+        'BT /Text 10 Tf 1 0 0 1 100 350 Tm [(Running) -278 (header.)] TJ ET q /Picture Do Q BT /Text 10 Tf 1 0 0 1 100 85 Tm [(Figure) -278 (1:Completepanel.)] TJ ET'
+      )
+    ids.push(
+      add(
+        `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 400 400] /Resources << /Font << /Text ${face} 0 R >> /XObject << /Picture ${form} 0 R >> >> /Contents ${content} 0 R >>`
+      )
+    )
+  }
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`
+  objects[pages - 1] =
+    `<< /Type /Pages /Kids [${ids.map((id) => `${id} 0 R`).join(' ')}] /Count 2 >>`
+  let pdf = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((n) => `${String(n).padStart(10, '0')} 00000 n \n`)
+    .join(
+      ''
+    )}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const bytes = new Uint8Array(Buffer.from(pdf)),
+    sourceSha256 = createHash('sha256').update(bytes).digest('hex'),
+    task = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      verbosity: 0,
+      standardFontDataUrl
+    })
+  try {
+    const document = await task.promise
+    for (const pageNumber of [1, 2]) {
+      const nativePage = await document.getPage(pageNumber),
+        viewport = nativePage.getViewport({ scale: 1 }),
+        content = await nativePage.getTextContent(),
+        canvas = createCanvas(400, 400),
+        render = nativePage.render({
+          canvas: canvas as never,
+          canvasContext: canvas.getContext('2d') as never,
+          viewport,
+          recordOperations: true
+        })
+      try {
+        recordPaintedOperationBounds(render)
+        await render.promise
+        const rgba = canvas.getContext('2d').getImageData(0, 0, 400, 400).data
+        let escaped = 0
+        for (let y = 0; y < 400; y++)
+          for (let x = 0; x < 400; x++) {
+            const i = (y * 400 + x) * 4
+            if (
+              rgba[i] > 200 &&
+              rgba[i + 1] < 80 &&
+              rgba[i + 2] < 80 &&
+              !(x >= 100 && x <= 200 && y >= 200 && y <= 300)
+            )
+              escaped++
+          }
+        expect(escaped).toBe(pageNumber === 1 ? 0 : 900)
+        const graphics = collectGraphicsBounds(
+            render,
+            (nativePage as ReturnType<typeof JSON.parse>).recordedBBoxes
+          ),
+          snapshot = captureNativeFigureRenderContext(
+            render,
+            pageNumber,
+            content,
+            viewport,
+            graphics.graphicsBounds,
+            sourceSha256,
+            nativePage.commonObjs
+          ),
+          context = {
+            ...matchNativeFigureRenderContext(
+              snapshot,
+              pageNumber,
+              content,
+              viewport,
+              graphics.graphicsBounds,
+              sourceSha256
+            ),
+            pageNumber,
+            sourceSha256
+          },
+          tokens = context.content.items
+            .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
+            .map((r: ReturnType<typeof JSON.parse>) => tableTextToken(r, viewport, 0)),
+          cap = tokens.find((t: ReturnType<typeof JSON.parse>) => t.text.startsWith('Figure 1:')),
+          caption = { page: pageNumber, rect: cap.rect, lines: [cap.text] },
+          page = {
+            pageNumber,
+            width: 400,
+            height: 400,
+            rotation: 0,
+            renderRotation: 0,
+            invalidGraphicsBounds: 0,
+            graphicsBounds: graphics.graphicsBounds,
+            lines: []
+          },
+          figure = { caption, rect: [90, 40, 350, 305] },
+          proof = nativeCaptionedFormPixelCrop(
+            page,
+            figure,
+            [caption],
+            [],
+            tokens,
+            context,
+            figure.rect,
+            { nativePage, pageContent: content, operators: await nativePage.getOperatorList() }
+          )
+        if (pageNumber === 2) expect(proof).toBeUndefined()
+        else {
+          expect(proof).toBeDefined()
+          const png = await renderPdfCrop(nativePage, proof.rect, 0)
+          expect(nativeCaptionedFormPixelPngSafe(proof, png, proof.rect, page)).toBe(true)
+        }
+      } finally {
+        canvas.width = canvas.height = 0
+      }
+    }
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each(['exterior-charproc', 'missing-exterior-outline', 'invalid-bbox', 'clean-published-crop'])(
+  'declines an unproved or unnecessary complete Form pixel crop: %s',
+  (mode) => {
+    const f = pixelOnlyVectorForm(),
+      o = f.context.operators
+    let published = f.figure.rect
+    if (mode === 'exterior-charproc')
+      o.argsArray[o.fnArray.indexOf(OPS.showText)][0][0].operatorListId = 'outside-program'
+    if (mode === 'missing-exterior-outline') f.context.partialFontGlyphBounds[0].glyphs = []
+    if (mode === 'invalid-bbox') o.argsArray[o.fnArray.indexOf(OPS.paintFormXObjectBegin)][1] = null
+    if (mode === 'clean-published-crop') published = [319.5, 59.5, 560.5, 300.5]
+    expect(
+      nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context, published)
+    ).toBeUndefined()
+  }
+)
+
+it.each([
+  'native-source',
+  'path-bytes',
+  'published-rectangle',
+  'equal-native-slot',
+  'source-index',
+  'native-bbox'
+])('invalidates a retained Form pixel plan when its actual inputs change: %s', (mode) => {
+  const f = pixelOnlyVectorForm(),
+    published = [...f.figure.rect],
+    plan = nativeCaptionedFormPixelCrop(
+      f.page,
+      f.figure,
+      f.captions,
+      [],
+      f.tokens,
+      f.context,
+      published
+    )
+  expect(plan).toBeDefined()
+  if (mode === 'native-source') f.context.content.items[0].str += ' changed'
+  if (mode === 'path-bytes')
+    f.context.operators.argsArray[f.context.operators.fnArray.indexOf(OPS.constructPath)][1][0][1]++
+  if (mode === 'published-rectangle') published[0]++
+  if (mode === 'equal-native-slot') f.context.operators = structuredClone(f.context.operators)
+  if (mode === 'source-index') f.context.content.items[0].sourceItem.index++
+  if (mode === 'native-bbox')
+    f.context.operators.argsArray[
+      f.context.operators.fnArray.indexOf(OPS.paintFormXObjectBegin)
+    ][1][0]++
+  expect(nativeCaptionedFormPixelPngSafe(plan, formPixelPng(plan.rect), plan.rect, f.page)).toBe(
+    false
+  )
 })
 
 it.each([
@@ -3951,4 +4940,1376 @@ it('checks the actual PNG halo beyond the independently repeated header drawing'
   png.writeUInt32BE(Math.ceil((candidate.rect[2] - candidate.rect[0]) * 4), 16)
   png.writeUInt32BE(Math.ceil((candidate.rect[3] - candidate.rect[1]) * 4), 20)
   expect(nativeSingleVectorGroupPng(png, candidate)).toBe(false)
+})
+it('uses a real bounded transparency canvas without granting its labels Source ownership', async () => {
+  const {
+      nativeRenderedGroupPixelCrop,
+      nativeNonisolatedGroupPixelCrop,
+      nativeRenderedGroupPixelPngSafe
+    } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+    ),
+    { createNativeNonisolatedGroupCropProfile } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-figure-recovery-profile.mjs')).href
+    ),
+    {
+      recordPaintedOperationBounds,
+      captureNativeFigureRenderContext,
+      matchNativeFigureRenderContext
+    } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href),
+    { collectGraphicsBounds } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+    ),
+    { tableTextToken } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+    ),
+    { renderPdfCrop } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+    ),
+    objects: string[] = [],
+    add = (text: string): number => objects.push(text),
+    stream = (text: string, dict = ''): number =>
+      add(`<< ${dict} /Length ${Buffer.byteLength(text)} >>\nstream\n${text}\nendstream`),
+    catalog = add(''),
+    pages = add(''),
+    face = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+    fn = add('<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [.7 .7 .7] /N 1 >>'),
+    shading = add(
+      `<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [100 100 300 280] /Function ${fn} 0 R /Extend [true true] >>`
+    ),
+    pattern = add(`<< /Type /Pattern /PatternType 2 /Shading ${shading} 0 R >>`),
+    image = stream(
+      'eeeeee888888ccccccaaaaaa>',
+      '/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode'
+    ),
+    secondImage = stream(
+      'ddeeff88aabbccddee99aabb>',
+      '/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode'
+    ),
+    tile = stream(
+      'q 16 0 0 16 0 0 cm /TileImage Do Q',
+      '/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 2 /BBox [0 0 16 16] /XStep 16 /YStep 16 /Resources << /XObject << /TileImage ' +
+        image +
+        ' 0 R >> >>'
+    ),
+    glyph = stream('600 0 d0 0 0 500 600 re f'),
+    type3 = add(
+      `<< /Type /Font /Subtype /Type3 /FontBBox [0 0 600 700] /FontMatrix [.001 0 0 .001 0 0] /FirstChar 65 /LastChar 65 /Widths [600] /Encoding << /Type /Encoding /Differences [65 /A] >> /CharProcs << /A ${glyph} 0 R >> /Resources << >> >>`
+    ),
+    ids: number[] = []
+  for (const withType3 of [false, true]) {
+    const form = stream(
+        'q /Pattern cs /Shade scn 100 100 200 180 re f Q q /Pattern cs /Tile scn 270 240 20 20 re f Q q 20 0 0 20 150 110 cm /PanelImage Do Q 0 0 0 rg BT /Text 10 Tf 2 Tr 1 0 0 1 105 260 Tm (Left label) Tj 1 0 0 1 200 200 Tm (Middle label) Tj 1 0 0 1 230 130 Tm (Right label) Tj ET' +
+          (withType3 ? ' BT /Type3 10 Tf 1 0 0 1 150 150 Tm (A) Tj ET' : ''),
+        `/Type /XObject /Subtype /Form /BBox [100 100 300 280] /Group << /S /Transparency /I false /K false >> /Resources << /Font << /Text ${face} 0 R /Type3 ${type3} 0 R >> /Pattern << /Shade ${pattern} 0 R /Tile ${tile} 0 R >> /XObject << /PanelImage ${secondImage} 0 R >> >>`
+      ),
+      content = stream(
+        'BT /Text 10 Tf 1 0 0 1 90 350 Tm (Running header.) Tj ET q /Picture Do Q BT /Text 10 Tf 1 0 0 1 90 80 Tm (Figure 1: Three complete measured sample panels.) Tj ET'
+      )
+    ids.push(
+      add(
+        `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 400 400] /Resources << /Font << /Text ${face} 0 R >> /XObject << /Picture ${form} 0 R >> >> /Contents ${content} 0 R >>`
+      )
+    )
+  }
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`
+  objects[pages - 1] =
+    `<< /Type /Pages /Kids [${ids.map((id) => `${id} 0 R`).join(' ')}] /Count 2 >>`
+  let pdf = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((n) => `${String(n).padStart(10, '0')} 00000 n \n`)
+    .join(
+      ''
+    )}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const bytes = new Uint8Array(Buffer.from(pdf)),
+    sourceSha256 = createHash('sha256').update(bytes).digest('hex'),
+    task = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      disableFontFace: true,
+      verbosity: 0,
+      standardFontDataUrl
+    })
+  try {
+    const document = await task.promise
+    for (const pageNumber of [1, 2]) {
+      const nativePage = await document.getPage(pageNumber),
+        viewport = nativePage.getViewport({ scale: 1 }),
+        content = await nativePage.getTextContent(),
+        canvas = createCanvas(400, 400),
+        render = nativePage.render({
+          canvas: canvas as never,
+          canvasContext: canvas.getContext('2d') as never,
+          viewport,
+          recordOperations: true
+        })
+      try {
+        recordPaintedOperationBounds(render)
+        await render.promise
+        const graphics = collectGraphicsBounds(
+            render,
+            (nativePage as ReturnType<typeof JSON.parse>).recordedBBoxes
+          ),
+          snapshot = captureNativeFigureRenderContext(
+            render,
+            pageNumber,
+            content,
+            viewport,
+            graphics.graphicsBounds,
+            sourceSha256,
+            nativePage.commonObjs
+          ),
+          context = {
+            ...matchNativeFigureRenderContext(
+              snapshot,
+              pageNumber,
+              content,
+              viewport,
+              graphics.graphicsBounds,
+              sourceSha256
+            ),
+            pageNumber,
+            sourceSha256
+          },
+          tokens = context.content.items
+            .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
+            .map((r: ReturnType<typeof JSON.parse>) => tableTextToken(r, viewport, 0)),
+          cap = tokens.find((t: ReturnType<typeof JSON.parse>) => t.text.startsWith('Figure 1:')),
+          caption = { page: pageNumber, rect: cap.rect, lines: [cap.text] },
+          page = {
+            pageNumber,
+            width: 400,
+            height: 400,
+            rotation: 0,
+            renderRotation: 0,
+            invalidGraphicsBounds: 0,
+            graphicsBounds: graphics.graphicsBounds,
+            lines: []
+          },
+          figure = {
+            caption,
+            rect: [120, 120, 300, 300],
+            graphicsCount: graphics.graphicsBounds.length,
+            reason: 'native-raster-composite-grid',
+            issue: undefined
+          },
+          live = {
+            nativePage,
+            pageContent: content,
+            operators: await nativePage.getOperatorList()
+          },
+          profile = createNativeNonisolatedGroupCropProfile(page, tokens, context)
+        if (pageNumber === 1)
+          expect(
+            nativeRenderedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              live
+            )
+          ).toBeUndefined()
+        const plan = nativeNonisolatedGroupPixelCrop(
+          page,
+          figure,
+          [caption],
+          [],
+          tokens,
+          context,
+          figure.rect,
+          live,
+          profile
+        )
+        if (pageNumber === 2) expect(plan).toBeUndefined()
+        else {
+          const rgba = canvas.getContext('2d').getImageData(100, 130, 20, 15).data
+          let omittedInk = 0
+          for (let i = 0; i < rgba.length; i += 4)
+            if (rgba[i] < 80 && rgba[i + 1] < 80 && rgba[i + 2] < 80) omittedInk++
+          expect(omittedInk).toBeGreaterThan(3)
+          expect(plan).toEqual({ rect: [99.5, 119.5, 300.5, 300.5] })
+          expect(plan.sourceItems).toBeUndefined()
+          expect(figure.reason).toBe('native-raster-composite-grid')
+          const sourceColor =
+              context.operators.argsArray[
+                context.operators.fnArray.findIndex(
+                  (op: number, i: number) =>
+                    op === OPS.setFillColorN && context.operators.argsArray[i][0] === 'Shading'
+                )
+              ],
+            liveColor =
+              live.operators.argsArray[
+                live.operators.fnArray.findIndex(
+                  (op: number, i: number) =>
+                    op === OPS.setFillColorN && live.operators.argsArray[i][0] === 'Shading'
+                )
+              ]
+          expect(sourceColor[1]).not.toBe(liveColor[1])
+          const tileIndex = live.operators.fnArray.findIndex(
+              (op: number, i: number) =>
+                op === OPS.setFillColorN && live.operators.argsArray[i][0] === 'TilingPattern'
+            ),
+            tileProgram = live.operators.argsArray[tileIndex][2],
+            nestedIndex = tileProgram.fnArray.indexOf(OPS.paintImageXObject),
+            nestedImage = tileProgram.argsArray[nestedIndex],
+            imageIndex = live.operators.fnArray.indexOf(OPS.paintImageXObject),
+            mainImage = live.operators.argsArray[imageIndex],
+            width = mainImage[1],
+            imageId = mainImage[0],
+            save = tileProgram.fnArray[0]
+          mainImage[1]++
+          expect(
+            nativeRenderedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              live
+            )
+          ).toBeUndefined()
+          mainImage[1] = width
+          mainImage[0] = nestedImage[0]
+          expect(
+            nativeRenderedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              live
+            )
+          ).toBeUndefined()
+          mainImage[0] = imageId
+          tileProgram.fnArray[0] = OPS.restore
+          expect(
+            nativeRenderedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              live
+            )
+          ).toBeUndefined()
+          tileProgram.fnArray[0] = save
+          expect(
+            nativeRenderedGroupPixelCrop(
+              page,
+              { ...figure, sourceItems: [tokens[0].sourceItem] },
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              live
+            )
+          ).toBeUndefined()
+          const png = await renderPdfCrop(nativePage, plan.rect, 0)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          tileProgram.argsArray[nestedIndex] = [...nestedImage]
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          tileProgram.argsArray[nestedIndex] = nestedImage
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          expect(nativeRenderedGroupPixelPngSafe(structuredClone(plan), png, plan.rect, page)).toBe(
+            false
+          )
+          const original = live.pageContent
+          live.pageContent = structuredClone(original)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          live.pageContent = original
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const fontIndex = live.operators.fnArray.indexOf(OPS.setFont),
+            font = nativePage.commonObjs.get(live.operators.argsArray[fontIndex][0]),
+            character = Object.keys(font.compiledGlyphs)[0],
+            oldSlot = Object.getOwnPropertyDescriptor(font.compiledGlyphs, character)!
+          let getterCalls = 0
+          Object.defineProperty(font.compiledGlyphs, character, {
+            configurable: true,
+            get() {
+              getterCalls++
+              return oldSlot.value
+            }
+          })
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          expect(getterCalls).toBe(0)
+          Object.defineProperty(font.compiledGlyphs, character, oldSlot)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const originalViewport = nativePage.getViewport,
+            oldViewportSlot = Object.getOwnPropertyDescriptor(nativePage, 'getViewport'),
+            view = nativePage.view,
+            left = view[0]
+          Object.defineProperty(nativePage, 'getViewport', {
+            configurable: true,
+            value: (options: Parameters<typeof nativePage.getViewport>[0]) =>
+              originalViewport.call(nativePage, {
+                ...options,
+                offsetX: (options.offsetX ?? 0) + 20
+              })
+          })
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          if (oldViewportSlot) Object.defineProperty(nativePage, 'getViewport', oldViewportSlot)
+          else delete (nativePage as ReturnType<typeof JSON.parse>).getViewport
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          view[0]++
+          expect(nativePage.getViewport).toBe(originalViewport)
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+          view[0] = left
+          expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+          const low = createCanvas(201, 181)
+          try {
+            await nativePage.render({
+              canvas: low as never,
+              canvasContext: low.getContext('2d') as never,
+              viewport: nativePage.getViewport({
+                scale: 1,
+                offsetX: -plan.rect[0],
+                offsetY: -plan.rect[1]
+              })
+            }).promise
+            expect(
+              nativeRenderedGroupPixelPngSafe(plan, low.toBuffer('image/png'), plan.rect, page)
+            ).toBe(false)
+          } finally {
+            low.width = low.height = 0
+          }
+        }
+      } finally {
+        canvas.width = canvas.height = 0
+      }
+    }
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each(['complete', 'removed-margin', 'missing-interior', 'zero-exterior'])(
+  'binds clipped Type3 pixels to the complete original render while preserving source: %s',
+  async (mode) => {
+    const { anonymousClippedType3Pdf } = await import(
+      pathToFileURL(resolve('test/fixtures/figure-recovery-program.mjs')).href
+    )
+    const {
+      recordPaintedOperationBounds,
+      captureNativeFigureRenderContext,
+      matchNativeFigureRenderContext
+    } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+    const { collectGraphicsBounds } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+    )
+    const { tableTextToken } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+    )
+    const { renderPdfCrop } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+    )
+    const { nativeRenderedGroupPixelCrop, nativeRenderedGroupPixelPngSafe } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+    )
+    const bytes = anonymousClippedType3Pdf(mode === 'zero-exterior' ? 'outside' : 'inside'),
+      checksum = createHash('sha256').update(bytes).digest('hex'),
+      loading = getDocument({
+        data: bytes,
+        fontExtraProperties: true,
+        isEvalSupported: false,
+        useSystemFonts: false,
+        disableFontFace: true,
+        verbosity: 0,
+        standardFontDataUrl
+      })
+    try {
+      const pdf = await loading.promise,
+        nativePage = await pdf.getPage(1),
+        content = await nativePage.getTextContent(),
+        operators = await nativePage.getOperatorList(),
+        viewport = nativePage.getViewport({ scale: 1 }),
+        canvas = createCanvas(600, 600)
+      try {
+        const render = nativePage.render({
+          canvas: canvas as never,
+          canvasContext: canvas.getContext('2d') as never,
+          viewport: nativePage.getViewport({ scale: 1.5 }),
+          recordOperations: true
+        })
+        recordPaintedOperationBounds(render)
+        await render.promise
+        const graphics = collectGraphicsBounds(render, nativePage.recordedBBoxes),
+          snapshot = captureNativeFigureRenderContext(
+            render,
+            1,
+            content,
+            viewport,
+            graphics.graphicsBounds,
+            checksum,
+            nativePage.commonObjs
+          ),
+          context = {
+            ...matchNativeFigureRenderContext(
+              snapshot,
+              1,
+              content,
+              viewport,
+              graphics.graphicsBounds,
+              checksum
+            ),
+            pageNumber: 1,
+            sourceSha256: checksum
+          },
+          allTokens = context.content.items
+            .filter((r: { str: string }) => r.str?.trim())
+            .map((r: unknown) => tableTextToken(r, viewport, 0)),
+          tokens = allTokens.filter((t: { text: string }) =>
+            mode === 'removed-margin'
+              ? !t.text.startsWith('Running header.')
+              : mode === 'missing-interior'
+                ? t.text !== 'Left label'
+                : true
+          ),
+          captionToken = tokens.find((t: { text: string }) => t.text.startsWith('Figure 1:')),
+          caption = { page: 1, rect: captionToken.rect, lines: [captionToken.text] },
+          page = {
+            pageNumber: 1,
+            width: 400,
+            height: 400,
+            rotation: 0,
+            renderRotation: 0,
+            invalidGraphicsBounds: 0,
+            graphicsBounds: graphics.graphicsBounds,
+            lines: []
+          },
+          figure = {
+            caption,
+            rect: [120, 120, 300, 300],
+            graphicsCount: graphics.graphicsBounds.length
+          },
+          before = JSON.stringify({ context, tokens, page, figure }),
+          fresh = (): ReturnType<typeof JSON.parse> =>
+            nativeRenderedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              { nativePage, pageContent: content, operators }
+            ),
+          plan = fresh()
+        expect(JSON.stringify({ context, tokens, page, figure })).toBe(before)
+        if (mode === 'missing-interior' || mode === 'zero-exterior') {
+          expect(plan).toBeUndefined()
+          return
+        }
+        expect(plan?.rect).toEqual([99.5, 119.5, 300.5, 300.5])
+        expect(plan.sourceItems).toBeUndefined()
+        expect(context.glyphBounds).toBeUndefined()
+        expect(
+          context.content.items.some(
+            (r: { str: string; width: number }) => r.str === '0' && r.width === 0
+          )
+        ).toBe(true)
+        const png = await renderPdfCrop(nativePage, plan.rect, 0)
+        expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+        expect(nativeRenderedGroupPixelPngSafe(structuredClone(plan), png, plan.rect, page)).toBe(
+          false
+        )
+        const program = context.pixelType3Programs[0].glyphs[0].program,
+          old = program.argsArray[1][0][0][1]
+        program.argsArray[1][0][0][1] = 2
+        expect(fresh()).toBeUndefined()
+        expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+        program.argsArray[1][0][0][1] = old
+        expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(true)
+        const font = nativePage.commonObjs.get(context.pixelType3Programs[0].fontName),
+          liveProgram =
+            font.charProcOperatorList[context.pixelType3Programs[0].glyphs[0].operatorListId],
+          original = liveProgram.fnArray
+        liveProgram.fnArray = [...original]
+        expect(nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, page)).toBe(false)
+      } finally {
+        canvas.width = canvas.height = 0
+      }
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+// A generated native PDF, not a reduced copy of a paper or a synthetic Source.
+async function withAnonymousPairedMicroFigure(
+  mode: 'complete' | 'identity' | 'foreign' | 'missing-marker' = 'complete',
+  inspect: (fixture: ReturnType<typeof JSON.parse>) => Promise<void>
+): Promise<void> {
+  const objects: string[] = [],
+    add = (s: string): number => objects.push(s),
+    stream = (s: string, dict = ''): number => {
+      if (mode === 'identity') s = s.replaceAll('\\265', 'r')
+      return add(`<< ${dict} /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`)
+    },
+    catalog = add(''),
+    pages = add(''),
+    font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'),
+    group = (bottom: number): number =>
+      stream(
+        `0 0 0 RG 1 w 100 ${bottom + 10} 180 60 re S 110 ${bottom + 30} m 270 ${bottom + 30} l S BT /T 8 Tf 1 0 0 1 100 ${bottom + 60} Tm (Left) Tj 1 0 0 1 180 ${bottom + 40} Tm (Middle) Tj 1 0 0 1 260 ${bottom + 15} Tm (Right) Tj ET`,
+        `/Type /XObject /Subtype /Form /BBox [90 ${bottom} 310 ${bottom + 80}] /Group << /S /Transparency /I false /K false >> /Resources << /Font << /T ${font} 0 R >> >>`
+      ),
+    a = group(330),
+    b = group(210),
+    description = (s: string, y: number): string =>
+      `BT /T 8 Tf 1 0 0 1 90 ${y} Tm [${s
+        .split(' ')
+        .map((word) => `(${word})`)
+        .join(' -278 ')}] TJ ET`,
+    body = stream(
+      'BT /T 10 Tf 1 0 0 1 90 450 Tm [(Running) -278 (header.)] TJ ET q /A Do Q ' +
+        description('(a) A complete native record.', 316) +
+        description('A parameter \\265, remains unchanged.', 304) +
+        ' q /B Do Q ' +
+        description(
+          mode === 'missing-marker'
+            ? 'A second complete native record.'
+            : '(b) A second complete native record.',
+          198
+        ) +
+        description('The pair \\265, is measured.', 186) +
+        description('Both records remain complete.', 174) +
+        ' BT /T 10 Tf 1 0 0 1 90 150 Tm [(Figure) -278 (1:) -278 (Paired) -278 (native) -278 (records.)] TJ ET' +
+        (mode === 'foreign' ? ' BT /T 4 Tf 1 0 0 1 86 360 Tm (X) Tj ET' : '')
+    ),
+    pageId = add(
+      `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 400 480] /Resources << /Font << /T ${font} 0 R >> /XObject << /A ${a} 0 R /B ${b} 0 R >> >> /Contents ${body} 0 R >>`
+    )
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`
+  objects[pages - 1] = `<< /Type /Pages /Kids [${pageId} 0 R] /Count 1 >>`
+  let pdf = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [i, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${i + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((n) => `${String(n).padStart(10, '0')} 00000 n \n`)
+    .join(
+      ''
+    )}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const bytes = new Uint8Array(Buffer.from(pdf)),
+    sourceSha256 = createHash('sha256').update(bytes).digest('hex'),
+    loading = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      disableFontFace: true,
+      verbosity: 0,
+      standardFontDataUrl
+    }),
+    {
+      recordPaintedOperationBounds,
+      captureNativeFigureRenderContext,
+      matchNativeFigureRenderContext,
+      attachNativeDualApiEvidence
+    } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href),
+    { collectGraphicsBounds } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+    ),
+    { tableTextToken } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+    )
+  let canvas: ReturnType<typeof createCanvas> | undefined
+  try {
+    const document = await loading.promise,
+      nativePage = await document.getPage(1),
+      viewport = nativePage.getViewport({ scale: 1 }),
+      content = await nativePage.getTextContent(),
+      raw = await nativePage.getTextContent({ disableNormalization: true })
+    canvas = createCanvas(400, 480)
+    const render = nativePage.render({
+      canvas: canvas as never,
+      canvasContext: canvas.getContext('2d') as never,
+      viewport,
+      recordOperations: true
+    })
+    recordPaintedOperationBounds(render)
+    await render.promise
+    const graphics = collectGraphicsBounds(
+        render,
+        (nativePage as ReturnType<typeof JSON.parse>).recordedBBoxes
+      ),
+      snapshot = captureNativeFigureRenderContext(
+        render,
+        1,
+        content,
+        viewport,
+        graphics.graphicsBounds,
+        sourceSha256,
+        nativePage.commonObjs
+      ),
+      context = {
+        ...matchNativeFigureRenderContext(
+          snapshot,
+          1,
+          content,
+          viewport,
+          graphics.graphicsBounds,
+          sourceSha256
+        ),
+        pageNumber: 1,
+        sourceSha256
+      },
+      tokens = context.content.items
+        .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
+        .map((r: ReturnType<typeof JSON.parse>) => tableTextToken(r, viewport, 0)),
+      cap = tokens.find((t: ReturnType<typeof JSON.parse>) => t.text.startsWith('Figure 1:')),
+      caption = { page: 1, rect: cap.rect, lines: [cap.text] },
+      page = {
+        pageNumber: 1,
+        width: 400,
+        height: 480,
+        rotation: 0,
+        renderRotation: 0,
+        invalidGraphicsBounds: 0,
+        graphicsBounds: graphics.graphicsBounds,
+        lines: []
+      },
+      figure = { caption, reason: 'no-unambiguous-adjacent-graphics' },
+      live = {
+        nativePage,
+        pageContent: content,
+        operators: await nativePage.getOperatorList(),
+        sourceSha256
+      }
+    expect(context.operators).toBeDefined()
+    expect(attachNativeDualApiEvidence(snapshot, content, raw).dualApiEvidence).toBeUndefined()
+    expect(content.items.some((r: ReturnType<typeof JSON.parse>) => r.str?.includes('μ,'))).toBe(
+      mode !== 'identity'
+    )
+    await inspect({ page, figure, captions: [caption], tokens, context, live, content, raw })
+  } finally {
+    if (canvas) canvas.width = canvas.height = 0
+    await loading.destroy()
+  }
+}
+
+it('keeps both native transparency groups and whole micro-sign descriptions pixel-only', async () => {
+  const m = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+  )
+  await withAnonymousPairedMicroFigure('complete', async (f) => {
+    const before = JSON.stringify([f.content, f.raw, f.tokens]),
+      plan = await m.nativePairedDescriptionGroupPixelCrop(
+        f.page,
+        f.figure,
+        f.captions,
+        [],
+        f.tokens,
+        f.context,
+        f.live
+      )
+    expect(plan).toBeDefined()
+    expect(plan.sourceItems).toBeUndefined()
+    expect(plan.rect[1]).toBeLessThan(70)
+    expect(plan.rect[3]).toBeGreaterThan(306)
+    expect(plan.rect[3]).toBeLessThan(f.figure.caption.rect[1])
+    expect(m.nativePairedDescriptionGroupPixelCurrent(plan, f.page)).toBe(true)
+    expect(m.nativePairedDescriptionGroupPixelCurrent(structuredClone(plan), f.page)).toBe(false)
+    expect(
+      m.nativeRenderedGroupPixelCrop(
+        f.page,
+        f.figure,
+        f.captions,
+        [],
+        f.tokens,
+        f.context,
+        undefined,
+        f.live
+      )
+    ).toBeUndefined()
+    const canvas = createCanvas(
+        Math.ceil((plan.rect[2] - plan.rect[0]) * 4),
+        Math.ceil((plan.rect[3] - plan.rect[1]) * 4)
+      ),
+      png = canvas.toBuffer('image/png')
+    expect(m.nativePairedDescriptionGroupPixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    expect(m.nativeRenderedGroupPixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+    const low = createCanvas(
+      Math.ceil(plan.rect[2] - plan.rect[0]),
+      Math.ceil(plan.rect[3] - plan.rect[1])
+    )
+    expect(
+      m.nativePairedDescriptionGroupPixelPngSafe(plan, low.toBuffer('image/png'), plan.rect, f.page)
+    ).toBe(false)
+    const original = f.context.operators.argsArray
+    f.context.operators.argsArray = structuredClone(original)
+    expect(m.nativePairedDescriptionGroupPixelCurrent(plan, f.page)).toBe(false)
+    f.context.operators.argsArray = original
+    expect(m.nativePairedDescriptionGroupPixelCurrent(plan, f.page)).toBe(true)
+    expect(JSON.stringify([f.content, f.raw, f.tokens])).toBe(before)
+    canvas.width = canvas.height = low.width = low.height = 0
+  })
+})
+it.each(['foreign', 'missing-marker'] as const)(
+  'declines the paired crop with %s evidence',
+  async (mode) => {
+    const m = await import(
+      pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+    )
+    await withAnonymousPairedMicroFigure(mode, async (f) => {
+      expect(
+        await m.nativePairedDescriptionGroupPixelCrop(
+          f.page,
+          f.figure,
+          f.captions,
+          [],
+          f.tokens,
+          f.context,
+          f.live
+        )
+      ).toBeUndefined()
+    })
+  }
+)
+it('requires the actual same-page micro cursor and independent foreign-table clearance', async () => {
+  const m = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+  )
+  await withAnonymousPairedMicroFigure('complete', async (f) => {
+    expect(
+      await m.nativePairedDescriptionGroupPixelCrop(
+        f.page,
+        f.figure,
+        f.captions,
+        [[90, 280, 300, 310]],
+        f.tokens,
+        f.context,
+        f.live
+      )
+    ).toBeUndefined()
+    expect(
+      await m.nativePairedDescriptionGroupPixelCrop(
+        f.page,
+        f.figure,
+        f.captions,
+        [],
+        f.tokens,
+        f.context,
+        { ...f.live, sourceSha256: 'f'.repeat(64) }
+      )
+    ).toBeUndefined()
+    const old = f.live.nativePage.getTextContent
+    Object.defineProperty(f.live.nativePage, 'getTextContent', {
+      configurable: true,
+      value: async (options: ReturnType<typeof JSON.parse>) => {
+        const raw = await old.call(f.live.nativePage, options),
+          out = { ...raw, items: raw.items.map((r: ReturnType<typeof JSON.parse>) => ({ ...r })) },
+          r = out.items.find((r: ReturnType<typeof JSON.parse>) => r.str?.includes('µ,'))
+        r.width += 0.001
+        return out
+      }
+    })
+    try {
+      expect(
+        await m.nativePairedDescriptionGroupPixelCrop(
+          f.page,
+          f.figure,
+          f.captions,
+          [],
+          f.tokens,
+          f.context,
+          f.live
+        )
+      ).toBeUndefined()
+    } finally {
+      delete f.live.nativePage.getTextContent
+    }
+  })
+})
+it('does not treat other punctuation changes or an incomplete original micro cursor as normalization', async () => {
+  const m = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+  )
+  await withAnonymousPairedMicroFigure('complete', async (f) => {
+    const old = f.live.nativePage.getTextContent
+    Object.defineProperty(f.live.nativePage, 'getTextContent', {
+      configurable: true,
+      value: async (options: ReturnType<typeof JSON.parse>) => {
+        const raw = await old.call(f.live.nativePage, options),
+          out = { ...raw, items: raw.items.map((r: ReturnType<typeof JSON.parse>) => ({ ...r })) },
+          r = out.items.find((r: ReturnType<typeof JSON.parse>) => r.str?.includes('µ,'))
+        r.str = r.str.replace('µ,', 'µ;')
+        return out
+      }
+    })
+    try {
+      expect(
+        await m.nativePairedDescriptionGroupPixelCrop(
+          f.page,
+          f.figure,
+          f.captions,
+          [],
+          f.tokens,
+          f.context,
+          f.live
+        )
+      ).toBeUndefined()
+    } finally {
+      delete f.live.nativePage.getTextContent
+    }
+    const op = f.context.operators.fnArray.findIndex(
+        (op: number, i: number) =>
+          op === OPS.showText &&
+          f.context.operators.argsArray[i][0].some(
+            (g: ReturnType<typeof JSON.parse>) => g?.unicode === 'µ'
+          )
+      ),
+      glyph = f.context.operators.argsArray[op][0].find(
+        (g: ReturnType<typeof JSON.parse>) => g?.unicode === 'µ'
+      ),
+      width = glyph.width
+    glyph.width += 10
+    try {
+      expect(
+        await m.nativePairedDescriptionGroupPixelCrop(
+          f.page,
+          f.figure,
+          f.captions,
+          [],
+          f.tokens,
+          f.context,
+          f.live
+        )
+      ).toBeUndefined()
+    } finally {
+      glyph.width = width
+    }
+    expect(
+      await m.nativePairedDescriptionGroupPixelCrop(
+        f.page,
+        f.figure,
+        f.captions,
+        [],
+        f.tokens,
+        f.context,
+        f.live
+      )
+    ).toBeDefined()
+  })
+})
+
+it('accepts an identical default and raw native relation without requiring a micro sign', async () => {
+  const m = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+  )
+  await withAnonymousPairedMicroFigure('identity', async (f) => {
+    expect(f.content).toEqual(f.raw)
+    const before = JSON.stringify([f.content, f.raw, f.tokens]),
+      plan = await m.nativePairedDescriptionGroupPixelCrop(
+        f.page,
+        f.figure,
+        f.captions,
+        [],
+        f.tokens,
+        f.context,
+        f.live
+      )
+    expect(plan).toBeDefined()
+    expect(m.nativePairedDescriptionGroupPixelCurrent(plan, f.page)).toBe(true)
+    expect(plan.sourceItems).toBeUndefined()
+    expect(JSON.stringify([f.content, f.raw, f.tokens])).toBe(before)
+  })
+})
+
+async function withRepeatedPaintHeader(
+  inspect: (fixture: ReturnType<typeof JSON.parse>) => Promise<void>,
+  variant: '' | 'body-repeat' | 'third-form' | 'foreign-paint' = ''
+): Promise<void> {
+  const {
+    captureNativeFigureRenderContext,
+    matchNativeFigureRenderContext,
+    recordPaintedOperationBounds
+  } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+  const { collectGraphicsBounds } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+  )
+  const { tableTextToken } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+  )
+  const { nativeCertifiedFigurePixelCrop, nativeCertifiedFigurePixelPngSafe } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-whole-paint-scope.mjs')).href
+  )
+  const { renderPdfCrop } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+  )
+  const objects: string[] = [],
+    add = (s: string): number => objects.push(s),
+    stream = (s: string, d = ''): number =>
+      add(`<< ${d} /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`),
+    catalog = add(''),
+    pages = add(''),
+    font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'),
+    logo = stream(
+      '0.2 0.3 0.6 rg 0 0 16 10 re f 20 0 16 12 re f 40 0 18 10 re f',
+      '/Type /XObject /Subtype /Form /BBox [0 0 60 12] /Resources << >>'
+    ),
+    chart = stream(
+      '0 0 0 rg 1 w 50 570 500 150 re S 50 620 m 550 620 l S 50 670 m 550 670 l S BT /T 10 Tf 1 0 0 1 70 700 Tm (Measured value) Tj ET',
+      `/Type /XObject /Subtype /Form /BBox [45 565 555 725] /Resources << /Font << /T ${font} 0 R >> >>`
+    ),
+    header = `${variant === 'body-repeat' ? 'q 1 0 0 1 0 -130 cm ' : ''}BT /T 8 Tf 1 0 0 1 40 770 Tm (REPORT) Tj ET q 1 0 0 1 480 766 cm /L Do Q q 0.4 w 40 762 m 550 762 l S Q${variant === 'body-repeat' ? ' Q' : ''}`,
+    body = stream(
+      `${header} q /C Do Q ${variant === 'third-form' ? 'q 1 0 0 1 480 766 cm /L Do Q' : variant === 'foreign-paint' ? '100 600 20 20 re f' : ''} BT /T 10 Tf 1 0 0 1 50 530 Tm (Figure 1: Anonymous measurements.) Tj ET`
+    ),
+    witness = stream(`${header} BT /T 10 Tf 1 0 0 1 50 700 Tm (An independent paragraph.) Tj ET`),
+    blank = stream(''),
+    ids = []
+  for (const content of [blank, witness, blank, body])
+    ids.push(
+      add(
+        `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 600 800] /Resources << /Font << /T ${font} 0 R >> /XObject << /L ${logo} 0 R /C ${chart} 0 R >> >> /Contents ${content} 0 R >>`
+      )
+    )
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`
+  objects[pages - 1] = `<< /Type /Pages /Kids [${ids.map((i) => `${i} 0 R`).join(' ')}] /Count 4 >>`
+  let pdf = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [i, o] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${i + 1} 0 obj\n${o}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((n) => `${String(n).padStart(10, '0')} 00000 n \n`)
+    .join(
+      ''
+    )}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const bytes = new Uint8Array(Buffer.from(pdf)),
+    sha = createHash('sha256').update(bytes).digest('hex'),
+    pdfres = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+    task = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      verbosity: 0,
+      standardFontDataUrl: join(pdfres, 'standard_fonts') + '/'
+    })
+  try {
+    const doc = await task.promise
+    const read = async (pn: number): Promise<ReturnType<typeof JSON.parse>> => {
+      const page = await doc.getPage(pn),
+        v = page.getViewport({ scale: 1 }),
+        s = page.getViewport({ scale: 1.5 }),
+        canvas = createCanvas(s.width, s.height),
+        r = page.render({
+          canvas: canvas as never,
+          canvasContext: canvas.getContext('2d') as never,
+          viewport: s,
+          recordOperations: true
+        })
+      recordPaintedOperationBounds(r)
+      await r.promise
+      const content = await page.getTextContent(),
+        g = collectGraphicsBounds(r, (page as ReturnType<typeof JSON.parse>).recordedBBoxes),
+        context = {
+          ...matchNativeFigureRenderContext(
+            captureNativeFigureRenderContext(
+              r,
+              pn,
+              content,
+              v,
+              g.graphicsBounds,
+              sha,
+              page.commonObjs
+            ),
+            pn,
+            content,
+            v,
+            g.graphicsBounds,
+            sha
+          ),
+          pageNumber: pn,
+          sourceSha256: sha
+        }
+      return { page, v, g, context }
+    }
+    const f = await read(4),
+      w = await read(2),
+      c = f.context
+    c.runningHeadWitness = {
+      sourceSha256: sha,
+      currentPageNumber: 4,
+      witnessPageNumber: 2,
+      currentContent: c.content,
+      witnessContent: w.context.content,
+      witnessViewport: w.v,
+      paintPrefix: {
+        operators: {
+          fnArray: w.context.operators.fnArray.slice(0, 512),
+          argsArray: w.context.operators.argsArray.slice(0, 512)
+        },
+        glyphBounds: w.context.glyphBounds
+      }
+    }
+    const tokens = c.content.items
+        .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
+        .map((r: ReturnType<typeof JSON.parse>) => tableTextToken(r, f.v, 0)),
+      cap = tokens.find((t: ReturnType<typeof JSON.parse>) => t.text.startsWith('Figure 1:')),
+      caption = { page: 4, rect: cap.rect, lines: [cap.text] },
+      page = {
+        pageNumber: 4,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        renderRotation: 0,
+        invalidGraphicsBounds: 0,
+        graphicsBounds: f.g.graphicsBounds,
+        lines: []
+      },
+      figure = { caption, rect: [35, 20, 555, 245] },
+      fresh = (): ReturnType<typeof JSON.parse> =>
+        nativeCertifiedFigurePixelCrop(
+          page,
+          figure,
+          [caption],
+          [],
+          tokens,
+          c,
+          [figure],
+          figure.rect
+        )
+    await inspect({
+      context: c,
+      witness: c.runningHeadWitness,
+      figure,
+      page,
+      tokens,
+      fresh,
+      nativePage: f.page,
+      renderPdfCrop,
+      nativeCertifiedFigurePixelPngSafe
+    })
+  } finally {
+    await task.destroy()
+  }
+}
+
+it('excludes a complete repeated native publisher header while retaining the independent Form', async () => {
+  await withRepeatedPaintHeader(async (f) => {
+    const before = JSON.stringify(f.figure),
+      plan = f.fresh()
+    expect(plan?.kind).toBe('complete-native-picture-with-repeated-header')
+    expect(plan.rect[1]).toBeGreaterThan(60)
+    expect(Object.keys(plan).sort()).toEqual(['graphicsCount', 'kind', 'rect'].sort())
+    const png = await f.renderPdfCrop(f.nativePage, plan.rect)
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    expect(JSON.stringify(f.figure)).toBe(before)
+  })
+})
+const repeatedPaintHeaderRefusals: [string, (fixture: ReturnType<typeof JSON.parse>) => void][] = [
+  ['missing witness', (f) => delete f.context.runningHeadWitness],
+  ['wrong document', (f) => (f.witness.sourceSha256 = '0'.repeat(64))],
+  ['equal-size shifted viewport origin', (f) => (f.witness.witnessViewport.transform[4] += 10)],
+  ['changed source identity', (f) => (f.witness.witnessContent.items[0].sourceItem.index = 1)],
+  [
+    'changed font bounds',
+    (f) => (f.witness.paintPrefix.glyphBounds[0].glyphs[0].bounds[2] += 0.01)
+  ],
+  [
+    'changed path program',
+    (f) => {
+      const o = f.witness.paintPrefix.operators,
+        i = o.fnArray.findIndex((x: number) => x === OPS.constructPath)
+      o.argsArray[i][1][0][1] += 1
+    }
+  ],
+  [
+    'changed Form clip',
+    (f) => {
+      const o = f.witness.paintPrefix.operators,
+        i = o.fnArray.findIndex((x: number) => x === OPS.paintFormXObjectBegin)
+      o.argsArray[i][1][2] -= 1
+    }
+  ],
+  ['missing header glyph program', (f) => (f.witness.paintPrefix.glyphBounds = [])],
+  [
+    'accessor witness',
+    (f) =>
+      Object.defineProperty(f.witness.paintPrefix, 'operators', {
+        get: () => {
+          throw new Error('must not read accessor')
+        }
+      })
+  ]
+]
+it.each(repeatedPaintHeaderRefusals)(
+  'retains the previous picture without closed publisher-header evidence: %s',
+  async (_name, mutate) => {
+    await withRepeatedPaintHeader(async (f) => {
+      mutate(f)
+      expect(f.fresh()).toBeUndefined()
+    })
+  }
+)
+it.each(['body-repeat', 'third-form', 'foreign-paint'] as const)(
+  'does not discard repeated body content or competing figure paint: %s',
+  async (variant) => {
+    await withRepeatedPaintHeader(async (f) => {
+      expect(f.fresh()).toBeUndefined()
+    }, variant)
+  }
+)
+it('rejects a publisher-header PNG when its source witness changes', async () => {
+  await withRepeatedPaintHeader(async (f) => {
+    const plan = f.fresh()
+    expect(plan).toBeDefined()
+    const png = await f.renderPdfCrop(f.nativePage, plan.rect)
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    f.witness.witnessContent.items[0].str = 'OTHER'
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+  })
+})
+
+async function withWrappedProof(
+  inspect: (fixture: ReturnType<typeof JSON.parse>) => Promise<void>,
+  variant:
+    | ''
+    | 'wrong-equation'
+    | 'missing-proof'
+    | 'wrong-ending'
+    | 'open-qed'
+    | 'foreign-paint'
+    | 'misaligned-qed'
+    | 'anchor-other-column'
+    | 'anchor-order' = ''
+): Promise<void> {
+  const {
+    captureNativeFigureRenderContext,
+    matchNativeFigureRenderContext,
+    recordPaintedOperationBounds
+  } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+  const { collectGraphicsBounds } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+  )
+  const { tableTextToken } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+  )
+  const { nativeCertifiedFigurePixelCrop, nativeCertifiedFigurePixelPngSafe } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-whole-paint-scope.mjs')).href
+  )
+  const { renderPdfCrop } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+  )
+  const objects: string[] = [],
+    add = (s: string): number => objects.push(s),
+    stream = (s: string): number =>
+      add(`<< /Length ${Buffer.byteLength(s)} >>\nstream\n${s}\nendstream`),
+    catalog = add(''),
+    pages = add(''),
+    font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>'),
+    math = add(
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>'
+    )
+  const stroke = (x: number, y: number, x2: number, y2: number): string =>
+    `q 1 0 0 1 ${x + (variant === 'misaligned-qed' ? 12 : 0)} ${y} cm 0.4 w 0 J [] 0 d 0 0 m ${x2} ${y2} l S Q`
+  const body = stream(
+    `0 0 0 rg 0 0 0 RG BT /T 10 Tf 1 0 0 1 469.45 ${variant === 'anchor-order' ? 690 : 740} Tm (${variant === 'wrong-equation' ? '(3.3)' : '(3.2)'}) Tj ET BT /M 10 Tf 1 0 0 1 ${variant === 'anchor-other-column' ? 180 : 40} 700 Tm (${variant === 'missing-proof' ? 'Note.' : 'Proof.'}) Tj ET BT /T 10 Tf 1 0 0 1 40 650 Tm (Hence) Tj /M 10 Tf 1 0 0 1 74 650 Tm (x) Tj /T 10 Tf 1 0 0 1 85 650 Tm (the complete result now) Tj /M 10 Tf 1 0 0 1 220 650 Tm (y) Tj /T 10 Tf 1 0 0 1 460 650 Tm (${variant === 'wrong-ending' ? 'values' : 'proves'}) Tj 1 0 0 1 40 636 Tm ((3.2).) Tj ET ${stroke(482, 636, 0, 8)} ${stroke(490, 636, 0, 8)} ${stroke(482.2, 636.2, 7.6, 0)} ${variant === 'open-qed' ? '' : stroke(482.2, 643.8, 7.6, 0)} ${variant === 'foreign-paint' ? '60 620 5 5 re f' : ''} q 1 w 80 350 420 200 re S 80 420 m 500 420 l S 80 490 m 500 490 l S BT /T 10 Tf 1 0 0 1 100 530 Tm (Measured value) Tj ET Q BT /T 10 Tf 1 0 0 1 50 300 Tm (Figure 1: Anonymous measurements.) Tj ET`
+  )
+  const pageId = add(
+    `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 600 800] /Resources << /Font << /T ${font} 0 R /M ${math} 0 R >> >> /Contents ${body} 0 R >>`
+  )
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pages} 0 R >>`
+  objects[pages - 1] = `<< /Type /Pages /Kids [${pageId} 0 R] /Count 1 >>`
+  let pdf = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [i, o] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${i + 1} 0 obj\n${o}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets
+    .slice(1)
+    .map((n) => `${String(n).padStart(10, '0')} 00000 n \n`)
+    .join(
+      ''
+    )}trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const bytes = new Uint8Array(Buffer.from(pdf)),
+    sha = createHash('sha256').update(bytes).digest('hex'),
+    pdfres = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+    task = getDocument({
+      data: bytes,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      verbosity: 0,
+      standardFontDataUrl: join(pdfres, 'standard_fonts') + '/'
+    })
+  try {
+    const doc = await task.promise,
+      nativePage = await doc.getPage(1),
+      v = nativePage.getViewport({ scale: 1 }),
+      s = nativePage.getViewport({ scale: 1.5 }),
+      canvas = createCanvas(s.width, s.height),
+      render = nativePage.render({
+        canvas: canvas as never,
+        canvasContext: canvas.getContext('2d') as never,
+        viewport: s,
+        recordOperations: true
+      })
+    recordPaintedOperationBounds(render)
+    await render.promise
+    const content = await nativePage.getTextContent(),
+      g = collectGraphicsBounds(
+        render,
+        (nativePage as ReturnType<typeof JSON.parse>).recordedBBoxes
+      ),
+      context = {
+        ...matchNativeFigureRenderContext(
+          captureNativeFigureRenderContext(
+            render,
+            1,
+            content,
+            v,
+            g.graphicsBounds,
+            sha,
+            nativePage.commonObjs
+          ),
+          1,
+          content,
+          v,
+          g.graphicsBounds,
+          sha
+        ),
+        pageNumber: 1,
+        sourceSha256: sha
+      },
+      tokens = context.content.items
+        .filter((r: ReturnType<typeof JSON.parse>) => r.str?.trim())
+        .map((r: ReturnType<typeof JSON.parse>) => tableTextToken(r, v, 0)),
+      cap = tokens.find((t: ReturnType<typeof JSON.parse>) => t.text.startsWith('Figure 1:')),
+      caption = { page: 1, rect: cap.rect, lines: [cap.text] },
+      page = {
+        pageNumber: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        renderRotation: 0,
+        invalidGraphicsBounds: 0,
+        graphicsBounds: g.graphicsBounds,
+        lines: []
+      },
+      figure = { caption, rect: [35, 140, 510, 460] },
+      fresh = (): ReturnType<typeof JSON.parse> =>
+        nativeCertifiedFigurePixelCrop(
+          page,
+          figure,
+          [caption],
+          [],
+          tokens,
+          context,
+          [figure],
+          figure.rect
+        )
+    await inspect({
+      context,
+      tokens,
+      page,
+      figure,
+      fresh,
+      nativePage,
+      renderPdfCrop,
+      nativeCertifiedFigurePixelPngSafe
+    })
+  } finally {
+    await task.destroy()
+  }
+}
+
+it('removes only a complete wrapped equation-proof conclusion and its native QED', async () => {
+  await withWrappedProof(async (f) => {
+    const before = JSON.stringify(f.figure),
+      plan = f.fresh()
+    expect(plan).toBeDefined()
+    expect(plan.rect[1]).toBeGreaterThan(200)
+    expect(Object.keys(plan).sort()).toEqual(['graphicsCount', 'kind', 'rect'].sort())
+    const png = await f.renderPdfCrop(f.nativePage, plan.rect)
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    expect(JSON.stringify(f.figure)).toBe(before)
+  })
+})
+it.each([
+  'wrong-equation',
+  'missing-proof',
+  'wrong-ending',
+  'open-qed',
+  'foreign-paint',
+  'misaligned-qed',
+  'anchor-other-column',
+  'anchor-order'
+] as const)('preserves unproved wrapped equation-proof paint: %s', async (variant) => {
+  await withWrappedProof(async (f) => {
+    expect(f.fresh()).toBeUndefined()
+  }, variant)
+})
+const wrappedProofRefusals: [string, (f: ReturnType<typeof JSON.parse>) => void][] = [
+  [
+    'partial source literal',
+    (f) => {
+      const r = f.context.content.items.find(
+        (r: ReturnType<typeof JSON.parse>) => r.str === 'Hence'
+      )
+      r.sourceItem.text = 'Hen'
+    }
+  ],
+  ['missing glyph outline', (f) => (f.context.glyphBounds = [])],
+  [
+    'stroked conclusion text',
+    (f) => {
+      const o = f.context.operators,
+        i = o.fnArray.findIndex((op: number) => op === OPS.showText)
+      o.fnArray.splice(i, 0, OPS.setTextRenderingMode)
+      o.argsArray.splice(i, 0, [1])
+    }
+  ]
+]
+it.each(wrappedProofRefusals)(
+  'rejects incomplete native wrapped-proof ownership: %s',
+  async (_name, mutate) => {
+    await withWrappedProof(async (f) => {
+      mutate(f)
+      expect(f.fresh()).toBeUndefined()
+    })
+  }
+)
+it('rejects a wrapped-proof PNG when its native path changes', async () => {
+  await withWrappedProof(async (f) => {
+    const plan = f.fresh()
+    expect(plan).toBeDefined()
+    const png = await f.renderPdfCrop(f.nativePage, plan.rect)
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+    const operators = f.context.operators
+    const index = operators.fnArray.findIndex((op: number) => op === OPS.constructPath)
+    operators.argsArray[index][1][0][1] += 1
+    expect(f.nativeCertifiedFigurePixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+  })
 })

@@ -45,6 +45,14 @@ export const isPublicFullTextAddress = (address: string): boolean =>
     ? !privateAddresses.check(address, 'ipv4')
     : isIP(address) === 6 && /^[23][0-9a-f]{3}:/iu.test(address)
 
+const fakeIpPlaceholderAddresses = new BlockList()
+fakeIpPlaceholderAddresses.addSubnet('198.18.0.0', 15, 'ipv4')
+
+// Mihomo/Clash commonly allocates placeholders here. A separate upstream proxy may
+// not share the local hostname mapping, so it needs the hostname instead.
+const isFakeIpPlaceholder = (address: string): boolean =>
+  isIP(address) === 4 && fakeIpPlaceholderAddresses.check(address, 'ipv4')
+
 export const fullTextUrl = (value: string): URL => {
   const url = new URL(value)
   if (
@@ -60,8 +68,9 @@ export const fullTextUrl = (value: string): URL => {
   return url
 }
 
-// Resolve and pin a public address for every connection, including redirects. Never send
-// application cookies or provider credentials to a PDF host.
+// Pin public DNS answers, including after redirects. Uniform fake-IP answers delegate
+// resolution and final-address policy to the configured proxy. Never send application
+// cookies or provider credentials to a PDF host.
 export const downloadFullText = async (
   rawUrl: string,
   maxBytes: number,
@@ -101,16 +110,25 @@ export const downloadFullText = async (
         void lookup(target.hostname, { all: true })
           .then(async (addresses) => {
             signal.throwIfAborted()
-            if (
-              !addresses.length ||
-              addresses.some(({ address }) => !isPublicFullTextAddress(address))
-            ) {
+            if (!addresses.length)
+              throw new Error('Full-text host did not resolve to a public address.')
+            const publicAddresses = addresses.filter(
+              ({ address }) => isPublicFullTextAddress(address) && !isFakeIpPlaceholder(address)
+            )
+            if (publicAddresses.length) {
+              if (publicAddresses.length !== addresses.length)
+                throw new Error('Full-text host did not resolve to a public address.')
+            } else if (!addresses.every(({ address }) => isFakeIpPlaceholder(address))) {
+              // A mixed or private answer must not enable proxy-side resolution.
               throw new Error('Full-text host did not resolve to a public address.')
             }
             if (!tunnel)
               throw new Error('A proxy tunnel adapter is required for proxied downloads.')
-            const socket = await tunnel(new URL(proxy), addresses[0]!.address, 443, signal)
-            // CONNECT uses the pinned IP. TLS still authenticates the original publisher hostname.
+            // A uniform fake-ip answer carries no routable address, so CONNECT to the
+            // publisher hostname and let the upstream proxy resolve it remotely.
+            const destination = publicAddresses[0]?.address ?? target.hostname
+            const socket = await tunnel(new URL(proxy), destination, 443, signal)
+            // TLS authenticates the publisher hostname, not whether its final IP is public.
             return connectTls({ socket, servername: target.hostname })
           })
           .then(

@@ -15,26 +15,36 @@ export const createDatabaseAtReleasedManifest = async (
   )
 ): Promise<void> => {
   await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
-  for (const migration of manifest) {
-    for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
-    await applySqliteMigrationOperations(client, migration.operations ?? [])
-    // Match the production runner's repair of the inbound reference after the frozen 0025 rebuild.
-    if (migration.id === '0025_managed_file_version_foundation')
-      await applySqliteMigrationOperations(client, visionEvidenceMigration.operations)
-  }
-  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "checksum" TEXT NOT NULL,
-    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "_open_science_migrations_checksum_check"
-      CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
-  )`)
-  for (const migration of manifest) {
-    await client.$executeRawUnsafe(
-      'INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)',
-      migration.id,
-      migration.checksum
+  try {
+    // Replay the same immutable history with one commit instead of fsync for every DDL statement.
+    await client.$transaction(
+      async (transaction) => {
+        for (const migration of manifest) {
+          for (const statement of migration.statements)
+            await transaction.$executeRawUnsafe(statement)
+          await applySqliteMigrationOperations(transaction, migration.operations ?? [])
+          // Match the production runner's repair of the inbound reference after the frozen 0025 rebuild.
+          if (migration.id === '0025_managed_file_version_foundation')
+            await applySqliteMigrationOperations(transaction, visionEvidenceMigration.operations)
+        }
+        await transaction.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+          "id" TEXT NOT NULL PRIMARY KEY,
+          "checksum" TEXT NOT NULL,
+          "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "_open_science_migrations_checksum_check"
+            CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
+        )`)
+        for (const migration of manifest) {
+          await transaction.$executeRawUnsafe(
+            'INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)',
+            migration.id,
+            migration.checksum
+          )
+        }
+      },
+      { timeout: 120_000 }
     )
+  } finally {
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   }
-  await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
 }

@@ -176,8 +176,10 @@ const RemoteOfficePreviewContent = ({
   const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
   const hasSourceIdentity =
+    source === 'compute-output' ||
     source === 'notebook-input' ||
     source === 'literature' ||
+    source === 'local' ||
     Boolean(item.projectId && item.managedFileId)
   useRegisterPreviewContextMenuFrame({
     id: `office-preview:${hostId}`,
@@ -200,7 +202,10 @@ const RemoteOfficePreviewContent = ({
   useEffect(() => {
     if (!ownsLease || !hasSourceIdentity) return
     const sourceIdentity =
-      source === 'notebook-input' || source === 'literature'
+      source === 'compute-output' ||
+      source === 'notebook-input' ||
+      source === 'literature' ||
+      source === 'local'
         ? { source, path: item.path }
         : {
             source,
@@ -455,7 +460,7 @@ const RemoteOfficePreviewContent = ({
   )
 }
 
-// Local Office files use the OS default app; managed sources use the in-app preview pipeline.
+// Notebook reply links open original documents in the isolated Office renderer.
 export const OfficePreviewContent = ({
   item,
   source = 'artifact'
@@ -465,7 +470,7 @@ export const OfficePreviewContent = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
-  if (source === 'local') {
+  if (source === 'local' && !item.fromNotebookDataLink) {
     return (
       <PreviewFallbackCard
         icon={FileWarning}

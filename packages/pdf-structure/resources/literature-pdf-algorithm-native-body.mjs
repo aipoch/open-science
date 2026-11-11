@@ -10,6 +10,10 @@ import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 import { matchNativeFigureRenderContext } from './literature-pdf-render-bounds.mjs'
 import { nativeRasterForeignPaints } from './literature-pdf-figure-native-stacked-raster.mjs'
+import {
+  hasBalancedNativeAlgorithmBody,
+  hasCompleteNativeProcedureBody
+} from './literature-pdf-native-balanced-algorithm.mjs'
 
 const valid = (r) =>
   Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
@@ -461,6 +465,103 @@ export function proveNativeAlgorithmBody(page, candidate, context) {
         .sort((a, b) => a.pageNumber - b.pageNumber || a.index - b.index)
     }
   }
+}
+
+// Some publishers put the title above a two-rule numbered program. Require
+// complete native ordinals, I/O and assignment packets; prose lists cannot
+// acquire the surrounding rule frame from their title alone.
+function framedIndentedOrdinals(page, title, titles, rules, context) {
+  const inventory = nativeInventory(page, context),
+    h = title.fontSize
+  if (
+    !inventory ||
+    inventory.some((t) => t.invalid) ||
+    !(h > 0) ||
+    !Array.isArray(context.operators?.fnArray) ||
+    !Array.isArray(context.operators.argsArray)
+  )
+    return []
+  const nativeRules = collectTableRules(context.operators, context.viewport)
+  const tops = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[1] > title.bottom &&
+      r[1] - title.bottom < h &&
+      r[2] - r[0] > page.width * 0.5 &&
+      title.x >= r[0] &&
+      title.right <= r[2]
+  )
+  if (tops.length !== 1) return []
+  const top = tops[0],
+    frame = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 2 ||
+    frame.some((r) => !nativeRules.some((n) => JSON.stringify(r) === JSON.stringify(n)))
+  )
+    return []
+  const bottom = frame[1],
+    rect = [top[0], title.y, top[2], bottom[1]]
+  if (bottom[1] - top[1] < h * 6 || titles.some((t) => t !== title && overlap(box(t), rect)))
+    return []
+  const body = inventory.filter((t) => overlap(t.rect, [top[0], top[1], top[2], bottom[1]]))
+  if (
+    !body.length ||
+    body.some(
+      (t) =>
+        !t.valid ||
+        !t.horizontal ||
+        !inside([top[0], top[1], top[2], bottom[1]], t.rect) ||
+        t.labelRect[1] <= top[1] ||
+        t.labelRect[3] >= bottom[1]
+    )
+  )
+    return []
+  const ordinals = body.filter((t) => /^[1-9]\d*:$/u.test(t.text))
+  if (
+    ordinals.length < 4 ||
+    ordinals.length > 128 ||
+    ordinals.some(
+      (t, n) =>
+        Number(t.text.slice(0, -1)) !== n + 1 ||
+        Math.abs(t.rect[2] - ordinals[0].rect[2]) > h * 0.1 ||
+        (n && t.baseline <= ordinals[n - 1].baseline)
+    )
+  )
+    return []
+  const prefix = body.filter((t) => t.sourceItem.index < ordinals[0].sourceItem.index)
+  if (
+    !prefix.length ||
+    !/^Inputs?:$/iu.test(prefix[0].text) ||
+    prefix.some((t) => t.baseline >= ordinals[0].baseline)
+  )
+    return []
+  const packets = ordinals.map((n, i) =>
+    body.filter(
+      (t) =>
+        t.sourceItem.index > n.sourceItem.index &&
+        (!ordinals[i + 1] || t.sourceItem.index < ordinals[i + 1].sourceItem.index)
+    )
+  )
+  if (
+    packets.some(
+      (g, i) =>
+        !g.length ||
+        g[0].rect[0] <= ordinals[i].rect[2] ||
+        Math.abs(g[0].baseline - ordinals[i].baseline) > h * 0.1 ||
+        g.some((t) => ordinals[i + 1] && t.labelRect[3] >= ordinals[i + 1].rect[1])
+    )
+  )
+    return []
+  const texts = packets.map((g) => g.map((t) => t.text).join(' '))
+  if (
+    texts.filter((t) => /←/u.test(t)).length < 2 ||
+    !texts.some((t) => /^(?:for each|while|if)\b/iu.test(t)) ||
+    !packets.some((g, i) => i && g[0].rect[0] > packets[i - 1][0].rect[0] + h * 0.5)
+  )
+    return []
+  return [{ rect, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }]
 }
 
 // A three-step computational routine has no explicit end-for/return. Its
@@ -1664,7 +1765,7 @@ function nativeDeclarationNote(page, context, step, next, line) {
   )
 }
 
-function closedNumberedFrame(page, candidate, lines, rules, context) {
+function closedNumberedFrame(page, candidate, lines, rules, context, captionOverhang = 0) {
   const title = candidate.caption,
     h = title.rect[3] - title.rect[1],
     // In addition to the established wide frame, accept a full column frame
@@ -1676,8 +1777,8 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
           r[1] === r[3] &&
           (r[2] - r[0] >= page.width * 0.5 ||
             (r[2] - r[0] >= candidate.rect[2] - candidate.rect[0] - h * 2 &&
-              r[0] <= title.rect[0] &&
-              r[2] >= title.rect[2])) &&
+              r[0] <= title.rect[0] + captionOverhang &&
+              r[2] >= title.rect[2] - captionOverhang)) &&
           inside(candidate.rect, r)
       )
       .sort((a, b) => a[1] - b[1])
@@ -1791,6 +1892,84 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
     if (stack.length) stack.at(-1).body = true
   }
   return loops > 0 && stack.length === 0
+}
+
+// Recover a wrapped title only inside the same three native rails as the
+// numbered program. A nearby paragraph never extends the caption or the crop.
+function wrappedNumberedFrame(page, candidate, lines, context) {
+  const title = candidate.caption,
+    { operators, viewport } = context
+  if (
+    title.lines.length !== 1 ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000 ||
+    !viewport
+  )
+    return
+  const first = lines.find((line) => line.text === title.lines[0] && inside(title.rect, box(line))),
+    inventory = nativeInventory(page, context)
+  if (!first || !inventory || !(first.fontSize > 0)) return
+  const em = first.fontSize,
+    overhang = em * 0.1,
+    paint = new Map(),
+    rails = collectTableRules(operators, viewport, paint)
+      .filter(
+        (rule) =>
+          rule[1] === rule[3] &&
+          inside(candidate.rect, rule) &&
+          rule[0] <= title.rect[0] + overhang &&
+          rule[2] >= title.rect[2] - overhang
+      )
+      .sort((a, b) => a[1] - b[1])
+  if (
+    rails.length !== 3 ||
+    rails.some((rule) => rule[0] !== rails[0][0] || rule[2] !== rails[0][2]) ||
+    first.right - first.x < (rails[0][2] - rails[0][0]) * 0.8
+  )
+    return
+  const [top, divider, bottom] = rails.map((rule) => paint.get(rule.join(',')))
+  if (!top || !divider || !bottom) return
+  const wrapped = lines.filter(
+    (line) =>
+      line !== first &&
+      line.y >= first.bottom &&
+      line.y < divider[1] &&
+      overlap(box(line), candidate.rect)
+  )
+  if (wrapped.length !== 1) return
+  const [next] = wrapped,
+    leading = next.bottom - first.bottom
+  if (
+    Math.abs(next.fontSize - em) > em * 0.05 ||
+    Math.abs(next.x - first.x) > overhang ||
+    next.right > rails[0][2] + overhang ||
+    leading < em * 0.9 ||
+    leading > em * 1.5 ||
+    !/^[\p{Ll}(]/u.test(next.text)
+  )
+    return
+  const caption = {
+    ...title,
+    lines: [...title.lines, next.text],
+    rect: union([title.rect, box(next)])
+  }
+  if (
+    inventory.some(
+      (item) =>
+        item.invalid ||
+        (overlap(item.rect, candidate.rect) &&
+          (inside(caption.rect, item.rect)
+            ? item.labelRect[1] <= top[3] || item.labelRect[3] >= divider[1]
+            : item.labelRect[1] <= divider[3] || item.labelRect[3] >= bottom[1]))
+    )
+  )
+    return
+  const completed = { ...candidate, caption }
+  if (!closedNumberedFrame(page, completed, lines, rails, context, overhang)) return
+  const proved = proveNativeAlgorithmBody(page, completed, context)
+  return proved && inside(candidate.rect, proved.rect) ? proved : undefined
 }
 
 // A publisher may close one numbered while scope through native indentation
@@ -2640,6 +2819,345 @@ function nativeClosedScopeLoops(page, context) {
   }
 }
 
+// Keep nativePageTextPacketInventory and all existing algorithm families strict.
+function nativeNumberedPseudocodeFrame(page, originalContext, balancedTitle, procedureTitle) {
+  const original = originalContext.nativeGlyphContext
+  if (
+    !/^[a-f0-9]{64}$/u.test(original?.sourceSha256 ?? '') ||
+    original.pageNumber !== page.pageNumber
+  )
+    return
+  const current = originalContext.content?.items
+  if (
+    !Array.isArray(current) ||
+    current.some(
+      (r, index) =>
+        r.str?.trim() &&
+        (r.sourceItem?.pageNumber !== page.pageNumber ||
+          r.sourceItem.index !== index ||
+          r.sourceItem.text !== r.str ||
+          ['sourceSegment', 'sourceSegments', 'sourceToken', 'sourceTokens', 'sourceItems'].some(
+            (k) => k in r
+          ))
+    )
+  )
+    return
+  const bound = matchNativeFigureRenderContext(
+    original,
+    page.pageNumber,
+    originalContext.content,
+    originalContext.viewport,
+    page.graphicsBounds,
+    original.sourceSha256
+  )
+  if (
+    !bound ||
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.lines) ||
+    !Array.isArray(page.graphicsBounds) ||
+    page.graphicsBounds.some((g) => g.kind !== 'path')
+  )
+    return
+  const context = {
+      ...originalContext,
+      ...bound,
+      nativeGlyphContext: {
+        ...bound,
+        pageNumber: page.pageNumber,
+        sourceSha256: original.sourceSha256
+      }
+    },
+    native = context.nativeGlyphContext,
+    raw = context.content.items,
+    v = context.viewport,
+    o = context.operators,
+    lines = groupPageLines(page),
+    titles = lines.filter((l) =>
+      procedureTitle
+        ? /^Procedure\s+[1-9]\d*\b/u.test(l.text)
+        : /^Algorithm\s+[1-9]\d*\b/u.test(l.text)
+    )
+  if (
+    raw.length > 16384 ||
+    (balancedTitle || procedureTitle
+      ? !titles.some((t) => {
+          const expected = balancedTitle ?? procedureTitle
+          return eq(box(t), box(expected)) && t.text === expected.text
+        })
+      : titles.length !== 1 || !/\bPseudocode\b/u.test(titles[0].text))
+  )
+    return
+  const title = balancedTitle ?? procedureTitle ?? titles[0],
+    paint = new Map(),
+    rules = collectTableRules(o, v, paint),
+    horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] > page.width * 0.5),
+    frames = []
+  if (rules.length > 4096) return
+  for (const top of horizontal) {
+    if (Math.abs(top[1] - title.y) >= title.fontSize) continue
+    const same = horizontal
+      .filter(
+        (r) =>
+          r[0] === top[0] &&
+          r[2] === top[2] &&
+          r[1] >= top[1] &&
+          (!balancedTitle || !titles.some((other) => other.y > title.bottom && r[1] >= other.y))
+      )
+      .sort((a, b) => a[1] - b[1])
+    const procedureCaptionLines = procedureTitle
+      ? lines.filter(
+          (line) =>
+            line.y >= title.y - title.fontSize * 0.1 &&
+            line.bottom < same[1]?.[1] &&
+            line.x >= top[0] - 1e-6 &&
+            line.x < top[2]
+        )
+      : undefined
+    if (
+      same.length === 3 &&
+      same[1][1] > title.bottom &&
+      (procedureTitle
+        ? procedureCaptionLines?.length === 2 &&
+          procedureCaptionLines[0].text === title.text &&
+          procedureCaptionLines[1].text.trim().length > 0 &&
+          same[1][1] - procedureCaptionLines[1].bottom < title.fontSize
+        : same[1][1] - title.bottom < title.fontSize) &&
+      same[2][1] - same[1][1] > title.fontSize * 5
+    )
+      frames.push(same)
+  }
+  if (frames.length !== 1) return
+  const [top, divider, bottom] = frames[0],
+    procedureCaptionLines = procedureTitle
+      ? lines.filter(
+          (line) =>
+            line.y >= title.y - title.fontSize * 0.1 &&
+            line.bottom < divider[1] &&
+            line.x >= top[0] - 1e-6 &&
+            line.x < top[2]
+        )
+      : undefined,
+    frame = [top[0], top[1], top[2], bottom[1]],
+    captionFrame = [balancedTitle ? Math.min(top[0], title.x) : top[0], top[1], top[2], divider[1]],
+    bodyFrame = [top[0], divider[1], top[2], bottom[1]],
+    tokens = raw.filter((r) => r.str?.trim()).map((r) => tableTextToken(r, v, 0)),
+    positive = new Set(tokens.filter((t) => valid(t.rect)).map((t) => t.sourceItem.index))
+  if (
+    procedureTitle &&
+    (procedureCaptionLines?.length !== 2 ||
+      procedureCaptionLines[0].text !== title.text ||
+      !procedureCaptionLines[1].text.trim())
+  )
+    return
+  if (!positive.size || positive.size > 4096) return
+  // Zero-advance glyphs remain unclaimed by the public packet. Its complete
+  // foreign ink certificate is checked separately before assigning body ownership.
+  // The balanced family can observe renderer-skipped whitespace only through
+  // the existing exact same-render empty-outline certificate. Nonspace glyphs
+  // and every owned whole advance retain the ordinary packet requirements.
+  const proof = nativePageTextPacketInventory(page, tokens, native, !!balancedTitle, positive)
+  if (!proof) return
+  const selected = proof.records.filter((r) => overlap(r.ink, frame)),
+    caption = selected.filter((r) => inside(captionFrame, r.ink)),
+    body = selected.filter(
+      (r) =>
+        inside(bodyFrame, r.ink) ||
+        (balancedTitle &&
+          r.ink[1] > divider[1] &&
+          r.ink[3] < bottom[1] &&
+          (inside(bodyFrame, r.rect) ||
+            (/^\(Eq\.\s+\([1-9]\d*\)\)$/u.test(r.r.str) &&
+              r.part.length > 1 &&
+              r.part.at(-1).g.ink[0] < top[2] &&
+              r.part.at(-1).g.ink[2] > top[2] &&
+              r.part.slice(0, -1).every((z) => inside(bodyFrame, z.g.ink)) &&
+              selected.some(
+                (other) =>
+                  other !== r &&
+                  inside(bodyFrame, other.ink) &&
+                  Math.abs(other.rect[3] - r.rect[3]) < title.fontSize * 0.02
+              ))))
+    )
+  if (
+    !caption.length ||
+    !body.length ||
+    selected.length !== caption.length + body.length ||
+    selected.some(
+      (r) =>
+        !r.advanceComplete ||
+        !valid(r.ink) ||
+        r.part.some((z) => !valid(z.g.ink) || !visible(z.g.textPaint) || z.g.rendererSkipped) ||
+        r.r.dir !== 'ltr' ||
+        r.r.transform[0] !== r.r.height ||
+        r.r.transform[1] !== 0 ||
+        r.r.transform[2] !== 0 ||
+        r.r.transform[3] !== r.r.height
+    ) ||
+    caption.some((r) => r.r.width <= 0) ||
+    !(
+      procedureTitle
+        ? /^Procedure\s+[1-9]\d*\b/u
+        : balancedTitle
+          ? /^Algorithm\s+[1-9]\d*:\s+\S/u
+          : /^Algorithm\s+[1-9]\d*\b.*\bPseudocode\b/u
+    ).test(caption.map((r) => r.r.str).join(' '))
+  )
+    return
+  if (
+    procedureTitle &&
+    caption
+      .map((record) => record.r.str)
+      .join(' ')
+      .replace(/\s/gu, '') !==
+      procedureCaptionLines
+        .map((line) => line.text)
+        .join(' ')
+        .replace(/\s/gu, '')
+  )
+    return
+  for (const r of body) {
+    if (r.r.width > 0) {
+      if (!valid(r.rect)) return
+      continue
+    }
+    const g = r.part[0]?.g
+    if (
+      r.r.width !== 0 ||
+      r.part.length !== 1 ||
+      r.rect[0] !== r.rect[2] ||
+      r.rect[1] >= r.rect[3] ||
+      g.advance[0] !== g.advance[2] ||
+      g.advance[1] >= g.advance[3] ||
+      g.text !== r.r.str ||
+      g.fontName !== r.r.fontName
+    )
+      return
+  }
+  const bodyIds = new Set(body.map((r) => r.index)),
+    first = body[0].index,
+    last = body.at(-1).index,
+    ordinals = body.filter((r) => /^[1-9]\d*:$/.test(r.r.str))
+  if (
+    caption.some((r) => r.index >= first) ||
+    proof.records.some((r) => r.index >= first && r.index <= last && !bodyIds.has(r.index)) ||
+    (!balancedTitle &&
+      (ordinals.length < 4 ||
+        ordinals.length > 128 ||
+        ordinals[0] !== body[0] ||
+        ordinals.some(
+          (r, i) =>
+            Number(r.r.str.slice(0, -1)) !== i + 1 ||
+            r.r.fontName !== ordinals[0].r.fontName ||
+            r.r.height !== ordinals[0].r.height ||
+            Math.abs(
+              r.rect[2] -
+                (procedureTitle
+                  ? ordinals.find((ordinal) => ordinal.r.str.length === r.r.str.length).rect[2]
+                  : ordinals[0].rect[2])
+            ) >
+              r.r.height * 0.001 ||
+            (i && r.rect[1] <= ordinals[i - 1].rect[3])
+        )))
+  )
+    return
+  if (balancedTitle && !hasBalancedNativeAlgorithmBody(body, title.fontSize, caption[0].r.fontName))
+    return
+  if (procedureTitle && !hasCompleteNativeProcedureBody(body, title.fontSize)) return
+  for (const [i, n] of (balancedTitle ? [] : ordinals).entries()) {
+    const packet = body.filter(
+      (r) => r.index > n.index && (!ordinals[i + 1] || r.index < ordinals[i + 1].index)
+    )
+    if (
+      !packet.length ||
+      packet[0].rect[0] <= n.rect[2] ||
+      Math.abs(packet[0].rect[3] - n.rect[3]) > packet[0].r.height * 0.1 ||
+      packet.some((r) => r.r.width > 0 && r.rect[0] <= n.rect[2])
+    )
+      return
+  }
+  const owners = frames[0].map((rule) =>
+    page.graphicsBounds.filter(
+      (g) =>
+        Number.isSafeInteger(g.operationIndex) &&
+        inside(
+          g.normalizedRect.map((x, i) => x * (i % 2 ? page.height : page.width)),
+          rule
+        )
+    )
+  )
+  if (owners.some((rs) => rs.length !== 1)) return
+  const ids = owners.map((rs) => rs[0].operationIndex),
+    colors = strokeColors(o)
+  if (new Set(ids).size !== 3 || !colors) return
+  for (const [i, id] of ids.entries()) {
+    const a = o.argsArray[id],
+      path = a?.[1]?.[0],
+      state = proof.evidence.paths.get(id),
+      ink = paint.get(frames[0][i].join(','))
+    if (
+      o.fnArray[id] !== OPS.constructPath ||
+      a?.[0] !== OPS.stroke ||
+      a[1]?.length !== 1 ||
+      path?.length !== 6 ||
+      path[0] !== 0 ||
+      path[3] !== 1 ||
+      !state ||
+      state.lineCap !== 0 ||
+      state.solidStroke !== true ||
+      state.strokeAlpha !== 1 ||
+      !valid(ink) ||
+      !valid(state.clip) ||
+      !inside(state.clip, ink) ||
+      !colors.get(id) ||
+      colors.get(id).toLowerCase() === '#ffffff'
+    )
+      return
+    const removed = { fnArray: [...o.fnArray], argsArray: [...o.argsArray] }
+    removed.fnArray[id] = OPS.dependency
+    removed.argsArray[id] = []
+    if (collectTableRules(removed, v).some((r) => eq(r, frames[0][i]))) return
+  }
+  const rect = union([
+      frame,
+      ...selected.map((r) => r.ink),
+      ...frames[0].map((r) => paint.get(r.join(',')))
+    ]),
+    ownedGlyphs = new Set(selected.flatMap((r) => r.part.map((z) => z.g))),
+    foreignGlyphs = proof.glyphs
+      .filter((g) => !ownedGlyphs.has(g) && valid(g.ink))
+      .map((g) => g.ink),
+    foreignProof = {
+      ...proof,
+      records: [],
+      evidence: {
+        ...proof.evidence,
+        paths: new Map([...proof.evidence.paths].filter(([id]) => !ids.includes(id)))
+      }
+    },
+    foreign = nativeRasterForeignPaints(foreignProof, page, [], [], context, [])
+  if (
+    !foreign ||
+    !inside([0, 0, page.width, page.height], rect) ||
+    foreignGlyphs.some((r) => overlap(r, rect)) ||
+    foreign.some((p) => !valid(p.rect) || overlap(p.rect, rect))
+  )
+    return
+  return {
+    rect,
+    caption: {
+      page: page.pageNumber,
+      rect: union(caption.map((r) => r.ink)),
+      lines: procedureTitle ? procedureCaptionLines.map((line) => line.text) : [title.text]
+    },
+    nativeBody: { kind: 'algorithm', sourceItems: body.map((r) => ({ ...r.r.sourceItem })) },
+    scopedGlyphProof: {
+      foreignGlyphs,
+      foreignPaint: foreign.map((p) => ({ rect: p.rect, floor: p.floor }))
+    }
+  }
+}
+
 export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
   const proof = candidate?.scopedGlyphProof,
     raster = getPdfCropRasterProtectionFromPng(png, candidate?.rect, page)
@@ -2662,6 +3180,194 @@ export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
   )
 }
 
+// Outdented, unpunctuated ordinals need their own complete I/O frame and native
+// conditional scope strokes. Neither a numbered prose list nor a title alone
+// authorizes borrowing the gutter or the figure immediately below it.
+function framedOutdentedConditionals(page, title, titles, context) {
+  const inventory = nativeInventory(page, context),
+    h = title.fontSize
+  if (
+    !inventory?.length ||
+    inventory.some((t) => !t.valid || !t.horizontal) ||
+    !Array.isArray(context.operators?.fnArray) ||
+    !Array.isArray(context.operators.argsArray)
+  )
+    return []
+  const paint = new Map(),
+    rules = collectTableRules(context.operators, context.viewport, paint)
+  const tops = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[2] - r[0] > page.width * 0.5 &&
+      Math.abs(r[1] - title.y) < h &&
+      title.x >= r[0] - h * 0.1 &&
+      title.right <= r[2]
+  )
+  if (tops.length !== 1) return []
+  const top = tops[0],
+    frame = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+  if (frame.length !== 3 || frame.some((r) => !valid(paint.get(r.join(','))))) return []
+  const [, divider, bottom] = frame
+  if (divider[1] <= title.bottom || divider[1] - title.bottom > h || bottom[1] - divider[1] < h * 5)
+    return []
+  const body = inventory.filter(
+      (t) =>
+        t.baseline > divider[1] &&
+        t.rect[1] < bottom[1] &&
+        t.rect[0] >= top[0] - h * 2 &&
+        t.rect[2] <= top[2]
+    ),
+    markers = body.filter((t) => /^[1-9]\d*$/u.test(t.text) && t.rect[2] < top[0]),
+    font = (t) => context.content.items[t.sourceItem.index].fontName
+  if (
+    body.some(
+      (t) => t.rect[3] >= bottom[1] || t.labelRect[3] >= bottom[1] || t.labelRect[1] <= divider[1]
+    )
+  )
+    return []
+  if (
+    markers.length < 4 ||
+    markers.length > 128 ||
+    markers.some(
+      (t, i) =>
+        Number(t.text) !== i + 1 ||
+        font(t) !== font(markers[0]) ||
+        t.height !== markers[0].height ||
+        Math.abs(t.rect[2] - markers[0].rect[2]) > t.height * 0.1 ||
+        (i && t.rect[1] <= markers[i - 1].rect[3])
+    )
+  )
+    return []
+  const prefix = body.filter((t) => t.sourceItem.index < markers[0].sourceItem.index),
+    inputs = prefix.filter((t) => t.text === 'Input:'),
+    outputs = prefix.filter((t) => t.text === 'Output:')
+  if (
+    inputs.length !== 1 ||
+    outputs.length !== 1 ||
+    prefix[0] !== inputs[0] ||
+    inputs[0].baseline >= outputs[0].baseline ||
+    outputs[0].baseline >= markers[0].baseline ||
+    [inputs[0], outputs[0]].some(
+      (anchor) =>
+        !prefix.some(
+          (t) =>
+            t !== anchor &&
+            t.sourceItem.index > anchor.sourceItem.index &&
+            t.rect[0] >= anchor.rect[2] &&
+            Math.abs(t.baseline - anchor.baseline) < anchor.height * 0.02 &&
+            /[\p{L}\p{N}]/u.test(t.text)
+        )
+    ) ||
+    prefix.some((t) => t.rect[0] < top[0] || t.baseline >= markers[0].baseline)
+  )
+    return []
+  const em = inputs[0].height,
+    comments = body.filter(
+      (t) =>
+        /^\/\/\s+\S/u.test(t.text) &&
+        t.height === em &&
+        t.rect[0] >= top[0] - em * 0.1 &&
+        markers.some(
+          (m, i) => markers[i + 1] && t.rect[1] > m.baseline && t.rect[3] < markers[i + 1].rect[1]
+        ) &&
+        body.filter((other) => Math.abs(other.baseline - t.baseline) < em * 0.3).length === 1
+    ),
+    rows = markers.map((marker, i) => {
+      const items = body.filter(
+        (t) =>
+          t.sourceItem.index > marker.sourceItem.index &&
+          t.sourceItem.index < (markers[i + 1]?.sourceItem.index ?? Infinity) &&
+          !comments.includes(t)
+      )
+      return { marker, items, first: items[0], text: items.map((t) => t.text).join(' ') }
+    })
+  if (
+    rows.some(
+      ({ marker, items, first }) =>
+        !first ||
+        first.rect[0] < top[0] - 0.02 ||
+        Math.abs(first.baseline - marker.baseline) > em * 0.02 ||
+        items.some(
+          (t) => t.rect[0] < top[0] - 0.02 || Math.abs(t.baseline - marker.baseline) > em * 0.3
+        )
+    )
+  )
+    return []
+  const controls = rows.filter((r) => /^if\b.+\bthen\s*$/iu.test(r.text)),
+    vertical = rules.filter(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > top[0] &&
+        r[0] < top[0] + em * 2 &&
+        r[1] > divider[1] &&
+        r[3] < bottom[1]
+    ),
+    caps = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[0] > top[0] &&
+        r[2] < top[0] + em * 3 &&
+        r[1] > divider[1] &&
+        r[1] < bottom[1]
+    )
+  if (
+    controls.length < 2 ||
+    vertical.length !== controls.length ||
+    caps.length !== controls.length ||
+    !rows.some((r) => /^return\b/iu.test(r.text)) ||
+    rows.some((r) => /^(?:(?:for|while)\b.+\bdo\s*$|(?:else|end)\b)/iu.test(r.text))
+  )
+    return []
+  const owned = [...frame]
+  for (const row of controls) {
+    const matches = vertical.filter(
+      (r) =>
+        r[0] > row.first.rect[0] &&
+        r[0] - row.first.rect[0] < em &&
+        r[1] > row.marker.baseline &&
+        r[1] - row.marker.baseline < em * 0.5
+    )
+    if (matches.length !== 1) return []
+    const rule = matches[0],
+      ends = caps.filter(
+        (r) =>
+          Math.abs(r[0] - rule[0]) < em * 0.05 &&
+          Math.abs(r[1] - rule[3]) < em * 0.05 &&
+          r[2] - r[0] > em * 0.2
+      ),
+      nested = rows.filter((r) => r.marker.baseline > rule[1] && r.marker.baseline < rule[3])
+    if (
+      ends.length !== 1 ||
+      !nested.length ||
+      nested.some((r) => r.first.rect[0] <= rule[0]) ||
+      rule[3] - nested.at(-1).marker.baseline > em * 0.5
+    )
+      return []
+    owned.push(rule, ends[0])
+  }
+  if (new Set(owned).size !== owned.length || owned.some((r) => !valid(paint.get(r.join(',')))))
+    return []
+  const caption = inventory.filter((t) => inside(box(title), t.rect)),
+    rect = union([
+      ...owned.map((r) => paint.get(r.join(','))),
+      ...caption.concat(body).flatMap((t) => [t.rect, t.labelRect])
+    ])
+  if (
+    !caption.length ||
+    !inside([0, 0, page.width, page.height], rect) ||
+    titles.some((t) => t !== title && overlap(box(t), rect)) ||
+    inventory.some((t) => !caption.includes(t) && !body.includes(t) && overlap(t.rect, rect)) ||
+    rules.some(
+      (r) =>
+        !owned.includes(r) && overlap([r[0] - 0.01, r[1] - 0.01, r[2] + 0.01, r[3] + 0.01], rect)
+    )
+  )
+    return []
+  return [{ rect, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }]
+}
+
 export function findNativeAlgorithmCandidates(page, context = {}) {
   const { rules = [] } = context,
     old = findAlgorithmCandidates(page, rules)
@@ -2678,12 +3384,14 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
     closedNumberedFrame(page, candidate, lines, rules, context) ||
     nativeIndentedNumberedFrame(page, candidate, context)
       ? (proveNativeAlgorithmBody(page, candidate, context) ?? candidate)
-      : candidate
+      : (wrappedNumberedFrame(page, candidate, lines, context) ?? candidate)
   )
   for (const title of titles) {
     for (const c of [
+      ...framedIndentedOrdinals(page, title, titles, rules, context),
       ...framedSteps(page, title, titles, rules, context),
       ...framedNumberedInput(page, title, titles, rules, context),
+      ...framedOutdentedConditionals(page, title, titles, context),
       ...framedLoop(page, title, titles, lines, rules, context),
       ...numberedScope(page, title, titles, lines, rules, context)
     ]) {
@@ -2700,5 +3408,19 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
   const closedScope = nativeClosedScopeLoops(page, context)
   if (closedScope && !result.some((other) => overlap(other.rect, closedScope.rect)))
     result.push(closedScope)
+  const numberedFrame = nativeNumberedPseudocodeFrame(page, context)
+  if (numberedFrame && !result.some((other) => overlap(other.rect, numberedFrame.rect)))
+    result.push(numberedFrame)
+  for (const title of titles) {
+    const balanced = nativeNumberedPseudocodeFrame(page, context, title)
+    if (balanced && !result.some((other) => overlap(other.rect, balanced.rect)))
+      result.push(balanced)
+  }
+  const procedureTitles = lines.filter((line) => /^Procedure\s+[1-9]\d*\b/u.test(line.text))
+  for (const title of procedureTitles) {
+    const procedure = nativeNumberedPseudocodeFrame(page, context, undefined, title)
+    if (procedure && !result.some((other) => overlap(other.rect, procedure.rect)))
+      result.push(procedure)
+  }
   return result
 }

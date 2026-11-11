@@ -5,6 +5,16 @@ import { describe, expect, it } from 'vitest'
 import { buildStartupDiagnostics } from './startup-error'
 
 describe('buildStartupDiagnostics', () => {
+  it('redacts roots with long internal separator runs and mixed trailing separators', () => {
+    const root = `/data/${'/'.repeat(4_000)}project`
+    const result = buildStartupDiagnostics(new Error('failed'), {
+      dataRoot: `${root}/\\/`,
+      home: '/users/test'
+    })
+    expect(result).toContain('failed')
+    expect(result).not.toContain(root)
+  })
+
   it('includes the error name, message, and stack frames', () => {
     const error = new Error('database is locked')
     error.stack = 'Error: database is locked\n    at open (/app/dist/main.js:10:5)'

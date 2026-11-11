@@ -166,7 +166,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
     )
     expect(onRespond).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('Allow data.example.org globally?')
+    expect(document.body.textContent).toContain('Allow https://data.example.org:443 globally?')
     expect(document.body.textContent).toContain('Settings → Network → Notebook network access')
     act(() =>
       document.body

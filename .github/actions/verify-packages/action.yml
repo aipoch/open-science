@@ -4,6 +4,9 @@ inputs:
   selection:
     description: ci for trusted selection, all, or comma-separated independent package names
     default: all
+  source-tests:
+    description: Run isolated source suites in addition to installed consumers
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -14,6 +17,7 @@ runs:
       shell: bash
       env:
         PACKAGE_SELECTION: ${{ inputs.selection }}
+        SOURCE_TESTS: ${{ inputs.source-tests }}
       run: |
         set -euo pipefail
         args=()
@@ -21,6 +25,11 @@ runs:
           ci) args+=(--ci) ;;
           all) ;;
           *) args+=("--packages=$PACKAGE_SELECTION") ;;
+        esac
+        case "$SOURCE_TESTS" in
+          true) ;;
+          false) args+=(--skip-tests) ;;
+          *) echo "Invalid source-tests input: $SOURCE_TESTS" >&2; exit 1 ;;
         esac
         npm run check:packages -- "${args[@]}"
     - name: Upload package verification timings

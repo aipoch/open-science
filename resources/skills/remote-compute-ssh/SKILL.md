@@ -1,6 +1,6 @@
 ---
 name: remote-compute-ssh
-description: Evaluate and use SSH Remote Compute before choosing where to run GPU, high-memory, parallel, batch, model-inference, bioinformatics, or other long-running scientific work; supports short remote commands and asynchronous jobs with automatic harvest and analysis.
+description: Evaluate and use Remote Compute before choosing where to run GPU, high-memory, parallel, batch, model-inference, bioinformatics, or other long-running scientific work; supports short remote commands and asynchronous jobs with automatic harvest and analysis.
 license: Apache-2.0
 ---
 
@@ -15,13 +15,50 @@ every example below with the `repl_execute` tool (JavaScript), the same kernel t
 `host.mcp`. The `python`/`r` data kernels have NO `host.compute` (SSH and approvals stay outside
 the sandbox workspace); calling it from a python/r cell will fail with `host.compute is undefined`.
 
+## External compute targets
+
+Use the execution mode returned by `host.compute.listHosts()` to select the file layout and launch options. Each external job requires its own approval, including the bound target, resource request and frozen inputs. SSH-only remote paths and named SSH environments do not apply.
+
+- `kubernetes`: The user configures the context, namespace, workload image and transfer image. The command runs in `/workspace`, where frozen inputs appear under their `dstFilename`. The app collects outputs from the job volume.
+- `hugging_face_jobs`: The target supplies the billing namespace, flavor and image. Inputs are mounted read-only at `/inputs/<dstFilename>`. The command starts in `/outputs`. Declare the output globs there. After verified publication the app cleans the job's bucket prefix.
+- `ray_jobs`: The driver starts in the uploaded working directory with each frozen input available by its `dstFilename`. Write output files under `$RAY_JOB_OUTPUT_DIR` and declare globs relative to that directory. Originals stay on the shared filesystem after collection.
+
+## Modal Sandboxes
+
+When a selected target has `execution_mode` equal to `modal_sandbox`, use `submitJob` and `attachJob`. The host authenticates with its local Modal profile or token and submits to the approved App and environment. The target selects the image, CPU, memory and GPU requests. Approval is required for each submission before any remote upload or Sandbox creation.
+
+The host needs Python with `modal==1.6.3` and a configured Modal identity. Set `OPEN_SCIENCE_MODAL_PYTHON` to the absolute path of the virtual environment’s Python interpreter if needed. The named App must already exist in the configured Modal environment. The workload image needs `/bin/sh`, `cp`, `mkdir`, `mktemp`, `find`, `sha256sum`, and `mv`.
+
+The command starts with the frozen uploads in its working directory under their `dstFilename` names. Write results under `$MODAL_JOB_OUTPUT_DIR` and declare globs relative to that directory. An empty declaration archives no files. After verified publication, deleting the job volume also deletes undeclared scratch files. Incomplete collection retains the volume for recovery. If termination interrupts the final checksum inventory, inspect the retained volume in Modal.
+
+```javascript
+const target = (await host.compute.listHosts()).find(
+  (entry) => entry.execution_mode === 'modal_sandbox' && entry.role === 'selected'
+)
+if (target) {
+  const c = host.compute.create(target.provider_id)
+  const job = await c.submitJob(
+    'Copy an input',
+    'cp table.csv "$MODAL_JOB_OUTPUT_DIR/result.csv"',
+    {
+      inputs: [{ src: 'table.csv', dstFilename: 'table.csv' }],
+      outputs: ['result.csv']
+    }
+  )
+  console.log(job.job_id)
+}
+```
+
 ## Choose an execution location
 
 Only Compute Hosts enabled for this Session are visible or callable. Discover them in one catalog;
 each entry has role `selected` or `available`. A non-empty selected pool is an execution instruction:
 run tool-backed task work on one or more selected hosts as the task requires. The pool has no
 priority and does not imply automatic multi-host scheduling. If no host is selected, choose from the
-available entries. Read `details()` only for candidates that need closer evaluation.
+available entries. For `direct_ssh` and `slurm`, read `details()` when you need saved instructions
+or the last resource probe. For Kubernetes, Hugging Face, Ray, and Modal, create a handle with
+`host.compute.create(provider_id)` and use `submitJob()` to start a job or `attachJob()` to resume
+tracking an existing job.
 
 Never guess or reuse a provider id absent from the catalog. A user naming a disabled host does not
 make it callable; explain that it must first be enabled for this Session. If no eligible host is
@@ -169,8 +206,11 @@ if (!snapshot.result_final) {
 return snapshot
 ```
 
-Treat only `result_final: true` as the final result; a provider-terminal status can still be waiting
-for local harvest. The app owns provider polling and harvest in the background. An unread final
+Treat only `result_final: true` as the final result. It means the automatic response is ready:
+`success`, `failed`, and `timeout` can still be waiting for local harvest, while `cancelled` and
+`error` are final without waiting for partial output collection. `output_files` contains only files
+actually available locally; an empty list does not prove there are no remote outputs.
+The app owns provider polling and harvest in the background. An unread final
 result is delivered in a later Agent Turn. A final `.result()` snapshot reports
 `follow_up_delivery: 'suppressed'` when it suppresses that fallback, or `committed` if automatic
 delivery already won the race and remains authoritative. `.status()` never consumes the full result.
@@ -182,6 +222,11 @@ the command as a detached process on the SSH target. `slurm` submits it with `sb
 cluster's required `#SBATCH` directives at the top of `command`. Open-Science owns submission,
 scheduler-status polling, cancellation, and harvest. Do not call `sbatch`, `squeue`, or `scancel`
 around `submitJob` yourself.
+
+For a Slurm status error or failed cancellation, read
+[Slurm troubleshooting](references/slurm-troubleshooting.md). In that exceptional path,
+`compute.callCommand` can inspect the same job and its outputs and perform recovery within the
+user's existing task authorization. Keep ordinary submission on the Compute API.
 
 Read `listHosts()` for the configured mode and `details()` for provider-specific directives; do not
 try to override the mode per job or infer it only from the workload. If Slurm is unavailable or
@@ -202,7 +247,7 @@ does not allocate CPUs, memory, or GPUs. `timeoutSeconds` limits workload runtim
 `#SBATCH --time` sets the scheduler allocation limit. Neither is a promise of queue start time.
 
 The non-blocking job `status()` and `result()` snapshots include `scheduler_job_id` when known,
-`error_code` on failure, and `last_poll_error` when observation or submission recovery needs
+`error: { code, message }` on a job-level error, and `last_poll_error` when observation or submission recovery needs
 attention. A pending reason or delayed accounting row does not mean the workload failed. If a
 submission is unconfirmed, use the reported job identity and provider diagnostics before deciding
 whether to submit again; Open-Science does not automatically submit a duplicate.
@@ -240,33 +285,53 @@ retry. Do not guess a conda name, add an inline install to the science job, or h
 const handle = c.attachJob(job.job_id)
 const s = await handle.status()
 // s → {
-//   job_id, scheduler_job_id?, status, result_final, cancellation_status?, exit_code,
-//   error_code?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir,
+//   job_id, scheduler_job_id?, status, result_final, cancellation?, exit_code,
+//   error?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir,
 //   follow_up_delivery: 'pending'
 // }
-// status: 'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
-// result_final is the authority for whether local harvest is complete; status alone is not.
+// status: 'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'cancelled' | 'error'
+// result_final means the automatic response is ready; partial outputs may still be remote.
+// error: { code, message }
+// cancellation: { status: 'cancelling' } or { status: 'failed', error: { code, message } }
 ```
 
 To stop one active job, request durable cancellation through the same handle:
 
 ```javascript
-await c.attachJob(job.job_id).cancel()
-// cancellation_status is 'cancelling' until owned remote termination is confirmed,
-// then 'cancelled'. Repeating cancel() is safe.
+const cancellation = await c.attachJob(job.job_id).cancel()
+// While pending: cancellation.cancellation.status === 'cancelling'.
+// Completed: cancellation.status === 'cancelled', result_final === true.
+// Failed attempt: cancellation.cancellation.status === 'failed'; inspect its error.
+// An explicit cancel() on a still-active job can retry a failed cancellation.
 ```
+
+Cancellation failure ends that cancellation attempt, not the computation: a snapshot can have
+`status: 'running'`, `result_final: false`, and `cancellation: { status: 'failed', error: ... }`.
+Its operation-failure notification is separate from the job's later final-result notification.
+`error.code`/`error.message` describe the task problem; `cancellation.error.code`/
+`cancellation.error.message` describe cancellation failure. A cancelled snapshot has only top-level
+`status: 'cancelled'`, without a duplicate cancellation object or job error.
+
+After final `error` or `cancelled`, end waiting rather than repeatedly calling status or cancel.
+An `error` reports an application processing problem and does not prove the remote process stopped.
+Empty scheduler queries and a name-filtered `ps` check do not establish remote termination. Output
+files establish the bytes recovered, not the job's exit code; keep those conclusions separate.
+Retain `job_id`, `scheduler_job_id`, and `remote_workdir` for diagnosis. When useful output remains,
+inspect it before choosing a rerun based on command idempotency, compute cost, remote state, and
+the user's goal. See the troubleshooting reference for concrete checks.
 
 ### submitJob status values
 
-| status      | meaning                                                               |
-| ----------- | --------------------------------------------------------------------- |
-| `queued`    | waiting for a Session concurrency slot                                |
-| `submitted` | accepted; direct dispatch or Slurm queue observation is in progress   |
-| `running`   | direct process or Slurm allocation observed running                   |
-| `success`   | exit code 0                                                           |
-| `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`) |
-| `timeout`   | exceeded `timeoutSeconds`                                             |
-| `error`     | dispatch or setup failed before a tracked workload started            |
+| status      | meaning                                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------- |
+| `queued`    | waiting for a Session concurrency slot                                                                   |
+| `submitted` | accepted; direct dispatch or Slurm queue observation is in progress                                      |
+| `running`   | direct process or Slurm allocation observed running                                                      |
+| `success`   | exit code 0                                                                                              |
+| `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`)                                    |
+| `timeout`   | exceeded `timeoutSeconds`                                                                                |
+| `cancelled` | cancellation completed; partial output collection may be incomplete                                      |
+| `error`     | application could not complete processing, including unavailable final status; remote work may still run |
 
 ## Workflow: the analysis turn
 
@@ -335,11 +400,13 @@ artifact panel with provenance tied to the compute execution and this analysis t
 
 ### When the job fails
 
-Read `r.exit_code` and `r.stderr_tail`. An infrastructure failure (wrong partition, env not
-activated, missing module, OOM, walltime) is yours to fix — adjust `command`, record the fix,
-fresh `c.submitJob()`. A harvest failure (`r.stderr_tail` notes it, `r.remote_workdir` is
-preserved) means some files were not downloaded — the remote workdir is kept so you can
-`c.callCommand('ls ...', intent='...')` to inspect what's there.
+Read `r.error`, `r.exit_code`, and `r.stderr_tail` to identify the failing layer. A confirmed
+computation failure can call for corrected resources, environment, or command and a fresh
+`c.submitJob()`. For `job_status_unavailable`, inspect the scheduler and outputs before deciding
+whether a rerun is appropriate; the application has ended automatic tracking without proving
+remote termination. A harvest failure (`r.harvest_error`) leaves `r.remote_workdir` available for
+inspection through `c.callCommand(command, intent)`. Do not replace useful existing outputs merely
+because collection or tracking failed.
 
 ## Chaining jobs via left_on_remote
 
@@ -431,7 +498,7 @@ try {
 }
 ```
 
-## Typical first-contact workflow
+## First contact with an SSH or Slurm host
 
 1. `await host.compute.details(provider_id, { mode: 'read' })` — read saved operation instructions
    from `doc` and inspect the separate, dated `probe` observation. An empty `doc` means no

@@ -603,7 +603,7 @@ describe('ArtifactProvenancePanel', () => {
     )
   })
 
-  it('truncates the inline kernel warning and exposes the full reason on hover', async () => {
+  it('shows the full version-specific warning and advice without hover', async () => {
     act(() => root.unmount())
     getCodeReconstruction.mockResolvedValue({
       state: 'unavailable',
@@ -618,30 +618,91 @@ describe('ArtifactProvenancePanel', () => {
       p.textContent?.includes('Failed or interrupted cells')
     )
     expect(reason?.textContent).toContain('may have changed kernel state before stopping')
-    expect(reason?.className).toContain('truncate')
-    expect(reason?.className).toContain('text-xs')
-    expect(reason?.className).toContain('leading-5')
-    const notice = reason?.closest('[role="status"]')
-    expect(notice?.hasAttribute('title')).toBe(false)
-    expect(notice?.getAttribute('tabindex')).toBe('0')
-    expect(notice?.className).toContain('text-status-warning-foreground')
-    expect(notice?.className).toContain('dark:text-status-warning-dark-foreground')
-    expect(notice?.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    const notice = reason?.closest('[data-notice-level="warning"]')
+    expect(notice?.textContent).toContain('v1')
+    expect(notice?.textContent).toContain('Run the producing task again')
+    expect(notice?.querySelector('.truncate')).toBeNull()
     const generate = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Generate script'
     )
     expect(generate?.disabled).toBe(true)
-    expect(generate?.getAttribute('data-variant')).toBe('outline')
-    expect(generate?.parentElement?.className).not.toContain('flex-col')
-    expect(notice?.parentElement).toBe(generate?.parentElement)
-    vi.useFakeTimers()
-    await act(async () => notice?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true })))
-    await act(async () => vi.advanceTimersByTime(100))
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason?.textContent)
-    await act(async () => notice?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true })))
-    vi.useRealTimers()
+    expect(notice?.parentElement).not.toBe(generate?.parentElement)
     expect(container.textContent).not.toContain('Download script')
     expect(generateCodeReconstruction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['script-not-applicable', 'info', 'Script reconstruction is not applicable to v1'],
+    ['execution-unavailable', 'warning', 'Execution evidence is incomplete for v1'],
+    ['record-invalid', 'error', 'Record validation failed for v1']
+  ] as const)('classifies %s and disables script generation', async (reason, level, title) => {
+    act(() => root.unmount())
+    getCodeReconstruction.mockResolvedValue({ state: 'unavailable', reason })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    expect(container.querySelector(`[data-notice-level="${level}"]`)?.textContent).toContain(title)
+    if (reason !== 'execution-unavailable') {
+      expect(container.querySelector(`[data-notice-level="${level}"] details`)).toBeNull()
+    }
+    expect(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Generate script'
+      )?.disabled
+    ).toBe(true)
+    expect(generateCodeReconstruction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'execution-unavailable',
+      'The file content was published directly, without a Notebook execution.'
+    ],
+    [
+      'producer-unavailable',
+      'An existing file was republished without linking the run that originally created it.'
+    ],
+    [
+      'producer-script-missing',
+      'A result was published from a run whose script text was empty or unavailable.'
+    ],
+    [
+      'helper-evidence-incomplete',
+      'The producing code imported helper files whose source could not be captured completely.'
+    ],
+    [
+      'supporting-code-incomplete',
+      'A cell failed or was interrupted after changing Notebook state, or the retained code was truncated.'
+    ]
+  ] as const)('shows collapsed, evidence-specific scenarios for %s', async (reason, scenario) => {
+    act(() => root.unmount())
+    getCodeReconstruction.mockResolvedValue({ state: 'unavailable', reason })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    const notice = container.querySelector('[data-notice-level="warning"]')!
+    const details = notice.querySelector('details')!
+    expect(details).not.toBeNull()
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')?.textContent).toContain(
+      'Details and possible scenarios'
+    )
+    expect(details.textContent).toContain('Confirmed finding')
+    expect(details.textContent).toContain('Possible scenarios (not confirmed for this version)')
+    expect(details.textContent).toContain(scenario)
+    expect(details.textContent).toContain('What to do')
+    if (reason !== 'supporting-code-incomplete') {
+      expect(details.textContent).not.toContain('A cell failed or was interrupted')
+    }
+    expect(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Generate script'
+      )?.disabled
+    ).toBe(true)
   })
 
   it('retains generation after an incomplete model response and offers download only after retry succeeds', async () => {
@@ -836,8 +897,20 @@ describe('ArtifactProvenancePanel', () => {
         root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
       )
       await flush()
+      expect(container.textContent).toContain('Artifact content is unavailable for v1')
+      expect(container.textContent).not.toContain('Record validation failed')
+      expect(container.textContent).not.toContain('Do not use its records')
+      expect(
+        container.querySelector(
+          `[data-notice-level="${reason === 'missing' ? 'warning' : 'error'}"]`
+        )
+      ).not.toBeNull()
+      const generate = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Generate script'
+      )!
+      expect(generate.disabled).toBe(true)
       expect(container.textContent).toContain(
-        `Artifact content is ${reason}; captured provenance remains available.`
+        'Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.'
       )
       const diagnostics = [...container.querySelectorAll('button')].find(
         (button) => button.textContent?.trim() === 'View diagnostics'
@@ -1033,7 +1106,7 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open-Science')
+    expect(container.textContent).toContain('Manually edited in Open-Science')
     expect(container.textContent).toContain('Frozen edited reference')
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1)
     expect(getVersionProvenance).not.toHaveBeenCalled()
@@ -1106,9 +1179,14 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open-Science')
+    expect(container.textContent).toContain('Manually edited in Open-Science')
+    expect(container.querySelector('[data-notice-level="info"]')?.textContent).toContain(
+      'v2 contains manual edits'
+    )
     expect(container.textContent).toContain('View source provenance · v1')
-    expect(container.textContent).toContain('This edited version has no new agent execution.')
+    expect(container.textContent).toContain(
+      'This version contains manual edits with no corresponding agent execution record, so script reconstruction is unavailable for this version.'
+    )
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(getVersionProvenance).not.toHaveBeenCalled()
     expect(getCodeReconstruction).not.toHaveBeenCalledWith(
@@ -1194,7 +1272,7 @@ describe('ArtifactProvenancePanel', () => {
     expect(onVersionChange).toHaveBeenCalledWith(
       expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
     )
-    expect(container.textContent).toContain('Edited in Open-Science')
+    expect(container.textContent).toContain('Manually edited in Open-Science')
     expect(container.textContent).toContain('View source provenance · v1')
   })
 

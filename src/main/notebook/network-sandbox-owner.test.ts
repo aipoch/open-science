@@ -4,13 +4,25 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { promisify } from 'node:util'
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import { flushLogs, initLogger, type Logger } from '@aipoch/diagnostics/node'
 import type {
   NotebookSandboxCleanupReason,
@@ -22,9 +34,12 @@ const backend = vi.hoisted(() => ({
   request: undefined as
     | ((request: {
         host: string
+        protocol?: 'http' | 'https'
         port?: number
         purpose?: 'probe' | 'block'
         canResume?: () => boolean
+        addresses?: readonly string[]
+        policyAllowed?: boolean
       }) => Promise<boolean>)
     | undefined,
   initialize: vi.fn().mockResolvedValue(undefined),
@@ -64,7 +79,8 @@ vi.mock('@aipoch/environment', async (importOriginal) => ({
   rKernelProtocolProbe: backend.rKernelProtocolProbe
 }))
 
-vi.mock('@aipoch/notebook-network-sandbox', () => ({
+vi.mock('@aipoch/notebook-network-sandbox', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/notebook-network-sandbox')>()),
   NotebookNetworkSandbox: class {
     status = backend.status
     initialize = backend.initialize
@@ -80,8 +96,15 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
   }
 }))
 
-import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
+import {
+  NotebookNetworkSandboxOwner,
+  commandLine,
+  runRAccessProbe,
+  type NotebookNetworkDecision
+} from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import { WindowsRuntimeComponentStore } from './windows-runtime-components'
+import { NotebookRuntimeService } from './runtime-service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
@@ -93,6 +116,11 @@ import {
 } from '../storage/migration-state'
 
 const fixtureDirectories: string[] = []
+// A fallback test needs an actually whitespace-free parent, including on hosts whose TEMP
+// contains the reported username pattern. Do not manufacture a candidate under that TEMP.
+const rTemporaryTestParent = [join(process.cwd(), '.cache'), tmpdir()].find(
+  (path) => !/\s/u.test(path)
+)
 let diagnosticLogRoot: string | undefined
 afterAll(async () => {
   await flushLogs()
@@ -143,7 +171,10 @@ beforeEach(() => {
       onNetworkAccessRequest: (request: {
         host: string
         port?: number
+        protocol?: 'http' | 'https'
         purpose?: 'probe' | 'block'
+        addresses?: readonly string[]
+        policyAllowed?: boolean
         signal: AbortSignal
       }) => Promise<boolean>
     }) => {
@@ -166,9 +197,12 @@ beforeEach(() => {
           ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      backend.request = ({ host, port, purpose, canResume }) =>
+      backend.request = ({ host, port, protocol, purpose, canResume, addresses, policyAllowed }) =>
         command.onNetworkAccessRequest({
           host,
+          protocol,
+          addresses,
+          policyAllowed,
           purpose,
           ...(canResume ? { canResume } : {}),
           ...(port === undefined ? {} : { port }),
@@ -202,6 +236,425 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each([
+    { visitSettings: false, background: false, failure: undefined },
+    { visitSettings: true, background: false, failure: undefined },
+    { visitSettings: false, background: true, failure: undefined },
+    { visitSettings: true, background: false, failure: 'mode-change' },
+    { visitSettings: true, background: true, failure: 'mode-change' },
+    { visitSettings: false, background: false, failure: 'components' }
+  ])(
+    'admits a protected PowerShell query after restart (Settings visited: $visitSettings, background: $background, failure: $failure)',
+    async ({ visitSettings, background, failure }) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-cold-shell-'))
+      fixtureDirectories.push(root)
+      const select = vi
+        .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
+        .mockImplementation(async (releases, request) => ({
+          release: releases.find(
+            (release) => release.component === request.component && release.source === 'patched'
+          )!,
+          root,
+          executable: join(root, request.component === 'node' ? 'node.exe' : 'pwsh.exe')
+        }))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project',
+        platform: 'win32',
+        processSandbox: owner,
+        shellBackgroundExecutionEnabled: true,
+        shellRuntimeBinding: { kind: 'powershell', version: '7.6' }
+      })
+      // The component store models an already-installed verified runtime. Stop at the existing
+      // native launch boundary, without changing machine protection or running a fixture binary.
+      backend.wrap.mockRejectedValue(new Error('fixture reached native launch'))
+      try {
+        if (visitSettings) await owner.status()
+        if (failure === 'mode-change')
+          backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+        if (failure === 'components')
+          select.mockRejectedValueOnce(new Error('Protected components missing'))
+        const expectedError =
+          failure === 'mode-change'
+            ? 'Notebook protection changed. Retry in the same conversation after the Shell capability refresh completes.'
+            : failure === 'components'
+              ? 'Protected components missing'
+              : 'fixture reached native launch'
+        const request = {
+          sessionId: 'cold-shell',
+          executionInvocationId: 'shell-query',
+          workspaceCwd: root,
+          command: '$PSVersionTable.PSVersion.ToString()'
+        }
+        if (background) {
+          const receipt = await service.executeShellBackground(request)
+          await service.waitForBackgroundRun(receipt.runId)
+          const result = await service.getBackgroundRun({ ...request, runId: receipt.runId })
+          expect(result.run.text.stderr).toBe(expectedError)
+        } else {
+          const result = await service.executeShell(request)
+          expect(result.stderr).toBe(expectedError)
+          if (failure)
+            expect(result).toMatchObject({
+              runtimeStatus: 'unavailable',
+              errorCode: 'shell-runtime-unavailable',
+              recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+            })
+        }
+        if (failure) {
+          const state = await service.state(request)
+          expect(state.runs).toHaveLength(1)
+          expect(state.runs[0]).toMatchObject({
+            status: 'failed',
+            text: { stderr: expectedError },
+            shellRuntimeStatus: 'unavailable',
+            shellErrorCode: 'shell-runtime-unavailable',
+            recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+          })
+          expect(backend.wrap).not.toHaveBeenCalled()
+          // Restoring readiness must not execute an already admitted submission again.
+          backend.isWindowsProtectionConfigured.mockResolvedValue(true)
+          if (background) {
+            const replay = await service.executeShellBackground(request)
+            expect(replay.runId).toBe(state.runs[0].runId)
+          } else {
+            await expect(service.executeShell(request)).resolves.toMatchObject({
+              stderr: expectedError,
+              runtimeStatus: 'unavailable'
+            })
+          }
+          expect((await service.state(request)).runs).toHaveLength(1)
+          expect(backend.wrap).not.toHaveBeenCalled()
+          const changedRequest = { ...request, command: 'Write-Output different' }
+          await expect(
+            background
+              ? service.executeShellBackground(changedRequest)
+              : service.executeShell(changedRequest)
+          ).rejects.toThrow('NOTEBOOK_RUN_SUBMISSION_CONFLICT')
+        } else {
+          expect(select).toHaveBeenCalledTimes(2)
+          expect(backend.wrap).toHaveBeenCalledOnce()
+        }
+        expect(select.mock.calls.every(([, request]) => !request.allowDownload)).toBe(true)
+      } finally {
+        await service.shutdownAll()
+        await owner.dispose()
+        select.mockRestore()
+      }
+    }
+  )
+
+  it.each(['parent', 'shared root'])(
+    'skips an R temporary candidate with a preexisting junction at its %s',
+    async (location) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-r-temp-junction-'))
+      fixtureDirectories.push(root)
+      const candidate = join(root, 'candidate')
+      const safeParent = join(root, 'safe')
+      const destination = join(root, 'existing-data')
+      await mkdir(safeParent)
+      await mkdir(destination)
+      await writeFile(join(destination, 'keep.txt'), 'untouched')
+      if (location === 'shared root') await mkdir(candidate)
+      const link = location === 'parent' ? candidate : join(candidate, 'open-science-notebook')
+      await symlink(destination, link, 'junction')
+      vi.stubEnv('TMPDIR', candidate)
+      vi.stubEnv('TMP', safeParent)
+      vi.stubEnv('TEMP', safeParent)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'Test User', 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
+      try {
+        wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'temporary junction regression',
+          sessionId: 'r-temp-junction',
+          projectId: 'r-temp-junction',
+          runtime: 'r',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const command = backend.wrap.mock.calls.at(-1)![0]
+        const directory = command.env.TMPDIR as string
+        expect(directory.startsWith(join(safeParent, 'open-science-notebook', 'command-'))).toBe(
+          true
+        )
+        expect(command.filesystem.readWriteRoots).toEqual([directory])
+        expect(await readdir(destination)).toEqual(['keep.txt'])
+        await wrapped.cleanup('exit', { processesTerminated: true })
+        expect(existsSync(directory)).toBe(false)
+        expect(existsSync(`${directory}.receipt`)).toBe(false)
+        expect(await readFile(join(destination, 'keep.txt'), 'utf8')).toBe('untouched')
+      } finally {
+        await wrapped?.cleanup('exit', { processesTerminated: true })
+        await owner.dispose()
+        vi.unstubAllEnvs()
+        await unlink(link)
+      }
+    }
+  )
+
+  it.skipIf(!rTemporaryTestParent).each([
+    { platform: 'win32' as const, runtime: 'r' as const, wsl: false, fallback: true },
+    {
+      platform: 'win32' as const,
+      runtime: 'r' as const,
+      wsl: false,
+      fallback: true,
+      temporaryParent: 'Temp With Spaces'
+    },
+    { platform: 'win32' as const, runtime: 'python' as const, wsl: false, fallback: false },
+    { platform: 'linux' as const, runtime: 'r' as const, wsl: false, fallback: false },
+    { platform: 'win32' as const, runtime: 'r' as const, wsl: true, fallback: false }
+  ])('selects and cleans R temporary storage for %j', async (testCase) => {
+    await mkdir(rTemporaryTestParent!, { recursive: true })
+    const root = await mkdtemp(join(rTemporaryTestParent!, 'os-r-temp-policy-'))
+    fixtureDirectories.push(root)
+    const configured = join(root, 'Test User', 'commands')
+    const temporaryParent = join(root, testCase.temporaryParent ?? '')
+    await mkdir(temporaryParent, { recursive: true })
+    const unavailable = join(root, 'not-a-directory')
+    await writeFile(unavailable, 'preserve')
+    vi.stubEnv('TMPDIR', unavailable)
+    vi.stubEnv('TMP', temporaryParent)
+    vi.stubEnv('TEMP', join(root, 'Other User'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      temporaryRoot: configured,
+      platform: testCase.platform,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      const wrapped = await owner.wrap({
+        executable: process.execPath,
+        args: [],
+        env: {},
+        cwd: root,
+        commandText: 'temporary directory regression',
+        sessionId: 'r-temp-policy',
+        projectId: 'r-temp-policy',
+        runtime: testCase.runtime,
+        ...(testCase.wsl
+          ? { target: { kind: 'wsl2' as const, profileId: 'test', distro: 'test', user: 'test' } }
+          : {}),
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const command = backend.wrap.mock.calls.at(-1)![0]
+      const directory = command.env.TMPDIR as string
+      expect(directory).toMatch(new RegExp('command-[0-9a-f-]+$'))
+      expect(
+        directory.startsWith(
+          join(
+            testCase.fallback ? join(temporaryParent, 'open-science-notebook') : configured,
+            'command-'
+          )
+        )
+      ).toBe(true)
+      expect(command.env.TMP).toBe(directory)
+      expect(command.env.TEMP).toBe(directory)
+      expect(command.filesystem.readWriteRoots).toContain(directory)
+      const failure = "Fatal error: 'R_TempDir' contains space"
+      expect(wrapped.annotateStderr(failure)).toBe(
+        testCase.fallback
+          ? `${failure}\nR could not use the selected temporary directory. Set TMPDIR to a writable directory without spaces and restart Open-Science.`
+          : failure
+      )
+      backend.cleanup.mockResolvedValueOnce({
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: false
+      })
+      await wrapped.cleanup('exit', { processesTerminated: false })
+      expect(existsSync(directory)).toBe(true)
+      expect(existsSync(`${directory}.receipt`)).toBe(true)
+      backend.cleanup.mockResolvedValueOnce({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      expect(existsSync(directory)).toBe(false)
+      expect(existsSync(`${directory}.receipt`)).toBe(false)
+      expect(await readFile(unavailable, 'utf8')).toBe('preserve')
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
+  it
+    .skipIf(
+      process.platform !== 'win32' ||
+        !process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX ||
+        !rTemporaryTestParent
+    )
+    .for([
+      { managedParent: 'plain', spacedHostTemp: false },
+      { managedParent: 'Test User', spacedHostTemp: false },
+      { managedParent: 'Test User', spacedHostTemp: true }
+    ])(
+    'verifies real R under $managedParent with spaced host temp=$spacedHostTemp',
+    async ({ managedParent, spacedHostTemp }, context) => {
+      const prefix = process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX!
+      await mkdir(rTemporaryTestParent!, { recursive: true })
+      const root = await mkdtemp(join(rTemporaryTestParent!, 'r-temp-spaces-'))
+      fixtureDirectories.push(root)
+      let temporaryParent = root
+      if (spacedHostTemp) {
+        // The system volume may provide short names even when the app-data volume does not.
+        temporaryParent = await mkdtemp(join(tmpdir(), 'R Temp With Spaces '))
+        fixtureDirectories.push(temporaryParent)
+        try {
+          const { stdout } = await promisify(execFile)(
+            join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe'),
+            ['--vanilla', '-e', 'cat(1 + 1)'],
+            {
+              env: {
+                ...process.env,
+                PATH: `${join(prefix, 'Library', 'bin')};${process.env.PATH ?? ''}`,
+                TMPDIR: temporaryParent,
+                TMP: temporaryParent,
+                TEMP: temporaryParent
+              },
+              windowsHide: true,
+              timeout: 15_000
+            }
+          )
+          expect(stdout.trim()).toBe('2')
+        } catch (error) {
+          if ((error as { stderr?: string }).stderr?.includes("'R_TempDir' contains space")) {
+            context.skip('The host filesystem does not provide an R-compatible spaced temp path')
+          }
+          throw error
+        }
+      }
+      for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, temporaryParent)
+      backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+      // Keep the real owner, environment and R process. Only native containment is replaced;
+      // no administrator setup or persistent runtime authorization is needed for this path test.
+      backend.wrap.mockImplementation(
+        async (command: { executable: string; args: string[]; env: NodeJS.ProcessEnv }) => ({
+          argv: [command.executable, ...command.args],
+          env: command.env,
+          annotateStderr: (value: string) => value,
+          resetNetworkConnections: backend.resetNetworkConnections,
+          setExecutionActive: backend.setExecutionActive,
+          confirmProcessTreeTermination: async () => true,
+          cleanup: (
+            _reason: NotebookSandboxCleanupReason,
+            outcome: NotebookSandboxProcessOutcome
+          ) => backend.cleanup(outcome)
+        })
+      )
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, managedParent, 'notebook-command-temp'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        await expect(
+          owner.ensureRuntimeAccess({
+            runtime: 'r',
+            executable: join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe'),
+            sessionId: 'r-temp-spaces'
+          })
+        ).resolves.toEqual({ windowsProtectionRequired: true, windowsRuntimeAccessRequired: false })
+      } finally {
+        vi.unstubAllEnvs()
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('preserves the failed R probe and gives guidance when no compatible temporary parent exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-temp-guidance-'))
+    fixtureDirectories.push(root)
+    const configured = join(root, 'Test User', 'commands')
+    for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, configured)
+    await mkdir(configured, { recursive: true })
+    const stderr = "Fatal error: 'R_TempDir' contains space\r\n\r\n"
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    // Replay the captured R startup diagnostic through the existing public probe and a real
+    // subprocess. This tests guidance, independently of whether this volume supports 8.3 paths.
+    backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        `process.stderr.write(${JSON.stringify(stderr)}); process.exit(2)`
+      ],
+      env: command.env,
+      annotateStderr: (value: string) => value,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      temporaryRoot: configured,
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.ensureRuntimeAccess({
+          runtime: 'r',
+          executable: process.execPath,
+          sessionId: 'r-temp-guidance'
+        })
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('Set TMPDIR to a writable directory without spaces'),
+        cause: expect.objectContaining({ code: 2, stderr })
+      })
+      const commandRoot = backend.wrap.mock.calls[0]![0].env.TMPDIR as string
+      expect(commandRoot.startsWith(join(configured, 'open-science-notebook', 'command-'))).toBe(
+        true
+      )
+      expect(existsSync(commandRoot)).toBe(false)
+      expect(existsSync(`${commandRoot}.receipt`)).toBe(false)
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
   it.each(
     (['darwin', 'linux', 'win32', 'wsl2'] as const).flatMap((target) =>
       (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({ target, runtime }))
@@ -1101,310 +1554,18 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(requestDecision).not.toHaveBeenCalled()
     await expect(
       owner.requestNetworkAccess({ ...request, hostname: 'localhost' })
-    ).resolves.toMatchObject({ status: 'blocked' })
+    ).resolves.toMatchObject({ status: 'alreadyAllowed' })
     await expect(
       owner.requestNetworkAccess({ ...request, signal: AbortSignal.abort() })
     ).resolves.toMatchObject({ status: 'denied', decisionSource: 'aborted' })
     expect(requestDecision).not.toHaveBeenCalled()
     await expect(
       owner.requestNetworkAccess({ ...request, sessionId: 'other-session' })
-    ).resolves.toMatchObject({ status: 'denied' })
-    expect(requestDecision).toHaveBeenCalledOnce()
+    ).resolves.toMatchObject({ status: 'alreadyAllowed' })
+    expect(requestDecision).not.toHaveBeenCalled()
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
     expect(backend.updatePolicy).not.toHaveBeenCalled()
     await owner.dispose()
-  })
-
-  it('applies allow-once to every matching connection in the next command only', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
-    const persistAlwaysAllow = vi.fn()
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision,
-      platform: 'linux'
-    })
-
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: 'C:\\Windows\\System32' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    expect(wrapped).toMatchObject({
-      executable: '/sandbox/sh',
-      args: ['-c', 'wrapped'],
-      env: { HTTPS_PROXY: 'http://127.0.0.1:4567' }
-    })
-    expect(backend.wrap).toHaveBeenCalledWith(
-      expect.objectContaining({
-        env: expect.objectContaining({
-          TMPDIR: expect.stringContaining('open-science-notebook'),
-          TEMP: expect.stringContaining('open-science-notebook'),
-          TMP: expect.stringContaining('open-science-notebook')
-        }),
-        filesystem: expect.objectContaining({
-          readWriteRoots: expect.arrayContaining([expect.stringContaining('open-science-notebook')])
-        })
-      })
-    )
-    await owner.initialize()
-    expect(backend.initialize).toHaveBeenCalledOnce()
-
-    const blockedExecution = wrapped.beginExecution?.()
-    expect(backend.setExecutionActive).toHaveBeenLastCalledWith(true)
-    await expect(
-      backend.request?.({ host: 'auto.example.org', port: 443, purpose: 'probe' })
-    ).resolves.toBe(false)
-    requestDecision.mockResolvedValueOnce('deny')
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'auto.example.org',
-        reason: 'No actual block occurred.'
-      })
-    ).resolves.toMatchObject({ status: 'denied' })
-    expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({ allowOnce: false }))
-    requestDecision.mockClear()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    blockedExecution?.()
-    expect(backend.resetNetworkConnections).toHaveBeenCalledTimes(2)
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.'
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        runtime: 'python',
-        reason: 'Download the requested dataset.'
-      })
-    )
-
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    const endExecution = wrapped.beginExecution?.()
-    const first = backend.request?.({ host: 'data.example.org', port: 443 })
-    const second = backend.request?.({ host: 'data.example.org', port: 443 })
-    await expect(first).resolves.toBe(true)
-    await expect(second).resolves.toBe(true)
-    expect(requestDecision).toHaveBeenCalledOnce()
-
-    await expect(backend.request?.({ host: 'hooks.slack.com', port: 443 })).resolves.toBe(false)
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'hooks.slack.com',
-        reason: 'Post the requested result.',
-        runtime: 'python',
-        command: 'python loop.py'
-      })
-    ).resolves.toEqual({ hostname: 'hooks.slack.com', status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledTimes(2)
-    endExecution?.()
-    expect(backend.resetNetworkConnections).toHaveBeenCalledTimes(4)
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-
-    const nextExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    nextExecution?.()
-    // A live interpreter must charge a grant to the actual cell, not its original launch command.
-    const changedCell = wrapped.beginExecution?.({ commandText: 'next cell' })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    changedCell?.()
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Retry the next cell.',
-        runtime: 'python',
-        command: 'next cell'
-      })
-    ).resolves.toMatchObject({ status: 'allowedOnce' })
-    const unrelatedCell = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    unrelatedCell?.()
-    const retryCell = wrapped.beginExecution?.({ commandText: 'next cell' })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
-    retryCell?.()
-    const afterRetry = wrapped.beginExecution?.({ commandText: 'next cell' })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    afterRetry?.()
-    await wrapped.cleanup('exit', { processesTerminated: true })
-
-    const nextCommand = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['next.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python next.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    await nextCommand.cleanup('exit', { processesTerminated: true })
-    const commandTempRoot = backend.wrap.mock.calls[0]?.[0].env.TMPDIR as string
-    await vi.waitFor(() => expect(existsSync(commandTempRoot)).toBe(false))
-    await owner.dispose()
-  })
-
-  it.each(['user-decision', 'aborted'] as const)(
-    'preserves the actual denial reason without granting access: %s',
-    async (decisionSource) => {
-      const requestDecision = vi.fn().mockResolvedValue('deny')
-      const persistAlwaysAllow = vi.fn()
-      const owner = new NotebookNetworkSandboxOwner({
-        resourceRoot: '/resources',
-        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-        persistAlwaysAllow,
-        requestDecision,
-        platform: 'linux'
-      })
-      const commandText = 'curl data.example.org/a'
-      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
-      try {
-        wrapped = await owner.wrap({
-          executable: '/usr/bin/bash',
-          args: [],
-          env: {},
-          cwd: '/workspace',
-          commandText,
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          runtime: 'bash',
-          filesystem: {
-            readOnlyRoots: [],
-            readWriteRoots: ['/workspace'],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
-        const finishBlockedExecution = wrapped.beginExecution?.()
-        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-          false
-        )
-        finishBlockedExecution?.()
-        const cancellation = new AbortController()
-        if (decisionSource === 'aborted') cancellation.abort()
-        const result = await owner.requestNetworkAccess({
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          hostname: 'data.example.org',
-          reason: 'Download the dataset.',
-          runtime: 'bash',
-          command: commandText,
-          signal: cancellation.signal
-        })
-        expect(result).toMatchObject({
-          hostname: 'data.example.org',
-          status: 'denied',
-          decisionSource,
-          message: expect.any(String)
-        })
-        expect(requestDecision).toHaveBeenCalledTimes(decisionSource === 'user-decision' ? 1 : 0)
-        expect(persistAlwaysAllow).not.toHaveBeenCalled()
-        const end = wrapped.beginExecution?.()
-        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-          false
-        )
-        end?.()
-      } finally {
-        await wrapped?.cleanup('exit', { processesTerminated: true })
-        await owner.dispose()
-      }
-    }
-  )
-
-  it('returns unavailable without creating a grant when no approval client is connected', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('unavailable')
-    const { logger, records } = createCapturingLogger()
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/private/resources/notebook-sandbox',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision,
-      platform: 'linux',
-      logger
-    })
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/Users/example/private-study',
-      commandText: 'python private-patient-analysis.py --token secret-value',
-      sessionId: 'private-session-id',
-      projectId: 'private-project-id',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/Users/example/private-study'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    const endExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endExecution?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'private-session-id',
-        projectId: 'private-project-id',
-        hostname: 'data.example.org',
-        reason: 'Download private patient data.'
-      })
-    ).resolves.toEqual({
-      hostname: 'data.example.org',
-      status: 'unavailable',
-      decisionSource: 'approval-surface-unavailable',
-      message: expect.any(String)
-    })
-    expect(requestDecision).toHaveBeenCalledOnce()
-    await wrapped.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-
-    const serialized = JSON.stringify(records)
-    expect(serialized).toContain('approval-surface-unavailable')
-    expect(serialized).toContain('"runtime":"python"')
-    for (const privateValue of [
-      'data.example.org',
-      'private-patient-analysis.py',
-      'secret-value',
-      'private patient data',
-      'private-session-id',
-      'private-project-id',
-      '/Users/example/private-study',
-      '/private/resources/notebook-sandbox'
-    ]) {
-      expect(serialized).not.toContain(privateValue)
-    }
   })
 
   it('records only a fixed error category when sandbox initialization fails', async () => {
@@ -1631,191 +1792,6 @@ describe('NotebookNetworkSandboxOwner', () => {
       prepare.mockRestore()
       await owner.dispose()
     }
-  })
-
-  it('fails closed instead of giving an ambiguous approval to the wrong runtime', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision,
-      platform: 'linux'
-    })
-    const invocation = {
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python' as const,
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    }
-    const python = await owner.wrap(invocation)
-    const pythonRequest = backend.request!
-    const bash = await owner.wrap({
-      ...invocation,
-      executable: '/bin/sh',
-      args: ['-c', 'curl https://data.example.org'],
-      commandText: 'curl https://data.example.org',
-      runtime: 'bash'
-    })
-    const bashRequest = backend.request!
-
-    const endPython = python.beginExecution?.()
-    await expect(pythonRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endPython?.()
-    const endBash = bash.beginExecution?.()
-    await expect(bashRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endBash?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.',
-        runtime: 'bash'
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ hostname: 'data.example.org', runtime: 'bash' })
-    )
-
-    await python.cleanup('exit', { processesTerminated: true })
-    await bash.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-  })
-
-  it('binds a bash allow-once grant to the exact failed command', async () => {
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision: vi.fn().mockResolvedValue('allowOnce'),
-      platform: 'linux'
-    })
-    const invocation = {
-      executable: '/bin/sh',
-      args: ['-c', 'curl https://data.example.org/a'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'curl https://data.example.org/a',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'bash' as const,
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    }
-    const first = await owner.wrap(invocation)
-    const firstRequest = backend.request!
-    const second = await owner.wrap({
-      ...invocation,
-      args: ['-c', 'curl https://data.example.org/b'],
-      commandText: 'curl https://data.example.org/b'
-    })
-    const secondRequest = backend.request!
-
-    const endFirst = first.beginExecution?.()
-    await expect(firstRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endFirst?.()
-    const endSecond = second.beginExecution?.()
-    await expect(secondRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endSecond?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.',
-        runtime: 'bash',
-        command: invocation.commandText
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'allowedOnce' })
-
-    const unrelated = await owner.wrap({
-      ...invocation,
-      args: ['-c', 'curl https://data.example.org/b'],
-      commandText: 'curl https://data.example.org/b'
-    })
-    const unrelatedRequest = backend.request!
-    const endUnrelated = unrelated.beginExecution?.()
-    await expect(unrelatedRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endUnrelated?.()
-
-    const retry = await owner.wrap(invocation)
-    const retryRequest = backend.request!
-    const endRetry = retry.beginExecution?.()
-    await expect(retryRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
-    endRetry?.()
-
-    await first.cleanup('exit', { processesTerminated: true })
-    await second.cleanup('exit', { processesTerminated: true })
-    await unrelated.cleanup('exit', { processesTerminated: true })
-    await retry.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-  })
-
-  it('persists and hot-applies an always-allow decision', async () => {
-    const persistAlwaysAllow = vi.fn(async (hostname: string) => ({
-      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      allowedDomains: [hostname]
-    }))
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision: vi.fn().mockResolvedValue('alwaysAllow'),
-      platform: 'linux'
-    })
-    await owner.initialize()
-
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    const blockedExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    blockedExecution?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.'
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'alwaysAllowed' })
-    expect(persistAlwaysAllow).toHaveBeenCalledWith('data.example.org')
-    expect(backend.updatePolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ allowedDomains: expect.arrayContaining(['data.example.org']) })
-    )
-    await wrapped.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
   })
 
   it('returns stable status reasons instead of backend prose', async () => {
@@ -2492,211 +2468,61 @@ describe('NotebookNetworkSandboxOwner', () => {
     await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
-
-  it('cancels a pending explicit decision with its RPC signal', async () => {
-    let decisionSignal: AbortSignal | undefined
-    const requestDecision = vi.fn(
-      ({ signal }: { signal: AbortSignal }) =>
-        new Promise<'deny'>((resolve) => {
-          decisionSignal = signal
-          signal.addEventListener('abort', () => resolve('deny'), { once: true })
-        })
-    )
-    const persistAlwaysAllow = vi.fn()
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision,
-      platform: 'linux'
-    })
-
-    const cancellation = new AbortController()
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    const blockedExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    blockedExecution?.()
-    const result = owner.requestNetworkAccess({
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      hostname: 'data.example.org',
-      reason: 'Download the requested dataset.',
-      signal: cancellation.signal
-    })
-    await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
-    cancellation.abort(new Error('Notebook tool ended.'))
-    expect(decisionSignal?.aborted).toBe(true)
-    await expect(result).resolves.toEqual({
-      hostname: 'data.example.org',
-      status: 'denied',
-      decisionSource: 'aborted',
-      message: expect.any(String)
-    })
-    expect(persistAlwaysAllow).not.toHaveBeenCalled()
-    await wrapped.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-  })
 })
 
-describe('explicit network approval without a preceding failure', () => {
-  it('offers a card without command context instead of treating it as a user denial', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('alwaysAllow')
-    const settings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['data.example.org'] }
-    const persistAlwaysAllow = vi.fn().mockResolvedValue(settings)
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision
-    })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
-        projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Explicit user approval'
+describe('explicit access without a trusted block record', () => {
+  it.each(['localhost', 'unknown.example', 'private.internal'])(
+    'allows HTTPS %s without approval',
+    async (hostname) => {
+      const requestDecision = vi.fn()
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        platform: 'linux',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision,
+        persistAlwaysAllow
       })
-    ).resolves.toMatchObject({ status: 'alwaysAllowed' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ allowOnce: false, hostname: 'data.example.org' })
-    )
-    expect(persistAlwaysAllow).toHaveBeenCalledWith('data.example.org')
-    await owner.dispose()
-  })
-
-  it('binds a proactive one-time approval to only the supplied command and session', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision,
-      platform: 'linux'
-    })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
-        projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Upload synthetic data',
-        runtime: 'bash',
-        command: 'curl --data marker https://data.example.org'
-      })
-    ).resolves.toMatchObject({ status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ allowOnce: true, runtime: 'bash' })
-    )
-    for (const [sessionId, commandText, expected] of [
-      ['other', 'curl --data marker https://data.example.org', false],
-      ['s', 'different command', false],
-      ['s', 'curl --data marker https://data.example.org', true],
-      ['s', 'curl --data marker https://data.example.org', false]
-    ] as const) {
-      const wrapped = await owner.wrap({
-        executable: '/bin/sh',
-        args: ['-c', commandText],
-        env: {},
-        cwd: '/workspace',
-        commandText,
-        sessionId,
-        projectId: 'p',
-        runtime: 'bash',
-        filesystem: {
-          readOnlyRoots: [],
-          readWriteRoots: ['/workspace'],
-          deniedReadRoots: [],
-          deniedWriteRoots: []
-        }
-      })
-      const end = wrapped.beginExecution?.()
-      await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-        expected
-      )
-      end?.()
-      await wrapped.cleanup('exit', { processesTerminated: true })
+      expect(
+        await owner.requestNetworkAccess({
+          hostname,
+          port: 80,
+          protocol: 'https',
+          projectId: 'p',
+          sessionId: 's',
+          reason: 'test'
+        })
+      ).toMatchObject({ hostname, port: 80, protocol: 'https', status: 'alreadyAllowed' })
+      expect(requestDecision).not.toHaveBeenCalled()
+      expect(persistAlwaysAllow).not.toHaveBeenCalled()
     }
-    await owner.dispose()
-  })
-
-  it('cannot turn an invalid once selection without command context into a grant', async () => {
+  )
+  it.each([
+    ['localhost', 'http'],
+    ['127.0.0.1', 'https'],
+    ['[::1]', 'https']
+  ] as const)('cannot create proactive authority for %s %s', async (hostname, protocol) => {
+    const requestDecision = vi.fn()
     const persistAlwaysAllow = vi.fn()
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
+      platform: 'linux',
       getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision: vi.fn().mockResolvedValue('allowOnce')
+      requestDecision,
+      persistAlwaysAllow
     })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
+    expect(
+      await owner.requestNetworkAccess({
+        hostname,
+        port: 8080,
+        protocol,
         projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Explicit approval'
+        sessionId: 's',
+        reason: 'test'
       })
-    ).resolves.toMatchObject({ status: 'unavailable' })
+    ).toMatchObject({ port: 8080, protocol, status: 'blocked' })
+    expect(requestDecision).not.toHaveBeenCalled()
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
-    await owner.dispose()
-  })
-  it.each(['python', 'r', 'repl'] as const)(
-    'does not offer proactive once for caller-supplied %s source code',
-    async (runtime) => {
-      const requestDecision = vi.fn().mockResolvedValue('deny')
-      const owner = new NotebookNetworkSandboxOwner({
-        resourceRoot: '/resources',
-        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-        persistAlwaysAllow: vi.fn(),
-        requestDecision
-      })
-      await expect(
-        owner.requestNetworkAccess({
-          sessionId: 's',
-          projectId: 'p',
-          hostname: 'data.example.org',
-          reason: 'Explicit approval',
-          runtime,
-          command: 'source code is not a kernel command'
-        })
-      ).resolves.toMatchObject({ status: 'denied' })
-      expect(requestDecision).toHaveBeenCalledWith(
-        expect.objectContaining({ allowOnce: false, runtime })
-      )
-      await owner.dispose()
-    }
-  )
-
-  it('rejects an invalid once selection for unrecognized Kernel command context', async () => {
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision: vi.fn().mockResolvedValue('allowOnce')
-    })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
-        projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Explicit approval',
-        runtime: 'python',
-        command: 'print(1)'
-      })
-    ).resolves.toMatchObject({ status: 'unavailable' })
-    await owner.dispose()
   })
 })
 
@@ -3104,6 +2930,42 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
 })
 
 describe('R startup authorization admission', () => {
+  it('lets a timed-out R probe owner publish cleanup proof before exiting', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-probe-timeout-'))
+    fixtureDirectories.push(root)
+    const request = join(root, 'terminate')
+    const proof = join(root, 'reaped')
+    const requestTermination = vi.fn(async () => {
+      await writeFile(request, '')
+      await vi.waitFor(() => expect(existsSync(proof)).toBe(true), { timeout: 5_000 })
+      return true
+    })
+    await expect(
+      runRAccessProbe(
+        {
+          executable: process.execPath,
+          args: [
+            '-e',
+            `const fs = require('node:fs'); setInterval(() => {
+            if (fs.existsSync(${JSON.stringify(request)})) {
+              fs.writeFileSync(${JSON.stringify(proof)}, 'reaped'); process.exit(1)
+            }
+          }, 10)`
+          ],
+          env: process.env,
+          requestProcessTreeTermination: requestTermination,
+          confirmProcessTreeTermination: async () => existsSync(proof),
+          annotateStderr: (value) => value,
+          cleanup: backend.cleanup
+        },
+        root,
+        500
+      )
+    ).rejects.toMatchObject({ code: 'PACKAGE_OPERATION_TIMEOUT' })
+    expect(requestTermination).toHaveBeenCalledOnce()
+    expect(existsSync(proof)).toBe(true)
+  })
+
   it('keeps the original verification failure and cleanup when diagnostic logging throws', async () => {
     backend.wrap.mockResolvedValueOnce({
       argv: [process.execPath, '-e', 'process.exit(77)'],
@@ -3391,7 +3253,7 @@ describe('R startup authorization admission', () => {
       const cwd = backend.wrap.mock.calls[0]![0].cwd as string
       fixtureDirectories.push(cwd)
       expect(existsSync(cwd)).toBe(true)
-      expect(confirm).toHaveBeenCalledOnce()
+      expect(confirm).toHaveBeenCalled()
       expect(backend.cleanup).toHaveBeenCalledWith({
         processesTerminated: false,
         confirmTermination: confirm
@@ -4569,7 +4431,48 @@ it.each([false, true])(
   }
 )
 
-it('explains that existing public policy is not private-service admission', async () => {
+it('reports the manual HTTP rule scope and standard port without treating it as HTTPS', async () => {
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: '/resources',
+    platform: 'linux',
+    persistAlwaysAllow: vi.fn(),
+    requestDecision: vi.fn(),
+    getSettings: async () => ({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [
+        { hostname: 'localhost', protocol: 'http', port: 80, approvedAddresses: [] }
+      ]
+    })
+  })
+  await expect(
+    owner.requestNetworkAccess({
+      sessionId: 'session',
+      projectId: 'project',
+      hostname: 'localhost',
+      protocol: 'http',
+      reason: 'Read the local service'
+    })
+  ).resolves.toMatchObject({
+    status: 'alreadyAllowed',
+    hostname: 'localhost',
+    protocol: 'http',
+    port: 80,
+    scope: 'global'
+  })
+  await expect(
+    owner.requestNetworkAccess({
+      sessionId: 'session',
+      projectId: 'project',
+      hostname: 'localhost',
+      protocol: 'http',
+      port: 8080,
+      reason: 'Read another service'
+    })
+  ).resolves.toMatchObject({ status: 'blocked', protocol: 'http', port: 8080 })
+  await owner.dispose()
+})
+
+it('allows HTTPS domains independently of preview domain preferences', async () => {
   const requestDecision = vi.fn()
   const persistAlwaysAllow = vi.fn()
   const owner = new NotebookNetworkSandboxOwner({
@@ -4591,12 +4494,297 @@ it('explains that existing public policy is not private-service admission', asyn
     })
   ).resolves.toMatchObject({
     status: 'alreadyAllowed',
-    message: expect.stringContaining(
-      'For private-network access, review the service and port in Settings'
-    )
+    message: expect.stringContaining('HTTPS domain access does not require approval')
   })
   expect(requestDecision).not.toHaveBeenCalled()
   expect(persistAlwaysAllow).not.toHaveBeenCalled()
 })
 
 configureTestRuntimeMetadata()
+
+describe('trusted gateway destination records', () => {
+  type DecisionRequest = Parameters<
+    ConstructorParameters<typeof NotebookNetworkSandboxOwner>[0]['requestDecision']
+  >[0]
+  type Fixture = {
+    root: string
+    owner: NotebookNetworkSandboxOwner
+    wrapped: Awaited<ReturnType<NotebookNetworkSandboxOwner['wrap']>>
+    requestDecision: Mock<(request: DecisionRequest) => Promise<NotebookNetworkDecision>>
+    connect: (addresses?: string[], port?: number, protocol?: 'http' | 'https') => Promise<boolean>
+    end: () => void
+    setSettings: (value: NotebookNetworkSettings) => Promise<void>
+  }
+  const setup = async (fullAccess = false, restrictFolders = true): Promise<Fixture> => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'destination-grants-')))
+    await mkdir(join(root, 'workspace'))
+    await mkdir(join(root, 'sessions'))
+    await writeFile(join(root, 'settings.json'), 'original')
+    fixtureDirectories.push(root)
+    let settings: NotebookNetworkSettings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS }
+    const requestDecision = vi
+      .fn<(request: DecisionRequest) => Promise<NotebookNetworkDecision>>()
+      .mockResolvedValue('retryRequired')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      configRoot: root,
+      temporaryRoot: join(root, 'tmp'),
+      platform: 'linux',
+      getSettings: async () => settings,
+      persistAlwaysAllow: async () => settings,
+      requestDecision,
+      hasFullAccess: () => fullAccess,
+      getFolderRestrictionEnabled: async () => restrictFolders
+    })
+    const wrapped = await owner.wrap({
+      executable: '/bin/sh',
+      args: [],
+      env: {},
+      cwd: root,
+      commandText: 'request fixture',
+      executionReference: 'execution-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: [root, join(root, 'workspace')],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    const end = wrapped.beginExecution!({
+      executionReference: 'execution-1',
+      commandText: 'request fixture'
+    })
+    const connect = (
+      addresses = ['127.0.0.1'],
+      port = 8443,
+      protocol: 'http' | 'https' = 'http'
+    ): Promise<boolean> =>
+      backend.request!({ host: 'local.test', port, protocol, purpose: 'block', addresses })
+    return {
+      root,
+      owner,
+      wrapped,
+      requestDecision,
+      connect,
+      end,
+      setSettings: async (value: typeof settings) => {
+        settings = value
+        owner.applySettings(value)
+      }
+    }
+  }
+
+  it('deduplicates records, keeps the original connection blocked and rejects forged ownership', async () => {
+    const f = await setup()
+    const [first, duplicate] = await Promise.all([f.connect(), f.connect()])
+    expect([first, duplicate]).toEqual([false, false])
+    expect(f.requestDecision).toHaveBeenCalledTimes(1)
+    const request = f.requestDecision.mock.calls[0]![0]
+    expect(request).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      hostname: 'local.test',
+      protocol: 'http' as const,
+      port: 8443,
+      evidence: {
+        addresses: ['127.0.0.1'],
+        risks: [],
+        recordId: expect.any(String)
+      }
+    })
+    const recordId = request.evidence!.recordId
+    expect(f.wrapped.annotateStderr('', '')).toContain(recordId)
+    for (const [projectId, sessionId, id] of [
+      ['project-2', 'session-1', recordId],
+      ['project-1', 'session-2', recordId],
+      ['project-1', 'session-1', 'forged']
+    ]) {
+      const result = await f.owner.requestNetworkAccess({
+        projectId,
+        sessionId,
+        recordId: id,
+        hostname: 'attacker.test',
+        reason: 'fixture'
+      })
+      expect(result.status).toBe('blocked')
+    }
+    expect(
+      (
+        await f.owner.requestNetworkAccess({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          recordId,
+          hostname: '',
+          reason: 'fixture'
+        })
+      ).status
+    ).toBe('allowedOnce')
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it.each(['project', 'global'] as const)(
+    'returns committed %s scope when queried before approval completes',
+    async (scope) => {
+      const f = await setup()
+      const pending = Promise.withResolvers<NotebookNetworkDecision>()
+      f.requestDecision.mockReturnValueOnce(pending.promise)
+      const connection = f.connect([], 8080)
+      // Empty DNS evidence cannot create a record; retry with actual gateway evidence.
+      expect(await connection).toBe(false)
+      const blocked = f.connect(['127.0.0.1'], 8080)
+      await vi.waitFor(() => expect(f.requestDecision).toHaveBeenCalledOnce())
+      const recordId = f.requestDecision.mock.calls[0]![0].evidence!.recordId
+      const request = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        recordId,
+        hostname: '',
+        reason: 'query'
+      }
+      const query = f.owner.requestNetworkAccess(request)
+      const grant = {
+        id: recordId,
+        recordId,
+        hostname: 'local.test',
+        port: 8080,
+        protocol: 'http' as const,
+        scope,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        approvedAddresses: [],
+        createdAt: 1
+      }
+      await f.setSettings({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, destinationGrants: [grant] })
+      pending.resolve('retryRequired')
+      expect(await blocked).toBe(false)
+      expect(await query).toMatchObject({
+        hostname: 'local.test',
+        port: 8080,
+        protocol: 'http',
+        scope,
+        status: scope === 'project' ? 'projectAllowed' : 'alwaysAllowed'
+      })
+      await f.setSettings({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        destinationGrants: [{ ...grant, revokedAt: 2 }]
+      })
+      expect(await f.owner.requestNetworkAccess(request)).toMatchObject({
+        status: 'denied',
+        protocol: 'http',
+        port: 8080,
+        scope
+      })
+      f.end()
+      await f.owner.dispose()
+    }
+  )
+
+  it('allows HTTPS localhost/domain evidence without opening an approval even on port 80', async () => {
+    const f = await setup()
+    expect(await f.connect(['127.0.0.1', '8.8.8.8'], 80, 'https')).toBe(true)
+    expect(f.requestDecision).not.toHaveBeenCalled()
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it('uses full access as the existing explicit exemption, including sensitive addresses', async () => {
+    const f = await setup(true)
+    expect(await f.connect()).toBe(true)
+    expect(f.requestDecision).not.toHaveBeenCalled()
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it('enforces host, port and project scope on every connection, then revokes', async () => {
+    const f = await setup()
+    const grant = {
+      id: 'grant',
+      scope: 'project' as const,
+      projectId: 'project-1',
+      sessionId: 'source',
+      recordId: 'source-record',
+      createdAt: 1,
+      hostname: 'local.test',
+      protocol: 'http' as const,
+      port: 8443,
+      approvedAddresses: ['127.0.0.1', '10.0.0.1']
+    }
+    await f.setSettings({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, destinationGrants: [grant] })
+    expect(await f.connect()).toBe(true)
+    expect(await f.connect(['10.0.0.1'])).toBe(true)
+    expect(f.requestDecision).not.toHaveBeenCalled()
+    expect(await f.connect(['127.0.0.1', '10.0.0.2'])).toBe(true)
+    expect(await f.connect(['127.0.0.1'], 443)).toBe(false)
+    await f.setSettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, projectId: 'project-2' }]
+    })
+    expect(await f.connect()).toBe(false)
+    await f.setSettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, projectId: 'project-2', scope: 'global' }]
+    })
+    expect(await f.connect()).toBe(true)
+    await f.setSettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, revokedAt: 2 }]
+    })
+    expect(await f.connect()).toBe(false)
+    const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+    expect(filesystem.deniedWriteRoots).toEqual(
+      expect.arrayContaining([join(f.root, 'settings.json'), join(f.root, 'sessions')])
+    )
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it.skipIf(process.platform !== 'darwin').each([true, false])(
+    'protects live settings, future staging and sessions with folder restrictions %s',
+    async (restricted) => {
+      const f = await setup(false, restricted)
+      const { seatbeltProfile } =
+        await import('../../../packages/notebook-network-sandbox/runtime/src/platform/macos-isolation')
+      const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+      const profile = seatbeltProfile({
+        command: '',
+        shell: '/bin/sh',
+        gatewayPort: 1,
+        gatewayCredentials: { username: 'unused', password: 'unused' },
+        env: process.env,
+        filesystem
+      })
+      const attempt = (path: string): Promise<{ stdout: string; stderr: string }> =>
+        promisify(execFile)(
+          '/usr/bin/sandbox-exec',
+          ['-p', profile, '/bin/sh', '-c', 'printf forged > "$1"', 'fixture', path],
+          { cwd: join(f.root, 'workspace') }
+        )
+      await expect(attempt(join(f.root, 'settings.json'))).rejects.toThrow()
+      await expect(attempt(join(f.root, 'settings.json.123-test.tmp'))).rejects.toThrow()
+      await expect(attempt(join(f.root, 'sessions', 'forged.json'))).rejects.toThrow()
+      await expect(attempt(join(f.root, 'workspace', 'output.txt'))).resolves.toMatchObject({
+        stderr: ''
+      })
+      expect(await readFile(join(f.root, 'settings.json'), 'utf8')).toBe('original')
+      f.end()
+      await f.owner.dispose()
+    }
+  )
+
+  it('retains the whole consumed once snapshot for subsequent connections in the same execution', async () => {
+    const f = await setup()
+    f.requestDecision.mockImplementationOnce(async (request) => {
+      request.onOnceGrant?.(['127.0.0.1', '10.0.0.1'])
+      return 'allowOnce'
+    })
+    expect(await f.connect(['127.0.0.1'])).toBe(true)
+    expect(await f.connect(['10.0.0.1'])).toBe(true)
+    expect(f.requestDecision).toHaveBeenCalledTimes(1)
+    f.end()
+    await f.owner.dispose()
+  })
+})

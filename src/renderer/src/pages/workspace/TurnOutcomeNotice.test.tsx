@@ -46,7 +46,7 @@ describe('turn outcome notice action ownership', () => {
       kind: 'failed',
       settledAt: 1,
       error: 'Historical opaque error',
-      errorReportable: true
+      failure: { category: 'internal' as const, diagnostics: {} }
     })
     act(() =>
       container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')?.click()
@@ -55,9 +55,19 @@ describe('turn outcome notice action ownership', () => {
   })
 
   it('uses each outcome reportability without borrowing the current turn flag', () => {
-    render({ kind: 'failed', settledAt: 1, error: 'Provider diagnostic', errorReportable: false })
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      error: 'Provider diagnostic',
+      failure: { category: 'service' as const, diagnostics: {} }
+    })
     expect(container.querySelector('[aria-label="Report this error"]')).toBeNull()
-    render({ kind: 'failed', settledAt: 1, error: 'Opaque older failure', errorReportable: true })
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      error: 'Opaque older failure',
+      failure: { category: 'internal' as const, diagnostics: {} }
+    })
     expect(container.querySelector('[aria-label="Report this error"]')).not.toBeNull()
   })
 

@@ -87,7 +87,12 @@ export const RuntimeUpdateDialog = ({
   const legacyOpen = Boolean(legacyToken && legacyToken === status.legacyShellRecovery?.token)
   const confirming = cliOpen || legacyOpen
   const completed = ['S15', 'S27', 'S28'].includes(id)
-  const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
+  const copy = runtimeUpdateCopy(
+    id,
+    t,
+    status.recovery?.detail === 'occupancy-unknown',
+    status.recovery?.blockingProcesses?.find((entry) => entry.name)?.name
+  )
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))
@@ -118,7 +123,7 @@ export const RuntimeUpdateDialog = ({
           ? t('Please wait for the app to close and reopen.')
           : id === 'S01'
             ? t(
-                'Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.'
+                'Updating restarts the app and temporarily disconnects CLI and web clients. Open-Science will save your changes and stop affected tasks after you confirm.'
               )
             : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {

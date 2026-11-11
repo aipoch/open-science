@@ -4,6 +4,7 @@ import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../.
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { AgentFramework } from '../agent-framework'
 import {
+  appMcpToolIdentities,
   canonicalAppMcpServerName,
   modelFacingAppMcpServerName
 } from '../agent-framework/app-mcp-names'
@@ -21,6 +22,7 @@ import {
 import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-server'
 import {
   NOTEBOOK_MCP_SERVER_NAME,
+  NOTEBOOK_RPC_TOOLS,
   createNotebookMcpServerConfig,
   type NotebookMcpEnvironment,
   type NotebookRpcConnection
@@ -32,11 +34,19 @@ import {
   type SkillImportRpcConnection
 } from '../skills/mcp-server'
 import {
+  SKILL_RUNTIME_MCP_SERVER_NAME,
+  LOAD_SKILL_TOOL_NAME,
+  isOwnedSkillRuntimeAcpServer
+} from '../skills/runtime-mcp-server'
+import {
   PLAN_MCP_SERVER_NAME,
   createPlanMcpServerConfig,
   type PlanMcpEnvironment
 } from '../session-plan/plan-mcp-server'
-import { HOST_MESSAGE_MCP_SERVER_NAME } from '../side-chat/host-message-mcp-server'
+import {
+  HOST_MESSAGE_MCP_SERVER_NAME,
+  HOST_SEND_MESSAGE_TOOL_NAME
+} from '../side-chat/host-message-mcp-server'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import {
   captureShellRuntimeBinding,
@@ -81,7 +91,7 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
 
 export type SessionCapabilityPolicy = Readonly<{
-  role: 'primary' | 'reviewer' | 'side-chat'
+  role: 'primary' | 'reviewer' | 'side-chat' | 'restricted-inference'
   // Delegation is deliberately explicit and denied for every currently shipped Session. Issue #458
   // can extend this input later without making prompts, identity text, or provider metadata authoritative.
   delegation: 'denied'
@@ -350,6 +360,8 @@ export class AcpSessionCapabilityOwner {
   private readonly literatureRoutingIds = new Map<string, string>()
   private readonly literatureEnabledSessionIds = new Set<string>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
+  private readonly piOwnedSkillServers = new WeakMap<object, McpServer>()
+  private readonly skillRuntimeReleases = new Map<string, () => void>()
   private readonly shellRuntimeBindings = new Map<string, ShellRuntimeBinding>()
   private readonly committedSessionIds = new Set<string>()
   private readonly bridgeMcpSessionKeys = new Map<string, string>()
@@ -383,6 +395,7 @@ export class AcpSessionCapabilityOwner {
     const routingIds = this.createRoutingIds(request.stableAppSessionId)
     const routingOwner = this.trackProvisionalRoutingOwner(routingIds)
     const provisionGeneration = this.provisionalGeneration
+    let ownedSkillServer: McpServer | undefined
     let notebookRelease: (() => void) | undefined
     let skillImportRelease: (() => void) | undefined
     let planRelease: (() => void) | undefined
@@ -458,6 +471,8 @@ export class AcpSessionCapabilityOwner {
     let provisionalCleanupComplete = false
     let preparedSetupSessionId: string | undefined
     let bridgeMcpSessionKey: string | undefined
+    let skillRuntimeRelease: (() => void) | undefined
+    let skillRuntimeRoutingId: string | undefined
 
     return Object.freeze({
       mcpServers: built.mcpServers,
@@ -488,9 +503,30 @@ export class AcpSessionCapabilityOwner {
           return Object.freeze({ mcpServers: built.mcpServers, descriptor: built.descriptor })
         }
 
+        if (request.policy.role === 'restricted-inference')
+          throw new Error('Restricted inference cannot attach framework MCP servers.')
+
         const addedNames = servers.map((server) => server.name)
         if (addedNames.some((name) => typeof name !== 'string' || name.length === 0)) {
           throw new Error('Framework MCP servers must have a non-empty name.')
+        }
+        const skillServer = servers.find((server) => server.name === SKILL_RUNTIME_MCP_SERVER_NAME)
+        if (skillServer && isOwnedSkillRuntimeAcpServer(skillServer)) ownedSkillServer = skillServer
+
+        if (
+          (!request.framework.acceptsStdioMcp || built.descriptor.transport === 'http') &&
+          ownedSkillServer &&
+          servers.includes(ownedSkillServer)
+        ) {
+          const host = this.options.mcpHttpHost
+          if (!host) throw new Error('Skill HTTP host is unavailable')
+          const converted = host.registerSkillRuntime(ownedSkillServer)
+          skillRuntimeRoutingId = converted.routingId
+          skillRuntimeRelease?.()
+          skillRuntimeRelease = converted.release
+          servers = servers.map((server) =>
+            server === ownedSkillServer ? converted.server : server
+          )
         }
 
         const modelFacingNames = [...built.descriptor.modelFacingMcpServerNames, ...addedNames]
@@ -556,6 +592,7 @@ export class AcpSessionCapabilityOwner {
         if (terminal) return
         const ownsRoutingIds = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         if (provisionGeneration !== this.provisionalGeneration) {
+          skillRuntimeRelease?.()
           this.revokeProvisional({
             capabilityTokens,
             routingIds: [
@@ -592,6 +629,7 @@ export class AcpSessionCapabilityOwner {
           throw new Error('ACP session capability provision was superseded.')
         }
         if (!ownsRoutingIds) {
+          skillRuntimeRelease?.()
           this.revokeProvisional({
             capabilityTokens,
             routingIds: [],
@@ -645,6 +683,31 @@ export class AcpSessionCapabilityOwner {
           skillImportRelease,
           planRelease
         })
+        if (request.framework.id === 'open-science-agent') {
+          for (const [kind, routingId] of [
+            ['notebook', routingIds.notebook],
+            ['artifact', routingIds.artifact],
+            ['skill-import', routingIds.skillImport],
+            ['plan', routingIds.plan],
+            ['host-message', routingIds.sideChat],
+            ['literature', routingIds.literature],
+            ['library', routingIds.literature],
+            ['skills', skillRuntimeRoutingId]
+          ] as const) {
+            if (routingId)
+              this.options.mcpHttpHost?.registerReceiptScope(
+                routingId,
+                JSON.stringify([request.projectId, appSessionId, kind]),
+                kind
+              )
+          }
+        }
+        if (ownedSkillServer && isOwnedSkillRuntimeAcpServer(ownedSkillServer)) {
+          this.piOwnedSkillServers.set(built.descriptor, ownedSkillServer)
+        }
+        this.skillRuntimeReleases.get(appSessionId)?.()
+        this.skillRuntimeReleases.delete(appSessionId)
+        if (skillRuntimeRelease) this.skillRuntimeReleases.set(appSessionId, skillRuntimeRelease)
         if (request.setupSessionToken) {
           this.options.wslSetupSessions?.commitBinding?.(request.setupSessionToken, appSessionId)
         }
@@ -653,6 +716,7 @@ export class AcpSessionCapabilityOwner {
       },
       release: (ownershipFacts: SessionCapabilityOwnershipFacts): void | Promise<void> => {
         if (terminal) return
+        skillRuntimeRelease?.()
         terminal = true
         const setupRollback = preparedSetupSessionId
           ? request.setupSessionToken && this.options.wslSetupSessions?.rollbackBinding
@@ -969,7 +1033,12 @@ export class AcpSessionCapabilityOwner {
               }
             : false,
           skillImport: capabilities.includes('skill-import'),
-          literature: literatureAllowed ? { elements: Boolean(literatureHandler?.elements) } : false
+          literature: literatureAllowed
+            ? {
+                elements: Boolean(literatureHandler?.elements),
+                annotations: Boolean(literatureHandler?.annotations)
+              }
+            : false
         })
       : []
     const bridgeMcpNamespaces = request.bridgeMcpAliasesEnabled
@@ -1172,6 +1241,8 @@ export class AcpSessionCapabilityOwner {
     this.releaseCommittedNotebookCapability(appSessionId)
     this.releaseCommittedSkillImportCapability(appSessionId)
     this.releaseCommittedPlanCapability(appSessionId)
+    this.skillRuntimeReleases.get(appSessionId)?.()
+    this.skillRuntimeReleases.delete(appSessionId)
   }
 
   forgetSetupSession(appSessionId: string): Promise<void> | undefined {
@@ -1195,6 +1266,7 @@ export class AcpSessionCapabilityOwner {
       ...this.notebookCapabilityReleases.keys(),
       ...this.skillImportCapabilityReleases.keys(),
       ...this.planCapabilityReleases.keys(),
+      ...this.skillRuntimeReleases.keys(),
       ...this.mcpServers.keys(),
       ...this.descriptors.keys(),
       ...this.committedSessionIds
@@ -1210,6 +1282,7 @@ export class AcpSessionCapabilityOwner {
       this.releaseCommittedNotebookCapability(sessionId)
       this.releaseCommittedSkillImportCapability(sessionId)
       this.releaseCommittedPlanCapability(sessionId)
+      this.skillRuntimeReleases.get(sessionId)?.()
     }
     this.sessionCapabilityTokens.clear()
     this.artifactRoutingIds.clear()
@@ -1221,6 +1294,7 @@ export class AcpSessionCapabilityOwner {
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
     this.planCapabilityReleases.clear()
+    this.skillRuntimeReleases.clear()
     this.mcpServers.clear()
     this.literatureEnabledSessionIds.clear()
     this.descriptors.clear()
@@ -1241,6 +1315,58 @@ export class AcpSessionCapabilityOwner {
 
   mcpServerNamesFor(appSessionId: string): readonly string[] {
     return this.descriptors.get(appSessionId)?.canonicalMcpServerNames ?? []
+  }
+
+  // Main-only identity of the committed capability provision. The frozen descriptor is replaced
+  // when a provision commits and removed when the session is revoked; callers must compare object
+  // identity, not fields or a value supplied by an ACP peer.
+  capabilityRevisionFor(appSessionId: string): object | undefined {
+    return this.descriptors.get(appSessionId)
+  }
+
+  // Pi's experimental permission path only admits methods from Main-provisioned capabilities.
+  // Framework-contributed server names do not establish app ownership. Expand this inventory only
+  // alongside the Main owner of the corresponding capability and its real permission checks.
+  piPermissionCapabilitiesFor(appSessionId: string):
+    | Readonly<{
+        role: 'primary' | 'side-chat'
+        revision: object
+        mcpServerNames: readonly string[]
+        allowedToolIdentities: ReadonlySet<string>
+      }>
+    | undefined {
+    const descriptor = this.descriptors.get(appSessionId)
+    if (!descriptor || (descriptor.role !== 'primary' && descriptor.role !== 'side-chat'))
+      return undefined
+    const allowed = new Set<string>()
+    // The side-chat policy admits only host-message, so a Side chat binds only its relay tool.
+    if (descriptor.capabilities.includes('host-message'))
+      allowed.add(`${HOST_MESSAGE_MCP_SERVER_NAME}/${HOST_SEND_MESSAGE_TOOL_NAME}`)
+    const ownedServers = new Set<string>()
+    if (descriptor.capabilities.includes('notebook')) {
+      for (const tool of NOTEBOOK_RPC_TOOLS) allowed.add(`${NOTEBOOK_MCP_SERVER_NAME}/${tool.name}`)
+    }
+    if (descriptor.capabilities.includes('artifacts')) ownedServers.add(ARTIFACT_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('skill-import'))
+      ownedServers.add(SKILL_IMPORT_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('plan')) ownedServers.add(PLAN_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('literature')) ownedServers.add(LITERATURE_MCP_SERVER_NAME)
+    if (descriptor.capabilities.includes('literature-library'))
+      ownedServers.add(LITERATURE_LIBRARY_MCP_SERVER_NAME)
+    for (const identity of appMcpToolIdentities()) {
+      const slash = identity.indexOf('/')
+      if (slash > 0 && ownedServers.has(identity.slice(0, slash))) allowed.add(identity)
+    }
+    const skillServer = this.piOwnedSkillServers.get(descriptor)
+    if (skillServer && isOwnedSkillRuntimeAcpServer(skillServer)) {
+      allowed.add(`${SKILL_RUNTIME_MCP_SERVER_NAME}/${LOAD_SKILL_TOOL_NAME}`)
+    }
+    return {
+      role: descriptor.role,
+      revision: descriptor,
+      mcpServerNames: descriptor.canonicalMcpServerNames,
+      allowedToolIdentities: allowed
+    }
   }
 
   shellRuntimeBindingFor(appSessionId: string): ShellRuntimeBinding | undefined {

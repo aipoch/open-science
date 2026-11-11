@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError
+} from '../../../../shared/desktop-runtime-recovery'
 import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
 import {
   activateConversationBranch,
@@ -23,11 +27,16 @@ import {
 } from '../../stores/session-store'
 import {
   createOrderedSessionPersistence,
+  flushSessionPersistence,
   resetSessionPersistenceWriteFailuresForTests,
   saveSessionInOrder,
   type SessionPersistenceApi
 } from '../session-persistence/session-persistence'
-import { prepareWorkspacePrompt, rollbackWorkspacePrompt } from './workspace-prompt-preparation'
+import {
+  describeWorkspacePromptRollbackFailure,
+  prepareWorkspacePrompt,
+  rollbackWorkspacePrompt
+} from './workspace-prompt-preparation'
 
 const fixture = (): PersistedChatSession =>
   materializeSessionConversationGraph({
@@ -37,7 +46,7 @@ const fixture = (): PersistedChatSession =>
     cwd: '/workspace',
     status: 'error',
     error: 'Historical failure',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     agentFrameworkId: 'codex',
     createdAt: 1,
     updatedAt: 1,
@@ -124,6 +133,119 @@ afterEach(() => {
 })
 
 describe('workspace prompt preparation with Main rollback authority', () => {
+  it.each([false, true])(
+    'retries the exact preparation after a storage failure (committed: %s)',
+    async (committed) => {
+      const main = mainAdapter()
+      const save = vi.mocked(main.api.saveSession).getMockImplementation()!
+      const failure = new Error('Preparation storage unavailable')
+      vi.mocked(main.api.saveSession).mockImplementationOnce(async (candidate, options) => {
+        if (committed) await save(candidate, options)
+        throw failure
+      })
+      await expect(prepareWorkspacePrompt(current(), 'new', 'new')).rejects.toBe(failure)
+      const commands = vi.mocked(main.api.saveSession).mock.calls[0][1]?.conversationCommands
+      await expect(prepareWorkspacePrompt(current(), 'different', 'new')).rejects.toMatchObject({
+        code: 'session-save-unconfirmed'
+      })
+      const preparation = await prepareWorkspacePrompt(current(), 'new', 'new')
+      expect(vi.mocked(main.api.saveSession).mock.calls.at(-1)?.[1]?.conversationCommands).toEqual(
+        commands
+      )
+      expect(preparation.id).toBe(commands?.[0].id)
+      expect(main.read().promptPreparation?.id).toBe(preparation.id)
+      expect(await rollbackWorkspacePrompt(preparation)).toBe(true)
+      expect(main.read().promptPreparation).toBeUndefined()
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    }
+  )
+
+  it.each(['disconnected', 'not-submitted', 'metadata'] as const)(
+    'does not bypass retained write review for a preparation retry: %s',
+    async (kind) => {
+      const main = mainAdapter()
+      const failure =
+        kind === 'disconnected'
+          ? new DesktopRuntimeDisconnectedError()
+          : kind === 'not-submitted'
+            ? new DesktopRuntimeWriteNotSubmittedError()
+            : new Error('Metadata save failed')
+      vi.mocked(main.api.saveSession).mockRejectedValueOnce(failure)
+      if (kind === 'metadata') {
+        await expect(
+          saveSessionInOrder({ ...current(), title: 'Retained title' }, undefined, undefined, {
+            conflictRebaseFields: ['title']
+          })
+        ).rejects.toBe(failure)
+      } else {
+        await expect(prepareWorkspacePrompt(current(), 'new', 'new')).rejects.toBe(failure)
+      }
+      await expect(prepareWorkspacePrompt(current(), 'new', 'new')).rejects.toMatchObject({
+        code: 'session-save-unconfirmed'
+      })
+      expect(main.api.saveSession).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each([false, true])(
+    'does not clear a newer rearm replay pointer on a late submitted release (started: %s)',
+    async (started) => {
+      const main = mainAdapter()
+      const prep = await prepareWorkspacePrompt(current(), 'new', 'new')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: prep.sessionId,
+        messageId: 'new',
+        content: 'Submitted question',
+        preparationId: prep.id
+      })
+      await saveSessionInOrder(current())
+      const run = current().activeRun!
+      const realSave = vi.mocked(main.api.saveSession).getMockImplementation()!
+      vi.mocked(main.api.saveSession).mockImplementation(async (candidate, options) => {
+        const saved = await realSave(candidate, options)
+        if (
+          options?.conversationCommands?.some(
+            (command) => command.kind === 'rollback-prompt' && command.preserveSubmittedMessage
+          )
+        ) {
+          // Another sender rearms the same Message while the old release acknowledgement is delayed.
+          const commands: SessionConversationCommand[] = [
+            {
+              kind: 'prepare-prompt',
+              id: 'next-preparation',
+              promptMessageId: 'new',
+              mode: 'rearm',
+              timestamp: 30
+            }
+          ]
+          if (started)
+            commands.push({
+              kind: 'start-run',
+              id: 'next-start',
+              preparationId: 'next-preparation',
+              run,
+              timestamp: 30
+            })
+          const fresh = await realSave(saved, { conversationCommands: commands })
+          useSessionStore.getState().upsertPersistedSession(fresh)
+          useSessionStore.setState((state) => ({
+            sessions: state.sessions.map((session) => ({
+              ...session,
+              pendingContextReplayMessageId: 'new'
+            }))
+          }))
+        }
+        return saved
+      })
+      expect(await rollbackWorkspacePrompt(prep, true)).toBe(true)
+      const fresh = useSessionStore.getState().sessions[0]
+      expect(fresh.promptPreparation?.id).toBe('next-preparation')
+      expect(fresh.activeRun).toEqual(started ? run : undefined)
+      expect(fresh.pendingContextReplayMessageId).toBe('new')
+      expect(fresh.messages.map(({ id }) => id)).toEqual(['old', 'new'])
+    }
+  )
+
   it('rolls back rearm of an existing failed prompt without requiring resumeRecovery', async () => {
     const original = fixture()
     const main = mainAdapter(original)
@@ -482,10 +604,70 @@ describe('workspace prompt preparation with Main rollback authority', () => {
     const failure = new Error('Rollback save unavailable')
     vi.mocked(main.api.saveSession).mockRejectedValueOnce(failure)
     await expect(rollbackWorkspacePrompt(prep)).rejects.toBe(failure)
+    const failedCommands = vi
+      .mocked(main.api.saveSession)
+      .mock.calls.at(-1)?.[1]?.conversationCommands
+    await expect(flushSessionPersistence()).rejects.toBe(failure)
+    await expect(saveSessionInOrder(current())).rejects.toMatchObject({
+      code: 'session-save-unconfirmed'
+    })
+    await expect(
+      rollbackWorkspacePrompt({ ...prep, id: `${prep.id}-other` })
+    ).rejects.toMatchObject({
+      code: 'session-save-unconfirmed'
+    })
+    await expect(rollbackWorkspacePrompt(prep, true)).rejects.toMatchObject({
+      code: 'session-save-unconfirmed'
+    })
     expect(pendingSessionConversationCommands(prep.sessionId)).toEqual([])
     expect(current().messages.some(({ id }) => id === 'new')).toBe(true)
     expect(await rollbackWorkspacePrompt(prep)).toBe(true)
     expect(current().messages.map(({ id }) => id)).toEqual(['old'])
     expect(main.read().messages.map(({ id }) => id)).toEqual(['old'])
+    expect(vi.mocked(main.api.saveSession).mock.calls.at(-1)?.[1]?.conversationCommands).toEqual(
+      failedCommands
+    )
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
+  })
+
+  it.each(['desktop-runtime-disconnected', 'desktop-runtime-not-submitted'] as const)(
+    'keeps a rollback blocked until connection recovery confirms its outcome: %s',
+    async (code) => {
+      const main = mainAdapter()
+      const prep = await prepareWorkspacePrompt(current(), 'new', 'new')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: prep.sessionId,
+        messageId: 'new',
+        content: 'Rejected question',
+        preparationId: prep.id
+      })
+      await saveSessionInOrder(current())
+      vi.mocked(main.api.saveSession).mockRejectedValueOnce(
+        code === 'desktop-runtime-disconnected'
+          ? new DesktopRuntimeDisconnectedError()
+          : new DesktopRuntimeWriteNotSubmittedError()
+      )
+      await expect(rollbackWorkspacePrompt(prep)).rejects.toMatchObject({ code })
+      const calls = vi.mocked(main.api.saveSession).mock.calls.length
+      await expect(rollbackWorkspacePrompt(prep)).rejects.toMatchObject({
+        code: 'session-save-unconfirmed'
+      })
+      expect(main.api.saveSession).toHaveBeenCalledTimes(calls)
+      expect(main.read().promptPreparation?.id).toBe(prep.id)
+    }
+  )
+})
+
+describe('rollback error presentation', () => {
+  it('keeps the operation error without exposing cleanup details or obsolete Stop instructions', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(
+      describeWorkspacePromptRollbackFailure('Attachment preparation failed', 'private disk detail')
+    ).toBe('Attachment preparation failed')
+    expect(describeWorkspacePromptRollbackFailure(undefined, 'private disk detail')).toBe(
+      'Session storage is not ready.'
+    )
+    expect(warning).toHaveBeenCalledWith('Workspace prompt rollback failed', 'private disk detail')
+    warning.mockRestore()
   })
 })

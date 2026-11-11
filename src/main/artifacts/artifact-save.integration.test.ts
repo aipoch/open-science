@@ -9,13 +9,22 @@ import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-litera
 import * as boundedIo from '../bounded-file-io'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, realpath, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm, stat, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createArtifactSaveFixture } from './save-test-fixtures'
 import { writeArtifactFileForCurrentRun } from './mcp-server'
 import { ArtifactProvenanceRepository } from './provenance-repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
+import type { ArtifactWriteSource } from '../../shared/artifacts'
+
+const inlineSource = (content: string): ArtifactWriteSource => ({
+  kind: 'inline',
+  content,
+  encoding: 'utf8'
+})
 
 const fixtures: Awaited<ReturnType<typeof createArtifactSaveFixture>>[] = []
 const setup = async (): Promise<Awaited<ReturnType<typeof createArtifactSaveFixture>>> => {
@@ -38,6 +47,211 @@ afterEach(async () => {
 const hash = (data: string): string => createHash('sha256').update(data).digest('hex')
 
 describe('complete Artifact save over the production local RPC', () => {
+  it('admits a save as soon as the activating turn publishes its handoff', async () => {
+    const f = await setup()
+    let saved: { versionId: string } | undefined
+    const owner = new ArtifactTurnOwner({
+      dataRoot: f.storageRoot,
+      repository: f.compatibilityRepository,
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: (binding, isOwnerActive) =>
+        f.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+      revokeRpcCapability: (token) => f.server.revokeArtifactRunCapability(token),
+      writeHandoffFile: async (path, content) => {
+        await writeFile(path, content)
+        if (!JSON.parse(content).rpcCapabilityToken) return
+        saved = await writeArtifactFileForCurrentRun(
+          f.compatibilityRepository,
+          {
+            storageRoot: f.storageRoot,
+            projectId: 'project-1',
+            sessionId: f.binding.artifactStorageSessionId,
+            currentRunFile: path,
+            allowedImportRoots: [],
+            rpcEndpoint: f.connection.endpoint
+          },
+          { filename: 'report.md', source: inlineSource('# Completed report') }
+        )
+      }
+    })
+    const turn = await owner.openRootExecution({
+      ...f.binding,
+      executionId: 'activating-execution',
+      agentName: 'Test Agent'
+    })
+    try {
+      expect(saved?.versionId).toBeTruthy()
+      expect(await f.client.artifactVersion.count()).toBe(1)
+    } finally {
+      await owner.dispose(turn)
+    }
+  })
+
+  it('keeps the previous handoff usable during and after a failed replacement write', async () => {
+    const f = await setup()
+    let failWrite = false
+    const outcomes: unknown[] = []
+    const save = async (path: string, filename: string): Promise<void> => {
+      outcomes.push(
+        await writeArtifactFileForCurrentRun(
+          f.compatibilityRepository,
+          {
+            storageRoot: f.storageRoot,
+            projectId: 'project-1',
+            sessionId: f.binding.artifactStorageSessionId,
+            currentRunFile: path,
+            allowedImportRoots: [],
+            rpcEndpoint: f.connection.endpoint
+          },
+          { filename, source: inlineSource('# Completed report') }
+        ).then(
+          () => 'saved',
+          (error: Error) => error.message
+        )
+      )
+    }
+    const owner = new ArtifactTurnOwner({
+      dataRoot: f.storageRoot,
+      repository: f.compatibilityRepository,
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: (binding, isOwnerActive) =>
+        f.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+      revokeRpcCapability: (token) => f.server.revokeArtifactRunCapability(token),
+      writeHandoffFile: async (path, content) => {
+        if (failWrite) {
+          await save(path, 'during.md')
+          throw new Error('replacement write failed')
+        }
+        await writeFile(path, content)
+      }
+    })
+    const request = { ...f.binding, agentName: 'Test Agent' }
+    const first = await owner.openRootExecution({ ...request, executionId: 'first-execution' })
+    const handoff = await readFile(owner.handoffFile(first), 'utf8')
+    try {
+      failWrite = true
+      await expect(
+        owner.openRootExecution({ ...request, executionId: 'replacement-execution' })
+      ).rejects.toThrow('replacement write failed')
+      await save(owner.handoffFile(first), 'after.md')
+      expect(await readFile(owner.handoffFile(first), 'utf8')).toBe(handoff)
+      expect(outcomes).toEqual(['saved', 'saved'])
+      expect(owner.activeRunIds()).toEqual([JSON.parse(handoff).artifactRunId])
+    } finally {
+      failWrite = false
+      await owner.dispose(first)
+    }
+  })
+
+  it.each([false, true])(
+    'publishes generated files late in an active turn (producerRunId: %s)',
+    async (includeProducer) => {
+      let now = Date.now()
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+      const f = await setup()
+      const lane = createFrameNotebookLane('project-1', 'session-1', f.binding.agentFrameId)
+      const document = await f.notebookRepository.loadOrCreate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        lane,
+        workspaceCwd: f.storageRoot
+      })
+      const dataDir = join(document.notebookSessionRoot, 'data')
+      await mkdir(dataDir, { recursive: true })
+      const sourcePath = join(dataDir, 'report.md')
+      await writeFile(sourcePath, '# Completed report\n')
+      const sourceStat = await stat(sourcePath)
+      const producerRunId = 'notebook-run-report'
+      await f.notebookRepository.appendRun({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        lane,
+        run: {
+          ...f.binding,
+          runId: producerRunId,
+          cellId: 'report-cell',
+          source: 'agent',
+          kernelKind: 'repl',
+          status: 'completed',
+          startedAt: sourceStat.mtimeMs - 1,
+          endedAt: sourceStat.mtimeMs,
+          script: 'await fs.writeFile("report.md", "# Completed report\\n")',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          inputFiles: [],
+          workingFiles: [
+            {
+              path: sourcePath,
+              relativePath: 'data/report.md',
+              kind: 'other',
+              size: sourceStat.size,
+              mtimeMs: sourceStat.mtimeMs,
+              createdByRunId: producerRunId
+            }
+          ]
+        }
+      })
+      const owner = new ArtifactTurnOwner({
+        dataRoot: f.storageRoot,
+        repository: f.compatibilityRepository,
+        runRegistry: new ArtifactRunRegistry(),
+        issueRpcCapability: (binding, isOwnerActive) =>
+          f.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+        revokeRpcCapability: (token) => f.server.revokeArtifactRunCapability(token),
+        notebook: f.server,
+        notebookArtifactSourceScope: () => ({
+          notebookSessionId: 'session-1',
+          notebookDataDir: dataDir,
+          notebookSessionRoot: document.notebookSessionRoot
+        })
+      })
+      const turn = await owner.openRootExecution({
+        ...f.binding,
+        executionId: 'active-execution',
+        agentName: 'Test Agent',
+        provenanceContext: {
+          ...f.binding,
+          messageBranchAncestry: [...(f.binding.messageBranchAncestry ?? [])],
+          messageAncestry: [...(f.binding.messageAncestry ?? [])]
+        }
+      })
+      const env = {
+        storageRoot: f.storageRoot,
+        projectId: 'project-1',
+        sessionId: f.binding.artifactStorageSessionId,
+        currentRunFile: owner.handoffFile(turn),
+        allowedImportRoots: [],
+        rpcEndpoint: f.connection.endpoint
+      }
+      const input = {
+        filename: 'report.md',
+        ...(includeProducer ? { producerRunId } : {})
+      }
+      // Establish that this exact file and provenance are valid before the long-running turn.
+      const initial = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      expect(initial.producerRunId).toBe(producerRunId)
+      now += 2 * 60 * 60 * 1_000 + 1
+      const outcomes: unknown[] = []
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        outcomes.push(
+          await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input).then(
+            (artifact) => ({ saved: true, producerRunId: artifact.producerRunId }),
+            (error: Error) => ({ error: error.message })
+          )
+        )
+      }
+      await owner.dispose(turn)
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe('# Completed report\n')
+      expect(outcomes).toEqual(
+        Array.from({ length: 2 }, () => ({
+          saved: true,
+          producerRunId
+        }))
+      )
+    }
+  )
+
   it.each(['ro', 'rw'] as const)(
     'imports absolute files using current %s folder grants and rejects revoked grants',
     async (access) => {
@@ -134,7 +348,7 @@ describe('complete Artifact save over the production local RPC', () => {
     )
     const error = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'receipt.txt',
-      content: 'saved bytes'
+      source: inlineSource('saved bytes')
     }).then(
       () => {
         throw new Error('Expected projection failure')
@@ -163,9 +377,9 @@ describe('complete Artifact save over the production local RPC', () => {
     const pendingSpy = vi.spyOn(f.compatibilityRepository, 'withPendingFileTransaction')
     const calls = Array.from({ length: 5 }, (_, i) => ({
       filename: `report-${i}.txt`,
-      content: `report ${i}`
+      text: `report ${i}`
     }))
-    await Promise.all(calls.map((c) => writeFile(join(workspace, c.filename), c.content)))
+    await Promise.all(calls.map((c) => writeFile(join(workspace, c.filename), c.text)))
     const results = await Promise.all(
       calls.map((c, i) =>
         writeArtifactFileForCurrentRun(
@@ -176,7 +390,10 @@ describe('complete Artifact save over the production local RPC', () => {
             }
           } as never,
           env,
-          i % 2 ? { filename: c.filename, source: { kind: 'localPath', path: c.filename } } : c,
+          {
+            filename: c.filename,
+            source: i % 2 ? { kind: 'localPath', path: c.filename } : inlineSource(c.text)
+          },
           { requestId: i }
         )
       )
@@ -184,9 +401,9 @@ describe('complete Artifact save over the production local RPC', () => {
     expect(pendingSpy).toHaveBeenCalledTimes(5)
     expect(await f.client.artifactVersion.count()).toBe(5)
     for (let i = 0; i < results.length; i++) {
-      expect(await readFile(results[i].path, 'utf8')).toBe(calls[i].content)
+      expect(await readFile(results[i].path, 'utf8')).toBe(calls[i].text)
       expect(results[i]).toMatchObject({
-        checksum: hash(calls[i].content),
+        checksum: hash(calls[i].text),
         sessionId: 'session-1',
         runId: 'artifact-run-1'
       })
@@ -210,21 +427,21 @@ describe('complete Artifact save over the production local RPC', () => {
         requestId: 'local'
       })
     ).toEqual(first)
-    const inline = { filename: 'same.txt', content: 'original' }
+    const inline = { filename: 'same.txt', source: inlineSource('original') }
     const original = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, inline, {
       requestId: 'inline'
     })
     const newer = await writeArtifactFileForCurrentRun(
       f.compatibilityRepository,
       env,
-      { ...inline, content: 'newer' },
+      { ...inline, source: inlineSource('newer') },
       { requestId: 'newer' }
     )
     await expect(
       writeArtifactFileForCurrentRun(
         f.compatibilityRepository,
         env,
-        { ...inline, content: 'conflict' },
+        { ...inline, source: inlineSource('conflict') },
         { requestId: 'inline' }
       )
     ).rejects.toThrow(/reused/)
@@ -257,7 +474,7 @@ describe('complete Artifact save over the production local RPC', () => {
     })
     const first = writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'first.txt',
-      content: 'first'
+      source: inlineSource('first')
     })
     await entered.promise
     const queuedEntered = deferred()
@@ -271,7 +488,7 @@ describe('complete Artifact save over the production local RPC', () => {
     const queued = writeArtifactFileForCurrentRun(
       f.compatibilityRepository,
       env,
-      { filename: 'cancel.txt', content: 'cancel' },
+      { filename: 'cancel.txt', source: inlineSource('cancel') },
       { signal: controller.signal }
     )
     const cancelled = expect(queued).rejects.toThrow()
@@ -301,7 +518,7 @@ describe('complete Artifact save over the production local RPC', () => {
     await expect(
       writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
         filename: 'late.txt',
-        content: 'late'
+        source: inlineSource('late')
       })
     ).rejects.toThrow(/Invalid/)
     expect(await f.client.artifactVersion.count()).toBe(2)
@@ -311,7 +528,7 @@ describe('complete Artifact save over the production local RPC', () => {
     const env = await f.environment()
     const first = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'same.txt',
-      content: 'old content'
+      source: inlineSource('old content')
     })
     const pending = join(
       f.storageRoot,
@@ -330,7 +547,7 @@ describe('complete Artifact save over the production local RPC', () => {
     await expect(
       writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
         filename: 'same.txt',
-        content: 'x'
+        source: inlineSource('x')
       })
     ).rejects.toThrow('injected')
     expect(await readFile(pending)).toEqual(before)
@@ -345,7 +562,7 @@ describe('complete Artifact save over the production local RPC', () => {
     ).toMatchObject({ versionId: first.versionId })
     await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'next.txt',
-      content: 'next'
+      source: inlineSource('next')
     })
     expect(await f.client.artifactVersion.count()).toBe(2)
   })
@@ -395,7 +612,7 @@ describe('complete Artifact save over the production local RPC', () => {
     await writeArtifactFileForCurrentRun(
       f.compatibilityRepository,
       { ...newEnv, rpcEndpoint: connection.endpoint },
-      { filename: 'after.txt', content: 'after' }
+      { filename: 'after.txt', source: inlineSource('after') }
     )
   })
 
@@ -416,7 +633,7 @@ describe('complete Artifact save over the production local RPC', () => {
         controller.abort(new Error('cancel at durable staging'))
       }
     })
-    const input = { filename: 'staged.txt', content: 'recoverable' }
+    const input = { filename: 'staged.txt', source: inlineSource('recoverable') }
     await expect(
       writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input, {
         requestId: 'staging'
@@ -457,7 +674,7 @@ describe('complete Artifact save over the production local RPC', () => {
     })
     const first = writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'first.txt',
-      content: 'first'
+      source: inlineSource('first')
     })
     await entered.promise
     const aborts = Array.from({ length: 15 }, () => new AbortController())
@@ -465,7 +682,7 @@ describe('complete Artifact save over the production local RPC', () => {
       writeArtifactFileForCurrentRun(
         f.compatibilityRepository,
         env,
-        { filename: `queue-${i}.txt`, content: 'queued' },
+        { filename: `queue-${i}.txt`, source: inlineSource('queued') },
         { signal: abort.signal }
       ).catch((error) => error)
     )
@@ -488,7 +705,7 @@ describe('complete Artifact save over the production local RPC', () => {
     const fresh = await f.environment()
     await writeArtifactFileForCurrentRun(f.compatibilityRepository, fresh, {
       filename: 'reclaimed.txt',
-      content: 'ok'
+      source: inlineSource('ok')
     })
     expect(await f.client.artifactVersion.count()).toBe(2)
   })
@@ -582,7 +799,7 @@ describe('complete Artifact save over the production local RPC', () => {
     expect(await f.client.artifactVersion.count()).toBe(0)
     await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'after-sidecar.txt',
-      content: 'ok'
+      source: inlineSource('ok')
     })
     expect(await f.client.artifactVersion.count()).toBe(1)
   })
@@ -594,7 +811,7 @@ describe('complete Artifact save over the production local RPC', () => {
     const result = await writeArtifactFileForCurrentRun(
       f.compatibilityRepository,
       env,
-      { filename: 'controls.bin', content },
+      { filename: 'controls.bin', source: inlineSource(content) },
       { requestId: 'controls' }
     )
     expect(result.size).toBe(32 * 1024 ** 2)
@@ -632,14 +849,14 @@ describe('complete Artifact save over the production local RPC', () => {
     await expect(
       writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
         filename: 'too-big.bin',
-        content: content + 'x'
+        source: inlineSource(content + 'x')
       })
     ).rejects.toThrow(/budget/)
     // The decoded content fits, but the complete request including metadata must still fit.
     await expect(
       writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
         filename: 'metadata-too-big.bin',
-        content,
+        source: inlineSource(content),
         mimeType: 'x'.repeat(22 * 1024 ** 2)
       })
     ).rejects.toThrow(/request.*budget/)
@@ -669,7 +886,7 @@ describe('complete Artifact save over the production local RPC', () => {
     await entered.promise
     const waiting = writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'wait.txt',
-      content: 'wait'
+      source: inlineSource('wait')
     })
     const other = await f.environment(
       { allowedImportRoots: [] },
@@ -681,7 +898,7 @@ describe('complete Artifact save over the production local RPC', () => {
     )
     const otherResult = await writeArtifactFileForCurrentRun(f.compatibilityRepository, other, {
       filename: 'other.txt',
-      content: 'other'
+      source: inlineSource('other')
     })
     expect(await readFile(otherResult.path, 'utf8')).toBe('other')
     release.resolve()
@@ -738,7 +955,7 @@ describe('complete Artifact save over the production local RPC', () => {
     const env = await f.environment({ allowedImportRoots: [] }, context)
     const first = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename: 'old.txt',
-      content: 'old version'
+      source: inlineSource('old version')
     })
     const oldVersions = [
       first,
@@ -746,7 +963,7 @@ describe('complete Artifact save over the production local RPC', () => {
         Array.from({ length: 4 }, (_, i) =>
           writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
             filename: `old-${i}.txt`,
-            content: `old ${i}`
+            source: inlineSource(`old ${i}`)
           })
         )
       ))
@@ -799,7 +1016,7 @@ describe('complete Artifact save over the production local RPC', () => {
     )
     const next = writeArtifactFileForCurrentRun(f.compatibilityRepository, nextEnv, {
       filename: 'new.txt',
-      content: 'new version'
+      source: inlineSource('new version')
     })
     await nextEntered.promise
     expect(budgetStarted).toBe(false)
@@ -826,7 +1043,7 @@ describe('complete Artifact save over the production local RPC', () => {
         writeArtifactFileForCurrentRun(
           f.compatibilityRepository,
           env,
-          { filename, content: `version ${i}` },
+          { filename, source: inlineSource(`version ${i}`) },
           { requestId: i }
         )
       )
@@ -891,7 +1108,7 @@ describe('complete Artifact save over the production local RPC', () => {
       ['aaaaaa', 'bbbbbb'].map((content, i) =>
         writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
           filename: `bounded-${i}.txt`,
-          content
+          source: inlineSource(content)
         })
       )
     )
@@ -909,7 +1126,7 @@ describe('complete Artifact save over the production local RPC', () => {
     )
     await writeArtifactFileForCurrentRun(f.compatibilityRepository, next, {
       filename: 'next.txt',
-      content: 'cccccc'
+      source: inlineSource('cccccc')
     })
     const last = await f.environment(
       { allowedImportRoots: [] },
@@ -918,7 +1135,7 @@ describe('complete Artifact save over the production local RPC', () => {
     await expect(
       writeArtifactFileForCurrentRun(f.compatibilityRepository, last, {
         filename: 'over.txt',
-        content: 'd'
+        source: inlineSource('d')
       })
     ).rejects.toThrow('session budget exceeded')
     expect(await f.client.artifactVersion.count()).toBe(2)

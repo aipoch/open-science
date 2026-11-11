@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // Tests for JobDetailModal — tab switching, Back navigation, and session jobs list.
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +10,7 @@ import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 import { useSettingsStore } from '@/stores/settings-store'
 
 // Mock radix Dialog to avoid portal / overlay complexity in jsdom
-vi.mock('radix-ui', () => {
+vi.mock('radix-ui', async (load) => {
   const Root = ({
     open,
     children
@@ -50,6 +51,7 @@ vi.mock('radix-ui', () => {
   )
 
   return {
+    ...(await load<typeof import('radix-ui')>()),
     Dialog: { Root, Portal, Overlay, Content, Close },
     Tooltip: {
       Root: TooltipRoot,
@@ -189,6 +191,118 @@ it('does not tick an empty Session list or one with only another Session running
 })
 
 describe('JobDetailModal — detail view', () => {
+  it('shows a failed cancellation without hiding execution and permits retry, then adopts natural completion', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      cancellation_status: 'failed',
+      cancellation_error: {
+        code: 'cancel_request_rejected',
+        message: 'Scheduler permission denied'
+      }
+    })
+    const jobsCancel = vi.fn(async () => undefined)
+    const jobsList = vi.fn(async () => [{ ...job, cancellation_status: 'cancelling' as const }])
+    Object.assign(window, { api: { compute: { jobsCancel, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe('Running')
+    expect(container.textContent).toContain('Cancellation failed')
+    expect(container.querySelectorAll('[data-notice-level]')).toHaveLength(1)
+    expect(container.querySelectorAll('details')).toHaveLength(1)
+    expect(container.querySelector('details')?.textContent).toContain('Scheduler permission denied')
+    expect(
+      (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
+    ).toBe(false)
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Retry'
+    )!
+    await act(async () => retry.click())
+    expect(jobsCancel).toHaveBeenCalledOnce()
+    act(() =>
+      useSessionJobStore
+        .getState()
+        .applyUpdate({ ...job, status: 'success', harvested_at: Date.now() })
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe('Done')
+    expect(container.querySelector('[data-testid="job-cancellation-failed"]')).toBeNull()
+  })
+
+  it('explains unavailable status without promising a stopped remote process or continued polling', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      status: 'error',
+      error_code: 'job_status_unavailable',
+      error_message: 'Queue and controller have no record; accounting is disabled.',
+      last_poll_error: 'no scheduler result'
+    })
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.textContent).toContain('Unable to get job status')
+    expect(container.textContent).toContain('remote process may still be running')
+    expect(container.textContent).toContain('Not collected')
+    expect(container.textContent).toContain(job.job_id)
+    expect(container.textContent).not.toContain('Open-Science will check again')
+    expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+  })
+
+  it.each([
+    { code: 'cancel_request_rejected', label: 'Cancellation failed' },
+    { code: 'cancel_confirmation_failed', label: 'Unable to confirm cancellation' }
+  ] as const)(
+    'combines unavailable status and $code in one notice with both diagnostics',
+    async ({ code, label }) => {
+      const { JobDetailModal } = await import('./JobDetailModal')
+      const job = makeJob({
+        status: 'error',
+        error_code: 'job_status_unavailable',
+        error_message: 'No scheduler result is available for job 1042.',
+        cancellation_status: 'failed',
+        cancellation_error: { code, message: 'Cancellation attempt could not be confirmed.' }
+      })
+      act(() =>
+        root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+      )
+      const notices = container.querySelectorAll('[data-notice-level]')
+      expect(notices).toHaveLength(1)
+      expect(notices[0].querySelector('h2')?.textContent).toBe('Unable to get job status')
+      expect(notices[0].textContent).toContain(label)
+      expect(notices[0].textContent).toContain('remote process may still be running')
+      const diagnostics = notices[0].querySelectorAll('details')
+      expect(diagnostics).toHaveLength(1)
+      expect(diagnostics[0].querySelector('summary')?.textContent).toBe('Diagnostics')
+      expect(diagnostics[0].textContent).toContain(job.error_message)
+      expect(diagnostics[0].textContent).toContain(job.cancellation_error?.message)
+      expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1)
+      expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+    }
+  )
+
+  it('projects an external scheduler cancellation consistently in detail, list, and row', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const { RemoteJobRow } = await import('./RemoteJobRow')
+    const job = makeJob({ status: 'failed', error_code: 'job_cancelled' })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe(
+      'Cancelled'
+    )
+    expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+    act(() =>
+      (container.querySelector('[data-testid="job-detail-back"]') as HTMLButtonElement).click()
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe(
+      'Cancelled'
+    )
+    act(() => root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />))
+    expect(container.textContent).toContain('Cancelled')
+    expect(container.textContent).not.toContain('failed')
+  })
+
   it('explains a queued policy blocker and clears it on a recovered job update', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob({ status: 'queued', queue_blocked_reason: 'session_policy_unavailable' })
@@ -299,6 +413,69 @@ describe('JobDetailModal — detail view', () => {
       (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
     ).toBe(true)
     expect(container.textContent).toContain('Cancelling')
+  })
+
+  it('confirms the exact staged prefix and retries cleanup for the same job', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      provider_id: 'hf-jobs:target',
+      status: 'error',
+      manualStagedCleanup: {
+        kind: 'hugging_face_jobs',
+        bucket: 'lab/files',
+        prefix: 'open-science/job-abc'
+      }
+    })
+    const jobsSetRemoteCleanup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(undefined)
+    const jobsList = vi.fn(async () => [{ ...job, manualStagedCleanup: undefined }])
+    Object.assign(window, { api: { compute: { jobsSetRemoteCleanup, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(
+        <JobDetailModal open sessionId={job.session_id} initialJob={job} onClose={vi.fn()} />
+      )
+    )
+    const button = (label: string): HTMLButtonElement =>
+      Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === label)!
+    act(() => button('Clean up staged resources').click())
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'open-science/job-abc'
+    )
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('lab/files')
+    expect(jobsSetRemoteCleanup).not.toHaveBeenCalled()
+    await act(async () => button('Delete').click())
+    expect(document.querySelector('[role="alertdialog"] [role="alert"]')).not.toBeNull()
+    await act(async () => button('Delete').click())
+    expect(jobsSetRemoteCleanup).toHaveBeenLastCalledWith({
+      providerId: job.provider_id,
+      jobId: job.job_id,
+      sessionId: job.session_id,
+      projectId: job.project_id,
+      disposition: 'cleaned',
+      manualStagedCleanup: true
+    })
+    expect(button('Clean up staged resources')).toBeUndefined()
+  })
+
+  it('hides local staged cleanup controls on the remote Web surface', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      manualStagedCleanup: { kind: 'modal_sandbox', environmentName: 'dev', volumeId: 'vo-demo' }
+    })
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    try {
+      act(() =>
+        root.render(
+          <JobDetailModal open sessionId={job.session_id} initialJob={job} onClose={vi.fn()} />
+        )
+      )
+      expect(container.textContent).not.toContain('Clean up staged resources')
+    } finally {
+      document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    }
   })
 
   it('refreshes details by fetching the Session job list', async () => {
@@ -519,44 +696,76 @@ describe('JobDetailModal — detail view', () => {
     expect(container.querySelector('[data-testid="session-jobs-list"]')).toBeTruthy()
   })
 
-  it('renders remote workdir link', async () => {
+  it('closes the detail after opening an archived output in the workbench', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
-    const job = makeJob({ remote_workdir: '/home/user/.openscience/jobs/job-abc' })
-    useSessionJobStore.getState().applyUpdate(job)
-
-    act(() => {
-      root.render(
-        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
-      )
-    })
-
-    expect(container.textContent).toContain('/home/user/.openscience/jobs/job-abc')
-  })
-
-  it('opens FileBrowserModal when workdir link is clicked', async () => {
-    const { JobDetailModal } = await import('./JobDetailModal')
+    const { usePreviewWorkbenchStore } = await import('@/stores/preview-workbench-store')
+    const onClose = vi.fn()
     const job = makeJob({
-      remote_workdir: '/home/user/.openscience/jobs/job-abc',
-      provider_id: 'ssh:biowulf'
+      status: 'success',
+      execution_mode: 'ray_jobs',
+      provider_id: 'ray:cluster',
+      harvested_at: Date.now(),
+      featured_files: ['hpc/job-abc/featured/summary.tsv']
     })
-    useSessionJobStore.getState().applyUpdate(job)
-
-    act(() => {
-      root.render(
-        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
-      )
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={onClose} />)
+    )
+    const output = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'summary.tsv'
+    )
+    expect(output).toBeDefined()
+    act(() => output!.click())
+    const { activeItemId, items } = usePreviewWorkbenchStore.getState()
+    expect(items.find((item) => item.id === activeItemId)).toMatchObject({
+      name: 'summary.tsv',
+      source: 'compute-output',
+      projectId: 'project-1',
+      sessionId: 'sess-1'
     })
-
-    // Find the workdir link button
-    const workdirBtn = container.querySelector(
-      '[data-testid="job-meta"] button'
-    ) as HTMLButtonElement
-    act(() => workdirBtn.click())
-
-    const browser = container.querySelector('[data-testid="file-browser-modal"]')
-    expect(browser).toBeTruthy()
-    expect(browser?.getAttribute('data-provider')).toBe('ssh:biowulf')
+    expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    ['ssh:biowulf', undefined, true],
+    ['ssh:biowulf', 'direct_ssh', true],
+    ['ssh:biowulf', 'slurm', true],
+    ['kubernetes:cluster', 'kubernetes', false],
+    ['hf-jobs:worker', 'hugging_face_jobs', false],
+    ['ray:cluster', 'ray_jobs', false],
+    ['modal:worker', 'modal_sandbox', false],
+    ['unknown:worker', undefined, false],
+    ['unknown:worker', 'direct_ssh', false]
+  ] as const)(
+    'gates workdir browsing for %s (%s)',
+    async (providerId, executionMode, browsable) => {
+      const { JobDetailModal } = await import('./JobDetailModal')
+      const workdir = '/work/job-abc'
+      const job = makeJob({
+        remote_workdir: workdir,
+        provider_id: providerId,
+        execution_mode: executionMode
+      })
+      useSessionJobStore.getState().applyUpdate(job)
+      act(() => {
+        root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+      })
+      const meta = container.querySelector('[data-testid="job-meta"]')!
+      expect(meta.textContent).toContain(workdir)
+      const link = Array.from(meta.querySelectorAll('button')).find(
+        (button) => button.textContent === workdir
+      )
+      expect(Boolean(link)).toBe(browsable)
+      if (link) {
+        act(() => link.click())
+        expect(
+          container
+            .querySelector('[data-testid="file-browser-modal"]')
+            ?.getAttribute('data-provider')
+        ).toBe(providerId)
+      }
+    }
+  )
 })
 
 describe('JobDetailModal — session jobs list view', () => {

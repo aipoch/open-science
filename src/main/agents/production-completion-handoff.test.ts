@@ -310,6 +310,8 @@ describe('production completion handoff runtime', () => {
       {
         kind: 'capture-for-handoff',
         targetName: 'Approved Specialist',
+        approvedSpecialistId: 'specialist-approved',
+        approvedSpecialistRevision: 3,
         generation: 1,
         envelope: { kind: 'returned', value: 'outer result' }
       },
@@ -341,6 +343,8 @@ describe('production completion handoff runtime', () => {
         {
           kind: 'capture-for-handoff',
           targetName: 'Approved Specialist',
+          approvedSpecialistId: 'specialist-approved',
+          approvedSpecialistRevision: 3,
           generation: 1,
           envelope: { kind: 'returned', value: 'outer result' }
         },
@@ -366,6 +370,19 @@ describe('production completion handoff runtime', () => {
           targetName: 'Approved Specialist',
           approvedSpecialistId: 'specialist-approved',
           approvedSpecialistRevision: 3
+        },
+        context
+      )
+    ).rejects.toThrow('superseded')
+    await expect(
+      runtime.continueAsApproved(
+        {
+          kind: 'capture-for-handoff',
+          targetName: 'Approved Specialist',
+          approvedSpecialistId: 'specialist-approved',
+          approvedSpecialistRevision: 3,
+          generation: 1,
+          envelope: { kind: 'returned', value: 'retry' }
         },
         context
       )

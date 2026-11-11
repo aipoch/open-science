@@ -152,12 +152,12 @@ describe('artifact finalization startup recovery', () => {
         kind: 'failed',
         settledAt: 3,
         error: 'Artifact publication failed',
-        errorReportable: false,
+        failure: { category: 'service' as const, diagnostics: {} },
         recovery: 'retry-artifact-publication'
       }),
       status: 'error',
       error: 'Artifact publication failed',
-      errorReportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
     const coordinator = new SessionPersistenceCoordinator(
       sessions,
@@ -217,12 +217,12 @@ describe('artifact finalization startup recovery', () => {
         kind: 'failed',
         settledAt: 3,
         error: 'Artifact publication failed',
-        errorReportable: false,
+        failure: { category: 'service' as const, diagnostics: {} },
         recovery: 'retry-artifact-publication'
       }),
       status: 'error',
       error: 'Artifact publication failed',
-      errorReportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
     const coordinator = new SessionPersistenceCoordinator(
       sessions,

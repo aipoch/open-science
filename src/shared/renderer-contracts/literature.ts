@@ -1,3 +1,6 @@
+import type { OverviewBatchRequest, OverviewBatch } from '../literature-overview-batch'
+import type { CollectorRequest, CollectorResult } from '../literature-collector'
+import type { LiteratureOverviewRequest, LiteratureOverviewResult } from '../literature-overview'
 import type {
   LiteraturePublicationCheckRequest,
   LiteraturePublicationCheckResult,
@@ -80,6 +83,16 @@ import {
 } from './definition'
 
 export const contracts = {
+  'literature.collect': callable<(request: CollectorRequest) => Promise<CollectorResult>>()(
+    'literature',
+    ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'literature.overviewBatch': callable<
+    (request: OverviewBatchRequest) => Promise<OverviewBatch | null>
+  >()('literature', ['literature:overview-batch', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.studySnapshot': callable<
+    (request: LiteratureOverviewRequest) => Promise<LiteratureOverviewResult>
+  >()('literature', ['literature:study-snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.getCandidateStates': callable<
     (request: LiteratureCandidateStatesRequest) => Promise<LiteratureCandidateStatesResult>
   >()('literature', [

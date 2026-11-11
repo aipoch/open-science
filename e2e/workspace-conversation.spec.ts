@@ -288,13 +288,16 @@ test('explains disabled revision navigation while a turn is running', async ({ a
     await expect(previous).toBeDisabled()
     const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
     const trigger = previous.locator('..')
-    // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
+    // Wait for the gated Agent to finish streaming before scrolling to the revision control.
+    // A later scroll dismisses the tooltip while the test is inspecting it.
+    await expect(
+      conversation.getByText('Queue gate lead-in chunk 3.', { exact: true })
+    ).toBeVisible()
+    // Release the active turn's scroll anchor with a reader-originated wheel gesture.
     await conversation.hover()
     await page.mouse.wheel(0, -100_000)
-    // The active-turn anchor can settle above zero; this scenario needs the revision control.
     await trigger.scrollIntoViewIfNeeded()
     await expect(trigger).toBeInViewport()
-    await trigger.hover()
     await trigger.focus()
     await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('revision-navigation-running.png') })
@@ -397,9 +400,10 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText(['2/2'])
 })
 
-test('keeps Memory reversible while the replacement session awaits history replay', async ({
+test('persists Memory toggles after idle provider release and restart', async ({
   app
-}) => {
+}, testInfo) => {
+  test.setTimeout(180_000)
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
@@ -407,6 +411,12 @@ test('keeps Memory reversible while the replacement session awaits history repla
 
   await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(async () => (await window.api.acp.getState()).sessionIds), {
+      // The provider remains warm for 60 seconds after its last activity.
+      timeout: 90_000
+    })
+    .toEqual([])
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
   const memory = page.getByRole('menuitem', { name: 'Memory', exact: true })
@@ -418,7 +428,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
     .toEqual({
       memoryEnabled: false,
       autoReviewEnabled: false,
-      pendingHistoryReplay: { kind: 'all' }
+      pendingHistoryReplay: null
     })
 
   await page.keyboard.press('Escape')
@@ -439,8 +449,9 @@ test('keeps Memory reversible while the replacement session awaits history repla
     .toEqual({
       memoryEnabled: true,
       autoReviewEnabled: false,
-      pendingHistoryReplay: { kind: 'all' }
+      pendingHistoryReplay: null
     })
+  await page.screenshot({ path: testInfo.outputPath('memory-restored-after-restart.png') })
 })
 
 test('resolves Agent permission requests through both Allow and Deny decisions @pr-mainline-conversation', async ({
@@ -591,74 +602,21 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await page.mouse.move(5, 5)
   await sourceLink.hover()
   const hoverTitle = hoverCard.locator('[data-source-preview-hover-title]')
-  await expect(hoverTitle).toHaveText('Fixture study')
-  await expect(hoverTitle).toHaveClass(/text-text-000/)
-  await expect(hoverCard.locator('[data-source-preview-hover-hostname]')).toHaveText(
-    'citation.example'
-  )
-  const hoverSummary = hoverCard.locator('[data-source-preview-hover-summary]')
-  const hoverActions = hoverCard.locator('[data-source-preview-hover-actions]')
+  await expect(hoverTitle).toHaveCount(0)
   const hoverUrl = hoverCard.locator('[data-source-preview-hover-url]')
-  await expect(hoverUrl).toHaveText('https://citation.example/paper')
-  await expect(hoverUrl).toHaveClass(/text-text-000/)
-  const externalButton = hoverCard.locator('[data-source-preview-hover-external]')
-  await expect(externalButton).toHaveAttribute('aria-label', 'Open source in browser')
-  await expect(hoverSummary).toContainText('Fixture study')
-  await expect(hoverActions.locator('[data-source-preview-hover-url]')).toBeVisible()
-  await expect(hoverActions.locator('[data-source-preview-hover-external]')).toBeVisible()
-  const hoverLayout = await hoverCard.evaluate((card) => {
-    const summary = card.querySelector<HTMLElement>('[data-source-preview-hover-summary]')
-    const actions = card.querySelector<HTMLElement>('[data-source-preview-hover-actions]')
-    const title = card.querySelector<HTMLElement>('[data-source-preview-hover-title]')
-    const hostname = card.querySelector<HTMLElement>('[data-source-preview-hover-hostname]')
-    const url = card.querySelector<HTMLElement>('[data-source-preview-hover-url]')
-    const external = card.querySelector<HTMLElement>('[data-source-preview-hover-external]')
-    const iconColumn = card.querySelector<HTMLElement>('[data-source-preview-hover-icon-column]')
-    const contentColumn = card.querySelector<HTMLElement>(
-      '[data-source-preview-hover-content-column]'
-    )
-    if (
-      !summary ||
-      !actions ||
-      !title ||
-      !hostname ||
-      !url ||
-      !external ||
-      !iconColumn ||
-      !contentColumn
-    ) {
-      throw new Error('Source hover layout is incomplete')
-    }
-    const cardRect = card.getBoundingClientRect()
-    const titleRect = title.getBoundingClientRect()
-    const hostnameRect = hostname.getBoundingClientRect()
-    const actionsRect = actions.getBoundingClientRect()
-    const urlRect = url.getBoundingClientRect()
-    const externalRect = external.getBoundingClientRect()
-    const iconColumnRect = iconColumn.getBoundingClientRect()
-    const contentColumnRect = contentColumn.getBoundingClientRect()
-    const contentStarts = [titleRect.left, hostnameRect.left, urlRect.left]
-    return {
-      width: cardRect.width,
-      titleColor: getComputedStyle(title).color,
-      descriptionColor: getComputedStyle(hostname).color,
-      actionGap: actionsRect.top - hostnameRect.bottom,
-      contentStartDelta: Math.max(...contentStarts) - Math.min(...contentStarts),
-      iconColumnPrecedesContent: iconColumnRect.right <= contentColumnRect.left,
-      iconColumnHeightDelta: Math.abs(iconColumnRect.height - contentColumnRect.height),
-      actionCenterDelta: Math.abs(
-        urlRect.top + urlRect.height / 2 - (externalRect.top + externalRect.height / 2)
-      )
-    }
+  await expect(hoverUrl).toHaveText('citation.example')
+  await expect(hoverUrl).toHaveAttribute('href', 'https://citation.example/paper')
+  const externalButton = hoverCard.getByRole('button', { name: 'Open source in browser' })
+  await expect(externalButton).toBeVisible()
+  const linkColor = await hoverCard.evaluate((card) => {
+    const swatch = document.createElement('span')
+    swatch.style.color = 'var(--primary)'
+    card.append(swatch)
+    const color = getComputedStyle(swatch).color
+    swatch.remove()
+    return color
   })
-  expect(hoverLayout.width).toBeLessThan(320)
-  expect(hoverLayout.titleColor).not.toBe(hoverLayout.descriptionColor)
-  expect(hoverLayout.actionGap).toBeGreaterThanOrEqual(8)
-  expect(hoverLayout.contentStartDelta).toBeLessThanOrEqual(1)
-  expect(hoverLayout.iconColumnPrecedesContent).toBe(true)
-  expect(hoverLayout.iconColumnHeightDelta).toBeLessThanOrEqual(1)
-  expect(hoverLayout.actionCenterDelta).toBeLessThanOrEqual(1)
-  await expect(hoverCard.locator('[data-session-link-favicon-skeleton]')).toHaveCount(0)
+  await expect(sourceLink).toHaveCSS('color', linkColor)
   expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
   const hoverAccessibility = (await hoverCard.evaluate(async (element) => {
@@ -1208,6 +1166,9 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
     if (attempt < 2) await advanceRevision()
     await archive.click()
     if (attempt < 2) {
+      const error = page.getByTestId('composer-notice-slot')
+      await expect(error.locator('pre')).toContainText('Session revision conflict:')
+      if (!(await error.locator('pre').isVisible())) await error.locator('summary').click()
       await expect(conflict).toBeVisible()
       await expect(undo).toBeHidden()
     } else {

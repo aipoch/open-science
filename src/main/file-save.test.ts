@@ -739,9 +739,11 @@ describe('file save IPC handlers', () => {
       canceled: false,
       filePath: join(downloadsPath, 'proxy.log')
     })
+    const publish = vi.fn(publishDirectly)
     registerFileSaveHandlers({
       resolveManagedFilePath,
-      openManagedFile
+      openManagedFile,
+      publishUserFile: publish
     })
 
     const result = await handlers.get('file:save-managed')!(
@@ -757,6 +759,11 @@ describe('file save IPC handlers', () => {
       path: '/Users/example/logs/proxy.log'
     })
     expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'proxy.log'))
+    expect(publish).toHaveBeenCalledWith(
+      join(downloadsPath, 'proxy.log'),
+      expect.any(Function),
+      expect.objectContaining({ userSelectedDestination: true })
+    )
     expect(close).toHaveBeenCalledTimes(1)
     expect(result).toEqual({
       saved: true,
@@ -764,37 +771,47 @@ describe('file save IPC handlers', () => {
     })
   })
 
-  it('exports a Notebook input through its trusted lease without resolving a source path', async () => {
-    const resolveManagedFilePath = vi
-      .fn()
-      .mockRejectedValue(new Error('path resolver must not run'))
-    const copyTo = vi.fn().mockResolvedValue(undefined)
-    const close = vi.fn().mockResolvedValue(undefined)
-    const openNotebookInput = vi.fn().mockResolvedValue({ copyTo, close })
-    showSaveDialog.mockResolvedValue({
-      canceled: false,
-      filePath: join(downloadsPath, 'captured.csv')
-    })
-    registerFileSaveHandlers({ resolveManagedFilePath, openNotebookInput } as never)
+  it.each([
+    ['notebook-input', 'notebook-input-preview-key', 'openNotebookInput'],
+    [
+      'compute-output',
+      'compute-output:v1:project/session/hpc/job/featured/captured.csv',
+      'openComputeOutput'
+    ]
+  ] as const)(
+    'exports %s through its trusted lease without resolving a source path',
+    async (source, path, resolver) => {
+      const resolveManagedFilePath = vi
+        .fn()
+        .mockRejectedValue(new Error('path resolver must not run'))
+      const copyTo = vi.fn().mockResolvedValue(undefined)
+      const close = vi.fn().mockResolvedValue(undefined)
+      const openLease = vi.fn().mockResolvedValue({ copyTo, close })
+      showSaveDialog.mockResolvedValue({
+        canceled: false,
+        filePath: join(downloadsPath, 'captured.csv')
+      })
+      registerFileSaveHandlers({ resolveManagedFilePath, [resolver]: openLease })
 
-    const result = await handlers.get('file:save-managed')!(
-      { sender: {} },
-      {
-        source: 'notebook-input',
-        path: 'notebook-input-preview-key',
-        suggestedName: 'captured.csv'
-      }
-    )
+      const result = await handlers.get('file:save-managed')!(
+        { sender: {} },
+        {
+          source,
+          path,
+          suggestedName: 'captured.csv'
+        }
+      )
 
-    expect(openNotebookInput).toHaveBeenCalledWith({ path: 'notebook-input-preview-key' })
-    expect(resolveManagedFilePath).not.toHaveBeenCalled()
-    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'captured.csv'))
-    expect(close).toHaveBeenCalledOnce()
-    expect(result).toEqual({
-      saved: true,
-      filePath: join(downloadsPath, 'captured.csv')
-    })
-  })
+      expect(openLease).toHaveBeenCalledExactlyOnceWith({ path })
+      expect(resolveManagedFilePath).not.toHaveBeenCalled()
+      expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'captured.csv'))
+      expect(close).toHaveBeenCalledOnce()
+      expect(result).toEqual({
+        saved: true,
+        filePath: join(downloadsPath, 'captured.csv')
+      })
+    }
+  )
 
   it('copies the original pending file identity after it is finalized during Save As', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/.pending/report.csv')

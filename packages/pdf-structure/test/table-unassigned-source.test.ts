@@ -24,6 +24,12 @@ const { recoverStrictSingletonSourceGaps } = await import(
 const { recoverUnassignedAggregateRows } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
 )
+const { recoverNativeProseContinuation } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
+)
+const { recoverNativeMathCellFragments } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids', `${name}.jsonl`))
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
@@ -36,6 +42,149 @@ type SourceToken = {
   height: number
   horizontal: boolean
 }
+
+it('recovers a uniquely aligned prose continuation inside a native cell', () => {
+  const rows = [{ rect: [0, 0, 300, 45] }]
+  const cells = [{ row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [100, 0, 300, 45] }]
+  const prefix: SourceToken = {
+    text: 'The proof is established by following the deferred parts',
+    rect: [110, 5, 260, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const continuation: SourceToken = {
+    text: 'including deferred parts. Empty if the paper gives no proof.',
+    rect: [110, 20, 270, 30],
+    baseline: 30,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[prefix, cells[0]]])
+  const repairs: string[] = []
+  expect(
+    recoverNativeProseContinuation({
+      items: [prefix, continuation],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs
+    })
+  ).toBe(true)
+  expect(assignments.get(continuation)).toBe(cells[0])
+  expect(cells[0].rect[3]).toBe(45)
+  expect(repairs).toContain('prose-continuation-recovered')
+})
+
+it('does not recover prose that starts in the next physical row', () => {
+  const rows = [{ rect: [0, 0, 300, 45] }, { rect: [0, 45, 300, 90] }]
+  const cells = [{ row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [100, 0, 300, 45] }]
+  const prefix: SourceToken = {
+    text: 'The proof is established by following the deferred parts',
+    rect: [110, 5, 260, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const nextRow: SourceToken = {
+    text: 'A separate row begins with an independent narrative value.',
+    rect: [110, 46, 280, 56],
+    baseline: 56,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[prefix, cells[0]]])
+  expect(
+    recoverNativeProseContinuation({
+      items: [prefix, nextRow],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs: []
+    })
+  ).toBe(false)
+  expect(assignments.has(nextRow)).toBe(false)
+})
+
+it('recovers short math fragments that straddle a native cell edge', () => {
+  const rows = [{ rect: [0, 0, 200, 20] }]
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [0, 0, 100, 20] },
+    { row: 0, column: 1, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [100, 0, 200, 20] }
+  ]
+  const anchor: SourceToken = {
+    text: '√',
+    rect: [120, 8, 128, 18],
+    baseline: 18,
+    height: 10,
+    horizontal: true
+  }
+  const fragment: SourceToken = {
+    text: '4',
+    rect: [130, 19, 138, 29],
+    baseline: 29,
+    height: 10,
+    horizontal: true
+  }
+  const sibling: SourceToken = {
+    text: 'L',
+    rect: [139, 19, 147, 29],
+    baseline: 29,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[anchor, cells[1]]])
+  const repairs: string[] = []
+  expect(
+    recoverNativeMathCellFragments({
+      items: [anchor, fragment, sibling],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs
+    })
+  ).toBe(2)
+  expect(assignments.get(fragment)).toBe(cells[1])
+  expect(assignments.get(sibling)).toBe(cells[1])
+  expect(repairs).toContain('native-math-fragments-recovered')
+})
+
+it('does not recover a short math token from the next physical row', () => {
+  const rows = [{ rect: [0, 0, 200, 20] }, { rect: [0, 20, 200, 40] }]
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [0, 0, 100, 20] },
+    { row: 0, column: 1, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [100, 0, 200, 20] }
+  ]
+  const anchor: SourceToken = {
+    text: '√',
+    rect: [120, 8, 128, 18],
+    baseline: 18,
+    height: 10,
+    horizontal: true
+  }
+  const nextRow: SourceToken = {
+    text: '4',
+    rect: [130, 21, 138, 31],
+    baseline: 31,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[anchor, cells[1]]])
+  expect(
+    recoverNativeMathCellFragments({
+      items: [anchor, nextRow],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs: []
+    })
+  ).toBe(0)
+  expect(assignments.has(nextRow)).toBe(false)
+})
 
 it('recovers only a uniquely supported Route header gap', () => {
   const rows = [{ rect: [0, 0, 300, 20] }, { rect: [0, 20, 300, 40] }, { rect: [0, 40, 300, 60] }]
@@ -758,7 +907,141 @@ it('fills an empty row from one complete baseline with a fragmented terminal lan
   expect(source.every((item) => (assignments.get(item) as { row?: number })?.row === 2)).toBe(true)
 })
 
-it('inserts a strictly witnessed three-column parameter row between complete rows', () => {
+it('recovers a terminal unassigned row in a two-column directory', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columnRects = [0, 100].map((left) => [left, 0, left + 100, 70])
+  const rows = [0, 20, 40].map((top) => ({
+    rect: [0, top, 200, top + 12],
+    origin: 'model'
+  }))
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      origin: 'model',
+      text: '',
+      items: [],
+      sourceRects: []
+    }))
+  )
+  const previous = [token('Methods', 8, 21), token('3', 108, 21)]
+  const source = [token('Appendix', 8, 41), token('5', 108, 41)]
+  const assignments = new Map<unknown, unknown>()
+  previous.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 1 && cell.column === column)
+    )
+  )
+  const repairs: string[] = []
+  const recovered = recoverUnassignedCompleteSourceRows({
+    items: [...previous, ...source],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs
+  })
+  expect(recovered).toBe(1)
+  expect(source.map((item) => (assignments.get(item) as { row?: number })?.row)).toEqual([2, 2])
+  expect(repairs).toContain('unassigned-complete-source-row-recovered')
+})
+
+it.each([
+  ['Parameters', '1'],
+  ['Hyperparameters', '5ms'],
+  ['Parameters', '10Hz'],
+  ['Hyperparameters', '20%']
+])(
+  'inserts a strictly witnessed three-column parameter row between complete rows: %s/%s',
+  (captionWord, valueText) => {
+    const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+      text,
+      rect: [x, y, x + Math.max(8, text.length * 3), y + 10],
+      baseline: y + 10,
+      height: 10,
+      horizontal: true
+    })
+    const columnRects = [0, 100, 200].map((left) => [left, 0, left + 100, 80])
+    const rows = [
+      { rect: [0, 0, 300, 18], origin: 'model' },
+      { rect: [0, 20, 300, 32], origin: 'model' },
+      { rect: [0, 42, 300, 54], origin: 'model' }
+    ]
+    const cells = rows.flatMap((row, rowIndex) =>
+      columnRects.map((rect, column) => ({
+        row: rowIndex,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+        origin: 'model',
+        items: []
+      }))
+    )
+    const header = [token('Parameter', 8, 4), token('Value', 108, 4), token('Description', 208, 4)]
+    const previous = [
+      token('alpha_rate', 8, 21),
+      token('0.2', 108, 21),
+      token('Learning rate', 208, 21)
+    ]
+    const missing = [
+      token('target_update_interval', 8, 33),
+      token(valueText, 108, 33),
+      token('Frequency of target updates', 208, 33)
+    ]
+    const next = [
+      token('target_entropy', 8, 45),
+      token('auto', 108, 45),
+      token('Target entropy', 208, 45)
+    ]
+    const assignments = new Map<unknown, unknown>()
+    previous.forEach((item, column) =>
+      assignments.set(
+        item,
+        cells.find((cell) => cell.row === 1 && cell.column === column)
+      )
+    )
+    next.forEach((item, column) =>
+      assignments.set(
+        item,
+        cells.find((cell) => cell.row === 2 && cell.column === column)
+      )
+    )
+    const repairs: string[] = []
+    const recovered = recoverUnassignedInsertedParameterRows({
+      items: [...header, ...previous, ...missing, ...next],
+      cells,
+      rows,
+      columnRects,
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs,
+      captions: [{ lines: [`Table 1: ${captionWord}`] }]
+    })
+    expect(recovered).toBe(1)
+    expect(rows).toHaveLength(4)
+    expect(cells.filter((cell) => cell.row === 2)).toHaveLength(3)
+    expect(
+      [...assignments.values()].filter((cell) => (cell as { row?: number } | undefined)?.row === 2)
+    ).toHaveLength(3)
+    expect(repairs).toContain('unassigned-parameter-row-inserted')
+  }
+)
+
+it('recovers a fragmented terminal value in a hyperparameter row', () => {
   const token = (text: string, x: number, y: number): Record<string, unknown> => ({
     text,
     rect: [x, y, x + Math.max(8, text.length * 3), y + 10],
@@ -767,11 +1050,88 @@ it('inserts a strictly witnessed three-column parameter row between complete row
     horizontal: true
   })
   const columnRects = [0, 100, 200].map((left) => [left, 0, left + 100, 80])
-  const rows = [
-    { rect: [0, 0, 300, 18], origin: 'model' },
-    { rect: [0, 20, 300, 32], origin: 'model' },
-    { rect: [0, 42, 300, 54], origin: 'model' }
+  const rows = [0, 20, 40].map((top) => ({
+    rect: [0, top, 300, top + 12],
+    origin: 'model'
+  }))
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      origin: 'model',
+      items: []
+    }))
+  )
+  const header = [
+    token('Hyperparameter', 8, 4),
+    token('Search Space', 108, 4),
+    token('Sampling', 208, 4)
   ]
+  const previous = [
+    token('Batch size', 8, 21),
+    token('[16, 128]', 108, 21),
+    token('Discrete', 208, 21)
+  ]
+  const missing = [
+    token('Weight decay', 8, 33),
+    token('[10', 108, 33),
+    token('−', 130, 29),
+    token('6', 140, 29),
+    token(',', 150, 33),
+    token('10', 160, 33),
+    token('−', 180, 29),
+    token('1]', 190, 33),
+    token('Loguniform', 208, 33)
+  ]
+  const next = [
+    token('Base learning rate', 8, 45),
+    token('[10−5, 10−2]', 108, 45),
+    token('Loguniform', 208, 45)
+  ]
+  const assignments = new Map<unknown, unknown>()
+  previous.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 1 && cell.column === column)
+    )
+  )
+  next.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 2 && cell.column === column)
+    )
+  )
+  const repairs: string[] = []
+  const recovered = recoverUnassignedInsertedParameterRows({
+    items: [...header, ...previous, ...missing, ...next],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs,
+    captions: [{ lines: ['Table A2: Hyperparameter search space'] }]
+  })
+  expect(recovered).toBe(1)
+  expect(rows).toHaveLength(4)
+  expect(repairs).toContain('unassigned-parameter-row-inserted')
+  expect(missing.every((item) => (assignments.get(item) as { row?: number })?.row === 2)).toBe(true)
+})
+
+it('rejects a parameter row contaminated by an out-of-grid token', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 3), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columnRects = [0, 100, 200].map((left) => [left, 0, left + 100, 80])
+  const rows = [0, 20, 40].map((top) => ({ rect: [0, top, 300, top + 12], origin: 'model' }))
   const cells = rows.flatMap((row, rowIndex) =>
     columnRects.map((rect, column) => ({
       row: rowIndex,
@@ -792,7 +1152,8 @@ it('inserts a strictly witnessed three-column parameter row between complete row
   const missing = [
     token('target_update_interval', 8, 33),
     token('1', 108, 33),
-    token('Frequency of target updates', 208, 33)
+    token('Frequency of target updates', 208, 33),
+    token('unrelated', -40, 33)
   ]
   const next = [
     token('target_entropy', 8, 45),
@@ -822,15 +1183,10 @@ it('inserts a strictly witnessed three-column parameter row between complete row
     assignments,
     ambiguousAssignments: new Set(),
     repairs,
-    captions: [{ lines: ['Table 1: Parameters'] }]
+    captions: [{ lines: ['Table 1: Hyperparameters'] }]
   })
-  expect(recovered).toBe(1)
-  expect(rows).toHaveLength(4)
-  expect(cells.filter((cell) => cell.row === 2)).toHaveLength(3)
-  expect(
-    [...assignments.values()].filter((cell) => (cell as { row?: number } | undefined)?.row === 2)
-  ).toHaveLength(3)
-  expect(repairs).toContain('unassigned-parameter-row-inserted')
+  expect(recovered).toBe(0)
+  expect(repairs).not.toContain('unassigned-parameter-row-inserted')
 })
 
 it('splits complete body baselines while retaining an unmeasured fused header', () => {

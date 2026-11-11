@@ -53,6 +53,30 @@ afterEach(async () => {
 })
 
 describe('ProviderRuntimeHealthOwner', () => {
+  it('does not apply a late model failure after a scoped ACP recovery', async () => {
+    const oldTarget = target()
+    await repository.updateProviderValidationIfTargetMatches(
+      original.id,
+      () => true,
+      { ok: true, category: 'ok' },
+      {
+        model: 'model-a',
+        endpoint: 'chat-completions',
+        frameworkId: 'opencode',
+        route: 'opencode-openai'
+      }
+    )
+    const before = await repository.getSettings()
+    await new ProviderRuntimeHealthOwner(repository).observe(oldTarget, {
+      category: 'model-not-found',
+      status: 404,
+      startedAt: 2,
+      model: 'model-a',
+      endpoint: 'chat-completions'
+    })
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
   it('makes a verified gateway unavailable and publishes after a runtime authentication rejection', async () => {
     const published = vi.fn(async () => {
       expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)

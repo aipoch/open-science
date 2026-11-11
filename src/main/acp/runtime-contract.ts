@@ -88,6 +88,8 @@ export type AcpRuntimeOptions = {
   // Disposable framework homes must retain the same read protection as app-owned config roots.
   additionalProtectedReadRoots?: readonly string[]
   callbacks?: AcpRuntimeCallbacks
+  // Restricted inference classifies operational notices; ordinary chat keeps its presentation.
+  separateProviderNotices?: boolean
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
     record: (
@@ -139,6 +141,11 @@ export type AcpRuntimeOptions = {
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
     networkApprovalOwner?: import('./sandbox-network-approval-owner').SandboxNetworkApprovalOwner
+    allowNetworkDestination?: (
+      grant: import('../../shared/network-destination-grants').NetworkDestinationGrant,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => Promise<unknown>
     allowNetworkDomain?: (
       hostname: string,
       assertCurrent?: () => Promise<void>,
@@ -157,6 +164,7 @@ export type AcpRuntimeOptions = {
     ) => Promise<SideChatSendMessageResult>
   }>
   literature?: Readonly<{
+    annotations?: import('../pdf-annotations/agent-tools').PdfAnnotationAgentTools
     elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     resolveAttachmentVersion?: (versionId: string) => Promise<
@@ -319,7 +327,10 @@ export type AcpRuntimeArtifactOptions = {
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
   getRpcConnection?: () => Promise<NotebookRpcConnection>
-  issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
+  issueRpcCapability?: (
+    binding: ArtifactRpcCapabilityBinding,
+    isOwnerActive: () => boolean
+  ) => string
   revokeRpcCapability?: (token: string) => Promise<void> | void
   // When present, the caller already owns the execution Artifact turn. Runtime only provisions the
   // MCP transport against this exact handoff and never opens a competing root turn.
@@ -396,6 +407,11 @@ export type AcpRuntimeNotebookOptions = {
     materializeOnly?: boolean
   }) => Promise<readonly NotebookPromptInput[] | void>
   peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+  isReplNamespaceUnavailable?: (
+    projectId: string,
+    sessionId: string,
+    rootFrameId?: string
+  ) => boolean
 }
 
 export type AcpRuntimeSkillImportOptions = {

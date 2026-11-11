@@ -76,8 +76,7 @@ const hooks = (): AcpAgentConnectionHooks => ({
   onProcessError: vi.fn(),
   onProcessExit: vi.fn(),
   onConnectionClosed: vi.fn(),
-  reportCleanupFailure: vi.fn(),
-  reportProcessTreeError: vi.fn()
+  reportCleanupFailure: vi.fn()
 })
 
 const openConnection = async (
@@ -98,6 +97,7 @@ const openConnection = async (
         prepareBackend: (backend) => backendOwner.prepare(attempt, backend),
         isCurrent: () => attempt.epoch === owner.epoch,
         isShuttingDown: () => owner.isShuttingDown,
+        cleanupUnattached: (resource, onFailure) => owner.cleanupUnattached(resource, onFailure),
         spawnAgent: () => asAgentProcess(process)
       },
       connectionHooks
@@ -119,6 +119,7 @@ const openCandidate = async (
 ): Promise<AcpAgentConnectionCandidate> => {
   const backendOwner = new AcpBackendGenerationOwner(claudeCodeFramework)
   const identity = { epoch: 1, assertCurrent: vi.fn() }
+  const resources = new AcpConnectionResourceOwner()
   return new AcpAgentConnectionAdapter().open(
     {
       epoch: identity.epoch,
@@ -126,6 +127,7 @@ const openCandidate = async (
       prepareBackend: (resolved) => backendOwner.prepare(identity, resolved),
       isCurrent: () => true,
       isShuttingDown: () => false,
+      cleanupUnattached: (resource, onFailure) => resources.cleanupUnattached(resource, onFailure),
       spawnAgent: () => asAgentProcess(process)
     },
     connectionHooks
@@ -133,8 +135,153 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it.each([false, true])(
+    'retains an unready OpenCode service for a later owner teardown; rejected=%s',
+    async (rejected) => {
+      const root = await mkdtemp(join(tmpdir(), 'opencode-unready-cleanup-'))
+      const child = new FakeAgentProcess()
+      const owner = new AcpConnectionResourceOwner()
+      const backendOwner = new AcpBackendGenerationOwner(opencodeFramework)
+      let releaseStore: (() => void) | undefined
+      const actualService =
+        await vi.importActual<typeof import('./opencode-service')>('./opencode-service')
+      startService.mockImplementationOnce(actualService.startOpenCodeService)
+      const failCleanup = async (): Promise<{ reaped: boolean }> => {
+        if (rejected) throw new Error('Termination temporarily unavailable')
+        return { reaped: false }
+      }
+      terminateProcessTree.mockImplementationOnce(failCleanup).mockImplementationOnce(failCleanup)
+      try {
+        await expect(
+          owner.connect(async (attempt) => {
+            const candidate = await new AcpAgentConnectionAdapter().open(
+              {
+                epoch: attempt.epoch,
+                resolveBackend: async () => ({
+                  framework: opencodeFramework,
+                  executablePath: '/opencode',
+                  env: { XDG_DATA_HOME: root },
+                  opencodeMajorVersion: 2
+                }),
+                prepareBackend: (backend) => backendOwner.prepare(attempt, backend),
+                isCurrent: () => owner.epoch === attempt.epoch,
+                isShuttingDown: () => owner.isShuttingDown,
+                cleanupUnattached: (resource, onFailure) =>
+                  owner.cleanupUnattached(resource, onFailure),
+                registerOpenCodeStoreRelease: (release) => {
+                  releaseStore = release
+                },
+                spawnProcess: () => {
+                  queueMicrotask(() =>
+                    child.stdout.write('{"url":"https://external.example:443"}\n')
+                  )
+                  return asAgentProcess(child)
+                }
+              },
+              hooks()
+            )
+            candidate.transferTo(attempt)
+            return attempt.publish({ close: false, delete: false, resume: true, steering: false })
+          })
+        ).rejects.toThrow(/could not be stopped after startup failed|cleanup failed/)
+        expect(child.stdin.writableEnded).toBe(false)
+        expect(owner.cleanupConfirmed).toBe(false)
+        expect(() => acquireRuntimeDirectorySync(join(root, 'opencode'))).toThrow('already using')
+        await owner.teardown(owner.supersede())
+        expect(terminateProcessTree).toHaveBeenCalledTimes(3)
+        expect(child.stdin.writableEnded).toBe(true)
+        expect(owner.cleanupConfirmed).toBe(true)
+        const lock = acquireRuntimeDirectorySync(join(root, 'opencode'))
+        lock.release()
+      } finally {
+        releaseStore?.()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('classifies OpenCode 1.x replay before SDK observers receive summary chunks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'opencode-compaction-'))
+    const process = new FakeAgentProcess()
+    const connectionHooks = hooks()
+    vi.mocked(connectionHooks.filesystem.resolveSessionCwd).mockImplementation(() => {
+      throw new Error('Session has not been attached during load')
+    })
+    const owner = new AcpConnectionResourceOwner()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          info: { id: 'summary', sessionID: 's', role: 'assistant', summary: true, finish: 'stop' }
+        })
+      )
+    )
+    try {
+      const candidate = await openCandidate(
+        process,
+        {
+          framework: opencodeFramework,
+          executablePath: '',
+          env: { XDG_DATA_HOME: root },
+          opencodeMajorVersion: 1,
+          opencodeUsageApi: { baseUrl: 'http://localhost:1234', authorization: 'Basic test' }
+        },
+        connectionHooks
+      )
+      const ready = await owner.connect(async (attempt) => {
+        candidate.transferTo(attempt)
+        return attempt.publish({ close: false, delete: false, resume: false, steering: false })
+      })
+      const request = ready.connection.agent.request(acp.methods.agent.session.load, {
+        sessionId: 's',
+        cwd: root,
+        mcpServers: []
+      })
+      const outgoing = await new Promise<Buffer>((resolve) => process.stdin.once('data', resolve))
+      const { id } = JSON.parse(outgoing.toString())
+      process.stdout.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 's',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: 'summary',
+              content: { type: 'text', text: 'INTERNAL_PATH_AND_INSTRUCTIONS' }
+            }
+          }
+        }) + '\n'
+      )
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result: {} }) + '\n')
+      await request
+      expect(connectionHooks.observeSessionUpdate).toHaveBeenCalledOnce()
+      expect(connectionHooks.observeSessionUpdate).toHaveBeenCalledWith({
+        sessionId: 's',
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: {
+            'opencode/compaction': {
+              messageId: 'summary',
+              reason: 'auto',
+              status: 'completed'
+            }
+          }
+        }
+      })
+      expect(
+        JSON.stringify(vi.mocked(connectionHooks.observeSessionUpdate).mock.calls)
+      ).not.toContain('INTERNAL_PATH_AND_INSTRUCTIONS')
+    } finally {
+      await owner.teardown(owner.epoch)
+      vi.unstubAllGlobals()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('releases a late store lease without spawning when its Attempt is closing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-closing-'))
+    const resources = new AcpConnectionResourceOwner()
     const spawn = vi.fn()
     const prepareBackend = vi.fn()
     try {
@@ -151,6 +298,8 @@ describe('AcpAgentConnectionAdapter', () => {
             prepareBackend,
             isCurrent: () => true,
             isShuttingDown: () => false,
+            cleanupUnattached: (resource, onFailure) =>
+              resources.cleanupUnattached(resource, onFailure),
             registerOpenCodeStoreRelease: () => {
               throw new Error('Delegated Attempt cleanup has started.')
             }
@@ -172,6 +321,7 @@ describe('AcpAgentConnectionAdapter', () => {
     'does not publish when the companion exits during %s',
     async (phase) => {
       const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-exit-'))
+      const resources = new AcpConnectionResourceOwner()
       let exitService!: () => void
       const release = vi.fn(async () => ({ reaped: true }))
       startService.mockImplementationOnce(async (_backend, onExit) => {
@@ -204,7 +354,9 @@ describe('AcpAgentConnectionAdapter', () => {
               return backendOwner.prepare({ epoch: 1, assertCurrent: vi.fn() }, backend)
             },
             isCurrent: () => true,
-            isShuttingDown: () => false
+            isShuttingDown: () => false,
+            cleanupUnattached: (resource, onFailure) =>
+              resources.cleanupUnattached(resource, onFailure)
           },
           connectionHooks
         )
@@ -231,6 +383,7 @@ describe('AcpAgentConnectionAdapter', () => {
     'reaps a late companion before releasing storage after %s during startup',
     async (interruption) => {
       const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-pending-'))
+      const resources = new AcpConnectionResourceOwner()
       const starting = Promise.withResolvers<void>()
       const ready = Promise.withResolvers<void>()
       const releasing = Promise.withResolvers<void>()
@@ -263,6 +416,8 @@ describe('AcpAgentConnectionAdapter', () => {
           prepareBackend,
           isCurrent: () => !(interrupted && interruption === 'supersession'),
           isShuttingDown: () => interrupted && interruption === 'shutdown',
+          cleanupUnattached: (resource, onFailure) =>
+            resources.cleanupUnattached(resource, onFailure),
           spawnAgent
         },
         connectionHooks
@@ -794,6 +949,33 @@ describe('AcpAgentConnectionAdapter', () => {
 
     await close()
     agentConnection.close()
+  })
+
+  it('does not dispatch filesystem requests on a tool-less connection', async () => {
+    const process = new FakeAgentProcess()
+    const agent = acp
+      .agent({ name: 'test-agent' })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const connectionHooks = { ...hooks(), toolLess: true }
+    const { close } = await openConnection(process, connectionHooks)
+    try {
+      const params = { sessionId: 'translation', path: join(tmpdir(), 'notes.txt') }
+      await expect(
+        agent.client.request(acp.methods.client.fs.readTextFile, params)
+      ).rejects.toMatchObject({ code: -32601 })
+      await expect(
+        agent.client.request(acp.methods.client.fs.writeTextFile, { ...params, content: '' })
+      ).rejects.toMatchObject({ code: -32601 })
+      expect(connectionHooks.filesystem.resolveSessionCwd).not.toHaveBeenCalled()
+    } finally {
+      await close()
+      agent.close()
+    }
   })
 
   it('reads text files inside the session workspace', async () => {

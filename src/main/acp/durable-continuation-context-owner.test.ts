@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   createLinearConversationGraph,
@@ -15,6 +18,8 @@ import type {
 } from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionPersistenceStateOwner } from '../session-persistence/state-owner'
+import { loadSessionMutationAuthority, SessionRepository } from '../session-persistence/repository'
+import { initDataRoot } from '../storage-root'
 import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 
 const message = (
@@ -96,6 +101,41 @@ const setActivities = (
 }
 
 describe('AcpDurableContinuationContextOwner', () => {
+  it('publishes the saved decision without declaring a continuation failure', async () => {
+    let session = createSession([message('prompt-active', 'Choose an approach.')])
+    setActivities(session, [pendingChoice()])
+    const publish = vi.fn()
+    const owner = new AcpDurableContinuationContextOwner(
+      {
+        loadSessionForContinuation: async () => structuredClone(session),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          session = { ...mutate(structuredClone(session)), runtimeTranscriptOwner: 'main' }
+          return structuredClone(session)
+        }
+      },
+      publish
+    )
+    await owner.prepareElicitation({
+      projectId: session.projectId,
+      sessionId: session.id,
+      requestId: 'choice-1',
+      toolCallId: 'tool-choice-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+    })
+    expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+    expect(session.activities?.[0].elicitation).toMatchObject({
+      state: 'answered',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      continuationPending: true
+    })
+    expect(session.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+    const restarted = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    expect(restarted.activities?.[0].elicitation?.state).toBe('answered')
+    expect(restarted.activities?.[0].elicitation?.continuationRecovery?.error).toBeTruthy()
+    expect(restarted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBeUndefined()
+  })
+
   it.each(
     (['accept', 'decline', 'cancel'] as const).flatMap((action) =>
       ['success', 'question-changed', 'write-failed'].map((scenario) => ({ action, scenario }))
@@ -484,6 +524,277 @@ describe('AcpDurableContinuationContextOwner', () => {
       })
     ).rejects.toThrow('pending Session activity')
   })
+
+  it.each(
+    (['accept', 'decline'] as const).flatMap((action) =>
+      [false, true].map((attachmentFailed) => ({ action, attachmentFailed }))
+    )
+  )(
+    'keeps a prepared $action decision recoverable after its next mutation fails (attachment failed: $attachmentFailed)',
+    async ({ action, attachmentFailed }) => {
+      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      session.runtimeTranscriptOwner = 'main'
+      setActivities(session, [pendingChoice()])
+      const publish = vi.fn()
+      let failWrite = false
+      const owner = new AcpDurableContinuationContextOwner(
+        {
+          loadSessionForContinuation: async () => structuredClone(session),
+          mutateRuntimeSession: async (_scope, mutate) => {
+            if (failWrite) {
+              failWrite = false
+              throw new Error('Recovery persistence failed')
+            }
+            session = mutate(structuredClone(session))
+            return structuredClone(session)
+          }
+        },
+        publish
+      )
+      const input = {
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action,
+        ...(action === 'accept' ? { answers: [{ fieldId: 'question_0', value: 'Expanded' }] } : {})
+      }
+      await owner.prepareElicitation(input)
+      const committedDecision = structuredClone(session.activities![0].elicitation!)
+      expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+      publish.mockClear()
+      failWrite = true
+      await expect(
+        owner.prepareElicitation({
+          ...input,
+          continuePrepared: true,
+          ...(attachmentFailed
+            ? { recovery: { error: 'The bound specialist is unavailable.' } }
+            : {})
+        })
+      ).rejects.toThrow('Recovery persistence failed')
+
+      expect(session.activities![0].elicitation).toEqual(committedDecision)
+      expect(publish).toHaveBeenCalledOnce()
+      expect(publish.mock.calls[0][0].activities[0].elicitation).toEqual({
+        ...committedDecision,
+        continuationRecovery: {
+          error: attachmentFailed
+            ? 'The bound specialist is unavailable.'
+            : 'Recovery persistence failed'
+        }
+      })
+      expect(publish.mock.calls[0][0].status).toBe('waiting-for-user')
+      expect(
+        normalizeSessionFile(JSON.parse(JSON.stringify(session)))!.activities![0].elicitation!
+          .continuationRecovery?.retryable
+      ).toBeUndefined()
+      await owner.prepareElicitation({ ...input, action: 'cancel' })
+      expect(session.status).toBe('idle')
+      expect(session.activities![0].elicitation!.answers).toEqual(input.answers)
+    }
+  )
+
+  it.each([1, 2])(
+    'bounds prepared authority rereads before any continuation mutation (failures: %s)',
+    async (failures) => {
+      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      session.runtimeTranscriptOwner = 'main'
+      setActivities(session, [pendingChoice()])
+      let remainingFailures = 0
+      const read = vi.fn(async () => {
+        if (remainingFailures > 0) {
+          remainingFailures -= 1
+          throw new Error('Authority read failed')
+        }
+        return structuredClone(session)
+      })
+      const mutate = vi.fn(
+        async (
+          _scope: { projectId: string; sessionId: string },
+          change: (value: PersistedChatSession) => PersistedChatSession
+        ) => {
+          session = change(structuredClone(session))
+          return structuredClone(session)
+        }
+      )
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: read,
+        mutateRuntimeSession: mutate
+      })
+      const input = {
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action: 'accept' as const,
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+      }
+      await owner.prepareElicitation(input)
+      remainingFailures = failures
+      const continuing = owner.prepareElicitation({ ...input, continuePrepared: true })
+      if (failures === 1)
+        await expect(continuing).resolves.toMatchObject({ request: { requestId: 'choice-1' } })
+      else await expect(continuing).rejects.toThrow('Authority read failed')
+      expect(read).toHaveBeenCalledTimes(3)
+      expect(mutate).toHaveBeenCalledTimes(failures === 1 ? 2 : 1)
+      expect(session.activities![0].elicitation!.answers).toEqual(input.answers)
+      if (failures === 2) {
+        expect(
+          normalizeSessionFile(JSON.parse(JSON.stringify(session)))!.activities![0].elicitation
+        ).toMatchObject({
+          continuationRecovery: { error: 'The task could not continue. Your response is saved.' }
+        })
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'recovers the same decision across a repository visibility change (initially live: %s)',
+    async (initiallyLive) => {
+      const root = await mkdtemp(join(tmpdir(), 'ask-user-visibility-'))
+      initDataRoot(root)
+      try {
+        let live = initiallyLive
+        const repository = new SessionRepository(root, { hasLiveRuntimeSession: () => live })
+        const session = createSession([message('prompt-active', 'Choose an approach.')])
+        session.runtimeTranscriptOwner = 'main'
+        setActivities(session, [pendingChoice()])
+        await repository.saveSession(session)
+        let failWrite = false
+        const publish = vi.fn()
+        const owner = new AcpDurableContinuationContextOwner(
+          {
+            loadSessionForContinuation: async (projectId, sessionId) => {
+              const loaded = await repository.loadSessionWithDiagnostics(projectId, sessionId)
+              if (loaded.status !== 'found') throw new Error('Missing fixture Session')
+              return loaded.session
+            },
+            mutateRuntimeSession: async (scope, mutate) => {
+              if (failWrite) {
+                failWrite = false
+                live = !live
+                throw new Error('Recovery persistence failed')
+              }
+              const loaded = await loadSessionMutationAuthority(
+                repository,
+                scope.projectId,
+                scope.sessionId
+              )
+              if (loaded.status !== 'found') throw new Error('Missing fixture authority')
+              return repository.saveSession(mutate(loaded.session), loaded.session.revision)
+            }
+          },
+          publish
+        )
+        const input = {
+          projectId: session.projectId,
+          sessionId: session.id,
+          requestId: 'choice-1',
+          toolCallId: 'tool-choice-1',
+          action: 'accept' as const,
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+        }
+        await owner.prepareElicitation(input)
+        expect(publish).toHaveBeenCalledOnce()
+        expect(publish.mock.calls[0][0]).toMatchObject({
+          id: session.id,
+          runtimeTranscriptOwner: 'main',
+          activities: [
+            {
+              elicitation: { state: 'answered', answers: input.answers, continuationPending: true }
+            }
+          ]
+        })
+        expect(
+          publish.mock.calls[0][0].activities[0].elicitation.continuationRecovery
+        ).toBeUndefined()
+        publish.mockClear()
+        failWrite = true
+        await expect(
+          owner.prepareElicitation({
+            ...input,
+            continuePrepared: true,
+            recovery: { error: 'Attachment persistence failed' }
+          })
+        ).rejects.toThrow('Recovery persistence failed')
+        expect(publish).toHaveBeenCalledOnce()
+        expect(publish.mock.calls[0][0].activities[0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: input.answers,
+          continuationRecovery: { error: 'Attachment persistence failed' }
+        })
+        expect(
+          publish.mock.calls[0][0].activities[0].elicitation.continuationRecovery.retryable
+        ).toBeUndefined()
+        await owner.prepareElicitation({ ...input, action: 'cancel' })
+        const ended = await repository.loadSessionWithDiagnostics(session.projectId, session.id)
+        expect(ended).toMatchObject({ status: 'found', session: { status: 'idle' } })
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['advanced', 'reanswered', 'publication-failed'] as const)(
+    'preserves authority and the original error after a recovery write fails (%s)',
+    async (scenario) => {
+      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      session.runtimeTranscriptOwner = 'main'
+      setActivities(session, [pendingChoice()])
+      let failWrite = false
+      const publish = vi.fn(async () => {
+        if (scenario === 'publication-failed' && failWrite) throw new Error('Observer disconnected')
+      })
+      const owner = new AcpDurableContinuationContextOwner(
+        {
+          loadSessionForContinuation: async () => structuredClone(session),
+          mutateRuntimeSession: async (_scope, mutate) => {
+            if (failWrite) {
+              if (scenario === 'advanced') {
+                session.status = 'running'
+                session.activeRun = { promptMessageId: 'prompt-active', startedAt: Date.now() }
+              }
+              if (scenario === 'reanswered') {
+                for (const activity of [
+                  ...session.activities!,
+                  ...session.conversationGraph!.activities
+                ]) {
+                  activity.elicitation!.respondedAt! += 1
+                }
+              }
+              throw new Error('Recovery persistence failed')
+            }
+            session = mutate(structuredClone(session))
+            return structuredClone(session)
+          }
+        },
+        publish
+      )
+      const input = {
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action: 'accept' as const,
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+      }
+      await owner.prepareElicitation(input)
+      expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+      publish.mockClear()
+      failWrite = true
+      await expect(
+        owner.prepareElicitation({
+          ...input,
+          continuePrepared: true,
+          recovery: { error: 'Attachment failed' }
+        })
+      ).rejects.toThrow('Recovery persistence failed')
+      expect(publish).toHaveBeenCalledTimes(scenario === 'publication-failed' ? 1 : 0)
+      expect(session.activities![0].elicitation!.continuationRecovery).toBeUndefined()
+      if (scenario === 'advanced') expect(session.activeRun).toBeDefined()
+    }
+  )
 
   it.each(['accept', 'decline'] as const)(
     'retains the committed %s decision after restarting an unaccepted continuation',

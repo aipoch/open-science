@@ -177,6 +177,10 @@
       "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/harness-tools.integration.test.ts",
+      "src/main/settings/harness-turn-journal.test.ts",
+      "scripts/agent-harness-smoke.test.ts",
+      "src/main/settings/harness-turn-usage.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",

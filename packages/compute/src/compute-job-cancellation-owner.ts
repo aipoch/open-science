@@ -6,7 +6,13 @@ import { probeRemoteLaunch } from './remote-launch-recovery'
 
 import { projectJobStatus } from './compute-job-status'
 import type { ComputeConnectionBrokerAcquirer } from './connection'
-import { ComputeHostUnavailableError, type ComputeJob, type JobStatusResult } from './model'
+import {
+  ComputeHostUnavailableError,
+  type ComputeJob,
+  type JobStatusResult,
+  type ComputeJobCancellationStatus,
+  type JobError
+} from './model'
 import type { ComputeJobRepository } from './ports'
 import {
   ComputeJobOperationRepository,
@@ -39,16 +45,27 @@ type ReaperOptions = Readonly<{
   makeLeaseToken?: () => string
   intervalMs?: number
   onConfirmed?: (jobId: string) => void | Promise<void>
+  onFailed?: (
+    jobId: string,
+    failure: { operationId: string; revision: number; error: JobError }
+  ) => void | Promise<void>
 }>
 
 const cancellationStatus = (
   cancellation: ComputeJobOperationRecord | null
-): JobStatusResult['cancellation_status'] =>
+): ComputeJobCancellationStatus | undefined =>
   cancellation?.phase === 'active'
     ? 'cancelling'
     : cancellation?.outcome === 'fulfilled'
       ? 'cancelled'
-      : undefined
+      : cancellation?.outcome === 'failed'
+        ? 'failed'
+        : undefined
+
+const cancellationError = (operation: ComputeJobOperationRecord | null): JobError | undefined =>
+  operation?.outcome === 'failed' && operation.errorCode && operation.errorMessage
+    ? { code: operation.errorCode, message: operation.errorMessage }
+    : undefined
 
 class ComputeJobCancellationOwner {
   constructor(
@@ -61,18 +78,23 @@ class ComputeJobCancellationOwner {
     const result = await this.operations.request(jobId, 'cancel', scope, this.now())
     if (!result.found) throw new ComputeHostUnavailableError()
     const job = await this.requireOwnedJob(jobId, scope)
-    const status = projectJobStatus(job, cancellationStatus(result.record))
+    const status = projectJobStatus(
+      job,
+      cancellationStatus(result.record),
+      cancellationError(result.record)
+    )
     log.info('Compute Job cancellation requested', {
       jobId,
       status: status.status,
-      cancellationStatus: status.cancellation_status
+      cancellationStatus: status.cancellation?.status
     })
     return status
   }
 
   async status(jobId: string, scope: ComputeJobOperationScope): Promise<JobStatusResult> {
     const job = await this.requireOwnedJob(jobId, scope)
-    return projectJobStatus(job, cancellationStatus(await this.operations.get(jobId, 'cancel')))
+    const operation = await this.operations.get(jobId, 'cancel')
+    return projectJobStatus(job, cancellationStatus(operation), cancellationError(operation))
   }
 
   private async requireOwnedJob(
@@ -100,6 +122,7 @@ class ComputeJobCancellationReaper {
   private readonly makeLeaseToken: () => string
   private readonly intervalMs: number
   private readonly onConfirmed?: (jobId: string) => void | Promise<void>
+  private readonly onFailed?: ReaperOptions['onFailed']
   private timer: ReturnType<typeof setInterval> | undefined
   private inFlight: Promise<void> | undefined
   private started = false
@@ -119,6 +142,7 @@ class ComputeJobCancellationReaper {
     this.makeLeaseToken = options.makeLeaseToken ?? randomUUID
     this.intervalMs = options.intervalMs ?? 1_000
     this.onConfirmed = options.onConfirmed
+    this.onFailed = options.onFailed
   }
 
   start(): void {
@@ -229,12 +253,81 @@ class ComputeJobCancellationReaper {
         return
       }
       if (handle.driver === 'slurm') {
-        if (await cancelSlurmJob(handle, connection)) {
-          await this.confirm(claim)
-          return
+        const result = await cancelSlurmJob(handle, connection)
+        switch (result.kind) {
+          case 'cancelled':
+            if (result.diagnostic)
+              log.info('Slurm cancellation evidence', {
+                jobId: claim.jobId,
+                diagnostic: result.diagnostic
+              })
+            await this.confirm(claim)
+            return
+          case 'completed': {
+            const status =
+              result.state === 'TIMEOUT' || result.exitCode === 124
+                ? 'timeout'
+                : result.state === 'COMPLETED' && result.exitCode === 0
+                  ? 'success'
+                  : 'failed'
+            const stderr = result.stderrTail ?? ''
+            const failureStderr =
+              `${stderr}${stderr.length > 0 && !stderr.endsWith('\n') ? '\n' : ''}Slurm scheduler state: ${result.state}.`.slice(
+                -65536
+              )
+            const settled = await this.operations.settle(claim, this.now(), {
+              outcome: 'superseded',
+              job: {
+                status,
+                exitCode: result.exitCode ?? null,
+                errorCode:
+                  status === 'success' ? null : status === 'timeout' ? 'timeout' : 'job_failed',
+                errorMessage: null,
+                stdoutTail: result.stdoutTail,
+                stderrTail: status === 'success' ? result.stderrTail : failureStderr,
+                lastPollError: result.diagnostic ?? null,
+                finishedAt: this.now()
+              }
+            })
+            if (settled) await this.onConfirmed?.(claim.jobId)
+            return
+          }
+          case 'rejected': {
+            const error = { code: 'cancel_request_rejected', message: result.message }
+            const settled = await this.operations.settle(claim, this.now(), {
+              outcome: 'failed',
+              error
+            })
+            if (settled)
+              await this.onFailed?.(claim.jobId, {
+                operationId: settled.id,
+                revision: settled.revision,
+                error
+              })
+            return
+          }
+          case 'unavailable': {
+            const settled = await this.operations.settle(claim, this.now(), {
+              outcome: 'failed',
+              error: result.cancellationError ?? {
+                code: 'cancel_confirmation_failed',
+                message: result.message
+              },
+              job: {
+                status: 'error',
+                errorCode: 'job_status_unavailable',
+                errorMessage: result.message,
+                lastPollError: null,
+                finishedAt: this.now()
+              }
+            })
+            if (settled) await this.onConfirmed?.(claim.jobId)
+            return
+          }
+          case 'unconfirmed':
+            await this.scheduleRetry(claim, 'scheduler-unconfirmed', result.message)
+            return
         }
-        await this.scheduleRetry(claim, 'scheduler-unconfirmed')
-        return
       }
       const ownership = await probeRemoteJobProcessOwnership(handle.pid, handle.workdir, connection)
       if (ownership === 'mismatch' || ownership === 'absent') {

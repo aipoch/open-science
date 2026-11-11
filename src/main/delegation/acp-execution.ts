@@ -463,8 +463,8 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       activeMessage = undefined
       for (const pending of queuedPrompts.splice(0)) pending.acceptance.reject(deliveryError)
       if (scope && !capabilityRevoked) {
-        capabilityRevoked = true
         await scope.capability.revoke()
+        capabilityRevoked = true
       }
     }
     let runtimeCreationStarted = false
@@ -517,20 +517,26 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           firstError ??= error
         }
         listeners.clear()
+        // Provider receipts do not own Notebook kernels. A confirmed ACP exit must not release
+        // capacity or dispose the workspace while the Attempt's Notebook lane is still alive.
+        const providerUnreaped = slot.unreaped
+        if (scope && !capabilityRevoked) slot.unreaped = true
         if (slot.unreaped) {
           quarantined.set(input.attemptId, async () => {
-            if (!scope?.confirmProcessCleanup)
+            await revokeWrites()
+            if (providerUnreaped && !scope?.confirmProcessCleanup)
               throw new DelegateExecutionCleanupError(
                 'Process cleanup cannot be retried without ownership evidence.'
               )
-            await scope.confirmProcessCleanup()
+            await scope?.confirmProcessCleanup?.()
             if (
+              scope &&
               (ownsRuntimeHome || !activeRuntimeHomes.has(scope.runtimeHome)) &&
               (ownsWorkspace || !activeWorkspaces.has(scope.workspace.cwd))
             )
               await scope.disposeResources?.()
-            if (ownsRuntimeHome) activeRuntimeHomes.delete(scope.runtimeHome)
-            if (ownsWorkspace) activeWorkspaces.delete(scope.workspace.cwd)
+            if (scope && ownsRuntimeHome) activeRuntimeHomes.delete(scope.runtimeHome)
+            if (scope && ownsWorkspace) activeWorkspaces.delete(scope.workspace.cwd)
             delete slot.unreaped
             releaseSlot(slotId)
             quarantined.delete(input.attemptId)

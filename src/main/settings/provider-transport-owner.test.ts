@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import type { BackendRoutePlan, BackendTransportPlan } from './backend-route-planner'
@@ -10,7 +11,7 @@ import {
   ProtocolForwardingBridge,
   type ProtocolForwardingBridgeTarget
 } from './protocol-forwarding-bridge'
-import type { MessagesBridgeTarget } from './messages-bridge'
+import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
 import type { ChatCompletionsCompatibilityTarget } from './chat-completions-compatibility'
 
 type ResponsesToChatCompletionsBridgeStub = ReturnType<
@@ -135,6 +136,628 @@ const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
   sessionEffort: 'high',
   providerModelCatalog: [],
   transport
+})
+
+describe('ProviderTransportOwner harness leases', () => {
+  const makeHarnessTarget = (): ProviderRuntimeTarget => ({ ...makeTarget(), configRevision: 3 })
+
+  const makeCodexHarnessTarget = (): ProviderRuntimeTarget => ({
+    ...makeHarnessTarget(),
+    providerType: 'codex-isolated',
+    apiEndpoints: ['responses'],
+    provider: { type: 'codex-isolated', apiEndpoints: ['responses'], model: 'model-a' }
+  })
+
+  const sendCodexRequest = (
+    connection: { baseUrl: string; token: string },
+    body: Record<string, unknown> = {},
+    signal?: AbortSignal
+  ): Promise<Response> =>
+    fetch(`${connection.baseUrl}/v1/responses`, {
+      method: 'POST',
+      signal,
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json',
+        'ChatGPT-Account-Id': 'client-cannot-select-account',
+        cookie: 'client-cannot-inject-cookie'
+      },
+      body: JSON.stringify({
+        model: 'client-model',
+        input: [],
+        store: false,
+        stream: true,
+        ...body
+      })
+    })
+
+  it('binds the Codex account once and resolves private credentials for every request', async () => {
+    const upstream = vi.fn<typeof fetch>(
+      async () =>
+        new Response('data: {"type":"response.completed","response":{}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' }
+        })
+    )
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'private-preflight-token',
+        accountId: 'account-one'
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'private-token-one',
+        accountId: 'account-one'
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'http://127.0.0.2:42000/imported/responses',
+        accessToken: 'private-token-two',
+        accountId: 'account-one'
+      })
+    const bind = vi.fn<(target: ProviderRuntimeTarget) => typeof resolve>(() => resolve)
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: bind,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const target = makeCodexHarnessTarget()
+    const acquiring = owner.acquireHarness(target, new AbortController().signal)
+    expect(bind).toHaveBeenCalledOnce()
+    target.configRevision = 4
+    const lease = await acquiring
+    expect(bind.mock.calls[0][0]).toMatchObject({ configRevision: 3 })
+    expect(resolve).toHaveBeenCalledOnce()
+    expect(JSON.stringify(lease)).not.toMatch(/private-token|account-one|chatgpt\.com/)
+    const tools = [{ type: 'function', name: 'sum', parameters: { type: 'object' } }]
+    const input = [
+      { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      { type: 'function_call', call_id: 'call-1', name: 'sum', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call-1', output: '42' }
+    ]
+    try {
+      for (let index = 0; index < 2; index++) {
+        const response = await sendCodexRequest(lease.connection, {
+          tools,
+          input,
+          instructions: 'Instructions',
+          max_output_tokens: 64,
+          reasoning: { effort: 'high' }
+        })
+        expect(await response.text()).toContain('response.completed')
+      }
+      expect(resolve).toHaveBeenCalledTimes(3)
+      expect(upstream).toHaveBeenCalledTimes(2)
+      for (const [index, [url, init]] of upstream.mock.calls.entries()) {
+        expect(String(url)).toBe(
+          index
+            ? 'http://127.0.0.2:42000/imported/responses'
+            : 'https://chatgpt.com/backend-api/codex/responses'
+        )
+        const headers = new Headers(init?.headers)
+        expect(headers.get('authorization')).toBe(
+          index ? 'Bearer private-token-two' : 'Bearer private-token-one'
+        )
+        expect(headers.get('ChatGPT-Account-Id')).toBe('account-one')
+        expect(headers.get('cookie')).toBeNull()
+        expect(init?.redirect).toBe('error')
+        expect(init?.credentials).toBe('omit')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'model-a',
+          store: false,
+          stream: true,
+          input,
+          tools,
+          instructions: 'Instructions',
+          reasoning: { effort: 'high' }
+        })
+      }
+    } finally {
+      await lease.release()
+    }
+    await expect(sendCodexRequest(lease.connection)).rejects.toThrow()
+  })
+
+  it('returns sanitized Codex 401 errors without retrying or caching an expired credential', async () => {
+    const resolve = vi.fn(async () => ({
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      accessToken: 'PRIVATE_CREDENTIAL',
+      accountId: 'PRIVATE_ACCOUNT'
+    }))
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        { error: { code: 'invalid_api_key', message: 'PRIVATE_CREDENTIAL PRIVATE_ACCOUNT' } },
+        { status: 401, headers: { 'x-private-header': 'PRIVATE_CREDENTIAL' } }
+      )
+    )
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => resolve,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      for (let index = 0; index < 2; index++) {
+        const response = await sendCodexRequest(lease.connection)
+        expect(response.status).toBe(401)
+        expect(response.headers.get('x-private-header')).toBeNull()
+        const text = await response.text()
+        expect(text).toContain('invalid_api_key')
+        expect(text).not.toMatch(/PRIVATE_CREDENTIAL|PRIVATE_ACCOUNT/)
+        expect(upstream).toHaveBeenCalledTimes(index + 1)
+      }
+      expect(resolve).toHaveBeenCalledTimes(3)
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it.each([
+    'https://evil.example/responses',
+    'https://chatgpt.com/backend-api/codex/responses?key=PRIVATE_CREDENTIAL',
+    'https://PRIVATE_CREDENTIAL@chatgpt.com/backend-api/codex/responses',
+    'http://remote.example/responses',
+    'file:///tmp/responses'
+  ])('rejects an unapproved Codex endpoint without sending credentials: %s', async (endpoint) => {
+    const upstream = vi.fn<typeof fetch>()
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => async () => ({
+        endpoint,
+        accessToken: 'PRIVATE_CREDENTIAL',
+        accountId: 'PRIVATE_ACCOUNT'
+      }),
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    await expect(
+      owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    ).rejects.toThrow('Invalid Codex harness endpoint.')
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('does not follow a Codex redirect or expose its location to the ACP client', async () => {
+    const upstream = vi.fn<typeof fetch>(
+      async () =>
+        new Response(null, { status: 302, headers: { location: 'https://evil.example/private' } })
+    )
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => async () => ({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'private',
+        accountId: 'account'
+      }),
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      const response = await sendCodexRequest(lease.connection)
+      expect(response.status).toBe(502)
+      expect(response.headers.get('location')).toBeNull()
+      expect(upstream).toHaveBeenCalledOnce()
+      expect(upstream.mock.calls[0][1]?.redirect).toBe('error')
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it('cancels Codex credential resolution on lease release before credentials reach upstream', async () => {
+    let resolveStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    let requestSignal!: AbortSignal
+    const upstream = vi.fn<typeof fetch>()
+    let resolving = 0
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => async (signal) => {
+        if (resolving++ === 0)
+          return {
+            endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+            accessToken: 'private',
+            accountId: 'account'
+          }
+        requestSignal = signal
+        resolveStarted()
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('PRIVATE_CREDENTIAL')), {
+            once: true
+          })
+        })
+        return { endpoint: '', accessToken: '', accountId: '' }
+      },
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    const pending = sendCodexRequest(lease.connection).then(
+      (response) => response.text(),
+      () => 'closed'
+    )
+    await started
+    await lease.release()
+    expect(requestSignal.aborted).toBe(true)
+    expect(await pending).not.toContain('PRIVATE_CREDENTIAL')
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('requires a host-owned authentication binder for Codex subscription leases', async () => {
+    const createBridge = vi.fn(() => makeOpenAiBridge(0))
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: createBridge })
+    await expect(
+      owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    ).rejects.toThrow()
+    expect(createBridge).not.toHaveBeenCalled()
+  })
+
+  it('stops a revoked Codex lease before forwarding and hides authentication diagnostics', async () => {
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        accessToken: 'PRIVATE_CREDENTIAL',
+        accountId: 'PRIVATE_ACCOUNT'
+      })
+      .mockRejectedValue(new Error('Revoked PRIVATE_CREDENTIAL PRIVATE_ACCOUNT'))
+    const upstream = vi.fn<typeof fetch>()
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => resolve,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      const response = await sendCodexRequest(lease.connection)
+      expect(response.status).toBe(502)
+      expect(await response.text()).not.toMatch(/PRIVATE_CREDENTIAL|PRIVATE_ACCOUNT/)
+      expect(upstream).not.toHaveBeenCalled()
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it('does not send late credentials after a client cancels the request', async () => {
+    const credentials = {
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      accessToken: 'private',
+      accountId: 'account'
+    }
+    let finish!: (value: typeof credentials) => void
+    let started!: () => void
+    const accepted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let requestSignal!: AbortSignal
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce(credentials)
+      .mockImplementationOnce((signal: AbortSignal) => {
+        requestSignal = signal
+        started()
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+      })
+    const upstream = vi.fn<typeof fetch>()
+    const owner = new ProviderTransportOwner({
+      bindCodexHarnessConnection: () => resolve,
+      createProtocolForwardingBridge: (targets, id, options) =>
+        new ProtocolForwardingBridge(targets, id, upstream, options)
+    })
+    const lease = await owner.acquireHarness(makeCodexHarnessTarget(), new AbortController().signal)
+    try {
+      const controller = new AbortController()
+      const pending = sendCodexRequest(lease.connection, {}, controller.signal)
+      const result = pending.catch(() => undefined)
+      await accepted
+      const aborted = new Promise<void>((resolve) => {
+        requestSignal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      controller.abort()
+      await aborted
+      finish(credentials)
+      await result
+      expect(upstream).not.toHaveBeenCalled()
+    } finally {
+      await lease.release()
+    }
+  })
+
+  it.each(['responses', 'messages'] as const)(
+    'forwards native %s without conversion and revokes the lease',
+    async (wire) => {
+      const upstream = vi.fn<typeof fetch>(
+        async () =>
+          new Response('data: {"native":true}\n\n', {
+            headers: { 'content-type': 'text/event-stream' }
+          })
+      )
+      const owner = new ProviderTransportOwner({
+        createProtocolForwardingBridge: (targets, id, options) =>
+          new ProtocolForwardingBridge(targets, id, upstream, options),
+        createMessagesBridge: (targets, id, options) =>
+          new MessagesBridge(targets, id, upstream, undefined, options)
+      })
+      const target = makeHarnessTarget()
+      target.apiEndpoints = [wire]
+      target.provider = { ...target.provider, vendorId: 'anthropic', apiEndpoints: [wire] }
+      const lease = await owner.acquireHarness(target, new AbortController().signal)
+      try {
+        expect(lease.route.protocol).toBe(wire)
+        const path = `${lease.connection.baseUrl}/v1/${wire}`
+        expect(
+          (
+            await fetch(path, {
+              method: 'POST',
+              headers: { authorization: 'Bearer wrong' },
+              body: '{}'
+            })
+          ).status
+        ).toBe(401)
+        expect(upstream).not.toHaveBeenCalled()
+        const image = {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'AA==' }
+        }
+        const native =
+          wire === 'messages'
+            ? { messages: [{ role: 'user', content: [image] }], max_tokens: 64 }
+            : {
+                input: [
+                  {
+                    role: 'user',
+                    content: [{ type: 'input_image', image_url: 'data:image/png;base64,AA==' }]
+                  }
+                ]
+              }
+        const result = await fetch(path, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${lease.connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ ...native, model: 'override', stream: true })
+        })
+        expect(await result.text()).toBe('data: {"native":true}\n\n')
+        const [url, init] = upstream.mock.calls[0]
+        expect(String(url)).toBe(`https://provider.example/v1/${wire}`)
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          ...native,
+          model: 'model-a',
+          stream: true
+        })
+        const headers = new Headers(init?.headers)
+        expect(headers.get(wire === 'messages' ? 'x-api-key' : 'authorization')).toBe(
+          wire === 'messages' ? 'plain-provider-key' : 'Bearer plain-provider-key'
+        )
+      } finally {
+        await lease.release()
+      }
+      await expect(fetch(`${lease.connection.baseUrl}/v1/${wire}`)).rejects.toThrow()
+    }
+  )
+
+  it('selects native Responses with the host-owned xAI OAuth owner', async () => {
+    const bridge = { ...makeOpenAiBridge(0), clearErrorReplay: vi.fn() }
+    const createXaiOAuthProviderBridge = vi.fn(
+      () =>
+        bridge as unknown as ReturnType<
+          NonNullable<ProviderTransportOwnerOptions['createXaiOAuthProviderBridge']>
+        >
+    )
+    const getXaiOAuthAccessToken = vi.fn(async () => 'private')
+    const owner = new ProviderTransportOwner({
+      createXaiOAuthProviderBridge,
+      getXaiOAuthAccessToken
+    })
+    const target = makeHarnessTarget()
+    target.providerType = 'xai-subscription'
+    target.provider = { ...target.provider, type: 'xai-subscription', key: undefined }
+    target.apiEndpoints = ['messages', 'chat-completions', 'responses']
+    const lease = await owner.acquireHarness(target, new AbortController().signal)
+    expect(lease.route.protocol).toBe('responses')
+    expect(createXaiOAuthProviderBridge).toHaveBeenCalledWith(
+      [{ id: lease.route.id, model: 'model-a' }],
+      lease.route.id,
+      'responses',
+      getXaiOAuthAccessToken
+    )
+    await lease.release()
+    expect(bridge.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { providerType: 'claude-subscription' },
+    { disconnectedAt: 1 },
+    { configRevision: undefined },
+    { configRevision: -1 },
+    { configRevision: 1.5 },
+    { providerId: '' },
+    { apiEndpoints: [] },
+    { effectiveModel: ' ' },
+    { provider: { ...makeTarget().provider, type: 'xai-subscription' } },
+    { provider: { ...makeTarget().provider, baseUrl: '', chatCompletionsBaseUrl: '' } },
+    { provider: { ...makeTarget().provider, chatCompletionsBaseUrl: 'file:///tmp/model' } },
+    {
+      provider: {
+        ...makeTarget().provider,
+        chatCompletionsBaseUrl: 'https://user:secret@example.test'
+      }
+    }
+  ])(
+    'rejects unsupported or incomplete targets before opening a connection: %j',
+    async (override) => {
+      const createBridge = vi.fn(() => makeOpenAiBridge(0))
+      const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: createBridge })
+      await expect(
+        owner.acquireHarness(
+          { ...makeHarnessTarget(), ...override } as ProviderRuntimeTarget,
+          new AbortController().signal
+        )
+      ).rejects.toThrow()
+      expect(createBridge).not.toHaveBeenCalled()
+    }
+  )
+
+  it('snapshots the route and health target without exposing upstream credentials', async () => {
+    const bridge = makeOpenAiBridge(0)
+    const observe = vi.fn()
+    let targets: readonly ProtocolForwardingBridgeTarget[] = []
+    const owner = new ProviderTransportOwner({
+      createProtocolForwardingBridge: (value) => {
+        targets = value
+        return bridge
+      },
+      onProviderFailure: observe,
+      nextGenerationId: () => 'harness-generation'
+    })
+    const target = makeHarnessTarget()
+    const acquiring = owner.acquireHarness(target, new AbortController().signal)
+    target.configRevision = 4
+    target.provider.key = 'new-key'
+    const lease = await acquiring
+    expect(lease.route).toEqual({
+      id: 'harness-generation',
+      providerId: 'provider-a',
+      configRevision: 3,
+      model: 'model-a',
+      protocol: 'chat-completions'
+    })
+    expect(targets[0]).toMatchObject({
+      endpoint: 'https://provider.example/v1/chat/completions',
+      model: 'model-a',
+      key: 'plain-provider-key'
+    })
+    expect(JSON.stringify(lease)).not.toMatch(/plain-provider-key|new-key|provider\.example/)
+    expect(Object.isFrozen(lease.route)).toBe(true)
+    expect(Object.isFrozen(lease.connection)).toBe(true)
+    const failure = {
+      category: 'auth' as const,
+      status: 401,
+      startedAt: 1,
+      endpoint: 'chat-completions' as const,
+      model: 'model-a'
+    }
+    await targets[0]?.onProviderFailure?.(failure)
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configRevision: 3,
+        provider: expect.objectContaining({ key: 'plain-provider-key' })
+      }),
+      failure
+    )
+    const firstRelease = lease.release()
+    expect(lease.release()).toBe(firstRelease)
+    await firstRelease
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects pre-cancelled acquisition and cleans up a start cancelled before it resolves', async () => {
+    const controller = new AbortController()
+    const bridge = makeOpenAiBridge(0)
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: () => bridge })
+    controller.abort()
+    await expect(owner.acquireHarness(makeHarnessTarget(), controller.signal)).rejects.toThrow()
+    expect(bridge.start).not.toHaveBeenCalled()
+    const duringStart = new AbortController()
+    let finish!: (value: { baseUrl: string; token: string }) => void
+    vi.mocked(bridge.start).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const acquiring = owner.acquireHarness(makeHarnessTarget(), duringStart.signal)
+    duringStart.abort()
+    finish({ baseUrl: 'http://127.0.0.1:44000', token: 'local' })
+    await expect(acquiring).rejects.toThrow()
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves both startup and cleanup errors', async () => {
+    const startError = new Error('start failed')
+    const closeError = new Error('close failed')
+    const bridge = makeOpenAiBridge(0, startError)
+    vi.mocked(bridge.close).mockRejectedValue(closeError)
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: () => bridge })
+    await expect(
+      owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    ).rejects.toMatchObject({ errors: [startError, closeError] })
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps release failures observable to every caller', async () => {
+    const bridge = makeOpenAiBridge(0)
+    const closeError = new Error('close failed')
+    vi.mocked(bridge.close).mockRejectedValue(closeError)
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: () => bridge })
+    const lease = await owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    await expect(lease.release()).rejects.toBe(closeError)
+    await expect(lease.release()).rejects.toBe(closeError)
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('authenticates loopback tool exchanges, pins the model, and isolates generations', async () => {
+    const upstreamFetch = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer plain-provider-key')
+      const request = JSON.parse(String(init?.body))
+      expect(request.model).toBe('model-a')
+      if (request.messages.at(-1)?.role === 'tool') {
+        expect(request.messages.at(-1)).toMatchObject({ tool_call_id: 'call-1', content: '42' })
+        return Response.json({
+          choices: [{ message: { role: 'assistant', content: '42 rows' } }],
+          usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 }
+        })
+      }
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-1',
+                  type: 'function',
+                  function: { name: 'count_rows', arguments: '{}' }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    })
+    const owner = new ProviderTransportOwner({
+      createProtocolForwardingBridge: (targets, id) =>
+        new ProtocolForwardingBridge(targets, id, upstreamFetch)
+    })
+    const first = await owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    const second = await owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    const send = (token: string, messages: unknown[]): Promise<Response> =>
+      fetch(`${second.connection.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'caller-cannot-switch-model', messages })
+      })
+    try {
+      expect(first.route.id).not.toBe(second.route.id)
+      expect((await send(first.connection.token, [])).status).toBe(401)
+      expect(upstreamFetch).not.toHaveBeenCalled()
+      await first.release()
+      const messages: unknown[] = [{ role: 'user', content: 'Count the rows' }]
+      const response = await send(second.connection.token, messages)
+      const toolCall = (await response.json()).choices[0].message
+      expect(toolCall.tool_calls[0].function.name).toBe('count_rows')
+      messages.push(toolCall, { role: 'tool', tool_call_id: 'call-1', content: '42' })
+      const result = await (await send(second.connection.token, messages)).json()
+      expect(result.choices[0].message.content).toBe('42 rows')
+      expect(result.usage.total_tokens).toBe(23)
+      expect(upstreamFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      await Promise.all([first.release(), second.release()])
+    }
+    await expect(send(second.connection.token, [])).rejects.toThrow()
+  })
 })
 
 describe('ProviderTransportOwner generations', () => {
@@ -589,8 +1212,12 @@ describe('ProviderTransportOwner generations', () => {
         : Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
     })
     const owner = new ProviderTransportOwner({
-      createProtocolForwardingBridge: (targets, initialTargetId) =>
-        new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch)
+      createProtocolForwardingBridge: (targets, initialTargetId) => {
+        expect(
+          targets.every((target) => target.adaptStream === bufferChatCompletionsToolNames)
+        ).toBe(true)
+        return new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch)
+      }
     })
     const targetA = makeTarget()
     const targetB: ProviderRuntimeTarget = {

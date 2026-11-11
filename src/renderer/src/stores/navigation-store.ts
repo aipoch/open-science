@@ -1,5 +1,6 @@
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../shared/pdf-annotations'
 import { create } from 'zustand'
+import type { ConnectorsView } from '@/lib/settings-navigation'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import type { CustomizeGoal } from '@/lib/customize-chat'
@@ -24,8 +25,23 @@ import {
   type SessionPdfContextSource
 } from '../../../shared/session-persistence'
 
-export type NavigationView = 'home' | 'library' | 'workspace'
+export type NavigationView = 'home' | 'library' | 'marketplace' | 'workspace'
 export type NavigationOrigin = 'user' | 'notification' | 'automatic'
+export type ResourceCenterResource = 'marketplace' | 'skills' | 'specialists' | 'connectors'
+export type ResourceCenterIntent =
+  | { resource: 'marketplace' }
+  | { resource: 'connectors'; view?: ConnectorsView }
+  | { resource: 'skills'; skillId?: string }
+  | { resource: 'specialists'; specialistId?: string; specialistKind?: 'builtin' | 'edit' }
+
+// A compact list expands around its visible case, even when the grid changes column count.
+export type MarketplaceListSnapshot = {
+  search: string
+  category: string
+  count: number
+  scrollTop: number
+  anchor?: { slug: string; offset: number }
+}
 
 // Workspace owns the mutable composer draft. It projects only the capability Global Search needs,
 // avoiding a second draft model or cross-Project mention handoff.
@@ -62,6 +78,8 @@ export type WslSupportPrefillIntent = {
 type NavigationStore = {
   view: NavigationView
   activeProjectId: string | undefined
+  marketplaceListContext: { projectId: string; list: MarketplaceListSnapshot } | undefined
+  resourceCenterIntent: ResourceCenterIntent | undefined
   // Advances only for explicit user navigation. Deferred startup intents observe this instead of
   // treating lifecycle/deep-link redirects as user choices.
   userNavigationRevision: number
@@ -100,6 +118,15 @@ type NavigationStore = {
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
   returnFromLibrary: (origin: NavigationOrigin) => void
+  returnToProject: (origin: NavigationOrigin) => void
+  openMarketplace: (origin: NavigationOrigin, list?: MarketplaceListSnapshot) => void
+  openResourceCenter: (
+    origin: NavigationOrigin,
+    intent?: ResourceCenterIntent,
+    afterNavigate?: () => void
+  ) => void
+  clearResourceCenterIntent: () => void
+  updateMarketplaceList: (projectId: string, list: MarketplaceListSnapshot) => void
   openLibrary: (origin: NavigationOrigin, options?: { section?: 'library' }) => void
   openLiteratureItem: (
     itemId: string,
@@ -183,8 +210,15 @@ const navigationState = (
   | 'userNavigationRevision'
   | 'explicitNavigationRevision'
   | 'pendingLiteraturePdfImport'
+  | 'marketplaceListContext'
 > => ({
   view: next.view,
+  // A Project handoff survives the round trip, but never leaks into Home or another Project.
+  marketplaceListContext:
+    next.view === 'home' ||
+    (next.activeProjectId !== undefined && next.activeProjectId !== state.activeProjectId)
+      ? undefined
+      : state.marketplaceListContext,
   pendingLiteraturePdfImport: undefined,
   activeProjectId:
     next.view === 'home' ? undefined : (next.activeProjectId ?? state.activeProjectId),
@@ -244,6 +278,8 @@ const requestPreviewLeaveForNavigation = (
 export const useNavigationStore = create<NavigationStore>((set, get) => ({
   view: 'home',
   activeProjectId: undefined,
+  marketplaceListContext: undefined,
+  resourceCenterIntent: undefined,
   userNavigationRevision: 0,
   explicitNavigationRevision: 0,
   pendingCustomizePrefill: undefined,
@@ -275,11 +311,15 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     )
   },
 
-  // Library retains the Workspace selection, including an unsent New Conversation. Opening the
-  // Project again would instead select its latest Session and replace that context.
   returnFromLibrary: (origin) => {
+    if (get().view === 'library') get().returnToProject(origin)
+  },
+
+  // Full-page modules retain the selected conversation and unsent draft on return.
+  // Opening the Project again would select its latest Session instead.
+  returnToProject: (origin) => {
     const { view, activeProjectId } = get()
-    if (view !== 'library') return
+    if (view !== 'library' && view !== 'marketplace') return
     if (!activeProjectId || !isActiveProject(activeProjectId)) {
       get().goHome(origin)
       return
@@ -290,6 +330,39 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     set((state) => navigationState(state, origin, { view: 'workspace', activeProjectId }))
     usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
   },
+
+  // Marketplace leaves Workspace through the same unsaved-preview guard as Library.
+  openMarketplace: (origin, list) =>
+    requestPreviewLeaveForNavigation({ view: 'marketplace' }, () =>
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'marketplace' }),
+        resourceCenterIntent: { resource: 'marketplace' },
+        marketplaceListContext:
+          list && state.view === 'workspace' && state.activeProjectId
+            ? { projectId: state.activeProjectId, list }
+            : undefined
+      }))
+    ),
+
+  openResourceCenter: (origin, intent = { resource: 'skills' }, afterNavigate) =>
+    requestPreviewLeaveForNavigation({ view: 'marketplace' }, () => {
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'marketplace' }),
+        resourceCenterIntent: intent,
+        marketplaceListContext: undefined
+      }))
+      afterNavigate?.()
+    }),
+
+  clearResourceCenterIntent: () => set({ resourceCenterIntent: undefined }),
+
+  // Only an existing Project handoff accepts updates; stale events cannot seed another Project.
+  updateMarketplaceList: (projectId, list) =>
+    set((state) =>
+      state.activeProjectId === projectId && state.marketplaceListContext?.projectId === projectId
+        ? { marketplaceListContext: { projectId, list } }
+        : state
+    ),
 
   openLibrary: (origin, options) =>
     requestPreviewLeaveForNavigation({ view: 'library' }, () =>

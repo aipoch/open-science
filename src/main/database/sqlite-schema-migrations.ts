@@ -157,7 +157,13 @@ const withOptionalLegacyColumns = (
   if (markerIndex === -1) {
     throw new Error('Canonical SQLite DDL cannot preserve optional columns without constraints.')
   }
-  const definitions = columns.map(({ definition }) => `    ${definition},`).join('\n')
+  // A suffix may add nullable columns in its target DDL while accepting either the older source
+  // or an already-adapted source. Copy those values when present without defining them twice.
+  const definitions = columns
+    .filter(({ name }) => !canonicalTableDdl.includes(`\n    "${name}" `))
+    .map(({ definition }) => `    ${definition},`)
+    .join('\n')
+  if (!definitions) return canonicalTableDdl
   return `${canonicalTableDdl.slice(0, markerIndex)}\n${definitions}${canonicalTableDdl.slice(markerIndex)}`
 }
 

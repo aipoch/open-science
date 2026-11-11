@@ -1,7 +1,9 @@
+import { computePythonSelectionSchema } from '../../shared/compute-python-runtime'
 import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { isAgentFrameworkId } from '../../shared/agent-framework-id'
 import { isLanguagePreference } from '../../shared/locale'
 import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
@@ -252,12 +254,17 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   })
   const classification = classificationSettingsSchema.safeParse(value.classification).data
   const visionModel = sanitizeVisionModel(value.visionModel)
+  const modalRuntime = computePythonSelectionSchema.safeParse(value.modalRuntime)
+  const huggingFaceRuntime = computePythonSelectionSchema.safeParse(value.huggingFaceRuntime)
   const settings: StoredSettings = {
+    ...(huggingFaceRuntime.success ? { huggingFaceRuntime: huggingFaceRuntime.data } : {}),
+    ...(modalRuntime.success ? { modalRuntime: modalRuntime.data } : {}),
     version: SETTINGS_FILE_VERSION,
     providers,
     ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
+    promptOptimizationModel: sanitizeSubagentModel(value.promptOptimizationModel),
     sessionDetailsModel: sanitizeSessionDetailsModel(value.sessionDetailsModel),
     ...(visionModel ? { visionModel } : {})
   }
@@ -348,12 +355,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (dataRoot && isAbsolute(dataRoot)) settings.dataRoot = dataRoot
 
   const agentFrameworkId = asString(value.agentFrameworkId)
-  if (
-    agentFrameworkId === 'claude-code' ||
-    agentFrameworkId === 'opencode' ||
-    agentFrameworkId === 'codex' ||
-    agentFrameworkId === 'codebuddy'
-  ) {
+  if (isAgentFrameworkId(agentFrameworkId)) {
     settings.agentFrameworkId = agentFrameworkId
   }
   const reasoningEffort = asString(value.reasoningEffort)

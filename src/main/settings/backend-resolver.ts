@@ -1,3 +1,5 @@
+import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
+import type { StoredProvider } from './types'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
@@ -10,7 +12,7 @@ import {
   buildActiveModelIncompatibleMessage,
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
-} from '../../shared/run-error-classification'
+} from '../../shared/failure/messages'
 import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
@@ -71,6 +73,7 @@ export type AgentBackendResolutionContext = {
   grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
+  isolateConfiguration?: boolean
 }
 
 const userSkillDirectorySystemPromptAppend = (storageRoot: string): string =>
@@ -104,7 +107,7 @@ export type AgentBackendRuntimePort = Pick<
   | 'materializeAgentConfigFiles'
   | 'reserveOpenCodeUsagePort'
   | 'resolveCodexProxyEnvironment'
->
+> & { resolvePiExecutable?: () => Promise<string> }
 
 export type AgentBackendProviderPort = Pick<
   ProviderAccountsModule,
@@ -142,7 +145,7 @@ export class AgentBackendResolver {
     transport: CodexSubscriptionTransport
   ) => Promise<void>
 
-  constructor(options: AgentBackendResolverOptions) {
+  constructor(private readonly options: AgentBackendResolverOptions) {
     this.readSettings = options.readSettings
     this.providers = options.providers
     this.runtime = options.runtime
@@ -238,6 +241,66 @@ export class AgentBackendResolver {
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
     return this.resolveBackendSelection(await this.selection.resolveExplicitTarget(target), context)
+  }
+
+  // Resolve a draft in disposable storage without publishing it or observing live account health.
+  async resolveValidationTarget(
+    provider: ResolvedProvider,
+    settings: StoredSettings,
+    storageRoot: string
+  ): Promise<ResolvedAgentBackend> {
+    if (provider.type !== 'custom' && provider.type !== 'official')
+      throw new Error('ACP provider validation requires an API-key provider.')
+    const configuration = { ...provider }
+    delete configuration.key
+    const candidate: StoredProvider = {
+      ...configuration,
+      id: 'validation',
+      name: 'Validation',
+      apiEndpoints: [...(provider.apiEndpoints ?? ['messages'])]
+    }
+    const projection = new ProviderRuntimeProjectionOwner()
+    const providers: AgentBackendProviderPort = {
+      resolveRuntimeTarget: (stored, selection, framework) => {
+        const target = projection.resolveRuntimeTarget(stored, selection, framework)
+        return { ...target, provider: { ...target.provider, ...provider } }
+      },
+      resolveRuntimeModelCatalog: (stored, framework) => [
+        providers.resolveRuntimeTarget(stored, { kind: 'provider-default' }, framework)
+      ],
+      resolveRuntimeReasoningEffortProfile: (stored, model) =>
+        projection.resolveRuntimeReasoningEffortProfile(stored, model)
+    }
+    const snapshot: StoredSettings = {
+      ...settings,
+      providers: [candidate],
+      activeProviderId: candidate.id,
+      activeModel: provider.model
+    }
+    const resolver = new AgentBackendResolver({
+      ...this.options,
+      storageRoot,
+      providers,
+      onProviderFailure: undefined,
+      readSettings: async () => snapshot
+    })
+    const backend = await resolver.resolveExplicitTarget(
+      {
+        frameworkId: settings.agentFrameworkId ?? 'open-science-agent',
+        providerId: candidate.id,
+        model: provider.model
+          ? { kind: 'required', id: provider.model }
+          : { kind: 'provider-default' },
+        reasoningEffort: DEFAULT_REASONING_EFFORT
+      },
+      {
+        includeSkillAndConnectorContext: false,
+        isolateConfiguration: true,
+        skillWhitelist: [],
+        systemPromptAppends: []
+      }
+    )
+    return { ...backend, ...(backend.sessionModel ? { sessionModelRequired: true } : {}) }
   }
 
   // Direct, tool-less features need the same admitted provider/model as an Agent session, but do
@@ -339,6 +402,80 @@ export class AgentBackendResolver {
     if (framework.id === 'codex' && !target.modelBridgeSupported) {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
+    if (framework.id === 'open-science-agent') {
+      // The host owns credential revocation and process lifetime; the child receives only a bridge token.
+      const lease = await this.transports.acquireHarness(target, new AbortController().signal)
+      try {
+        const includeSkills = context.includeSkillAndConnectorContext !== false
+        const skillRoot = join(this.storageRoot, 'open-science-agent', 'skill-runtime')
+        const discovery = includeSkills
+          ? await this.runtime.prepareAgentSkillDiscovery(
+              settings,
+              skillRoot,
+              new Set(context.forcedSkillIds ?? []),
+              context.skillWhitelist
+            )
+          : undefined
+        const provider = {
+          ...target.provider,
+          apiEndpoints: [lease.route.protocol],
+          model: lease.route.model,
+          agentProviderId: JSON.stringify([
+            'open-science-agent',
+            target.providerId,
+            target.configRevision,
+            lease.route.model
+          ])
+        }
+        const executablePath = this.skillRuntimeMcpEntryPath
+        const effort =
+          resolvedEffort ??
+          this.planner.projectModelChange({ settings, frameworkId, target, effortIntent })
+            ?.reasoningEffort
+        const config = framework.prepareModelConfig(provider, {
+          storageRoot: this.storageRoot,
+          executablePath,
+          responsesConnection: lease.connection,
+          reasoningEffort: effort === 'default' ? undefined : effort
+        })
+        return {
+          framework,
+          providerId: target.providerId,
+          backendId: `open-science-agent:${target.providerId}`,
+          modelRoute: 'open-science-agent',
+          executablePath,
+          env: config.env ?? {},
+          args: config.args,
+          authentication: config.authentication,
+          sessionModel: config.sessionModel,
+          sessionEffort: effort === 'default' ? undefined : effort,
+          contextWindow: provider.contextWindow ?? 32_768,
+          contextUsageModel: provider.model,
+          supportsImageInput: provider.supportsImageInput === true,
+          systemPromptAppends: [
+            ...(context.systemPromptAppends ?? []),
+            ...(includeSkills ? [renderConnectorInstructions()] : [])
+          ],
+          ...(discovery
+            ? {
+                sessionOptions: {
+                  [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+                    command: process.execPath,
+                    entryPath: executablePath,
+                    root: skillRoot,
+                    skillsDirectory: join(skillRoot, 'skills'),
+                    mainAllowedNames: discovery.mainAllowedNames
+                  }
+                }
+              }
+            : {}),
+          providerTransportLease: { setTarget: () => false, release: lease.release }
+        }
+      } catch (error) {
+        await lease.release()
+        throw error
+      }
+    }
     const forceNativeResponsesCompatibility =
       context.forceCodexNativeResponsesCompatibility === true &&
       framework.id === 'codex' &&
@@ -352,6 +489,7 @@ export class AgentBackendResolver {
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const includeSkillAndConnectorContext = context.includeSkillAndConnectorContext !== false
     const codeBuddySkillRuntimeRoot = join(codeBuddyStorageDir(this.storageRoot), 'skill-runtime')
+    const piSkillRuntimeRoot = join(this.storageRoot, 'pi', 'skill-runtime')
     const codexSkillRuntimeRoot = isCodexSubscriptionProvider(target.provider.type)
       ? codexSubscriptionStorageDir(this.storageRoot)
       : codexStorageDir(this.storageRoot)
@@ -373,14 +511,19 @@ export class AgentBackendResolver {
             )
           : framework.id === 'codebuddy'
             ? await this.runtime.resolveCodeBuddyExecutable(settings.codebuddyPath)
-            : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
+            : framework.id === 'pi'
+              ? await this.runtime.resolvePiExecutable?.()
+              : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
+    if (!executablePath) throw new Error('The selected agent executable is unavailable.')
     const codexNativeVersion =
       framework.id === 'codex'
         ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
     const opencodeVersion =
       framework.id === 'opencode'
-        ? await this.runtime.probeOpencodeVersion(executablePath)
+        ? await this.runtime.probeOpencodeVersion(executablePath).catch((cause: unknown) => {
+            throw new Error('OpenCode CLI version check failed.', { cause })
+          })
         : undefined
     const opencodeMajorVersion = opencodeVersion?.startsWith('2.') ? 2 : 1
     if (framework.id === 'opencode' && !/^[12]\.\d+\./.test(opencodeVersion ?? '')) {
@@ -421,7 +564,8 @@ export class AgentBackendResolver {
         executablePath,
         plan.claudeModelConfig,
         includeSkillAndConnectorContext,
-        context.skillWhitelist
+        context.skillWhitelist,
+        context.isolateConfiguration
       )
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
@@ -466,7 +610,9 @@ export class AgentBackendResolver {
           ? join(codeBuddySkillRuntimeRoot, '.claude')
           : framework.id === 'codex'
             ? codexSkillRuntimeRoot
-            : opencodeConfigDir(this.storageRoot)
+            : framework.id === 'pi'
+              ? piSkillRuntimeRoot
+              : opencodeConfigDir(this.storageRoot)
       skillDiscovery = includeSkillAndConnectorContext
         ? await this.runtime.prepareAgentSkillDiscovery(
             settings,
@@ -494,6 +640,9 @@ export class AgentBackendResolver {
     ]
 
     try {
+      if (framework.id === 'pi' && !transport.piModelBridge) {
+        throw new Error('The Pi model bridge is unavailable.')
+      }
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
@@ -505,6 +654,7 @@ export class AgentBackendResolver {
           ? { nativeVersion: codexNativeVersion ?? opencodeVersion }
           : {}),
         responsesConnection,
+        ...(transport.piModelBridge ? { piModelBridge: transport.piModelBridge } : {}),
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
         providerModelCatalog,
@@ -565,7 +715,9 @@ export class AgentBackendResolver {
           ? { proxyEnvironmentMode: proxyEnv === undefined ? 'inherit' : 'replace' }
           : {}),
         sessionModel,
-        ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
+        ...((framework.id === 'pi' ||
+          (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type))) &&
+        sessionModel
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
@@ -587,7 +739,12 @@ export class AgentBackendResolver {
                           root: codexSkillRuntimeRoot,
                           skillsDirectory: join(codexSkillRuntimeRoot, 'skills')
                         }
-                      : {})
+                      : framework.id === 'pi'
+                        ? {
+                            root: piSkillRuntimeRoot,
+                            skillsDirectory: join(piSkillRuntimeRoot, 'skills')
+                          }
+                        : {})
                 }
               }
             }
@@ -622,7 +779,8 @@ export class AgentBackendResolver {
     resolvedExecutablePath?: string,
     modelConfig?: ClaudeRuntimeModelConfig,
     includeSkillAndConnectorContext = true,
-    allowedNames?: readonly string[]
+    allowedNames?: readonly string[],
+    isolateConfiguration = false
   ): Promise<AgentSpawnConfig> {
     const executablePath =
       resolvedExecutablePath ??
@@ -631,6 +789,18 @@ export class AgentBackendResolver {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
     const provider = target.provider
+    if (isolateConfiguration && usesAppProviderTransport(provider.type)) {
+      return {
+        executablePath,
+        envOverrides: buildProviderEnv(provider, {
+          storageRoot: this.storageRoot,
+          claudeExecutablePath: executablePath,
+          userClaudeConfigDir: this.userClaudeDir
+        }),
+        sessionOptions: { settings: { ...(modelConfig ?? {}) }, settingSources: [] },
+        contextWindow: provider.contextWindow
+      }
+    }
     const runtimeConfig = await this.runtime.provisionClaudeRuntimeConfig(
       settings,
       forcedSkillIds,

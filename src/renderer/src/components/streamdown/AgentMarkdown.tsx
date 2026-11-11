@@ -3,6 +3,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import {
   Component,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -26,7 +27,10 @@ import {
 import 'katex/dist/katex.min.css'
 
 import { createMarkdownPluginNeedsScanner } from './code-fence'
-import { createIncrementalMarkdownBlocks } from './incremental-markdown-blocks'
+import {
+  createIncrementalMarkdownBlocks,
+  dropUnsettledStreamingTableTail
+} from './incremental-markdown-blocks'
 import { retainMarkdownParser } from './markdown-parser'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import {
@@ -315,6 +319,13 @@ const RichAgentMarkdown = memo(
     // Append-only streaming re-normalizes just the trailing block instead of the full message.
     const [normalizer] = useState(() => createAgentMarkdownNormalizer())
     const [splitBlocks] = useState(() => createIncrementalMarkdownBlocks())
+    const segmentBlocks = useCallback(
+      (markdown: string): string[] => {
+        const blocks = splitBlocks(markdown)
+        return isAnimating ? dropUnsettledStreamingTableTail(blocks) : blocks
+      },
+      [isAnimating, splitBlocks]
+    )
     useEffect(() => (isAnimating ? retainMarkdownParser() : undefined), [isAnimating])
     const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
     const allowedTags = useMemo(
@@ -356,7 +367,7 @@ const RichAgentMarkdown = memo(
           isAnimating={isAnimating}
           animated={false}
           BlockComponent={AsyncStreamingBlock}
-          parseMarkdownIntoBlocksFn={splitBlocks}
+          parseMarkdownIntoBlocksFn={segmentBlocks}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={allowedTags}

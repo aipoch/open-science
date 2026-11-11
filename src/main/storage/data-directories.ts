@@ -8,6 +8,8 @@ export const RELOCATABLE_DATA_DIRS = [
   'literature',
   'notebooks',
   'models',
+  'research-video-jobs',
+  'research-video-presentations',
   'pdf-structure',
   'execution-file-evidence',
   'uploads',

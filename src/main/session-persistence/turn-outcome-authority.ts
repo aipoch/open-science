@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import { isDeepStrictEqual } from 'node:util'
 import {
   legacySessionStateForOutcome,
@@ -62,11 +63,11 @@ export const recordRestartTurnOutcome = (
         ? {
             status: 'idle' as const,
             error: undefined,
-            errorReportable: undefined,
+            failure: undefined,
             resumeRecovery: undefined
           }
         : preparation.previousState
-    for (const key of ['status', 'error', 'errorReportable', 'resumeRecovery'] as const) {
+    for (const key of ['status', 'error', 'failure', 'resumeRecovery'] as const) {
       if (isDeepStrictEqual(authority[key], preparation.expectedState[key]))
         Object.assign(next, { [key]: target[key] })
     }
@@ -89,7 +90,7 @@ export const recordRestartTurnOutcome = (
     cause: 'app-restart',
     settledAt: restored.updatedAt,
     error: restored.error,
-    errorReportable: false,
+    failure: classifyFailure({ origin: 'session' }),
     recovery: 'resume'
   }
   return {

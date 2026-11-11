@@ -29,6 +29,8 @@ import {
 } from '../../../../shared/permission-profiles'
 import {
   isSessionSizeLimitError,
+  type DeleteSessionRequest,
+  type SessionDeletionResult,
   type MessagePdfContextSnapshot
 } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
@@ -53,6 +55,7 @@ import {
 } from './workspace-permission-response-attempt-owner'
 import {
   resendEditedWorkspaceMessage,
+  deleteWorkspaceSession,
   sendWorkspaceMessage,
   type ResendEditedMessageInput,
   type SendWorkspaceMessageIntent,
@@ -78,6 +81,11 @@ import {
   type WorkspaceSessionRuntimeSelection
 } from './workspace-runtime-selection-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
+import {
+  retryWorkspaceSessionCleanup,
+  useWorkspaceSessionCleanups,
+  type WorkspaceSessionCleanup
+} from './workspace-runtime-session-cleanup-owner'
 import {
   createSubagentTranscriptOwner,
   useSubagentRuntimePresentation,
@@ -146,6 +154,7 @@ type WorkspaceAgentRuntime = {
   saveAsSkillInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
   subagentTranscripts: SubagentTranscriptOwner
+  sessionCleanups: Readonly<Record<string, WorkspaceSessionCleanup>>
   compactContext: (sessionId: string) => Promise<boolean>
   ensureSessionReady: (sessionId: string) => Promise<void>
   saveAsSkill: (
@@ -160,6 +169,8 @@ type WorkspaceAgentRuntime = {
     input: ResendEditedMessageInput
   ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
+  deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
+  retrySessionCleanup: (request: DeleteSessionRequest) => Promise<void>
   steerFollowUp: (
     request: AcpSteerFollowUpRequest & {
       agentConfiguration?: SessionAgentConfiguration
@@ -179,6 +190,7 @@ const useOwnedWorkspaceAgentRuntime = (
   onSessionSizeLimit?: (sessionId: string) => void
 ): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
+  const sessionCleanups = useWorkspaceSessionCleanups((state) => state.cleanups)
   const [subagentTranscripts] = useState(createSubagentTranscriptOwner)
   const restoredPermissionProjectionKey = useSessionStore((state) =>
     JSON.stringify(
@@ -624,6 +636,7 @@ const useOwnedWorkspaceAgentRuntime = (
     saveAsSkillInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
     subagentTranscripts,
+    sessionCleanups,
     compactContext,
     ensureSessionReady,
     setMemoryEnabled,
@@ -631,6 +644,8 @@ const useOwnedWorkspaceAgentRuntime = (
     sendMessage,
     resendEditedMessage,
     cancelRun,
+    deleteSession: deleteWorkspaceSession,
+    retrySessionCleanup: retryWorkspaceSessionCleanup,
     steerFollowUp,
     resumeInterruptedSession,
     respondToPermission,

@@ -4,7 +4,8 @@ import type {
   ComputeJobOperationOutcome,
   ComputeJobOperationPhase,
   ComputeJobOperationRecord,
-  ComputeJobOperationScope
+  ComputeJobOperationScope,
+  ComputeJobOperationSettlement
 } from '@aipoch/compute'
 import { hasCleanupStopEvidence } from '@aipoch/compute/node'
 import { OptionalSecureStorageStringProtection } from './credential-vault'
@@ -64,6 +65,7 @@ const asOutcome = (value: string | null): ComputeJobOperationOutcome | null => {
     case null:
     case 'fulfilled':
     case 'superseded':
+    case 'failed':
       return value
   }
   throw new Error(`Invalid Compute Job operation outcome: ${value}`)
@@ -85,6 +87,8 @@ const toRecord = (row: {
   createdAt: Date
   settledAt: Date | null
   updatedAt: Date
+  errorCode?: string | null
+  errorMessage?: string | null
 }): ComputeJobOperationRecord => ({
   ...row,
   kind: asKind(row.kind),
@@ -97,9 +101,17 @@ class ComputeJobOperationRepository {
     private readonly getClient: OperationClientProvider,
     private readonly fieldProtection: Pick<
       OptionalSecureStorageStringProtection,
-      'reveal' | 'revealJson'
+      'protect' | 'reveal' | 'revealJson'
     > = new OptionalSecureStorageStringProtection()
   ) {}
+
+  private record(row: Parameters<typeof toRecord>[0]): ComputeJobOperationRecord {
+    return toRecord({
+      ...row,
+      errorCode: row.errorCode ?? null,
+      errorMessage: row.errorMessage ? this.fieldProtection.reveal(row.errorMessage) : null
+    })
+  }
 
   private cancellationDidNotLaunch(job: PrismaComputeJob): boolean {
     if (job.remoteHandle || !job.lastPollError) return false
@@ -111,6 +123,8 @@ class ComputeJobOperationRepository {
   }
 
   private cleanupStopError(job: PrismaComputeJob): string | null {
+    if (job.executionMode && job.executionMode !== 'direct_ssh' && job.executionMode !== 'slurm')
+      return null
     const protection = this.fieldProtection
     const reveal = (value: string | null): string | undefined =>
       value === null ? undefined : job.sensitiveDataEncrypted ? protection.reveal(value) : value
@@ -150,7 +164,7 @@ class ComputeJobOperationRepository {
     const row = await client.computeJobOperation.findUnique({
       where: { jobId_kind: { jobId, kind } }
     })
-    return row ? toRecord(row) : null
+    return row ? this.record(row) : null
   }
 
   // This is the operation request linearization point. Kind-specific atomic job transitions stay
@@ -171,9 +185,19 @@ class ComputeJobOperationRepository {
           id: jobId,
           projectId: scope.projectId,
           sessionId: scope.sessionId,
-          providerId: scope.providerId
+          providerId: scope.providerId,
+          executionMode: {
+            in: [
+              'direct_ssh',
+              'slurm',
+              'kubernetes',
+              'ray_jobs',
+              'hugging_face_jobs',
+              'modal_sandbox'
+            ]
+          }
         },
-        select: { status: true }
+        select: { status: true, executionMode: true }
       })
       if (!job) return { found: false } as const
 
@@ -181,10 +205,36 @@ class ComputeJobOperationRepository {
         where: { jobId_kind: { jobId, kind } }
       })
       if (existing) {
+        if (
+          existing.phase === 'settled' &&
+          existing.outcome === 'failed' &&
+          (ACTIVE_STATUSES as readonly string[]).includes(job.status)
+        ) {
+          const reopened = await transaction.computeJobOperation.update({
+            where: { id: existing.id },
+            data: {
+              phase: 'active',
+              outcome: null,
+              revision: { increment: 1 },
+              errorCode: null,
+              errorMessage: null,
+              settledAt: null,
+              eligibleAt: null,
+              claimToken: null,
+              claimExpiresAt: null,
+              updatedAt: now
+            }
+          })
+          return {
+            found: true,
+            jobStatus: asJobStatus(job.status),
+            record: this.record(reopened)
+          } as const
+        }
         return {
           found: true,
           jobStatus: asJobStatus(job.status),
-          record: toRecord(existing)
+          record: this.record(existing)
         } as const
       }
 
@@ -210,13 +260,24 @@ class ComputeJobOperationRepository {
           if (queued) {
             await transaction.computeJob.updateMany({
               where: { id: jobId, status: 'queued' },
-              data: { status: 'failed', finishedAt: now }
+              data: {
+                status: 'failed',
+                finishedAt: now,
+                ...(['modal_sandbox', 'hugging_face_jobs', 'ray_jobs', 'kubernetes'].includes(
+                  job.executionMode
+                ) && {
+                  ...(job.executionMode === 'kubernetes' && { kubernetesWorkspace: null }),
+                  remoteCleanupDisposition: 'cleaned',
+                  errorCode: 'job_cancelled',
+                  harvestedAt: now
+                })
+              }
             })
           }
           return {
             found: true,
             jobStatus: queued ? ('failed' as const) : asJobStatus(job.status),
-            record: toRecord(row)
+            record: this.record(row)
           } as const
         }
       }
@@ -228,7 +289,8 @@ class ComputeJobOperationRepository {
     kind: ComputeJobOperationKind,
     now: Date,
     leaseMs: number,
-    claimToken: string
+    claimToken: string,
+    backend?: 'modal_sandbox' | 'hugging_face_jobs' | 'ray_jobs' | 'kubernetes'
   ): Promise<ClaimedComputeJobOperation | null> {
     const client = await this.getClient()
     return runOperationTransaction(client, async (transaction, attempt) => {
@@ -239,7 +301,12 @@ class ComputeJobOperationRepository {
             where: {
               kind,
               phase: 'active',
-              job: { is: { status: { in: [...TERMINAL_STATUSES] } } }
+              job: {
+                is: {
+                  executionMode: backend ?? { in: ['slurm', 'direct_ssh'] },
+                  status: { in: [...TERMINAL_STATUSES] }
+                }
+              }
             },
             orderBy: { createdAt: 'asc' }
           })
@@ -266,7 +333,12 @@ class ComputeJobOperationRepository {
         where: {
           kind,
           phase: 'active',
-          job: { is: { status: { in: [...ACTIVE_STATUSES] } } },
+          job: {
+            is: {
+              executionMode: backend ?? { in: ['slurm', 'direct_ssh'] },
+              status: { in: [...ACTIVE_STATUSES] }
+            }
+          },
           OR: [
             {
               claimToken: null,
@@ -295,14 +367,15 @@ class ComputeJobOperationRepository {
       const row = await transaction.computeJobOperation.findUniqueOrThrow({
         where: { id: candidate.id }
       })
-      return { operation: toRecord(row), jobId: candidate.jobId }
+      return { operation: this.record(row), jobId: candidate.jobId }
     })
   }
 
   async fulfill(
     claim: ClaimedComputeJobOperation,
     now: Date,
-    remoteWorkdirAbsent = false
+    remoteWorkdirAbsent = false,
+    stagedInputsOnly = false
   ): Promise<boolean> {
     const client = await this.getClient()
     return runOperationTransaction(client, async (transaction) => {
@@ -325,12 +398,16 @@ class ComputeJobOperationRepository {
             },
             data: {
               status: 'failed',
+              errorCode: 'job_cancelled',
+              errorMessage: null,
               finishedAt: now,
               // Definitive cancellation evidence supersedes uncertain dispatch diagnostics.
               lastPollError: this.cleanupStopError(job),
               // No launched workload means there are no results to harvest. Directory absence
               // remains a separate fact; only that fact can settle remote cleanup.
-              ...(this.cancellationDidNotLaunch(job)
+              ...(this.cancellationDidNotLaunch(job) ||
+              (['modal_sandbox', 'hugging_face_jobs', 'ray_jobs'].includes(job.executionMode) &&
+                stagedInputsOnly)
                 ? { harvestedAt: now, harvestError: null }
                 : {}),
               ...(remoteWorkdirAbsent
@@ -353,6 +430,8 @@ class ComputeJobOperationRepository {
         data: {
           phase: 'settled',
           outcome: 'fulfilled',
+          errorCode: null,
+          errorMessage: null,
           revision: { increment: 1 },
           eligibleAt: null,
           claimToken: null,
@@ -394,7 +473,13 @@ class ComputeJobOperationRepository {
       if ((ACTIVE_STATUSES as readonly string[]).includes(job.status)) {
         await transaction.computeJob.update({
           where: { id: jobId },
-          data: { status: 'failed', finishedAt: now, lastPollError: this.cleanupStopError(job) }
+          data: {
+            status: 'failed',
+            errorCode: 'job_cancelled',
+            errorMessage: null,
+            finishedAt: now,
+            lastPollError: this.cleanupStopError(job)
+          }
         })
       }
       const settled = await transaction.computeJobOperation.updateMany({
@@ -407,6 +492,8 @@ class ComputeJobOperationRepository {
         data: {
           phase: 'settled',
           outcome: 'fulfilled',
+          errorCode: null,
+          errorMessage: null,
           revision: { increment: 1 },
           eligibleAt: null,
           claimToken: null,
@@ -439,6 +526,95 @@ class ComputeJobOperationRepository {
       data
     })
     return result.count === 1
+  }
+
+  // The active claim owns both records. A stale remote observation cannot change the job or
+  // settle a reopened cancellation; returning the committed revision also fixes event identity.
+  async settle(
+    claim: ClaimedComputeJobOperation,
+    now: Date,
+    settlement: ComputeJobOperationSettlement
+  ): Promise<ComputeJobOperationRecord | null> {
+    const client = await this.getClient()
+    return runOperationTransaction(client, async (transaction) => {
+      const ownership = {
+        id: claim.operation.id,
+        phase: 'active',
+        revision: claim.operation.revision,
+        claimToken: claim.operation.claimToken
+      }
+      const operation = await transaction.computeJobOperation.findFirst({ where: ownership })
+      if (!operation) return null
+      const job = await transaction.computeJob.findUnique({ where: { id: claim.jobId } })
+      if (!job || !(ACTIVE_STATUSES as readonly string[]).includes(job.status)) return null
+      const protect = (value: string): string =>
+        job.sensitiveDataEncrypted ? this.fieldProtection.protect(value) : value
+      if (settlement.job) {
+        const update = settlement.job
+        if (!update.status || !(TERMINAL_STATUSES as readonly string[]).includes(update.status)) {
+          throw new Error('Cancellation settlement requires a terminal job result.')
+        }
+        await transaction.computeJob.update({
+          where: { id: claim.jobId },
+          data: {
+            status: update.status,
+            exitCode: update.exitCode,
+            errorCode: update.errorCode,
+            errorMessage:
+              update.errorMessage == null ? update.errorMessage : protect(update.errorMessage),
+            stdoutTail: update.stdoutTail == null ? update.stdoutTail : protect(update.stdoutTail),
+            stderrTail: update.stderrTail == null ? update.stderrTail : protect(update.stderrTail),
+            lastPollError:
+              update.lastPollError == null ? update.lastPollError : protect(update.lastPollError),
+            finishedAt: update.finishedAt ?? now
+          }
+        })
+      }
+      const updated = await transaction.computeJobOperation.updateMany({
+        where: ownership,
+        data: {
+          phase: 'settled',
+          outcome: settlement.outcome,
+          revision: { increment: 1 },
+          errorCode: settlement.error?.code ?? null,
+          errorMessage: settlement.error ? protect(settlement.error.message) : null,
+          eligibleAt: null,
+          claimToken: null,
+          claimExpiresAt: null,
+          settledAt: now,
+          updatedAt: now
+        }
+      })
+      if (updated.count !== 1) throw new Error('Operation settlement lost its ownership claim')
+      const row = await transaction.computeJobOperation.findUniqueOrThrow({
+        where: { id: claim.operation.id }
+      })
+      if (settlement.outcome === 'failed' && !settlement.job && settlement.error) {
+        const sourceId = `${row.id}:${row.revision}`
+        await transaction.backgroundResultDelivery.create({
+          data: {
+            id: `compute-cancellation:${sourceId}`,
+            sourceKind: 'compute-cancellation',
+            sourceId,
+            projectId: job.projectId,
+            sessionId: job.sessionId,
+            state: 'pending',
+            sourceSnapshot: protect(
+              JSON.stringify({
+                jobId: job.id,
+                jobStatus: job.status,
+                operationId: row.id,
+                revision: row.revision,
+                error: settlement.error
+              })
+            ),
+            createdAt: now,
+            updatedAt: now
+          }
+        })
+      }
+      return this.record(row)
+    })
   }
 }
 

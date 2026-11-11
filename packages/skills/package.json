@@ -45,14 +45,14 @@
     "fflate": "0.8.3",
     "js-yaml": "^4.1.0",
     "marked": "^17.0.6",
-    "zod": "^4.6.5",
+    "zod": "^4.6.6",
     "@aipoch/durable-files": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
     "@types/js-yaml": "^4.0.9",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "esbuild": "^0.28.2"
   }
 }

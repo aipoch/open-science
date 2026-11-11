@@ -55,7 +55,8 @@ try {
       directory
     )
     npmRun(['run', 'typecheck'], directory)
-    if (plan.tests.includes(name)) npmRun(['test'], directory)
+    if (plan.tests.includes(name) && !process.argv.includes('--skip-tests'))
+      npmRun(['test'], directory)
     npmRun(['pack', '--pack-destination', temporary], directory)
     const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
     tarballs.push(join(temporary, `aipoch-${name}-${manifest.version}.tgz`))

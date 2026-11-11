@@ -42,6 +42,7 @@ export async function runVerificationProcess(
     cwd?: string
     timeoutMs?: number
     maxBytes?: number
+    env?: NodeJS.ProcessEnv
   } = {}
 ): Promise<{ stdout: string; stderr: string }> {
   options.signal?.throwIfAborted()
@@ -51,12 +52,13 @@ export async function runVerificationProcess(
       process.platform === 'win32'
         ? spawnWindowsOwnedProcess(jobName, command, args, {
             cwd: options.cwd,
-            env: process.env,
+            env: options.env ?? process.env,
             stdio: 'pipe'
           })
         : spawn(command, args, {
             cwd: options.cwd,
             detached: true,
+            env: options.env,
             windowsHide: true,
             stdio: ['ignore', 'pipe', 'pipe']
           })

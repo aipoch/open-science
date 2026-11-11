@@ -11,7 +11,10 @@ import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { constrainMessageClipboard, readMessageClipboard } from './message-clipboard'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import {
+  createProjectMarketplacePreviewItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
 import { createPreviewFileItemFromMention } from '../preview-file-item'
@@ -605,6 +608,16 @@ export const ComposerEditor = ({
       onLocatePastedText?.(pastedTextId)
       return
     }
+    const skillChip = (event.target as HTMLElement).closest?.('[data-mention-type="skill"]')
+    if (root && skillChip && root.contains(skillChip)) {
+      const skillId = skillChip.getAttribute('data-skill-id')
+      if (!skillId) return
+      event.preventDefault()
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createProjectMarketplacePreviewItem(skillId))
+      return
+    }
     const sessionChip = (event.target as HTMLElement).closest?.(
       '[data-mention-type="session"]'
     ) as HTMLElement | null
@@ -941,7 +954,7 @@ export const ComposerEditor = ({
   }
 
   return (
-    <div className="relative min-w-0">
+    <div className="relative min-w-0 pr-7">
       <div
         ref={editorRef}
         role="textbox"
@@ -1002,31 +1015,29 @@ export const ComposerEditor = ({
         {historyStatus}
       </span>
       {!isComposing && !hasVisibleContent && !hasPastedText ? (
-        <>
-          <div aria-hidden="true" className={composerPlaceholderClassName}>
-            {placeholder}
-          </div>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('Input help')}
-                className="absolute right-0 top-0 size-6 text-muted-foreground"
-              >
-                <CircleHelp className="size-3.5" aria-hidden="true" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent side="top" align="end" className="w-72 max-w-[calc(100vw-2rem)] p-3">
-              <div className="space-y-2">
-                <p className="font-medium">{t('Input help')}</p>
-                <p className="whitespace-normal">{placeholder}</p>
-              </div>
-            </PopoverContent>
-          </Popover>
-        </>
+        <div aria-hidden="true" className={composerPlaceholderClassName}>
+          {placeholder}
+        </div>
       ) : null}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('Input help')}
+            className="absolute right-0 top-0 size-6 text-muted-foreground"
+          >
+            <CircleHelp className="size-3.5" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent side="top" align="end" className="w-72 max-w-[calc(100vw-2rem)] p-3">
+          <div className="space-y-2">
+            <p className="font-medium">{t('Input help')}</p>
+            <p className="whitespace-normal">{placeholder}</p>
+          </div>
+        </PopoverContent>
+      </Popover>
       {mention.active ? (
         <SkillMentionPopup
           composingRef={composingRef}

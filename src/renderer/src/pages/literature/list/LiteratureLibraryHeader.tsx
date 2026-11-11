@@ -1,6 +1,7 @@
 import type { LiteratureProject, LiteratureNavigation } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
+import type { ReferenceExportRequest } from '@aipoch/literature-library/client'
 import { ExternalLink, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureAddMenu, LiteratureLibraryActionsMenu } from './LiteratureLibraryMenus'
@@ -22,6 +23,8 @@ export function LiteratureLibraryHeader({
   onImportFiles,
   importRecordsInputRef,
   beginManualImport,
+  onImportZotero,
+  beginLinkImport,
   query,
   searchResetRevision,
   setQuery,
@@ -48,6 +51,8 @@ export function LiteratureLibraryHeader({
   onImportFiles: (files: File[]) => void
   importRecordsInputRef: React.RefObject<HTMLInputElement | null>
   beginManualImport: (resetDraft?: boolean) => void
+  onImportZotero: () => void
+  beginLinkImport: (trigger: HTMLButtonElement | null) => void
   query: string
   searchResetRevision: number
   setQuery: React.Dispatch<React.SetStateAction<string>>
@@ -60,7 +65,7 @@ export function LiteratureLibraryHeader({
   loadCollections: () => Promise<LiteratureCollectionView[] | undefined>
   entriesLoading: boolean
   projectItemCounts: Record<string, number>
-  exportCurrentScope: (format: 'bibtex' | 'ris') => Promise<boolean>
+  exportCurrentScope: (format: ReferenceExportRequest['format']) => Promise<boolean>
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -177,6 +182,8 @@ export function LiteratureLibraryHeader({
               }}
             />
             <LiteratureAddMenu
+              onImportZotero={onImportZotero}
+              onAddLink={beginLinkImport}
               onAddReference={() => beginManualImport(true)}
               onImportPdf={() => importPdfInputRef.current?.click()}
               onImportReferences={() => importRecordsInputRef.current?.click()}

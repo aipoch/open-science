@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { processBirthIdentity } from './process-birth-identity'
+import { windowsParentProcessId, windowsProcessCommandLine } from './windows-process-query'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -52,24 +53,12 @@ async function inspectProcess(pid: number): Promise<InspectedProcess | undefined
     const birthToken = processBirthIdentity(pid)
     if (!birthToken) return undefined
     if (process.platform === 'win32') {
-      const { stdout } = await run(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { "$($p.ParentProcessId)|$($p.CommandLine)" }`
-        ],
-        { timeout: 5000, windowsHide: true }
-      )
-      const line = stdout.trim()
-      const split = line.indexOf('|')
-      if (split < 0 || processBirthIdentity(pid) !== birthToken) return undefined
-      return {
-        birthToken,
-        parentPid: Number(line.slice(0, split)),
-        commandLine: line.slice(split + 1)
-      }
+      const parentPid = windowsParentProcessId(pid)
+      const commandLine = windowsProcessCommandLine(pid)
+      if (parentPid === undefined || commandLine === undefined) return undefined
+      // Re-read the birth identity so a PID reused between reads cannot supply this evidence.
+      if (processBirthIdentity(pid) !== birthToken) return undefined
+      return { birthToken, parentPid, commandLine }
     }
     const { stdout } = await run('ps', ['-p', String(pid), '-o', 'ppid=', '-o', 'command='], {
       timeout: 5000

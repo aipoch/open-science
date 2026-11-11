@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 import { createCanvas } from '@napi-rs/canvas'
@@ -12,6 +12,150 @@ const { associateFigures } = await import(
 const { tableTextToken } = await import(
   pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
 )
+const { nativeCaptionedFormPixelCrop, nativeCaptionedFormPixelPngSafe, nativeCaptionedFormScope } =
+  await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-form.mjs')).href
+  )
+
+// Reuse the native raster array, adding an independent rotated mark and one
+// explicitly captured PDF.js API spelling pair outside its picture.
+function pixelFormWithIndependentSources(): ReturnType<typeof JSON.parse> {
+  const { args: a, figure } = anonymousScriptedArray({ rasterTitles: true }),
+    [page, captions, , , , tokens, context] = a,
+    o = context.operators,
+    glyphs = context.glyphBounds[0].glyphs,
+    add = (op: number, args: unknown = null): number => {
+      o.fnArray.push(op)
+      return o.argsArray.push(args) - 1
+    },
+    text = (str: string, glyph: object, transform: number[], width: number): number => {
+      const size = Math.hypot(transform[0], transform[1]),
+        index = context.content.items.length,
+        sourceItem = { pageNumber: 1, index, text: str },
+        item = { str, dir: 'ltr', fontName: 'F', width, height: size, transform, sourceItem }
+      add(OPS.beginText)
+      add(OPS.setFont, ['F', size])
+      add(OPS.setTextMatrix, [
+        [...transform.slice(0, 4).map((n) => n / size), ...transform.slice(4)]
+      ])
+      const op = add(OPS.showText, [[glyph]])
+      add(OPS.endText)
+      context.content.items.push(item)
+      tokens.push(tableTextToken(item, context.viewport, 0))
+      return op
+    }
+  figure.caption.lines = ['C']
+  context.pageNumber = 1
+  context.sourceSha256 = 'a'.repeat(64)
+  add(OPS.paintFormXObjectBegin, [null, [375, 240, 395, 260]])
+  const zeroOp = text(
+    '^',
+    { unicode: '^', fontChar: '^', width: 0, isInFont: true },
+    [0, 10, -10, 0, 385, 250],
+    0
+  )
+  add(OPS.paintFormXObjectEnd)
+  const pairIndex = context.content.items.length
+  text(
+    'μ',
+    { unicode: 'µ', fontChar: 'µ', width: 500, isInFont: true, originalCharCode: 181 },
+    [8, 0, 0, 8, 380, 70],
+    4
+  )
+  glyphs.push(
+    { fontChar: '^', bounds: [0, -0.1, 0.5, 0.7] },
+    { fontChar: 'µ', bounds: [0, -0.1, 0.5, 0.7] }
+  )
+  const refresh = (): void => {
+    const content = {
+        ...context.content,
+        items: context.content.items.map((r: ReturnType<typeof JSON.parse>) => {
+          const item = { ...r }
+          delete item.sourceItem
+          return item
+        })
+      },
+      viewport = { ...context.viewport }
+    delete viewport.convertToViewportPoint
+    const raw = structuredClone(content)
+    raw.items[pairIndex].str = 'µ'
+    context.dualApiEvidence = structuredClone({
+      schema: 'same-pdfjs-page-dual-api-capture-v1',
+      pdfjsVersion: version,
+      apiDefaultOptions: {},
+      apiRawOptions: { disableNormalization: true },
+      pageNumber: 1,
+      sourceSha256: context.sourceSha256,
+      defaultContent: content,
+      rawContent: raw,
+      renderContext: {
+        pageNumber: context.pageNumber,
+        sourceSha256: context.sourceSha256,
+        viewport,
+        content,
+        operators: context.operators,
+        glyphBounds: context.glyphBounds,
+        graphicsBounds: context.graphicsBounds
+      }
+    })
+  }
+  refresh()
+  return { page, figure, captions, tokens, context, pairIndex, zeroOp, refresh }
+}
+
+it('keeps a complete pixel Form separate from certified API spelling and a rotated zero advance', () => {
+  const f = pixelFormWithIndependentSources(),
+    before = JSON.stringify(f.context.content),
+    plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  expect(plan?.rect).toEqual([29.5, 59.5, 370.5, 185.5])
+  expect(plan.sourceItems).toBeUndefined()
+  const canvas = createCanvas(1364, 504),
+    png = canvas.toBuffer('image/png')
+  expect(nativeCaptionedFormPixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+  expect(
+    nativeCaptionedFormScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+  expect(JSON.stringify(f.context.content)).toBe(before)
+  f.context.dualApiEvidence = structuredClone(f.context.dualApiEvidence)
+  expect(nativeCaptionedFormPixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+})
+
+it.each([
+  'missing-api',
+  'wrong-pair',
+  'wrong-font',
+  'non-quarter-turn',
+  'nonzero-glyph',
+  'missing-outline'
+])('declines a pixel Form when independent native evidence is incomplete: %s', (fault) => {
+  const f = pixelFormWithIndependentSources()
+  if (fault === 'missing-api') delete f.context.dualApiEvidence
+  if (fault === 'wrong-pair') f.context.dualApiEvidence.rawContent.items[f.pairIndex].str = 'v'
+  if (fault === 'wrong-font')
+    f.context.dualApiEvidence.rawContent.items[f.pairIndex].fontName = 'other'
+  if (fault === 'non-quarter-turn') {
+    const item = f.context.content.items[f.pairIndex - 1]
+    item.transform[0] = 0.01
+    f.tokens.find(
+      (t: ReturnType<typeof JSON.parse>) => t.sourceItem.index === f.pairIndex - 1
+    ).rect = tableTextToken(item, f.context.viewport, 0).rect
+    f.context.operators.argsArray[f.zeroOp - 1][0][0] = 0.001
+    f.refresh()
+  }
+  if (fault === 'nonzero-glyph') {
+    f.context.operators.argsArray[f.zeroOp][0][0].width = 1
+    f.refresh()
+  }
+  if (fault === 'missing-outline') {
+    f.context.glyphBounds[0].glyphs = f.context.glyphBounds[0].glyphs.filter(
+      (g: { fontChar: string }) => g.fontChar !== '^'
+    )
+    f.refresh()
+  }
+  expect(
+    nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})
 // Keep the existing anonymous native operator fixture. Only its three zero ticks
 // become complete panel keys; each face retains two numeric ticks.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -93,6 +237,28 @@ it.each(['off-center-title', 'white-title', 'clipped-title', 'partial-seed'])(
     if (kind === 'clipped-title') context.operators.argsArray[0][1][3] = 227
     if (kind === 'partial-seed') figure.rect[0] += 1
     expect(nativeCompleteFormCrop(a[0], figure, a[1], a[2], a[5], a[6])).toBeUndefined()
+  }
+)
+it.each(['api-item-reference', 'api-value', 'font-reference', 'source-reference'])(
+  'refuses a pixel Form after its final render changes %s',
+  (fault) => {
+    const f = pixelFormWithIndependentSources(),
+      plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context),
+      canvas = createCanvas(1364, 504),
+      png = canvas.toBuffer('image/png')
+    expect(plan).toBeDefined()
+    if (fault === 'api-item-reference') {
+      const items = f.context.dualApiEvidence.rawContent.items
+      items[f.pairIndex] = structuredClone(items[f.pairIndex])
+    }
+    if (fault === 'api-value') f.context.dualApiEvidence.rawContent.items[f.pairIndex].str = 'v'
+    if (fault === 'font-reference')
+      f.context.glyphBounds[0] = structuredClone(f.context.glyphBounds[0])
+    if (fault === 'source-reference') {
+      const items = f.context.content.items
+      items[f.pairIndex] = structuredClone(items[f.pairIndex])
+    }
+    expect(nativeCaptionedFormPixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
   }
 )
 it('completes a bounded plot Form with native top-left panel keys and an exterior seed margin', () => {
@@ -441,5 +607,120 @@ it.each([false, true])(
     expect(nativeCompleteFormCropPngSafe(png(4), rect, a[0], candidate)).toBe(true)
     expect(nativeCompleteFormCropPngSafe(png(0.5), rect, a[0], candidate)).toBe(false)
     expect(nativeCompleteFormCropPngSafe(Buffer.from('invalid'), rect, a[0], candidate)).toBe(false)
+  }
+)
+
+// One native multi-image Form, including a repeated resource at two distinct
+// transforms, is enclosed by an independently clipped isolated group.
+function isolatedRasterForm(fault = ''): ReturnType<typeof JSON.parse> {
+  const f = pixelFormWithIndependentSources(),
+    o = f.context.operators,
+    begin = o.fnArray.indexOf(OPS.paintFormXObjectBegin),
+    end = o.fnArray.indexOf(OPS.paintFormXObjectEnd),
+    group = {
+      matrix: null,
+      bbox: [30, 115, 370, 240],
+      smask: null,
+      isolated: true,
+      knockout: false
+    },
+    insert = (at: number, op: number, args: unknown): void => {
+      o.fnArray.splice(at, 0, op)
+      o.argsArray.splice(at, 0, args)
+      for (const g of f.page.graphicsBounds) if (g.operationIndex >= at) g.operationIndex++
+    }
+  const images = o.fnArray.flatMap((op: number, i: number) =>
+    op === OPS.paintImageXObject ? [i] : []
+  )
+  o.argsArray[images[1]][0] = o.argsArray[images[0]][0]
+  if (fault !== 'bounded-form') o.argsArray[begin] = [null, null]
+  if (fault === 'soft-mask') group.smask = { subtype: 'Alpha' } as never
+  if (fault === 'knockout') group.knockout = true
+  if (fault === 'nonisolated') group.isolated = false
+  if (fault !== 'no-group') {
+    insert(end + 1, OPS.endGroup, [group])
+    insert(begin, OPS.beginGroup, [group])
+  }
+  if (fault === 'unbalanced') o.fnArray[end + 2] = OPS.restore
+  if (fault === 'non-direct') {
+    insert(end + 2, OPS.restore, null)
+    insert(begin + 1, OPS.save, null)
+  }
+  if (fault === 'foreign') {
+    const item = f.context.content.items[f.pairIndex],
+      show = o.fnArray.findIndex(
+        (op: number, i: number) =>
+          op === OPS.showText &&
+          o.argsArray[i][0].some((g: { unicode?: string }) => g.unicode === 'µ')
+      )
+    item.transform = [8, 0, 0, 8, 160, 170]
+    o.argsArray[show - 1] = [[1, 0, 0, 1, 160, 170]]
+    const token = f.tokens.findIndex(
+      (t: { sourceItem: { index: number } }) => t.sourceItem.index === f.pairIndex
+    )
+    f.tokens[token] = tableTextToken(item, f.context.viewport, 0)
+  }
+  f.refresh()
+  return f
+}
+
+it('recovers the complete pixel Form inside an exact isolated group without Source authority', () => {
+  const f = isolatedRasterForm(),
+    before = JSON.stringify(f.context),
+    plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  expect(plan?.rect).toEqual([28, 58, 372, 187])
+  expect(plan.sourceItems).toBeUndefined()
+  const canvas = createCanvas(1376, 516),
+    png = canvas.toBuffer('image/png')
+  expect(nativeCaptionedFormPixelPngSafe(plan, png, plan.rect, f.page)).toBe(true)
+  expect(
+    nativeCaptionedFormPixelPngSafe(
+      plan,
+      createCanvas(344, 129).toBuffer('image/png'),
+      plan.rect,
+      f.page
+    )
+  ).toBe(false)
+  expect(
+    nativeCaptionedFormScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+  expect(JSON.stringify(f.context)).toBe(before)
+  f.context.operators.argsArray[0] = [...f.context.operators.argsArray[0]]
+  expect(nativeCaptionedFormPixelPngSafe(plan, png, plan.rect, f.page)).toBe(false)
+})
+
+it.each([
+  'soft-mask',
+  'knockout',
+  'nonisolated',
+  'unbalanced',
+  'bounded-form',
+  'no-group',
+  'non-direct',
+  'foreign'
+])('keeps unproved group compositing outside the pixel Form proof: %s', (fault) => {
+  const f = isolatedRasterForm(fault)
+  expect(
+    nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})
+
+const { nativeIsolatedGroupPixelCropCurrent } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-form.mjs')).href
+)
+
+it.each(['clone', 'stale', 'old-form'])(
+  'does not grant complete-group identity to a %s pixel plan',
+  (mode) => {
+    const f = mode === 'old-form' ? pixelFormWithIndependentSources() : isolatedRasterForm(),
+      plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    expect(plan).toBeDefined()
+    if (mode !== 'old-form') {
+      expect(nativeIsolatedGroupPixelCropCurrent(plan, f.page)).toBe(true)
+      expect(nativeIsolatedGroupPixelCropCurrent(plan, { ...f.page })).toBe(false)
+    }
+    const observed = mode === 'clone' ? { ...plan, kind: 'isolated-group-clip' } : plan
+    if (mode === 'stale') f.context.operators.argsArray[0] = [...f.context.operators.argsArray[0]]
+    expect(nativeIsolatedGroupPixelCropCurrent(observed, f.page)).toBe(false)
   }
 )

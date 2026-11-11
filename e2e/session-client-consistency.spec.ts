@@ -223,7 +223,7 @@ test('preserves a Web message edit while another client changes the selected Bra
   }
 })
 
-test('keeps the draft without appending an unsent prompt when retrying a Session revision conflict', async ({
+test('keeps the draft without appending an unsent prompt while a Session revision conflict blocks sending', async ({
   app,
   browser
 }, testInfo) => {
@@ -269,17 +269,17 @@ test('keeps the draft without appending an unsent prompt when retrying a Session
     const conversation = web.getByRole('region', { name: 'Conversation' })
     await composer.fill(draft)
     await send.click()
-    await expect(web.getByText(conflict, { exact: true })).toBeVisible()
+    const error = web.getByTestId('composer-notice-slot')
+    await error.locator('summary').click()
+    await expect(error.locator('pre')).toContainText(conflict)
+    await expect(error.locator('pre')).toBeVisible()
     // Preparation fails before append; Main's rollback leaves the existing history unchanged.
     await expect(conversation.getByText(draft, { exact: true })).toHaveCount(0)
     await expect(composer).toHaveText(draft)
-    await expect(send).toBeEnabled()
-    // An unresolved conflict also blocks later preparation until the Session is reloaded.
-    await send.click()
-    await expect(send).toBeEnabled()
-    await expect(web.getByText(conflict, { exact: true })).toBeVisible()
-    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(0)
-    await expect(composer).toHaveText(draft)
+    await expect(send).toBeDisabled()
+    await expect(
+      web.getByRole('button', { name: 'Review recovery options', exact: true })
+    ).toBeVisible()
     expect((await app.readFakeAgentPrompts()).length).toBe(dispatchedBefore)
     await web.screenshot({ path: testInfo.outputPath('revision-conflict-retry.png') })
   } finally {

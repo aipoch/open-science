@@ -37,6 +37,7 @@ import * as runtimeComposition from '../acp/runtime-composition'
 import * as openCodeProcess from '../agent-framework/opencode'
 import { AcpAgentConnectionAdapter } from '../acp/agent-connection-adapter'
 import { AcpBackendGenerationOwner } from '../acp/backend-generation-owner'
+import { AcpConnectionResourceOwner } from '../acp/connection-resource-owner'
 import { terminateProcessTree } from '../process-tree'
 import { acquireRuntimeDirectorySync } from '../runtime-ownership'
 import * as fsPromises from 'node:fs/promises'
@@ -767,6 +768,17 @@ describe('production delegated framework runtime bridge', () => {
       await expect(running.completion).rejects.not.toThrow('configured provider is unavailable')
       expect(resolveAdmittedSubagentBackend).not.toHaveBeenCalled()
       expect(issueDelegatedNotebookConnection).toHaveBeenCalledOnce()
+      expect(issueDelegatedNotebookConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          viewImageBackend: {
+            frameworkId: admittedBackend.framework.id,
+            backendId: admittedBackend.backendId,
+            modelRoute: admittedBackend.modelRoute,
+            model: admittedBackend.contextUsageModel ?? admittedBackend.sessionModel,
+            supportsImageInput: admittedBackend.supportsImageInput === true
+          }
+        })
+      )
     } finally {
       await Promise.all([
         rm(dataRoot, { recursive: true, force: true }),
@@ -1673,6 +1685,7 @@ it.each([true, false])(
         return {
           createSession: async () => {
             const backendOwner = new AcpBackendGenerationOwner(opencodeFramework)
+            const resources = new AcpConnectionResourceOwner()
             candidate = await new AcpAgentConnectionAdapter().open(
               {
                 epoch: 1,
@@ -1681,6 +1694,8 @@ it.each([true, false])(
                   backendOwner.prepare({ epoch: 1, assertCurrent: vi.fn() }, resolved),
                 isCurrent: () => true,
                 isShuttingDown: () => false,
+                cleanupUnattached: (resource, onFailure) =>
+                  resources.cleanupUnattached(resource, onFailure),
                 spawnAgent: options.spawnAgent,
                 spawnProcess: options.spawnProcess,
                 registerOpenCodeStoreRelease: options.registerOpenCodeStoreRelease
@@ -1700,8 +1715,7 @@ it.each([true, false])(
                 onProcessError: vi.fn(),
                 onProcessExit: vi.fn(),
                 onConnectionClosed: vi.fn(),
-                reportCleanupFailure: vi.fn(),
-                reportProcessTreeError: vi.fn()
+                reportCleanupFailure: vi.fn()
               }
             )
             receiptsAtStartup = owner.receipts({ ...key, attemptId: 'companion-attempt' }).length

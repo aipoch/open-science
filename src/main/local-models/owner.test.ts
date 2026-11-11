@@ -6,9 +6,9 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { net } from 'electron'
 import { DownloadChecksumError } from '@aipoch/resilient-download'
-import { createLocalModelOwner } from './owner'
+import { createLocalModelApi, createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
-import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
+import { OCR_LANGUAGE_PACK_REVISIONS, PDF_TABLE_MODEL_REVISIONS } from './catalog'
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import { LOCAL_MODEL_NOT_INSTALLED } from '../../shared/local-models'
 import {
@@ -61,6 +61,13 @@ const waitForIdle = async (owner: ReturnType<typeof createLocalModelOwner>): Pro
     { timeout: 10_000 }
   )
 }
+
+it('accepts every catalog revision identifier', () => {
+  for (const revisions of [PDF_TABLE_MODEL_REVISIONS, Object.values(OCR_LANGUAGE_PACK_REVISIONS)]) {
+    expect(() => createLocalModelOwner({ revisions, dataRoot: () => tmpdir() })).not.toThrow()
+  }
+})
+
 const seed = async (root: string, name = 'v1'): Promise<void> => {
   const folder = join(root, 'models', 'pdf-tables', 'revisions', name)
   await mkdir(folder, { recursive: true })
@@ -147,8 +154,9 @@ describe('local model use leases', () => {
       await expect(owner.acquireUse()).rejects.toThrow(LOCAL_MODEL_NOT_INSTALLED)
       expect(await owner.install()).toMatchObject({ availability: 'installing', inUse: false })
       expect(download).toHaveBeenCalledOnce()
+      const ready = owner.installForUse(new AbortController().signal)
       finishDownload()
-      await waitForIdle(owner)
+      expect((await ready).availability).toBe('ready')
       const use = await owner.acquireUse()
       expect(use.revision).toBe('v1')
       use.release()
@@ -692,7 +700,11 @@ describe('local model lifecycle', () => {
     })
     await Promise.all([owner.install(), owner.install()])
     await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1))
-    expect((await owner.cancel()).availability).toBe('notInstalled')
+    const controller = new AbortController()
+    const joined = owner.installForUse(controller.signal)
+    controller.abort()
+    await expect(joined).rejects.toThrow()
+    expect((await owner.getSnapshot()).availability).toBe('notInstalled')
     expect(writers).toBe(0)
     expect(
       await readFile(join(root, 'models/pdf-tables/staging/v1/detection.onnx.part'), 'utf8')
@@ -965,7 +977,19 @@ it('isolates flat translation assets and receipts from parser model management',
   })
   await owner.install()
   await waitForIdle(owner)
+  const api = createLocalModelApi(createLocalModelOwner({ dataRoot: () => root }), owner)
+  const before = await api.getSnapshot('pdf-translation')
+  const receiptPath = join(root, 'models/pdf-translation/active.json')
+  const receipt = await readFile(receiptPath, 'utf8')
+  await expect(api.install('pdf-translation')).rejects.toThrow('Local translation is unavailable.')
+  expect(await api.getSnapshot('pdf-translation')).toEqual(before)
+  expect(before).toMatchObject({ availability: 'ready', installedRevision: 'translation-v1' })
+  expect(await readFile(receiptPath, 'utf8')).toBe(receipt)
   const use = await owner.acquireUse()
+  expect(await Promise.all(use.assets.map((asset) => readFile(asset.path)))).toEqual([
+    content,
+    content
+  ])
   expect(
     use.assets.every(
       (asset) =>
@@ -982,3 +1006,75 @@ it('isolates flat translation assets and receipts from parser model management',
   await owner.close()
 })
 await configureTestElectronHost(await import('electron'))
+
+it('routes narration through its own verified model owner and blocks removal during generation', async () => {
+  const root = await prepare()
+  await seed(root)
+  const narration = createLocalModelOwner({
+    dataRoot: () => root,
+    namespace: 'research-narration',
+    revisions: [revision('voice-v1')],
+    download: installFile
+  })
+  const tables = createLocalModelOwner({ dataRoot: () => root, revisions: [revision('v1')] })
+  const api = createLocalModelApi(tables, tables, undefined, narration)
+  await api.install('research-narration')
+  await waitForIdle(narration)
+  const use = await narration.acquireUse()
+  expect((await api.getSnapshot('research-narration')).availability).toBe('ready')
+  expect((await api.remove('research-narration')).inUse).toBe(true)
+  use.release()
+  expect((await api.remove('research-narration')).availability).toBe('notInstalled')
+  expect((await api.getSnapshot()).availability).toBe('ready')
+  await narration.close()
+  await tables.close()
+})
+
+it('requires the current narration revision without blocking removal or leaking a lease', async () => {
+  const root = await prepare()
+  await seed(root, 'v1')
+  const owner = createLocalModelOwner({
+    dataRoot: () => root,
+    revisions: [revision('v2'), revision('v1')],
+    requireRecommendedRevision: true,
+    download: installFile
+  })
+  expect(await owner.getSnapshot()).toMatchObject({ availability: 'ready', updateAvailable: true })
+  await expect(owner.acquireUse()).rejects.toThrow('Install or update Research narration')
+  expect((await owner.getSnapshot()).inUse).toBe(false)
+  await owner.install()
+  await waitForIdle(owner)
+  const lease = await owner.acquireUse()
+  expect(lease.revision).toBe('v2')
+  lease.release()
+  await owner.remove()
+  expect((await owner.getSnapshot()).availability).toBe('notInstalled')
+  await owner.close()
+})
+
+it('routes the narration bundle through the CDN and reuses the installed bundle', async () => {
+  const root = await prepare()
+  const fixture = revision('narration-v1')
+  vi.mocked(net.fetch).mockImplementation(
+    async () => new Response(content, { headers: { 'Content-Length': String(content.length) } })
+  )
+  const owner = createLocalModelOwner({
+    namespace: 'research-narration',
+    dataRoot: () => root,
+    revisions: [fixture],
+    acquireWriter: () => () => undefined
+  })
+  await owner.install()
+  await waitForIdle(owner)
+  expect((await owner.getSnapshot()).availability).toBe('ready')
+  expect(vi.mocked(net.fetch).mock.calls.map(([url]) => String(url))).toEqual(
+    fixture.assets.map(
+      (asset) =>
+        `https://statics.aipoch.com/open-science/research-narration/${asset.sha256}/${asset.file}`
+    )
+  )
+  await owner.install()
+  await waitForIdle(owner)
+  expect(net.fetch).toHaveBeenCalledTimes(fixture.assets.length)
+  await owner.close()
+})

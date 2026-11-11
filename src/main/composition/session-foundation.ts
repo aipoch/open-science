@@ -124,9 +124,12 @@ export async function composeSessionFoundation({
     const owner = createSessionDiagnosticsDesktop({
       createWorker: createDiagnosticsWorker,
       resolveSources: (identity) => {
-        const sensitiveContent = sensitiveContentFailures.get(
-          sensitiveContentKey(identity.projectId, identity.sessionId)
-        )
+        const sensitiveContent =
+          identity.scope === 'application'
+            ? undefined
+            : sensitiveContentFailures.get(
+                sensitiveContentKey(identity.projectId, identity.sessionId)
+              )
         return {
           dataRoot: resolveDataRoot(),
           configRoot: resolveConfigRoot(),

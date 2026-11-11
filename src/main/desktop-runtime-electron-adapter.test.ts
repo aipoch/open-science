@@ -26,12 +26,16 @@ beforeEach(() => {
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function setup() {
+function setup(
+  allowSecondary = false,
+  fallback?: (clientId: string, channel: string, args: readonly unknown[]) => Promise<unknown>
+) {
   const client = {
     notificationAction: vi.fn(),
     notificationView: vi.fn(),
     commandNames: () => [
       'projects:list',
+      'sessions:inspect-diagnostics',
       'sessions:save-session',
       'notebook-env:cancel',
       'office-preview:report-state',
@@ -44,12 +48,18 @@ function setup() {
   }
   const mainFrame = {}
   const sender = { id: 7, mainFrame, isDestroyed: () => false }
+  const secondaryFrame = {}
+  const secondarySender = { id: 8, mainFrame: secondaryFrame, isDestroyed: () => false }
   const registry = new ApplicationCallerLeaseRegistry()
   const lease = registry.acquire(createElectronCallerContext(7))
   const event = { sender, senderFrame: mainFrame } as IpcMainInvokeEvent
   bindCallerLeaseToEvent(event, lease.lease)
-  const installed = installDesktopRuntimeElectronAdapter(client, (value) => value === event.sender)
-  return { client, event, lease, registry, installed }
+  const installed = installDesktopRuntimeElectronAdapter(
+    client,
+    (value) => value === event.sender || (allowSecondary && value === secondarySender),
+    fallback
+  )
+  return { client, event, lease, registry, installed, secondarySender, secondaryFrame }
 }
 
 describe('Electron adapter for the Node runtime', () => {
@@ -103,6 +113,27 @@ describe('Electron adapter for the Node runtime', () => {
     expect(value.client.invoke).not.toHaveBeenCalled()
   })
 
+  it('accepts a registered secondary window main frame and rejects its child frames', async () => {
+    const value = setup(true)
+    const secondaryEvent = {
+      sender: value.secondarySender,
+      senderFrame: value.secondaryFrame
+    } as IpcMainInvokeEvent
+    const secondaryLease = value.registry.acquire(createElectronCallerContext(8))
+    bindCallerLeaseToEvent(secondaryEvent, secondaryLease.lease)
+    await expect(handlers.get('projects:list')!(secondaryEvent)).resolves.toEqual({
+      ok: true,
+      result: []
+    })
+    await expect(
+      handlers.get('projects:list')!({ ...secondaryEvent, senderFrame: {} } as IpcMainInvokeEvent)
+    ).resolves.toMatchObject({ ok: false })
+    expect(value.client.invoke).toHaveBeenCalledTimes(1)
+    secondaryLease.release()
+    value.lease.release()
+    value.installed.uninstall()
+  })
+
   it('retains structured domain errors expected by preload', async () => {
     const value = setup()
     value.client.invoke.mockRejectedValueOnce(
@@ -114,6 +145,21 @@ describe('Electron adapter for the Node runtime', () => {
     })
     value.installed.uninstall()
     expect(value.client.release).toHaveBeenCalledOnce()
+  })
+
+  it('uses a local fallback result without sending a request to the disconnected runtime', async () => {
+    const fallback = vi.fn(async () => ({ items: [] }))
+    const value = setup(false, fallback)
+    const request = { operationId: 'operation-1', scope: 'application' }
+
+    await expect(
+      handlers.get('sessions:inspect-diagnostics')!(value.event, request)
+    ).resolves.toEqual({ ok: true, result: { items: [] } })
+    expect(fallback).toHaveBeenCalledWith(expect.any(String), 'sessions:inspect-diagnostics', [
+      request
+    ])
+    expect(value.client.invoke).not.toHaveBeenCalled()
+    value.installed.uninstall()
   })
 })
 

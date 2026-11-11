@@ -14,6 +14,7 @@ import {
   sanitizeSession,
   type PersistedChatSession
 } from '../../shared/session-persistence'
+import { recordRestartTurnOutcome } from './turn-outcome-authority'
 
 type Preparation = {
   sessionId: string
@@ -41,7 +42,7 @@ const changedBranch = (): Error =>
 const stateFields = [
   'status',
   'error',
-  'errorReportable',
+  'failure',
   'resumeRecovery',
   'activeRun',
   'pendingHistoryReplay',
@@ -254,7 +255,7 @@ export class SessionPromptPreparationOwner {
         const previousState = {
           status: result.status,
           error: result.error,
-          errorReportable: result.errorReportable,
+          failure: result.failure,
           resumeRecovery: result.resumeRecovery
         }
         const noticePrompt = latestOutcomePrompt(result)
@@ -293,7 +294,12 @@ export class SessionPromptPreparationOwner {
         throw changedBranch()
       if (command.kind === 'rollback-prompt') {
         receipt!.rollbackCommandId = command.id
-        result = acknowledge(this.rollback(result, receipt!), command)
+        result = acknowledge(
+          command.preserveSubmittedMessage
+            ? this.releaseSubmittedPrompt(result, receipt!)
+            : this.rollback(result, receipt!),
+          command
+        )
         if (result.promptPreparation?.id === command.preparationId) delete result.promptPreparation
         continue
       }
@@ -367,7 +373,7 @@ export class SessionPromptPreparationOwner {
               ? {
                   status: result.status,
                   error: result.error,
-                  errorReportable: result.errorReportable,
+                  failure: result.failure,
                   resumeRecovery: result.resumeRecovery
                 }
               : marker.previousState
@@ -380,7 +386,7 @@ export class SessionPromptPreparationOwner {
             expectedState: {
               status: next.status,
               error: next.error,
-              errorReportable: next.errorReportable,
+              failure: next.failure,
               resumeRecovery: structuredClone(next.resumeRecovery)
             }
           }
@@ -390,6 +396,23 @@ export class SessionPromptPreparationOwner {
       result = next
     }
     return result
+  }
+
+  private releaseSubmittedPrompt(
+    session: PersistedChatSession,
+    receipt: Preparation
+  ): PersistedChatSession {
+    if (receipt.closed) return session
+    if (hasNewAdmission(receipt, session)) {
+      this.close(receipt)
+      return session
+    }
+    // A dispatched request can be cancelled before Main creates a turn. Keep its submitted graph
+    // and release only the exact unadmitted run, using Main's durable expected state as on restart.
+    if (session.promptPreparation?.id !== receipt.expected?.promptPreparation?.id) return session
+    if (session.activeRun && !sameValue(session.activeRun, receipt.expected?.activeRun))
+      throw changedBranch()
+    return recordRestartTurnOutcome(session, session)
   }
 
   private rollback(session: PersistedChatSession, receipt: Preparation): PersistedChatSession {

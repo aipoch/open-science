@@ -8,6 +8,9 @@ import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 
+// Copy error uses Chromium's clipboard API, which requires a focused, visible document.
+test.use({ windowMode: 'normal' })
+
 const PROMPT = 'Run the framework Resume acceptance journey.'
 const COMPLETED = 'Framework Resume completed.'
 let selector: Server
@@ -140,8 +143,11 @@ test('failed provider attachment exposes original details and exports real diagn
     await window.api.settings.setAgentFramework({ id: 'codebuddy' })
   })
   await page.getByRole('button', { name: 'Resume session', exact: true }).click()
-  const error = page.getByTestId('resume-operation-error')
-  await expect(error.getByText('Could not resume this conversation', { exact: true })).toBeVisible()
+  const slot = page.getByTestId('composer-notice-slot')
+  await slot.getByRole('button', { name: '1 more notice', exact: true }).click()
+  await slot.locator('[data-select-notice*=":action:"]').click()
+  const error = page.locator('[data-testid="composer-notice-slot"][data-notice-operation="action"]')
+  await expect(error.getByRole('alert')).toContainText('An unexpected application error occurred')
   await expect(error).toHaveClass(/bg-card/)
   await expect(error).toHaveClass(/border-border/)
   await expect(error).not.toHaveAttribute('data-notice-inline')
@@ -151,14 +157,21 @@ test('failed provider attachment exposes original details and exports real diagn
   await page.keyboard.press('Enter')
   await expect(error.locator('pre')).toContainText('Resume acceptance attachment failed')
   const titleBounds = await error
-    .getByText('Could not resume this conversation', { exact: true })
+    .getByRole('heading', { name: 'An unexpected application error occurred', exact: true })
     .boundingBox()
   const detailsBounds = await error.locator('details').boundingBox()
   expect(titleBounds).not.toBeNull()
   expect(detailsBounds).not.toBeNull()
   expect(Math.abs(titleBounds!.x - detailsBounds!.x)).toBeLessThanOrEqual(1)
-  await error.getByRole('button', { name: 'Copy', exact: true }).click()
   const application = (app as unknown as { application: ElectronApplication }).application
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.focus()
+    window.webContents.focus()
+  })
+  await page.bringToFront()
+  await error.getByRole('button', { name: 'Copy error', exact: true }).click()
+  await expect(error.getByRole('button', { name: 'Copy error', exact: true })).toHaveText('Copied')
   const displayedDetails = (await error.locator('pre').textContent())!.replace(/\r\n/g, '\n')
   await expect
     .poll(async () =>
@@ -203,6 +216,8 @@ test('failed provider attachment exposes original details and exports real diagn
   expect(dismissed.messages).toEqual(before.messages)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Resume session', exact: true }).click()
+  await slot.getByRole('button', { name: '1 more notice', exact: true }).click()
+  await slot.locator('[data-select-notice*=":action:"]').click()
   await expect(error).toBeVisible()
   await expect(error.locator('details')).not.toHaveAttribute('open')
   await page.setViewportSize({ width: 1280, height: 900 })
@@ -214,12 +229,18 @@ test('failed provider attachment exposes original details and exports real diagn
   await error.getByRole('button', { name: 'Export diagnostics…', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
   await expect(dialog.getByRole('checkbox', { name: 'Current log', exact: true })).toBeChecked()
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Backend startup logs', exact: true })
+  ).toBeChecked()
   await page.screenshot({ path: info.outputPath('resume-diagnostics-dialog.png'), fullPage: true })
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(dialog.getByText(/^Diagnostic package exported successfully/)).toBeVisible({
+  const exportResult = dialog.getByText(
+    /^Diagnostic package (?:exported successfully|partially exported)/
+  )
+  await expect(exportResult).toBeVisible({
     timeout: 60_000
   })
-  await dialog.getByText(/^Diagnostic package exported successfully/).scrollIntoViewIfNeeded()
+  await exportResult.scrollIntoViewIfNeeded()
   await page.screenshot({
     path: info.outputPath('resume-diagnostics-exported.png'),
     fullPage: true
@@ -227,6 +248,15 @@ test('failed provider attachment exposes original details and exports real diagn
   const unpacked = info.outputPath('unpacked')
   await mkdir(unpacked, { recursive: true })
   await extract({ file: archive, cwd: unpacked })
+  const manifest = JSON.parse(await readFile(join(unpacked, 'manifest.json'), 'utf8')) as {
+    items: { id: string; selected: boolean; status: string }[]
+  }
+  const backendLogs = manifest.items.filter(({ id }) => id.startsWith('backend-log:'))
+  expect(backendLogs.length).toBeGreaterThan(0)
+  for (const item of backendLogs) {
+    expect(item.selected).toBe(true)
+    expect(['exported', 'partial']).toContain(item.status)
+  }
   const log = await readFile(join(unpacked, 'logs/main.log'), 'utf8')
   expect(log).toContain('acp:resume-session failed')
   expect(log).toContain('Resume acceptance attachment failed')

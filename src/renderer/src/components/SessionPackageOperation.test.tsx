@@ -195,6 +195,7 @@ beforeEach(() => {
   root = createRoot(container)
   usePackageOperationStore.setState({
     operation: null,
+    useCaseSlug: undefined,
     dismissedId: undefined,
     open: false,
     excludedStorageKeys: null,
@@ -1266,6 +1267,63 @@ it('requires an explicit destination for an opened file and hides archived proje
     target: { projectId: 'target' }
   })
 })
+
+it.each([
+  { marketplace: true, view: 'workspace' as const, selected: true },
+  { marketplace: true, view: 'home' as const, selected: false },
+  { marketplace: false, view: 'workspace' as const, selected: false }
+])(
+  'preselects only project Marketplace imports ($marketplace, $view)',
+  async ({ marketplace, view, selected }) => {
+    const navigation = useNavigationStore.getState()
+    const operation: PackageOperationSnapshot = {
+      id: 'marketplace-import',
+      kind: 'import',
+      state: 'awaiting-selection',
+      progress: { phase: 'selecting' },
+      importFilename: 'research.science'
+    }
+    const packageOperation = vi.fn(async () => operation)
+    vi.stubGlobal('api', {
+      sessions: { packageOperation, onPackageOperation: () => () => undefined },
+      projects: {
+        list: async () => [
+          { id: 'other', name: 'Other research', createdAt: 1, updatedAt: 1 },
+          { id: 'current', name: 'Current research', createdAt: 1, updatedAt: 1 }
+        ]
+      }
+    })
+    useNavigationStore.setState({ view, activeProjectId: 'current' })
+    if (marketplace) {
+      usePackageOperationStore.getState().receive({
+        ...operation,
+        state: 'running',
+        useCaseDownload: { slug: 'research', completedBytes: 0 }
+      })
+    }
+    usePackageOperationStore.getState().receive(operation)
+    usePackageOperationStore.getState().setOpen(true)
+    try {
+      await act(async () => root.render(<SessionPackageOperation />))
+      const inputs = [...document.querySelectorAll<HTMLInputElement>('input[type=radio]')]
+      expect(inputs.map((input) => input.value)).toEqual(
+        selected ? ['current', 'other'] : ['other', 'current']
+      )
+      expect(inputs.find((input) => input.value === 'current')?.checked).toBe(selected)
+      expect(button('Continue').disabled).toBe(!selected)
+      if (selected) {
+        await act(async () => button('Continue').click())
+        expect(packageOperation).toHaveBeenCalledWith({
+          action: 'select-project',
+          operationId: operation.id,
+          target: { projectId: 'current' }
+        })
+      }
+    } finally {
+      await act(async () => useNavigationStore.setState(navigation))
+    }
+  }
+)
 
 it('keeps import confirmation in one dialog with omissions collapsed', async () => {
   const operation: PackageOperationSnapshot = {
@@ -2730,3 +2788,39 @@ it.each([
   await act(async () => root.render(<PackageOperationIndicator />))
   expect(document.querySelector('[aria-label="Package progress"]')).not.toBeNull()
 })
+
+it.each([false, true])(
+  'offers optional films only when complete results exist (%s)',
+  async (available) => {
+    const request = vi.fn(async () => undefined)
+    vi.stubGlobal('api', { sessions: { packageOperation: request } })
+    usePackageOperationStore.setState({
+      operation: {
+        ...snapshot,
+        summary: {
+          retainedFiles: [],
+          metadataBytes: 0,
+          ...(available ? { researchFilms: { count: 2, sizeBytes: 4096 } } : {})
+        }
+      },
+      open: true
+    })
+    await act(async () => root.render(<SessionPackageOperation />))
+    const label = [...document.querySelectorAll('label')].find((node) =>
+      node.textContent?.includes('Include research films')
+    )
+    expect(Boolean(label)).toBe(available)
+    if (available) {
+      const checkbox = label!.querySelector<HTMLInputElement>('input')!
+      expect(checkbox.checked).toBe(false)
+      await act(async () => checkbox.click())
+    }
+    await act(async () => button('Choose save location…').click())
+    expect(request).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'select',
+        ...(available ? { includeResearchFilms: true } : {})
+      })
+    )
+  }
+)

@@ -21,9 +21,11 @@ import {
   branchWorkspaceSessionFromMessage,
   reconcileBranchedAttachments
 } from './workspace-runtime-session-branch-owner'
+import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
 
 describe('branchWorkspaceSessionFromMessage', () => {
   beforeEach(() => {
+    resetSessionPersistenceWriteFailuresForTests()
     resetSessionConversationIntentsForTests()
     useWorkspaceOperationErrors.setState({ errors: {} })
     useSessionStore.setState(createInitialSessionState())

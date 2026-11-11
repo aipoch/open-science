@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import {
+  INVALID_PLAN_GUIDANCE,
   callPlanRpc,
   createPlanMcpServer,
   createPlanMcpServerForEnvironment
@@ -47,6 +48,51 @@ function planGenerationArguments(
 }
 
 describe('Session Plan MCP server', () => {
+  it.each(['approved', 'rejected', 'feedback'] as const)(
+    'keeps delayed human %s alive beyond the MCP idle timeout',
+    async (decision) => {
+      vi.useFakeTimers()
+      let finish!: (value: unknown) => void
+      const generate = vi.fn(() => new Promise<unknown>((resolve) => (finish = resolve)))
+      try {
+        await withPlanMcpClient(
+          'delayed-plan-review',
+          { generate, approve: vi.fn(), reject: vi.fn(), updateStepStatus: vi.fn() },
+          async (client) => {
+            const progress = vi.fn()
+            const outcome = client
+              .callTool(
+                { name: 'generate_plan', arguments: planGenerationArguments([VALID_PHASE]) },
+                undefined,
+                { timeout: 60_000, resetTimeoutOnProgress: true, onprogress: progress }
+              )
+              .then(
+                (result) => ({ result }),
+                (error: unknown) => ({ error })
+              )
+            await vi.advanceTimersByTimeAsync(65_000)
+            expect(generate).toHaveBeenCalledOnce()
+            expect(progress).toHaveBeenCalledTimes(3)
+            finish(
+              decision === 'feedback'
+                ? { kind: 'feedback', text: 'Revise the scope.' }
+                : {
+                    changed: true,
+                    projection: { approval: decision, lifecycle: decision, revision: 1 }
+                  }
+            )
+            expect(await outcome).toMatchObject({ result: { content: expect.any(Array) } })
+            expect(await outcome).not.toHaveProperty('result.isError', true)
+            await vi.advanceTimersByTimeAsync(60_000)
+            expect(progress).toHaveBeenCalledTimes(3)
+          }
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('advertises the complete nested Plan content schema', async () => {
     const server = createPlanMcpServer({
       generate: vi.fn(),
@@ -1456,7 +1502,8 @@ describe('Session Plan MCP server', () => {
     expect(JSON.parse(malformedContent[0].text)).toEqual({
       error: {
         code: 'invalid-plan',
-        message: 'task_summary must be non-empty.'
+        message: 'task_summary must be non-empty.',
+        guidance: INVALID_PLAN_GUIDANCE
       }
     })
     expect(generate).toHaveBeenCalledOnce()
@@ -1505,7 +1552,8 @@ describe('Session Plan MCP server', () => {
     expect(JSON.parse((mixed as { content: Array<{ text: string }> }).content[0].text)).toEqual({
       error: {
         code: 'invalid-plan',
-        message: 'A Plan decision cannot be combined with Plan content.'
+        message: 'A Plan decision cannot be combined with Plan content.',
+        guidance: INVALID_PLAN_GUIDANCE
       }
     })
 

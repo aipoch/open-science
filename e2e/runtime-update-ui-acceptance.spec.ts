@@ -1,11 +1,11 @@
 import {
   captureFixtureProcess,
-  captureFixtureService,
+  observeFixtureService,
   cleanupFixtureProcess,
-  cleanupFixtureService,
+  cleanupObservedFixtureService,
   runFixtureCleanup,
   type CapturedFixtureProcess,
-  type CapturedService
+  type ObservedFixtureService
 } from './fixtures/local-service-cleanup'
 import { test, expect } from '@playwright/test'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -19,6 +19,7 @@ import {
 } from './fixtures/electron-app'
 import type { UpdateStatus, UpdateRecoveryStatus } from '../src/shared/update'
 import type { RuntimeStartupState } from '../src/shared/runtime-startup'
+import { terminateProcessTree } from '../src/main/process-tree'
 
 // Actual Electron source application and preload. Only the update/startup IPC results below are
 // injected. These images certify presentation and user-action routing, NOT stopping or installation.
@@ -32,7 +33,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
   await mkdir(output, { recursive: true })
   let application: ElectronApplication | undefined
   let desktopProcess: CapturedFixtureProcess | undefined
-  let capturedService: CapturedService | undefined
+  let capturedService: ObservedFixtureService | undefined
   let failure: unknown
   const capturedStates: string[] = []
   const views: {
@@ -53,7 +54,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
       false,
       false,
       join(root, 'remote'),
-      'hidden',
+      process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'normal' : 'hidden',
       false
     )
     desktopProcess = captureFixtureProcess(application.process())
@@ -63,7 +64,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
     await expect
       .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60_000 })
       .toMatchObject({ phase: 'ready' })
-    capturedService = await captureFixtureService(storageRoot)
+    capturedService = await observeFixtureService(storageRoot)
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -307,7 +308,17 @@ test('captures all runtime update states in isolated Electron (presentation-only
       },
       S32: { reason: 'installation-busy', recovery: rec({ detail: 'unsupported-channel' }) },
       S33: { reason: 'installation-busy', recovery: rec({ detail: 'occupancy-unknown' }) },
-      S34: { reason: 'runtime-not-controlled', recovery: rec({ detail: 'operation-pending' }) }
+      S34: { reason: 'runtime-not-controlled', recovery: rec({ detail: 'operation-pending' }) },
+      S36: {
+        reason: 'installation-busy',
+        recovery: rec({
+          phase: 'stopped',
+          runtime: 'stopped-clean',
+          detail: 'foreign-process',
+          canRecover: true,
+          blockingProcesses: [{ pid: 4218 }]
+        })
+      }
     }
     for (const [id, extra] of Object.entries(states)) {
       const status = { ...base, ...extra }
@@ -326,6 +337,14 @@ test('captures all runtime update states in isolated Electron (presentation-only
           page.locator(`[data-runtime-update-state="${id}"] [role="status"]`)
         ).toBeVisible()
       else await expect(page.locator(`[data-runtime-update-state="${id}"]`).first()).toBeVisible()
+      if (id === 'S36') {
+        await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+        const dialog = page.getByTestId('runtime-update-dialog')
+        await expect(dialog).toContainText('Another app is using Open-Science files')
+        await expect(dialog).toContainText('Quit the other app, then recheck.')
+        await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
+        await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
+      }
       if (await page.getByTestId('runtime-update-dialog').isVisible()) {
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
@@ -383,6 +402,8 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(releaseNotes).toBeFocused()
       }
       await capture(id)
+      if (id === 'S36')
+        await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
       if (['S13', 'S14', 'S23', 'S24', 'S25'].includes(id)) {
         await page.keyboard.press('Escape')
         await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
@@ -628,20 +649,20 @@ test('captures all runtime update states in isolated Electron (presentation-only
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
     // The separate force confirmation S05 was removed; S19 has no current surface. Assert every supported state by identity.
     expect(capturedStates.filter((id) => /^S\d\d$/.test(id)).sort()).toEqual(
-      Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
-        (id) => id !== 'S19' && id !== 'S05'
-      )
+      Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`)
+        .filter((id) => id !== 'S19' && id !== 'S05')
+        .concat('S36')
     )
   } catch (error) {
     failure = error
     throw error
   } finally {
-    let service: CapturedService | undefined
+    let service: ObservedFixtureService | undefined
     await runFixtureCleanup(
       [
         () => testInfo.attach('fixture-root', { body: root, contentType: 'text/plain' }),
         async () => {
-          service = await captureFixtureService(storageRoot)
+          service = await observeFixtureService(storageRoot)
         },
         async () => {
           if (
@@ -654,13 +675,20 @@ test('captures all runtime update states in isolated Electron (presentation-only
           await closeElectronApplicationForCleanup(
             {
               close: () => application!.close(),
-              forceClose: () => cleanupFixtureProcess(desktopProcess)
+              forceClose: async () => {
+                const result = await terminateProcessTree(desktopProcess!.child)
+                if (!result.reaped)
+                  throw new Error('Electron E2E forced close did not reap the tree.')
+              }
             },
-            { gracefulTimeoutMs: 5000, forcedTimeoutMs: 25_000 }
+            {
+              gracefulTimeoutMs: process.platform === 'win32' ? 30_000 : 5000,
+              forcedTimeoutMs: 30_000
+            }
           )
         },
-        () => cleanupFixtureService(service),
-        () => cleanupFixtureService(capturedService),
+        () => cleanupObservedFixtureService(service),
+        () => cleanupObservedFixtureService(capturedService),
         () => cleanupFixtureProcess(desktopProcess)
       ],
       failure

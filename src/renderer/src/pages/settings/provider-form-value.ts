@@ -20,7 +20,6 @@ import { type ReasoningEffortPresetSetting } from '../../../../shared/reasoning-
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
-  preferredEndpoint,
   xaiSubscriptionProviderIdentity,
   type AgentFrameworkId,
   type CodexSubscriptionTransport,
@@ -144,7 +143,7 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
 // legacy Messages default remains the safe fallback while framework capabilities are still loading.
 export const defaultCustomApiEndpoint = (
   frameworkEndpoints: readonly ModelProtocol[]
-): ModelProtocol => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'messages'
+): ModelProtocol => frameworkEndpoints[0] ?? 'messages'
 
 // Built-in providers resolve the exact protocol for the selected/default model. `apiEndpoint` only
 // represents the single format selected for a custom gateway and may be stale after switching
@@ -184,7 +183,7 @@ export const providerFormModelForFramework = (
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
-// OpenCode → DeepSeek, CodeBuddy → MiniMax. Exhaustive over AgentFrameworkId so a new framework
+// OpenCode and Pi → DeepSeek, CodeBuddy → MiniMax. Exhaustive over AgentFrameworkId so a new framework
 // forces a deliberate choice, and keyed off OfficialVendorId so a registry rename fails at compile
 // time.
 export const defaultProviderKindKey = (
@@ -196,6 +195,8 @@ export const defaultProviderKindKey = (
     case 'codex':
       return 'official:openai'
     case 'opencode':
+    case 'open-science-agent':
+    case 'pi':
       return 'official:deepseek'
     case 'codebuddy':
       return 'official:minimax'

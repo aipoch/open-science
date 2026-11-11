@@ -83,9 +83,13 @@ const HARVESTABLE_TERMINAL_STATUSES = new Set<ComputeJob['status']>([
   'failed',
   'timeout'
 ])
+const slurmStatusUnavailable = (job: ComputeJob): boolean =>
+  job.execution_mode === 'slurm' &&
+  job.status === 'error' &&
+  job.error_code === 'job_status_unavailable'
 
 const activeRemoteHandle = (job: ComputeJob, workdir: string): ComputeRemoteHandle | undefined => {
-  if (!ACTIVE_STATUSES.has(job.status)) return undefined
+  if (!ACTIVE_STATUSES.has(job.status) && !slurmStatusUnavailable(job)) return undefined
   if (!job.remote_handle) {
     if (job.execution_mode === 'slurm') return undefined
     if (job.status === 'submitted') return undefined
@@ -329,7 +333,11 @@ class ComputeJobDeletionOwner {
       ) {
         throw new Error('Compute Job cleanup scope does not match.')
       }
-      if (ACTIVE_STATUSES.has(job.status) || job.status === 'queued') {
+      // A submitted Modal creation may have no receipt. Its repository checks the durable fence before allowing abandonment.
+      if (
+        (ACTIVE_STATUSES.has(job.status) || job.status === 'queued') &&
+        job.execution_mode !== 'modal_sandbox'
+      ) {
         throw new Error('Active Compute Jobs must be cancelled and cleaned remotely.')
       }
       return this.deps.jobRepository.settleRemoteCleanup(request)
@@ -583,7 +591,9 @@ class ComputeJobDeletionOwner {
     const stopped = hasCleanupStopEvidence(job, workdir)
     const handle = stopped ? undefined : activeRemoteHandle(job, workdir)
     const isActiveSlurm =
-      !noLaunch && ACTIVE_STATUSES.has(job.status) && job.execution_mode === 'slurm'
+      !noLaunch &&
+      (ACTIVE_STATUSES.has(job.status) || slurmStatusUnavailable(job)) &&
+      job.execution_mode === 'slurm'
     return {
       jobId: job.job_id,
       providerId: job.provider_id,
@@ -659,7 +669,8 @@ class ComputeJobDeletionOwner {
             `Slurm job for Compute Job ${cleanup.jobId} could not be recovered; remote cleanup was not attempted.`
           )
         }
-        if (!(await cancelSlurmJob(handle, connection))) {
+        const cancellation = await cancelSlurmJob(handle, connection)
+        if (cancellation.kind !== 'cancelled' && cancellation.kind !== 'completed') {
           throw new Error(
             `Slurm cancellation is not yet confirmed for Compute Job ${cleanup.jobId}; remote cleanup was not attempted.`
           )

@@ -14,8 +14,16 @@ import type { PdfStructureSourceAuthority, PdfStructureSourceRequest } from './s
 const token = z.string().min(1).max(8192)
 export const listPdfElementsInput = z
   .object({
-    documentId: z.string().trim().min(1).max(512).optional(),
-    cursor: token.optional()
+    documentId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(512)
+      .optional()
+      .describe(
+        'documentId of a PDF linked to the current message. Required when more than one is linked.'
+      ),
+    cursor: token.optional().describe('nextCursor from the previous result, passed unchanged.')
   })
   .strict()
   .refine(
@@ -23,7 +31,10 @@ export const listPdfElementsInput = z
     'Use documentId for selection or cursor for continuation, never both.'
   )
 export const readPdfElementInput = z
-  .object({ elementRef: token, cursor: token.optional() })
+  .object({
+    elementRef: token.describe('elementRef returned by list_pdf_elements, passed unchanged.'),
+    cursor: token.optional().describe('nextCursor from the previous read of this element.')
+  })
   .strict()
 export type ListPdfElementsInput = z.infer<typeof listPdfElementsInput>
 export type ReadPdfElementInput = z.infer<typeof readPdfElementInput>
@@ -313,6 +324,38 @@ export class PdfElementAgentReader {
             : null
       }
     }
+  }
+
+  async annotationRegions(
+    context: PdfElementContext,
+    elementRef: string
+  ): Promise<{
+    documentId: string
+    regions: Array<Element['regions'][number] & { rotation: number }>
+  }> {
+    const ref = this.decode(context, token.parse(elementRef), 'element')
+    const auth = await this.authorize(context, ref.documentId, ref.sourceKey)
+    let result = await this.dependencies.owner.readCached(auth.request, [ref.page], context.signal)
+    if (!result || result.extractionId !== ref.extractionId || result.pageCount !== ref.pageCount)
+      throw stale()
+    const element = result.elements.find((item) => item.id === ref.elementId)
+    if (!element || element.regions.length > 20) throw stale()
+    const pages = [...new Set(element.regions.map((region) => region.page))].sort(
+      (left, right) => left - right
+    )
+    if (pages.some((page) => !result!.pages.some((cached) => cached.page === page))) {
+      result = await this.dependencies.owner.readCached(auth.request, pages, context.signal)
+      if (!result || result.extractionId !== ref.extractionId || result.pageCount !== ref.pageCount)
+        throw stale()
+    }
+    const regions = element.regions.map((region) => {
+      const page = result.pages.find((page) => page.page === region.page)
+      if (!page) throw stale()
+      return { ...region, rotation: page.rotation }
+    })
+    await this.dependencies.sources.reauthorize(auth.request, auth.source)
+    context.signal.throwIfAborted()
+    return { documentId: auth.binding.bindingId, regions }
   }
 
   async read(context: PdfElementContext, raw: ReadPdfElementInput): Promise<PdfElementOutput> {

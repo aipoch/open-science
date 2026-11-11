@@ -604,19 +604,26 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
     return null
   // The opening bracket can share its native link with a collective author.
   // Keep it only with the complete closed author/year identity and occurrence.
-  if (/^[[［]/u.test(label)) {
+  if (/^[[［(（]/u.test(label)) {
     const pattern = new RegExp(
-        `[\\[［]\\s*(${author}\\s*(?:et\\s*al\\.|等人?))[,，]\\s*(\\d{4}[a-z]?)\\s*[\\]］]`,
+        `[\\[［(（]\\s*(${author}\\s*(?:et\\s*al\\.|等人?))[,，]\\s*(\\d{4}[a-z]?)\\s*年?[\\]］)）]`,
         'gu'
       ),
-      references = (text) => [...text.matchAll(pattern)],
+      references = (text) =>
+        [...text.matchAll(pattern)].filter((match) =>
+          /^[[［]/u.test(match[0]) ? /[\]］]$/u.test(match[0]) : /[)）]$/u.test(match[0])
+        ),
+      prefix = (match, comma) => {
+        const end = match[0].indexOf(match[1]) + match[1].length
+        return match[0].slice(0, end + (comma ? 1 : 0))
+      },
+      comma = /[,，]$/u.test(label),
       reference = references(source).find(
         (match) =>
-          match.index === offset &&
-          match[0].startsWith(label) &&
-          label === match[0].slice(0, match[0].indexOf(match[1]) + match[1].length)
+          match.index === offset && match[0].startsWith(label) && label === prefix(match, comma)
       ),
-      identity = (match) => `${pdfLinkLabelKey(match[1])}:${match[2]}`
+      identity = (match) =>
+        `${/^[[［]/u.test(match[0]) ? '[' : '('}:${pdfLinkLabelKey(match[1])}:${match[2]}`
     if (reference) {
       const from = references(source).filter((match) => identity(match) === identity(reference)),
         to = references(translation).filter((match) => identity(match) === identity(reference)),
@@ -625,7 +632,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       const target = to[occurrence]
       return {
         start: target.index,
-        text: target[0].slice(0, target[0].indexOf(target[1]) + target[1].length)
+        text: prefix(target, comma)
       }
     }
   }

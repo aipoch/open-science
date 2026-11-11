@@ -40,6 +40,7 @@
     "src/main/settings/local-shell-runtime-mutation.ts",
     "src/main/settings/managed-codebuddy.test.ts",
     "src/main/settings/managed-codebuddy.ts",
+    "src/main/settings/managed-pi.ts",
     "src/main/settings/network-proxy-settings.test.ts",
     "src/main/settings/notebook-network-settings-owner.test.ts",
     "src/main/settings/notebook-network-settings-owner.ts",

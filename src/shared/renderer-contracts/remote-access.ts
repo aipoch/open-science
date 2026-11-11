@@ -4,7 +4,10 @@ import type {
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
   RevokeRemoteBrowsersRequest,
-  SetRemoteAccessModeRequest
+  SetRemoteAccessModeRequest,
+  SelectLanAddressRequest,
+  SetPinggyTokenRequest,
+  SetPinggyRegionRequest
 } from '../remote-access'
 
 import { callable, ELECTRON, LOCAL, type RemoveListener, EVENT } from './definition'
@@ -43,5 +46,18 @@ export const contracts = {
   >()('remote-access', ['remote-access:revoke-browsers']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
-  >()('remote-access', ['remote-access:set-mode', ELECTRON])
+  >()('remote-access', ['remote-access:set-mode', ELECTRON]),
+  'remoteAccess.refreshOffer': callable<() => Promise<RemoteAccessSnapshot>>()('remote-access', [
+    'remote-access:refresh-offer',
+    ELECTRON
+  ]),
+  'remoteAccess.selectLanAddress': callable<
+    (request: SelectLanAddressRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:select-lan-address', ELECTRON]),
+  'remoteAccess.setPinggyToken': callable<
+    (request: SetPinggyTokenRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:set-pinggy-token', ELECTRON]),
+  'remoteAccess.setPinggyRegion': callable<
+    (request: SetPinggyRegionRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:set-pinggy-region', ELECTRON])
 } as const

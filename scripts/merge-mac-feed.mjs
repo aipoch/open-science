@@ -8,7 +8,7 @@
 //
 // Usage: node scripts/merge-mac-feed.mjs [dir]   (dir defaults to cwd)
 // An entirely non-mac directory may be skipped. Any partial mac publication fails closed.
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { dump, load } from 'js-yaml'
 import { validateUpdateFeed } from './release-artifact-validation.mjs'
@@ -29,6 +29,9 @@ const files = feeds.map((feed, index) => {
   const suffix = index === 0 ? '-mac-arm64.zip' : '-mac-x64.zip'
   const entries = feed.files.filter((file) => file.url.endsWith(suffix))
   if (entries.length !== 1) throw new Error(`Expected one ${suffix} update artifact`)
+  const blockmap = `${entries[0].url}.blockmap`
+  const stat = statSync(join(dir, blockmap))
+  if (!stat.isFile() || !stat.size) throw new Error(`Invalid macOS blockmap: ${blockmap}`)
   return entries[0]
 })
 const releaseDate = feeds

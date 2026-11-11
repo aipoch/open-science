@@ -1,3 +1,5 @@
+import { listAgentFrameworks } from '../agent-framework/registry'
+import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -45,6 +47,122 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it.each([undefined, '', '   ', 'not-a-url'])(
+    'rejects local invalid base URL %s without either probe',
+    async (baseUrl) => {
+      runAcpValidation = vi.fn()
+      const http = vi.fn()
+      vi.stubGlobal('fetch', http)
+      await expect(
+        module.validateProvider({ draft: { type: 'custom', baseUrl, model: 'model', key: 'key' } })
+      ).rejects.toThrow('Base URL')
+      expect(http).not.toHaveBeenCalled()
+      expect(runAcpValidation).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(listAgentFrameworks())(
+    'falls back once after arbitrary HTTP failure for $id',
+    async (framework) => {
+      await repository.setAgentFramework(framework.id)
+      const endpoint = framework.id === 'codex' ? 'responses' : 'messages'
+      const draft = {
+        id: 'fallback',
+        type: 'custom' as const,
+        name: 'Gateway',
+        baseUrl: 'https://api.openai.com',
+        model: 'gpt-5.4',
+        key: 'candidate-secret',
+        apiEndpoints: [endpoint] as ('responses' | 'messages')[]
+      }
+      const statuses = [400, 401, 403, 429, 500, 502]
+      const status = statuses[listAgentFrameworks().findIndex(({ id }) => id === framework.id)]
+      const http = vi.fn(async () => new Response('arbitrary unrecognized content', { status }))
+      vi.stubGlobal('fetch', http)
+      const scope = providerValidationRoute(draft, framework.id)
+      runAcpValidation = vi.fn(
+        async (
+          provider: ResolvedProvider,
+          snapshot: StoredSettings
+        ): Promise<ValidateProviderResult> => {
+          expect(provider.key).toBe('candidate-secret')
+          expect(snapshot.agentFrameworkId).toBe(framework.id)
+          expect((await repository.getSettings()).providers).toEqual([])
+          return { ok: true, category: 'ok', testedTarget: { ...scope, model: draft.model } }
+        }
+      )
+      const result = await module.saveValidatedProvider(draft)
+      expect(result.providerId).toBe('fallback')
+      expect(runAcpValidation).toHaveBeenCalledTimes(1)
+      expect(http).toHaveBeenCalledTimes(1)
+      const stored = (await new SettingsRepository(dir).getSettings()).providers[0]
+      expect(stored.lastValidatedTarget).toEqual({ ...scope, model: draft.model, endpoint })
+      expect(providerValidationSucceeded(stored, stored.lastValidatedTarget!)).toBe(true)
+      expect(providerValidationSucceeded(stored, { model: draft.model, endpoint })).toBe(false)
+    }
+  )
+
+  it('does not fall back after HTTP success and preserves both failures after a network error', async () => {
+    await repository.setAgentFramework('claude-code')
+    const draft = {
+      type: 'custom' as const,
+      baseUrl: 'https://gateway.example',
+      model: 'model',
+      key: 'key'
+    }
+    runAcpValidation = vi.fn(async (): Promise<ValidateProviderResult> => ({
+      ok: false,
+      category: 'unknown',
+      message: 'runtime unavailable'
+    }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'OK' }],
+          usage: { input_tokens: 1, output_tokens: 1 }
+        })
+      )
+    )
+    expect((await module.validateProvider({ draft })).ok).toBe(true)
+    expect(runAcpValidation).not.toHaveBeenCalled()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('socket unavailable')
+      })
+    )
+    const failed = await module.validateProvider({ draft })
+    expect(failed.ok).toBe(false)
+    expect(failed.message).toContain('HTTP:')
+    expect(failed.message).toContain('ACP: runtime unavailable')
+    expect(runAcpValidation).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a fallback result if the framework changed during an unsaved draft test', async () => {
+    await repository.setAgentFramework('claude-code')
+    runAcpValidation = vi.fn(async (): Promise<ValidateProviderResult> => {
+      await repository.setAgentFramework('opencode')
+      return { ok: true, category: 'ok' }
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 403 }))
+    )
+    await expect(
+      module.saveValidatedProvider({
+        type: 'custom',
+        name: 'Draft',
+        baseUrl: 'https://gateway.example',
+        model: 'model',
+        key: 'key'
+      })
+    ).rejects.toThrow('status changed')
+    expect((await repository.getSettings()).providers).toEqual([])
+  })
+
   it.each(['opencode', 'codebuddy'] as const)(
     'saves and revalidates Requesty GPT models with the minimum Chat probe budget for %s',
     async (frameworkId) => {
@@ -1024,6 +1142,40 @@ describe('ProviderAccountsModule', () => {
     expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(auth)
   })
 
+  it('rejects CLI login completion after switching to the built-in Agent without queuing validation', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    await repository.setAgentFramework('open-science-agent')
+    const before = await repository.getSettings()
+    await expect(module.completeBootstrapCodex()).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
+  it('leaves account health unchanged when authentication is held during built-in validation', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    await writeFile(
+      join(codexSubscriptionStorageDir(dir), 'auth.json'),
+      JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic' })
+    )
+    await module.completeBootstrapCodex()
+    await repository.setAgentFramework('open-science-agent')
+    const before = await repository.getSettings()
+    const hold = module.quiesceAuthentication()
+    await hold.settled
+    try {
+      await expect(
+        module.validateProvider({ providerId: 'builtin-codex-subscription' })
+      ).resolves.toMatchObject({ ok: false, applied: false })
+      expect(await repository.getSettings()).toEqual(before)
+    } finally {
+      hold.release()
+    }
+  })
+
   it('does not activate rejected subscription credentials', async () => {
     await repository.setAgentFramework('codex')
     await module.prepareBootstrapCodex()
@@ -1073,12 +1225,14 @@ describe('ProviderAccountsModule', () => {
   let claudeSharedAuth: ClaudeSharedAuthControllerPort
   let xaiOAuth: XaiOAuthControllerPort
   let module: InstanceType<typeof ProviderAccountsModule>
+  let runAcpValidation: import('./provider-accounts').ProviderAccountsModuleOptions['runAcpValidation']
   let runClaudeSubscriptionProbe: (
     provider: ResolvedProvider,
     settings: StoredSettings
   ) => Promise<ValidateProviderResult>
 
   beforeEach(async () => {
+    runAcpValidation = undefined
     dir = await mkdtemp(join(tmpdir(), 'osci-provider-accounts-'))
     repository = new SettingsRepository(dir)
     let settingsIdSequence = 0
@@ -1113,6 +1267,7 @@ describe('ProviderAccountsModule', () => {
       cancelLogin: vi.fn()
     }
     xaiOAuth = {
+      quiesce: vi.fn(() => ({ settled: Promise.resolve(), release: vi.fn() })),
       beginLogin: vi.fn(async () => ({
         userCode: 'GROK-1234',
         verificationUri: 'https://auth.x.ai/activate',
@@ -1123,7 +1278,8 @@ describe('ProviderAccountsModule', () => {
       cancelLogin: vi.fn(),
       getAccessToken: vi.fn(async () => 'access-token'),
       getAccessCredential: vi.fn(async () => ({ token: 'access-token' })),
-      logout: vi.fn(async () => undefined)
+      logout: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined)
     }
     runClaudeSubscriptionProbe = vi.fn(async (): Promise<ValidateProviderResult> => ({
       ok: true,
@@ -1141,6 +1297,9 @@ describe('ProviderAccountsModule', () => {
       resolveCodexExecutable: vi.fn(async () => '/codex-acp'),
       resolveCodexProxyEnvironment: vi.fn(async () => undefined),
       runClaudeSubscriptionProbe,
+      get runAcpValidation() {
+        return runAcpValidation
+      },
       codexAuth,
       claudeIsolatedAuth,
       claudeSharedAuth,
@@ -1729,6 +1888,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('keeps only the newest validation result for one provider id', async () => {
+    runAcpValidation = vi.fn()
     await module.upsertProvider({ type: 'codex-isolated' })
     const firstStatus = deferred<CodexAuthStatus>()
     vi.mocked(codexAuth.getStatus)
@@ -1751,6 +1911,7 @@ describe('ProviderAccountsModule', () => {
 
     expect(second).toMatchObject({ ok: true, applied: true })
     await expect(first).resolves.toMatchObject({ ok: false, applied: false })
+    expect(runAcpValidation).not.toHaveBeenCalled()
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeTypeOf('number')
     expect(stored.lastValidationFailure).toBeUndefined()
@@ -1935,7 +2096,34 @@ describe('ProviderAccountsModule', () => {
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
-    expect(xaiOAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(xaiOAuth.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('waits for the xAI credential owner before completing disposal', async () => {
+    let finish!: () => void
+    vi.mocked(xaiOAuth.dispose).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const done = vi.fn()
+    const closing = module.dispose().then(done)
+    await Promise.resolve()
+    expect(done).not.toHaveBeenCalled()
+    finish()
+    await closing
+    expect(done).toHaveBeenCalledOnce()
+  })
+
+  it('drains credential writes and releases both authentication owners after a cancelled quit', async () => {
+    const lease = { settled: Promise.resolve(), release: vi.fn() }
+    vi.mocked(xaiOAuth.quiesce).mockReturnValue(lease)
+    const combined = module.quiesceAuthentication()
+    await combined.settled
+    combined.release()
+    expect(lease.release).toHaveBeenCalledOnce()
+    expect(xaiOAuth.quiesce).toHaveBeenCalledOnce()
   })
 
   it('returns bounded failures for missing model catalogs', async () => {
@@ -1964,6 +2152,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('probes a custom gateway over its own route under a foreign framework and persists health only', async () => {
+    await repository.setAgentFramework('claude-code')
     // An incompatible pairing no longer short-circuits the probe. The endpoint is still tested over
     // its own declared route (framework-agnostic), the framework mismatch rides along as a flag,
     // and the outcome persists as endpoint health — never as an 'incompatible' failure that would
@@ -1995,7 +2184,7 @@ describe('ProviderAccountsModule', () => {
       applied: true,
       frameworkIncompatible: true
     })
-    // The default framework (Claude Code) speaks /v1/messages only; the probe must exercise the
+    // The selected framework (Claude Code) speaks /v1/messages only; the probe must exercise the
     // provider's own /v1/chat/completions route, not the framework's. A verified endpoint pairs
     // its success with the specific route mismatch.
     expect(probedUrls).toEqual(['https://lab.example/v1/chat/completions'])
@@ -2009,6 +2198,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('probes an official vendor over its own route under a foreign framework and persists health only', async () => {
+    await repository.setAgentFramework('claude-code')
     // OpenCode Zen speaks only /v1/chat/completions; Claude Code cannot drive it. The vendor's own
     // route is still probed, the pairing rides along as a flag, and the vendor's default model is
     // the persisted target.
@@ -2046,6 +2236,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('keeps the actionable probe failure when an incompatible pairing also fails its probe', async () => {
+    await repository.setAgentFramework('claude-code')
     vi.stubGlobal(
       'fetch',
       vi.fn(

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// Proves the two General-panel sections that sit outside the panel body — About (app version +
+// Proves the app-information section that sits outside the General panel body — app version +
 // update control) and App icon — read their copy from the catalog rather than shipping literals.
 // Catalog parity tests can't catch a component that never calls t(), and they can't catch zh-Hant
-// quietly falling back to zh-Hans, so both scripts are asserted separately. The About status line
+// quietly falling back to zh-Hans, so both scripts are asserted separately. The status line
 // is a switch over update states, so each interpolated branch is rendered rather than just one.
 import { act } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -52,23 +52,23 @@ afterEach(() => {
 })
 
 describe('AppVersionSection', () => {
-  it('translates the section title and the check button, and re-renders on language change', () => {
+  it('renders app information without an About heading and re-renders on language change', () => {
     render(<AppVersionSection />)
-    expect(container.textContent).toContain('About')
+    expect(container.querySelector('h3')).toBeNull()
     expect(container.textContent).toContain('Check now')
     expect(container.textContent).toContain('You are on the latest version')
     expect(container.textContent).toContain('Help Center')
     expect(container.textContent).toContain('Release notes')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('关于')
+    expect(container.textContent).toContain('手动安装或更新')
     expect(container.textContent).toContain('立即检查')
     expect(container.textContent).toContain('已是最新版本')
     expect(container.textContent).toContain('帮助中心')
     expect(container.textContent).toContain('发布说明')
 
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('關於')
+    expect(container.textContent).toContain('手動安裝或更新')
     expect(container.textContent).toContain('立即檢查')
     expect(container.textContent).toContain('說明中心')
     expect(container.textContent).toContain('版本資訊')

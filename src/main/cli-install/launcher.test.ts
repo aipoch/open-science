@@ -93,7 +93,8 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.mocked(rm).mockReset()
-  await rm(home, { recursive: true, force: true })
+  // Windows can briefly retain the copied executable after cmd has exited.
+  await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 describe('planCliLauncher', () => {

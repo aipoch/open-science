@@ -1,3 +1,4 @@
+import type { PdfAnnotationAgentTools } from '../pdf-annotations/agent-tools'
 import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
@@ -16,7 +17,7 @@ import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
-import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/run-error-classification'
+import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/failure/messages'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {
@@ -148,6 +149,9 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     AcpRuntimeOptions['notebook']
   >['canOwnRuntimeBindingDecision']
   peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+  isReplNamespaceUnavailable?: NonNullable<
+    AcpRuntimeOptions['notebook']
+  >['isReplNamespaceUnavailable']
   authorizeSkillImportReferencedUploads: (
     projectId: string,
     sessionId: string,
@@ -202,6 +206,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     messageId: string
   }) => Promise<ArtifactFile[]>
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
+  pdfAnnotationAgent?: PdfAnnotationAgentTools
   pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
   literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'searchForAgent' | 'transact'>
@@ -270,6 +275,7 @@ const createAcpRuntime = ({
   getShellRuntimeBinding,
   canOwnRuntimeBindingDecision,
   peekNotebookHandoffContext,
+  isReplNamespaceUnavailable,
   authorizeSkillImportReferencedUploads,
   settingsService,
   grantedRootsRepository,
@@ -295,6 +301,7 @@ const createAcpRuntime = ({
   finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
+  pdfAnnotationAgent,
   literatureAttachments,
   literatureCatalog,
   literaturePdfAcquisition,
@@ -352,8 +359,8 @@ const createAcpRuntime = ({
               scope.projectId,
               scope.sessionId
             ),
-          mutateSession: (scope, mutate) =>
-            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate),
+          mutateSession: (scope, mutate, onJsonCommitted) =>
+            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate, onJsonCommitted),
           finalizeArtifacts: finalizeRuntimeArtifacts,
           onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
             sessionPersistenceCoordinator.recordRuntimeTerminalFailure?.(
@@ -489,7 +496,9 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
-        mcpHttpHost: new AgentMcpHttpHost(),
+        mcpHttpHost: new AgentMcpHttpHost({
+          receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
+        }),
         wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
@@ -511,7 +520,8 @@ const createAcpRuntime = ({
                 resolveAttachmentVersion: (versionId) =>
                   literatureAttachments.resolveVersion(versionId),
                 readDocument: (request) => literatureReader.readCurrent(request),
-                ...(pdfElementReader ? { elements: pdfElementReader } : {})
+                ...(pdfElementReader ? { elements: pdfElementReader } : {}),
+                ...(pdfAnnotationAgent ? { annotations: pdfAnnotationAgent } : {})
               }
             }
           : {}),
@@ -679,7 +689,7 @@ const createAcpRuntime = ({
                   if (!item || !isLiteratureItemInScope(item, request)) return undefined
                   if (!literatureReader) {
                     throw new Error(
-                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable.'
+                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable in this session. Do not retry; use read_library_abstract or tell the user full text cannot be read.'
                     )
                   }
                   const selected = item.attachments
@@ -694,7 +704,7 @@ const createAcpRuntime = ({
                     )[0]
                   if (!selected) {
                     throw new Error(
-                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment.'
+                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment. Omit attachmentId to read the first PDF; if hasPdf is false, use read_library_abstract or acquire_pdf instead.'
                     )
                   }
                   const evidence = await literatureReader.searchAttachment({
@@ -772,8 +782,8 @@ const createAcpRuntime = ({
                 provenance: provenanceRepository,
                 managedFileVersions,
                 getRpcConnection: () => notebookRpcServer.ensureStarted(),
-                issueRpcCapability: (binding) =>
-                  notebookRpcServer.issueArtifactRunCapability(binding),
+                issueRpcCapability: (binding, isOwnerActive) =>
+                  notebookRpcServer.issueArtifactRunCapability(binding, undefined, isOwnerActive),
                 revokeRpcCapability: (token) =>
                   notebookRpcServer.revokeArtifactRunCapability(token),
                 ...(delegatedArtifactCurrentRunFile
@@ -842,7 +852,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
-                peekHandoffContext: peekNotebookHandoffContext
+                peekHandoffContext: peekNotebookHandoffContext,
+                isReplNamespaceUnavailable
               })
         },
         ...(delegatedNotebookConnection
@@ -867,6 +878,8 @@ const createAcpRuntime = ({
           ? {
               permissionWait: {
                 networkApprovalOwner: sandboxNetworkApprovalOwner,
+                allowNetworkDestination:
+                  settingsService.allowNotebookNetworkDestination?.bind(settingsService),
                 allowNetworkDomain:
                   settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,

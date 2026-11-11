@@ -47,7 +47,8 @@
     "packages/literature-discovery/test/related.test.ts",
     "packages/literature-discovery/src/publication-check-contracts.ts",
     "packages/literature-discovery/src/publication-check.ts",
-    "packages/literature-discovery/test/publication-check.test.ts"
+    "packages/literature-discovery/test/publication-check.test.ts",
+    "packages/literature-discovery/src/arxiv.ts"
   ],
   "interfacePaths": [
     "packages/literature-discovery/src/index.ts",

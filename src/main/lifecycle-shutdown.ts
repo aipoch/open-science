@@ -1,4 +1,8 @@
-import { trackLifecycleSettlement } from './lifecycle-settlement'
+import {
+  hasPendingLifecycleSettlement,
+  trackLifecycleSettlement,
+  waitForLifecycleSettlement
+} from './lifecycle-settlement'
 // Coordinates a bounded, best-effort shutdown of the app's backend subsystems (main/Side Chat agent
 // runtimes and notebook kernels). Kept free of Electron imports so it stays trivially unit-testable:
 // callers inject the runtime handles. Every operation is time-bounded so app quit can never hang on a
@@ -93,11 +97,87 @@ const withSideChatShutdown = async (
 
 // Normal quit/relaunch budget: keep it short so a stuck backend can't hang quit.
 export const QUIT_SHUTDOWN_BUDGET_MS = 5000
+// An already-sent OAuth rotation has a 15s network deadline; reserve time to persist its response.
+export const AUTHENTICATION_QUIT_BUDGET_MS = 20_000
 // Pre-update-install budget: longer than a single tree's worst-case teardown (a notebook kernel can take
 // up to ~6s for taskkill /T + ~5s waiting for the real exit). The installer's uninstall step deletes the
 // running app's files, so releasing every handle first matters more here than finishing quickly.
 export const UPDATE_SHUTDOWN_BUDGET_MS = 15000
 const ABANDON_GRACE_MS = 3000
+
+type QuitPreparationOutcome = Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>
+
+/** Reversible preparation runs authentication settlement alongside producer cleanup. */
+export function createQuitPreparation(deps: {
+  quiesceAuthentication: () => { settled: Promise<void>; release: () => void }
+  prepareAgent: () => Promise<QuitPreparationOutcome>
+  prepareBackends: () => Promise<QuitPreparationOutcome>
+  abortAgent: () => void
+  resumeSideChat: () => void
+}): { prepareForQuit: () => Promise<QuitPreparationOutcome>; abortQuitPreparation: () => void } {
+  let generation = 0
+  let lease: ReturnType<typeof deps.quiesceAuthentication> | undefined
+  let pending: Promise<QuitPreparationOutcome> | undefined
+  let cancelWait: (() => void) | undefined
+  return {
+    prepareForQuit: () => {
+      if (pending) return pending
+      const current = ++generation
+      lease = deps.quiesceAuthentication()
+      const authentication = lease.settled
+      const producers = Promise.resolve().then(async () => {
+        const outcome = await deps.prepareAgent()
+        if (current !== generation) return 'failed' as const
+        return outcome === 'completed' ? deps.prepareBackends() : outcome
+      })
+      pending = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          return await Promise.race([
+            Promise.allSettled([authentication, producers]).then<QuitPreparationOutcome>(
+              ([auth, producer]) => {
+                if (
+                  current !== generation ||
+                  auth.status === 'rejected' ||
+                  producer.status === 'rejected'
+                )
+                  return 'failed'
+                return producer.value
+              }
+            ),
+            new Promise<'timeout'>((resolve) => {
+              timer = setTimeout(() => resolve('timeout'), AUTHENTICATION_QUIT_BUDGET_MS)
+              timer.unref?.()
+            }),
+            new Promise<'failed'>((resolve) => {
+              cancelWait = () => resolve('failed')
+            })
+          ])
+        } finally {
+          clearTimeout(timer)
+        }
+      })()
+      return pending
+    },
+    abortQuitPreparation: () => {
+      const current = ++generation
+      cancelWait?.()
+      cancelWait = undefined
+      pending = undefined
+      lease?.release()
+      lease = undefined
+      try {
+        deps.abortAgent()
+      } finally {
+        const resume = (): void => {
+          if (current === generation) deps.resumeSideChat()
+        }
+        if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(resume)
+        else resume()
+      }
+    }
+  }
+}
 
 // Runs two backend teardowns concurrently, never rejecting and never running longer than budgetMs. A
 // failing backend is logged but does not block the other, and a hung backend is abandoned once the

@@ -38,6 +38,7 @@ describe('BackgroundResultDelivery migration', () => {
       'id',
       'sourceKind',
       'sourceId',
+      'sourceSnapshot',
       'projectId',
       'sessionId',
       'agentFrameId',

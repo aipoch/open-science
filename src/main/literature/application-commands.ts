@@ -1,3 +1,8 @@
+import type { OverviewBatchRequest, OverviewBatch } from '../../shared/literature-overview-batch'
+import type {
+  LiteratureOverviewRequest,
+  LiteratureOverviewResult
+} from '../../shared/literature-overview'
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
   type LiteraturePublicationCheckRequest,
@@ -46,6 +51,11 @@ import {
   type LiteraturePdfImportRequest
 } from '../../shared/literature'
 import {
+  literatureCollectorContract,
+  type CollectorRequest,
+  type CollectorResult
+} from '../../shared/literature-collector'
+import {
   literatureExportRecordContract,
   type LiteratureExportRecordRequest,
   type LiteratureExportRecordResult
@@ -61,6 +71,11 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  overviewBatch(request: OverviewBatchRequest, signal?: AbortSignal): Promise<OverviewBatch | null>
+  studySnapshot(
+    request: LiteratureOverviewRequest,
+    signal?: AbortSignal
+  ): Promise<LiteratureOverviewResult>
   getCandidateStates(
     request: LiteratureCandidateStatesRequest
   ): Promise<LiteratureCandidateStatesResult>
@@ -69,6 +84,7 @@ type LiteratureCommandOwner = Readonly<{
     signal?: AbortSignal
   ): Promise<LiteraturePdfImportReceipt>
   journals(request: JournalRequest): Promise<JournalResult>
+  collect(request: CollectorRequest, signal?: AbortSignal): Promise<CollectorResult>
   exportRecord(request: LiteratureExportRecordRequest): Promise<LiteratureExportRecordResult>
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
   supplementAttachmentProgress(
@@ -125,6 +141,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [JournalRequest],
     JournalResult
   >('literature:journals', journalAttributesContract),
+  collect: defineApplicationCommand<
+    'literature:collect',
+    readonly [CollectorRequest],
+    CollectorResult
+  >('literature:collect', literatureCollectorContract),
   exportRecord: defineApplicationCommand<
     'literature:export-record',
     readonly [LiteratureExportRecordRequest],
@@ -173,6 +194,16 @@ const literatureApplicationCommands = Object.freeze({
     readonly [string],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
+  overviewBatch: defineApplicationCommand<
+    'literature:overview-batch',
+    readonly [OverviewBatchRequest],
+    OverviewBatch | null
+  >('literature:overview-batch', literatureApplicationCommandContracts.overviewBatch),
+  studySnapshot: defineApplicationCommand<
+    'literature:study-snapshot',
+    readonly [LiteratureOverviewRequest],
+    LiteratureOverviewResult
+  >('literature:study-snapshot', literatureApplicationCommandContracts.studySnapshot),
   completeMetadata: defineApplicationCommand<
     'literature:complete-metadata',
     readonly [LiteratureMetadataCompletionRequest],
@@ -233,6 +264,7 @@ const literatureApplicationCommands = Object.freeze({
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
   literatureApplicationCommands.getCandidateStates,
   literatureApplicationCommands.journals,
+  literatureApplicationCommands.collect,
   literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
@@ -243,6 +275,8 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.supplementAttachmentProgress,
   literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
+  literatureApplicationCommands.studySnapshot,
+  literatureApplicationCommands.overviewBatch,
   literatureApplicationCommands.citationStyles,
   literatureApplicationCommands.formatReferences,
   literatureApplicationCommands.formatDocument,
@@ -284,6 +318,8 @@ const registerLiteratureApplicationCommands = (
   }
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:collect': ({ args, callerLease }) =>
+        run(() => owner.collect(args[0], AbortSignal.any([callerLease.signal, lifetime.signal]))),
       'literature:get-candidate-states': ({ args }) => run(() => owner.getCandidateStates(args[0])),
       'literature:journals': ({ args }) => run(() => owner.journals(args[0])),
       'literature:export-record': ({ args }) => run(() => owner.exportRecord(args[0])),
@@ -315,6 +351,18 @@ const registerLiteratureApplicationCommands = (
         ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
       'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
+      'literature:study-snapshot': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.studySnapshot(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
+      'literature:overview-batch': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.overviewBatch(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
       'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),
       'literature:citation-styles': ({ args }) => run(() => owner.citationStyles(args[0])),
       'literature:format-references': ({ args }) => run(() => owner.formatReferences(args[0])),

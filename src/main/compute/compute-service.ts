@@ -1,3 +1,11 @@
+import {
+  externalComputeMode,
+  type ExternalComputeMode,
+  type KubernetesTarget,
+  type HostedTarget,
+  type RayTarget,
+  type ModalTarget
+} from '../../shared/compute'
 import type {
   ComputeExecutionMode,
   ComputeHost,
@@ -114,12 +122,47 @@ export class ComputeService {
       storageRoot,
       concurrencyManager,
       undefined,
-      this.execution
+      this.execution,
+      (mode) => this.wakeExternalJobs(mode)
     )
     this.jobCancellation =
       operationRepository && jobRepository
         ? createJobCancellation(operationRepository, jobRepository)
         : undefined
+  }
+
+  private readonly externalRuntimes = new Map<
+    ExternalComputeMode,
+    { tick: () => Promise<void>; manualCleanup?: (job: ComputeJob) => Promise<void> }
+  >()
+  bindExternalJobRuntime(
+    mode: ExternalComputeMode,
+    tick: () => Promise<void>,
+    manualCleanup?: (job: ComputeJob) => Promise<void>
+  ): () => void {
+    const runtime = { tick, manualCleanup }
+    this.externalRuntimes.set(mode, runtime)
+    return () => {
+      if (this.externalRuntimes.get(mode) === runtime) this.externalRuntimes.delete(mode)
+    }
+  }
+  async cleanStagedJob(mode: ExternalComputeMode, job: ComputeJob): Promise<void> {
+    const clean = this.externalRuntimes.get(mode)?.manualCleanup
+    if (!clean) throw new Error('Staged resource cleanup is unavailable.')
+    await clean(job)
+  }
+  wakeExternalJobs(mode: ExternalComputeMode): void {
+    void this.externalRuntimes
+      .get(mode)
+      ?.tick()
+      .catch((error) =>
+        log.warn('Compute reconciliation deferred to the next poll.', errorLogFields(error))
+      )
+  }
+  async reconcileExternalJobs(mode: ExternalComputeMode): Promise<void> {
+    const tick = this.externalRuntimes.get(mode)?.tick
+    if (!tick) throw new Error('Compute recovery is unavailable.')
+    await tick()
   }
 
   private harvestRetry?: (request: RetryComputeJobHarvestRequest) => Promise<void>
@@ -140,6 +183,19 @@ export class ComputeService {
 
   async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
     return this.hostProfiles.probe(providerId, signal)
+  }
+
+  listKubernetesTargets(): Promise<KubernetesTarget[]> {
+    return this.repository.listKubernetesTargets()
+  }
+  listHostedTargets(): Promise<HostedTarget[]> {
+    return this.repository.listHostedTargets()
+  }
+  listRayTargets(): Promise<RayTarget[]> {
+    return this.repository.listRayTargets()
+  }
+  listModalTargets(): Promise<ModalTarget[]> {
+    return this.repository.listModalTargets()
   }
 
   async list(): Promise<ComputeHost[]> {
@@ -234,11 +290,20 @@ export class ComputeService {
       workspaceCwd?: string
     },
     context: { sessionId: string; projectId: string; producerRunId?: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    assertTargetEnabled?: () => Promise<void>
   ): Promise<SubmitJobResult> {
     const release = this.dependencies.admitSessionWork?.(context.projectId, context.sessionId)
     try {
-      return await this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
+      return await this.jobWorkflow.submitJob(
+        providerId,
+        intent,
+        command,
+        options,
+        context,
+        signal,
+        assertTargetEnabled
+      )
     } finally {
       release?.()
     }
@@ -264,11 +329,7 @@ export class ComputeService {
     }
     const result = await this.jobCancellation.request(jobId, scope)
     const job = await this.jobWorkflow.getJob(jobId, scope)
-    if (
-      result.cancellation_status === 'cancelled' &&
-      job.submitted_at === undefined &&
-      this.storageRoot
-    ) {
+    if (result.status === 'cancelled' && job.submitted_at === undefined && this.storageRoot) {
       await cleanupComputeJobFileEvidence({
         storageRoot: this.storageRoot,
         projectId: job.project_id,
@@ -282,7 +343,9 @@ export class ComputeService {
       )
     }
     this.handleJobUpdated(job)
-    if (result.cancellation_status === 'cancelled') {
+    const mode = externalComputeMode(job.provider_id)
+    if (mode && mode === job.execution_mode) this.wakeExternalJobs(mode)
+    if (result.status === 'cancelled') {
       await this.concurrencyManager?.onJobCompleted()
     }
     return result

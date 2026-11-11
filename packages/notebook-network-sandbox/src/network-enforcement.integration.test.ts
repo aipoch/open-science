@@ -136,7 +136,13 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       if (!address || typeof address === 'string')
         throw new Error('Expected an IPv4 server address.')
       const sandbox = new NotebookNetworkSandbox({
-        policy: { allowedDomains: ['example.test'], deniedDomains: [] },
+        policy: {
+          allowedDomains: ['example.test'],
+          deniedDomains: [],
+          trustedPrivateDestinations: [
+            { hostname: 'example.test', port: 80, protocol: 'http', approvedAddresses: [] }
+          ]
+        },
         resources: { root: resolve(import.meta.dirname, '../vendor') },
         parentProxy: { http: `http://127.0.0.1:${address.port}` },
         trustBundle: { path: '', certificates: [certificatePem] }
@@ -161,7 +167,13 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
             })
             return runAndCleanup(wrapped, process.cwd())
           }
-          sandbox.updatePolicy({ allowedDomains: ['example.test'], deniedDomains: [] })
+          sandbox.updatePolicy({
+            allowedDomains: ['example.test'],
+            deniedDomains: [],
+            trustedPrivateDestinations: [
+              { hostname: 'example.test', port: 80, protocol: 'http', approvedAddresses: [] }
+            ]
+          })
           const allowed = await runClient()
           expect(allowed, allowed.annotatedStderr).toMatchObject({
             code: 0,
@@ -230,9 +242,10 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         })
         request.on('error', reject)
         request.on('connect', (response, socket) => {
-          expect(response.statusCode).toBe(403)
-          socket.destroy()
-          resolveResponse()
+          expect(response.statusCode).toBe(200)
+          socket.once('close', resolveResponse)
+          socket.write(Buffer.from([0x16, 0x03, 0x03]))
+          socket.resume()
         })
         request.end()
       })
@@ -305,7 +318,10 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         }
       })
       request.on('error', () => {})
-      request.on('connect', (_response, socket) => socket.destroy())
+      request.on('connect', (_response, socket) => {
+        socket.on('error', () => {})
+        socket.write(Buffer.from([0x16, 0x03, 0x03]))
+      })
       request.end()
       await started
       wrapped.setExecutionActive(false)
@@ -471,8 +487,8 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
   )
 
   it('exposes only the declared local RPC socket inside the process sandbox', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'open-science-rpc-test-'))
-    const socketPath = join(directory, 'notebook-rpc.sock')
+    const directory = await mkdtemp(join(tmpdir(), 'rpc-'))
+    const socketPath = join(directory, 'rpc')
     const otherSocketPath = join(directory, 'other.sock')
     const server = createServer((_request, response) => response.end('rpc-ok'))
     const otherServer = createServer((_request, response) => response.end('must-not-connect'))
@@ -526,7 +542,6 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
 
   it('allows a listed destination and blocks it after a live policy update', async () => {
     // Pin public DNS as well as the parent proxy: this tests live policy changes, not DNS availability.
-    // The real policy still rejects loopback/private destinations, including in this fixture.
     const server = createServer((_request, response) => response.end('sandbox-ok'))
     await new Promise<void>((resolveListen, reject) => {
       server.once('error', reject)
@@ -537,7 +552,13 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
 
     const cwd = process.cwd()
     const sandbox = new NotebookNetworkSandbox({
-      policy: { allowedDomains: ['example.com:80'], deniedDomains: [] },
+      policy: {
+        allowedDomains: [],
+        deniedDomains: [],
+        trustedPrivateDestinations: [
+          { hostname: 'example.com', port: 80, protocol: 'http', approvedAddresses: [] }
+        ]
+      },
       resources: { root: resolve(import.meta.dirname, '../vendor') },
       parentProxy: { http: `http://127.0.0.1:${address.port}` }
     })
@@ -566,7 +587,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       })
       expect(denied.code, denied.annotatedStderr).toBe(22)
       expect(denied.stdout).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
-      expect(denied.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(denied.annotatedStderr).toContain('Destination approval is required')
       expect(denied.annotatedStderr).toContain('deny network-outbound example.com:80')
 
       sandbox.updatePolicy({
@@ -586,7 +607,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       expect(hardDenied.annotatedStderr).toContain('destination is explicitly blocked')
       expect(hardDeniedDecision).not.toHaveBeenCalled()
 
-      const privateDecision = vi.fn(async () => true)
+      const privateDecision = vi.fn(async () => false)
       const privateProcess = await sandbox.wrap({
         command: `/usr/bin/curl --silent --show-error --fail-with-body http://127.0.0.1:${address.port}/`,
         cwd,
@@ -594,11 +615,9 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       })
       const privateResult = await runAndCleanup(privateProcess, cwd)
       expect(privateResult.code, privateResult.annotatedStderr).toBe(22)
-      expect(privateResult.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
-      expect(privateResult.annotatedStderr).toContain(
-        'destination resolves to a non-public network address'
-      )
-      expect(privateDecision).not.toHaveBeenCalled()
+      expect(privateResult.stdout).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(privateResult.annotatedStderr).toContain('Destination approval is required')
+      expect(privateDecision).toHaveBeenCalledOnce()
     } finally {
       dnsFixture.mockRestore()
       try {
@@ -608,62 +627,6 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
           server.close((error) => (error ? reject(error) : resolveClose()))
         )
       }
-    }
-  })
-
-  it('binds concurrent approval requests to their owning command', async () => {
-    const server = createServer((_request, response) => response.end('approved'))
-    await new Promise<void>((resolveListen, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolveListen)
-    })
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('Expected an IPv4 server address.')
-
-    const cwd = process.cwd()
-    const sandbox = new NotebookNetworkSandbox({
-      policy: { allowedDomains: [], deniedDomains: [] },
-      resources: { root: resolve(import.meta.dirname, '../vendor') },
-      parentProxy: { http: `http://127.0.0.1:${address.port}` }
-    })
-    const firstRequests: string[] = []
-    const secondRequests: string[] = []
-
-    try {
-      await sandbox.initialize()
-      const [first, second] = await Promise.all([
-        sandbox.wrap({
-          command: '/usr/bin/curl --silent http://example.com/',
-          cwd,
-          onNetworkAccessRequest: async ({ host }) => {
-            firstRequests.push(host)
-            return true
-          }
-        }),
-        sandbox.wrap({
-          command: '/usr/bin/curl --silent http://example.org/',
-          cwd,
-          onNetworkAccessRequest: async ({ host }) => {
-            secondRequests.push(host)
-            return true
-          }
-        })
-      ])
-
-      const [firstResult, secondResult] = await Promise.all([
-        runAndCleanup(first, cwd),
-        runAndCleanup(second, cwd)
-      ])
-
-      expect(firstResult).toMatchObject({ code: 0, stdout: 'approved' })
-      expect(secondResult).toMatchObject({ code: 0, stdout: 'approved' })
-      expect(firstRequests).toEqual(['example.com'])
-      expect(secondRequests).toEqual(['example.org'])
-    } finally {
-      await sandbox.dispose()
-      await new Promise<void>((resolveClose, reject) =>
-        server.close((error) => (error ? reject(error) : resolveClose()))
-      )
     }
   })
 

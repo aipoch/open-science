@@ -69,11 +69,13 @@ import {
   serializeNotebookToolResult
 } from './mcp-server'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import { HostViewImageError } from './host-view-image-service'
 import { NotebookRunRepository } from './repository'
 import {
   NotebookRuntimeService,
   type NotebookExecutionRequest,
-  type NotebookExecutionResult
+  type NotebookExecutionResult,
+  type NotebookShellResult
 } from './runtime-service'
 
 const tokenizer = new Tiktoken(cl100kBase)
@@ -299,8 +301,6 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })`'
     )
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/validation errors.*correct once/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/never repeat.*identical.*failed arguments/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
@@ -314,19 +314,22 @@ describe('notebook MCP server config', () => {
   })
 
   it('directs agents to concise Host SDK help without prefetching every topic', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Main/root agents')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain("await host.help('delegate')")
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('role-aware catalog')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('field descriptions')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call forms in `repl_execute`')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('role-aware catalog')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.sendFrameMessage(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
 
-    expect(REPL_EXECUTE_DOC).toContain("await host.help('delegate')")
+    expect(REPL_EXECUTE_DOC).toContain("host.help('delegate')")
     expect(REPL_EXECUTE_DOC).toMatch(/do not prefetch.*topics/i)
+    expect(REPL_EXECUTE_DOC).toContain("return JSON.stringify(await host.help('topic'))")
+    expect(REPL_EXECUTE_DOC).toContain('catalog visibility does not grant access')
+    expect(REPL_EXECUTE_DOC).toContain('Restored conversation history does not restore variables')
+    expect(REPL_EXECUTE_DOC).toContain(
+      'never probe old variable names or replay side-effecting calls'
+    )
+    expect(REPL_EXECUTE_DOC).toContain('host.viewImage({ path: "plot.png" })')
+    expect(REPL_EXECUTE_DOC).toContain('Omit profile to inherit the parent')
   })
 
   it('does not inject a 4000-character output instruction into agent guidance', () => {
@@ -391,15 +394,18 @@ describe('notebook MCP server config', () => {
     ])
   })
 
-  it('allows explicit network approval before a connection while preserving scoped grants', () => {
-    const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
-
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('A failed connection is not required')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
-    expect(tool?.description).toContain(
-      'before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
-    )
-    expect(tool?.description).toContain('Execute or retry only when the result is allowed')
+  it('requires a trusted block record and an access purpose', () => {
+    const tool = NOTEBOOK_RPC_TOOLS.find(
+      (candidate) => candidate.name === 'request_network_access'
+    )!
+    expect(
+      z.object(tool.inputSchema).safeParse({ hostname: 'example.org', reason: 'Download data' })
+        .success
+    ).toBe(false)
+    expect(
+      z.object(tool.inputSchema).safeParse({ recordId: 'trusted-record', reason: 'Download data' })
+        .success
+    ).toBe(true)
   })
 
   it.each(['aborted', 'user-decision', 'approval-surface-unavailable'])(
@@ -436,9 +442,8 @@ describe('notebook MCP server config', () => {
         const delivered = await client.callTool({
           name: 'request_network_access',
           arguments: {
-            hostname: 'data.example.org',
-            reason: 'Download the dataset.',
-            runtime: 'python'
+            recordId: 'trusted-record',
+            reason: 'Download the dataset.'
           }
         })
         expect(delivered.content).toEqual([{ type: 'text', text: JSON.stringify(result, null, 2) }])
@@ -493,8 +498,7 @@ describe('notebook MCP server config', () => {
               toolName === 'bash_execute'
                 ? { command: 'sample-client request' }
                 : {
-                    hostname: 'service.example.test',
-                    runtime: 'python',
+                    recordId: 'trusted-record',
                     reason: 'Read the fixture.'
                   }
           },
@@ -744,10 +748,10 @@ describe('notebook MCP server config', () => {
     const toolNames = NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)
     expect(toolNames).toContain('manage_environments')
 
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('manage_environments')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('./handoff/')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND.toLowerCase()).toContain('separate')
+    const environment = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'manage_environments')
+    expect(environment?.description).toContain('separate')
+    expect(REPL_EXECUTE_DOC).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(REPL_EXECUTE_DOC).not.toContain('./handoff/')
   })
 })
 
@@ -868,6 +872,38 @@ describe('ask_user_question tool', () => {
     ).toBe('single-select')
   })
 
+  it('exposes non-blank constraints to schema-level validation and keeps sanitize as the semantic boundary', () => {
+    const emitted = z.toJSONSchema(z.object(tool!.inputSchema))
+    const questionItems = (
+      emitted.properties?.questions as { items?: { properties?: Record<string, unknown> } }
+    ).items?.properties
+    const optionItems = (
+      questionItems?.options as { items?: { properties?: Record<string, unknown> } }
+    ).items?.properties
+    // Pi validates the emitted JSON Schema before its permission hook, so a whitespace-only
+    // required string fails without reaching the app. Optional fields stay pattern-free to fit
+    // the static context budget; zod and the sanitizer still reject them.
+    expect((questionItems?.question as { pattern?: string }).pattern).toBe('\\S')
+    expect((optionItems?.label as { pattern?: string }).pattern).toBe('\\S')
+
+    const schema = z.object(tool!.inputSchema)
+    const malformed = [
+      // Whitespace-only strings: JSON Schema pattern and the zod chain both reject.
+      { question: '   ', options: [{ label: 'A' }, { label: 'B' }] },
+      { question: 'Pick?', header: ' ', options: [{ label: 'A' }, { label: 'B' }] },
+      { question: 'Pick?', options: [{ label: ' ' }, { label: 'B' }] },
+      { question: 'Pick?', options: [{ label: 'A', description: ' ' }, { label: 'B' }] },
+      // Duplicate labels are unexpressible in JSON Schema; both layers must reject them.
+      { question: 'Pick?', options: [{ label: 'A' }, { label: 'A' }] }
+    ]
+    for (const question of malformed) {
+      expect(schema.safeParse({ questions: [question] }).success).toBe(false)
+      expect(
+        sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', questions: [question] })
+      ).toBeUndefined()
+    }
+  })
+
   it('validates multiple answers without losing label boundaries or custom text', () => {
     const labels = ['A, B', 'A', 'Quote " and newline\nend']
     const question = {
@@ -946,6 +982,79 @@ describe('notebook_execute tool', () => {
         method: 'execute',
         params: { code: 'print(42)' }
       })
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['Notebook execution turn ended before request admission.', 'Do not retry in this turn'],
+    ['WSL_SETUP_DIAGNOSTICS_STALE', 'then retry once'],
+    ['Notebook Runtime binding does not match its pending host admission.', 'Do not retry']
+  ])('chooses the 409 next step from the conflict: %s', async (error, nextStep) => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'conflict-repro', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ error }), { status: 409 }))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'print(42)' }
+      })
+      const text = (result.content as { text: string }[])[0]!.text
+      expect(text).toContain(`${error}\n`)
+      expect(text).toContain(nextStep)
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('reports failed foreground cells and failed background Runs as tool errors', async () => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'run-failure', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const results = [
+      { runId: 'run-1', kernelKind: 'python', status: 'failed', text: { traceback: 'boom' } },
+      { receipt: {}, run: { runId: 'run-2', kernelKind: 'python', status: 'failed' } },
+      {
+        receipt: {},
+        run: { runId: 'run-3', kernelKind: 'bash', status: 'completed', exitCode: 2 }
+      },
+      { runId: 'run-4', kernelKind: 'python', status: 'completed' }
+    ]
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(JSON.stringify({ result: results.shift() })))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const call = (name: string, args: Record<string, unknown>): Promise<unknown> =>
+        client.callTool({ name, arguments: args }).then((result) => result.isError)
+
+      expect(await call('notebook_execute', { code: 'raise' })).toBe(true)
+      expect(await call('background_run', { action: 'query', runId: 'run-2' })).toBe(true)
+      expect(await call('background_run', { action: 'query', runId: 'run-3' })).toBe(true)
+      expect(await call('notebook_execute', { code: 'ok' })).not.toBe(true)
     } finally {
       fetchRpc.mockRestore()
       await client.close()
@@ -1254,14 +1363,14 @@ describe('background_run tool', () => {
       runId: 'run-1'
     })
     expect(() => schema.parse({ action: 'retry', runId: 'run-1' })).toThrow()
-    expect(tool?.description).toMatch(/query a saved runId.*non-blocking/i)
+    expect(tool?.description).toMatch(/query or cancel the saved runId/i)
     expect(tool?.description).toMatch(/non-blocking snapshot/i)
     expect(tool?.description).toMatch(/never scan Run history/i)
     expect(tool?.description).not.toMatch(/once|never.*poll|do not poll/i)
     expect(tool?.description).toContain('followUpDelivery:"suppressed"')
     expect(tool?.description).toContain('"committed"')
     expect(tool?.description).toContain('follow-up Turn')
-    expect(tool?.description).toMatch(/submissionIdentity.*recovers only a missing receipt/i)
+    expect(tool?.description).toMatch(/submissionIdentity only recovers a missing receipt/i)
   })
 
   it('preserves the durable receipt internally and flattens compact query output', () => {
@@ -1464,11 +1573,13 @@ describe('repl_execute tool', () => {
     // The control-plane repl takes no language/cellId — it is distinct from notebook_execute.
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['code', 'background', 'timeoutMs'])
     expect(tool?.description).toMatch(/background:true/u)
-    expect(tool?.description).toMatch(/background-safe/iu)
     expect(tool?.description).toMatch(
-      /host\.mcp.*host\.compute.*host\.llm.*host\.delegate.*host\.viewImage/u
+      /background:true supports host\.mcp, host\.compute, host\.llm, host\.delegate/u
     )
-    expect(tool?.description).toMatch(/host\.agents\.switch.*unsafe/u)
+    expect(tool?.description).toMatch(
+      /Foreground.*host\.viewImage, host\.agents\.switch and user input/u
+    )
+    expect(tool?.description).toContain('BACKGROUND_HOST_METHOD_UNSAFE requires foreground')
   })
 
   it('maps background REPL execution to the shared compact receipt', () => {
@@ -1530,6 +1641,31 @@ describe('repl_execute tool', () => {
     ).toEqual([{ type: 'text', text: expect.any(String) }])
   })
 
+  it('delivers only text to a text-only model after Vision inspects a plot (#1159)', () => {
+    const evidence = '<attached-image-evidence>Sine and Cosine</attached-image-evidence>'
+    const content = buildNotebookToolContent(
+      { status: 'completed', viewImages: [{ evidence }] },
+      tool!
+    )
+
+    expect(content).toEqual([
+      { type: 'text', text: expect.stringContaining('"status": "completed"') },
+      { type: 'text', text: evidence }
+    ])
+  })
+
+  it('rejects a relay result carrying both evidence and raw pixels', () => {
+    expect(() =>
+      buildNotebookToolContent(
+        {
+          status: 'completed',
+          viewImages: [{ evidence: 'plot', data: 'YQ==', mimeType: 'image/png' }]
+        },
+        tool!
+      )
+    ).toThrow(/invalid transient image content/u)
+  })
+
   it('fails the entire transient image attachment when any image block is malformed', () => {
     const valid = Buffer.from('valid-image').toString('base64')
 
@@ -1580,7 +1716,7 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('role-aware catalog')
     expect(tool?.description).toContain('field descriptions')
     expect(tool?.description).toMatch(/do not prefetch.*topics/i)
-    expect(tool?.description).toContain('Delegate agents should use the same catalog')
+    expect(tool?.description).toContain('Delegate agents cannot delegate')
     expect(tool?.description).not.toContain('host.sendFrameMessage(')
     expect(tool?.description).not.toContain('host.send_message(')
   })
@@ -1636,6 +1772,80 @@ describe('repl_execute tool', () => {
       expect(body.params.code).toBe('return 2')
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+
+  it('delivers image evidence failure separately from long stderr in a real MCP response', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'image-failure-mcp-'))
+    const stderr = 'existing diagnostic\n'.repeat(500)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => ({
+          status: 'completed',
+          stdout: 'computed 42',
+          stderr,
+          traceback: '',
+          cwdAfter: root,
+          outputs: [{ type: 'stream', name: 'stdout', text: 'computed 42' }]
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1',
+      token: 'control-token',
+      completeControlInvocation: async () => {
+        throw new HostViewImageError(
+          'could not prepare image evidence.',
+          new Error('private provider detail')
+        )
+      },
+      discardControlInvocation: vi.fn()
+    }))
+    const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const mcp = createNotebookMcpServer({
+      ...connection,
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    const client = new ModelContextProtocolClient({ name: 'image-failure-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await mcp.connect(serverTransport)
+      await client.connect(clientTransport)
+      const response = await client.callTool({
+        name: 'repl_execute',
+        arguments: { code: 'return 42' }
+      })
+      expect(response.isError).not.toBe(true)
+      expect(response.content).toEqual([
+        { type: 'text', text: expect.stringContaining('computed 42') },
+        { type: 'text', text: 'host.viewImage could not prepare image evidence.' }
+      ])
+      const preview = JSON.parse((response.content as { text: string }[])[0].text)
+      expect(preview).toMatchObject({ status: 'completed', stdout: 'computed 42', truncated: true })
+      expect(preview.stderr).toContain('existing diagnostic')
+      expect(JSON.stringify(response)).not.toContain('private provider detail')
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.text
+          .stderr
+      ).toBe(stderr)
+    } finally {
+      await client.close()
+      await mcp.close()
+      await rpc.close()
+      await service.dispose()
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   })
 
@@ -1891,6 +2101,43 @@ describe('repl_execute tool', () => {
 })
 
 describe('bash_execute tool', () => {
+  it.each([0, 1])('reports Shell exit %s through the MCP failure flag', async (exitCode) => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: process.cwd()
+    })
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const stderr = exitCode === 0 ? '' : 'ls: input: Operation not permitted'
+    const shellResult: NotebookShellResult = { stdout: '', stderr, exitCode }
+    // Reproduce the reported runtime result at the existing RPC boundary, not an OS denial.
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: shellResult })
+    } as Response)
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: 'bash_execute',
+        arguments: { command: 'ls input' }
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      const text = (result.content as Array<{ type: string; text?: string }>).find(
+        (item) => item.type === 'text'
+      )?.text
+      expect(JSON.parse(text!)).toMatchObject({ exitCode, ...(stderr ? { stderr } : {}) })
+      expect(result.isError === true).toBe(exitCode !== 0)
+    } finally {
+      fetch.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'bash_execute')
 
   it('supports foreground compatibility and durable background Shell receipts', () => {
@@ -1934,7 +2181,8 @@ describe('bash_execute tool', () => {
     expect(tool?.description).toBe(BASH_EXECUTE_DOC)
     expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
     expect(tool?.description).toContain('earlier commands are never replayed')
-    expect(tool?.description).toContain('resets its state')
+    expect(tool?.description).toContain('resets state')
+    expect(tool?.description).toContain('idle reclamation resets state')
   })
 
   it.each(['5.1', '7.6'] as const)(

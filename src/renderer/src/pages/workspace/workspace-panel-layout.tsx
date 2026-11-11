@@ -27,7 +27,28 @@ const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
 // Match the visible divider and its hit area to the resize library's hover/drag region.
 const WORKSPACE_RESIZE_HANDLE_CLASS_NAME =
-  'z-20 after:w-5 before:top-0 before:h-full before:translate-y-0 before:bg-text-200 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=hover]:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+  'group/workspace-resize z-20 cursor-grab! hover:cursor-grab! data-[separator=active]:cursor-grabbing! after:w-5 before:[transform:translateY(var(--resize-handle-offset,0px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+// Keep pointer movement out of React state so hovering does not re-render the workspace.
+const trackResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const handle = event.currentTarget
+  const { top, height } = handle.getBoundingClientRect()
+  // Moving top forces layout before the resize library's document hit-test. Translate the
+  // centered 48px grip instead, keeping it inside the divider without changing its geometry.
+  const maxOffset = Math.max(0, height / 2 - 24)
+  const offset = Math.min(maxOffset, Math.max(-maxOffset, event.clientY - top - height / 2))
+  const value = `${offset}px`
+  if (handle.style.getPropertyValue('--resize-handle-offset') !== value) {
+    handle.style.setProperty('--resize-handle-offset', value)
+  }
+}
+
+const captureResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
+  if (event.button !== 0) return
+  trackResizeHandle(event)
+  // Capture before the first move can enter an embedded preview frame.
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -560,7 +581,7 @@ const WorkspacePanelLayout = ({
 
   return (
     <>
-      <div className="relative flex h-full">
+      <div className="relative flex h-full min-w-0">
         {mobileSidebar.isOpen ? (
           <button
             type="button"
@@ -597,7 +618,7 @@ const WorkspacePanelLayout = ({
           resizeTargetMinimumSize={{ coarse: 20, fine: 20 }}
           aria-hidden={isMobile && mobileSidebar.isOpen ? true : undefined}
           inert={isMobile && mobileSidebar.isOpen ? true : undefined}
-          className={isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}
+          className={`has-[>[data-separator=active]]:cursor-grabbing! [&:has(>[data-separator=active])_[data-resize-cursor]]:cursor-grabbing! ${isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}`}
         >
           {!isMobile ? (
             <>
@@ -620,13 +641,23 @@ const WorkspacePanelLayout = ({
 
               <ResizableHandle
                 elementRef={sidebar.separatorRef}
+                onPointerMove={trackResizeHandle}
+                onPointerDown={captureResizeHandle}
+                onPointerLeave={(event) =>
+                  event.currentTarget.style.removeProperty('--resize-handle-offset')
+                }
                 aria-label={t('Resize left panel')}
                 disabled={sidebar.state === 'collapsed'}
                 aria-hidden={sidebar.state === 'collapsed'}
                 className={`${WORKSPACE_RESIZE_HANDLE_CLASS_NAME} ${
                   sidebar.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
-              />
+              >
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-text-200 opacity-0 group-hover/workspace-resize:opacity-100 group-focus-visible/workspace-resize:opacity-100 group-data-[separator=active]/workspace-resize:opacity-100"
+                />
+              </ResizableHandle>
             </>
           ) : null}
 
@@ -640,13 +671,23 @@ const WorkspacePanelLayout = ({
             <>
               <ResizableHandle
                 elementRef={preview.separatorRef}
+                onPointerMove={trackResizeHandle}
+                onPointerDown={captureResizeHandle}
+                onPointerLeave={(event) =>
+                  event.currentTarget.style.removeProperty('--resize-handle-offset')
+                }
                 aria-label={t('Resize right panel')}
                 disabled={preview.state === 'collapsed'}
                 aria-hidden={preview.state === 'collapsed'}
                 className={`${WORKSPACE_RESIZE_HANDLE_CLASS_NAME} bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] ${
                   preview.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
-              />
+              >
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-text-200 opacity-0 group-hover/workspace-resize:opacity-100 group-focus-visible/workspace-resize:opacity-100 group-data-[separator=active]/workspace-resize:opacity-100"
+                />
+              </ResizableHandle>
             </>
           ) : null}
           <PreviewPanel

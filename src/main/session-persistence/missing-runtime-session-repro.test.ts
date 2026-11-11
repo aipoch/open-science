@@ -190,7 +190,7 @@ describe('missing runtime Session authority regression', () => {
         publicationOwner: 'main',
         interruptionCause: 'terminal-commit-failed',
         terminalCommitFailure: 'missing-record',
-        errorReportable: false,
+        failure: { category: 'session' as const, diagnostics: {} },
         terminalScope: { executionId: 'admitted-execution', startedAt: 1 }
       })
       expect(coordinator.listRuntimeTerminalFailures()).toEqual(published)

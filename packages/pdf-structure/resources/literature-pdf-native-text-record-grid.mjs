@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import {
   refineNativeTableBoundaryInk,
+  refineNativeFollowingGridCrop,
   recoverNativeClippedHeaderCrop
 } from './literature-pdf-native-table-boundary-ink.mjs'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -274,10 +275,39 @@ export function recoverNativeTextRecordGrid(table, items, captions, rules) {
     return
   const header = source.filter((i) => i.baseline < divider[1]),
     body = source.filter((i) => i.baseline > divider[1])
-  const mainHeader = header.filter((i) => Math.abs(i.height - h) < h * 0.04)
+  let mainHeader = header.filter((i) => Math.abs(i.height - h) < h * 0.04)
+  // A parameter-by-scale heading can have a separately painted arrow.
+  // Join only touching native heading pieces; every complete body record and
+  // each native section divider still proves the resulting independent lanes.
+  const headings = []
+  for (const token of [...mainHeader].sort((a, b) => a.rect[0] - b.rect[0])) {
+    const previous = headings.at(-1)
+    if (
+      previous &&
+      token.rect[0] - previous.rect[2] >= 0 &&
+      token.rect[0] - previous.rect[2] < h * 0.5
+    )
+      headings[headings.length - 1] = {
+        ...previous,
+        text: previous.text + ' ' + token.text,
+        rect: [
+          previous.rect[0],
+          Math.min(previous.rect[1], token.rect[1]),
+          token.rect[2],
+          Math.max(previous.rect[3], token.rect[3])
+        ]
+      }
+    else headings.push(token)
+  }
+  const scaleParameters =
+    headings.length >= 3 &&
+    headings.length <= 6 &&
+    headings.length === model.length &&
+    /^Parameter\s*[\\/]\s*Scale\s*→?$/iu.test(headings[0].text.trim())
+  if (scaleParameters) mainHeader = headings
   if (
     mainHeader.length < 2 ||
-    mainHeader.length > 4 ||
+    mainHeader.length > (scaleParameters ? 6 : 4) ||
     mainHeader.some((i) => Math.abs(i.baseline - mainHeader[0].baseline) > h * 0.04)
   )
     return
@@ -395,9 +425,10 @@ export function recoverNativeTextRecordGrid(table, items, captions, rules) {
   // baseline, with at least two pairs in each native band and ink-free dividers.
   if (groupRules.length) {
     if (
-      mainHeader.length !== 2 ||
-      !/^(?:hyper)?parameters?$/i.test(mainHeader[0].text.trim()) ||
-      !/^values?$/i.test(mainHeader[1].text.trim()) ||
+      (!scaleParameters &&
+        (mainHeader.length !== 2 ||
+          !/^(?:hyper)?parameters?$/i.test(mainHeader[0].text.trim()) ||
+          !/^values?$/i.test(mainHeader[1].text.trim()))) ||
       records.length !== physical.length ||
       physical.some((row) => {
         const values = readSourceRow(row, cuts)
@@ -786,6 +817,8 @@ export function proveNativeTableReadingOrder(table, wholeProof, items, rules, co
 export function completeNativeTableVisualCrop(table, wholeProof, items, rules, context) {
   const header = recoverNativeClippedHeaderCrop(table, context)
   if (header) return { ...table, cropRect: header }
+  const following = refineNativeFollowingGridCrop(table, rules, context)
+  if (following) return following
   const valid = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
   if (

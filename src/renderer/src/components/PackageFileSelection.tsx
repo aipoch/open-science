@@ -36,7 +36,11 @@ export const PackageFileSelection = ({
 }: {
   files: PackageSelectableFile[]
   summary?: PackageSelectionSummary
-  onSelect: (excludedStorageKeys: string[], includePdfNotes?: boolean) => void
+  onSelect: (
+    excludedStorageKeys: string[],
+    includePdfNotes?: boolean,
+    includeResearchFilms?: boolean
+  ) => void
   onCancel: () => void
   notice?: React.ReactNode
   children?: React.ReactNode
@@ -49,6 +53,7 @@ export const PackageFileSelection = ({
     usePackageOperationStore()
   const [query, setQuery] = useState('')
   const [includePdfNotes, setIncludePdfNotes] = useState(false)
+  const [includeResearchFilms, setIncludeResearchFilms] = useState(false)
   const [customizing, setCustomizing] = useState(false)
   const [page, setPage] = useState(0)
   const [retainedPage, setRetainedPage] = useState(0)
@@ -205,10 +210,10 @@ export const PackageFileSelection = ({
   return (
     <>
       <div
-        data-package-body
+        data-workflow-body
         className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
-        <div data-package-content className="space-y-4">
+        <div data-workflow-content className="space-y-4">
           {notice}
           <fieldset className="grid gap-2 sm:grid-cols-2">
             <legend className="sr-only">{t('Package contents')}</legend>
@@ -292,7 +297,13 @@ export const PackageFileSelection = ({
                 </TooltipProvider>
               </span>
               <strong className="text-base font-semibold tabular-nums text-foreground">
-                {summary ? packageBytes(retainedBytes + selectedBytes) : '—'}
+                {summary
+                  ? packageBytes(
+                      retainedBytes +
+                        selectedBytes +
+                        (includeResearchFilms ? (summary?.researchFilms?.sizeBytes ?? 0) : 0)
+                    )
+                  : '—'}
               </strong>
             </div>
             {summary ? (
@@ -724,6 +735,19 @@ export const PackageFileSelection = ({
               {children}
             </div>
           ) : null}
+          {summary?.researchFilms ? (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={includeResearchFilms}
+                onChange={(event) => setIncludeResearchFilms(event.target.checked)}
+              />
+              {t('Include research films')}
+              <span className="text-muted-foreground tabular-nums">
+                {packageBytes(summary.researchFilms.sizeBytes)}
+              </span>
+            </label>
+          ) : null}
           {summary?.pdfNotesAvailable ? (
             <label className="flex items-start gap-2 text-sm">
               <input
@@ -744,7 +768,7 @@ export const PackageFileSelection = ({
         </Button>
         <Button
           disabled={requiredOversized}
-          onClick={() => onSelect([...excluded], includePdfNotes)}
+          onClick={() => onSelect([...excluded], includePdfNotes, includeResearchFilms)}
         >
           {t('Choose save location…')}
         </Button>

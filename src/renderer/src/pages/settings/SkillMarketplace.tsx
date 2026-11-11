@@ -1,3 +1,5 @@
+import { ResourceDetailActions, ResourceDetailHeader } from '../marketplace/ResourceDetailLayout'
+import { ScrollText } from 'lucide-react'
 import type { SkillMarketplaceView } from '../../lib/settings-navigation'
 import { SkillMarketplaceUpdateDialog } from './SkillMarketplaceUpdateDialog'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -32,6 +34,16 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SkillMarketplaceBatchControls, type MarketplaceBatchMode } from './SkillMarketplaceBatch'
 import {
+  ResourceCatalogHeader,
+  ResourceCatalogFilter,
+  ResourceCatalogToolbar,
+  ResourceCenterModeTabs
+} from '../marketplace/ResourceCenterModeTabs'
+import {
+  ResourceMarketplaceCardContent,
+  ResourceMarketplaceIdentity
+} from '../marketplace/ResourceMarketplaceIdentity'
+import {
   filterSkillMarketplace,
   skillMarketplaceAttribution,
   skillMarketplaceSourceOwner,
@@ -43,63 +55,6 @@ import {
 import './skill-marketplace.css'
 
 export type { SkillMarketplaceView } from '../../lib/settings-navigation'
-
-function TruncatedText({
-  text,
-  lines,
-  onClick
-}: {
-  text: string
-  lines: 1 | 2
-  onClick?: () => void
-}): React.JSX.Element {
-  const ref = useRef<HTMLSpanElement>(null)
-  const [open, setOpen] = useState(false)
-  const content = (
-    <span ref={ref} className={lines === 1 ? 'block truncate' : 'line-clamp-2 break-words'}>
-      {text}
-    </span>
-  )
-  return (
-    <Tooltip
-      open={open}
-      onOpenChange={(next) => {
-        const el = ref.current
-        setOpen(
-          Boolean(
-            next && el && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight + 1)
-          )
-        )
-      }}
-    >
-      <TooltipTrigger asChild>
-        {onClick ? (
-          <button
-            type="button"
-            onClick={onClick}
-            className="block w-full min-w-0 rounded text-left font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {content}
-          </button>
-        ) : (
-          <span
-            tabIndex={0}
-            className="block min-w-0 rounded text-sm leading-5 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {content}
-          </span>
-        )}
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        sideOffset={6}
-        className="skill-marketplace-tooltip max-h-[var(--radix-tooltip-content-available-height)] max-w-[280px] overflow-auto px-3 py-2 leading-5"
-      >
-        {text}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
 
 function MetadataLink({
   href,
@@ -315,7 +270,7 @@ function MarketplaceInstallControls({
   }
   return (
     <div
-      className={compact ? 'skill-marketplace-card-controls' : 'skill-marketplace-detail-controls'}
+      className={compact ? 'flex min-w-0 flex-col gap-2' : 'space-y-4'}
       aria-busy={Boolean(pending)}
     >
       {refreshFailed && installed ? (
@@ -390,9 +345,11 @@ function MarketplaceInstallControls({
       !compact &&
       conflictSkillId &&
       (conflictReason === 'name-taken' || conflictReason === 'local-content-changed') ? (
-        <Button disabled={disabled || Boolean(pending)} onClick={() => void reviewUpdate()}>
-          {pending === 'preview' ? t('Loading…') : t('Review Skill update')}
-        </Button>
+        <ResourceDetailActions>
+          <Button disabled={disabled || Boolean(pending)} onClick={() => void reviewUpdate()}>
+            {pending === 'preview' ? t('Loading…') : t('Review Skill update')}
+          </Button>
+        </ResourceDetailActions>
       ) : null}
       <SkillMarketplaceUpdateDialog
         preview={updatePreview}
@@ -420,23 +377,36 @@ function MarketplaceInstallControls({
         </span>
       ) : null}
       {compact || !conflict ? (
-        <div
-          className="skill-marketplace-primary-action flex flex-wrap items-center gap-3"
-          role={!compact ? 'group' : undefined}
-          aria-label={!compact ? t('Manage') : undefined}
-          data-slot={!compact ? 'skill-marketplace-detail-actions' : undefined}
+        <ResourceDetailActions
+          inline={compact}
+          leading={
+            !compact && localSkill ? (
+              <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                {t('Enable')}
+                <Switch
+                  aria-label={t('Enable')}
+                  aria-busy={pending === 'toggle' || undefined}
+                  checked={localSkill.enabled}
+                  disabled={disabled || Boolean(pending)}
+                  onCheckedChange={() => void manage(false)}
+                />
+              </label>
+            ) : null
+          }
         >
-          {!compact && localSkill ? (
-            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-              {t('Enable')}
-              <Switch
-                aria-label={t('Enable')}
-                aria-busy={pending === 'toggle' || undefined}
-                checked={localSkill.enabled}
-                disabled={disabled || Boolean(pending)}
-                onCheckedChange={() => void manage(false)}
-              />
-            </label>
+          {!compact && localSkillId && installed?.canUpdate && !installed.protected ? (
+            <Button
+              ref={uninstallTrigger}
+              variant="outline"
+              className="text-destructive"
+              aria-disabled={pending === 'toggle' || undefined}
+              disabled={disabled || packagePending}
+              onClick={() => {
+                if (!inFlight.current) setUninstallConfirm(true)
+              }}
+            >
+              {t('Uninstall')}
+            </Button>
           ) : null}
           <Button
             ref={trigger}
@@ -480,10 +450,8 @@ function MarketplaceInstallControls({
                   onManageLocal?.(localSkillId)
                   return
                 }
-                if (uninstallArmed) {
-                  if (compact) void manage(true)
-                  else setUninstallConfirm(true)
-                } else setUninstallArmed(true)
+                if (uninstallArmed) setUninstallConfirm(true)
+                else setUninstallArmed(true)
               } else if (installed?.requiresPreview) void reviewUpdate()
               else if (installed) setConfirm(true)
               else void install()
@@ -517,21 +485,7 @@ function MarketplaceInstallControls({
                       : t('Installed')
                     : t('Install')}
           </Button>
-          {!compact && localSkillId && installed?.canUpdate && !installed.protected ? (
-            <Button
-              ref={uninstallTrigger}
-              variant="outline"
-              className="text-destructive"
-              aria-disabled={pending === 'toggle' || undefined}
-              disabled={disabled || packagePending}
-              onClick={() => {
-                if (!inFlight.current) setUninstallConfirm(true)
-              }}
-            >
-              {t('Uninstall')}
-            </Button>
-          ) : null}
-        </div>
+        </ResourceDetailActions>
       ) : null}
       <ConfirmActionDialog
         open={uninstallConfirm}
@@ -587,14 +541,27 @@ export function SkillMarketplace({
   view,
   onNavigate,
   onImportFromGitHub,
+  localRevisionKey = 0,
+  onInstallationChanged,
+  addAction,
   onManageLocal
 }: {
   view: SkillMarketplaceView
   onNavigate: (view: SkillMarketplaceView) => void
   onManageLocal?: (id?: string) => void
+  localRevisionKey?: number
+  onInstallationChanged?: () => void
+  addAction?: React.ReactNode
   onImportFromGitHub?: () => void
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
+  const installedCount = useSettingsStore(
+    (state) => state.skills.filter((skill) => skill.available !== false).length
+  )
+  // Retained catalogs also reconcile imports, edits and deletions made in other resource views.
+  const skillCatalogRevision = useSettingsStore((state) =>
+    JSON.stringify(state.skills.map(({ id, updatedAt, available }) => [id, updatedAt, available]))
+  )
   const heading = useRef<HTMLHeadingElement>(null)
   const surface = useRef<HTMLDivElement>(null)
   const listScrollTop = useRef(0)
@@ -638,6 +605,8 @@ export function SkillMarketplace({
   const [localSyncError, setLocalSyncError] = useState(false)
   const [localSyncPending, setLocalSyncPending] = useState(false)
   const localReconciled = useRef(0)
+  const externalReconciled = useRef(localRevisionKey)
+  const skillsReconciled = useRef(skillCatalogRevision)
   const localRevision = useRef(0)
   const readCatalog = useCallback(async (request?: SkillMarketplaceCatalogRequest) => {
     let revision = localRevision.current
@@ -694,7 +663,13 @@ export function SkillMarketplace({
   }, [refresh, readCatalog])
   const catalogSnapshotId = catalog?.ok ? catalog.value.snapshotId : undefined
   useEffect(() => {
-    if (!catalogSnapshotId || localRefresh === localReconciled.current) return
+    if (
+      !catalogSnapshotId ||
+      (localRefresh === localReconciled.current &&
+        localRevisionKey === externalReconciled.current &&
+        skillCatalogRevision === skillsReconciled.current)
+    )
+      return
     let active = true
     setLocalSyncPending(true)
     setLocalSyncError(false)
@@ -706,6 +681,8 @@ export function SkillMarketplace({
             // A slower remote read must not undo the authoritative local reconciliation.
             ++localRevision.current
             localReconciled.current = localRefresh
+            externalReconciled.current = localRevisionKey
+            skillsReconciled.current = skillCatalogRevision
             setCatalog((current) =>
               current?.result.ok && current.result.value.snapshotId === catalogSnapshotId
                 ? {
@@ -745,7 +722,7 @@ export function SkillMarketplace({
     return () => {
       active = false
     }
-  }, [catalogSnapshotId, localRefresh, readCatalog])
+  }, [catalogSnapshotId, localRefresh, localRevisionKey, skillCatalogRevision, readCatalog])
   useEffect(() => {
     if (!detailId || !snapshotId) return
     let active = true
@@ -871,6 +848,7 @@ export function SkillMarketplace({
   }): void => {
     // The installer has verified and committed these files; show success without a page flash.
     if (installedUpdate) {
+      onInstallationChanged?.()
       ++localRevision.current
       const focusedCard = document.activeElement?.closest<HTMLElement>(
         '[data-slot="skill-marketplace-card"]'
@@ -942,10 +920,110 @@ export function SkillMarketplace({
         snapshotId: catalog.value.snapshotId
       })
   }
+  const renderCatalogToolbar = (toolbarActions: React.ReactNode): React.JSX.Element => (
+    <ResourceCatalogToolbar
+      onResetFilters={() => {
+        resetFilter(setCategory, 'all')
+        resetFilter(setStatusFilter, 'all')
+        resetFilter(setSort, 'name', false)
+      }}
+      activeFilterCount={
+        Number(category !== 'all') + Number(statusFilter !== 'all') + Number(sort !== 'name')
+      }
+      resetFiltersDisabled={isBatch && batchBusy}
+      data-batch={isBatch || undefined}
+      trailing={
+        <>
+          <p role="status" className="ml-auto text-xs tabular-nums text-muted-foreground">
+            {refreshing ? (
+              <LoaderCircle
+                className="mr-2 inline size-3 animate-spin motion-reduce:animate-none"
+                aria-label={t('Loading…')}
+              />
+            ) : null}
+            {t('Results: {{results}} / {{total}}', {
+              results: matches.length,
+              total: modeItems.length
+            })}
+          </p>
+          {toolbarActions}
+        </>
+      }
+      search={
+        <SettingsSearchInput
+          aria-label={t('Search skills')}
+          placeholder={t('Search skills…')}
+          value={query}
+          disabled={isBatch && batchBusy}
+          onChange={(event) => resetFilter(setQuery, event.target.value)}
+        />
+      }
+    >
+      <ResourceCatalogFilter label={t('Category')}>
+        <Select
+          value={category}
+          disabled={isBatch && batchBusy}
+          onValueChange={(value) => resetFilter(setCategory, value)}
+        >
+          <SelectTrigger aria-label={t('Category')} className="w-44">
+            <span className="truncate">{category === 'all' ? t('All') : labels[category]}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {['all', ...skillMarketplaceCategories].map((value) => (
+              <SelectItem key={value} value={value}>
+                {value === 'all' ? t('All') : labels[value]}
+                <span className="ml-2 tabular-nums text-muted-foreground">
+                  {value === 'all' ? modeItems.length : (categoryCounts.get(value) ?? 0)}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ResourceCatalogFilter>
+      {installations && !isBatch ? (
+        <ResourceCatalogFilter label={t('Installation status')}>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => resetFilter(setStatusFilter, value)}
+          >
+            <SelectTrigger aria-label={t('Installation status')} className="w-40">
+              <span className="truncate">
+                {statusFilter === 'all'
+                  ? t('All')
+                  : statusFilter === 'installed'
+                    ? t('Installed')
+                    : t('Update available')}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('All')}</SelectItem>
+              <SelectItem value="installed">{t('Installed')}</SelectItem>
+              <SelectItem value="updates">{t('Update available')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </ResourceCatalogFilter>
+      ) : null}
+      <ResourceCatalogFilter label={t('Sort by')}>
+        <Select
+          value={sort}
+          disabled={isBatch && batchBusy}
+          onValueChange={(value) => resetFilter(setSort, value, false)}
+        >
+          <SelectTrigger aria-label={t('Sort by')} className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name">{t('Name A–Z')}</SelectItem>
+            <SelectItem value="manifest">{t('Catalog order')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </ResourceCatalogFilter>
+    </ResourceCatalogToolbar>
+  )
   return (
     <div
       ref={surface}
-      className={isBatch ? 'skill-marketplace-batch-surface' : 'space-y-4 p-5'}
+      className="space-y-4 p-5"
       data-slot="skill-marketplace"
       data-batch={isBatch || undefined}
     >
@@ -954,20 +1032,6 @@ export function SkillMarketplace({
         expanded={isBatch}
         onOpen={() => onNavigate({ kind: 'marketplace-batch' })}
         onExit={() => onNavigate({ kind: 'marketplace' })}
-        heading={
-          view.kind !== 'marketplace-detail' ? (
-            <div className="flex min-w-0 items-center gap-3">
-              <h3 ref={heading} tabIndex={-1} className="min-w-0 text-lg font-semibold">
-                {isBatch ? t('Batch manage') : t('Browse Marketplace')}
-              </h3>
-              {onImportFromGitHub && !isBatch ? (
-                <Button variant="outline" size="sm" onClick={onImportFromGitHub}>
-                  {t('Import from GitHub')}
-                </Button>
-              ) : null}
-            </div>
-          ) : undefined
-        }
         onRefresh={
           view.kind !== 'marketplace-detail' ? () => setRefresh((value) => value + 1) : undefined
         }
@@ -1001,8 +1065,37 @@ export function SkillMarketplace({
         onBusyChange={setBatchBusy}
         onChanged={() => setLocalRefresh((value) => value + 1)}
       >
-        {(selectionControls) => (
+        {(selectionControls, toolbarActions) => (
           <>
+            {view.kind !== 'marketplace-detail' ? (
+              <ResourceCatalogHeader
+                icon={ScrollText}
+                title={t('Skills')}
+                actions={
+                  addAction ??
+                  (onImportFromGitHub ? (
+                    <Button variant="outline" size="sm" onClick={onImportFromGitHub}>
+                      {t('Import from GitHub')}
+                    </Button>
+                  ) : undefined)
+                }
+                selectionBar={selectionControls}
+                toolbar={renderCatalogToolbar(toolbarActions)}
+              >
+                <ResourceCenterModeTabs
+                  count={installedCount}
+                  value="marketplace"
+                  onChange={(value) => {
+                    if (value === 'installed') onManageLocal?.()
+                  }}
+                />
+              </ResourceCatalogHeader>
+            ) : null}
+            {view.kind !== 'marketplace-detail' ? (
+              <h2 ref={heading} tabIndex={-1} className="sr-only">
+                {t('Marketplace')}
+              </h2>
+            ) : null}
             {view.kind !== 'marketplace-detail' &&
             !refreshing &&
             catalog?.ok &&
@@ -1082,45 +1175,41 @@ export function SkillMarketplace({
               />
             ) : view.kind === 'marketplace-detail' ? (
               selected ? (
-                <div
-                  className="skill-marketplace-detail grid gap-x-4 gap-y-5"
-                  data-slot="skill-marketplace-detail"
-                >
-                  <header className="skill-marketplace-detail-header">
-                    <div className="skill-marketplace-detail-identity min-w-0 space-y-3">
-                      <p
-                        data-slot="skill-marketplace-detail-category"
-                        className="w-fit max-w-full truncate rounded bg-muted px-2 py-1 text-xs text-muted-foreground"
-                      >
-                        {labels[selected.category]}
-                      </p>
-                      <h3
-                        ref={heading}
-                        tabIndex={-1}
-                        className="min-w-0 break-words text-2xl font-semibold tracking-tight"
-                      >
-                        {selected.displayName}
-                      </h3>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        {selected.authors?.length ? (
-                          <span>
-                            {t('Author: {{name}}', {
-                              name: selected.authors.map((a) => a.name).join(', ')
-                            })}
-                          </span>
-                        ) : (
-                          <span>
-                            {t('Upstream source')}: {skillMarketplaceSourceOwner(selected)}
-                          </span>
-                        )}
-                        <span>
-                          {t('Version')}: {selected.version}
-                        </span>
-                        <span>
-                          {t('License')}: {selected.license}
-                        </span>
-                      </div>
-                    </div>
+                <div className="space-y-6" data-slot="skill-marketplace-detail">
+                  <ResourceDetailHeader
+                    headingRef={heading}
+                    identity={
+                      <ResourceMarketplaceIdentity
+                        id={selected.id}
+                        displayName={selected.displayName}
+                      />
+                    }
+                    name={selected.displayName}
+                    description={selected.summary}
+                  >
+                    <span data-slot="skill-marketplace-detail-category">
+                      {labels[selected.category]}
+                    </span>
+                    <span>
+                      {t('Publisher: {{publisher}}', { publisher: selected.publisher.name })}
+                    </span>
+                    {selected.authors?.length ? (
+                      <span>
+                        {t('Author: {{name}}', {
+                          name: selected.authors.map((a) => a.name).join(', ')
+                        })}
+                      </span>
+                    ) : (
+                      <span>
+                        {t('Upstream source')}: {skillMarketplaceSourceOwner(selected)}
+                      </span>
+                    )}
+                    <span>
+                      {t('Version')}: {selected.version}
+                    </span>
+                    <span>
+                      {t('License')}: {selected.license}
+                    </span>
                     {selected.evaluation ? (
                       <TooltipProvider>
                         <Tooltip>
@@ -1132,10 +1221,10 @@ export function SkillMarketplace({
                                 'Upstream self-assessment {{score}}/{{maxScore}}',
                                 selected.evaluation
                               )}
-                              className="skill-marketplace-detail-score rounded text-2xl font-semibold tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              className="rounded font-medium tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
                               {selected.evaluation.score}
-                              <span className="text-sm font-normal text-muted-foreground">
+                              <span className="font-normal text-muted-foreground">
                                 /{selected.evaluation.maxScore}
                               </span>
                             </span>
@@ -1148,10 +1237,7 @@ export function SkillMarketplace({
                         </Tooltip>
                       </TooltipProvider>
                     ) : null}
-                    <p className="skill-marketplace-detail-summary max-w-prose text-sm leading-6">
-                      {selected.summary}
-                    </p>
-                  </header>
+                  </ResourceDetailHeader>
                   {detailResult?.ok && detailResult.value.installation && snapshotId ? (
                     <MarketplaceInstallControls
                       key={detailKey}
@@ -1300,178 +1386,79 @@ export function SkillMarketplace({
               )
             ) : (
               <>
-                <div
-                  className="skill-marketplace-filters flex flex-wrap gap-2"
-                  data-batch={isBatch || undefined}
-                >
-                  <SettingsSearchInput
-                    aria-label={t('Search skills')}
-                    placeholder={t('Search skills…')}
-                    value={query}
-                    disabled={isBatch && batchBusy}
-                    onChange={(event) => resetFilter(setQuery, event.target.value)}
-                    containerClassName="min-w-0 basis-64"
-                  />
-                  <Select
-                    value={category}
-                    disabled={isBatch && batchBusy}
-                    onValueChange={(value) => resetFilter(setCategory, value)}
-                  >
-                    <SelectTrigger aria-label={t('Category')} className="w-44">
-                      <span className="truncate">
-                        {category === 'all' ? t('Category') : labels[category]}
-                      </span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {['all', ...skillMarketplaceCategories].map((value) => (
-                        <SelectItem key={value} value={value}>
-                          {value === 'all' ? t('All') : labels[value]}
-                          <span className="ml-2 tabular-nums text-muted-foreground">
-                            {value === 'all' ? modeItems.length : (categoryCounts.get(value) ?? 0)}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {installations && !isBatch ? (
-                    <Select
-                      value={statusFilter}
-                      onValueChange={(value) => resetFilter(setStatusFilter, value)}
-                    >
-                      <SelectTrigger aria-label={t('Installation status')} className="w-40">
-                        <span className="truncate">
-                          {statusFilter === 'all'
-                            ? t('Installation status')
-                            : statusFilter === 'installed'
-                              ? t('Installed')
-                              : t('Update available')}
-                        </span>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">{t('All')}</SelectItem>
-                        <SelectItem value="installed">{t('Installed')}</SelectItem>
-                        <SelectItem value="updates">{t('Update available')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  ) : null}
-                  <Select
-                    value={sort}
-                    disabled={isBatch && batchBusy}
-                    onValueChange={(value) => resetFilter(setSort, value, false)}
-                  >
-                    <SelectTrigger aria-label={t('Sort by')} className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="name">{t('Name A–Z')}</SelectItem>
-                      <SelectItem value="manifest">{t('Catalog order')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div
-                  className="flex flex-wrap items-center justify-between gap-2"
-                  data-slot="skill-marketplace-selection"
-                >
-                  {selectionControls}
-                  <p role="status" className="text-xs tabular-nums text-muted-foreground">
-                    {refreshing ? (
-                      <LoaderCircle
-                        className="mr-2 inline size-3 animate-spin motion-reduce:animate-none"
-                        aria-label={t('Loading…')}
-                      />
-                    ) : null}
-                    {t('Results: {{results}} / {{total}}', {
-                      results: matches.length,
-                      total: modeItems.length
-                    })}
-                  </p>
-                </div>
                 <TooltipProvider skipDelayDuration={300}>
-                  <div className="skill-marketplace-grid grid gap-3">
-                    {matches.slice(0, visibleCount).map((item) => (
-                      <article
-                        key={item.id}
-                        data-slot="skill-marketplace-card"
-                        data-skill-id={item.id}
-                        data-selected={(isBatch && selectedIds.has(item.id)) || undefined}
-                        className="skill-marketplace-card flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-                      >
-                        <div className="skill-marketplace-card-heading grid min-w-0 items-start gap-3">
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
-                            {isBatch ? (
-                              <input
-                                type="checkbox"
-                                className="size-4 shrink-0 accent-primary"
-                                aria-label={t('Select {{name}}', { name: item.displayName })}
-                                checked={selectedIds.has(item.id) && canSelect(item)}
-                                disabled={batchBusy || !canSelect(item)}
-                                onChange={(event) =>
-                                  setSelectedIds((current) => {
-                                    const next = new Set(current)
-                                    if (event.target.checked) next.add(item.id)
-                                    else next.delete(item.id)
-                                    return next
-                                  })
-                                }
-                              />
-                            ) : null}
-                            <TruncatedText
-                              text={item.displayName}
-                              lines={1}
-                              onClick={() => openDetail(item)}
-                            />
-                          </div>
-                          {!isBatch && installations && catalog?.ok ? (
-                            <MarketplaceInstallControls
-                              compact
-                              disabled={batchBusy || localSyncPending || localSyncError}
-                              entry={item}
-                              snapshotId={catalog.value.snapshotId}
-                              installation={installations[item.id] ?? { kind: 'not-installed' }}
-                              onChanged={(installation) =>
-                                changed(installation ? { id: item.id, installation } : undefined)
-                              }
-                              onOpenDetail={() => openDetail(item)}
-                              onManageLocal={onManageLocal}
-                            />
-                          ) : null}
-                        </div>
-                        <TruncatedText text={item.summary} lines={2} />
-                        <div className="mt-auto flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-xs text-muted-foreground">
-                          <span className="max-w-[45%] truncate rounded bg-muted px-2 py-1">
-                            {labels[item.category]}
-                          </span>
-                          <span
-                            className="min-w-0 truncate text-muted-foreground"
-                            title={skillMarketplaceAttribution(item)}
-                          >
-                            {skillMarketplaceAttribution(item)}
-                          </span>
-                          {item.evaluation ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  onClick={() => openDetail(item)}
-                                  aria-label={t(
-                                    'Upstream self-assessment {{score}}/{{maxScore}}',
-                                    item.evaluation
-                                  )}
-                                  className="ml-auto shrink-0 rounded tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                >
-                                  {item.evaluation.score}/{item.evaluation.maxScore}
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent className="skill-marketplace-tooltip max-w-64">
-                                {t(
-                                  'Upstream self-assessment is not an independent quality or safety endorsement.'
-                                )}
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))}
+                  <div className="resource-marketplace-grid grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3">
+                    {matches.slice(0, visibleCount).map((item) => {
+                      const installation = installations?.[item.id]
+                      return (
+                        <article
+                          key={item.id}
+                          data-slot="skill-marketplace-card"
+                          data-skill-id={item.id}
+                          data-selected={(isBatch && selectedIds.has(item.id)) || undefined}
+                          className="resource-marketplace-card relative flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
+                        >
+                          <ResourceMarketplaceCardContent
+                            id={item.id}
+                            name={item.displayName}
+                            publisher={skillMarketplaceAttribution(item)}
+                            summary={item.summary}
+                            onOpen={() => openDetail(item)}
+                            primaryAction={
+                              !isBatch &&
+                              catalog?.ok &&
+                              installations &&
+                              skillMarketplaceStableVersionPattern.test(item.version) &&
+                              installation?.kind !== 'conflict' ? (
+                                <MarketplaceInstallControls
+                                  compact
+                                  entry={item}
+                                  snapshotId={catalog.value.snapshotId}
+                                  installation={installation ?? { kind: 'not-installed' }}
+                                  disabled={batchBusy || localSyncPending || localSyncError}
+                                  onChanged={(next) =>
+                                    changed(next ? { id: item.id, installation: next } : undefined)
+                                  }
+                                  onOpenDetail={() => openDetail(item)}
+                                  onManageLocal={onManageLocal}
+                                />
+                              ) : null
+                            }
+                            status={
+                              !skillMarketplaceStableVersionPattern.test(item.version)
+                                ? t('Unavailable')
+                                : installation?.kind === 'conflict'
+                                  ? t('Local conflict')
+                                  : installation?.kind === 'installed' &&
+                                      (isBatch || installation.canUpdate)
+                                    ? installation.canUpdate
+                                      ? t('Update available')
+                                      : t('Installed')
+                                    : undefined
+                            }
+                            selection={
+                              isBatch ? (
+                                <input
+                                  type="checkbox"
+                                  className="absolute right-4 top-4 size-4 accent-primary"
+                                  aria-label={t('Select {{name}}', { name: item.displayName })}
+                                  checked={selectedIds.has(item.id) && canSelect(item)}
+                                  disabled={batchBusy || !canSelect(item)}
+                                  onChange={(event) =>
+                                    setSelectedIds((current) => {
+                                      const next = new Set(current)
+                                      if (event.target.checked) next.add(item.id)
+                                      else next.delete(item.id)
+                                      return next
+                                    })
+                                  }
+                                />
+                              ) : null
+                            }
+                          />
+                        </article>
+                      )
+                    })}
                   </div>
                 </TooltipProvider>
                 {matches.length === 0 ? (

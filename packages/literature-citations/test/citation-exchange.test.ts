@@ -21,6 +21,12 @@ ER  -
 `
 
 describe('RIS literal creator compatibility', () => {
+  it('ignores malformed long fields and preserves whitespace-trimmed values', () => {
+    expect(
+      importRisFields(`ET  -${'\t'.repeat(50_000)}\u2028invalid\nET\t-\t2nd edition\t\n`, {})
+    ).toMatchObject({ edition: '2nd edition' })
+  })
+
   it.each([oldBook, oldArticle])(
     'imports historical institution names through the formatter',
     async (input) => {

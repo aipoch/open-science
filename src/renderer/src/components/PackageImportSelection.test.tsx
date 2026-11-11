@@ -31,6 +31,62 @@ beforeEach(() =>
 )
 afterEach(cleanup)
 
+it('prioritizes the current project after loading and preserves a manual choice on refresh', async () => {
+  const current = { ...project, id: 'current', name: 'Current research' }
+  const other = { ...project, id: 'other', name: 'Other research' }
+  const projects = [project, current, other]
+  useProjectStore.setState({ projects: [], isLoaded: false })
+  const onContinue = vi.fn(async () => undefined)
+  render(
+    <PackageImportSelection
+      operation={operation}
+      currentProjectId={current.id}
+      onCancel={vi.fn()}
+      onContinue={onContinue}
+    />
+  )
+  expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(
+    true
+  )
+  act(() => useProjectStore.setState({ projects, isLoaded: true }))
+  expect(screen.getAllByRole('radio').map((input) => (input as HTMLInputElement).value)).toEqual([
+    'current',
+    'existing',
+    'other'
+  ])
+  expect((screen.getByRole('radio', { name: current.name }) as HTMLInputElement).checked).toBe(true)
+  expect(projects.map(({ id }) => id)).toEqual(['existing', 'current', 'other'])
+  fireEvent.click(screen.getByRole('radio', { name: project.name }))
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Existing' } })
+  act(() => useProjectStore.setState({ projects: [...projects] }))
+  expect(screen.queryByRole('radio', { name: current.name })).toBeNull()
+  expect((screen.getByRole('radio', { name: project.name }) as HTMLInputElement).checked).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+  await waitFor(() => expect(onContinue).toHaveBeenCalledWith({ projectId: project.id }))
+})
+
+it.each([undefined, 'missing', 'archived'])(
+  'leaves selection empty when the current project is unavailable (%s)',
+  (currentProjectId) => {
+    useProjectStore.setState({
+      projects: [project, { ...project, id: 'archived', name: 'Archived research', archivedAt: 2 }]
+    })
+    render(
+      <PackageImportSelection
+        operation={operation}
+        currentProjectId={currentProjectId}
+        onCancel={vi.fn()}
+        onContinue={vi.fn()}
+      />
+    )
+    expect(screen.getAllByRole('radio')).toHaveLength(1)
+    expect((screen.getByRole('radio') as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(
+      true
+    )
+  }
+)
+
 it('uses an explicit creation action and returns without losing the selected destination', () => {
   render(<PackageImportSelection operation={operation} onCancel={vi.fn()} onContinue={vi.fn()} />)
   fireEvent.click(screen.getByRole('radio', { name: 'Existing research' }))

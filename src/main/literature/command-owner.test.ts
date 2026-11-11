@@ -1,5 +1,12 @@
+import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
+import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations/contracts'
+import { runInNewContext } from 'node:vm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { literatureRecordImportRequestSchema } from '@aipoch/literature-library/contracts'
+import {
+  literatureItemInputSchema,
+  literatureRecordImportRequestSchema
+} from '@aipoch/literature-library/contracts'
 
 vi.mock('../renderer-broadcast', () => ({ broadcastToRenderers: vi.fn() }))
 vi.mock('../storage/migration-state', () => ({
@@ -8,6 +15,7 @@ vi.mock('../storage/migration-state', () => ({
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createLiteratureCommandOwner } from './command-owner'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 
 type Services = Parameters<typeof createLiteratureCommandOwner>[0]
 const request = {
@@ -72,6 +80,56 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it.each([
+    'ZOTERO_BATCH_POLICY_CONFLICT',
+    'ZOTERO_FILL_TYPE_CONFLICT',
+    'ZOTERO_COLLECTION_CONFLICT',
+    'ZOTERO_PREVIEW_CHANGED',
+    'ZOTERO_CONNECTION_FAILED',
+    'ZOTERO_REQUEST_TIMED_OUT',
+    'ZOTERO_LOCAL_API_DISABLED'
+  ])('exposes the safe collector error %s to Web callers', async (message) => {
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run: vi.fn().mockRejectedValue(new Error(message)) }
+    } as unknown as Services)
+    await expect(owner.collect({ kind: 'zotero-preview' })).rejects.toEqual(
+      new ApplicationCommandError('command-failed', message)
+    )
+  })
+
+  it('leaves unexpected collector errors private', async () => {
+    const error = new Error('private database path')
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run: vi.fn().mockRejectedValue(error) }
+    } as unknown as Services)
+    await expect(owner.collect({ kind: 'zotero-preview' })).rejects.toBe(error)
+    expect(error).not.toBeInstanceOf(ApplicationCommandError)
+  })
+
+  it('forwards Zotero collection to its owner under the command write gate', async () => {
+    const result = { kind: 'preview' }
+    const run = vi.fn().mockResolvedValue(result)
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run }
+    } as unknown as Services)
+    const request = { kind: 'zotero-preview' as const }
+    const signal = new AbortController().signal
+    await expect(owner.collect(request, signal)).resolves.toBe(result)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+  })
+  it('forwards study snapshot requests and cancellation without writing to the catalog', async () => {
+    const run = vi.fn().mockResolvedValue({ itemId: 'paper' })
+    const owner = createLiteratureCommandOwner({
+      literatureOverview: { run }
+    } as unknown as Services)
+    const request = { itemId: 'paper', expectedSourceKey: 'source-key', language: 'en' }
+    const signal = new AbortController().signal
+    await owner.studySnapshot(request, signal)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
   it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
     const run = vi.fn().mockResolvedValue({ records: [] })
     const owner = createLiteratureCommandOwner({
@@ -138,6 +196,23 @@ describe('Literature command workflows', () => {
     const request = { action: 'list' as const }
     await expect(owner.journals(request)).resolves.toBe(result)
     expect(journalAttributes.run).toHaveBeenCalledWith(request)
+  })
+
+  it('uses the requested item order for citations and both export formats', async () => {
+    const first = { id: 'first', item: { title: 'First paper' } }
+    const second = { id: 'second', item: { title: 'Second paper' } }
+    const formatReferences = vi.fn()
+    const exportReferences = vi.fn()
+    const owner = createLiteratureCommandOwner({
+      literatureCatalog: { getMany: vi.fn().mockResolvedValue([first, second]) },
+      literatureCitationFormatter: { formatReferences, exportReferences }
+    } as unknown as Services)
+
+    await owner.formatReferences({ itemIds: ['second', 'first'], styleId: 'apa', locale: 'en-US' })
+
+    expect(formatReferences).toHaveBeenCalledWith([second, first], 'apa', 'en-US')
+    expect(exportReferences).toHaveBeenCalledWith([second, first], 'bibtex')
+    expect(exportReferences).toHaveBeenCalledWith([second, first], 'ris')
   })
 
   it('previews references without acquiring a file lease or creating a version', async () => {
@@ -366,4 +441,184 @@ describe('selected reference import', () => {
       }).success
     ).toBe(true)
   })
+})
+
+it.each([
+  ['10.1234/paper', 'doi:10.1234/paper'],
+  ['pmid:12345', 'pmid:12345'],
+  [' PMID:12345 ', 'PMID:12345'],
+  ['pmcid:PMC12345', 'pmcid:PMC12345'],
+  [' PMCID:PMC12345 ', 'PMCID:PMC12345'],
+  ['arxiv:2401.12345', 'arxiv:2401.12345'],
+  [' ArXiv:2401.12345 ', 'ArXiv:2401.12345']
+])('looks up %s without mutating the library', async (input, reference) => {
+  const item = { title: 'Resolved reference' }
+  const lookup = vi.fn().mockResolvedValue({ item })
+  const owner = createLiteratureCommandOwner({
+    literatureReferenceResolver: { lookup }
+  } as unknown as Services)
+  await expect(owner.lookupMetadata(input)).resolves.toBe(item)
+  expect(lookup).toHaveBeenCalledWith(reference)
+  expect(broadcastToRenderers).not.toHaveBeenCalled()
+})
+
+it('accepts exactly one bounded import source at the transport boundary', () => {
+  const items = [literatureItemInputSchema.parse({ itemType: 'review', title: 'Native record' })]
+  for (const mode of ['preview', 'commit'] as const) {
+    expect(literatureRecordImportRequestSchema.parse({ mode, items })).toEqual({ mode, items })
+    for (const source of [
+      {},
+      { items: [] },
+      { items, content: 'ambiguous' },
+      { items: [{ title: 'Incomplete' }] },
+      { items: Array.from({ length: 1001 }, () => items[0]) }
+    ]) {
+      expect(literatureRecordImportRequestSchema.safeParse({ mode, ...source }).success).toBe(false)
+    }
+  }
+})
+
+it('looks up one PMID without repeating EFetch when the abstract needs a fallback', async () => {
+  const fetchFn = vi.fn<typeof fetch>(async (url) =>
+    new URL(String(url)).pathname.endsWith('/efetch.fcgi')
+      ? new Response('PMID- 35486828\nTI  - A PubMed paper.\nAU  - Author A\n')
+      : new Response(
+          JSON.stringify({
+            resultList: {
+              result: [
+                {
+                  id: '35486828',
+                  source: 'MED',
+                  title: 'A PubMed paper.',
+                  abstractText: 'A fallback abstract.'
+                }
+              ]
+            }
+          })
+        )
+  )
+  const owner = createLiteratureCommandOwner({
+    literatureReferenceResolver: new LiteratureReferenceResolver(
+      fetchFn,
+      new LiteratureCitationFormatter()
+    )
+  } as unknown as Services)
+  const item = await owner.lookupMetadata('pmid:35486828')
+  expect(item.abstract).toBe('A fallback abstract.')
+  expect(
+    fetchFn.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith('/efetch.fcgi'))
+  ).toHaveLength(1)
+  expect(fetchFn).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  ['preview', 'items'],
+  ['commit', 'items'],
+  ['preview', 'content'],
+  ['commit', 'content']
+] as const)('bounds UTF-8 volume for %s %s independently of record count', (mode, kind) => {
+  const abstract = '科'.repeat(12_000)
+  const item = literatureItemInputSchema.parse({
+    itemType: 'journalArticle',
+    title: 'A paper',
+    abstract
+  })
+  // Legal record count and character count, but more than 32 MiB once encoded as UTF-8.
+  const source =
+    kind === 'items'
+      ? { items: Array.from({ length: 1000 }, () => item) }
+      : { content: abstract.repeat(1000) }
+  expect(literatureRecordImportRequestSchema.safeParse({ mode, ...source }).success).toBe(false)
+})
+
+it('accepts the exact native byte budget and rejects one additional byte', () => {
+  const item = literatureItemInputSchema.parse({ itemType: 'review', title: 'A paper' })
+  const overhead = new TextEncoder().encode(JSON.stringify([item])).byteLength
+  item.abstract = 'a'.repeat(LITERATURE_RECORD_IMPORT_MAX_BYTES - overhead)
+  expect(
+    literatureRecordImportRequestSchema.safeParse({ mode: 'preview', items: [item] }).success
+  ).toBe(true)
+  item.abstract += 'a'
+  expect(
+    literatureRecordImportRequestSchema.safeParse({ mode: 'preview', items: [item] }).success
+  ).toBe(false)
+})
+
+it.each(['bigint', 'cycle'] as const)(
+  'rejects unserializable %s metadata as a validation failure',
+  (kind) => {
+    const typeFields: Record<string, unknown> = { value: BigInt(1) }
+    if (kind === 'cycle') typeFields.value = typeFields
+    const item = literatureItemInputSchema.parse({
+      itemType: 'review',
+      title: 'A paper',
+      typeFields
+    })
+    expect(
+      literatureRecordImportRequestSchema.safeParse({ mode: 'preview', items: [item] }).success
+    ).toBe(false)
+  }
+)
+
+it.each([
+  { kind: 'NaN', value: NaN },
+  { kind: 'Infinity', value: Infinity },
+  { kind: '-Infinity', value: -Infinity },
+  { kind: 'function', value: (): number => 1 },
+  { kind: 'symbol', value: Symbol('unsupported') },
+  { kind: 'Date', value: new Date(0) },
+  { kind: 'Map', value: new Map([['key', 1]]) },
+  { kind: 'Set', value: new Set([1]) },
+  { kind: 'toJSON coercion', value: { toJSON: (): number => 1 } },
+  { kind: 'undefined array entry', value: [undefined] },
+  { kind: 'array hole', value: Array(1) }
+])('rejects extension values that JSON would silently alter: $kind', ({ value }) => {
+  const item = literatureItemInputSchema.parse({
+    itemType: 'review',
+    title: 'A paper',
+    typeFields: { nested: { value } }
+  })
+  expect(
+    literatureRecordImportRequestSchema.safeParse({ mode: 'preview', items: [item] }).success
+  ).toBe(false)
+})
+
+it('accepts ordinary JSON data independently of the JavaScript realm that created it', () => {
+  const typeFields: Record<string, unknown> = runInNewContext(
+    '({ nested: { scores: [0, 1, 2], flag: false, none: null } })'
+  )
+  const item = literatureItemInputSchema.parse({
+    itemType: 'review',
+    title: 'Cross-realm paper',
+    typeFields
+  })
+  const parsed = literatureRecordImportRequestSchema.safeParse({ mode: 'preview', items: [item] })
+  expect(parsed.success).toBe(true)
+  if (parsed.success && 'items' in parsed.data)
+    expect(JSON.stringify(parsed.data.items[0].typeFields)).toBe(JSON.stringify(typeFields))
+})
+
+it.each(['new Map([["key",1]])', 'new Set([1])', 'new Date(0)'])(
+  'rejects foreign non-JSON containers: %s',
+  (expression) => {
+    const value: unknown = runInNewContext(expression)
+    const item = literatureItemInputSchema.parse({
+      itemType: 'review',
+      title: 'A paper',
+      typeFields: { value }
+    })
+    expect(
+      literatureRecordImportRequestSchema.safeParse({ mode: 'preview', items: [item] }).success
+    ).toBe(false)
+  }
+)
+
+it('forwards batch controls and cancellation without constructing storage in the adapter', async () => {
+  const run = vi.fn().mockResolvedValue(null)
+  const owner = createLiteratureCommandOwner({
+    literatureOverviewBatch: { run }
+  } as unknown as Services)
+  const signal = new AbortController().signal
+  await expect(owner.overviewBatch({ action: 'read' }, signal)).resolves.toBeNull()
+  expect(run).toHaveBeenCalledExactlyOnceWith({ action: 'read' }, signal)
 })

@@ -74,6 +74,15 @@ type AcpConnectionResourceOwnerOptions = Readonly<{
   closeMcpHost?: () => Promise<void>
 }>
 
+type PendingCleanup = {
+  resource: AcpUnattachedConnectionResource
+  closeConnection: boolean
+  processReaped: boolean
+  serviceReaped: boolean
+  attemptEpoch?: number
+  inFlight?: Promise<void>
+}
+
 type CurrentResource = AcpAttachedConnectionResource & {
   epoch: number
   capabilities: AcpConnectionCapabilities
@@ -96,8 +105,7 @@ export class AcpConnectionResourceOwner {
   private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly releasedBridgeLeases = new WeakSet<object>()
   private shuttingDown = false
-  private lastTreeKillReaped = true
-  private readonly pendingOpenCodeCleanup = new Set<Promise<void>>()
+  private readonly pendingCleanup = new Set<PendingCleanup>()
 
   constructor(private readonly options: AcpConnectionResourceOwnerOptions = {}) {}
 
@@ -107,6 +115,14 @@ export class AcpConnectionResourceOwner {
 
   get connection(): ClientConnection | undefined {
     return this.currentResource()?.connection
+  }
+
+  get transition(): Promise<unknown> | undefined {
+    const active = [...this.pendingCleanup].flatMap((cleanup) =>
+      cleanup.inFlight ? [cleanup.inFlight] : []
+    )
+    if (this.connectInFlight) active.push(this.connectInFlight.then(() => undefined))
+    return active.length ? Promise.all(active) : undefined
   }
 
   get capabilities(): AcpConnectionCapabilities {
@@ -178,29 +194,17 @@ export class AcpConnectionResourceOwner {
     onFailure: CleanupFailure = (stage, error) =>
       safeLogCleanupError(`ACP ${stage} cleanup failed`, error)
   ): Promise<void> {
-    // Ownership transfers synchronously before the first cleanup await, so a successor may attach
-    // without an older process or lease remaining reachable through this owner.
+    if (expectedEpoch !== this.resourceEpoch) return
+    // Detached resources remain cleanup-owned until every writer is confirmed reaped. They never
+    // become published again and cannot authorize teardown of a successor connection.
     const resource = this.detach(expectedEpoch)
-    if (!resource) return
-    this.expectedProcessExits.add(resource.process)
-
-    try {
-      resource.connection.close()
-    } catch (error) {
-      this.reportCleanupFailure(onFailure, 'connection', error)
-    }
-
-    let reaped = false
-    try {
-      reaped = await this.reapProcessTree(resource.process)
-    } catch (error) {
-      this.reportCleanupFailure(onFailure, 'agent-process', error)
-    }
-    await this.releaseBridgeLease(resource.bridgeLease)
-    await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
-    await this.releaseProviderTransportLease(resource.providerTransportLease)
-    const serviceReaped = await this.releaseOpenCodeService(resource.openCodeService)
-    if (reaped && serviceReaped) resource.openCodeStore?.release()
+    if (resource) this.retainCleanup(resource, true)
+    await Promise.all(
+      [...this.pendingCleanup]
+        // Successor startup may overlap an older teardown. Shutdown joins all work in finish().
+        .filter((cleanup) => !cleanup.inFlight || cleanup.attemptEpoch === expectedEpoch)
+        .map((cleanup) => this.cleanResource(cleanup, onFailure))
+    )
   }
 
   async cleanupUnattached(
@@ -208,42 +212,12 @@ export class AcpConnectionResourceOwner {
     onFailure: CleanupFailure = (stage, error) =>
       safeLogCleanupError(`unattached ACP ${stage} cleanup failed`, error)
   ): Promise<void> {
-    if (resource.process) this.expectedProcessExits.add(resource.process)
-    try {
-      resource.connection?.close()
-    } catch (error) {
-      this.reportCleanupFailure(onFailure, 'connection', error)
-    }
-
-    let reaped = !resource.process
-    if (resource.process) {
-      try {
-        reaped = await this.reapProcessTree(resource.process)
-      } catch (error) {
-        this.reportCleanupFailure(onFailure, 'agent-process', error)
-      }
-    }
-    await this.releaseBridgeLease(resource.bridgeLease)
-    await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
-    await this.releaseProviderTransportLease(resource.providerTransportLease)
-    const serviceReaped = await this.releaseOpenCodeService(resource.openCodeService)
-    if (reaped && serviceReaped) resource.openCodeStore?.release()
+    await this.cleanResource(this.retainCleanup(resource, true), onFailure)
   }
 
   cleanupUnexpectedClose(expectedEpoch: number): void {
     const resource = this.detach(expectedEpoch)
-    if (!resource) return
-    this.expectedProcessExits.add(resource.process)
-    if (resource.openCodeStore || resource.openCodeService) {
-      this.trackOpenCodeCleanup(resource)
-    } else {
-      void this.reapProcessTree(resource.process).catch((error) => {
-        safeLogCleanupError('agent process cleanup after unexpected close failed', error)
-      })
-    }
-    void this.releaseBridgeLease(resource.bridgeLease)
-    void this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
-    void this.releaseProviderTransportLease(resource.providerTransportLease)
+    if (resource) void this.cleanResource(this.retainCleanup(resource, false))
   }
 
   shutdownSynchronously(onSuperseded: () => void): void {
@@ -253,38 +227,35 @@ export class AcpConnectionResourceOwner {
       onSuperseded()
     } finally {
       const resource = this.detach(teardownEpoch)
-      if (resource?.process) this.expectedProcessExits.add(resource.process)
-      try {
-        resource?.connection.close()
-      } catch (error) {
-        safeLogCleanupError('ACP connection close during shutdown failed', error)
-      }
-      if (resource?.process) {
+      if (resource) {
+        const cleanup = this.retainCleanup(resource, true)
+        this.closeResourceConnection(cleanup)
         try {
           if (!resource.process.killed) resource.process.kill()
         } catch (error) {
           safeLogCleanupError('agent process kill during shutdown failed', error)
         }
       }
-      void this.releaseBridgeLease(resource?.bridgeLease)
-      void this.releaseMessagesBridgeLease(resource?.messagesBridgeLease)
-      void this.releaseProviderTransportLease(resource?.providerTransportLease)
-      if (resource && (resource.openCodeStore || resource.openCodeService))
-        this.trackOpenCodeCleanup(resource)
+      for (const cleanup of this.pendingCleanup) void this.cleanResource(cleanup)
       void this.closeMcp()
     }
   }
 
+  get cleanupConfirmed(): boolean {
+    return (
+      !this.current && !this.provisional && !this.connectInFlight && this.pendingCleanup.size === 0
+    )
+  }
+
   beginAwaitableShutdown(latch: boolean): AcpConnectionShutdownHandle {
-    this.lastTreeKillReaped = true
     if (latch) this.shuttingDown = true
     const inFlight = this.connectInFlight
 
     return Object.freeze({
       finish: async () => {
         if (inFlight) await inFlight.catch(() => undefined)
-        await Promise.all(this.pendingOpenCodeCleanup)
-        return { reaped: this.lastTreeKillReaped }
+        await Promise.all([...this.pendingCleanup].map((cleanup) => cleanup.inFlight))
+        return { reaped: this.cleanupConfirmed }
       }
     })
   }
@@ -389,14 +360,8 @@ export class AcpConnectionResourceOwner {
 
   private async reapProcessTree(process: ChildProcessWithoutNullStreams): Promise<boolean> {
     this.expectedProcessExits.add(process)
-    try {
-      const result = await terminateProcessTree(process, undefined, log)
-      this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
-      return result.reaped
-    } catch (error) {
-      this.lastTreeKillReaped = false
-      throw error
-    }
+    const result = await terminateProcessTree(process, undefined, log)
+    return result.reaped
   }
 
   private async releaseBridgeLease(lease: ResponsesTransportLease): Promise<void> {
@@ -433,28 +398,83 @@ export class AcpConnectionResourceOwner {
     if (!lease) return true
     try {
       const result = await lease.release()
-      this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
       return result.reaped
     } catch (error) {
-      this.lastTreeKillReaped = false
       safeLogCleanupError('OpenCode HTTP service release failed', error)
       return false
     }
   }
 
-  private trackOpenCodeCleanup(resource: AcpAttachedConnectionResource): void {
-    const cleanup = Promise.all([
-      this.reapProcessTree(resource.process).catch((error) => {
-        safeLogCleanupError('OpenCode process cleanup failed', error)
-        return false
-      }),
-      this.releaseOpenCodeService(resource.openCodeService)
-    ]).then(([processReaped, serviceReaped]) => {
-      // Keep ownership if a writer may still be alive; releasing would permit unsafe migration.
-      if (processReaped && serviceReaped) resource.openCodeStore?.release()
-    })
-    this.pendingOpenCodeCleanup.add(cleanup)
-    void cleanup.finally(() => this.pendingOpenCodeCleanup.delete(cleanup))
+  private retainCleanup(
+    resource: AcpUnattachedConnectionResource,
+    closeConnection: boolean
+  ): PendingCleanup {
+    if (resource.process) this.expectedProcessExits.add(resource.process)
+    const cleanup: PendingCleanup = {
+      resource,
+      closeConnection,
+      processReaped: !resource.process,
+      serviceReaped: !resource.openCodeService
+    }
+    this.pendingCleanup.add(cleanup)
+    return cleanup
+  }
+
+  private closeResourceConnection(
+    cleanup: PendingCleanup,
+    onFailure: CleanupFailure = (stage, error) =>
+      safeLogCleanupError(`ACP ${stage} cleanup failed`, error)
+  ): void {
+    if (!cleanup.closeConnection) return
+    cleanup.closeConnection = false
+    try {
+      cleanup.resource.connection?.close()
+    } catch (error) {
+      this.reportCleanupFailure(onFailure, 'connection', error)
+    }
+  }
+
+  private cleanResource(
+    cleanup: PendingCleanup,
+    onFailure: CleanupFailure = (stage, error) =>
+      safeLogCleanupError(`ACP ${stage} cleanup failed`, error)
+  ): Promise<void> {
+    if (cleanup.inFlight) return cleanup.inFlight
+    const completion = Promise.withResolvers<void>()
+    cleanup.inFlight = completion.promise
+    cleanup.attemptEpoch = this.resourceEpoch
+    const clear = (): void => {
+      cleanup.inFlight = undefined
+    }
+    void completion.promise.then(clear, clear)
+    void this.performResourceCleanup(cleanup, onFailure).then(completion.resolve, completion.reject)
+    return completion.promise
+  }
+
+  private async performResourceCleanup(
+    cleanup: PendingCleanup,
+    onFailure: CleanupFailure
+  ): Promise<void> {
+    const { resource } = cleanup
+    this.closeResourceConnection(cleanup, onFailure)
+    if (!cleanup.processReaped && resource.process) {
+      try {
+        cleanup.processReaped = await this.reapProcessTree(resource.process)
+      } catch (error) {
+        this.reportCleanupFailure(onFailure, 'agent-process', error)
+      }
+    }
+    await this.releaseBridgeLease(resource.bridgeLease)
+    await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
+    await this.releaseProviderTransportLease(resource.providerTransportLease)
+    if (!cleanup.serviceReaped) {
+      cleanup.serviceReaped = await this.releaseOpenCodeService(resource.openCodeService)
+    }
+    // Keep storage ownership while either writer may still be alive, including across retries.
+    if (cleanup.processReaped && cleanup.serviceReaped) {
+      resource.openCodeStore?.release()
+      this.pendingCleanup.delete(cleanup)
+    }
   }
 
   private reportCleanupFailure(

@@ -45,8 +45,9 @@ const createActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => 
 const loadAgentLoadingMessageModule = async (): Promise<{
   getAgentLoadingPhase: (
     session: ChatSession | undefined,
-    facts?: Pick<SessionActionabilityFacts, 'credentialPending'>
+    facts?: Pick<SessionActionabilityFacts, 'credentialPending'> & { sendPreparing?: boolean }
   ) =>
+    | 'preparing'
     | 'hidden'
     | 'thinking'
     | 'interacting-with-tools'
@@ -55,6 +56,25 @@ const loadAgentLoadingMessageModule = async (): Promise<{
 }> => import('./agent-loading-message')
 
 describe('agent loading message state', () => {
+  it('keeps preparation silent even after ACP binding, with user interactions first', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      messages: [createMessage({})],
+      activeRun: { promptMessageId: 'message-1', startedAt: 1 }
+    })
+    expect(getAgentLoadingPhase(session, { sendPreparing: true })).toBe('preparing')
+    expect(getAgentLoadingPhase({ ...session, isPending: true }, { sendPreparing: true })).toBe(
+      'preparing'
+    )
+    expect(getAgentLoadingPhase(session, { sendPreparing: true, credentialPending: true })).toBe(
+      'waiting-for-response'
+    )
+    expect(
+      getAgentLoadingPhase({ ...session, status: 'waiting-plan-approval' }, { sendPreparing: true })
+    ).toBe('waiting-for-approval')
+    expect(getAgentLoadingPhase(session, { sendPreparing: false })).toBe('thinking')
+  })
+
   it('shows loading after the active prompt until agent text arrives', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({

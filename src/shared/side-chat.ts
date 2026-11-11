@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AGENT_FRAMEWORK_ID_VALUES } from './agent-framework-id'
 import { defineApplicationCommandContract } from './application-command-contract'
 import type { PersistedConversationGraph } from './conversation-graph'
 import type { ReasoningEffort } from './model-preference-contract'
@@ -174,7 +175,7 @@ export const sideChatCommandContracts = {
     z
       .object({
         sideSessionId: identity,
-        frameworkId: z.enum(['claude-code', 'opencode', 'codex', 'codebuddy']),
+        frameworkId: z.enum(AGENT_FRAMEWORK_ID_VALUES),
         model: z.string().optional()
       })
       .strict()

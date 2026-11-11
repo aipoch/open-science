@@ -77,6 +77,7 @@ const setPlatform = (value: string): void => {
 afterEach(() => {
   setPlatform(originalPlatform)
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   vi.clearAllMocks()
   vi.useRealTimers()
 })
@@ -84,6 +85,8 @@ afterEach(() => {
 describe('terminateProcessTree (win32)', () => {
   it('kills the whole tree via taskkill and resolves when taskkill exits cleanly', async () => {
     setPlatform('win32')
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\fixture')
     const killer = new EventEmitter()
     spawnMock.mockReturnValueOnce(killer)
     const child = new FakeChild(4321)
@@ -91,7 +94,7 @@ describe('terminateProcessTree (win32)', () => {
     const pending = terminateProcessTree(child as never)
 
     expect(spawnMock).toHaveBeenCalledWith(
-      'taskkill',
+      'C:\\Windows\\System32\\taskkill.exe',
       ['/pid', '4321', '/T', '/F'],
       expect.objectContaining({ windowsHide: true })
     )
@@ -100,6 +103,27 @@ describe('terminateProcessTree (win32)', () => {
     await expect(pending).resolves.toEqual({ reaped: true })
     // A clean taskkill reaps the tree; no direct fallback kill is needed.
     expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('resolves taskkill beside ComSpec when the Windows root variables are unavailable', async () => {
+    setPlatform('win32')
+    vi.stubEnv('SystemRoot', '')
+    vi.stubEnv('WINDIR', '')
+    vi.stubEnv('ComSpec', 'C:\\Windows\\System32\\cmd.exe')
+    const killer = new EventEmitter()
+    spawnMock.mockReturnValueOnce(killer)
+    const child = new FakeChild(4321)
+
+    const pending = terminateProcessTree(child as never)
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\taskkill.exe',
+      ['/pid', '4321', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true })
+    )
+
+    killer.emit('exit', 0, null)
+    await expect(pending).resolves.toEqual({ reaped: true })
   })
 
   it('does not fall back spuriously after a clean taskkill even once the grace elapses', async () => {
@@ -806,7 +830,12 @@ describe('Linux cold recovery marker scan', () => {
   const leader = { pid: 1000, birthToken: 'linux-proc-starttime:100' }
   const spawnedAt = 500_000
 
-  const prepare = (command: string, starttime: number, environment: string | Error): void => {
+  const prepare = (
+    command: string,
+    starttime: number,
+    environment: string | Error,
+    status?: string
+  ): void => {
     setPlatform('linux')
     vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
     vi.spyOn(process, 'kill').mockImplementation(() => {
@@ -820,6 +849,7 @@ describe('Linux cold recovery marker scan', () => {
     readFileSyncMock.mockImplementation((path: string) => {
       if (path === '/proc/uptime') return '1000 0'
       if (path === '/proc/2000/stat') return stat
+      if (path === '/proc/2000/status' && status !== undefined) return status
       if (path === '/proc/2000/environ') {
         if (environment instanceof Error) throw environment
         return environment
@@ -836,6 +866,19 @@ describe('Linux cold recovery marker scan', () => {
       expect(process.kill).toHaveBeenCalledExactlyOnceWith(-1000, 0)
     }
   )
+
+  it.each([
+    ['1', 'gone'],
+    ['0', 'blocked']
+  ])('uses Kthread=%s to classify a newer unreadable task', async (flag, outcome) => {
+    prepare(
+      'kworker/u16:7',
+      60_000,
+      Object.assign(new Error('denied'), { code: 'EACCES' }),
+      `Name:\tkworker/u16:7\nKthread:\t${flag}\n`
+    )
+    await expect(proveRecordedPosixLeaderGone(leader, 'owner', spawnedAt)).resolves.toBe(outcome)
+  })
 
   it.each(['EACCES', 'EPERM', 'EIO'])(
     'retains a newer unreadable candidate with parentheses in comm (%s)',

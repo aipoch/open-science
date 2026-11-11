@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from '@playwright/test'
+import { expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
@@ -19,6 +19,30 @@ const ARTIFACT_PROMPT = 'Create the turn outcome retry artifact.'
 const FAILURE = 'Synthetic turn outcome failure.'
 const SAVE_WARNING =
   'Open-Science could not save the latest conversation changes. Retry before closing the app.'
+
+const selectNotice = async (page: Page, kind: 'action' | 'turn' | 'session'): Promise<Locator> => {
+  const slot = page.getByTestId('conversation-composer-dock').getByTestId('composer-notice-slot')
+  const attribute = kind === 'action' ? 'data-notice-operation' : 'data-slot'
+  const value =
+    kind === 'action'
+      ? 'action'
+      : kind === 'turn'
+        ? 'turn-outcome-notice'
+        : 'session-recovery-notice'
+  await expect(slot).toBeVisible()
+  if ((await slot.getAttribute(attribute)) !== value) {
+    await slot.getByRole('button', { name: /^\d+ more notices?$/ }).click()
+    await slot.locator(`[data-select-notice*=":${kind}:"]`).click()
+  }
+  await expect(slot).toHaveAttribute(attribute, value)
+  return slot
+}
+
+const showDiagnostics = async (notice: Locator, error: string): Promise<void> => {
+  await expect(notice.locator('pre')).toContainText(error)
+  if (!(await notice.locator('pre').isVisible())) await notice.locator('summary').click()
+  await expect(notice.locator('pre')).toBeVisible()
+}
 
 const sessionForPrompt = async (page: Page, prompt: string): Promise<PersistedChatSession> => {
   let session: PersistedChatSession | undefined
@@ -79,11 +103,11 @@ test('keeps the failed turn and Operation Error while a later turn succeeds', as
   )
   const projectId = await createProject(page, 'Turn outcome failure history')
   await submit(page, FAILURE_PROMPT)
-  await expect(page.getByText(FAILURE, { exact: false })).toBeVisible()
+  await showDiagnostics(await selectNotice(page, 'turn'), FAILURE)
   await expect(page.getByRole('button', { name: 'Report this error', exact: true })).toBeVisible()
   await expect
     .poll(async () => outcomeFor(await sessionForPrompt(page, FAILURE_PROMPT), FAILURE_PROMPT))
-    .toMatchObject({ kind: 'failed', errorReportable: true })
+    .toMatchObject({ kind: 'failed', failure: { category: 'internal' } })
   const failed = await sessionForPrompt(page, FAILURE_PROMPT)
   const identity = { projectId, sessionId: failed.id }
   const original = await readRawOutcomeSession(app, identity)
@@ -98,10 +122,8 @@ test('keeps the failed turn and Operation Error while a later turn succeeds', as
     await submit(page, rejectedPrompt)
     await expect.poll(fault.hits).toBeGreaterThan(0)
     await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveText(rejectedPrompt)
-    await expect(
-      page.getByText('Synthetic submission write failure.', { exact: false }).first()
-    ).toBeVisible()
-    await expect(page.getByText(FAILURE, { exact: false })).toBeVisible()
+    await showDiagnostics(await selectNotice(page, 'action'), 'Synthetic submission write failure.')
+    await showDiagnostics(await selectNotice(page, 'turn'), FAILURE)
     await expect(page.getByRole('button', { name: 'Report this error', exact: true })).toBeVisible()
     const rolledBack = await readRawOutcomeSession(app, identity)
     expect(rolledBack.conversationGraph?.messages).toEqual(original.conversationGraph?.messages)
@@ -122,7 +144,7 @@ test('keeps the failed turn and Operation Error while a later turn succeeds', as
       mode: 'new'
     })
     const currentNotice = page.locator(
-      `[data-slot="turn-outcome-notice"][data-prompt-message-id="${failed.messages.find((message) => message.role === 'user')!.id}"]`
+      `[data-testid="composer-notice-slot"][data-slot="turn-outcome-notice"][data-prompt-message-id="${failed.messages.find((message) => message.role === 'user')!.id}"]`
     )
     await expect(currentNotice).toBeVisible()
     await expect(currentNotice).toContainText(FAILURE)
@@ -150,8 +172,8 @@ test('keeps the failed turn and Operation Error while a later turn succeeds', as
   await expect(historical).toBeVisible()
   await expect(page.getByText(FAILURE, { exact: false })).toBeHidden()
   await evidence(page, testInfo, 'later-success-historical-collapsed', completed)
-  await historical.locator('summary').click()
-  await expect(page.getByText(FAILURE, { exact: false })).toBeVisible()
+  await historical.locator(':scope > summary').click()
+  await showDiagnostics(historical.getByTestId('composer-notice-slot'), FAILURE)
   await expect(page.getByRole('button', { name: 'Report this error', exact: true })).toBeVisible()
   await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
@@ -282,7 +304,9 @@ for (const earlyOutcome of ['completed', 'failed'] as const)
       const prepared = await sessionForPrompt(page, editedPrompt)
       expect(prepared.promptPreparation?.mode).toBe('new')
       await expect(
-        page.locator(`[data-slot="turn-outcome-notice"][data-prompt-message-id="${latestId}"]`)
+        page.locator(
+          `[data-testid="composer-notice-slot"][data-slot="turn-outcome-notice"][data-prompt-message-id="${latestId}"]`
+        )
       ).toBeVisible()
       await evidence(page, testInfo, `early-${earlyOutcome}-edit-keeps-latest-failure`, prepared)
     } finally {
@@ -291,7 +315,9 @@ for (const earlyOutcome of ['completed', 'failed'] as const)
     await expect
       .poll(async () => outcomeFor(await sessionForPrompt(page, editedPrompt), editedPrompt))
       .toMatchObject({ kind: 'completed' })
-    await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
+    await expect(
+      page.locator('[data-testid="composer-notice-slot"][data-slot="turn-outcome-notice"]')
+    ).toHaveCount(0)
     expect(outcomeFor(await readRawOutcomeSession(app, identity), FAILURE_PROMPT)).toMatchObject({
       kind: 'failed'
     })
@@ -372,12 +398,16 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
       expect(preparing.promptPreparation?.noticeBaseline?.promptMessageId).toBe(latestId)
       if (latestKind === 'legacy-failed') {
         await expect(
-          page.locator(`[data-slot="turn-outcome-notice"][data-prompt-message-id="${latestId}"]`)
+          page.locator(
+            `[data-testid="composer-notice-slot"][data-slot="turn-outcome-notice"][data-prompt-message-id="${latestId}"]`
+          )
         ).toBeVisible()
-        await expect(page.getByText(FAILURE, { exact: false })).toBeVisible()
+        await showDiagnostics(await selectNotice(page, 'turn'), FAILURE)
         await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
       } else {
-        await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
+        await expect(
+          page.locator('[data-testid="composer-notice-slot"][data-slot="turn-outcome-notice"]')
+        ).toHaveCount(0)
         await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(1)
         await expect(page.locator('[data-slot="session-recovery-notice"]')).toBeVisible()
         await expect(
@@ -394,7 +424,9 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
     await expect
       .poll(async () => outcomeFor(await sessionForPrompt(page, editedPrompt), editedPrompt))
       .toMatchObject({ kind: 'completed' })
-    await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
+    await expect(
+      page.locator('[data-testid="composer-notice-slot"][data-slot="turn-outcome-notice"]')
+    ).toHaveCount(0)
     await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   })
@@ -440,9 +472,7 @@ test('edited prompt save rejection restores the original Branch and permits fres
   try {
     await edit(rejected)
     await expect.poll(fault.hits).toBeGreaterThan(0)
-    await expect(
-      page.getByText('Synthetic submission write failure.', { exact: false }).first()
-    ).toBeVisible()
+    await showDiagnostics(await selectNotice(page, 'action'), 'Synthetic submission write failure.')
     await expect
       .poll(async () => (await readRawOutcomeSession(app, identity)).promptPreparation)
       .toBeUndefined()
@@ -549,9 +579,8 @@ test('cancelled Resume completes the original turn without an Attention dot', as
     await submit(page, rejectedPrompt)
     await expect.poll(fault.hits).toBeGreaterThan(0)
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeEnabled()
-    await expect(
-      page.getByText('Synthetic submission write failure.', { exact: false }).first()
-    ).toBeVisible()
+    await showDiagnostics(await selectNotice(page, 'action'), 'Synthetic submission write failure.')
+    await selectNotice(page, 'session')
   } finally {
     await fault.restore()
   }
@@ -856,7 +885,7 @@ test('Artifact publication Retry completes the same turn and Version exactly onc
     await expect(
       page.getByRole('button', { name: 'Retry Artifact publication', exact: true })
     ).toBeHidden()
-    await historical.locator('summary').click()
+    await historical.locator(':scope > summary').click()
     await expect(
       page.getByRole('button', { name: 'Retry Artifact publication', exact: true })
     ).toBeVisible()

@@ -1,4 +1,8 @@
-import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
+import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
+import { PromptOptimizationService } from './projects/prompt-optimization'
+import { composeResearchFilm } from './composition/research-film'
+import { createLocalModelApi } from './local-models/owner'
+import { registerLocalModelIpcHandlers } from './desktop-surface-declarations'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
 import type { SessionSummary } from '../shared/session-persistence'
@@ -61,7 +65,11 @@ import { LocalePreferenceOwner } from './locale/owner'
 import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
 import { runtimeMetadata } from './runtime-metadata'
 
-import { QUIT_SHUTDOWN_BUDGET_MS, type ShutdownStepOutcome } from './lifecycle-shutdown'
+import {
+  createQuitPreparation,
+  QUIT_SHUTDOWN_BUDGET_MS,
+  type ShutdownStepOutcome
+} from './lifecycle-shutdown'
 import { type NativeTranslator } from './locale/main-process-messages'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
 import { TaskNotificationService } from './notifications/task-notifications'
@@ -88,6 +96,7 @@ import {
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
+import { defaultOcrLanguagesForLocale } from '../shared/local-models'
 
 export type IpcRegistrationOptions = {
   notificationDelivery?: (
@@ -313,7 +322,6 @@ export const createApplicationModules = async (
   })
   const documentReading = await composeDocumentReading({
     sessionPackageService: sessionPackages.sessionPackageService,
-    declareElectronAdapter,
     applicationEvents,
     pdfUploadImporter: uploadStorage.pdfUploadImporter,
     uploadRepository: uploadStorage.uploadRepository,
@@ -321,9 +329,46 @@ export const createApplicationModules = async (
     ...managedFiles,
     ...sessionAuthority,
     modules,
-    settingsService: settingsBootstrap.settingsService
+    settingsService: settingsBootstrap.settingsService,
+    defaultOcrLanguages: () => defaultOcrLanguagesForLocale(localeOwner.snapshot().locale)
   })
+  const optimizationRunner = new RestrictedInferenceRunner({
+    appVersion: runtimeMetadata().version,
+    configRoot: sessionAuthority.configRoot,
+    profileNamespace: 'prompt-optimization',
+    taskOnly: true,
+    allowNativeCodexSubscription: true,
+    resolveTarget: (target, context) =>
+      settingsBootstrap.settingsService.resolveExplicitAgentBackend(target, context)
+  })
+  await modules.add({ optimizationRunner }, ({ optimizationRunner: runner }) => ({
+    name: 'prompt-optimization',
+    capability: undefined,
+    start: () => runner.sweepStaleProfiles(),
+    dispose: () => runner.shutdown()
+  }))
+  const promptOptimization = new PromptOptimizationService({
+    getProject: (id) => sessionPackages.projectRepository.get(id),
+    resolveTarget: settingsBootstrap.resolveSessionAgentTarget,
+    runner: optimizationRunner
+  })
+  const researchFilm = await composeResearchFilm({
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...sessionPackages,
+    modules
+  })
+  const localModels = createLocalModelApi(
+    documentReading.localModelOwner,
+    documentReading.localTranslationModels,
+    documentReading.ocrModels,
+    researchFilm.researchNarrationModels,
+    researchFilm.videoExportModels
+  )
+  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const projectLifecycle = composeProjectLifecycle({
+    promptOptimization,
     applicationEvents,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,
@@ -775,6 +820,8 @@ export const createApplicationModules = async (
     managedFiles,
     sessionAuthority,
     documentReading,
+    researchFilm,
+    localModels,
     projectLifecycle,
     notebookRuntime,
     researchCatalog,
@@ -819,7 +866,13 @@ export const createApplicationModules = async (
     disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
   }))
   composition.phase('commands')
-  let quitPreparationGeneration = 0
+  const quitPreparation = createQuitPreparation({
+    quiesceAuthentication: () => settingsBootstrap.settingsService.quiesceAuthentication(),
+    prepareAgent: () => agentRuntime.runtime.prepareForQuit(),
+    prepareBackends: () => handoff.shutdownCoordinator.runForQuitPreparation(),
+    abortAgent: () => agentRuntime.runtime.abortQuitPreparation(),
+    resumeSideChat: () => sideChat.sideChatRuntime.resumeAfterHandoff()
+  })
 
   return {
     fetchPreview: createManagedPreviewProtocolHandler(managedFiles.previewResources),
@@ -913,25 +966,8 @@ export const createApplicationModules = async (
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
     holdSettingsInstallAdmission: () => settingsBootstrap.settingsService.holdInstallAdmission(),
-    prepareForQuit: async () => {
-      quitPreparationGeneration += 1
-      const outcome = await agentRuntime.runtime.prepareForQuit()
-      if (outcome !== 'completed') return outcome
-      return handoff.shutdownCoordinator.runForQuitPreparation()
-    },
-    abortQuitPreparation: () => {
-      try {
-        agentRuntime.runtime.abortQuitPreparation()
-      } finally {
-        const generation = quitPreparationGeneration
-        const resume = (): void => {
-          if (generation === quitPreparationGeneration)
-            sideChat.sideChatRuntime.resumeAfterHandoff()
-        }
-        if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(resume)
-        else resume()
-      }
-    },
+    prepareForQuit: quitPreparation.prepareForQuit,
+    abortQuitPreparation: quitPreparation.abortQuitPreparation,
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
       compute: {

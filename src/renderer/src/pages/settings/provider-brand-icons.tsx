@@ -17,6 +17,15 @@ const iconProps = ({ size = 20, ...props }: BrandIconProps): SVGProps<SVGSVGElem
   ...props
 })
 
+// Official navigation mark from https://aipoch.com/; inherit the surrounding theme color.
+export const AipochMono = (props: BrandIconProps): React.JSX.Element => (
+  <svg {...iconProps(props)} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+    <title>AIPOCH</title>
+    <circle cx="16" cy="16" r="15" stroke="currentColor" strokeOpacity="0.4" strokeWidth="1" />
+    <circle cx="16" cy="16" r="2" fill="currentColor" />
+  </svg>
+)
+
 export const ClaudeColor = (props: BrandIconProps): React.JSX.Element => (
   <svg {...iconProps(props)}>
     <title>Claude</title>
@@ -72,5 +81,36 @@ export const TencentCloudColor = (props: BrandIconProps): React.JSX.Element => (
       d="M18.4564 8.74536C17.4836 6.12171 14.9188 4.28516 12.0003 4.28516C8.5511 4.28516 5.80945 6.82135 5.27881 9.96973C5.54413 9.96973 5.80945 9.88228 6.16321 9.88228C6.51697 9.88228 6.95917 9.96973 7.31294 9.96973C7.75514 7.78336 9.70082 6.20917 12.0003 6.20917C13.946 6.20917 15.6263 7.34608 16.4223 9.00773C16.4223 9.00773 16.5107 9.09518 16.5107 9.00773C17.1298 8.92027 17.8373 8.74536 18.4564 8.74536C18.4564 8.83282 18.4564 8.83282 18.4564 8.74536Z"
       fill="#006EFF"
     />
+  </svg>
+)
+
+// Pi's 4×4 pixel mark and brand colors, redrawn from piLogoLines() in
+// @earendil-works/pi-coding-agent 1.4.0 (MIT). The name and mark remain third-party trademarks.
+const PI_MARK_PIXELS: readonly (readonly [column: number, row: number, fill: string])[] = [
+  [0, 0, '#E48A7A'],
+  [1, 0, '#E48A7A'],
+  [2, 0, '#E48A7A'],
+  [0, 1, '#4F8EB3'],
+  [2, 1, '#E48A7A'],
+  [0, 2, '#4F8EB3'],
+  [1, 2, '#4F8EB3'],
+  [3, 2, '#EAB65D'],
+  [0, 3, '#4F8EB3'],
+  [3, 3, '#EAB65D']
+]
+
+export const PiColor = (props: BrandIconProps): React.JSX.Element => (
+  <svg {...iconProps(props)}>
+    <title>Pi</title>
+    {PI_MARK_PIXELS.map(([column, row, fill]) => (
+      <rect
+        key={`${column}-${row}`}
+        x={2 + column * 5}
+        y={2 + row * 5}
+        width={5}
+        height={5}
+        fill={fill}
+      />
+    ))}
   </svg>
 )

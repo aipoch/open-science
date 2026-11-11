@@ -335,7 +335,10 @@ for (const width of [320, 375, 768, 1280]) {
         const style = getComputedStyle(notice)
         return {
           columnWidth: column.clientWidth,
-          availableWidth: label.clientWidth - 48 - 12,
+          availableWidth:
+            label.clientWidth -
+            label.firstElementChild!.getBoundingClientRect().width -
+            parseFloat(getComputedStyle(label).columnGap),
           border: style.borderTopWidth,
           padding: style.padding,
           iconOffset: icon.y - text.y,

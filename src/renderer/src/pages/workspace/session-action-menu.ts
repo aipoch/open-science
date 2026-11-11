@@ -21,6 +21,7 @@ import type {
   ActionMenuRecipeEntry
 } from '@/components/action-menu'
 import type { ChatSession, SessionStatus } from '@/stores/session-store-contract'
+import { isSessionDeletionAllowed } from '@/stores/session-actionability'
 import { projectPresentedSessionActionability } from './session-wait-reason'
 
 export type SessionActionId =
@@ -42,6 +43,11 @@ export type SessionActionInvocation = Readonly<{
   session: ChatSession
   presentedStatus: SessionStatus
 }>
+
+export const isImportedSession = (session: ChatSession): boolean =>
+  session.contentLoaded === false
+    ? session.id.startsWith('import-')
+    : Boolean(session.packageOrigin)
 
 export const SESSION_ACTION_CATALOG = {
   'toggle-pin': { labelKey: 'Pin', icon: Pin },
@@ -85,6 +91,7 @@ type SessionActionOptions = {
   canDeleteConversations: boolean
   canDownloadArtifacts: boolean
   canArchiveSession?: (session: ChatSession) => boolean
+  canTogglePin?: boolean
   onTogglePin: (session: ChatSession) => void
   onRenameSession: (session: ChatSession) => void
   onDownloadArtifacts?: (session: ChatSession) => void
@@ -140,6 +147,7 @@ export const createSessionActionBindings = (
     execute: ({ session }) => options.onTogglePin(session),
     labelKey: ({ session }: SessionActionInvocation) => (session.pinned ? 'Unpin' : 'Pin'),
     icon: ({ session }: SessionActionInvocation) => (session.pinned ? PinOff : Pin),
+    hidden: options.canTogglePin === false,
     disabled: !options.canMutateConversations
   },
   edit: {
@@ -197,8 +205,10 @@ export const createSessionActionBindings = (
     disabled: ({ session }) => !options.canArchiveSession?.(session)
   },
   delete: {
-    execute: ({ session }) => options.onDeleteSession?.(session),
-    hidden: !options.onDeleteSession,
+    execute: ({ session }) => {
+      if (isSessionDeletionAllowed(session)) options.onDeleteSession?.(session)
+    },
+    hidden: ({ session }) => !options.onDeleteSession || !isSessionDeletionAllowed(session),
     disabled: !options.canDeleteConversations
   }
 })

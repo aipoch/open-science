@@ -687,27 +687,39 @@ describe('session store', () => {
     })
   })
 
-  it('allows a failed creation to retry and change Agent configuration without unlocking branches', () => {
-    const failed = { status: 'error' as const, isPending: true }
-    expect(projectSessionActionability(failed).actions).toMatchObject({
-      startTurn: { allowed: true },
-      changeAgentControls: { allowed: true },
-      changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
-      changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
-      changeMemory: { allowed: false, disabledReason: 'session-pending' },
-      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
-    })
-    for (const facts of [
-      { hasRunningWork: true },
-      { rootPermissionPending: true },
-      { credentialPending: true },
-      { elicitationPending: true },
-      { planPending: true }
-    ]) {
-      const projection = projectSessionActionability(failed, facts)
-      expect(projection.actions.startTurn.allowed).toBe(false)
-      expect(projection.actions.changeAgentControls.allowed).toBe(false)
+  it.each(['error', 'idle'] as const)(
+    'allows a retryable creation in %s to retry and change Agent configuration without unlocking branches',
+    (status) => {
+      const failed = { status, isPending: true, pendingRetryable: true as const }
+      expect(projectSessionActionability(failed).actions).toMatchObject({
+        startTurn: { allowed: true },
+        changeAgentControls: { allowed: true },
+        changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
+        changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
+        changeMemory: { allowed: false, disabledReason: 'session-pending' },
+        branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+      })
+      for (const facts of [
+        { hasRunningWork: true },
+        { rootPermissionPending: true },
+        { credentialPending: true },
+        { elicitationPending: true },
+        { planPending: true }
+      ]) {
+        const projection = projectSessionActionability(failed, facts)
+        expect(projection.actions.startTurn.allowed).toBe(false)
+        expect(projection.actions.changeAgentControls.allowed).toBe(false)
+      }
     }
+  )
+
+  it('does not infer pending creation retryability from an error status', () => {
+    expect(projectSessionActionability({ status: 'error', isPending: true }).actions).toMatchObject(
+      {
+        startTurn: { allowed: false, disabledReason: 'session-pending' },
+        changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+      }
+    )
   })
 
   it('keeps replay-independent Session actions available while history replay is pending', () => {
@@ -5036,7 +5048,7 @@ describe('session store', () => {
     })
   })
 
-  it('derives errorReportable from the message when no explicit flag is passed', () => {
+  it('classifies operation failures when no classification is supplied', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Read the files'
@@ -5044,13 +5056,13 @@ describe('session store', () => {
 
     // An opaque/internal failure with no crafted-message match stays reportable.
     useSessionStore.getState().failRun('transport-session-1', 'Agent session could not be created.')
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('internal')
 
     // An app-crafted reminder is recognized by its exact text and is not reportable.
     useSessionStore
       .getState()
       .failRun('transport-session-1', 'Session workspace is missing; start a new conversation.')
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('environment')
 
     // Claude Code's unreachable-API wrapper is recognized without an explicit flag (createSession /
     // persisted pre-flag sessions).
@@ -5060,7 +5072,7 @@ describe('session store', () => {
         'transport-session-1',
         'Internal error: API Error: Unable to connect to API (ConnectionRefused)'
       )
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('service')
   })
 
   it('honors an explicit reportable flag (the runtime tags a model-provider failure)', () => {
@@ -5072,9 +5084,9 @@ describe('session store', () => {
     // A model-provider failure: opaque text that WOULD derive reportable=true, but the ACP layer
     // structurally tagged it non-reportable, and the explicit flag wins.
     useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
-      reportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('service')
   })
 
   it('clears errorReportable when a new run starts, so a later error cannot inherit it', () => {
@@ -5084,21 +5096,21 @@ describe('session store', () => {
     })
     // A model-provider failure hides the report button.
     useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
-      reportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(false)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('service')
 
     // A new turn clears the prior error + flag.
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'second turn'
     })
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].failure).toBeUndefined()
 
     // A later ACP-layer failure with no explicit flag derives reportable=true — it never inherits the
     // earlier provider error's false.
     useSessionStore.getState().failRun('transport-session-1', 'Agent cancellation failed')
-    expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
+    expect(useSessionStore.getState().sessions[0].failure?.category).toBe('internal')
   })
 
   it('records an artifact finalization error as reportable (an app-layer failure)', () => {
@@ -5108,13 +5120,13 @@ describe('session store', () => {
     })
     // Simulate a prior provider error's flag lingering, then an artifact error overwriting it.
     useSessionStore.getState().failRun('transport-session-1', 'Invalid API key', {
-      reportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
     useSessionStore.getState().recordArtifactError('transport-session-1', 'disk full')
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.error).toContain('disk full')
-    expect(session.errorReportable).toBe(true)
+    expect(session.failure?.category).toBe('internal')
   })
 
   it('keeps artifact finalization errors visible when the run later stops', () => {
@@ -5513,7 +5525,7 @@ describe('session store', () => {
     })
     expect(session.activePlanProjection).toBeUndefined()
     expect(session.error).toBeUndefined()
-    expect(session.errorReportable).toBeUndefined()
+    expect(session.failure).toBeUndefined()
     expect(session.messages[1]).toMatchObject({ status: 'error', failedAt: expect.any(Number) })
     expect(session.activities?.[0]).toMatchObject({ status: 'failed' })
   })
@@ -7628,6 +7640,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-cleanup-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
@@ -7643,10 +7656,10 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/settings/SettingsPage.tsx',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
+      'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
-      'src/renderer/src/pages/workspace/SessionDiscussionDialog.tsx',
       'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',
       'src/renderer/src/pages/workspace/SessionReplayPreview.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',
@@ -7655,6 +7668,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
       'src/renderer/src/pages/workspace/WorkspacePage.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceSidebar.tsx',
       'src/renderer/src/pages/workspace/WorkspaceSidebarContainer.tsx',
       'src/renderer/src/pages/workspace/composer/SessionMentionPopup.tsx',
       'src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx',
@@ -7671,6 +7685,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/useManagedVersionWorkflow.ts',
       'src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-actions.ts',
       'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
@@ -7756,6 +7771,7 @@ describe('session store public contract', () => {
       sessions: state.sessions.map((session) => ({
         ...session,
         isPending: true,
+        pendingRetryable: true,
         pendingBindingSessionId: 'durable-seed',
         unsavedTitle: true,
         interrupted: true,
@@ -7801,6 +7817,7 @@ describe('session store public contract', () => {
     expect(durable.messages[0]).not.toHaveProperty('sortIndex')
     for (const transientKey of [
       'isPending',
+      'pendingRetryable',
       'pendingBindingSessionId',
       'unsavedTitle',
       'interrupted',
@@ -7940,7 +7957,7 @@ describe('branchInNewSession', () => {
               ...session,
               status: 'error',
               error: 'old failure',
-              errorReportable: false,
+              failure: { category: 'service' as const, diagnostics: {} },
               interrupted: true,
               agentStatus: 'stale status',
               branchContextResetRequired: true,
@@ -9340,7 +9357,7 @@ describe('truncateSessionFromMessage', () => {
       status: 'error',
       activeRun: undefined,
       awaitingFirstAgentOutput: undefined,
-      errorReportable: true,
+      failure: { category: 'internal' as const, diagnostics: {} },
       conversationGraphSyncBlocked: true
     })
     expect(settled.error).toContain('Conversation history could not be finalized')
@@ -9375,7 +9392,7 @@ describe('truncateSessionFromMessage', () => {
     expect(settled).toMatchObject({
       status: 'error',
       activeRun: undefined,
-      errorReportable: true,
+      failure: { category: 'internal' as const, diagnostics: {} },
       conversationGraphSyncBlocked: true
     })
     expect(settled.error).toContain('Provider failed')

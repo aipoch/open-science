@@ -16,14 +16,14 @@ it.each([3, 4, 5, 6, 8])('captures reported cell %s', async (index) => {
     ? analyzeRNotebookSource(cell.script)
     : analyzePythonNotebookSource(cell.script))
   for (const reason of ['opaque-call', 'opaque-mutation'])
-    if ([6, 8].includes(index) && reason === 'opaque-call')
+    if ([5, 6, 8].includes(index) && reason === 'opaque-call')
       expect(facts.state === 'unknown' ? facts.reasons : []).toContain(reason)
     else expect(facts.state === 'unknown' ? facts.reasons : []).not.toContain(reason)
   const access = await analyzeNotebookSourceFileAccess(cell.language as 'r' | 'python', cell.script)
   expect(access, JSON.stringify(facts)).toMatchObject({
-    readState: [6, 8].includes(index) ? 'partial' : 'complete',
-    writeState: [6, 8].includes(index) ? 'partial' : 'complete',
-    externalState: [6, 8].includes(index) ? 'partial' : 'complete'
+    readState: [5, 6, 8].includes(index) ? 'partial' : 'complete',
+    writeState: [5, 6, 8].includes(index) ? 'partial' : 'complete',
+    externalState: [5, 6, 8].includes(index) ? 'partial' : 'complete'
   })
 })
 

@@ -193,6 +193,11 @@ export type NotebookSessionExecutor<
   shutdown: () => Promise<{ reaped: boolean }>
   restart?: () => Promise<void>
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
+  idleProcesses?: () => Array<{
+    identity: object
+    processKey: string
+    release: () => Promise<boolean>
+  }>
 }
 
 export type NotebookSessionExecutorGeneration = symbol
@@ -220,7 +225,8 @@ export type NotebookSessionMcpRpcConnection = {
   token: string
   beginControlInvocation?: (context: TrustedControlInvocationIdentity) => () => void
   completeControlInvocation?: (
-    controlInvocationId: string
+    controlInvocationId: string,
+    signal?: AbortSignal
   ) => Promise<readonly TransientViewImage[]>
   discardControlInvocation?: (controlInvocationId: string) => void
   // Revoke process authority without discarding output awaiting invocation completion.
@@ -602,6 +608,10 @@ export class NotebookSessionAggregate<
     return Array.from(this.kernelStatuses.keys())
   }
 
+  idleProcesses(): ReturnType<NonNullable<NotebookSessionExecutor['idleProcesses']>> {
+    return this.executorValue.idleProcesses?.() ?? []
+  }
+
   setKernelStatus(processKey: string, status: NotebookKernelMetadata['lastKnownStatus']): void {
     this.kernelStatuses.set(processKey, status)
     this.kernelStatusLastActivityAt.set(processKey, Date.now())
@@ -850,15 +860,20 @@ export class NotebookSessionAggregate<
   }
 
   async completeControlInvocation(
-    controlInvocationId: string
+    controlInvocationId: string,
+    signal?: AbortSignal
   ): Promise<readonly TransientViewImage[]> {
     const connection = this.controlInvocationConnections.get(controlInvocationId)
     if (!connection) return []
     try {
-      const images = (await connection.completeControlInvocation?.(controlInvocationId)) ?? []
-      // Shutdown may dispose this invocation while its image producer is completing.
-      return this.controlInvocationConnections.get(controlInvocationId) === connection ? images : []
+      const images =
+        (await connection.completeControlInvocation?.(controlInvocationId, signal)) ?? []
+      // Shutdown may retire the connection while image analysis is settling.
+      if (this.controlInvocationConnections.get(controlInvocationId) !== connection) return []
+      if (images.length > 0) signal?.throwIfAborted()
+      return images
     } catch (error) {
+      if (this.controlInvocationConnections.get(controlInvocationId) !== connection) return []
       connection.discardControlInvocation?.(controlInvocationId)
       throw error
     } finally {

@@ -32,10 +32,12 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
-  providerValidationTargetMatches,
+  providerValidationTargetApplies,
+  providerValidationRoute,
   requiresChatCompletionsBridge,
   resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
@@ -220,34 +222,37 @@ const ProviderList = ({
         {displayedProviders.map((provider) => {
           const isActiveSource = provider.id === activeProviderId
           const isBusy = provider.id === busyProviderId
-          // Show the latest failed test on the provider card. Targeted failures only exclude the
-          // matching model/protocol from pickers; provider-wide failures still exclude everything.
-          const failure = providerValidationFailed(provider, provider.lastValidationFailure?.target)
+          const validationScope = providerValidationRoute(provider, agentFrameworkId)
+          // Keep the latest failed model visible, but evaluate its recovery in the current agent.
+          // Native recovery must not erase the HTTP failure for other frameworks.
+          const failure = providerValidationFailed(provider, {
+            ...provider.lastValidationFailure?.target,
+            ...validationScope
+          })
             ? provider.lastValidationFailure
             : undefined
           const providerRoutes = providerEndpoints(provider)
           const effectiveModel =
-            activeModel ??
+            (isActiveSource ? activeModel : undefined) ??
             provider.model ??
             (provider.vendorId ? defaultVendorModel(provider.vendorId, provider.region) : undefined)
           const activeValidationTarget = {
+            ...validationScope,
             model: effectiveModel,
             endpoint: preferredEndpoint(
               providerRoutes,
               isXaiSubscriptionProvider(provider.type)
                 ? (['responses'] as const)
-                : agentFrameworkId === 'codex'
-                  ? (['messages', 'chat-completions', 'responses'] as const)
-                  : requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
-                    ? providerRoutes
-                    : frameworkEndpoints
+                : agentFrameworkId === 'codex' ||
+                    requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
+                  ? DEFAULT_ENDPOINT_ORDER
+                  : frameworkEndpoints
             )
           }
           // A passing test shows a green check. Suppressed while a test is in flight.
           const validationMatchesActiveTarget =
-            !isActiveSource ||
             provider.lastValidatedTarget === undefined ||
-            providerValidationTargetMatches(provider.lastValidatedTarget, activeValidationTarget)
+            providerValidationTargetApplies(provider.lastValidatedTarget, activeValidationTarget)
           const isVerified =
             !failure &&
             !isBusy &&

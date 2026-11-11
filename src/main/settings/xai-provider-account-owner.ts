@@ -73,6 +73,14 @@ export class XaiProviderAccountOwner {
     this.oauth.cancelLogin()
   }
 
+  dispose(): Promise<void> {
+    return this.oauth.dispose()
+  }
+
+  quiesce(): ReturnType<XaiOAuthControllerPort['quiesce']> {
+    return this.oauth.quiesce()
+  }
+
   logout(): Promise<void> {
     return this.oauth.logout()
   }

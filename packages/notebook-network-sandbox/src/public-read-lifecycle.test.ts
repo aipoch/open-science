@@ -95,6 +95,23 @@ it.skipIf(process.platform === 'win32')(
     await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
   }
 )
+it('records a TLS reset before HTTP as a blocked destination', async () => {
+  const { ca, blocked, connectClient, connectHead } = await fixture()
+  const socket = await connectClient()
+  connectHead(socket)
+  await once(socket, 'data')
+  const tls = tlsConnect({ socket, servername: 'data.example', ca: ca.certificatePem })
+  tls.on('error', () => undefined)
+  cleanup.push(() => {
+    tls.destroy()
+  })
+  await once(tls, 'secureConnect')
+  // Let the server process Finished before the client aborts without an HTTP request.
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  socket.resetAndDestroy()
+  await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+})
 it('cannot revive a certificate signing result after reset', async () => {
   const ca = await createLocalCertificateAuthority()
   cleanup.push(() => ca.dispose())
@@ -113,6 +130,8 @@ it('cannot revive a certificate signing result after reset', async () => {
   })
   const socket = await connectClient()
   connectHead(socket)
+  await once(socket, 'data')
+  socket.write(Buffer.from([0x16, 0x03, 0x03]))
   await vi.waitFor(() => expect(requested).toHaveBeenCalledOnce())
   const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
   gateway.resetConnections()
@@ -243,7 +262,9 @@ it.each([80, 8443])('preserves explicit CONNECT port %s and never inspects it', 
   const done = new Promise<void>((resolve) => socket.once('close', () => resolve()))
   socket.resume()
   connectHead(socket, `data.example:${port}`)
+  await once(socket, 'data')
+  socket.write(Buffer.from([0x16, 0x03, 0x03]))
   await done
-  expect(decide).toHaveBeenCalledWith('data.example', port, 'probe', expect.any(Function))
-  expect(decide).toHaveBeenCalledWith('data.example', port, 'block', expect.any(Function))
+  expect(decide).toHaveBeenCalledWith('data.example', port, 'probe', expect.any(Function), 'https')
+  expect(decide).toHaveBeenCalledWith('data.example', port, 'block', expect.any(Function), 'https')
 })

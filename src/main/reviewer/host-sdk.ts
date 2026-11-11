@@ -33,7 +33,7 @@ import {
 } from '../resource-budget'
 import { toErrorMessage } from '../error-message'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
-import { extractPdfTextPages } from '../uploads/attachment-media'
+import { extractPdfTextPages } from '../uploads/pdf-text-extraction'
 import {
   readBoundedPptx,
   readBoundedSpreadsheet,

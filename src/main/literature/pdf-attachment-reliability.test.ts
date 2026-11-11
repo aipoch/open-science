@@ -1,5 +1,7 @@
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { PrismaClient } from '@prisma/client'
+import { appendFile, open } from 'node:fs/promises'
+import { attachLiteraturePdf } from './pdf-attachment'
 import { createHash } from 'node:crypto'
 import {
   access,
@@ -262,6 +264,40 @@ describe('Literature PDF attachment reliability', () => {
     await importer.addToLiterature(input)
     expect((await catalog.get(request.itemId))!.attachments[0].versions).toHaveLength(1)
   })
+  it.each(['size', 'header'] as const)(
+    'rejects published PDF %s changes after source preflight with real storage',
+    async (failure) => {
+      const bytes =
+        failure === 'header' ? Buffer.concat([pdf(), Buffer.alloc(51 * 1024 * 1024)]) : pdf()
+      const { catalog, content, path, request } = await setup(bytes)
+      const publish = content.withPublishedContent.bind(content)
+      vi.spyOn(content, 'withPublishedContent').mockImplementationOnce(async (input, use) => {
+        if (failure === 'size') await appendFile(path, 'added after source preflight')
+        else {
+          const handle = await open(path, 'r+')
+          try {
+            await handle.write(Buffer.from('other'), 0, 5, 0)
+          } finally {
+            await handle.close()
+          }
+        }
+        return publish(input, use)
+      })
+      await expect(
+        attachLiteraturePdf(
+          { catalog, content },
+          {
+            sourcePath: path,
+            itemId: request.itemId,
+            filename: 'paper.pdf',
+            maxBytes: failure === 'size' ? bytes.length : 200 * 1024 * 1024
+          }
+        )
+      ).rejects.toThrow(failure === 'size' ? 'size limit' : 'not a PDF')
+      expect(await client!.literatureAttachmentVersion.count()).toBe(0)
+      expect(await client!.contentBlob.count({ where: { state: 'available' } })).toBe(0)
+    }
+  )
 
   it.each(['unlink', 'sweep'] as const)(
     'reports pending cleanup when permanent deletion commits before a %s failure',

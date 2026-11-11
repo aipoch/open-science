@@ -8,10 +8,10 @@ import {
 } from './workspace-conversation-items'
 import {
   buildToolActivityDetails,
-  getToolDisplayName,
   translateToolDetailCopy,
   isEditActivity,
   isSkillActivity,
+  isToolSearchActivity,
   getNotebookRunIdFromActivity
 } from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
@@ -47,6 +47,14 @@ type RenderableActivityEntry = {
 }
 
 const WEB_SEARCH_PROVIDER_TOOL_NAME = 'websearch'
+const NOTEBOOK_TERMINAL_PHASES: ReadonlySet<string> = new Set([
+  'completed',
+  'declined',
+  'failed',
+  'limit-reached',
+  'interrupted',
+  'cancelled'
+])
 
 // Collapses consecutive activity items into one transcript group between chat messages.
 const groupConversationItems = (
@@ -230,7 +238,7 @@ const categorizeActivity = (
           hasToolSearchInferenceEvidence(activity) &&
           hasEarlierToolSearchWrapper)
   if (isSearch) return 'search'
-  if (isToolSearchWrapperActivity(activity)) return 'toolSearch'
+  if (isToolSearchActivity(activity)) return 'toolSearch'
 
   const providerName = getNormalizedProviderName(activity)
 
@@ -318,9 +326,15 @@ const formatActivityGroupTitle = (
 
     if (category === 'search' && !categoryCounts.has('search')) {
       // A concrete search supersedes any wrappers encountered earlier in this same pass.
-      categoryCounts.delete('toolSearch')
+      const discoveryCount = activities
+        .slice(0, activityIndex)
+        .filter(
+          (candidate) => isToolSearchActivity(candidate) && !isToolSearchWrapperActivity(candidate)
+        ).length
+      if (discoveryCount) categoryCounts.set('toolSearch', discoveryCount)
+      else categoryCounts.delete('toolSearch')
     }
-    if (category === 'toolSearch' && categoryCounts.has('search')) {
+    if (isToolSearchWrapperActivity(activity) && categoryCounts.has('search')) {
       hasEarlierToolSearchWrapper = true
       return
     }
@@ -365,7 +379,9 @@ const formatActivityGroupPresentationTitle = (
     const notebookControlTool =
       matchNotebookControlTool(current.activity.providerToolName) ??
       matchNotebookControlTool(current.activity.title)
-    if (details?.displayName === getToolDisplayName(current.activity) && notebookControlTool)
+    // Keep the group header at the stable Notebook category even when the expanded card uses a
+    // specific control title such as "Inspect packages" or "Manage environments".
+    if (notebookControlTool)
       // Canonicalize provider spellings before reusing the existing chip-name mapping.
       return formatActivityTitle(
         {
@@ -393,14 +409,46 @@ const formatActivityGroupPresentationTitle = (
   const noun =
     notebookCount === 1 ? t('Notebook run') : t('{{count}} Notebook runs', { count: notebookCount })
 
-  if (phases.includes('awaiting-approval')) return t('Waiting for your approval')
-  if (phases.includes('executing')) return t('Running {{noun}}', { noun })
-  if (phases.includes('prepared')) return t('Notebook code shown')
-  if (phases.includes('declined')) return t('Declined {{noun}}', { noun })
-  if (phases.includes('failed')) return t('Failed {{noun}}', { noun })
-  if (phases.includes('limit-reached')) return t('Execution limit reached for {{noun}}', { noun })
-  if (phases.includes('interrupted')) return t('Interrupted {{noun}}', { noun })
-  if (phases.includes('cancelled')) return t('Cancelled {{noun}}', { noun })
+  const transientPhase = (['awaiting-approval', 'executing', 'prepared'] as const).find((phase) =>
+    phases.includes(phase)
+  )
+  switch (transientPhase) {
+    case 'awaiting-approval':
+      return t('Waiting for your approval')
+    case 'executing':
+      return t('Running {{noun}}', { noun })
+    case 'prepared':
+      return t('Notebook code shown')
+  }
+
+  // A group can contain many successful runs and one failed run. Only apply an outcome label when
+  // every Notebook run shares that outcome; mixed terminal results stay neutral and let the step
+  // summary show the exact failure count.
+  const uniformPhase =
+    phases.length > 0 && phases.every((phase) => phase === phases[0]) ? phases[0] : undefined
+  const outcomePhase =
+    uniformPhase ??
+    (phases.length > 1 &&
+    phases.some((phase) => phase !== 'completed') &&
+    phases.every((phase) => NOTEBOOK_TERMINAL_PHASES.has(phase))
+      ? 'mixed'
+      : undefined)
+
+  switch (outcomePhase) {
+    case 'declined':
+      return t('Declined {{noun}}', { noun })
+    case 'failed':
+      return t('Failed {{noun}}', { noun })
+    case 'limit-reached':
+      return t('Execution limit reached for {{noun}}', { noun })
+    case 'interrupted':
+      return t('Interrupted {{noun}}', { noun })
+    case 'cancelled':
+      return t('Cancelled {{noun}}', { noun })
+    case 'mixed':
+      return noun
+  }
+
   return formatActivityGroupTitle(activities, declaredTitle, t)
 }
 

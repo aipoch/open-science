@@ -886,7 +886,6 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-inline.test.ts",
       "test/pdf-translation-preservation.test.ts",
       "test/pdf-translation-native-verification.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/connectors/registry.test.ts",
       "src/main/connectors/skill-doc.test.ts",

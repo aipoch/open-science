@@ -10,7 +10,16 @@ import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { nativeWhitespaceGaps } from './literature-pdf-symbol-text.mjs'
 import { collectTableRules } from './literature-pdf-graphics.mjs'
-import { proveNativeCompleteRuledSourcePacket } from './literature-pdf-native-leaf-record-repair.mjs'
+import {
+  proveNativeCompleteRuledSourcePacket,
+  proveNativeSegmentedRuleSourcePacket
+} from './literature-pdf-native-leaf-record-repair.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+
+export {
+  ordinarySourcePrograms as proveOrdinaryNativeTablePrograms,
+  sourcePaintFits as fitOrdinaryNativeTableSourcePaint
+}
 
 const finiteItem = (i) =>
   i.horizontal !== false &&
@@ -360,7 +369,356 @@ function sourcePaintFits(fonts, context, crop) {
   return true
 }
 
+// A nearby lower title belongs to the next table only when its own native
+// three-rule frame, leaf header and repeated numeric records prove that role.
+// Proximity alone cannot choose between an upper and a footer caption.
+function hasNativeFollowingTableFrame(caption, items, captions, rules, context, p, em) {
+  const horizontal = joinHorizontalTableRules(rules),
+    openings = horizontal.filter(
+      (r) =>
+        r[1] > caption.rect[3] &&
+        r[1] - caption.rect[3] < em * 4 &&
+        r[0] >= caption.rect[0] - em &&
+        r[2] <= caption.rect[2] + em
+    )
+  if (openings.length !== 1) return false
+  const opening = openings[0],
+    nextTitle = Math.min(
+      context.viewport.height,
+      ...captions.filter((c) => c !== caption && c.rect?.[1] > opening[1]).map((c) => c.rect[1])
+    ),
+    edges = horizontal
+      .filter(
+        (r) =>
+          eq(r[0], opening[0]) && eq(r[2], opening[2]) && r[1] >= opening[1] && r[1] < nextTitle
+      )
+      .sort((a, b) => a[1] - b[1])
+  if (edges.length !== 3) return false
+  const [, divider, closing] = edges,
+    frame = [opening[0], opening[1], opening[2], closing[1]],
+    source = items.filter(
+      (i) =>
+        i.rect[0] < frame[2] && i.rect[2] > frame[0] && i.rect[1] < frame[3] && i.rect[3] > frame[1]
+    ),
+    title = items.filter(
+      (i) =>
+        i.rect[0] < caption.rect[2] &&
+        i.rect[2] > caption.rect[0] &&
+        i.rect[1] < caption.rect[3] &&
+        i.rect[3] > caption.rect[1]
+    )
+  const originalFonts = context.sourceContent.items
+      .filter((i) => 'str' in i && i.str.trim())
+      .map((i) => tableTextToken(i, context.viewport, 0)),
+    originals = originalFonts.filter(
+      (i) =>
+        i.rect[0] < frame[2] && i.rect[2] > frame[0] && i.rect[1] < frame[3] && i.rect[3] > frame[1]
+    ),
+    originalTitle = originalFonts.filter(
+      (i) =>
+        i.rect[0] < caption.rect[2] &&
+        i.rect[2] > caption.rect[0] &&
+        i.rect[1] < caption.rect[3] &&
+        i.rect[3] > caption.rect[1]
+    ),
+    matches = (a, b) =>
+      a.sourceItem?.index === b.sourceItem?.index &&
+      a.text === b.text &&
+      a.rect.every((v, n) => Math.abs(v - b.rect[n]) < 0.02)
+  if (
+    !source.length ||
+    source.length > 512 ||
+    !title.length ||
+    [...source, ...title].some((i) => !finiteItem(i)) ||
+    originals.length !== source.length ||
+    originalTitle.length !== title.length ||
+    originalTitle.some((i) => title.filter((f) => matches(f, i)).length !== 1) ||
+    originals.some(
+      (i) =>
+        source.filter(
+          (f) =>
+            f.sourceItem?.index === i.sourceItem?.index &&
+            f.text === i.text &&
+            f.rect.every((v, n) => Math.abs(v - i.rect[n]) < 0.02)
+        ).length !== 1
+    ) ||
+    source.some((i) => i.rect.some((v, n) => (n < 2 ? v < frame[n] : v > frame[n]))) ||
+    title
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/gu, '') !== caption.lines.join('').replace(/\s/gu, '') ||
+    [...originalFonts, ...items].some(
+      (i) =>
+        !originalTitle.some((title) => matches(i, title)) &&
+        i.rect[0] < frame[2] &&
+        i.rect[2] > frame[0] &&
+        i.rect[1] < opening[1] &&
+        i.rect[3] > caption.rect[1]
+    ) ||
+    !ordinarySourcePrograms([...source, ...title], context, p)
+  )
+    return false
+  const lines = []
+  for (const item of [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const line = lines.at(-1)
+    if (line && Math.abs(line[0].baseline - item.baseline) < 0.02) line.push(item)
+    else lines.push([item])
+  }
+  const header = lines.filter((line) => line.every((i) => i.rect[3] < divider[1])).at(-1),
+    body = lines.filter((line) => line.every((i) => i.rect[1] > divider[1]))
+  if (
+    !header ||
+    header.length < 2 ||
+    body.length < 3 ||
+    lines.some(
+      (line) =>
+        !line.every((i) => i.rect[3] < divider[1]) && !line.every((i) => i.rect[1] > divider[1])
+    ) ||
+    body.some((line) => line.length !== header.length)
+  )
+    return false
+  const fields = [header, ...body],
+    cuts = [
+      frame[0],
+      ...header
+        .slice(1)
+        .map(
+          (_, n) =>
+            (Math.max(...fields.map((line) => line[n].rect[2])) +
+              Math.min(...fields.map((line) => line[n + 1].rect[0]))) /
+            2
+        ),
+      frame[2]
+    ]
+  if (
+    header.some((i, n) => n && i.rect[0] <= header[n - 1].rect[2]) ||
+    body.some((line) =>
+      line.some(
+        (i, n) =>
+          i.rect[0] < cuts[n] ||
+          i.rect[2] > cuts[n + 1] ||
+          (n > 0 && !/^[−+-]?(?:\d+(?:\.\d+)?|\.\d+)%?$/u.test(i.text))
+      )
+    )
+  )
+    return false
+  const paint = new Map(),
+    native = collectTableRules(context.operators, context.viewport, paint)
+  return edges.every((edge) =>
+    native.some((r) => r.every((v, n) => Math.abs(v - edge[n]) < 0.02) && paint.has(r.join(',')))
+  )
+}
+
+// An existing open-bottom crop can contain complete scalar records without a
+// closing stroke. Do not infer continuation or a new bottom: unchanged whole
+// headers, positive native gutters and both source order and native baselines
+// must independently agree on every field inside the original crop.
+function openScalarSourceRecords(table, items, captions, rules, context) {
+  const crop = table.cropRect,
+    p = pageNumber(table),
+    raw = context?.sourceContent,
+    viewport = context?.viewport
+  if (
+    !Array.isArray(raw?.items) ||
+    !viewport ||
+    typeof viewport.convertToViewportPoint !== 'function' ||
+    !Number.isInteger(p) ||
+    p < 1 ||
+    table.readingRotation ||
+    !crop?.every(Number.isFinite) ||
+    !Array.isArray(table.structure?.objects)
+  )
+    return
+  if (
+    raw.items.some(
+      (i) =>
+        typeof i.str === 'string' &&
+        i.str.trim() &&
+        (!Array.isArray(i.transform) ||
+          i.transform.length !== 6 ||
+          !i.transform.every(Number.isFinite) ||
+          !(i.width > 0) ||
+          !(i.height > 0))
+    )
+  )
+    return
+  const intersects = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const source = items.filter((i) => i.text?.trim() && i.rect && intersects(i.rect, crop))
+  if (!source.length || source.some((i) => !finiteItem(i))) return
+  const em = Math.max(...source.map((i) => i.height)),
+    full = joinHorizontalTableRules(rules)
+      .filter(
+        (r) =>
+          r[1] >= crop[1] &&
+          r[1] <= crop[3] &&
+          Math.abs(r[0] - crop[0]) < em &&
+          Math.abs(r[2] - crop[2]) < em
+      )
+      .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 2 ||
+    full.some((r) => !eq(r[0], full[0][0]) || !eq(r[2], full[0][2])) ||
+    full[1][1] - full[0][1] < em ||
+    full[1][1] - full[0][1] > em * 3 ||
+    full[0][1] - crop[1] > em ||
+    source.some(
+      (i) =>
+        i.rect[0] < full[0][0] - 0.02 ||
+        i.rect[2] > full[0][2] + 0.02 ||
+        i.rect[1] < full[0][1] ||
+        i.rect[3] > crop[3]
+    ) ||
+    !proveNativeUniqueWholeFonts(source, items)
+  )
+    return
+  const originals = raw.items
+    .filter((i) => 'str' in i && i.str.trim())
+    .map((i) => tableTextToken(i, viewport, 0))
+    .filter((i) => intersects(i.rect, crop))
+  if (
+    originals.length !== source.length ||
+    originals.some(
+      (i) =>
+        source.filter(
+          (s) =>
+            s.sourceItem?.index === i.sourceItem?.index &&
+            s.text === i.text &&
+            s.rect.every((v, n) => Math.abs(v - i.rect[n]) < 0.02)
+        ).length !== 1
+    )
+  )
+    return
+  const header = source.filter((i) => i.baseline < full[1][1]),
+    body = source.filter((i) => i.baseline > full[1][1]),
+    count = table.structure.objects.filter((o) => o.label === 'table column').length
+  if (
+    count < 5 ||
+    count > 10 ||
+    header.length !== count ||
+    header.some(
+      (i) =>
+        !/\p{L}/u.test(i.text) ||
+        Math.abs(i.height - em) > 0.02 ||
+        Math.abs(i.baseline - header[0].baseline) > 0.02
+    ) ||
+    header.length + body.length !== source.length
+  )
+    return
+  const records = []
+  for (const i of [...body].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const row = records.at(-1)
+    if (row && Math.abs(row[0].baseline - i.baseline) < 0.02) row.push(i)
+    else records.push([i])
+  }
+  if (
+    records.length < 3 ||
+    records.length > 80 ||
+    (records.length + 1) * count > 2048 ||
+    records.some((r) => r.length !== count)
+  )
+    return
+  const ordered = [...body].sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+  if (records.flat().some((i, n) => ordered[n] !== i)) return
+  for (const row of records) {
+    if (
+      row.some((i, c) =>
+        c < 2
+          ? !/^[\p{L}\p{N}_.-]+$/u.test(i.text) ||
+            !/\p{L}/u.test(i.text) ||
+            i.height < em * 0.55 ||
+            i.height > em ||
+            Math.abs(i.height - records[0][c].height) > 0.02
+          : !/^[+−-]?\d+(?:\.\d+)?$/u.test(i.text) || Math.abs(i.height - em) > 0.02
+      )
+    )
+      return
+  }
+  const headings = [...header].sort((a, b) => a.rect[0] - b.rect[0]),
+    domains = headings.map((i, c) => [
+      Math.min(i.rect[0], ...records.map((r) => r[c].rect[0])),
+      Math.max(i.rect[2], ...records.map((r) => r[c].rect[2]))
+    ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < em * 0.3)) return
+  const bounds = records.map((r) => [
+    Math.min(...r.map((i) => i.rect[1])),
+    Math.max(...r.map((i) => i.rect[3]))
+  ])
+  if (bounds[0][0] <= full[1][1] || bounds.some((b, n) => n && b[0] <= bounds[n - 1][1])) return
+  const titles = captions.filter(
+    (c) =>
+      c.page === p &&
+      captionKind(c.lines?.[0]) === 'table' &&
+      c.rect?.every(Number.isFinite) &&
+      c.rect[3] < full[0][1] &&
+      full[0][1] - c.rect[3] < em * 4 &&
+      c.rect[0] < crop[2] &&
+      c.rect[2] > crop[0]
+  )
+  if (titles.length !== 1) return
+  const caption = titles[0],
+    titleFonts = raw.items
+      .filter((i) => 'str' in i && i.str.trim())
+      .map((i) => tableTextToken(i, viewport, 0))
+      .filter((i) => intersects(i.rect, caption.rect))
+  if (
+    !titleFonts.length ||
+    titleFonts.some((i) =>
+      i.rect.some((v, n) => (n < 2 ? v < caption.rect[n] - 0.02 : v > caption.rect[n] + 0.02))
+    ) ||
+    titleFonts
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/gu, '') !== caption.lines.join('').replace(/\s/gu, '') ||
+    !ordinarySourcePrograms([...titleFonts, ...source], context, p)
+  )
+    return
+  const painted = new Map(),
+    native = collectTableRules(context.operators, viewport, painted),
+    // A stroke crossing an outer boundary still competes with this packet.
+    local = native.filter(
+      (r) => r[0] <= crop[2] && r[2] >= crop[0] && r[1] <= crop[3] && r[3] >= crop[1]
+    )
+  if (
+    local.length !== 2 ||
+    full.some(
+      (r) =>
+        local.filter(
+          (n) => n.every((v, k) => Math.abs(v - r[k]) < 0.02) && painted.has(n.join(','))
+        ).length !== 1
+    ) ||
+    local.some((r) =>
+      painted.get(r.join(','))?.some((v, n) => (n < 2 ? v < crop[n] : v > crop[n]))
+    ) ||
+    rules.some(
+      (r) =>
+        r[0] <= crop[2] &&
+        r[2] >= crop[0] &&
+        r[1] <= crop[3] &&
+        r[3] >= crop[1] &&
+        !full.some((f) => f.every((v, n) => Math.abs(v - r[n]) < 0.02))
+    )
+  )
+    return
+  const fitted = [...crop]
+  if (!sourcePaintFits(source, context, fitted) || fitted.some((v, n) => v !== crop[n])) return
+  const cuts = [crop[0], ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2), crop[2]],
+    ys = [crop[1], full[1][1], ...bounds.slice(1).map((b, n) => (bounds[n][1] + b[0]) / 2), crop[3]]
+  return {
+    cropRect: [...crop],
+    rows: ys.slice(1).map((y, n) => [crop[0], ys[n], crop[2], y]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], crop[1], x, crop[3]]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true,
+    repair: 'native-body-records-recovered'
+  }
+}
+
 function sourceOrderedProseRecords(table, items, captions, rules, context) {
+  const openScalar = openScalarSourceRecords(table, items, captions, rules, context)
+  if (openScalar) return openScalar
   const crop = table.cropRect,
     p = pageNumber(table)
   if (!context || !Number.isInteger(p) || !crop?.every(Number.isFinite) || table.readingRotation)
@@ -441,7 +799,7 @@ function sourceOrderedProseRecords(table, items, captions, rules, context) {
     if (prior && i.rect[0] - prior[1] < em * 0.3) prior[1] = Math.max(prior[1], i.rect[2])
     else projections.push([i.rect[0], i.rect[2]])
   }
-  if (![2, 4, 6].includes(projections.length)) return
+  if (![2, 3, 4, 6].includes(projections.length)) return
   const cuts = [
     Math.min(opening[0], projections[0][0]),
     ...projections.slice(1).map((r, n) => (projections[n][1] + r[0]) / 2),
@@ -488,7 +846,7 @@ function sourceOrderedProseRecords(table, items, captions, rules, context) {
     (!paired && !labels?.every((v) => /\p{L}/u.test(v)))
   )
     return
-  const titles = captions.filter(
+  let titles = captions.filter(
     (c) =>
       c.page === p &&
       captionKind(c.lines?.[0]) === 'table' &&
@@ -500,6 +858,11 @@ function sourceOrderedProseRecords(table, items, captions, rules, context) {
           c.rect[1] > closing[1] &&
           c.rect[1] - closing[1] < em * 4))
   )
+  if (titles.length === 2 && titles.filter((c) => c.rect[3] < opening[1]).length === 1) {
+    const lower = titles.find((c) => c.rect[1] > closing[1])
+    if (lower && hasNativeFollowingTableFrame(lower, items, captions, rules, context, p, em))
+      titles = titles.filter((c) => c !== lower)
+  }
   if (titles.length !== 1) return
   const caption = titles[0],
     captionFonts = context.sourceContent?.items
@@ -1667,7 +2030,132 @@ export function recoverNativePairedTextCaption(table, tokens, captions, rules, a
     ?.continuationCaption
 }
 
-export function recoverNativeOrdinalWrappedRecordGrid(table, tokens, captions, rules) {
+// Continuation pages can begin with a numbered record rather than a header.
+// Repeated native three-piece rails prove all lanes and each complete record;
+// the model's merged ordinal/name column grants no source ownership.
+function continuedOrdinalRecords(table, tokens, captions, rules, context) {
+  const crop = table.cropRect,
+    p = pageNumber(table)
+  if (!context || table.readingRotation || !crop?.every(Number.isFinite)) return
+  if (captions.some((c) => c.page === p && c.rect[1] < crop[3] && c.rect[3] > crop[1])) return
+  const source = tokens.filter(
+      (i) =>
+        i.text?.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.rect[1] < crop[3] &&
+        i.rect[3] > crop[1]
+    ),
+    em = source[0]?.height
+  if (
+    !(em > 0) ||
+    source.some(
+      (i) =>
+        !finiteItem(i) ||
+        i.horizontal !== true ||
+        Math.abs(i.height - em) > em * 0.02 ||
+        i.rect[0] < crop[0] ||
+        i.rect[2] > crop[2]
+    )
+  )
+    return
+  const bands = [
+    ...Map.groupBy(
+      rules.filter((r) => r[1] === r[3] && r[1] > crop[1] && r[1] < crop[3]),
+      (r) => r[1]
+    ).values()
+  ]
+    .map((b) => b.sort((a, b) => a[0] - b[0]))
+    .sort((a, b) => a[0][1] - b[0][1])
+  if (bands.length < 5 || bands.length > 25 || bands.some((b) => b.length !== 3)) return
+  const first = bands[0],
+    cuts = [crop[0], (first[0][2] + first[1][0]) / 2, (first[1][2] + first[2][0]) / 2, crop[2]],
+    lane = (i) => cuts.slice(1).findIndex((x, c) => i.rect[0] >= cuts[c] && i.rect[2] <= x)
+  if (
+    bands.some((b) =>
+      b.some(
+        (r, c) =>
+          Math.abs(r[0] - first[c][0]) > em * 0.08 ||
+          Math.abs(r[2] - first[c][2]) > em * 0.08 ||
+          (c && Math.abs(r[0] - b[c - 1][2]) > em * 0.08)
+      )
+    ) ||
+    Math.abs(first[0][0] - crop[0]) > em ||
+    Math.abs(first[2][2] - crop[2]) > em ||
+    source.some((i) => lane(i) < 0)
+  )
+    return
+  const groups = bands
+      .slice(1)
+      .map((b, n) => source.filter((i) => i.baseline > bands[n][0][1] && i.baseline < b[0][1])),
+    numbers = []
+  for (const [n, g] of groups.entries()) {
+    const ordinal = g.filter((i) => lane(i) === 0),
+      names = g.filter((i) => lane(i) === 1),
+      values = g.filter((i) => lane(i) === 2),
+      top = bands[n][0][1],
+      bottom = bands[n + 1][0][1]
+    if (
+      ordinal.length !== 1 ||
+      !/^[1-9]\d*$/u.test(ordinal[0].text.trim()) ||
+      !names.length ||
+      !values.length ||
+      !names.some((i) => /\p{L}/u.test(i.text)) ||
+      !values.some((i) => /\p{L}/u.test(i.text)) ||
+      [names, values].some(
+        (l) => Math.abs(Math.min(...l.map((i) => i.baseline)) - ordinal[0].baseline) > em * 0.02
+      ) ||
+      ordinal[0].baseline - top < em * 0.85 ||
+      ordinal[0].baseline - top > em * 1.1 ||
+      g.some(
+        (i) =>
+          i.rect[1] < top - em * 0.1 ||
+          i.rect[3] >= bottom ||
+          Math.abs(i.baseline - i.rect[3]) > em * 0.02
+      ) ||
+      [names, values].some((l) => l.some((i) => Math.abs(i.rect[0] - l[0].rect[0]) > em * 0.02))
+    )
+      return
+    numbers.push(Number(ordinal[0].text))
+  }
+  const packet = proveNativeSegmentedRuleSourcePacket(source, rules, context, crop)
+  if (
+    numbers[0] === 1 ||
+    numbers.some((n, i) => i && n !== numbers[i - 1] + 1) ||
+    !hasUniqueRecordTokens(source, groups) ||
+    !packet ||
+    groups.some((g, n) =>
+      g.some((i) => {
+        const ink = packet.ink.get(i),
+          top = bands[n][0][1],
+          bottom = bands[n + 1][0][1]
+        return !ink || ink[1] < top || ink[3] > bottom
+      })
+    )
+  )
+    return
+  return {
+    cropRect: crop,
+    rows: groups.map((g) => [
+      crop[0],
+      Math.min(...g.map((i) => i.rect[1])),
+      crop[2],
+      Math.max(...g.map((i) => i.rect[3]))
+    ]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], crop[1], x, crop[3]]),
+    spans: [],
+    headerRows: [],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    preservePhysicalRows: true,
+    repair: 'native-ruled-ordinal-continuation-recovered'
+  }
+}
+
+export function recoverNativeOrdinalWrappedRecordGrid(table, tokens, captions, rules, context) {
+  const continuation = continuedOrdinalRecords(table, tokens, captions, rules, context)
+  if (continuation) return continuation
+
   // Malformed present page fonts cannot silently disappear through rectangle
   // comparisons before the whole native source owner has been established.
   if (

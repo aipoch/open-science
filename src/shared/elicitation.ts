@@ -303,6 +303,11 @@ const boundedString = (value: unknown, max: number): string | undefined => {
   return text && value.length <= max ? text : undefined
 }
 
+// Model-facing contract repeated in rejection errors so a provider can self-correct instead of
+// retrying the same malformed call. Unique option labels stay unexpressible in JSON Schema.
+export const AGENT_USER_CHOICE_REQUEST_CONTRACT =
+  'sessionId plus 1-3 questions, each with a non-blank question, 2-16 options with unique non-blank labels, and optional non-blank header or kind "single-select" or "multi-select"'
+
 export const sanitizeAgentUserChoiceRequest = (
   value: unknown
 ): AgentUserChoiceRequest | undefined => {

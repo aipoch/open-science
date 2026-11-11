@@ -36,7 +36,7 @@ try {
   npm(['run', 'build'], source)
   if (plan.tests.includes('durable-files')) {
     npm(['run', 'typecheck'], source)
-    npm(['test'], source)
+    if (!process.argv.includes('--skip-tests')) npm(['test'], source)
   }
   const packed = JSON.parse(
     execFileSync(process.execPath, [npmCli, 'pack', '--json', '--pack-destination', work], {
@@ -158,6 +158,7 @@ void durability; void dependencies
       [
         join(root, 'packages', name, 'scripts/verify-package.mjs'),
         `--durable-files-tarball=${tarball}`,
+        ...(process.argv.includes('--skip-tests') ? ['--skip-tests'] : []),
         ...offline
       ],
       root

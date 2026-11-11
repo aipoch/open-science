@@ -181,6 +181,229 @@ function hasWholeFontNumberedReferences(rows, table, left, width) {
   )
 }
 
+// The detector can see only the final pair of entries and a page ordinal. The
+// complete native packet above the crop must establish the reference section.
+function hasNativeBracketedReferenceTail(table, items, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const keys = table.grid.map((row) => row[0]?.trim()).filter(Boolean)
+  if (
+    keys.length !== 2 ||
+    keys.some((key) => !/^\[[1-9]\d*\]$/u.test(key)) ||
+    table.grid.some((row) => row.length !== 2) ||
+    table.grid.at(-1)[0].trim() ||
+    !/^\d+$/.test(table.grid.at(-1)[1].trim())
+  )
+    return false
+  const headings = items.filter(
+    (item) =>
+      item.horizontal &&
+      /^(?:References|Bibliography)$/iu.test(item.text.trim()) &&
+      item.rect[0] >= left &&
+      item.rect[2] <= right &&
+      item.rect[3] < top
+  )
+  if (headings.length !== 1) return false
+  const heading = headings[0]
+  const rows = wholeNativeRows([left, heading.rect[1], right, bottom], items, rules)
+  if (
+    !rows ||
+    rows.length < 6 ||
+    rows.length > 80 ||
+    rows[0].length !== 1 ||
+    rows[0][0] !== heading ||
+    rules.some(
+      (rule) =>
+        Math.abs(rule[3] - rule[1]) < 1 &&
+        rule[1] >= heading.rect[1] &&
+        rule[1] <= bottom &&
+        Math.min(rule[2], right) - Math.max(rule[0], left) > (right - left) / 2
+    )
+  )
+    return false
+  const last = rows.at(-1),
+    folio = last[0]
+  const origin = (item) =>
+    item.sourceItem?.text === item.text &&
+    Number.isSafeInteger(item.sourceItem.index) &&
+    item.sourceItem.pageNumber === folio.sourceItem?.pageNumber
+  if (
+    last.length !== 1 ||
+    !origin(heading) ||
+    !origin(folio) ||
+    !Number.isSafeInteger(folio.sourceItem.pageNumber) ||
+    folio.sourceItem.pageNumber < 1 ||
+    folio.text.trim() !== String(folio.sourceItem.pageNumber) ||
+    folio.text.trim() !== table.grid.at(-1)[1].trim() ||
+    Math.abs(folio.rect[0] + folio.rect[2] - left - right) > folio.height
+  )
+    return false
+  const first = rows[1][0],
+    em = first.height,
+    bodyLeft = rows[1][1]?.rect[0]
+  if (!Number.isFinite(bodyLeft) || first.baseline - heading.baseline > em * 4) return false
+  const entries = []
+  for (const row of rows.slice(1, -1)) {
+    const marker = row[0]
+    if (row.some((item) => Math.abs(item.height - em) > em * 0.05)) return false
+    if (marker.text.trim() === `[${entries.length + 1}]`) {
+      if (
+        !origin(marker) ||
+        row.length < 2 ||
+        Math.abs(marker.rect[0] - first.rect[0]) > em * 0.2 ||
+        Math.abs(row[1].rect[0] - bodyLeft) > em * 0.2 ||
+        bodyLeft - marker.rect[2] < em * 0.3
+      )
+        return false
+      entries.push({ marker, lines: [row.slice(1)] })
+    } else {
+      const entry = entries.at(-1),
+        prior = entry?.lines.at(-1)[0]
+      if (
+        !prior ||
+        Math.abs(marker.rect[0] - bodyLeft) > em * 0.2 ||
+        marker.baseline - prior.baseline < em * 0.7 ||
+        marker.baseline - prior.baseline > em * 2.5
+      )
+        return false
+      entry.lines.push(row)
+    }
+  }
+  if (entries.length < 4 || folio.baseline - rows.at(-2)[0].baseline < em * 2.5) return false
+  const tail = entries.slice(-2)
+  return (
+    tail.every(({ marker }, i) => marker.rect[1] >= top && marker.text.trim() === keys[i]) &&
+    entries
+      .slice(0, -2)
+      .every(({ lines }) => lines.every((line) => line.every((item) => item.rect[3] <= top))) &&
+    entries.every(({ lines }) => {
+      const text = lines
+        .flat()
+        .map((item) => item.text)
+        .join(' ')
+      return (
+        /^\p{Lu}\.\s/u.test(text) &&
+        /\b(?:19|20)\d{2}\b/u.test(text) &&
+        (text.match(/\p{L}{2,}/gu) ?? []).length >= 6
+      )
+    })
+  )
+}
+
+// A detector crop may slice a two-column caption directory. Its complete
+// native navigation packets, rather than the detector's clipped rows, prove
+// that the repeated integers are ordinals and page targets.
+function hasCaptionDirectory(table, items) {
+  const headings = items.filter((t) => /^List of (?:Figures|Tables)$/u.test(t.text))
+  if (headings.length !== 1) return false
+  const heading = headings[0],
+    h = heading.height
+  const valid = (t) =>
+    t.horizontal &&
+    Number.isFinite(t.baseline) &&
+    Number.isFinite(t.height) &&
+    t.height > 0 &&
+    t.rect?.length === 4 &&
+    t.rect.every(Number.isFinite) &&
+    t.rect[2] > t.rect[0] &&
+    t.rect[3] > t.rect[1] &&
+    Number.isSafeInteger(t.sourceItem?.pageNumber) &&
+    t.sourceItem.pageNumber > 0 &&
+    t.sourceItem.pageNumber === heading.sourceItem?.pageNumber &&
+    Number.isSafeInteger(t.sourceItem?.index) &&
+    t.sourceItem.index >= 0 &&
+    t.sourceItem.text === t.text &&
+    !t.sourceSegment
+  if (!valid(heading)) return false
+  const source = items
+    .filter((t) => t.sourceItem?.index > heading.sourceItem.index)
+    .sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+  if (
+    !source.length ||
+    source.some((t) => !valid(t) || Math.abs(t.height - h) > h * 0.05) ||
+    new Set(items.map((t) => t.sourceItem?.index)).size !== items.length
+  )
+    return false
+  const records = []
+  for (let n = 0; n < source.length;) {
+    const ordinal = source[n++],
+      title = []
+    if (!/^[1-9]\d*$/u.test(ordinal.text)) return false
+    while (source[n] && /\p{L}/u.test(source[n].text)) title.push(source[n++])
+    const target = source[n++]
+    if (
+      !title.length ||
+      !target ||
+      !/^\d+$/u.test(target.text) ||
+      Math.abs(ordinal.baseline - title[0].baseline) > h * 0.1 ||
+      Math.abs(target.baseline - title.at(-1).baseline) > h * 0.1 ||
+      target.rect[0] - ordinal.rect[2] < h * 8 ||
+      title.some((t) => t.rect[0] < ordinal.rect[2] + h * 0.5 || t.rect[2] > target.rect[0] - h)
+    )
+      return false
+    records.push({ ordinal, title, target })
+  }
+  if (
+    records.length < 6 ||
+    records.some(
+      (r, n) =>
+        Number(r.ordinal.text) !== n + 1 ||
+        (n && Number(r.target.text) < Number(records[n - 1].target.text))
+    )
+  )
+    return false
+  const lanes = []
+  for (const r of records) {
+    let lane = lanes.find((g) => Math.abs(g[0].ordinal.rect[0] - r.ordinal.rect[0]) < h * 0.2)
+    if (!lane) lanes.push((lane = []))
+    lane.push(r)
+  }
+  if (
+    lanes.length !== 2 ||
+    lanes.some(
+      (g) =>
+        g.length < 3 ||
+        g.some(
+          (r, n) =>
+            Math.abs(r.target.rect[2] - g[0].target.rect[2]) > h * 0.2 ||
+            (n &&
+              (Number(r.ordinal.text) !== Number(g[n - 1].ordinal.text) + 1 ||
+                r.ordinal.baseline <= g[n - 1].target.baseline))
+        )
+    ) ||
+    lanes[0].at(-1).target.rect[2] >= lanes[1][0].ordinal.rect[0] ||
+    heading.rect[0] < lanes[0][0].ordinal.rect[0] ||
+    heading.rect[2] > lanes[0][0].target.rect[2] ||
+    heading.baseline >= records[0].ordinal.rect[1]
+  )
+    return false
+  const [l, t, r, b] = table.cropRect
+  const selected = items.filter(
+    (i) => i.rect?.[0] < r && i.rect[2] > l && i.rect[1] < b && i.rect[3] > t
+  )
+  const owned = new Set([heading, ...source])
+  const prior = selected
+    .filter((i) => !owned.has(i))
+    .sort((a, b) => a.sourceItem?.index - b.sourceItem?.index)
+  if (
+    prior.length &&
+    (prior.length !== 3 ||
+      prior.some((i) => !valid(i) || Math.abs(i.height - h) > h * 0.05) ||
+      prior[1].rect[0] < prior[0].rect[2] + h * 0.5 ||
+      prior[1].rect[2] > prior[2].rect[0] - h ||
+      prior[2].rect[0] - prior[0].rect[2] < h * 8 ||
+      !/^[1-9]\d*$/u.test(prior[0].text) ||
+      !/\p{L}/u.test(prior[1].text) ||
+      !/^\d+$/u.test(prior[2].text) ||
+      prior.some(
+        (i) => Math.abs(i.baseline - prior[0].baseline) > h * 0.1 || i.baseline >= heading.rect[1]
+      ) ||
+      Math.abs(prior[0].rect[0] - records[0].ordinal.rect[0]) > h * 0.2 ||
+      Math.abs(prior[2].rect[2] - records[0].target.rect[2]) > h * 0.2)
+  )
+    return false
+  return true
+}
+
 export function hasNativeNonTableLayout(table, items, rules) {
   if (!table.cropRect || !Array.isArray(rules)) return false
   const [left, top, right, bottom] = table.cropRect,
@@ -204,9 +427,11 @@ export function hasNativeNonTableLayout(table, items, rules) {
   // Some directories print each section ordinal and its entire title as one
   // native font. Preserve that whole font; two complete lanes and all repeated
   // navigation roles must close before treating the page numbers as prose.
+  if (hasCaptionDirectory(table, items)) return true
   const wholeRows = wholeNativeRows(table.cropRect, items, rules)
   if (hasWholeFontContents(wholeRows, left, width)) return true
   if (hasWholeFontNumberedReferences(wholeRows, table, left, width)) return true
+  if (hasNativeBracketedReferenceTail(table, items, rules)) return true
   const rows = []
   for (const item of [...source].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
     const row = rows.find(

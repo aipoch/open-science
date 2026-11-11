@@ -326,7 +326,7 @@ describe('Main terminal commit recovery', () => {
           interruptionCause: 'terminal-commit-failed',
           terminalCommitFailure: failure,
           terminalCommitError: message,
-          errorReportable: false
+          failure: { category: 'session' as const, reason: 'session/interrupted', diagnostics: {} }
         })
       )
       expect(h.sessions.get(turn.sessionId)?.status).toBe('running') // live result is never written
@@ -1125,19 +1125,31 @@ describe('RuntimeSessionOwner', () => {
     {
       recoverable: 'context-overflow' as const,
       text: 'request too large',
-      providerError: false,
+      failure: {
+        category: 'input' as const,
+        reason: 'input/context-overflow' as const,
+        diagnostics: {}
+      },
       contextReset: false
     },
     {
       recoverable: undefined,
       text: 'API Error: Connection closed mid-response',
-      providerError: true,
+      failure: {
+        category: 'service' as const,
+        reason: 'service/response-interrupted' as const,
+        diagnostics: {}
+      },
       contextReset: false
     },
     {
       recoverable: undefined,
       text: 'API Error: Connection closed mid-response',
-      providerError: true,
+      failure: {
+        category: 'service' as const,
+        reason: 'service/response-interrupted' as const,
+        diagnostics: {}
+      },
       contextReset: true
     }
   ])(
@@ -1161,7 +1173,7 @@ describe('RuntimeSessionOwner', () => {
       const interrupted = sessions.get(turn.sessionId)!
       expect(interrupted.activeRun).toBeUndefined()
       expect(interrupted.messages.at(-1)?.status).toBe('error')
-      if (failure.providerError) {
+      if (failure.failure.category === 'service') {
         expect(interrupted.resumeRecovery).toEqual({
           kind: 'resume-required',
           cause: 'connection-lost',
@@ -1186,7 +1198,8 @@ describe('RuntimeSessionOwner', () => {
           run: { promptMessageId: turn.promptMessageId, startedAt: 10 }
         }
       ])
-      if (failure.providerError) expect(prepared.resumeRecovery).toEqual(interrupted.resumeRecovery)
+      if (failure.failure.category === 'service')
+        expect(prepared.resumeRecovery).toEqual(interrupted.resumeRecovery)
       sessions.set(turn.sessionId, prepared)
       const admitRetry = async (): Promise<void> => {
         await owner.begin({
@@ -1195,7 +1208,7 @@ describe('RuntimeSessionOwner', () => {
           executionId: 'retry-execution'
         })
       }
-      if (failure.providerError) {
+      if (failure.failure.category === 'service') {
         await continueInterruptedTurn(
           {
             loadSession: async () => structuredClone(sessions.get(turn.sessionId)),
@@ -1753,7 +1766,7 @@ describe('RuntimeSessionOwner', () => {
               promptMessageId: turn.promptMessageId,
               timestamp: 3,
               text: 'Provider unavailable',
-              providerError: true
+              failure: { category: 'service' as const, diagnostics: {} }
             }
       )
       await owner.flush(turn.sessionId, turn.promptMessageId)

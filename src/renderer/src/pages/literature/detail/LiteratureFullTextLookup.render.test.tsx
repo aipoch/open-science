@@ -73,6 +73,62 @@ describe('LiteratureFullTextLookup', () => {
     })
   })
   afterEach(cleanup)
+  it.each([false, true])(
+    'clears an old attachment failure after searching again while retaining cooldown %s',
+    async (limited) => {
+      const retryAt = limited ? Date.now() + 60_000 : undefined
+      const candidate = {
+        id: 'candidate',
+        provider: 'pmc',
+        source: 'PubMed Central',
+        url: 'https://pmc.ncbi.nlm.nih.gov/paper.pdf'
+      }
+      transfer.mockResolvedValue({
+        mode: 'transfer',
+        transfer: { id: 'failed-task', itemId: item.id, status: 'failed', candidate, retryAt }
+      })
+      fullText.mockResolvedValue({ mode: 'search', candidates: [candidate], notices: [] })
+      const { rerender } = render(<LiteratureFullTextLookup {...props} />)
+      await results().findByRole('button', { name: limited ? /^Retry in/ : 'Add attachment' })
+      expect(screen.getByRole('alert')).not.toBeNull()
+      let finishSearch: (() => void) | undefined
+      if (!limited)
+        fullText.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishSearch = () => resolve({ mode: 'search', candidates: [candidate], notices: [] })
+            })
+        )
+      fireEvent.click(screen.getByRole('button', { name: 'Search again' }))
+      await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
+      if (!limited) {
+        await act(async () => {
+          rerender(<LiteratureFullTextLookup {...props} onAdded={vi.fn()} />)
+        })
+        await act(async () => finishSearch?.())
+      }
+      await waitFor(() => {
+        expect(screen.queryByRole('alert') !== null).toBe(Boolean(retryAt))
+        expect(
+          (
+            results().getByRole('button', {
+              name: limited ? /^Retry in/ : 'Add attachment'
+            }) as HTMLButtonElement
+          ).disabled
+        ).toBe(Boolean(retryAt))
+      })
+      if (!limited) {
+        fullText.mockRejectedValueOnce(new Error('Download failed again'))
+        fireEvent.click(results().getByRole('button', { name: 'Add attachment' }))
+        await screen.findByRole('alert')
+        await act(async () => {
+          rerender(<LiteratureFullTextLookup {...props} onAdded={vi.fn()} />)
+        })
+        expect(fullText).toHaveBeenLastCalledWith({ mode: 'search', itemId: item.id })
+        expect(screen.getByRole('alert')).not.toBeNull()
+      }
+    }
+  )
   it.each(['attached', 'reopened'])(
     'retries item refresh after a successful %s transfer without reporting download failure',
     async (entry) => {

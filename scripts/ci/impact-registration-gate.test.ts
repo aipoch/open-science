@@ -90,7 +90,9 @@ describe('fixed impact-registration gate', () => {
               PREFLIGHT_RESULT: 'success',
               REGISTRATION_RESULT: result,
               RUNTIME_REQUIRED: 'false',
-              PACKAGE_RESULT: 'success'
+              PACKAGE_RESULT: 'success',
+              PACKAGE_SOURCE_REQUIRED: 'false',
+              PACKAGE_SOURCE_RESULT: 'skipped'
             }
           })
           expect(run.status, `${result}: ${run.stderr}`).toBe(result === 'success' ? 0 : 1)

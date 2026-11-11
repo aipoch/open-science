@@ -1,5 +1,6 @@
 import { pdfReflowContentKinds } from './reflow-content.js'
 import { createPdfTranslationSource, type PdfTranslationSource } from './source.js'
+import { carryNativeCaptionEligibility } from './caption-eligibility.js'
 
 type Unit = PdfTranslationSource['units'][number]
 type Region = NonNullable<PdfTranslationSource['originalRegions']>[number]
@@ -82,5 +83,8 @@ export function applyPdfContentFirstPolicy(source: PdfTranslationSource): PdfTra
             )
         )
   )
-  return createPdfTranslationSource({ ...source, units, originalRegions: uniqueRegions })
+  return carryNativeCaptionEligibility(
+    source,
+    createPdfTranslationSource({ ...source, units, originalRegions: uniqueRegions })
+  )
 }

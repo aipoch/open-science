@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ModalTargetCatalog } from './modal-target-catalog'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ComputeHostRepository, type ComputeHostClient } from './repository'
@@ -40,6 +44,41 @@ const createMockClient = (
 }
 
 describe('compute host repository', () => {
+  it('preserves independent targets on concurrent saves and rejects malformed persisted settings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'compute-targets-'))
+    try {
+      const catalog = new ModalTargetCatalog(() => root)
+      const config = {
+        displayName: 'Work',
+        environmentName: 'research',
+        appName: 'experiment',
+        image: 'ubuntu:24.04',
+        cpus: 2,
+        memoryMiB: 1024
+      }
+      expect(() => catalog.create({ ...config, cpus: 0 })).toThrow(/positive|>0/)
+      const [first, second] = await Promise.all([
+        catalog.create(config),
+        catalog.create({ ...config, gpu: 'H100' })
+      ])
+      const restarted = new ModalTargetCatalog(() => root)
+      expect(await restarted.list()).toEqual([first, second])
+      const edited = { ...config, displayName: 'Edited' }
+      await restarted.update(second.providerId, edited)
+      expect(await catalog.list()).toEqual([
+        first,
+        { ...edited, id: second.id, providerId: second.providerId }
+      ])
+      await restarted.remove(first.providerId)
+      await expect(restarted.update(first.providerId, config)).rejects.toThrow('no longer exists')
+      expect((await catalog.list()).map((entry) => entry.providerId)).toEqual([second.providerId])
+      await writeFile(join(root, 'compute-modal-targets.json'), '{')
+      await expect(restarted.create(config)).rejects.toThrow()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('lists hosts most-recently-created first as epoch-ms timestamps', async () => {
     const { client, computeHost } = createMockClient({
       findMany: () => Promise.resolve([createRow()])

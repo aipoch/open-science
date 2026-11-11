@@ -45,6 +45,140 @@ async function fixture(): Promise<SessionDiagnosticWorkerInput> {
 const sessionPath = (input: SessionDiagnosticWorkerInput): string =>
   join(input.configRoot, 'sessions/project/session.json')
 describe('session diagnostics isolated collector', () => {
+  it.each([
+    { id: 'log:main.log', output: 'logs/main.log' },
+    { id: 'desktop-log:main.log', output: 'logs/desktop/main.log' }
+  ])('marks malformed canonical log records as partial: $id', async ({ id, output }) => {
+    const input = await fixture()
+    input.desktopLogPath = input.logPath
+    await writeFile(
+      input.logPath!,
+      `${JSON.stringify({ level: 'info', msg: 'startup completed' })}\n{"level":"error","msg":"PRIVATE_TRUNCATED_RECORD`
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: [id] })
+    const extracted = join(input.directory!, 'extracted')
+    await mkdir(extracted)
+    await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+    const exported = await readFile(join(extracted, output), 'utf8')
+    expect(exported).toContain('startup completed')
+    expect(exported).not.toContain('PRIVATE_TRUNCATED_RECORD')
+    const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+    const source = manifest.items.find((item: { id: string }) => item.id === id)
+    expect(source.sourceMetadata).toMatchObject({ retainedRecords: 1, omittedLines: 1 })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    expect(source.status).toBe('partial')
+  })
+  it.each([false, true])(
+    'exports filtered backend logs successfully with a bounded tail: %s',
+    async (bounded) => {
+      const input = await fixture()
+      const name = 'desktop-backend-42-1700000000000.log'
+      const logs = join(input.configRoot, 'logs')
+      await mkdir(logs)
+      const prefix = bounded ? `${'x'.repeat(256 * 1024)}\n` : ''
+      await writeFile(
+        join(logs, name),
+        prefix +
+          [
+            '(node:42) ExperimentalWarning: SQLite is an experimental feature',
+            '[credential-identity] identity probe completed {',
+            "  status: 'exists'",
+            '}',
+            'PRIVATE_STDOUT',
+            JSON.stringify({ level: 'info', scope: 'startup', msg: 'startup completed' })
+          ].join('\n')
+      )
+      const result = await runSessionDiagnosticWorker({
+        ...input,
+        selectedItems: [`backend-log:${name}`]
+      })
+      expect(result).toMatchObject({ kind: 'archive', partial: false })
+      const extracted = join(input.directory!, 'extracted')
+      await mkdir(extracted)
+      await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+      const exported = await readFile(join(extracted, 'logs/backend', name), 'utf8')
+      expect(exported).toContain('startup completed')
+      expect(exported).not.toContain('PRIVATE_STDOUT')
+      const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+      expect(manifest.items.find((item: { selected: boolean }) => item.selected)).toMatchObject({
+        status: 'exported',
+        sourceMetadata: { omittedLines: 5, omittedBytes: Buffer.byteLength(prefix) }
+      })
+    }
+  )
+  it('retains a complete fatal record at the backend tail boundary', async () => {
+    const input = await fixture()
+    const logs = join(input.configRoot, 'logs')
+    await mkdir(logs)
+    const name = 'desktop-backend-42-1700000000000.log'
+    const fatal = 'FATAL ERROR: Reached heap limit Allocation failed\n'
+    const tail = fatal + 'x'.repeat(256 * 1024 - Buffer.byteLength(fatal))
+    await writeFile(join(logs, name), `older output\n${tail}`)
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: [`backend-log:${name}`]
+    })
+    expect(result.kind).toBe('archive')
+    const output = join(input.directory!, 'content', 'logs/backend', name)
+    expect(await readFile(output, 'utf8')).toContain('FATAL ERROR: Reached heap limit')
+    expect(JSON.parse(await readFile(`${output}.metadata.json`, 'utf8'))).toMatchObject({
+      omittedBytes: Buffer.byteLength('older output\n'),
+      readBytes: 256 * 1024,
+      boundaryProbeBytes: 1
+    })
+  })
+  it('discovers recent backend logs and exports bounded redacted fatal evidence', async () => {
+    const input = await fixture()
+    const logs = join(input.configRoot, 'logs')
+    await mkdir(logs)
+    for (let index = 0; index < 22; index++)
+      await writeFile(join(logs, `desktop-backend-42-${1700000000000 + index}.log`), '')
+    const name = 'desktop-backend-42-1700000000021.log'
+    const source = [
+      'x'.repeat(9 * 1024 * 1024),
+      'UNRELATED_STDOUT',
+      '# Fatal process out of memory: Re-embedded builtins: set permissions',
+      '----- Native stack trace -----',
+      ' 1: 00007FF732BB7107',
+      'Error: access denied api_key=backend-secret at C:\\private-user\\profile',
+      '    at read (C:\\private-user\\startup.js:1:2)',
+      JSON.stringify({
+        t: '2026-10-30T00:27:00.000Z',
+        level: 'error',
+        scope: 'node-runtime',
+        msg: 'startup failed',
+        data: { error: 'denied', code: 'EACCES' }
+      })
+    ].join('\n')
+    await writeFile(join(logs, name), source)
+    await writeFile(join(logs, 'not-a-backend.log'), 'UNRELATED_FILE')
+    const inspection = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
+    expect(inspection.kind).toBe('inspection')
+    if (inspection.kind !== 'inspection') throw new Error('inspection required')
+    const backend = inspection.inspection.items.filter(
+      (item) => item.id.startsWith('backend-log:') && item.available
+    )
+    expect(backend).toHaveLength(20)
+    expect(backend[0].name).toBe(name)
+    expect(backend.some((item) => item.name.endsWith('1700000000000.log'))).toBe(false)
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: [backend[0].id] })
+    expect(result.kind).toBe('archive')
+    const exported = await readFile(join(input.directory!, 'content', 'logs/backend', name), 'utf8')
+    expect(exported).toContain('Re-embedded builtins: set permissions')
+    expect(exported).toContain('00007FF732BB7107')
+    expect(exported).toContain('EACCES')
+    for (const secret of ['backend-secret', 'private-user', 'UNRELATED_STDOUT'])
+      expect(exported).not.toContain(secret)
+    const metadata = JSON.parse(
+      await readFile(
+        join(input.directory!, 'content', 'logs/backend', `${name}.metadata.json`),
+        'utf8'
+      )
+    )
+    expect(metadata.omittedBytes).toBeGreaterThan(0)
+    expect(metadata.readBytes).toBeLessThanOrEqual(256 * 1024)
+    expect(await readFile(join(logs, name), 'utf8')).toBe(source)
+  })
   it('exports selected diagnostic projections and leaves source bytes unchanged', async () => {
     const input = await fixture()
     const raw = JSON.stringify({

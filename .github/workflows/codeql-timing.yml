@@ -1,0 +1,65 @@
+name: CodeQL timing dry-run
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/codeql-timing.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [full, overlay-base]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - uses: github/codeql-action/setup-codeql@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        id: setup
+        with:
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-linux64.tar.zst
+      - name: Initialize JavaScript database
+        env:
+          CODEQL: ${{ steps.setup.outputs.codeql-path }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          DB="$RUNNER_TEMP/codeql-db"
+          echo "DB=$DB" >> "$GITHUB_ENV"
+          echo "$(dirname "$CODEQL")" >> "$GITHUB_PATH"
+          flags=()
+          if [[ "$MODE" == overlay-base ]]; then flags+=(--overlay-base); fi
+          "$CODEQL" database init "$DB" --language=javascript --build-mode=none \
+            --calculate-language-specific-baseline --sublanguage-file-coverage --extractor-include-aliases \
+            --source-root=. --codescanning-config=.github/codeql/codeql-config.yml "${flags[@]}"
+      - name: Extract JavaScript and TypeScript
+        run: codeql database trace-command --use-build-mode "$DB"
+      - name: Finalize database
+        run: codeql database finalize --finalize-dataset --threads=4 --ram=14569 "$DB"
+      - name: Run default queries
+        run: codeql database run-queries --threads=4 --ram=14569 --min-disk-free=1024 "$DB"
+      - name: Report source and finding signatures
+        run: |
+          sarif="$RUNNER_TEMP/results.sarif"
+          codeql database interpret-results "$DB" --format=sarifv2.1.0 --output="$sarif"
+          unzip -Z1 "$DB/src.zip" | LC_ALL=C sort > "$RUNNER_TEMP/sources"
+          jq -cS '.runs[].results[] | [.ruleId, .message.text, [.locations[].physicalLocation | [.artifactLocation.uri, .region]]]' \
+            "$sarif" | LC_ALL=C sort > "$RUNNER_TEMP/findings"
+          {
+            echo "Commit: $(git rev-parse HEAD)"
+            echo '~~~'
+            cd "$RUNNER_TEMP"
+            wc -l sources findings
+            sha256sum sources findings
+            echo '~~~'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

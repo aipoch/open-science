@@ -9,18 +9,21 @@ import { requestReplaySeek } from './replay/replay-context'
 
 export const ReplayReferenceText = ({
   text,
-  projectId
+  projectId,
+  deletedDiscussionSourceId
 }: {
   text: string
   projectId?: string
+  deletedDiscussionSourceId?: string
 }): React.JSX.Element => {
   const navigationRevision = useNavigationStore((state) => state.explicitNavigationRevision)
   return (
     <ScopedReplayReferenceText
-      key={JSON.stringify([projectId, text, navigationRevision])}
+      key={JSON.stringify([projectId, text, navigationRevision, deletedDiscussionSourceId])}
       text={text}
       projectId={projectId}
       navigationRevision={navigationRevision}
+      deletedDiscussionSourceId={deletedDiscussionSourceId}
     />
   )
 }
@@ -28,15 +31,47 @@ export const ReplayReferenceText = ({
 const ScopedReplayReferenceText = ({
   text,
   projectId,
-  navigationRevision
+  navigationRevision,
+  deletedDiscussionSourceId
 }: {
   text: string
   projectId?: string
   navigationRevision: number
+  deletedDiscussionSourceId?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [error, setError] = useState<string>()
   const [pending, setPending] = useState<string>()
+  const [deletedLinks, setDeletedLinks] = useState<ReadonlySet<string>>()
+  useEffect(() => {
+    if (
+      !deletedDiscussionSourceId ||
+      !projectId ||
+      !window.api?.sessionReplay?.getSelectionSnapshot
+    )
+      return
+    // Legacy inline links carry the snapshot ID, not the source Session ID.
+    const ids = new Set(
+      splitReplayReferenceText(text).flatMap((part) =>
+        part.kind === 'reference' && (part.projectId ?? projectId) === projectId ? [part.id] : []
+      )
+    )
+    if (!ids.size) return
+    let active = true
+    void Promise.all(
+      [...ids].map(async (id) => {
+        const snapshot = await window.api.sessionReplay
+          .getSelectionSnapshot({ projectId, id })
+          .catch(() => undefined)
+        return snapshot?.sourceSessionId === deletedDiscussionSourceId ? id : undefined
+      })
+    ).then((matches) => {
+      if (active) setDeletedLinks(new Set(matches.filter((id): id is string => id !== undefined)))
+    })
+    return () => {
+      active = false
+    }
+  }, [deletedDiscussionSourceId, projectId, text])
   const request = useRef(0)
   useEffect(() => {
     return () => {
@@ -70,6 +105,13 @@ const ScopedReplayReferenceText = ({
         setError(t('This replay reference is unavailable on this device.'))
         return
       }
+      if (
+        context.projectId === projectId &&
+        context.sourceSessionId === deletedDiscussionSourceId
+      ) {
+        setDeletedLinks((previous) => new Set(previous).add(id))
+        return
+      }
       usePreviewWorkbenchStore
         .getState()
         .upsertAndActivateItem(
@@ -92,6 +134,10 @@ const ScopedReplayReferenceText = ({
       {splitReplayReferenceText(text).map((part, index) =>
         part.kind === 'text' ? (
           <Fragment key={index}>{part.text}</Fragment>
+        ) : (part.projectId ?? projectId) === projectId && deletedLinks?.has(part.id) ? (
+          <span key={index} className="text-xs text-muted-foreground">
+            {part.label} · {t('Source deleted')}
+          </span>
         ) : (
           <button
             key={index}

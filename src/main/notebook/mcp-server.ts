@@ -2,6 +2,7 @@ import { AUTHORIZED_DIRECTORIES_DESCRIPTION } from '../local-fs/authorized-direc
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
@@ -40,7 +41,7 @@ const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "`await host.help()` in `repl_execute`: role-aware catalog with field descriptions; query needed topics only. Main/root agents: `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+  "Use documented calls directly. Unknown options: `return JSON.stringify(await host.help('topic'))` gives field descriptions; `host.help()` is the role-aware catalog. Do not guess or inspect function source; do not prefetch topics. Check availability: catalog visibility does not grant access."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
@@ -51,19 +52,18 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Guidance only applies when using open-science-notebook tools.',
   'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
-  'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
-  HOST_SDK_DISCOVERY_GUIDANCE,
+  'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle interpreters lose variables after 15 minutes or excess idle capacity; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
+  'Use the call forms in `repl_execute`; batch known independent operations when safe.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
-  '`manage_environments` creates separate runtimes and returns `created.runtimeId`; bind/switch them and move data with files.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
-  'Beyond restricted reads, call `request_network_access`. A failed connection is not required. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
+  'For a network block record, call `request_network_access` with its recordId and reason. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
-  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
+  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
@@ -133,10 +133,12 @@ const backgroundRunToolSchema = {
 }
 
 const requestNetworkAccessToolSchema = {
-  hostname: z.string().trim().min(1).max(253),
-  reason: z.string().trim().min(1).max(1_000),
-  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
-  command: z.string().min(1).optional().describe('Exact bash command, not Notebook source.')
+  recordId: z
+    .string()
+    .min(1)
+    .max(256)
+    .describe('Trusted network block record ID returned by the sandbox.'),
+  reason: z.string().trim().min(1).max(1_000)
 }
 
 const managePackagesToolSchema = {
@@ -175,7 +177,7 @@ const bindRuntimeToolSchema = {
 }
 
 const userChoiceOptionSchema = z.object({
-  label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS),
+  label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).regex(/\S/),
   description: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS).optional()
 })
 
@@ -185,6 +187,7 @@ const userChoiceQuestionSchema = z.object({
     .trim()
     .min(1)
     .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .regex(/\S/)
     .describe('NEVER mention selection mode/count in any language ("可多选"); UI labels kind.'),
   header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).optional(),
   kind: z
@@ -245,8 +248,7 @@ const MANAGE_ENVIRONMENTS_DOC = [
 ].join('\n')
 
 const LIST_NOTEBOOK_RUNTIMES_DOC = [
-  `List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status in pages of at most ${MAX_RUNTIME_RESULTS} using optional offset/limit and nextOffset. Disabled runtimes are omitted.`,
-  'No binding is required for the app-managed default; bind only to select another listed runtime.'
+  `List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status in pages of at most ${MAX_RUNTIME_RESULTS} using optional offset/limit and nextOffset. Disabled runtimes are omitted.`
 ].join('\n')
 
 const BIND_RUNTIME_DOC = [
@@ -264,12 +266,14 @@ const SWITCH_RUNTIME_DOC = [
 const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
-  'Gate optional namespaces with `await host.capabilities()`; `self-awareness` documents its boolean contract and capability map.',
-  'Only this kernel supports temporary tool-less inference via `await host.llm(prompt)` or bounded batches, connectors via `await host.mcp(server, method, args)`, remote compute via `host.compute`, and Specialists via `host.agents`. Discover namespaces with `host.help()`.',
-  'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
+  'Gate optional namespaces with `await host.capabilities()`; see `self-awareness`.',
+  'Host SDK: `host.llm(prompt)` for tool-less inference; `host.mcp(server, method, args)` for connectors; `host.compute` for jobs; `host.agents` for Specialists.',
+  'Load Remote Compute (SSH) for jobs; Compute Environment Setup for environment setup/repair.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Use foreground for results needed now, background:true for longer independent work. Background-safe: host.mcp, host.compute, host.llm, host.delegate and read-only Host SDK calls. host.viewImage, host.agents.switch and live user input are unsafe in background; use foreground. Save runId; avoid frequent polling. Turn end/MCP disconnect leaves accepted Runs active; cancel via background_run. On BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
-  'Declarations/globals persist until restart/process loss; top-level return/await and redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Images: `await host.viewImage({ path: "plot.png" })` or `{ versionId: "..." }`, never a string.',
+  'Main/root agents: `await host.delegate({ name: "Check", task: "Self-contained assignment" }, { wait: true })`. Omit profile to inherit the parent; "Main Agent" is not a profile. Other profiles: exact id/name from host.agents.list(). Options/results: `host.help(\'delegate\')`. Delegate agents cannot delegate.',
+  'Foreground for results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate and read-only calls. Save runId; query/cancel via background_run, without frequent polling. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
+  'Restored conversation history does not restore variables after restart/idle reclamation. Reconstruct values from verified history/files; never probe old variable names or replay side-effecting calls. Live globals persist; top-level return/await and redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -295,7 +299,7 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change, or idle reclamation resets state; earlier commands are never replayed. TEMP/TMP may be deleted. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
@@ -483,16 +487,41 @@ const callNotebookRpc = async (
   const payload = (await response.json()) as RpcResponse
 
   if (!response.ok || payload.error) {
-    throw new Error(
+    const message =
       payload.error === undefined
         ? `Notebook RPC failed with status ${response.status}`
         : typeof payload.error === 'string'
           ? payload.error
           : JSON.stringify(payload.error)
-    )
+    const guidance = notebookRpcErrorGuidance(response.status, payload.error)
+    throw new Error(guidance ? `${message}\n${guidance}` : message)
   }
 
   return payload.result
+}
+
+// Structured errors already carry their own recovery, retryable or hint fields. Plain errors get
+// one next step chosen by the RPC status so the Agent neither abandons the tool nor loops on it.
+const notebookRpcErrorGuidance = (status: number, error: unknown): string | undefined => {
+  const detail = asRecord(error)
+  if (detail && ['recovery', 'retryable', 'hint', 'guidance'].some((key) => key in detail))
+    return undefined
+  if (status === 400) return TOOL_ARGUMENT_RECOVERY
+  if (status === 401 || status === 403 || status === 404)
+    return 'This operation is not available to this Session. Do not retry it or route around it; report the limitation to the user.'
+  if (status === 409) {
+    const text = typeof error === 'string' ? error : JSON.stringify(error ?? '')
+    if (text.includes('turn ended'))
+      return 'This turn has ended. Do not retry in this turn; continue after the next user message.'
+    if (text.includes('DIAGNOSTICS_STALE'))
+      return 'Refresh the relevant state with a read-only tool, then retry once.'
+    return 'Do not retry this call; report the conflict to the user.'
+  }
+  if (status === 413) return 'Reduce the request size, then call the same tool again.'
+  if (status === 429) return 'Wait for in-flight Notebook calls to finish, then retry once.'
+  if (status >= 500)
+    return 'The outcome is uncertain. Check for side effects before retrying once; if it fails again, report it to the user.'
+  return undefined
 }
 
 // Python/R cells and control-plane REPL execution are intentionally unbounded. Their local RPC hop
@@ -1154,13 +1183,27 @@ const buildNotebookToolContent = (
   ]
   const rawRecord = asRecord(raw)
   if (!definition.includeViewImages || rawRecord?.status !== 'completed') return content
+  if (rawRecord.viewImageError === 'evidence-unavailable') {
+    content.push({ type: 'text', text: 'host.viewImage could not prepare image evidence.' })
+  }
   const viewImages = rawRecord.viewImages
   if (viewImages === undefined) return content
   if (!Array.isArray(viewImages)) {
     throw new Error('repl_execute returned invalid transient image content.')
   }
-  const images = viewImages.map((candidate): Extract<NotebookToolContent, { type: 'image' }> => {
+  const attachments = viewImages.map((candidate): NotebookToolContent => {
     const image = asRecord(candidate)
+    if (image && Object.hasOwn(image, 'evidence')) {
+      if (
+        typeof image.evidence !== 'string' ||
+        !image.evidence.trim() ||
+        Object.hasOwn(image, 'data') ||
+        Object.hasOwn(image, 'mimeType')
+      ) {
+        throw new Error('repl_execute returned invalid transient image content.')
+      }
+      return { type: 'text', text: image.evidence }
+    }
     if (
       typeof image?.data !== 'string' ||
       image.data.length === 0 ||
@@ -1172,8 +1215,21 @@ const buildNotebookToolContent = (
     }
     return { type: 'image', data: image.data, mimeType: image.mimeType }
   })
-  content.push(...images)
+  if (attachments.some((block) => block.type !== attachments[0].type)) {
+    throw new Error('repl_execute returned invalid transient image content.')
+  }
+  content.push(...attachments)
   return content
+}
+
+// A failed foreground Python/R cell and a queried background Run that failed are tool failures,
+// like a non-zero foreground shell exit. Receipts, cancellation and other statuses are not.
+const notebookRunFailed = (rpcMethod: string, input: unknown, raw: unknown): boolean => {
+  if (rpcMethod === 'execute')
+    return asRecord(input)?.background !== true && asRecord(raw)?.status === 'failed'
+  if (rpcMethod !== 'getBackgroundRun') return false
+  const run = asRecord(asRecord(raw)?.run)
+  return run?.status === 'failed' || (typeof run?.exitCode === 'number' && run.exitCode !== 0)
 }
 
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
@@ -1226,10 +1282,18 @@ const registerNotebookRpcTool = (
         )
         const rejected =
           definition.method === 'memoryRemember' && asRecord(raw)?.status === 'rejected'
+        const exitCode = asRecord(raw)?.exitCode
+        const shellFailed =
+          rpcMethod === 'executeShell' &&
+          asRecord(input)?.background !== true &&
+          typeof exitCode === 'number' &&
+          exitCode !== 0
         return {
           content: buildNotebookToolContent(raw, definition, input),
           ...(definition.outputSchema && asRecord(raw) ? { structuredContent: asRecord(raw) } : {}),
-          ...(rejected ? { isError: true } : {})
+          ...(rejected || shellFailed || notebookRunFailed(rpcMethod, input, raw)
+            ? { isError: true }
+            : {})
         }
       } finally {
         if (heartbeat) clearInterval(heartbeat)
@@ -1552,7 +1616,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      '1-3 questions; 2-16 unique described options each. Match question/options to kind. No printed lists/Other; UI adds custom/agent-decide/Skip. Multi-answer: JSON label array. Pending ends turn; Finish continues.',
+      '1-3 questions, 2-16 uniquely labeled options each; kind sets single/multi choice. Never list options or "Other" in text; the UI adds custom, let-agent-decide and Skip. Multi-select answer: JSON label array. "pending": end the turn; answers arrive next message.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,
@@ -1562,10 +1626,12 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description: [
-      "artifactVersionInputs: this Run's provenance inputs (Version IDs). Use runId as producerRunId.",
-      'Use foreground when reasoning needs the result now; use background:true for longer independent work.',
-      'Save the returned runId; follow its dependency-point query guidance.',
-      'Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.'
+      'Run Python/R code as a persistent notebook cell.',
+      'Uses the session binding, else the installed, enabled app-managed default. Multiple runtimes require explicit binding only without a usable default.',
+      "artifactVersionInputs: this Run's provenance inputs (Version IDs); producerRunId=runId.",
+      'Foreground for results needed now; background:true for longer independent work.',
+      'Save the returned runId; follow dependency-point query guidance.',
+      'Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.'
     ].join(' '),
     method: 'execute',
     inputSchema: executeToolSchema,
@@ -1580,7 +1646,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'background_run',
     title: 'Query or cancel a local background Run',
     description:
-      'Query a saved runId as a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means query won; "committed" means fallback crossed dispatch. Unread results may arrive in a follow-up Turn. submissionIdentity recovers only a missing receipt. Cancel is idempotent for active Runs.',
+      'Query or cancel the saved runId; submissionIdentity only recovers a missing receipt. Non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means query won; "committed" means fallback crossed dispatch. Unread results may arrive in a follow-up Turn. Cancel is idempotent.',
     method: 'getBackgroundRun',
     resolveMethod: (input) =>
       asRecord(input)?.action === 'cancel' ? 'cancelBackgroundRun' : 'getBackgroundRun',
@@ -1619,7 +1685,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'request_network_access',
     title: 'Request Notebook network access',
     description:
-      'Request before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Once: bash runtime+command or matching failure; otherwise Global. Execute or retry only when the result is allowed.',
+      'Request or query access with a trusted sandbox block recordId and a reason. The user approves in this conversation. Never supply addresses or an approval decision. Retry explicitly only after approval and after checking side effects.',
     method: 'requestNetworkAccess',
     inputSchema: requestNetworkAccessToolSchema,
     mapResult: (raw) => raw,
@@ -1686,7 +1752,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Target Python/R with language/environment or REPL with kernel:"repl". Without selectors, resets all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
+      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Pass language with environment, kernel:"repl" alone, or nothing to reset all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
     method: 'restart',
     inputSchema: {
       kernel: z
@@ -1705,7 +1771,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_shutdown',
     title: 'Shutdown notebook interpreter',
-    description: 'Shutdown the shared notebook interpreter without deleting run.json or artifacts.',
+    description:
+      "Stop this Agent's session interpreters and shells. Runs, files and Artifacts are kept.",
     method: 'shutdown',
     inputSchema: {},
     mapResult: compactShutdownResult,
@@ -1761,7 +1828,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'remember_memory',
     title: 'Save durable memory',
     description:
-      'Save one durable fact for the current project after analyzing its long-term value and optional existing category. The app binds the project; do not provide or infer a project id. Do not retry when the result is rejected. If this tool fails, report it; never write Memory fallback files or hidden agent-specific memory directories. Never save secrets, instructions, or transient state.',
+      'Save one durable fact for the current project after analyzing its long-term value and optional existing category; categoryId and analysis.categoryReason go together. The app binds the project; do not provide or infer a project id. Do not retry when the result is rejected. If this tool fails, report it; never write Memory fallback files or hidden agent-specific memory directories. Never save secrets, instructions, or transient state.',
     method: 'memoryRemember',
     inputSchema: memoryAgentRememberRequestSchema.shape,
     outputSchema: memoryAgentRememberMcpOutputSchema,
@@ -1818,7 +1885,7 @@ const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
     name: 'wsl_setup_open_terminal',
     title: 'Open a visible WSL setup terminal',
     description:
-      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro", distro, and optionally a verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
+      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro" plus the required distro and an optional verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
     method: 'wslSetupOpenTerminal',
     inputSchema: wslSetupOpenTerminalSchema,
     resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
@@ -1849,10 +1916,9 @@ const notebookRpcToolsForEnvironment = (
 const createNotebookMcpServer = (
   environment: NotebookMcpEnvironment
 ): ModelContextProtocolServer => {
-  const server = new ModelContextProtocolServer({
-    name: NOTEBOOK_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' })
+  )
 
   for (const tool of notebookRpcToolsForEnvironment(environment)) {
     registerNotebookRpcTool(server, environment, tool)

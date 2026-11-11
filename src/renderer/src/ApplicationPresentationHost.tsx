@@ -19,6 +19,8 @@ import { useSettingsUndoPortal } from '@/components/use-settings-undo-portal'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
+import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { StorageCleanupToast } from '@/components/StorageCleanupToast'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
@@ -26,6 +28,7 @@ import { useApplicationStartup } from '@/hooks/useApplicationStartup'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
+import { SharingMarketplacePage } from '@/pages/marketplace/SharingMarketplacePage'
 import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import {
@@ -111,6 +114,9 @@ const ApplicationPresentationContent = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [settingsIssueOpen, setSettingsIssueOpen] = useState(false)
+  const [discardTarget, setDiscardTarget] = useState<{ target: string; title: string }>()
+  const [discardBusy, setDiscardBusy] = useState(false)
+  const [discardError, setDiscardError] = useState(false)
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
   const requestSettingsLeave = useCallback((leave: () => void) => {
@@ -259,26 +265,96 @@ const ApplicationPresentationContent = ({
 
   const activePresentation = presentation.active
   const isBasePresentationActive = activePresentation === 'base' || activePresentation === 'preview'
-  const writeErrorAlert = sessions.writeError ? (
-    <SessionPersistenceAlert
-      title={
-        sessions.writeErrorRetryable
-          ? t('Conversation storage needs attention')
-          : t('Conversation storage limit reached')
-      }
-      message={sessions.writeError}
-      onDismiss={sessions.writeErrorRetryable ? sessions.dismissWriteWarning : undefined}
-      onRetry={sessions.writeErrorRetryable ? sessions.retryWrites : undefined}
-      onAction={
-        sessions.writeErrorRetryable
-          ? undefined
-          : () => {
-              sessions.startNewConversationAfterSizeLimit()
-            }
-      }
-      actionLabel={sessions.writeErrorRetryable ? undefined : t('New conversation')}
-    />
-  ) : null
+  const checkingStorage = !sessions.writeError && sessions.isCheckingWrites
+  const writeErrorAlert =
+    sessions.writeError || checkingStorage ? (
+      <SessionPersistenceAlert
+        variant={checkingStorage ? 'info' : 'error'}
+        title={
+          checkingStorage
+            ? t('Checking conversation storage…')
+            : sessions.writeErrorRetryable
+              ? t('Conversation storage needs attention')
+              : t('Conversation storage limit reached')
+        }
+        message={
+          checkingStorage
+            ? t(
+                'The connection changed while saving. Checking which conversation changes were saved.'
+              )
+            : sessions.writeError!
+        }
+        onDismiss={sessions.writeErrorRetryable ? sessions.dismissWriteWarning : undefined}
+        onRetry={
+          !checkingStorage && sessions.writeErrorRetryable ? sessions.retryWrites : undefined
+        }
+        retrying={sessions.isRetryingWrites}
+        onAction={
+          checkingStorage || sessions.writeErrorRetryable
+            ? undefined
+            : () => {
+                sessions.startNewConversationAfterSizeLimit()
+              }
+        }
+        actionLabel={
+          checkingStorage || sessions.writeErrorRetryable ? undefined : t('New conversation')
+        }
+      >
+        {sessions.writeIssues?.length > 0 ? (
+          <div
+            className="flex flex-col items-start gap-1"
+            data-testid="session-persistence-targets"
+          >
+            <p className="text-sm font-medium">{t('Affected conversations')}</p>
+            {sessions.writeIssues.map((issue) =>
+              issue.sessionId && issue.projectId ? (
+                <div
+                  key={issue.target}
+                  className="flex w-full min-w-0 flex-wrap items-start gap-x-2 gap-y-1"
+                >
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto min-w-0 max-w-full justify-start whitespace-normal px-0 text-left [overflow-wrap:anywhere]"
+                    aria-label={t('Open conversation: {{title}}', {
+                      title: issue.title || issue.sessionId
+                    })}
+                    onClick={() =>
+                      events.navigation.openSession(issue.projectId!, issue.sessionId!)
+                    }
+                  >
+                    {issue.title || issue.sessionId}
+                  </Button>
+                  {issue.canDiscard ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-auto max-w-full whitespace-normal text-xs"
+                      aria-label={t('Discard retained changes for {{title}}', {
+                        title: issue.title || issue.sessionId
+                      })}
+                      onClick={() => {
+                        setDiscardError(false)
+                        setDiscardTarget({
+                          target: issue.target,
+                          title: issue.title || issue.sessionId!
+                        })
+                      }}
+                    >
+                      {t('Discard retained changes…')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <span key={issue.target} className="text-sm">
+                  {t('Conversation selection')}
+                </span>
+              )
+            )}
+          </div>
+        ) : null}
+      </SessionPersistenceAlert>
+    ) : null
   const quitPersistenceAlert = startup.quitPersistence.notice ? (
     <SessionPersistenceAlert
       className="z-[70]!"
@@ -321,6 +397,8 @@ const ApplicationPresentationContent = ({
                     catalogRecovery={sessions.catalogRecovery}
                     onOpenGlobalSearch={events.globalSearch.open}
                   />
+                ) : events.navigation.view === 'marketplace' ? (
+                  <SharingMarketplacePage />
                 ) : events.navigation.view === 'library' ? (
                   <StableLiteratureLibraryPage />
                 ) : (
@@ -328,6 +406,8 @@ const ApplicationPresentationContent = ({
                     isSessionPersistenceHydrated={sessions.isHydrated}
                     isSessionPersistenceReady={sessions.isReady}
                     persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                    persistenceWriteIssues={sessions.writeIssues}
+                    onReviewPersistence={sessions.reviewWriteIssues}
                     onSessionSizeLimit={sessions.reportSessionSizeLimit}
                     canDeleteConversations={sessions.canDeleteSessionsAndProjects}
                     isPreviewPresentationActive={isBasePresentationActive}
@@ -403,6 +483,45 @@ const ApplicationPresentationContent = ({
           </WorkspaceMessageQueueProvider>
         </WorkspaceComposerDraftsProvider>
       </WorkspaceAgentRuntimeProvider>
+      <ConfirmActionDialog
+        open={discardTarget !== undefined && isBasePresentationActive}
+        title={t('Discard unsaved changes?')}
+        description={t(
+          'Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.',
+          { title: discardTarget?.title ?? '' }
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Discard changes')}
+        loading={discardBusy}
+        destructive
+        testId="session-write-discard-dialog"
+        onCancel={() => {
+          if (!discardBusy) setDiscardTarget(undefined)
+        }}
+        onConfirm={() => {
+          if (!discardTarget || discardBusy) return
+          setDiscardBusy(true)
+          setDiscardError(false)
+          void sessions
+            .discardWrite(discardTarget.target)
+            .then(
+              () => setDiscardTarget(undefined),
+              () => setDiscardError(true)
+            )
+            .finally(() => setDiscardBusy(false))
+        }}
+      >
+        {discardError ? (
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="amber"
+            description={t(
+              'Could not reload the saved conversation. Retained changes were kept. Please try again.'
+            )}
+          />
+        ) : null}
+      </ConfirmActionDialog>
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}

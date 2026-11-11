@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { createServer, type Server } from 'node:net'
+import { createConnection, createServer, type Server } from 'node:net'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -9,7 +9,9 @@ const helper = vi.hoisted(() => ({
   gatewayProbeExitCode: 0 as number | null,
   outsideProbeExitCode: 33 as number | null,
   fenceInstalled: true,
-  hold: undefined as Promise<void> | undefined
+  hold: undefined as Promise<void> | undefined,
+  outsideStarted: undefined as (() => void) | undefined,
+  connectGateway: undefined as (() => Promise<number>) | undefined
 }))
 vi.mock('node:fs/promises', async (original) => ({
   ...(await original<typeof import('node:fs/promises')>()),
@@ -44,10 +46,17 @@ vi.mock('node:child_process', async (original) => ({
           arguments: string[]
         }
         const gatewayProbe = spec.arguments.at(-1)!.includes(`127.0.0.1', ${helper.port})`)
-        if (!gatewayProbe) await helper.hold
+        if (!gatewayProbe) {
+          helper.outsideStarted?.()
+          await helper.hold
+        }
         child.emit(
           'close',
-          gatewayProbe ? helper.gatewayProbeExitCode : helper.outsideProbeExitCode
+          gatewayProbe
+            ? helper.connectGateway
+              ? await helper.connectGateway()
+              : helper.gatewayProbeExitCode
+            : helper.outsideProbeExitCode
         )
       }
     })
@@ -57,6 +66,7 @@ vi.mock('node:child_process', async (original) => ({
 
 import { checkWindowsAppContainer } from '../runtime/src/platform/windows-appcontainer.js'
 import { NotebookNetworkSandbox } from './index.js'
+import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
 
 const servers: Server[] = []
 const listen = async (port: number): Promise<Server> => {
@@ -72,11 +82,51 @@ const close = (server: Server): Promise<void> =>
   new Promise((resolve) => server.close(() => resolve()))
 afterEach(async () => {
   helper.hold = undefined
+  helper.outsideStarted = undefined
+  helper.connectGateway = undefined
   helper.statusCalls = 0
   helper.gatewayProbeExitCode = 0
   helper.outsideProbeExitCode = 33
   helper.fenceInstalled = true
   await Promise.all(servers.splice(0).map(close))
+})
+
+it('finishes checking protection when the active command ends during the fence probe', async () => {
+  const allocation = await listen(0)
+  helper.port = (allocation.address() as { port: number }).port
+  await close(allocation)
+  const gateway = await CommandGateway.open({
+    sharedPort: helper.port,
+    credentials: { username: 'fixture-command', password: 'fixture-secret' },
+    decide: async () => ({ allowed: false })
+  })
+  const outside = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  helper.outsideStarted = outside.resolve
+  helper.hold = release.promise
+  // The external helper's TCP probe uses a real socket; connection refusal is the native
+  // probe's exit 33. The protected outside connection remains denied by the fixture above.
+  helper.connectGateway = () =>
+    new Promise<number>((resolve) => {
+      const client = createConnection({ host: '127.0.0.1', port: helper.port })
+      client.once('connect', () => {
+        client.destroy()
+        resolve(0)
+      })
+      client.once('error', () => resolve(33))
+    })
+  const check = checkWindowsAppContainer('fixture-host', 'fixture-installation', 'fixture-receipt')
+  void check.catch(() => undefined)
+  try {
+    await outside.promise
+    await gateway.close()
+    release.resolve()
+    await expect(check).resolves.toEqual({ warnings: [], errors: [] })
+  } finally {
+    release.resolve()
+    await check.catch(() => undefined)
+    await gateway.close()
+  }
 })
 
 it('reads configuration without waiting for runtime initialization to finish probing', async () => {

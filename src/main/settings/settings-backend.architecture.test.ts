@@ -257,6 +257,7 @@ const productionSourcePaths = productionSources()
 describe('Settings backend ownership architecture', () => {
   it('locks the stable module export inventories', () => {
     expect(exportInventoryFrom(settingsPaths.repository)).toEqual([
+      'type:ProviderChange',
       'value:SettingsRepository',
       'value:sanitizeConnectors',
       'value:sanitizeCustomMcpServer',
@@ -287,6 +288,7 @@ describe('Settings backend ownership architecture', () => {
       'value:AgentBackendResolver'
     ])
     expect(exportInventoryFrom(settingsPaths.providerTransportOwner)).toEqual([
+      'type:HarnessProviderLease',
       'type:ProviderTransportOwnerOptions',
       'value:ProviderTransportOwner'
     ])
@@ -316,10 +318,12 @@ describe('Settings backend ownership architecture', () => {
       'value:createSubagentModels'
     ])
     expect(exportInventoryFrom(settingsPaths.subagentModelSettings)).toEqual([
+      'type:PromptOptimizationModelValidator',
       'type:ReviewerModelValidator',
       'type:SessionDetailsModelValidator',
       'type:SubagentModelValidator',
       'type:VisionModelValidator',
+      'value:buildPromptOptimizationModelMutation',
       'value:buildReviewerModelMutation',
       'value:buildSessionDetailsModelMutation',
       'value:buildSubagentModelMutation',
@@ -363,6 +367,7 @@ describe('Settings backend ownership architecture', () => {
       'setCodeBuddyInfo',
       'setCodexInfo',
       'setComputeBookmarks',
+      'setComputePythonRuntime',
       'setConnectorAutoAllow',
       'setConnectorDisabled',
       'setConversationSkillImportEnabled',
@@ -383,6 +388,7 @@ describe('Settings backend ownership architecture', () => {
       'setOpencodeInfo',
       'setPackageMirror',
       'setProjectFilesFilter',
+      'setPromptOptimizationModel',
       'setReasoningEffort',
       'setReviewerModel',
       'setRuntimeEnablement',
@@ -396,6 +402,7 @@ describe('Settings backend ownership architecture', () => {
       'setToolPolicy',
       'setVisionModel',
       'setWslSelection',
+      'subscribeProviders',
       'updateClaudeIsolatedCredentialsIfExists',
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
@@ -410,6 +417,7 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(publicOperationsOf(settingsPaths.providerAccounts, 'ProviderAccountsModule')).toEqual([
       'beginXaiOAuthLogin',
+      'bindCodexHarnessConnection',
       'bootstrapOpenAi',
       'cancelClaudeIsolatedLogin',
       'cancelClaudeLogin',
@@ -432,6 +440,7 @@ describe('Settings backend ownership architecture', () => {
       'logoutXaiOAuth',
       'migrateLegacyKeyRefs',
       'prepareBootstrapCodex',
+      'quiesceAuthentication',
       'refreshProviderModels',
       'resolveActiveModel',
       'resolveProvider',
@@ -459,11 +468,12 @@ describe('Settings backend ownership architecture', () => {
       'resolveAdmittedTarget',
       'resolveExplicitDirectProvider',
       'resolveExplicitTarget',
-      'resolveSelection'
+      'resolveSelection',
+      'resolveValidationTarget'
     ])
     expect(
       publicOperationsOf(settingsPaths.providerTransportOwner, 'ProviderTransportOwner')
-    ).toEqual(['acquire'])
+    ).toEqual(['acquire', 'acquireHarness'])
     expect(
       publicOperationsOf(
         settingsPaths.responsesToChatCompletionsBridge,
@@ -490,18 +500,18 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDestination allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
-        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWsl2BashPreviewStatus getWslSetupStatus hasActiveInstall holdInstallAdmission
+        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getComputePythonRuntime getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
+        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWslSetupStatus getWsl2BashPreviewStatus hasActiveInstall holdInstallAdmission quiesceAuthentication
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
+        cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
         dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
-        markPathsNormalized migrateAgentHomeSkillIdentities openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport
+        markPathsNormalized migrateAgentHomeSkillIdentities openHarnessSession openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         createWslSupportHandoff probeWslSetup provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort restoreLocalShellRuntimePreference reviewNotebookPrivateDestination
@@ -511,8 +521,8 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
-        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
-        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
+        setOpenAlexCredential setComputePythonRuntime setPackageMirror setProjectFilesFilter setPromptOptimizationModel setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
@@ -558,7 +568,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-resolver.ts'
     ])
     expect(importersOf(settingsPaths.providerTransportOwner)).toEqual([
-      'src/main/settings/backend-resolver.ts'
+      'src/main/settings/backend-resolver.ts',
+      'src/main/settings/service.ts'
     ])
     expect(importersOf(settingsPaths.responsesToChatCompletionsBridge)).toEqual([
       'src/main/settings/provider-transport-owner.ts',
@@ -677,9 +688,11 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenMask',
       'githubTokenRef',
       'grantedLocalRoots',
+      'huggingFaceRuntime',
       'legacyDataMovePromptDismissedAt',
       'localShellRuntime',
       'localePreference',
+      'modalRuntime',
       'networkProxy',
       'notebookFolderRestrictionEnabled',
       'notebookManualInterpreters',
@@ -692,6 +705,7 @@ describe('Settings backend ownership architecture', () => {
       'packageMirror',
       'pathsNormalizedAt',
       'projectFilesFilter',
+      'promptOptimizationModel',
       'providers',
       'reasoningEffort',
       'reviewerModel',

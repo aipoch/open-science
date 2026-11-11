@@ -19,6 +19,7 @@ const f = vi.hoisted(() => {
     launch: vi.fn(),
     connect: vi.fn(),
     lifecycle: vi.fn(),
+    windowCreated: vi.fn(),
     diagnostics: vi.fn(),
     completedStartup: vi.fn(),
     windowsStartup: vi.fn(),
@@ -53,7 +54,26 @@ vi.mock('electron', () => ({
   app: f.app,
   dialog: f.dialog,
   protocol: f.protocol,
-  BrowserWindow: { getAllWindows: () => [], fromWebContents: () => null },
+  BrowserWindow: class {
+    static getAllWindows(): [] {
+      return []
+    }
+    static fromWebContents(): null {
+      return null
+    }
+    webContents = { setWindowOpenHandler: vi.fn() }
+    constructor() {
+      f.windowCreated()
+    }
+    loadURL(): Promise<void> {
+      return Promise.resolve()
+    }
+    isDestroyed(): boolean {
+      return false
+    }
+    destroy = vi.fn()
+    showInactive = vi.fn()
+  },
   Menu: { getApplicationMenu: () => null, setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn() },
   Notification: {},
   crashReporter: { start: vi.fn() },
@@ -154,7 +174,9 @@ vi.mock('../../resources/tray.png?asset', () => ({ default: 'icon' }))
 vi.mock('./windows', () => ({
   createMainWindow: vi.fn(() => ({ once: vi.fn(), show: vi.fn(), isDestroyed: () => false })),
   configureMainWindow: vi.fn(),
-  isMainWindow: vi.fn()
+  isMainWindow: vi.fn(),
+  isConnectMobileWindow: vi.fn(() => false),
+  openConnectMobileWindow: vi.fn()
 }))
 vi.mock('./window-shortcuts', () => ({
   applyInterfaceScaleShortcut: vi.fn(),
@@ -194,6 +216,10 @@ vi.mock('./session-persistence/renderer-flush', () => ({
   rendererSessionPersistenceFlushBlocksShutdown: vi.fn()
 }))
 vi.mock('./system-lifecycle-adapters', () => ({
+  installResourceActivityRelay: () => ({
+    state: () => ({ foreground: false, suspended: false }),
+    dispose: vi.fn()
+  }),
   installSystemLifecycleAdapters: () => ({
     installPowerMonitorListeners: vi.fn(),
     bindWindow: vi.fn()
@@ -225,6 +251,39 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+it('keeps credential authorization headless until backend startup completes', async () => {
+  let rejectLaunch!: (error: Error) => void
+  let entered!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  f.launch.mockImplementation((options) => {
+    options.onStatus({
+      protocolVersion: 1,
+      attemptId: '9706f945-efc7-4fe8-b52e-cd1978a126a7',
+      stage: 'credentials',
+      kind: 'progress',
+      elapsedMs: 0
+    })
+    entered()
+    return new Promise((_resolve, reject) => {
+      rejectLaunch = reject
+    })
+  })
+  await import('./index')
+  await waiting
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1800))
+    expect(f.windowCreated).not.toHaveBeenCalled()
+    expect(f.dialog.showMessageBox).not.toHaveBeenCalled()
+    expect(f.dialog.showErrorBox).not.toHaveBeenCalled()
+    expect(f.lifecycle).not.toHaveBeenCalled()
+  } finally {
+    rejectLaunch(new Error('fixture startup stopped'))
+    await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
+  }
 })
 
 it.each(['mac-keychain', 'windows-dpapi'] as const)(
@@ -425,6 +484,8 @@ it.each(['win32', 'linux', 'darwin'] as const)(
       expect(lifecycleOptions.createConfirmClose).toBeTypeOf('function')
       expect(client.close).not.toHaveBeenCalled()
       expect(f.app.exit).not.toHaveBeenCalled()
+      // The mocked lifecycle does not perform quit admission; stop its reconnect timer here.
+      lifecycleOptions.holdSettingsInstallAdmission()
     } finally {
       Object.defineProperty(process, 'platform', originalPlatform)
     }

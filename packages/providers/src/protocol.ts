@@ -7,7 +7,11 @@ export {
 } from './protocols/endpoints'
 export { normalizeChatCompletionsUsage } from './protocols/usage'
 export type { ProviderTokenUsage } from './protocols/usage'
-export { resolveChatReasoningTransport } from './protocols/reasoning'
+export {
+  resolveChatReasoningTransport,
+  resolveMessagesReasoningTransport,
+  resolveResponsesReasoningTransport
+} from './protocols/reasoning'
 export type { ChatReasoningTransport } from './protocols/reasoning'
 export { createResponsesAdapter, convertResponsesRequest } from './responses/adapter'
 export type {
@@ -35,4 +39,7 @@ export {
   messagesToChatCompletions
 } from './protocols/messages/conversion'
 
-export { encodeChatCompletionsStream } from './protocols/chat-completions/stream'
+export {
+  encodeChatCompletionsStream,
+  bufferChatCompletionsToolNames
+} from './protocols/chat-completions/stream'

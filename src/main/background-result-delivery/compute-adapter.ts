@@ -1,11 +1,14 @@
 import type {
   AgentResultFollowUpDelivery,
-  BackgroundResultSourceRef
+  BackgroundResultSourceRef,
+  ComputeCancellationFailureSnapshot
 } from '../../shared/background-result-delivery'
 import type { JobSummary } from '../../shared/compute'
+import { isComputeJobCancelled } from '@aipoch/compute'
 
 const isNonTerminal = (job: JobSummary): boolean =>
-  job.status === 'queued' || job.status === 'submitted' || job.status === 'running'
+  !isComputeJobCancelled(job) &&
+  (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
 
 const computeJobSourceRef = (job: JobSummary): BackgroundResultSourceRef => {
   if (!job.project_id) throw new Error(`Compute Job ${job.job_id} has no Project scope.`)
@@ -56,13 +59,31 @@ class ComputeJobResultDeliveryAdapter {
   }
 
   observeResult(job: JobSummary): Promise<AgentResultFollowUpDelivery> {
-    if (isNonTerminal(job) || (job.status !== 'error' && job.harvested_at === undefined)) {
+    if (
+      isNonTerminal(job) ||
+      (!isComputeJobCancelled(job) && job.status !== 'error' && job.harvested_at === undefined)
+    ) {
       return Promise.resolve('pending')
     }
     let disposition: AgentResultFollowUpDelivery = 'pending'
     return this.serialize(job.job_id, async () => {
       disposition = await this.deps.acknowledgeObserved(computeJobSourceRef(job))
     }).then(() => disposition)
+  }
+
+  // The failed operation already persisted this source atomically with its immutable snapshot.
+  // Enqueue wakes the existing delivery owner without consuming the Job's final-result source.
+  observeCancellationFailure(
+    job: JobSummary,
+    failure: Pick<ComputeCancellationFailureSnapshot, 'operationId' | 'revision'>
+  ): Promise<void> {
+    return this.serialize(job.job_id, async () => {
+      await this.deps.enqueue({
+        ...computeJobSourceRef(job),
+        sourceKind: 'compute-cancellation',
+        sourceId: `${failure.operationId}:${failure.revision}`
+      })
+    })
   }
 
   async takeOver(jobs: readonly JobSummary[]): Promise<void> {

@@ -96,6 +96,8 @@ const {
       }),
       resetSessionContext,
       requestProviderReconnect,
+      requestIdleRelease: vi.fn(),
+      withPromptAdmission: <T>(work: () => Promise<T>) => work(),
       hasPendingSessionWriterRelease: vi.fn(() => false),
       resumeSession,
       sendAppContinuation: (request: AcpPromptRequest, promptAttemptId?: string) => {
@@ -1032,7 +1034,10 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
       {},
       { projectId: 'project-1', permissionProfile: 'ask' }
     )
+    const creationRejected = expect(createPromise).rejects.toBe(failure)
     await vi.waitFor(() => expect(rm).toHaveBeenCalledTimes(1))
+    // The caller receives the failure while cleanup still holds the writer.
+    await creationRejected
 
     beginMigration()
     let drained = false
@@ -1044,7 +1049,6 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     expect(drained).toBe(false)
 
     finishRollback()
-    await expect(createPromise).rejects.toBe(failure)
     await drainPromise
     expect(drained).toBe(true)
   })

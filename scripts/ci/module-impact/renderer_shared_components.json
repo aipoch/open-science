@@ -31,7 +31,9 @@
     "src/renderer/src/components/FileDropZone.test.tsx",
     "src/renderer/src/components/ManualUpdate.tsx",
     "src/renderer/src/components/ManualUpdate.test.tsx",
-    "src/renderer/src/components/use-manual-update.ts"
+    "src/renderer/src/components/use-manual-update.ts",
+    "src/renderer/src/components/local-ocr-control.tsx",
+    "src/renderer/src/components/local-ocr-control.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ActionToast.tsx",
@@ -55,7 +57,8 @@
     "src/renderer/src/components/use-settings-undo-portal.tsx",
     "src/renderer/src/components/FileDropZone.tsx",
     "src/renderer/src/components/ManualUpdate.tsx",
-    "src/renderer/src/components/use-manual-update.ts"
+    "src/renderer/src/components/use-manual-update.ts",
+    "src/renderer/src/components/local-ocr-control.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -79,7 +82,8 @@
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
       "src/renderer/src/components/FileDropZone.test.tsx",
-      "src/renderer/src/components/ManualUpdate.test.tsx"
+      "src/renderer/src/components/ManualUpdate.test.tsx",
+      "src/renderer/src/components/local-ocr-control.test.tsx"
     ],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",

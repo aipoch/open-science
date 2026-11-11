@@ -34,6 +34,7 @@ const registry = JSON.parse(await readFile('scripts/ci/package-test-boundaries.j
 const plan = familyVerificationPlan([
   'pdf-structure',
   'pdf-translation',
+  'research-film',
   'literature-citations',
   'journal-catalog',
   'literature-discovery',
@@ -61,6 +62,7 @@ const lockHash = createHash('sha256')
   .update(await readFile(join(root, 'package-lock.json')))
   .digest('hex')
 const resume = process.argv.includes('--resume')
+const sourceTests = !process.argv.includes('--skip-tests')
 const forced = new Set(
   (process.argv.find((a) => a.startsWith('--force=')) ?? '').slice(8).split(',').filter(Boolean)
 )
@@ -143,6 +145,7 @@ for (const e of entries) {
   if (
     resume &&
     r.consumer === 'exports, declarations, private paths passed' &&
+    (!sourceTests || r.source === 'build and tests passed') &&
     !r.error &&
     !forced.has(name) &&
     JSON.stringify(r.inputs) === JSON.stringify(inputs)
@@ -150,6 +153,7 @@ for (const e of entries) {
     continue
   r.inputs = inputs
   delete r.error
+  delete r.tests
   r.source = 'pending'
   r.consumer = 'pending'
   try {
@@ -190,19 +194,21 @@ for (const e of entries) {
       r.consumer = 'build prerequisite only'
       continue
     }
-    await run(
-      'npm',
-      ['test', '--', '--reporter=default', '--reporter=json', '--outputFile=test-report.json'],
-      dir,
-      'isolated-' + name + '-test'
-    )
-    r.source = 'build and tests passed'
-    const test = JSON.parse(await readFile(join(dir, 'test-report.json'), 'utf8'))
-    r.tests = {
-      total: test.numTotalTests,
-      passed: test.numPassedTests,
-      failed: test.numFailedTests,
-      pending: test.numPendingTests
+    if (sourceTests) {
+      await run(
+        'npm',
+        ['test', '--', '--reporter=default', '--reporter=json', '--outputFile=test-report.json'],
+        dir,
+        'isolated-' + name + '-test'
+      )
+      r.source = 'build and tests passed'
+      const test = JSON.parse(await readFile(join(dir, 'test-report.json'), 'utf8'))
+      r.tests = {
+        total: test.numTotalTests,
+        passed: test.numPassedTests,
+        failed: test.numFailedTests,
+        pending: test.numPendingTests
+      }
     }
     const consumer = join(attempt, 'consumer')
     await mkdir(consumer, { recursive: true })
@@ -257,6 +263,7 @@ for (const e of entries) {
       [
         'pdf-structure',
         'pdf-translation',
+        'research-film',
         'literature-citations',
         'journal-catalog',
         'literature-discovery',
@@ -284,21 +291,23 @@ for (const e of entries) {
       'consumer-' + name + '-type-tools'
     )
     const browserEntries =
-      name === 'pdf-translation'
-        ? ['contracts', 'text', 'reader'].map((entry) => e.manifest.name + '/' + entry)
-        : name === 'pdf-structure'
-          ? [e.manifest.name + '/result']
-          : name === 'literature-citations'
-            ? ['contracts', 'csl', 'exchange'].map((entry) => e.manifest.name + '/' + entry)
-            : name === 'literature-discovery'
-              ? ['contracts', 'jobs'].map((entry) => e.manifest.name + '/' + entry)
-              : name === 'literature-screening'
-                ? ['contracts', 'rules'].map((entry) => e.manifest.name + '/' + entry)
-                : name === 'literature-library'
-                  ? ['contracts', 'client', 'item'].map((entry) => e.manifest.name + '/' + entry)
-                  : name === 'journal-catalog'
-                    ? ['contracts', 'files'].map((entry) => e.manifest.name + '/' + entry)
-                    : []
+      name === 'research-film'
+        ? [e.manifest.name + '/contracts']
+        : name === 'pdf-translation'
+          ? ['contracts', 'text', 'reader'].map((entry) => e.manifest.name + '/' + entry)
+          : name === 'pdf-structure'
+            ? [e.manifest.name + '/result']
+            : name === 'literature-citations'
+              ? ['contracts', 'csl', 'exchange'].map((entry) => e.manifest.name + '/' + entry)
+              : name === 'literature-discovery'
+                ? ['contracts', 'jobs'].map((entry) => e.manifest.name + '/' + entry)
+                : name === 'literature-screening'
+                  ? ['contracts', 'rules'].map((entry) => e.manifest.name + '/' + entry)
+                  : name === 'literature-library'
+                    ? ['contracts', 'client', 'item'].map((entry) => e.manifest.name + '/' + entry)
+                    : name === 'journal-catalog'
+                      ? ['contracts', 'files'].map((entry) => e.manifest.name + '/' + entry)
+                      : []
     if (browserEntries.length) {
       await writeFile(
         join(consumer, 'browser.ts'),

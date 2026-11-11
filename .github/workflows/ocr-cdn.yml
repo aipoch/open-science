@@ -1,0 +1,80 @@
+name: Publish OCR CDN assets
+
+# Maintainer operation. It publishes only content-addressed first-party OCR files; the upstream
+# WASM and language assets remain on their pinned package CDN URLs.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref containing the reviewed OCR catalog
+        type: string
+        required: true
+        default: main
+      dry_run:
+        description: Build and verify without writing to the CDN
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ocr-cdn-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: OCR CDN
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+      S3_PREFIX: ${{ vars.S3_PREFIX }}
+    steps:
+      - name: Checkout reviewed ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install OCR build dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/patch-package/index.js --error-on-fail
+      - name: Rebuild and verify reviewed catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/ocr/build.mjs
+          node scripts/ocr/build.mjs --catalog
+          git diff --exit-code -- src/main/local-models/catalog.ts
+          node scripts/publish-ocr-assets.mjs verify out/ocr
+      - name: Upload verified candidates
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ocr-cdn-assets
+          path: |
+            out/ocr/ocr-worker.mjs
+            out/ocr/ocr-engine.mjs
+            out/ocr/licenses.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Configure AWS credentials
+        if: ${{ !inputs.dry_run }}
+        env:
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_REGION: ${{ vars.S3_REGION }}
+        run: |
+          aws configure set aws_access_key_id "$S3_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
+          aws configure set default.region "$S3_REGION"
+      - name: Publish immutable OCR assets
+        if: ${{ !inputs.dry_run }}
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+        run: node scripts/publish-ocr-assets.mjs publish out/ocr

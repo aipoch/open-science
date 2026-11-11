@@ -1,3 +1,8 @@
+import { overviewBatchRequestSchema, overviewBatchResultSchema } from './literature-overview-batch'
+import {
+  literatureOverviewRequestSchema,
+  literatureOverviewResultSchema
+} from './literature-overview'
 import {
   literaturePublicationCheckRequestSchema,
   literaturePublicationCheckResultSchema,
@@ -182,10 +187,20 @@ const literatureApplicationCommandContracts = Object.freeze({
           .trim()
           .min(1)
           .max(2048)
-          .regex(/^(?:10\.\d{4,9}\/\S+|pmid:\d+)$/u)
+          .regex(
+            /^(?:10\.\d{4,9}\/\S+|pmid:\d+|pmcid:PMC[1-9]\d{0,8}|arxiv:(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7}))$/u
+          )
       ])
     ),
     validationCodec(literatureItemInputSchema)
+  ),
+  overviewBatch: defineApplicationCommandContract(
+    validationCodec(z.tuple([overviewBatchRequestSchema])),
+    validationCodec(overviewBatchResultSchema)
+  ),
+  studySnapshot: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureOverviewRequestSchema])),
+    validationCodec(literatureOverviewResultSchema)
   ),
   completeMetadata: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureMetadataCompletionRequestSchema])),
@@ -222,3 +237,8 @@ export {
 }
 
 export type { LiteratureCatalogSearchPage, LiteraturePdfImportRequest }
+
+export {
+  literatureIssuedYear,
+  normalizeLiteratureIdentifierKey
+} from '@aipoch/literature-citations/contracts'

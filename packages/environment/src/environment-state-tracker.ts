@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
@@ -738,12 +738,22 @@ const rInlineScript = (script: string): string => script.replace(/\r?\n/gu, ';')
 // enumerating and parsing every installed distribution, but still notice added/removed package
 // directories and metadata replacements made outside the app's package-manager journal.
 // Preserve search-path order: reordering the same libraries can select a different package.
+// WATCH lines name search-path candidates that do not exist yet (for example a user site or
+// personal R library created by a later install). They are excluded from the fingerprint hash.
 const PYTHON_FINGERPRINT_SCRIPT = [
-  'import os, pathlib, platform, sys',
+  'import os, pathlib, platform, site, sys',
   'print("RUNTIME\\t" + platform.python_version())',
+  'print("WATCH\\t" + sys.executable)',
+  'print("WATCH\\t" + os.path.join(sys.prefix, "pyvenv.cfg"))',
+  'for name in os.listdir(os.path.dirname(sys.executable)):',
+  '    if name.endswith("._pth"): print("WATCH\\t" + os.path.join(os.path.dirname(sys.executable), name))',
+  'if site.ENABLE_USER_SITE and not os.path.isdir(site.getusersitepackages()):',
+  '    print("WATCH\\t" + site.getusersitepackages())',
   'for raw in dict.fromkeys(filter(None, sys.path)):',
   '    root = pathlib.Path(raw)',
-  '    if not root.is_dir(): continue',
+  '    if not root.is_dir():',
+  '        print("WATCH\\t" + str(root))',
+  '        continue',
   '    try:',
   '        st = root.stat()',
   '        print("ROOT\\t%s\\t%d\\t%d" % (root, st.st_mtime_ns, st.st_size))',
@@ -759,6 +769,9 @@ const PYTHON_FINGERPRINT_SCRIPT = [
 
 const R_FINGERPRINT_SCRIPT = [
   'cat("RUNTIME\\t", paste(R.version$major, R.version$minor, sep="."), "\\n", sep="")',
+  'cat("WATCH\\t", file.path(R.home("bin"), if (.Platform$OS.type == "windows") "R.dll" else file.path("exec", "R")), "\\n", sep="")',
+  'cat("WATCH\\t", file.path(R.home("etc"), "Renviron"), "\\n", sep="")',
+  'for (candidate in path.expand(unlist(strsplit(c(Sys.getenv("R_LIBS"), Sys.getenv("R_LIBS_USER")), .Platform$path.sep, fixed=TRUE)))) if (nzchar(candidate) && !dir.exists(candidate)) cat("WATCH\\t", candidate, "\\n", sep="")',
   'for (root in unique(.libPaths())) {',
   '  info <- file.info(root)',
   '  if (is.na(info$mtime)) { cat("UNWATCHABLE\\t", root, "\\n", sep=""); next }',
@@ -920,11 +933,11 @@ const inspectInstalledDefault = async (
   return parseInventory(target.language, stdout)
 }
 
-const captureFingerprintDefault = async (
+const runFingerprintProbe = async (
   target: EnvironmentCaptureTarget,
   platform: NodeJS.Platform = process.platform,
   execute: EnvironmentExecFile = execFileAsync
-): Promise<string | undefined> => {
+): Promise<string> => {
   const args = [
     ...(target.args ?? []),
     ...(target.language === 'python'
@@ -937,12 +950,146 @@ const captureFingerprintDefault = async (
     maxBuffer: 8 * 1024 * 1024,
     env: environmentCaptureProcessEnv(target, process.env, platform)
   })
+  return stdout
+}
+
+const fingerprintFromProbe = (
+  target: EnvironmentCaptureTarget,
+  stdout: string
+): string | undefined => {
   if (stdout.includes('UNWATCHABLE\t')) return undefined
+  // WATCH lines only feed the stat observer; keep historical fingerprints byte-compatible.
+  const evidence = stdout
+    .split('\n')
+    .filter((line) => !line.startsWith('WATCH\t'))
+    .join('\n')
   // Cached inventories must be refreshed when the reader gains new evidence fields, even
   // when the installed files are unchanged. Do not rewrite historical manifest snapshots.
   const inventoryScript =
     target.language === 'python' ? PYTHON_INVENTORY_SCRIPT : R_INVENTORY_SCRIPT
-  return sha256(`${target.language}\n${sha256(inventoryScript)}\n${stdout}`)
+  return sha256(`${target.language}\n${sha256(inventoryScript)}\n${evidence}`)
+}
+
+type FingerprintObservation = {
+  paths: { roots: string[]; watched: string[] }
+  signature: string
+  fingerprint: string | undefined
+  confirmed: boolean
+}
+
+const MAX_FINGERPRINT_OBSERVATIONS = 64
+const ABSENT_PATH_ERROR_CODES = new Set(['ENOENT', 'ENOTDIR'])
+
+const fingerprintProbePaths = (stdout: string): FingerprintObservation['paths'] | undefined => {
+  const roots: string[] = []
+  const watched: string[] = []
+  for (const line of stdout.split('\n')) {
+    const [kind, path] = line.replace(/\r$/u, '').split('\t')
+    if (kind === 'UNWATCHABLE') return undefined
+    if (kind === 'ROOT' && path) roots.push(path)
+    if (kind === 'WATCH' && path) watched.push(path)
+  }
+  return roots.length > 0 ? { roots, watched } : undefined
+}
+
+const statToken = async (path: string): Promise<string> => {
+  try {
+    const info = await stat(path, { bigint: true })
+    const kind = info.isDirectory() ? 'd' : info.isFile() ? 'f' : 'o'
+    return `${kind}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
+  } catch (error) {
+    if (ABSENT_PATH_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? '')) return 'absent'
+    throw error
+  }
+}
+
+// Mirrors the probe scripts: a package is represented by its metadata file when present, so an
+// in-place metadata rewrite is noticed even when the library directory itself is unchanged.
+const libraryRootTokens = async (language: NotebookLanguage, root: string): Promise<string[]> => {
+  const names = (await readdir(root)).sort()
+  const packageTokens = await Promise.all(
+    names.map(async (name) => {
+      const entry = join(root, name)
+      const metadata =
+        language === 'r'
+          ? join(entry, 'DESCRIPTION')
+          : name.endsWith('.dist-info') || name.endsWith('.egg-info')
+            ? join(entry, 'METADATA')
+            : undefined
+      const metadataToken = metadata ? await statToken(metadata) : 'none'
+      return `${name}\t${await statToken(entry)}\t${metadataToken}`
+    })
+  )
+  return [`ROOT\t${root}\t${await statToken(root)}`, ...packageTokens]
+}
+
+const fingerprintObservationSignature = async (
+  target: EnvironmentCaptureTarget,
+  environment: NodeJS.ProcessEnv,
+  paths: FingerprintObservation['paths']
+): Promise<string> => {
+  const hash = createHash('sha256')
+  hash.update(`${target.language}\n${await statToken(target.command)}\n`)
+  // The whole probe environment: any variable (R_LIBS_SITE, PYTHONUSERBASE, ...) can move roots.
+  hash.update(JSON.stringify(Object.entries(environment).sort(([a], [b]) => (a < b ? -1 : 1))))
+  for (const watched of paths.watched)
+    hash.update(`\nWATCH\t${watched}\t${await statToken(watched)}`)
+  for (const root of paths.roots) {
+    for (const token of await libraryRootTokens(target.language, root)) hash.update(`\n${token}`)
+  }
+  return hash.digest('hex')
+}
+
+// Reuses an interpreter fingerprint while every path its probe reported, plus the running
+// interpreter binary, is unchanged. Any stat failure falls back to the interpreter probe. A result
+// is reused only after a probe whose surrounding signatures agree, so a package change racing with
+// the probe cannot pin a stale fingerprint. Commands resolved through PATH are never reused: their
+// selected interpreter cannot be observed without resolving PATH the way the probe does.
+class EnvironmentFingerprintObserver {
+  private readonly observations = new Map<string, FingerprintObservation>()
+
+  async capture(
+    key: string,
+    target: EnvironmentCaptureTarget,
+    environment: NodeJS.ProcessEnv,
+    probe: () => Promise<string>
+  ): Promise<string | undefined> {
+    if (!isAbsolute(target.command)) return fingerprintFromProbe(target, await probe())
+    const previous = this.observations.get(key)
+    const before = previous
+      ? await fingerprintObservationSignature(target, environment, previous.paths).catch(
+          () => undefined
+        )
+      : undefined
+    if (previous?.confirmed && before === previous.signature) return previous.fingerprint
+
+    this.observations.delete(key)
+    const stdout = await probe()
+    const fingerprint = fingerprintFromProbe(target, stdout)
+    const paths = fingerprintProbePaths(stdout)
+    if (!paths) return fingerprint
+    const signature = await fingerprintObservationSignature(target, environment, paths).catch(
+      () => undefined
+    )
+    if (!signature) return fingerprint
+    this.observations.set(key, {
+      paths,
+      signature,
+      fingerprint,
+      confirmed:
+        before === signature &&
+        previous?.signature === signature &&
+        previous.fingerprint === fingerprint
+    })
+    if (this.observations.size > MAX_FINGERPRINT_OBSERVATIONS) {
+      this.observations.delete(this.observations.keys().next().value!)
+    }
+    return fingerprint
+  }
+
+  forget(key: string): void {
+    this.observations.delete(key)
+  }
 }
 
 class EnvironmentStateTracker {
@@ -961,6 +1108,7 @@ class EnvironmentStateTracker {
   private readonly execute: EnvironmentExecFile
   private readonly targetQueues = new Map<string, Promise<void>>()
   private readonly environmentLockCapture = new EnvironmentLockCaptureOwner()
+  private readonly fingerprintObserver = new EnvironmentFingerprintObserver()
 
   constructor(private readonly options: EnvironmentStateTrackerOptions) {
     this.platform = options.platform ?? process.platform
@@ -979,7 +1127,13 @@ class EnvironmentStateTracker {
         ))
     this.captureFingerprint =
       options.captureFingerprint ??
-      ((target) => captureFingerprintDefault(target, this.platform, execute))
+      ((target) =>
+        this.fingerprintObserver.capture(
+          this.fingerprintObservationKey(target),
+          target,
+          environmentCaptureProcessEnv(target, process.env, this.platform),
+          () => runFingerprintProbe(target, this.platform, execute)
+        ))
     this.now = options.now ?? (() => new Date())
     this.operationLogLimits = options.operationLogLimits ?? {
       maxEntries: MAX_OPERATION_LOG_ENTRIES,
@@ -1283,6 +1437,7 @@ class EnvironmentStateTracker {
     intent: PackageMutationIntent
   ): Promise<void> {
     await this.serializeTarget(target, async () => {
+      this.fingerprintObserver.forget(this.fingerprintObservationKey(target))
       const cache = await this.readBinding(target)
       let beforeInventoryChecksum = cache.inventoryChecksum
       if (beforeInventoryChecksum) {
@@ -1338,6 +1493,7 @@ class EnvironmentStateTracker {
     outcome: PackageMutationOutcome
   ): Promise<PackageMutationVerification> {
     return this.serializeTarget(target, async () => {
+      this.fingerprintObserver.forget(this.fingerprintObservationKey(target))
       const cache = await this.readBinding(target)
       const operation = await this.readOperation(target, outcome.operationId)
       const beforeInventoryChecksum = operation?.beforeInventoryChecksum ?? cache.inventoryChecksum
@@ -1484,6 +1640,10 @@ class EnvironmentStateTracker {
       await this.writeBinding(target, cache)
       return verification
     })
+  }
+
+  private fingerprintObservationKey(target: EnvironmentCaptureTarget): string {
+    return JSON.stringify([this.targetKey(target), target.condaPrefix ?? null])
   }
 
   private targetKey(target: EnvironmentCaptureTarget): string {

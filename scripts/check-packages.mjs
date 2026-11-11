@@ -31,7 +31,12 @@ export async function checkPackages(args = process.argv.slice(2)) {
     args.find((arg) => arg.startsWith('--output='))?.slice(9) ??
       'test-results/package-verification.json'
   )
-  const report = { node: process.version, plan, runs: [] }
+  const report = {
+    node: process.version,
+    plan,
+    sourceTests: !args.includes('--skip-tests'),
+    runs: []
+  }
   await mkdir(dirname(output), { recursive: true })
   for (const command of commands) {
     const started = performance.now()
@@ -45,7 +50,8 @@ export async function checkPackages(args = process.argv.slice(2)) {
           command.script,
           '--',
           `--packages=${command.packages.join(',')}`,
-          ...(args.includes('--offline') ? ['--offline'] : [])
+          ...(args.includes('--offline') ? ['--offline'] : []),
+          ...(args.includes('--skip-tests') ? ['--skip-tests'] : [])
         ],
         { cwd: fileURLToPath(new URL('../', import.meta.url)), stdio: 'inherit' }
       )

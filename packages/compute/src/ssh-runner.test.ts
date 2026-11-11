@@ -575,19 +575,23 @@ describe('SystemSshRunner', () => {
     expect(child.stdin.end).toHaveBeenCalledWith(command)
   })
 
-  it('observes a streamed command stdin failure and preserves the child exit status', async () => {
-    const child = new FakeChild()
-    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
-    const promise = runner.run(target(), '# ' + 'x'.repeat(24000), { timeoutMs: 5000 })
-    child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
-    child.stderr.emit('data', Buffer.from('remote shell rejected command'))
-    child.emit('close', 23)
-    await expect(promise).resolves.toMatchObject({
-      exitCode: 23,
-      stderr: 'remote shell rejected command',
-      timedOut: false
-    })
-  })
+  it.each(['inline', 'streamed'])(
+    'observes an %s command stdin failure and preserves the child exit status',
+    async (mode) => {
+      const child = new FakeChild()
+      execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+      const command = mode === 'inline' ? 'printf ready' : '# ' + 'x'.repeat(24000)
+      const promise = runner.run(target(), command, { timeoutMs: 5000 })
+      child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+      child.stderr.emit('data', Buffer.from('remote shell rejected command'))
+      child.emit('close', 23)
+      await expect(promise).resolves.toMatchObject({
+        exitCode: 23,
+        stderr: 'remote shell rejected command',
+        timedOut: false
+      })
+    }
+  )
 
   it('retains the hard boundary when signal delivery emits an error', async () => {
     vi.useFakeTimers()

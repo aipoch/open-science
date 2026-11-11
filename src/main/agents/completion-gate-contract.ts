@@ -79,11 +79,13 @@ export type CompletionGateRuntime = {
   // unsupported session keeps the established completion path rather than being captured halfway.
   canCapture?(context: TrustedToolCompletionContext): boolean
   // Requests old-prompt stop. This alone is NOT evidence that runtime ownership was released.
-  stopOldPrompt(context: TrustedToolCompletionContext): Promise<void>
+  stopOldPrompt(context: TrustedToolCompletionContext, generation?: number): Promise<void>
   // Resolves only on the runtime's explicit in-flight ownership/lease-release acknowledgement.
   waitForOwnershipRelease(context: TrustedToolCompletionContext): Promise<void>
   // Release adapter-owned handoff context after explicit cancellation without publishing failure.
   cleanupCancelledHandoff?(context: TrustedToolCompletionContext): Promise<void>
+  // Release only the replaced generation's process hold; do not cancel or report its successor.
+  releaseSupersededHandoff?(context: TrustedToolCompletionContext, generation: number): void
   reconfigure(
     handoff:
       | Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>

@@ -95,7 +95,8 @@ jobs:
     needs: [source, verify]
     if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Must cover the full bounded visibility window for a fresh batch plus download time.
+    timeout-minutes: 60
     environment: npm
     permissions:
       contents: read

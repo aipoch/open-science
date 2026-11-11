@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   packageVerificationPlan,
   packageRegistry,
@@ -13,6 +15,10 @@ const registry = packageRegistry()
 const roots = registry.packages.map(({ root }: { root: string }) => root)
 const upstream = 'packages/pdf-structure'
 const downstream = 'packages/pdf-translation'
+// Windows keeps only the first case-insensitive key; an inherited alias must not win over the stub.
+const subprocessEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'npm_execpath')
+)
 
 describe('independent package verification', () => {
   it('includes every registered Literature package in the targeted build and verification commands', () => {
@@ -102,8 +108,9 @@ describe('independent package verification', () => {
         ['scripts/check-reproducibility-package.mjs', '--ci'],
         {
           encoding: 'utf8',
+          timeout: 30_000,
           env: {
-            ...process.env,
+            ...subprocessEnvironment,
             npm_execpath: 'unexpected-npm-invocation.cjs',
             OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(selected),
             OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
@@ -121,8 +128,9 @@ describe('independent package verification', () => {
       ['scripts/check-environment-package.mjs', '--ci'],
       {
         encoding: 'utf8',
+        timeout: 30_000,
         env: {
-          ...process.env,
+          ...subprocessEnvironment,
           npm_execpath: 'unexpected-npm-invocation.cjs',
           OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(['packages/compute']),
           OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
@@ -203,3 +211,50 @@ it('verifies the private test-impact tool without selecting application packages
     { script: 'check:test-impact-package', packages: ['test-impact'] }
   ])
 })
+
+it.each([false, true])(
+  'dispatches every family with explicit source-test evidence (skip=%s)',
+  (skip) => {
+    const directory = mkdtempSync(join(tmpdir(), 'package-dispatch-'))
+    try {
+      const npm = join(directory, 'npm.cjs')
+      const calls = join(directory, 'calls.jsonl')
+      const output = join(directory, 'report.json')
+      writeFileSync(
+        npm,
+        "require('node:fs').appendFileSync(process.env.PACKAGE_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n')"
+      )
+      execFileSync(
+        process.execPath,
+        ['scripts/check-packages.mjs', `--output=${output}`, ...(skip ? ['--skip-tests'] : [])],
+        {
+          // A synchronous child otherwise blocks Vitest's own timeout indefinitely.
+          timeout: 30_000,
+          encoding: 'utf8',
+          env: { ...subprocessEnvironment, npm_execpath: npm, PACKAGE_TEST_CALLS: calls }
+        }
+      )
+      const commands = verificationCommands(verificationPlanFromArguments([], {}))
+      expect(
+        readFileSync(calls, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      ).toEqual(
+        commands.map(({ script, packages }: { script: string; packages: string[] }) => [
+          'run',
+          script,
+          '--',
+          `--packages=${packages.join(',')}`,
+          ...(skip ? ['--skip-tests'] : [])
+        ])
+      )
+      const report = JSON.parse(readFileSync(output, 'utf8'))
+      expect(report.sourceTests).toBe(!skip)
+      expect(report.runs).toHaveLength(commands.length)
+      expect(report.runs.every(({ exitCode }: { exitCode: number }) => exitCode === 0)).toBe(true)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)

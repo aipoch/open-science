@@ -16,7 +16,7 @@ import {
   McpToolCallError,
   buildTransport as createTransport
 } from './client-manager'
-import type { CustomMcpServerConfig } from './client-manager'
+import type { CustomMcpServerConfig, McpStdioLaunch } from './client-manager'
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 const EXTRA_PATH_DIRS = ['/fixture/bin']
 
@@ -78,6 +78,45 @@ const config: CustomMcpServerConfig = {
 }
 
 describe('McpClientManager', () => {
+  it('prepares stdio launches after environment preparation without mutating configuration', () => {
+    const original = {
+      ...config,
+      command: 'npx',
+      args: ['--yes', 'fixture'],
+      env: { TOKEN: 'value' }
+    }
+    const prepareStdioLaunch = vi.fn((launch: McpStdioLaunch) => ({
+      command: '/bundled/node',
+      args: ['/bundled/npx-cli.js', ...launch.args],
+      env: { ...launch.env, PREPARED: 'yes' }
+    }))
+    const transport = buildTransport(original, undefined, { prepareStdioLaunch }) as unknown as {
+      _serverParams: { command: string; args: string[]; env: Record<string, string> }
+    }
+    expect(prepareStdioLaunch).toHaveBeenCalledWith({
+      command: 'npx',
+      args: ['--yes', 'fixture'],
+      env: expect.objectContaining({
+        TOKEN: 'value',
+        PATH: expect.stringContaining('/fixture/bin')
+      })
+    })
+    expect(transport._serverParams).toMatchObject({
+      command: '/bundled/node',
+      args: ['/bundled/npx-cli.js', '--yes', 'fixture'],
+      env: { TOKEN: 'value', PREPARED: 'yes' }
+    })
+    expect(original.command).toBe('npx')
+    expect(original.args).toEqual(['--yes', 'fixture'])
+    expect(original.env).toEqual({ TOKEN: 'value' })
+    buildTransport(
+      { ...config, transport: 'streamable_http', url: 'https://example.test/mcp' },
+      undefined,
+      { prepareStdioLaunch }
+    )
+    expect(prepareStdioLaunch).toHaveBeenCalledTimes(1)
+  })
+
   it('lists tools registered on the server', async () => {
     const { createClient } = makeTestServer()
     const manager = new McpClientManager({ createClient: () => createClient() })

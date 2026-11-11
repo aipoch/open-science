@@ -5,6 +5,7 @@ import type {
 } from '../../shared/background-result-delivery'
 import type { JobSummary } from '../../shared/compute'
 import type { NotebookRunRecord } from '../../shared/notebook'
+import { isComputeJobCancelled, projectComputeJobConclusion } from '@aipoch/compute'
 
 const SUMMARY_LIMIT = 8_000
 const WORKING_FILE_LIMIT = 100
@@ -141,8 +142,7 @@ const mapNotebookSource = (
   }
 }
 
-const computeTerminalStatus = (job: JobSummary): string =>
-  job.cancellation_status === 'cancelled' ? 'cancelled' : job.status
+const computeTerminalStatus = (job: JobSummary): string => projectComputeJobConclusion(job).status
 
 const computeSummary = (job: JobSummary): string =>
   truncate(
@@ -164,13 +164,15 @@ const computeSummary = (job: JobSummary): string =>
   )
 
 const computeErrorGuidance = (job: JobSummary): string | undefined => {
-  if (job.cancellation_status === 'cancelled')
+  if (isComputeJobCancelled(job))
     return 'The remote Compute Job was cancelled. Decide whether any follow-up is needed.'
   if (job.status === 'success' && !job.harvest_error) return undefined
   if (job.harvest_error)
     return 'Result harvesting was incomplete. Inspect featured files, files left on the remote Host, and the harvest error before continuing.'
   if (job.status === 'timeout')
     return 'The remote Compute Job timed out. Inspect its durable output before deciding whether to submit new work.'
+  if (job.status === 'error')
+    return 'Automatic job handling ended with an error. The remote process may still be running. Inspect the scheduler and available output before deciding the next step.'
   return 'The remote Compute Job failed. Inspect its durable output and remote work directory; do not assume it should be resubmitted.'
 }
 
@@ -180,7 +182,9 @@ const mapComputeSource = (
 ): ResolvedBackgroundResultSource => {
   const base = activityBase(delivery)
   if (!job) return { delivery, availability: 'missing', activity: base }
-  const active = job.status === 'queued' || job.status === 'submitted' || job.status === 'running'
+  const active =
+    !isComputeJobCancelled(job) &&
+    (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
   const terminalStatus = computeTerminalStatus(job)
   const activity: BackgroundResultActivityItem = {
     ...base,
@@ -201,7 +205,10 @@ const mapComputeSource = (
   }
   if (
     active ||
-    (job.status !== 'error' && job.harvested_at === undefined && job.notified_at === undefined)
+    (!isComputeJobCancelled(job) &&
+      job.status !== 'error' &&
+      job.harvested_at === undefined &&
+      job.notified_at === undefined)
   ) {
     return { delivery, availability: 'not-ready', activity }
   }
@@ -212,6 +219,10 @@ const mapComputeSource = (
     outcome: {
       sourceKind: 'compute-job',
       jobId: job.job_id,
+      job_id: job.job_id,
+      ...(job.scheduler_job_id ? { scheduler_job_id: job.scheduler_job_id } : {}),
+      ...projectComputeJobConclusion(job),
+      result_final: true,
       executionType: 'compute-job',
       terminalStatus,
       resultSummary: computeSummary(job),
@@ -231,6 +242,51 @@ const unavailable = (delivery: BackgroundResultDelivery): ResolvedBackgroundResu
   availability: 'unavailable',
   activity: activityBase(delivery)
 })
+
+const mapComputeCancellationSource = (
+  delivery: BackgroundResultDelivery,
+  job: JobSummary | undefined
+): ResolvedBackgroundResultSource => {
+  const failure = delivery.sourceSnapshot
+  if (
+    !job ||
+    !failure ||
+    failure.jobId !== job.job_id ||
+    delivery.sourceId !== `${failure.operationId}:${failure.revision}` ||
+    job.project_id !== delivery.projectId ||
+    job.session_id !== delivery.sessionId
+  ) {
+    return { delivery, availability: 'missing', activity: activityBase(delivery) }
+  }
+  return {
+    delivery,
+    availability: 'terminal',
+    activity: {
+      ...activityBase(delivery),
+      executionType: 'compute-job',
+      title: job.intent,
+      lane: job.display_name,
+      active: false,
+      status: delivery.state === 'needs-attention' ? 'needs-attention' : 'pending-delivery'
+    },
+    outcome: {
+      sourceKind: 'compute-cancellation',
+      event: 'cancellation_failed',
+      job_id: job.job_id,
+      ...(job.scheduler_job_id ? { scheduler_job_id: job.scheduler_job_id } : {}),
+      status: failure.jobStatus,
+      result_final: false,
+      cancellation: { status: 'failed', error: failure.error },
+      operation_id: failure.operationId,
+      revision: failure.revision,
+      remote_workdir: job.remote_workdir,
+      sessionId: delivery.sessionId,
+      computeHost: { providerId: job.provider_id, displayName: job.display_name },
+      errorGuidance:
+        'The cancellation operation failed. The computation may still be running; this event does not consume its final result. Inspect the current scheduler state and output before deciding whether to cancel again.'
+    }
+  }
+}
 
 const resolveBackgroundResultSources = async (
   deliveries: readonly BackgroundResultDelivery[],
@@ -270,12 +326,19 @@ const resolveBackgroundResultSources = async (
       }
     })
   )
-  const compute = deliveries.filter(({ sourceKind }) => sourceKind === 'compute-job')
+  const compute = deliveries.filter(
+    ({ sourceKind }) => sourceKind === 'compute-job' || sourceKind === 'compute-cancellation'
+  )
   if (compute.length > 0) {
     try {
       const jobs = await deps.loadComputeJobs(compute)
       for (const source of compute)
-        resolved.set(source.id, mapComputeSource(source, jobs.get(source.sourceId)))
+        resolved.set(
+          source.id,
+          source.sourceKind === 'compute-cancellation'
+            ? mapComputeCancellationSource(source, jobs.get(source.sourceId))
+            : mapComputeSource(source, jobs.get(source.sourceId))
+        )
     } catch {
       for (const source of compute) resolved.set(source.id, unavailable(source))
     }

@@ -4,6 +4,7 @@ export {
   isLoopbackProviderBaseUrl
 } from './transport/url-security'
 export { fetchProviderRequest } from './transport/request'
+export { readSseRecords } from './transport/sse'
 export {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,

@@ -1,4 +1,6 @@
 import type { ServerResponse } from 'node:http'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { netFetchStandard } from '../network-fetch'
 
@@ -22,12 +24,13 @@ import {
   responsesToChatCompletions
 } from '@aipoch/providers/protocol'
 
-type Wire = 'messages' | 'chat-completions'
+type Wire = 'messages' | 'chat-completions' | 'responses'
 export type XaiOAuthBridgeTarget = Readonly<{ id: string; model: string }>
 export type XaiOAuthBridgeConnection = Readonly<{ baseUrl: string; token: string }>
 type XaiOAuthProviderBridgeOptions = Readonly<{
   fetchImpl?: typeof fetch
   adaptChatCompletionsRequest?: (request: Record<string, unknown>) => Record<string, unknown>
+  token?: string
 }>
 
 const log = createLogger('xai-oauth-bridge')
@@ -76,7 +79,8 @@ export class XaiOAuthProviderBridge {
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly adaptChatCompletionsRequest?: (
       request: Record<string, unknown>
-    ) => Record<string, unknown>
+    ) => Record<string, unknown>,
+    token?: string
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
@@ -91,6 +95,7 @@ export class XaiOAuthProviderBridge {
     this.host = new ProviderLoopbackHttpHost({
       diagnosticName: `xai-oauth-${this.wire}`,
       credentialMode: 'bearer-or-api-key',
+      ...(token ? { token } : {}),
       createConnection: (origin, token) => ({ baseUrl: origin, token }),
       onUnauthorized: (response) => json(response, 401, { error: { message: 'Unauthorized' } }),
       onError: (error, response) =>
@@ -134,7 +139,7 @@ export class XaiOAuthProviderBridge {
     }
     if (request.method !== 'POST')
       return json(response, 405, { error: { message: 'Method not allowed' } })
-    const expected = this.wire === 'messages' ? '/v1/messages' : '/v1/chat/completions'
+    const expected = `/v1/${this.wire === 'chat-completions' ? 'chat/completions' : this.wire}`
     if (this.wire === 'messages' && pathname === '/v1/messages/count_tokens') {
       return json(response, 200, {
         input_tokens: countMessagesInputTokens(await request.readJsonObject())
@@ -157,11 +162,25 @@ export class XaiOAuthProviderBridge {
     })
     const wantsStream = body.stream === true
     const upstreamBody =
-      this.wire === 'messages'
-        ? messagesToResponses(body, this.target.model)
-        : chatCompletionsToResponses(body, this.target.model)
+      this.wire === 'responses'
+        ? { ...body, model: this.target.model }
+        : this.wire === 'messages'
+          ? messagesToResponses(body, this.target.model)
+          : chatCompletionsToResponses(body, this.target.model)
     let upstream = await this.request(upstreamBody, request, false)
-    if (upstream.status === 401) upstream = await this.request(upstreamBody, request, true)
+    if (upstream.status === 401) {
+      await upstream.body?.cancel()
+      upstream = await this.request(upstreamBody, request, true)
+    }
+    if (this.wire === 'responses' && upstream.ok && wantsStream) {
+      response.writeHead(upstream.status, {
+        'content-type': upstream.headers.get('content-type') ?? 'text/event-stream',
+        'cache-control': 'no-cache'
+      })
+      if (!upstream.body) return void response.end()
+      await pipeline(Readable.from(upstream.body as AsyncIterable<Uint8Array>), response)
+      return
+    }
     const payload = JSON.parse(
       await readBoundedResponseText(
         upstream,
@@ -179,6 +198,7 @@ export class XaiOAuthProviderBridge {
       })
       return json(response, upstream.status, payload)
     }
+    if (this.wire === 'responses') return json(response, upstream.status, payload)
     const translated =
       this.wire === 'messages'
         ? responsesToMessages(payload, requestModel)
@@ -238,7 +258,20 @@ export class XaiOAuthProviderBridge {
     request: ProviderLoopbackHttpRequest,
     forceRefresh: boolean
   ): Promise<Response> {
-    const token = await this.getAccessToken(forceRefresh)
+    request.signal.throwIfAborted()
+    let abort: () => void
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(request.signal.reason)
+      request.signal.addEventListener('abort', abort, { once: true })
+    })
+    let token: string
+    try {
+      // Stop this caller's wait, not the shared refresh that may need to save a rotated token.
+      token = await Promise.race([this.getAccessToken(forceRefresh), cancelled])
+      request.signal.throwIfAborted()
+    } finally {
+      request.signal.removeEventListener('abort', abort!)
+    }
     return fetchProviderRequest(this.fetchImpl, 'https://api.x.ai/v1/responses', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -354,6 +387,7 @@ export const createXaiOAuthProviderBridge = (
     wire,
     getAccessToken,
     options.fetchImpl ?? netFetchStandard,
-    options.adaptChatCompletionsRequest
+    options.adaptChatCompletionsRequest,
+    options.token
   )
 }

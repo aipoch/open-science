@@ -56,7 +56,7 @@ it.each([
   ['sensenova', 'global', 'sensenova-6.8-flash-lite'],
   ['sensenova', undefined, 'sensenova-6.8-flash-lite'],
   ['volcengine', undefined, 'doubao-seed-2-1-pro-260915'],
-  ['tencent', undefined, 'hy4-preview'],
+  ['tencent', undefined, 'hy4'],
   ['tencentcodingplan', undefined, 'deepseek-v4-flash-202605'],
   ['tencenttokenplan', undefined, 'glm-5.2'],
   ['apodex', undefined, 'apodex-1.1'],

@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { setTimeout as delay } from 'node:timers/promises'
+import { parseArxivRecord } from './arxiv.js'
 import {
   discoveryRecordSchema,
   type DiscoveryRecord,
@@ -21,6 +23,51 @@ const PUBMED_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 const PUBMED_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 15_000
+// Quotas belong to the loaded process, not a resolver instance or transport wrapper.
+const arxivAdmission = { queue: Promise.resolve(), nextStart: 0, intervalMs: 3_000 }
+const pubmedAdmission = { queue: Promise.resolve(), nextStart: 0, intervalMs: 334 }
+
+/** Admit bounded provider reads; keep independent service quotas and release failures. */
+function admittedRead(
+  admission: typeof arxivAdmission,
+  read: () => Promise<string>,
+  signal?: AbortSignal
+): Promise<string> {
+  const pending = admission.queue.then(async () => {
+    while (admission.nextStart > performance.now()) {
+      await delay(Math.ceil(admission.nextStart - performance.now()), undefined, { signal })
+    }
+    signal?.throwIfAborted()
+    const response = read()
+    admission.nextStart = performance.now() + admission.intervalMs
+    return response
+  })
+  // Hold admission through body consumption; a failure must not poison later requests.
+  admission.queue = pending.then(
+    () => undefined,
+    () => undefined
+  )
+  if (!signal) return pending
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    const cleanup = (): void => signal.removeEventListener('abort', abort)
+    pending.then(
+      (result) => {
+        cleanup()
+        resolve(result)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      }
+    )
+    if (signal.aborted) {
+      cleanup()
+      abort()
+    }
+  })
+}
 
 type FetchFn = typeof fetch
 type LiteratureReferenceDiscovery = Readonly<{
@@ -34,7 +81,7 @@ type MetadataLookup = LiteratureReferenceDiscovery & {
 
 type ReferenceKey = Readonly<{
   key: string
-  scheme: 'doi' | 'pmid'
+  scheme: 'doi' | 'pmid' | 'pmcid' | 'arxiv'
   value: string
 }>
 
@@ -42,15 +89,23 @@ const parseReference = (input: string): ReferenceKey => {
   const separator = input.indexOf(':')
   const scheme = separator >= 0 ? input.slice(0, separator).trim().toLowerCase() : ''
   const rawValue = separator >= 0 ? input.slice(separator + 1) : ''
-  if (scheme !== 'doi' && scheme !== 'pmid') {
-    throw new Error(`UNSUPPORTED_REFERENCE: Use pmid:<id> or doi:<id>; received "${input}".`)
+  if (scheme !== 'doi' && scheme !== 'pmid' && scheme !== 'pmcid' && scheme !== 'arxiv') {
+    throw new Error(
+      `UNSUPPORTED_REFERENCE: Use pmid:<id>, pmcid:PMC<id>, doi:<id>, or arxiv:<id>; received "${input}".`
+    )
   }
   const value = normalizeIdentifier(scheme, rawValue)
   if (scheme === 'pmid' && !/^\d+$/u.test(value)) {
     throw new Error(`INVALID_PMID: "${input}" does not contain a valid PMID.`)
   }
+  if (scheme === 'pmcid' && !/^PMC[1-9]\d{0,8}$/u.test(value)) {
+    throw new Error('INVALID_PMCID: Invalid PMCID.')
+  }
   if (scheme === 'doi' && !/^10\.\d{4,9}\/\S+$/u.test(value)) {
     throw new Error(`INVALID_DOI: "${input}" does not contain a valid DOI.`)
+  }
+  if (scheme === 'arxiv' && !/^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7})$/iu.test(value)) {
+    throw new Error('INVALID_ARXIV: Invalid arXiv identifier.')
   }
   return { key: `${scheme}:${value}`, scheme, value }
 }
@@ -236,7 +291,12 @@ class LiteratureReferenceResolver {
       tool: 'OpenScience'
     })
     const parsed = await this.formatter.parseReferences(
-      await this.read(`${PUBMED_BASE}?${params}`, 'text/plain', signal, PUBMED_MAX_RESPONSE_BYTES)
+      await admittedRead(
+        pubmedAdmission,
+        () =>
+          this.read(`${PUBMED_BASE}?${params}`, 'text/plain', signal, PUBMED_MAX_RESPONSE_BYTES),
+        signal
+      )
     )
     return parsed.items.flatMap((item) => {
       const pmid = item.identifiers.find(({ scheme }) => scheme === 'pmid')?.value
@@ -255,10 +315,21 @@ class LiteratureReferenceResolver {
     })
   }
 
+  private async arxiv(id: string, signal?: AbortSignal): Promise<LiteratureReferenceDiscovery> {
+    const sourceUrl = `https://export.arxiv.org/api/query?${new URLSearchParams({ id_list: id, max_results: '1' })}`
+    const xml = await admittedRead(
+      arxivAdmission,
+      () => this.read(sourceUrl, 'application/atom+xml', signal),
+      signal
+    )
+    const { item, rawMetadata } = parseArxivRecord(xml, id)
+    return { item, source: { provider: 'arxiv', externalId: id, sourceUrl, rawMetadata } }
+  }
+
   private async crossref(doi: string, signal?: AbortSignal): Promise<LiteratureReferenceDiscovery> {
     const sourceUrl = `${CROSSREF_BASE}${encodeURIComponent(doi)}`
     const message = parseCrossrefResponse(await this.read(sourceUrl, 'application/json', signal))
-    if (normalizeIdentifier('doi', message.DOI ?? doi) !== doi)
+    if (normalizeIdentifier('doi', message.DOI ?? '') !== doi)
       throw new Error('Crossref returned metadata for a different DOI.')
     const seed = metadataProposalSchema.parse({
       itemType: crossrefItemType(message.type),
@@ -271,13 +342,17 @@ class LiteratureReferenceResolver {
   }
 
   private async europe(
-    reference: ReferenceKey,
+    reference: ReferenceKey & { scheme: 'doi' | 'pmid' | 'pmcid' },
     signal?: AbortSignal
   ): Promise<LiteratureReferenceDiscovery> {
     // Quoting and escaping keep a DOI suffix from changing the provider's query semantics.
     const escaped = reference.value.replace(/[\\"]/gu, '\\$&')
     const query =
-      reference.scheme === 'doi' ? `DOI:"${escaped}"` : `EXT_ID:${reference.value} AND SRC:MED`
+      reference.scheme === 'doi'
+        ? `DOI:"${escaped}"`
+        : reference.scheme === 'pmcid'
+          ? `PMCID:${reference.value}`
+          : `EXT_ID:${reference.value} AND SRC:MED`
     const sourceUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?${new URLSearchParams({ query, resultType: 'core', format: 'json', pageSize: '5' })}`
     const records = europeSchema.parse(
       JSON.parse(await this.read(sourceUrl, 'application/json', signal))
@@ -285,7 +360,9 @@ class LiteratureReferenceResolver {
     const matches = records.filter((record) =>
       reference.scheme === 'doi'
         ? normalizeIdentifier('doi', record.doi ?? '') === reference.value
-        : record.source === 'MED' && record.id === reference.value
+        : reference.scheme === 'pmcid'
+          ? record.pmcid === reference.value
+          : record.source === 'MED' && record.id === reference.value
     )
     if (matches.length !== 1) throw new LiteratureProviderError(404)
     const record = matches[0]
@@ -296,7 +373,8 @@ class LiteratureReferenceResolver {
       identifiers.push({ scheme: 'doi', value: record.doi, isPrimary: false })
     if (record.source === 'MED' && reference.scheme !== 'pmid')
       identifiers.push({ scheme: 'pmid', value: record.id, isPrimary: false })
-    if (record.pmcid) identifiers.push({ scheme: 'pmcid', value: record.pmcid, isPrimary: false })
+    if (record.pmcid && reference.scheme !== 'pmcid')
+      identifiers.push({ scheme: 'pmcid', value: record.pmcid, isPrimary: false })
     const year = Number(record.pubYear ?? record.firstPublicationDate?.slice(0, 4))
     const item = metadataProposalSchema.parse({
       itemType: 'journalArticle',
@@ -310,7 +388,9 @@ class LiteratureReferenceResolver {
       url:
         reference.scheme === 'doi'
           ? `https://doi.org/${reference.value}`
-          : `https://pubmed.ncbi.nlm.nih.gov/${reference.value}/`,
+          : reference.scheme === 'pmcid'
+            ? `https://pmc.ncbi.nlm.nih.gov/articles/${reference.value}/`
+            : `https://pubmed.ncbi.nlm.nih.gov/${reference.value}/`,
       typeFields: Object.fromEntries(
         Object.entries({
           volume: record.journalInfo?.volume,
@@ -402,6 +482,14 @@ class LiteratureReferenceResolver {
   async lookup(input: string, signal?: AbortSignal): Promise<MetadataLookup> {
     const reference = parseReference(input)
     signal?.throwIfAborted()
+    if (reference.scheme === 'arxiv') {
+      const result = await this.arxiv(reference.value, signal)
+      return { ...result, sources: [result.source], failures: [] }
+    }
+    if (reference.scheme === 'pmcid') {
+      const result = await this.europe({ ...reference, scheme: 'pmcid' }, signal)
+      return { ...result, sources: [result.source], failures: [] }
+    }
     let primary: LiteratureReferenceDiscovery | undefined
     let primaryError: unknown
     const failures: LiteratureFailure[] = []
@@ -446,7 +534,7 @@ class LiteratureReferenceResolver {
     }
     if (!primary?.item.abstract || !primary.item.title.trim()) {
       try {
-        accept(await this.europe(reference, signal))
+        accept(await this.europe({ ...reference, scheme: reference.scheme }, signal))
       } catch (error) {
         signal?.throwIfAborted()
         failures.push(literatureFailure(error, 'search', 'europe-pmc'))

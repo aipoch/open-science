@@ -78,7 +78,7 @@ const requestByMethod = {
   executeShell: { ...request, command: 'echo hi', background: true },
   requestNetworkAccess: {
     ...request,
-    hostname: 'data.example.org',
+    recordId: 'trusted-record',
     reason: 'Download the requested public dataset.'
   },
   state: request,
@@ -93,6 +93,24 @@ const requestByMethod = {
 } satisfies Record<NotebookLocalRpcMethod, Record<string, unknown>>
 
 describe('notebook local RPC adapter', () => {
+  it('rejects forged evidence and approval fields at the Agent RPC boundary', () => {
+    const capability = createCapability()
+    for (const fields of [
+      { addresses: ['127.0.0.1'] },
+      { approved: true },
+      { runtime: 'python' },
+      { evidence: { recordId: 'forged' } }
+    ]) {
+      expect(() =>
+        resolveNotebookLocalRpcHandler(capability, 'requestNetworkAccess', {
+          ...requestByMethod.requestNetworkAccess,
+          ...fields
+        })
+      ).toThrow('Invalid notebook RPC params')
+    }
+    expect(capability.requestNetworkAccess).not.toHaveBeenCalled()
+  })
+
   it('owns exactly the notebook capability method surface', () => {
     expect(NOTEBOOK_LOCAL_RPC_METHODS).toEqual([
       'beginCodeCell',
@@ -153,7 +171,9 @@ describe('notebook local RPC adapter', () => {
 
     await expect(handler(methodRequest)).resolves.toBe(result)
     expect(methodMock).toHaveBeenCalledTimes(1)
-    expect(methodMock.mock.calls[0]?.[0]).toBe(methodRequest)
+    if (method === 'requestNetworkAccess')
+      expect(methodMock.mock.calls[0]?.[0]).toEqual({ ...methodRequest, hostname: '' })
+    else expect(methodMock.mock.calls[0]?.[0]).toBe(methodRequest)
     for (const otherMethod of NOTEBOOK_LOCAL_RPC_METHODS) {
       if (otherMethod === method) continue
       expect(
@@ -318,7 +338,10 @@ describe('notebook local RPC adapter', () => {
 
     await handler(methodRequest, cancellation.signal)
 
-    expect(capability.requestNetworkAccess).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+    expect(capability.requestNetworkAccess).toHaveBeenCalledWith(
+      { ...methodRequest, hostname: '' },
+      cancellation.signal
+    )
   })
 
   it('forwards request cancellation to shell execution', async () => {

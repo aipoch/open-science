@@ -141,6 +141,8 @@ describe('computeStorageUsage', () => {
       },
       { key: 'notebooks', bytes: 0 },
       { key: 'models', bytes: 0 },
+      { key: 'research-video-jobs', bytes: 0 },
+      { key: 'research-video-presentations', bytes: 0 },
       { key: 'pdf-structure', bytes: 0 },
       { key: 'execution-file-evidence', bytes: 125 },
       {
@@ -169,6 +171,18 @@ describe('computeStorageUsage', () => {
         { name: 'empty', bytes: 0 }
       ]
     })
+  })
+
+  it('counts retained film sources and playable outputs', async () => {
+    await writeSized(join(dataRoot, 'research-video-jobs', 'job', 'sources.zip'), 40)
+    await writeSized(
+      join(dataRoot, 'research-video-presentations', 'scope', 'job', 'output', 'player.html'),
+      60
+    )
+    const usage = await computeStorageUsage(dataRoot)
+    expect(usage.categories).toContainEqual({ key: 'research-video-jobs', bytes: 40 })
+    expect(usage.categories).toContainEqual({ key: 'research-video-presentations', bytes: 60 })
+    expect(usage.totalBytes).toBe(100)
   })
 
   it('accounts for every relocatable data directory', () => {
@@ -290,6 +304,8 @@ describe('computeStorageUsage', () => {
       { key: 'runtime', bytes: 0, children: [] },
       { key: 'notebooks', bytes: 0 },
       { key: 'models', bytes: 0 },
+      { key: 'research-video-jobs', bytes: 0 },
+      { key: 'research-video-presentations', bytes: 0 },
       { key: 'pdf-structure', bytes: 0 },
       { key: 'execution-file-evidence', bytes: 0 },
       { key: 'workspaces', bytes: 0 }

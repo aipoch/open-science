@@ -23,13 +23,14 @@ describe('renderer contract catalog', () => {
     })
     expect(WEB_INVOKE_CHANNELS['remoteAccess.revokeBrowsers']).toBe('remote-access:revoke-browsers')
   })
-  it('registers all four local model methods across the intended surfaces', () => {
+  it('registers all local model methods across the intended surfaces', () => {
     const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
     expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([
       'localModels.cancel',
       'localModels.getSnapshot',
       'localModels.install',
-      'localModels.remove'
+      'localModels.remove',
+      'localModels.setOcrLanguages'
     ])
     for (const contract of group!.contracts) {
       expect(contract.surfaceInstallation).toMatchObject({
@@ -305,12 +306,17 @@ describe('renderer contract catalog', () => {
     ).toEqual([
       'specialist.abortPackageUpload',
       'specialist.beginPackageUpload',
+      'specialist.cancelMarketplaceCandidate',
       'specialist.cancelPackage',
+      'specialist.delete',
       'specialist.getMarketplaceRelease',
+      'specialist.installMarketplace',
       'specialist.installPackage',
       'specialist.list',
       'specialist.listMarketplace',
       'specialist.onCatalogChanged',
+      'specialist.prepareMarketplaceInstall',
+      'specialist.previewDelete',
       'specialist.previewPackageUpload',
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',
@@ -339,19 +345,35 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(39)
+    expect(compute).toHaveLength(60)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
         .map(({ publicPath }) => publicPath)
     ).toEqual([
+      'compute.accountStatus',
+      'compute.cancelAccountConnection',
       'compute.changeAuthentication',
+      'compute.connectAccount',
+      'compute.createHostedTarget',
+      'compute.createKubernetesTarget',
+      'compute.createModalTarget',
       'compute.createPassword',
+      'compute.createRayTarget',
+      'compute.disconnectAccount',
       'compute.download',
+      'compute.getComputePythonRuntime',
       'compute.jobsSetRemoteCleanup',
+      'compute.listRayTokens',
       'compute.passwordCapability',
+      'compute.removeRayToken',
       'compute.resetPassword',
-      'compute.revealInFolder'
+      'compute.revealInFolder',
+      'compute.selectComputePythonRuntime',
+      'compute.setRayToken',
+      'compute.updateTarget',
+      'compute.useLocalAccount',
+      'compute.verifyTarget'
     ])
   })
 
@@ -520,6 +542,7 @@ describe('renderer contract catalog', () => {
       'literature.addPdf',
       'literature.cancelPdfImport',
       'literature.citationStyles',
+      'literature.collect',
       'literature.completeMetadata',
       'literature.exportRecord',
       'literature.formatDocument',
@@ -532,10 +555,12 @@ describe('renderer contract catalog', () => {
       'literature.jobs',
       'literature.journals',
       'literature.lookupMetadata',
+      'literature.overviewBatch',
       'literature.publicationCheck',
       'literature.related',
       'literature.search',
       'literature.sources',
+      'literature.studySnapshot',
       'literature.supplementAttachment',
       'literature.supplementAttachmentProgress',
       'literature.supplements',
@@ -561,14 +586,20 @@ describe('renderer contract catalog', () => {
       'pdfStructure.parse',
       'pdfStructure.readCached',
       'pdfStructure.readThumbnail',
+      'projects.cancelPromptOptimization',
       'projects.create',
       'projects.delete',
       'projects.get',
       'projects.list',
       'projects.listDeletionCleanup',
+      'projects.optimizePrompt',
+      'projects.recordOptimizationEvent',
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
+      'resourceRecording.getState',
+      'resourceRecording.start',
+      'resourceRecording.stop',
       'sessionReplay.get',
       'sessionReplay.getSelectionSnapshot',
       'sessionReplay.list',
@@ -593,6 +624,7 @@ describe('renderer contract catalog', () => {
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'sessions.useCaseCatalog',
+      'sessions.useCaseIntroduction',
       'settings.getSettings',
       'tags.create',
       'tags.delete',
@@ -617,6 +649,7 @@ describe('renderer contract catalog', () => {
       'literature:add-pdf',
       'literature:cancel-pdf-import',
       'literature:citation-styles',
+      'literature:collect',
       'literature:complete-metadata',
       'literature:export-record',
       'literature:format-document',
@@ -629,10 +662,12 @@ describe('renderer contract catalog', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:overview-batch',
       'literature:publication-check',
       'literature:related',
       'literature:search',
       'literature:sources',
+      'literature:study-snapshot',
       'literature:supplement-attachment',
       'literature:supplement-attachment-progress',
       'literature:supplements',
@@ -658,14 +693,20 @@ describe('renderer contract catalog', () => {
       'pdf-structure:parse',
       'pdf-structure:read-cached',
       'pdf-structure:read-thumbnail',
+      'projects:cancel-prompt-optimization',
       'projects:create',
       'projects:delete',
       'projects:get',
       'projects:list',
       'projects:list-deletion-cleanup',
+      'projects:optimize-prompt',
+      'projects:record-optimization-event',
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'resource-recording:get-state',
+      'resource-recording:start',
+      'resource-recording:stop',
       'session-replay:get',
       'session-replay:get-selection-snapshot',
       'session-replay:list',
@@ -690,6 +731,7 @@ describe('renderer contract catalog', () => {
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
       'sessions:use-case-catalog',
+      'sessions:use-case-introduction',
       'settings:get-settings',
       'tags:create',
       'tags:delete',

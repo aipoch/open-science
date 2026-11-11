@@ -176,7 +176,7 @@ function bodyPlan(table, options) {
   if (!packet) return
   const all = paints(packet),
     edges = rails.map((r) => all.filter((p) => p.eligible && equal(p.segment, r)))
-  if (edges.some((e) => e.length !== 1)) return
+  if (edges.some((e) => e.length !== 1 || !inside(e[0].bounds, crop))) return
   const marks = edges.flat(),
     records = packet.records.filter((r) => wanted.has(r.index)),
     glyphs = new Set(records.flatMap((r) => r.part.map((p) => p.g))),

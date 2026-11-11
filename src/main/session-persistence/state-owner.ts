@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import { preserveMainTurnOutcomes, recordRestartTurnOutcome } from './turn-outcome-authority'
 import {
   setTurnOutcome,
@@ -19,6 +20,7 @@ import {
   sanitizePlanHistoryProjections,
   sanitizeSessionRuntimeContext,
   SessionConfigurationBusyError,
+  SessionRevisionConflictError,
   sessionRevision,
   type DelegationPolicy,
   type PersistedChatMessage,
@@ -107,7 +109,8 @@ type SessionStateRepository = {
   retainRuntimeSessionState?(projectId: string, sessionId: string, retained: boolean): void
   saveSession(
     session: PersistedChatSession,
-    expectedRevision?: number
+    expectedRevision?: number,
+    onJsonCommitted?: (session: PersistedChatSession) => void
   ): Promise<PersistedChatSession>
 }
 
@@ -559,6 +562,23 @@ class SessionPersistenceStateOwner {
     candidate.revision = current.revision + 1
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
+    if (
+      session.deletedDiscussionSourceId &&
+      runtimeContext.sessionContext?.bindings.some(
+        (binding) =>
+          binding.projectId === projectId && binding.sessionId === session.deletedDiscussionSourceId
+      )
+    )
+      throw new Error('The discussion source was permanently deleted.')
+    if (session.parentSessionId && Object.hasOwn(patch, 'sessionContext')) {
+      const bindings = runtimeContext.sessionContext?.bindings
+      if (
+        bindings?.length !== 1 ||
+        bindings[0].sessionId !== session.parentSessionId ||
+        bindings[0].projectId !== projectId
+      )
+        throw new Error('A child discussion must keep its parent research Session.')
+    }
 
     const archivePlanProjection = command.archivePlanProjection
       ? sanitizePlanHistoryProjections([command.archivePlanProjection])?.[0]
@@ -909,7 +929,8 @@ class SessionPersistenceStateOwner {
 
   async mutateRuntimeSession(
     scope: { projectId: string; sessionId: string },
-    mutate: (session: PersistedChatSession) => PersistedChatSession
+    mutate: (session: PersistedChatSession) => PersistedChatSession,
+    onJsonCommitted?: () => void
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(scope.projectId, scope.sessionId, 'mutate')
     const loaded = await loadAuthority(this.options.repository, scope.projectId, scope.sessionId)
@@ -955,19 +976,27 @@ class SessionPersistenceStateOwner {
     )
     if (validation.status === 'conflict') throw validation.error
     let persisted: PersistedChatSession
+    let recorded = false
+    const recordJsonCommit = (session: PersistedChatSession): void => {
+      this.recordSession(session)
+      this.invalidateBindingTopology(scope.projectId, scope.sessionId)
+      recorded = true
+      onJsonCommitted?.()
+    }
     try {
-      persisted = await saveSessionWithRevision(
-        this.options.repository,
-        candidate,
-        previous.revision ?? 0
-      )
+      persisted = onJsonCommitted
+        ? await this.options.repository.saveSession(
+            candidate,
+            previous.revision ?? 0,
+            recordJsonCommit
+          )
+        : await saveSessionWithRevision(this.options.repository, candidate, previous.revision ?? 0)
     } catch (error) {
       if (!(error instanceof SessionProjectionAfterCommitError)) throw error
       persisted = error.committedSession
       this.markMetadataIncomplete()
     }
-    this.recordSession(persisted)
-    this.invalidateBindingTopology(scope.projectId, scope.sessionId)
+    if (!recorded) recordJsonCommit(persisted)
     // JSON is the authoritative commit. Derived capture/index/publication failure must not report
     // that this mutation never happened or invite another execution of the provider work.
     try {
@@ -1134,7 +1163,7 @@ class SessionPersistenceStateOwner {
     return this.persistTaskTerminalState(session, command, {
       status: 'idle',
       error: undefined,
-      errorReportable: undefined
+      failure: undefined
     })
   }
 
@@ -1145,7 +1174,7 @@ class SessionPersistenceStateOwner {
     return this.persistTaskTerminalState(session, command, {
       status: 'error',
       error: command.error,
-      errorReportable: command.errorReportable
+      failure: command.failure
     })
   }
 
@@ -1236,13 +1265,20 @@ class SessionPersistenceStateOwner {
   private async persistTaskTerminalState(
     session: PersistedChatSession,
     command: SettleTaskSessionCompletionRequest,
-    terminal: Pick<PersistedChatSession, 'status' | 'error' | 'errorReportable'>
+    terminal: Pick<PersistedChatSession, 'status' | 'error' | 'failure'>
   ): Promise<PersistedChatSession> {
     if (session.runtimeTranscriptOwner === 'main') {
       // Runtime completion has already committed the exact transcript and publication outcome.
       // A superseding turn owns the Session witness as well as its transcript.
-      if (session.activeRun && session.activeRun.promptMessageId !== command.promptMessageId)
+      const runtimeRun = session.activeRun ?? session.runtimeTranscriptLastRun
+      if (
+        runtimeRun &&
+        (runtimeRun.promptMessageId !== command.promptMessageId ||
+          (command.expectedRunStartedAt !== undefined &&
+            runtimeRun.startedAt !== command.expectedRunStartedAt))
+      ) {
         return session
+      }
       if (session.activeRun) {
         if (terminal.status !== 'error')
           throw new Error('Main runtime completion has not committed yet.')
@@ -1251,7 +1287,13 @@ class SessionPersistenceStateOwner {
         return this.mutateRuntimeSession(
           { projectId: session.projectId, sessionId: session.id },
           (latest) => {
-            if (latest.activeRun?.promptMessageId !== command.promptMessageId) return latest
+            if (
+              latest.activeRun?.promptMessageId !== command.promptMessageId ||
+              (command.expectedRunStartedAt !== undefined &&
+                latest.activeRun.startedAt !== command.expectedRunStartedAt)
+            ) {
+              return latest
+            }
             const materialized = materializeSessionConversationGraph(latest)
             const prompt = materialized.conversationGraph?.messages.find(
               ({ id, role }) => id === command.promptMessageId && role === 'user'
@@ -1276,7 +1318,7 @@ class SessionPersistenceStateOwner {
                       timestamp: failureAt,
                       title: 'Task Run failed',
                       text: terminal.error ?? 'Task Run failed.',
-                      providerError: terminal.errorReportable === false,
+                      failure: terminal.failure,
                       ...('interruptionCause' in command &&
                       command.interruptionCause === 'app-restart'
                         ? { interruptionCause: 'app-restart' as const }
@@ -1294,12 +1336,6 @@ class SessionPersistenceStateOwner {
         )
       }
       // Task only records its journal witness for the corresponding completed turn.
-      if (
-        session.runtimeTranscriptLastRun &&
-        session.runtimeTranscriptLastRun.promptMessageId !== command.promptMessageId
-      ) {
-        return session
-      }
       if (session.taskRunCommitId === command.taskRunCommitId) return session
       return this.persistTaskSession({ ...session, taskRunCommitId: command.taskRunCommitId })
     }
@@ -1341,14 +1377,14 @@ class SessionPersistenceStateOwner {
               cause: 'app-restart',
               settledAt: command.updatedAt,
               error: terminal.error,
-              errorReportable: false,
+              failure: classifyFailure({ origin: 'session' }),
               recovery: 'resume'
             }
           : {
               kind: 'failed',
               settledAt: command.updatedAt,
               error: terminal.error,
-              errorReportable: terminal.errorReportable
+              failure: terminal.failure
             }
         : { kind: 'completed', settledAt: command.updatedAt }
     candidate = session.status.startsWith('waiting-')
@@ -1356,7 +1392,7 @@ class SessionPersistenceStateOwner {
           ...candidate,
           status: session.status,
           error: session.error,
-          errorReportable: session.errorReportable,
+          failure: session.failure,
           resumeRecovery: session.resumeRecovery
         }
       : {
@@ -1458,6 +1494,12 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    const assertRecoveryRevision = (current: PersistedChatSession | undefined): void => {
+      const actualRevision = current ? sessionRevision(current) : 0
+      if (options.expectedRevision !== undefined && options.expectedRevision !== actualRevision)
+        throw new SessionRevisionConflictError(options.expectedRevision, actualRevision)
+    }
+    assertRecoveryRevision(authority)
     if (
       !authority &&
       options.conversationCommands?.some(
@@ -1509,7 +1551,10 @@ class SessionPersistenceStateOwner {
           // The next terminal save retries the command against an authority with no active run.
           // Real branch identity conflicts still reject.
           if (error instanceof SessionConversationCommandDeferredError)
-            return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+            return this.mutateRuntimeSession({ projectId, sessionId }, (current) => {
+              assertRecoveryRevision(current)
+              return candidate
+            })
           throw error
         }
         if (this.options.uploads)
@@ -1517,7 +1562,10 @@ class SessionPersistenceStateOwner {
             mode: 'live-save'
           })
       }
-      return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+      return this.mutateRuntimeSession({ projectId, sessionId }, (current) => {
+        assertRecoveryRevision(current)
+        return candidate
+      })
     }
     session = {
       ...session,
@@ -1598,7 +1646,7 @@ class SessionPersistenceStateOwner {
     const mainOwnedState = {
       status: stateAuthority?.status ?? ('idle' as const),
       error: stateAuthority?.error,
-      errorReportable: stateAuthority?.errorReportable,
+      failure: stateAuthority?.failure,
       resumeRecovery: stateAuthority?.resumeRecovery
     }
     // Once Main has durable Session-details ownership, a stale whole-Session renderer save may
@@ -1618,6 +1666,7 @@ class SessionPersistenceStateOwner {
         : undefined
     const commandProjection = conversationAuthority
       ? {
+          parentSessionId: conversationAuthority.parentSessionId,
           conversationGraph: conversationAuthority.conversationGraph,
           messages: conversationAuthority.messages,
           activities: conversationAuthority.activities,
@@ -1638,6 +1687,13 @@ class SessionPersistenceStateOwner {
       ...commandProjection,
       ...relayProjection,
       ...mainOwnedSessionDetails,
+      ...(authority?.parentSessionId ? { parentSessionId: authority.parentSessionId } : {}),
+      ...(authority?.deletedDiscussionSourceId
+        ? {
+            parentSessionId: undefined,
+            deletedDiscussionSourceId: authority.deletedDiscussionSourceId
+          }
+        : { deletedDiscussionSourceId: undefined }),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(authority?.planHistoryProjections

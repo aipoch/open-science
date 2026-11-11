@@ -1,4 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
+import { recordResourceEvent } from '../resource-diagnostics/recorder'
 import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -28,12 +29,10 @@ type AcpRuntimePromptHost = Readonly<{
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   onProviderPromptAccepted?: (sessionId: string) => void
-  requestArtifactPublicationContinuation?: (input: {
-    permissionPrompts?: AcpPromptRequest['permissionPrompts']
-    sessionId: string
-    provenanceContext?: AcpPromptRequest['provenanceContext']
+  artifactPublicationPrompt?: (
+    sessionId: string,
     files: readonly NotebookWorkingFile[]
-  }) => void
+  ) => string | undefined
 }>
 
 const log = createLogger('acp')
@@ -83,6 +82,11 @@ const composeAcpRuntimePromptOwners = (
   const endPromptTurn = (sessionId: string, turnToken: string): void => {
     if (startedPromptTurns.get(turnToken) !== sessionId) return
     startedPromptTurns.delete(turnToken)
+    recordResourceEvent('prompt-ended', {
+      runtimeId: base.resourceRuntimeId,
+      sessionId,
+      turnId: turnToken
+    })
     for (const cleanup of [
       () => session.sessionUpdateProjector.clearAssistantOutput(sessionId),
       () => host.onPromptEnded?.(sessionId, turnToken),
@@ -185,6 +189,8 @@ const composeAcpRuntimePromptOwners = (
   }
 
   const promptPreparation = new AcpPromptPreparationOwner({
+    shellRuntimeBindingFor: (sessionId) =>
+      base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
     promptContent: base.promptContentOwner,
@@ -204,6 +210,7 @@ const composeAcpRuntimePromptOwners = (
       ? {
           notebook: {
             peekHandoffContext: options.notebook.peekHandoffContext,
+            isReplNamespaceUnavailable: options.notebook.isReplNamespaceUnavailable,
             registerTurnInputs: options.notebook.registerTurnInputs
           }
         }
@@ -355,7 +362,7 @@ const composeAcpRuntimePromptOwners = (
       sideChatRelays: options.sideChatRelays,
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
-      requestArtifactPublicationContinuation: host.requestArtifactPublicationContinuation,
+      artifactPublicationPrompt: host.artifactPublicationPrompt,
       diagnosticContext,
       pushUserMessage: ({ sessionId, promptMessageId, text, attribution }) =>
         session.publication.pushEvent({
@@ -378,11 +385,8 @@ const composeAcpRuntimePromptOwners = (
         artifact ? base.artifactTurns?.snapshot(artifact).promptMessageId : undefined,
       publish: publishArtifact,
       dispose: disposeArtifact,
-      publicationCount: (artifact) => {
-        if (!artifact || !base.artifactTurns) return 0
-        const terminal = base.artifactTurns.snapshot(artifact).terminalResult
-        return terminal?.kind === 'publication' ? terminal.artifactCount : 0
-      }
+      sealForPublication: async (artifact) =>
+        (await base.artifactTurns!.finalize(artifact)) ? 'ready' : 'empty'
     },
     plan: host.plan,
     finalization: {
@@ -439,7 +443,8 @@ const composeAcpRuntimePromptOwners = (
             planDeliveryCommandId,
             delegatedMessageId,
             applicationPrompt,
-            approvedHandoffContinuation
+            approvedHandoffContinuation,
+            continuationAdmission
           ) => {
             const provenance = request.provenanceContext
             if (
@@ -478,15 +483,28 @@ const composeAcpRuntimePromptOwners = (
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
                 ...(applicationPrompt ? { applicationPrompt } : {}),
                 ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
-              }
+              },
+              continuationAdmission
             )
           },
           assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
-            options.runtimeSessions!.assertAdmissionAvailable(sessionId)
+            options.runtimeSessions!.assertAdmissionAvailable(sessionId),
+          waitForRuntimeSessionTerminalWrites: (sessionId: string, signal: AbortSignal) =>
+            options.runtimeSessions!.waitForTerminalWrites(sessionId, signal)
         }
       : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
       startedPromptTurns.set(turnToken, sessionId)
+      const scope = base.sessionInteractions.current(sessionId)
+      const provenance = scope?.kind === 'prompt' ? scope.provenanceContext : undefined
+      recordResourceEvent('prompt-started', {
+        runtimeId: base.resourceRuntimeId,
+        epoch: base.connectionResources.epoch,
+        sessionId,
+        turnId: turnToken,
+        frameId: provenance?.agentFrameId ?? provenance?.rootFrameId,
+        activeBranchId: provenance?.messageBranchId
+      })
       callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
     },
     emitState

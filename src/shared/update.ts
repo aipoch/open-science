@@ -106,8 +106,10 @@ export type UpdateRecoveryStatus = {
     | 'controller-held'
     | 'operation-pending'
     | 'other-runtime'
+    | 'foreign-process'
     | 'occupancy-unknown'
     | 'unsupported-channel'
+  blockingProcesses?: { pid: number; name?: string }[]
 }
 export type UpdateCliConfirmation = {
   token: string

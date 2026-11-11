@@ -16,6 +16,7 @@ vi.mock('node:child_process', { spy: true })
 vi.mock('node:fs/promises', { spy: true })
 
 import {
+  assertPackagedElectronIdentity,
   configurePackagedMacKeychain,
   closeElectronApplicationForCleanup,
   disconnectFixtureServiceConnection,
@@ -25,6 +26,54 @@ import {
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+describe('packaged Electron identity', () => {
+  const environment = {
+    OPEN_SCIENCE_E2E_EXECUTABLE: resolve('fixture/Open-Science'),
+    OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA: 'a375b638988bbf0c95178c20196906ba41eb8582'
+  }
+  const evidence = {
+    packaged: true,
+    appPath: resolve('fixture/resources/app.asar'),
+    executable: environment.OPEN_SCIENCE_E2E_EXECUTABLE,
+    version: '1.0.5-nightly.ga375b63'
+  }
+
+  it('accepts the build workflow nightly version for the expected revision', () => {
+    expect(() => assertPackagedElectronIdentity(evidence, environment)).not.toThrow()
+  })
+
+  it.each([
+    '1.0.5-nightly.a375b63',
+    '1.0.5-nightly.g5e97d09',
+    '1.0.5-nightly.ga375b63-extra',
+    '1.0.5'
+  ])('rejects a mismatched nightly version: %s', (version) => {
+    expect(() => assertPackagedElectronIdentity({ ...evidence, version }, environment)).toThrow(
+      'Packaged Electron identity mismatch'
+    )
+  })
+
+  it.each([
+    { packaged: false },
+    { appPath: resolve('fixture/resources/app') },
+    { executable: resolve('fixture/another/Open-Science') },
+    { executable: 'fixture/Open-Science' }
+  ])('rejects invalid package evidence: %j', (invalid) => {
+    expect(() => assertPackagedElectronIdentity({ ...evidence, ...invalid }, environment)).toThrow(
+      'Packaged Electron identity mismatch'
+    )
+  })
+
+  it('allows stable packages only when no expected build revision was requested', () => {
+    expect(() =>
+      assertPackagedElectronIdentity(
+        { ...evidence, version: '1.0.5' },
+        { OPEN_SCIENCE_E2E_EXECUTABLE: environment.OPEN_SCIENCE_E2E_EXECUTABLE }
+      )
+    ).not.toThrow()
+  })
+})
 
 it('binds only packaged macOS launches to the hosted test Keychain under isolated HOME', async () => {
   const execute = vi.spyOn(childProcess, 'execFileSync').mockReturnValue(Buffer.alloc(0))
@@ -126,7 +175,7 @@ describe('fixture service connection evidence', () => {
     expect(Socket.prototype.connect).toBe(original)
   })
 
-  it('disconnects only the unique ws-owned Desktop service pipe', () => {
+  it('defers disconnecting the unique ws-owned Desktop pipe beyond inspector evaluation', async () => {
     const unrelated = {
       readable: true,
       writable: true,
@@ -142,9 +191,11 @@ describe('fixture service connection evidence', () => {
     })
     const target = process as NodeJS.Process & { _getActiveHandles(): unknown[] }
     const handles = vi.spyOn(target, '_getActiveHandles').mockReturnValue([unrelated, socket])
-    let result: ReturnType<typeof disconnectFixtureServiceConnection>
+    let result: Awaited<ReturnType<typeof disconnectFixtureServiceConnection>>
     try {
-      result = disconnectFixtureServiceConnection()
+      const pending = disconnectFixtureServiceConnection()
+      expect(socket.destroy).not.toHaveBeenCalled()
+      result = await pending
     } finally {
       handles.mockRestore()
     }
@@ -168,6 +219,46 @@ describe('fixture service connection evidence', () => {
     }
     expect(destroy).not.toHaveBeenCalled()
   })
+
+  it.each(['during-preflight', 'after-preflight'] as const)(
+    'targets only the service pipe when disconnecting %s',
+    (timing) => {
+      const unrelated = {
+        readable: true,
+        writable: true,
+        _handle: { constructor: { name: 'Pipe' } },
+        destroy: vi.fn()
+      }
+      const socket = { ...unrelated, destroyed: false, destroy: vi.fn() }
+      socket.destroy.mockImplementation(() => {
+        socket.destroyed = true
+      })
+      Object.assign(socket, {
+        [Symbol('websocket')]: { _socket: socket, url: 'ws://localhost/desktop', readyState: 1 }
+      })
+      const ipcMain = new EventEmitter()
+      const send = vi.fn()
+      const contents = { send }
+      const disconnect = runInNewContext(`(${disconnectFixtureServiceConnection.toString()})`, {
+        process: { _getActiveHandles: () => [unrelated, socket] }
+      })
+      disconnect(
+        { ipcMain, BrowserWindow: { getAllWindows: () => [{ webContents: contents }] } },
+        timing
+      )
+      expect(socket.destroy).not.toHaveBeenCalled()
+      if (timing === 'during-preflight') {
+        contents.send('sessions:flush-request', { requestId: 'closing' })
+        expect(contents.send).toBe(send)
+        expect(send).toHaveBeenCalledWith('sessions:flush-request', { requestId: 'closing' })
+      } else {
+        ipcMain.emit('sessions:flush-response')
+        expect(ipcMain.listenerCount('sessions:flush-response')).toBe(0)
+      }
+      expect(socket.destroy).toHaveBeenCalledOnce()
+      expect(unrelated.destroy).not.toHaveBeenCalled()
+    }
+  )
 
   it('requires a newer connected epoch of the same service rather than old connected or a no-op', () => {
     const before = { phase: 'connected', epoch: 4 }

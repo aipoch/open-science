@@ -136,10 +136,16 @@ export const retainSessionRecoveryDrafts = (
   session: ChatSession,
   previous: ChatSession
 ): ChatSession => {
-  if (!previous.unsavedTitle && !previous.elicitationEditDrafts) return session
+  if (
+    !previous.unsavedTitle &&
+    !previous.elicitationEditDrafts &&
+    previous.firstPromptDraft === undefined
+  )
+    return session
   const retained: ChatSession = {
     ...session,
     elicitationEditDrafts: previous.elicitationEditDrafts,
+    firstPromptDraft: previous.firstPromptDraft,
     ...(previous.unsavedTitle ? { title: previous.title, unsavedTitle: true } : {})
   }
   const authority = externallyHydratedSessionAuthorities.get(session)
@@ -186,6 +192,12 @@ const projectSessionMetadataAuthority = (
   const projected = {
     ...current,
     revision: incomingRevision,
+    ...(incoming.deletedDiscussionSourceId
+      ? {
+          parentSessionId: undefined,
+          deletedDiscussionSourceId: incoming.deletedDiscussionSourceId
+        }
+      : {}),
     enabledComputeHosts: incoming.enabledComputeHosts && [...incoming.enabledComputeHosts],
     selectedComputeHosts: incoming.selectedComputeHosts && [...incoming.selectedComputeHosts],
     computeConcurrencyLimit: incoming.computeConcurrencyLimit
@@ -276,7 +288,9 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    pendingRetryable,
     pendingBindingSessionId,
+    firstPromptDraft,
     wslSetup,
     delegationPolicyAuthorityPending,
     unsavedTitle,
@@ -310,6 +324,8 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void pendingRetryable
+  void firstPromptDraft
   void pendingBindingSessionId
   void wslSetup
   void delegationPolicyAuthorityPending
@@ -413,6 +429,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   number: summary.number,
   id: summary.id,
   projectId: summary.projectId,
+  ...(summary.parentSessionId ? { parentSessionId: summary.parentSessionId } : {}),
   title: summary.title,
   cwd: '',
   status: summary.presentedStatus,
@@ -513,6 +530,8 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    pendingRetryable: source.pendingRetryable,
+    firstPromptDraft: source.firstPromptDraft,
     pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,

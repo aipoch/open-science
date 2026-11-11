@@ -311,7 +311,15 @@ const element = z
       .optional(),
     table: table.optional(),
     tableParts: z
-      .array(z.object({ title: z.string().min(1), table }).strict())
+      .array(
+        z
+          .object({
+            title: z.string().min(1),
+            table,
+            regions: z.array(region).min(1).max(8).optional()
+          })
+          .strict()
+      )
       .min(2)
       .max(8)
       .optional(),
@@ -351,6 +359,12 @@ const element = z
   .refine(
     (value) => !value.tableParts || (!value.table && !!value.caption),
     'Grouped tables require a shared caption and separate parts.'
+  )
+  .refine(
+    (value) =>
+      !value.tableParts?.some((part) => part.regions) ||
+      value.tableParts.every((part) => part.regions),
+    'Grouped table boundaries must cover every part or be absent from the legacy group.'
   )
 
 // This is the production contract, independent of the throwaway spike's JSON. Paths and source
@@ -405,19 +419,20 @@ export type PdfStructureIdentity = Pick<
   'extractionId' | 'engineFingerprint' | 'sourceChecksum' | 'sourceSizeBytes' | 'requestedPages'
 >
 
-export const checkPdfStructureDecodingBudget = (input: unknown): void => {
+const checkDecodingBudget = (input: unknown, workerSourceOverflow = false): void => {
   // Main-process decoding has its own budget, independent of later worker CPU/RAM/page limits.
   // Walk before Zod/refinements so large, deep or cyclic in-process inputs cannot stall validation.
-  const pending = [{ value: input, depth: 0 }]
+  const pending = [{ value: input, depth: 0, source: false }]
   const seen = new Set<object>()
   let nodes = 0
   let textLength = 0
   let cells = 0
   while (pending.length) {
-    const { value, depth } = pending.pop()!
-    if (++nodes > 32768 || depth > 32) throw new Error('PDF result exceeds its decoding budget.')
+    const { value, depth, source } = pending.pop()!
+    if ((!source && ++nodes > 32768) || depth > 32)
+      throw new Error('PDF result exceeds its decoding budget.')
     if (typeof value === 'string') {
-      textLength += value.length
+      if (!source) textLength += value.length
       if (value.length > 262144 || textLength > 2 * 1024 * 1024)
         throw new Error('PDF result text exceeds its decoding budget.')
     } else if (value && typeof value === 'object') {
@@ -425,7 +440,7 @@ export const checkPdfStructureDecodingBudget = (input: unknown): void => {
       seen.add(value)
       if (Array.isArray(value)) {
         if (value.length > 8192) throw new Error('PDF result array exceeds its decoding budget.')
-        for (const entry of value) pending.push({ value: entry, depth: depth + 1 })
+        for (const entry of value) pending.push({ value: entry, depth: depth + 1, source })
       } else {
         if (Object.getPrototypeOf(value) !== Object.prototype)
           throw new Error('PDF result must contain plain JSON objects.')
@@ -437,18 +452,39 @@ export const checkPdfStructureDecodingBudget = (input: unknown): void => {
             if (entry.length > MAX_TABLE_CELLS || cells > 8192)
               throw new Error('PDF result cells exceed the decoding budget.')
           }
-          pending.push({ value: entry, depth: depth + 1 })
+          pending.push({
+            value: entry,
+            depth: depth + 1,
+            source:
+              source ||
+              (workerSourceOverflow &&
+                [
+                  'sourceItems',
+                  'sourceSegments',
+                  'nativeBody',
+                  'unreliableMathSourceItems'
+                ].includes(key))
+          })
         }
       }
     }
   }
 }
 
-export const parsePdfStructureResult = (
+export const checkPdfStructureDecodingBudget = (input: unknown): void => checkDecodingBudget(input)
+
+// Internal worker boundary only: the input file is already capped at 8 MiB. Validate every
+// source packet before optional budgeting, retaining all per-value/tree/core-content limits.
+// IPC and cache decoding always use the strict aggregate budget above.
+export const checkWorkerSourceMetadataBudget = (input: unknown): void =>
+  checkDecodingBudget(input, true)
+
+const parseResult = (
   input: unknown,
-  expected: PdfStructureIdentity
+  expected: PdfStructureIdentity,
+  workerSourceOverflow = false
 ): PdfStructureResult => {
-  checkPdfStructureDecodingBudget(input)
+  checkDecodingBudget(input, workerSourceOverflow)
   const result = manifest.parse(input)
   for (const key of [
     'extractionId',
@@ -568,8 +604,44 @@ export const parsePdfStructureResult = (
   for (const element of result.elements) {
     const tables =
       element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+    const partRegions = element.tableParts?.flatMap((part) => part.regions ?? []) ?? []
+    for (const [index, part] of partRegions.entries()) {
+      if (
+        !element.regions.some(
+          (parent) =>
+            parent.page === part.page &&
+            part.x >= parent.x - 1e-8 &&
+            part.y >= parent.y - 1e-8 &&
+            part.x + part.width <= parent.x + parent.width + 1e-8 &&
+            part.y + part.height <= parent.y + parent.height + 1e-8
+        ) ||
+        partRegions
+          .slice(0, index)
+          .some(
+            (other) =>
+              part.page === other.page &&
+              Math.min(part.x + part.width, other.x + other.width) - Math.max(part.x, other.x) >
+                1e-8 &&
+              Math.min(part.y + part.height, other.y + other.height) - Math.max(part.y, other.y) >
+                1e-8
+          )
+      )
+        throw new Error('PDF table part boundary escapes its group or overlaps another part.')
+    }
+    for (const part of element.tableParts ?? []) {
+      if (
+        part.regions &&
+        part.table.cells.some((cell) =>
+          cell.regions.some(
+            (region) => !part.regions!.some((boundary) => boundary.page === region.page)
+          )
+        )
+      )
+        throw new Error('PDF table cell does not belong to its part page.')
+    }
     const regions = [
       ...element.regions,
+      ...partRegions,
       ...tables.flatMap((table) => table.cells.flatMap(({ regions }) => regions)),
       ...tables.flatMap((table) => table.unassignedText.flatMap(({ regions }) => regions))
     ]
@@ -642,6 +714,18 @@ export const parsePdfStructureResult = (
   }
   return result
 }
+
+export const parsePdfStructureResult = (
+  input: unknown,
+  expected: PdfStructureIdentity
+): PdfStructureResult => parseResult(input, expected)
+
+// Never use for unbounded IPC/cache input. The worker reader validates the original complete
+// evidence here, then applies the strict budget to the selected complete-element bundles.
+export const validateWorkerSourceMetadata = (
+  input: unknown,
+  expected: PdfStructureIdentity
+): PdfStructureResult => parseResult(input, expected, true)
 
 export const decodePdfStructureResult = (input: unknown): PdfStructureResult => {
   checkPdfStructureDecodingBudget(input)

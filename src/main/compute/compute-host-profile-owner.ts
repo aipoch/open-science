@@ -16,6 +16,13 @@ import type { ComputeHostRepository } from './repository'
 const PROBE_TIMEOUT_MS = 30_000
 const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
 
+// Optional sources have the same command budget as the existing probe. Run them after the base
+// check so an unavailable or hanging accounting service cannot discard a usable scheduler result.
+const OPTIONAL_SLURM_PROBE_SCRIPT = [
+  'if scontrol show job --oneliner >/dev/null 2>&1; then echo controller_available=yes; else echo controller_available=no; fi',
+  'if sacct --noheader --allocations --user="$(id -un)" --starttime=now-1hour --endtime=now --format=JobID >/dev/null 2>&1; then echo accounting_available=yes; else echo accounting_available=no; fi'
+].join('\n')
+
 const PROBE_SCRIPT = [
   'echo "os=$(uname -s 2>/dev/null)"',
   'echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo)"',
@@ -38,7 +45,7 @@ const healthProbeScript = (host: ComputeHost): string => {
     `probe_scratch=${scratch}`,
     'printf "scratch_path=%s\\n" "$probe_scratch"',
     'if probe_file=$(mktemp "$probe_scratch/.open-science-probe.XXXXXX" 2>/dev/null); then probe_ok=no; if printf test > "$probe_file"; then probe_ok=yes; fi; rm -f -- "$probe_file" || probe_ok=no; echo scratch_writable=$probe_ok; else echo scratch_writable=no; fi',
-    'if command -v sbatch >/dev/null 2>&1 && command -v sacct >/dev/null 2>&1 && command -v scancel >/dev/null 2>&1 && squeue --noheader --user="$(id -un)" --format="%i" >/dev/null 2>&1; then echo scheduler_available=yes; else echo scheduler_available=no; fi'
+    'if command -v sbatch >/dev/null 2>&1 && command -v scancel >/dev/null 2>&1 && squeue --noheader --user="$(id -un)" --format="%i" >/dev/null 2>&1; then echo scheduler_available=yes; else echo scheduler_available=no; fi'
   ].join('\n')
 }
 
@@ -225,6 +232,8 @@ export class ComputeHostProfileOwner {
       scratchPath: parsed.scratchPath,
       scratchWritable: parsed.scratchWritable,
       schedulerAvailable: parsed.schedulerAvailable,
+      controllerAvailable: parsed.controllerAvailable,
+      accountingAvailable: parsed.accountingAvailable,
       probedAt,
       exitCode: runResult.exitCode,
       errorTail: null,
@@ -234,6 +243,48 @@ export class ComputeHostProfileOwner {
       memMib: parsed.memMib,
       gpus: parsed.gpus && parsed.gpus.length > 0 ? parsed.gpus : undefined,
       detectedScheduler: parsed.detectedScheduler
+    }
+
+    if (parsed.detectedScheduler === 'slurm') {
+      result.controllerAvailable = false
+      result.accountingAvailable = false
+      signal?.throwIfAborted()
+      try {
+        const optional = await connection.run(OPTIONAL_SLURM_PROBE_SCRIPT, {
+          timeoutMs: PROBE_TIMEOUT_MS,
+          loginShell: true,
+          maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
+        })
+        const complete =
+          !optional.timedOut && optional.exitCode === 0 && !isConnectionStdoutTruncated(optional)
+        // Each newline-terminated marker follows a completed command. Preserve a successful
+        // controller observation even if the later accounting command exhausts the budget.
+        const facts = parseProbeOutput(
+          complete
+            ? optional.stdout
+            : optional.stdout.slice(0, optional.stdout.lastIndexOf('\n') + 1)
+        )
+        result.controllerAvailable = facts.controllerAvailable ?? false
+        result.accountingAvailable = facts.accountingAvailable ?? false
+        if (
+          !complete ||
+          facts.controllerAvailable === undefined ||
+          facts.accountingAvailable === undefined
+        ) {
+          result.errorTail =
+            optional.stderr.trim().slice(-2048) ||
+            (optional.timedOut
+              ? 'Optional Slurm controller/accounting probe timed out; base checks are preserved.'
+              : 'Optional Slurm controller/accounting probe did not return complete output; base checks are preserved.')
+        }
+      } catch (error) {
+        if (isAbortError(error)) throw error
+        result.errorTail =
+          error instanceof Error
+            ? error.message
+            : 'Optional Slurm controller/accounting probe failed; base checks are preserved.'
+      }
+      signal?.throwIfAborted()
     }
 
     let safeScratchRoot: string | undefined

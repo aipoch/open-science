@@ -93,6 +93,62 @@ describe('in-memory PDF translation boundary', () => {
     ).toBe(true)
     expect((await document.getPage(1)).cleanup).not.toHaveBeenCalled()
   })
+  it.each(['complete', 'changed text', 'cancelled'] as const)(
+    'bounds cold page reads and waits for the full source proof: %s',
+    async (outcome) => {
+      const original = input(),
+        controller = new AbortController()
+      const data = {
+        ...original,
+        pages: Array.from({ length: 5 }, () => original.pages[0]),
+        units: Array.from({ length: 5 }, (_, index) => ({
+          ...original.units[0],
+          id: `p${index + 1}`,
+          fragments: [{ ...original.units[0].fragments[0], pageNumber: index + 1 }]
+        }))
+      }
+      const finish = new Map<number, () => void>()
+      const cleanup = vi.fn()
+      const document = {
+        ...pdf(),
+        numPages: 5,
+        getPage: vi.fn(async (number: number) => ({
+          getViewport: () => original.pages[0],
+          getTextContent: () =>
+            new Promise((resolve) => {
+              finish.set(number, () =>
+                resolve({
+                  items: [
+                    { str: number === 4 && outcome === 'changed text' ? 'Changed.' : 'A result.' }
+                  ]
+                })
+              )
+            }),
+          cleanup
+        }))
+      } as unknown as ReturnType<typeof pdf>
+      const published = vi.fn()
+      const pending = verifyPdfTranslation(data, document, 'version:0', controller.signal).then(
+        published
+      )
+      await vi.waitFor(() => expect(finish.size).toBe(4))
+      expect(document.getPage).toHaveBeenCalledTimes(4)
+      expect(published).not.toHaveBeenCalled()
+      // Later pages may settle first; none can publish a partially verified document.
+      for (const number of [4, 3, 2]) finish.get(number)!()
+      if (outcome === 'cancelled') controller.abort()
+      finish.get(1)!()
+      if (outcome === 'complete') {
+        await vi.waitFor(() => expect(finish.has(5)).toBe(true))
+        expect(published).not.toHaveBeenCalled()
+        finish.get(5)!()
+      }
+      await pending
+      expect(published).toHaveBeenCalledWith(outcome === 'complete')
+      expect(document.getPage).toHaveBeenCalledTimes(outcome === 'complete' ? 5 : 4)
+      expect(cleanup).not.toHaveBeenCalled()
+    }
+  )
   it.each([
     'wrong version',
     'wrong fingerprint',

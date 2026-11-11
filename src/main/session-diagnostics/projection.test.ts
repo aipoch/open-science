@@ -3,6 +3,61 @@ import { describe, expect, it } from 'vitest'
 import { projectDiagnosticLog, projectDiagnosticSession } from './projection'
 
 describe('diagnostic log projection', () => {
+  it.each(['never-started', 'started-and-reaped', 'termination-unknown'])(
+    'preserves the recorded Notebook process state %s',
+    (processState) => {
+      expect(
+        projectDiagnosticLog({ scope: 'notebook:network-sandbox', data: { processState } })
+      ).toEqual({ scope: 'notebook:network-sandbox', diagnostics: { processState } })
+    }
+  )
+
+  it('keeps absent, invalid and unrelated Notebook lifecycle evidence out of the export', () => {
+    expect(projectDiagnosticLog({ scope: 'notebook:runtime', data: {} })).toEqual({
+      scope: 'notebook:runtime'
+    })
+    expect(
+      projectDiagnosticLog({
+        scope: 'notebook:network-sandbox',
+        data: {
+          runtime: 'PRIVATE_RUNTIME',
+          stage: 'PRIVATE_STAGE',
+          terminationReason: 'PRIVATE_REASON',
+          cleanupState: 'PRIVATE_STATE',
+          processState: 'PRIVATE_PROCESS_STATE',
+          executionReference: '/private/execution',
+          parentOperationId: 'private operation',
+          processesTerminated: 'false',
+          networkClosed: 1,
+          temporaryResourcesRemoved: null,
+          incompleteStageCount: 4,
+          temporaryCleanupErrorCode: 'EBUSY /private/path',
+          exitCode: '0'
+        }
+      })
+    ).toEqual({ scope: 'notebook:network-sandbox' })
+    expect(
+      projectDiagnosticLog({
+        scope: 'unrelated',
+        data: {
+          runtime: 'powershell',
+          stage: 'execution',
+          terminationReason: 'cancel',
+          cleanupState: 'complete',
+          processState: 'never-started',
+          executionReference: 'execution-1',
+          parentOperationId: 'operation-1',
+          processesTerminated: true,
+          networkClosed: false,
+          temporaryResourcesRemoved: true,
+          incompleteStageCount: 1,
+          temporaryCleanupErrorCode: 'EBUSY',
+          exitCode: null
+        }
+      })
+    ).toEqual({ scope: 'unrelated' })
+  })
+
   it.each(['specialist-resolution', 'acp-provider-session-adoption'])(
     'retains bounded Specialist checkpoints for %s without exporting configuration',
     (operation) => {
@@ -322,6 +377,42 @@ it('retains bounded runtime failure context and omits private or unknown diagnos
   ).toEqual({})
 })
 
+it('retains schema-safe credential inventory diagnostics in recovery evidence', () => {
+  const event = {
+    scope: 'desktop-runtime-recovery',
+    msg: 'desktop runtime recovery failed',
+    data: {
+      startupStage: 'credentials',
+      credentialReason: 'windows-profile-key-unavailable',
+      pid: 42,
+      crashesInWindow: 1,
+      timedOut: false,
+      error: { message: 'startup failed', cause: { code: 'EACCES' } },
+      credentialDiagnostic: { code: 'dpapi-unprotect-failed', osStatus: 5 }
+    }
+  }
+  expect(projectDiagnosticLog(event)).toMatchObject({ diagnostics: event.data })
+  expect(
+    projectDiagnosticLog({
+      ...event,
+      data: {
+        ...event.data,
+        credentialDiagnostic: {
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-files',
+          reason: 'operation-failed'
+        }
+      }
+    }).diagnostics
+  ).toHaveProperty('credentialDiagnostic', {
+    code: 'inventory-failed',
+    source: 'cookies',
+    stage: 'read-files',
+    reason: 'operation-failed'
+  })
+})
+
 it('preserves permission trace classifications and rejects spoofed raw identity fields', () => {
   expect(
     projectDiagnosticLog({
@@ -381,4 +472,57 @@ it('preserves permission trace classifications and rejects spoofed raw identity 
     }
   })
   expect(JSON.stringify(invalid)).not.toContain('private-')
+})
+
+it('retains classified failure evidence in session and turn diagnostics with redaction and limits', () => {
+  const failure = {
+    category: 'service',
+    reason: 'service/unavailable',
+    diagnostics: {
+      status: 503,
+      code: 'overloaded',
+      provider: 'Example',
+      model: 'example-model',
+      requestId: 'request-example',
+      raw: 'Authorization: Bearer secret-example\n' + 'x'.repeat(5000),
+      secret: 'DO NOT EXPORT'
+    }
+  }
+  const projection = projectDiagnosticSession({
+    failure,
+    messages: [{ id: 'prompt', turnOutcome: { kind: 'failed', settledAt: 1, failure } }]
+  })
+  expect(projection).toMatchObject({
+    session: {
+      failure: {
+        category: 'service',
+        diagnostics: { status: 503, provider: 'Example', requestId: 'request-example' }
+      },
+      messages: [{ turnOutcome: { failure: { category: 'service' } } }]
+    }
+  })
+  const serialized = JSON.stringify(projection)
+  expect(serialized).not.toContain('secret-example')
+  expect(serialized).not.toContain('DO NOT EXPORT')
+  expect(serialized).toContain('[truncated]')
+})
+
+it('retains film request evidence without exporting the generated content', () => {
+  const fields = {
+    operationId: 'film-job',
+    requestId: 'call-1',
+    attempt: 2,
+    phase: 'animation',
+    model: 'example-model',
+    reason: 'max_turn_requests',
+    outputBytes: 0,
+    outputTokens: 4096,
+    durationMs: 54000
+  }
+  expect(
+    projectDiagnosticLog({
+      scope: 'research-video',
+      data: { ...fields, text: 'private draft', prompt: 'private session' }
+    })
+  ).toEqual({ scope: 'research-video', diagnostics: fields })
 })

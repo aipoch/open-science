@@ -93,7 +93,8 @@ export function composeSessionProjection({
         log.warn('network approval Session publication failed', errorLogFields(error))
       }
     },
-    settingsService.allowNotebookNetworkDomain.bind(settingsService)
+    settingsService.allowNotebookNetworkDomain.bind(settingsService),
+    settingsService.allowNotebookNetworkDestination.bind(settingsService)
   )
   // Stashed host.agents.switch bindings for sessions that are not yet durable (fresh unsent drafts),
   // flushed to disk on the session's first save so an approved switch survives an app restart before

@@ -18,7 +18,11 @@ PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repos
 workflow), AI review, static checks and selective portable tests on Ubuntu.
 PRs and merge queue run affected host/package tests separately and skip unaffected packages.
 Failed selected checks block merging; full portable suites run in scheduled/manual Source
-Regression instead. See [Package workflows](package-workflows.md) for selection details.
+Regression instead. A full plan still runs, as a blocking floor (`unitFloor`), the declared module
+tests of each changed path that has its own bounded selection. A rename joins only when both sides
+are bounded and selects both owners; deleted, type-changed, unmerged, unowned and global paths add
+no floor.
+See [Package workflows](package-workflows.md) for selection details.
 Desktop changes run the Windows
 mainline E2E journeys on one test runner, selected from the changed modules and their declared
 consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native
@@ -30,7 +34,7 @@ Agent Allow/Deny, uploaded Markdown editing/preview, real Python analysis/resump
 Windows tray/second-launch lifecycle. New cases and additional variants stay untagged in
 complete scheduled/manual regression; adding a mainline tag requires CI policy review.
 The discovery guard asserts these five exact test identities to prevent silent growth.
-PR Windows E2E installs, builds and runs on one runner; the three-runner scheduled regression
+PR Windows E2E installs, builds and runs on one runner; the six-runner scheduled regression
 retains its shared setup snapshot. Selection uses the trusted base module owners and consumer graph and explains every chosen group
 in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
 E2E suites. Windows core checks remain blocking when selected. The trusted selector uses the existing module
@@ -51,6 +55,19 @@ three native platforms for its declared lifecycle owner and harness paths, as de
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
+
+### CodeQL
+
+GitHub default setup uses [codeql-config.yml](../.github/codeql/codeql-config.yml)
+to exclude development tests from security analysis while retaining production code,
+runtime resources and fixtures. Test execution is unchanged. Audit shipping paths before
+extending exclusions; files under `resources/` may ship even with test suffixes.
+
+Activate the configuration with the repository-only `github-codeql-config-file` property:
+`remote=aipoch/open-science@main:.github/codeql/codeql-config.yml`.
+Before merge, use a verified unique commit abbreviation instead of `main` (75-character
+property limit). Verify a main scan saves the JavaScript baseline and a later PR restores
+it; clear the property to restore default scope.
 
 ### Static check groups
 
@@ -95,11 +112,22 @@ default-branch SHA is unchanged. Its manual `core` and `detector` modes are focu
 dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
 Its runner selects the independent `scripts/ci/process-lifecycle/vitest.config.ts`; ordinary
 module tests do not collect its native suite or count it as portable consumer evidence.
-PRs changing its harness, tested process owners, dynamic Notebook host or declared setup inputs
-also run the same collection at the exact PR head. The workflow's path inventory and discovery
-contract must be updated when scenario dependencies change; it is not an exhaustive transitive
-dependency selector. Unrelated UI/documentation changes do not allocate these native runners.
-The 14 source scenarios retain immediate MCP cancellation/timeout cleanup checks, owned/borrowed
+PRs changing its harness, explicit lifecycle owners, process identity/stop helpers, dynamic
+Notebook host or direct harness setup inputs run the same collection at the exact PR head.
+The workflow lists individual source files instead of whole delegation/runtime directories;
+ordinary unit tests, unrelated business code, root dependency manifests, generic patches and
+Prisma changes do not independently trigger these three native runners. Shared dependency and
+other indirect changes receive lifecycle coverage in the daily default-branch run; use manual
+`core` when earlier feedback is needed. This is an intentional bounded PR policy, not an exhaustive
+transitive dependency selector. Update the workflow inventory and its positive/negative contract
+when scenario dependencies change. PR filtering does not reduce the daily collection.
+The 21 source scenarios include ACP candidate disposal, post-spawn failure cleanup, main-agent
+shutdown, Codex direct/bridged connection disposal and OpenCode companion release/startup-failure
+cleanup using controlled real subprocesses. The bridged case checks transport-lease release, not
+the bridge server or protocol.
+They exercise production ownership and cleanup with an independent OS observer; external CLI
+workloads are substituted, so these scenarios do not certify vendor protocols, model calls, history
+replay or subscriptions. The collection retains immediate MCP cancellation/timeout cleanup checks, owned/borrowed
 runtime behavior and recovery. Twelve detector controls verify the observer itself, including
 delayed/failed initial capture, capture deadlines and spawn failure. Workloads start only after their runner has
 been observed, and the orphan control waits for descendant readiness before reparenting.
@@ -109,8 +137,8 @@ These fixtures do not certify installed upgrades, OS reboot, real provider proto
 quit/persistence UI; those retain their existing dedicated validation paths.
 
 Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
-(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into eight isolated Mac test jobs:
-functional, workspace, presentation (browser/visual/accessibility), delegation, three ordinary
+(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into twelve isolated Mac test jobs:
+functional, two workspace shards, presentation (browser/visual/accessibility), delegation, six ordinary
 supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
 fail-fast is disabled so every group can report its own failures. Capacity is selected from the
 same regression command with `@capacity`, while ordinary shards exclude that tag. No tests are
@@ -121,11 +149,11 @@ the scheduled outcome.
 
 Source Regression manual modes `functional`, `workspace`, `presentation`, `regressions`, `capacity`
 and `delegation` select the same production jobs. In `regressions` mode, `shard` can select `1`,
-`2`, `3`, or `all`; `full` always runs all three shards regardless of that diagnostic input.
+`2`, `3`, `4`, `5`, `6`, or `all`; `full` always runs all six shards regardless of that diagnostic input.
 Existing focused diagnostic modes remain available and never publish or change scheduled issues.
 PR Gate retains its existing groups and non-capacity selection.
 Windows E2E Regression runs daily at **02:17 Singapore time**
-(Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on three Windows
+(Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on six Windows
 test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run
 Windows Full Test or Notebook mutation checks. PR Gate manual `windows-e2e-mainline`, `windows-e2e` and the Windows part of `e2e` run all
 mainline groups. The independent regression workflow is the manual entry point for complete
@@ -159,10 +187,16 @@ See [nightly recovery](../release-notes/README.md#recovering-a-stale-nightly).
 
 ## PR and issue labels
 
-[`.github/labels.json`](../.github/labels.json) defines PR type, `size:*`, and issue intake labels.
-PR labels refresh on opening, reopening, new commits and title edits; size counts added/deleted
+[`.github/labels.json`](../.github/labels.json) defines PR type, `size:*`, review, and issue intake labels.
+PR type and size labels refresh on opening, reopening, new commits and title edits; size counts added/deleted
 lines excluding lockfiles. File-based area labels are not generated. Other human/bot labels remain
 untouched. Labels do not control CI or merges.
+
+On open PRs to `main`, a formal GitHub **Request changes** review from a reviewer with write access
+sets `needs-author-action`. Pushing an updated commit switches it to `needs-review`. A new request
+for changes on that commit switches it back. Approval of the current commit clears both labels once
+no requests for changes remain. Ordinary comments leave the status alone. The review signal follows
+GitHub's normal Actions approval policy for forks; push handling runs from the trusted base.
 
 New template issues receive `needs-triage` and their category; maintainers remove `needs-triage`
 after assessment. Existing issues and PRs are not assigned intake labels in bulk.
@@ -291,6 +325,13 @@ Shared changes or uncertain evidence retain all package tests. Local `npm test` 
 Registry changes require CI owner review.
 
 Installed package checks run selectively in merge queue and fully in scheduled Source Regression.
+Queue retains isolated builds and all installed-consumer assertions but omits the verifier's source
+Vitest rerun. Source suites run in the portable package shards; when platform policy defers the general
+portable suite, two blocking package-only shards run the trusted selected packages instead. They do
+not allocate host test shards or duplicate an already selected portable job. Scheduled/manual full
+verification retains complete isolated source suites. Isolation-only source failures can therefore
+first appear in scheduled certification. The existing aggregate gate also rejects failed, cancelled
+or unexpectedly skipped selected package-source shards.
 Use the manual package dry-run for focused diagnostics; see [Package workflows](package-workflows.md).
 
 For pure registered-package edits, the default `queue` tier can further omit host tests added only

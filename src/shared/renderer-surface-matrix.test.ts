@@ -60,21 +60,30 @@ const permissionPaths = [
 const permissionEventPaths = ['acp.onPermissionRequest', 'permissions.onChanged'] as const
 
 const computePaths = [
+  'compute.accountStatus',
   'compute.bookmarksGet',
   'compute.bookmarksSet',
+  'compute.cancelAccountConnection',
   'compute.changeAuthentication',
   'compute.concurrencySet',
+  'compute.connectAccount',
   'compute.create',
+  'compute.createHostedTarget',
+  'compute.createKubernetesTarget',
+  'compute.createModalTarget',
   'compute.createPassword',
+  'compute.createRayTarget',
   'compute.delete',
   'compute.deletionStatus',
   'compute.detailsGet',
   'compute.detailsSave',
+  'compute.disconnectAccount',
   'compute.download',
   'compute.enabledHostsGet',
   'compute.enabledHostsSet',
   'compute.executionModeSet',
   'compute.get',
+  'compute.getComputePythonRuntime',
   'compute.hostEnabledSet',
   'compute.hostSelectedSet',
   'compute.jobsCancel',
@@ -86,8 +95,15 @@ const computePaths = [
   'compute.jobsTransitionAnalysis',
   'compute.list',
   'compute.listDir',
+  'compute.listHostedTargets',
+  'compute.listKubernetesTargets',
+  'compute.listModalTargets',
+  'compute.listRayTargets',
+  'compute.listRayTokens',
   'compute.passwordCapability',
   'compute.probe',
+  'compute.readOutputPreview',
+  'compute.removeRayToken',
   'compute.replayApproval',
   'compute.replayPendingApprovals',
   'compute.resetPassword',
@@ -95,7 +111,12 @@ const computePaths = [
   'compute.revealInFolder',
   'compute.scratchClear',
   'compute.scratchSet',
-  'compute.sshConfigAliases'
+  'compute.selectComputePythonRuntime',
+  'compute.setRayToken',
+  'compute.sshConfigAliases',
+  'compute.updateTarget',
+  'compute.useLocalAccount',
+  'compute.verifyTarget'
 ] as const
 
 const computeEventPaths = [
@@ -194,11 +215,16 @@ describe('renderer surface compatibility matrix', () => {
     expect(pathsWithPrefix(invokePaths, 'specialist.')).toEqual([
       'specialist.abortPackageUpload',
       'specialist.beginPackageUpload',
+      'specialist.cancelMarketplaceCandidate',
       'specialist.cancelPackage',
+      'specialist.delete',
       'specialist.getMarketplaceRelease',
+      'specialist.installMarketplace',
       'specialist.installPackage',
       'specialist.list',
       'specialist.listMarketplace',
+      'specialist.prepareMarketplaceInstall',
+      'specialist.previewDelete',
       'specialist.previewPackageUpload',
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',
@@ -319,13 +345,29 @@ describe('renderer surface compatibility matrix', () => {
       .map((path) => WEB_INVOKE_CHANNELS[path])
       .filter((channel) => REMOTE_LOCAL_ONLY_RPC_CHANNELS.has(channel))
     expect(remoteRestrictedCompute).toEqual([
+      'compute:account-status',
+      'compute:cancel-account-connection',
       'compute:change-authentication',
+      'compute:connect-account',
+      'compute:create-hosted-target',
+      'compute:create-kubernetes-target',
+      'compute:create-modal-target',
       'compute:create-password',
+      'compute:create-ray-target',
+      'compute:disconnect-account',
       'compute:download',
+      'compute:python-runtime:get',
       'compute:jobs:set-remote-cleanup',
+      'compute:list-ray-tokens',
       'compute:password-capability',
+      'compute:remove-ray-token',
       'compute:reset-password',
-      'compute:reveal-in-folder'
+      'compute:reveal-in-folder',
+      'compute:python-runtime:select',
+      'compute:set-ray-token',
+      'compute:update-target',
+      'compute:use-local-account',
+      'compute:verify-target'
     ])
 
     const remoteApi: Record<string, unknown> = {}

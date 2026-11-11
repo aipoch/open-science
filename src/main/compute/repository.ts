@@ -1,3 +1,15 @@
+import {
+  externalComputeMode,
+  type KubernetesTarget,
+  type HostedTarget,
+  type RayTarget,
+  type ExternalComputeTarget,
+  type ModalTarget
+} from '../../shared/compute'
+import { KubernetesTargetCatalog } from './kubernetes-target-catalog'
+import { HostedTargetCatalog } from './hosted-target-catalog'
+import { RayTargetCatalog } from './ray-target-catalog'
+import { ModalTargetCatalog } from './modal-target-catalog'
 import type { PrismaClient, ComputeHost as PrismaComputeHost } from '@prisma/client'
 
 import type {
@@ -300,8 +312,87 @@ const serializeOverrides = (overrides: SshOverrides | undefined): string | null 
 // recover (see projects/repository.ts). Phase 1 (issue 01): create / list / get / delete; issue 02
 // adds updateProbeResult and updateScratchRoot for probe persistence.
 class ComputeHostRepository {
-  constructor(private readonly getClient: ComputeHostClientProvider) {}
+  constructor(
+    private readonly getClient: ComputeHostClientProvider,
+    private readonly catalogs: {
+      kubernetesTargets?: KubernetesTargetCatalog
+      hostedTargets?: HostedTargetCatalog
+      rayTargets?: RayTargetCatalog
+      modalTargets?: ModalTargetCatalog
+    } = {}
+  ) {}
+  async listKubernetesTargets(): Promise<KubernetesTarget[]> {
+    return this.catalogs.kubernetesTargets?.list() ?? []
+  }
+  async getKubernetesTarget(providerId: string): Promise<KubernetesTarget | null> {
+    return (
+      (await this.listKubernetesTargets()).find((target) => target.providerId === providerId) ??
+      null
+    )
+  }
 
+  async listHostedTargets(): Promise<HostedTarget[]> {
+    return this.catalogs.hostedTargets?.list() ?? []
+  }
+  async getHostedTarget(providerId: string): Promise<HostedTarget | null> {
+    return (
+      (await this.listHostedTargets()).find((target) => target.providerId === providerId) ?? null
+    )
+  }
+
+  async listRayTargets(): Promise<RayTarget[]> {
+    return this.catalogs.rayTargets?.list() ?? []
+  }
+  async getRayTarget(providerId: string): Promise<RayTarget | null> {
+    return (await this.listRayTargets()).find((target) => target.providerId === providerId) ?? null
+  }
+
+  async listModalTargets(): Promise<ModalTarget[]> {
+    return this.catalogs.modalTargets?.list() ?? []
+  }
+  async getModalTarget(providerId: string): Promise<ModalTarget | null> {
+    return (
+      (await this.listModalTargets()).find((target) => target.providerId === providerId) ?? null
+    )
+  }
+
+  async listComputeTargets(): Promise<(ExternalComputeTarget | ComputeHost)[]> {
+    return (
+      await Promise.all([
+        this.list(),
+        this.listKubernetesTargets(),
+        this.listHostedTargets(),
+        this.listRayTargets(),
+        this.listModalTargets()
+      ])
+    ).flat()
+  }
+  async getComputeTarget(providerId: string): Promise<ExternalComputeTarget | ComputeHost | null> {
+    switch (externalComputeMode(providerId)) {
+      case 'kubernetes':
+        return this.getKubernetesTarget(providerId)
+      case 'hugging_face_jobs':
+        return this.getHostedTarget(providerId)
+      case 'ray_jobs':
+        return this.getRayTarget(providerId)
+      case 'modal_sandbox':
+        return this.getModalTarget(providerId)
+      default:
+        return this.get(providerId)
+    }
+  }
+  get kubernetesTargets(): KubernetesTargetCatalog | undefined {
+    return this.catalogs.kubernetesTargets
+  }
+  get hostedTargets(): HostedTargetCatalog | undefined {
+    return this.catalogs.hostedTargets
+  }
+  get rayTargets(): RayTargetCatalog | undefined {
+    return this.catalogs.rayTargets
+  }
+  get modalTargets(): ModalTargetCatalog | undefined {
+    return this.catalogs.modalTargets
+  }
   async getAuthenticationOperation(
     operationId: string
   ): Promise<Readonly<{ requestFingerprint: string }> | null> {
@@ -730,6 +821,26 @@ class ComputeHostRepository {
 
   // Removes a host row by provider id.
   async delete(providerId: string): Promise<void> {
+    if (providerId.startsWith('kubernetes:')) {
+      if (!this.kubernetesTargets) throw new Error('Compute settings unavailable.')
+      await this.kubernetesTargets.remove(providerId)
+      return
+    }
+    if (providerId.startsWith('hf-jobs:')) {
+      if (!this.hostedTargets) throw new Error('Compute settings unavailable.')
+      await this.hostedTargets.remove(providerId)
+      return
+    }
+    if (providerId.startsWith('ray:')) {
+      if (!this.rayTargets) throw new Error('Compute settings unavailable.')
+      await this.rayTargets.remove(providerId)
+      return
+    }
+    if (providerId.startsWith('modal:')) {
+      if (!this.modalTargets) throw new Error('Compute settings unavailable.')
+      await this.modalTargets.remove(providerId)
+      return
+    }
     const client = await this.getClient()
     await client.$transaction(async (transaction) => {
       const host = await transaction.computeHost.findUnique({

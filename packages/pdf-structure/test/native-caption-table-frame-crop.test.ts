@@ -44,7 +44,7 @@ const setup = (
   contentRect: number[]
   rules: number[][]
   pageItems: Item[]
-  pageFontItems?: (Item & { fontDescent: number })[]
+  pageFontItems?: (Item & { fontAscent?: number; fontDescent: number })[]
   noteOwnerRects?: number[][]
   pageNumber: number
   scale: number
@@ -522,6 +522,185 @@ it('uses measured opening paint when an above-table caption is fully owned', () 
   ])
   trim(f)
   expect(f.cropRect[1]).toBe(9.1)
+})
+
+const aboveSegmentedRecordFrame = (): ReturnType<typeof setup> => {
+  const f = textFrame(),
+    caption = f.pageItems.at(-1)!
+  caption.baseline = -2
+  caption.rect[1] = -14
+  caption.rect[3] = -2
+  f.caption.rect = [...caption.rect]
+  f.cropRect[3] = f.table.cropRect[3] = 84.9
+  f.rules = f.rules.flatMap((r) => [0, 60, 120].map((x) => [x, r[1], x + 60, r[3]]))
+  return f
+}
+
+it('retains the existing closing protection for an above-caption complete descriptive frame', () => {
+  const f = aboveSegmentedRecordFrame(),
+    table = structuredClone(f.table),
+    caption = structuredClone(f.caption)
+  trim(f)
+  expect(f.cropRect).toEqual([0, 10, 180, 85.5])
+  expect(f.table).toEqual(table)
+  expect(f.caption).toEqual(caption)
+})
+
+it('uses the descriptive above-frame proof only for its existing closing boundary', () => {
+  const f = aboveSegmentedRecordFrame()
+  f.cropRect[0] = f.table.cropRect[0] = 0.4
+  f.cropRect[1] = f.table.cropRect[1] = 10.4
+  f.cropRect[2] = f.table.cropRect[2] = 179.6
+  f.rulePaintBounds = new Map([
+    ['0,10,180,10', [0, 9.4, 180, 10.6]],
+    ['0,85,180,85', [0, 84.6, 180, 85.4]]
+  ])
+  trim(f)
+  expect(f.cropRect).toEqual([0.4, 10.4, 179.6, 85.5])
+})
+
+const measuredAboveRecordFrame = (): ReturnType<typeof setup> => {
+  const f = aboveSegmentedRecordFrame()
+  f.rules = [10, 30, 85].map((y) => [0, y, 180, y])
+  f.cropRect[0] = f.table.cropRect[0] = 0.4
+  f.cropRect[1] = f.table.cropRect[1] = 10.4
+  f.cropRect[2] = f.table.cropRect[2] = 179.6
+  f.rulePaintBounds = new Map([
+    ['0,10,180,10', [0, 9.4, 180, 10.6]],
+    ['0,85,180,85', [0, 84.4, 180, 85.6]]
+  ])
+  f.pageFontItems = f.pageItems.map((i) => ({ ...i, fontAscent: 0.9, fontDescent: -0.2 }))
+  return f
+}
+
+it('borrows only the existing complete opening paint after excluding every unowned whole font', () => {
+  const f = measuredAboveRecordFrame(),
+    table = structuredClone(f.table),
+    caption = structuredClone(f.caption)
+  trim(f)
+  expect(f.cropRect).toEqual([0.4, 9.4, 179.6, 85.6])
+  expect(f.table).toEqual(table)
+  expect(f.caption).toEqual(caption)
+})
+
+it.each([
+  'empty paint map',
+  'missing opening paint',
+  'incomplete paint endpoint',
+  'wrong paint center',
+  'missing fonts',
+  'missing caption font',
+  'ambiguous caption font',
+  'wrong caption font literal',
+  'wrong caption font rect',
+  'wrong caption font baseline',
+  'missing ascent',
+  'missing descent',
+  'invalid descent',
+  'caption metric descent into AA strip',
+  'caption overlaps opening',
+  'foreign font',
+  'foreign font outside horizontal crop',
+  'foreign metric descent into AA strip',
+  'foreign metric ascent into AA strip',
+  'missing foreign metrics',
+  'distant original crop'
+])('keeps the opening unchanged without complete measured top-strip proof: %s', (variant) => {
+  const f = measuredAboveRecordFrame(),
+    captionFont = f.pageFontItems!.at(-1)!
+  if (variant === 'empty paint map') f.rulePaintBounds!.clear()
+  if (variant === 'missing opening paint') f.rulePaintBounds!.delete('0,10,180,10')
+  if (variant === 'incomplete paint endpoint') f.rulePaintBounds!.get('0,10,180,10')![2] = 179.9
+  if (variant === 'wrong paint center') f.rulePaintBounds!.get('0,10,180,10')![1] = 8
+  if (variant === 'missing fonts') f.pageFontItems = []
+  if (variant === 'missing caption font') f.pageFontItems!.pop()
+  if (variant === 'ambiguous caption font') f.pageFontItems!.push({ ...captionFont })
+  if (variant === 'wrong caption font literal') captionFont.text = 'Unrelated'
+  if (variant === 'wrong caption font rect') captionFont.rect = [0, -14, 175, -2]
+  if (variant === 'wrong caption font baseline') captionFont.baseline += 1
+  if (variant === 'missing ascent') Object.assign(captionFont, { fontAscent: undefined })
+  if (variant === 'missing descent') Object.assign(captionFont, { fontDescent: undefined })
+  if (variant === 'invalid descent') captionFont.fontDescent = -1.1
+  if (variant === 'caption metric descent into AA strip') captionFont.fontDescent = -0.95
+  if (variant === 'caption overlaps opening') {
+    const item = f.pageItems.at(-1)!
+    item.rect = [5, -2, 175, 10]
+    item.baseline = 10
+    f.caption.rect = [...item.rect]
+    Object.assign(captionFont, { ...item, fontAscent: 1.1 })
+  }
+  if (variant.startsWith('foreign') || variant === 'missing foreign metrics') {
+    const item = source('Foreign', variant.includes('outside') ? 500 : 60, 9.3)
+    item.rect[1] = 8.8
+    item.height = 0.5
+    if (variant.includes('metric descent')) {
+      item.rect = [60, 7.6, 80, 8.6]
+      item.baseline = 8.6
+      item.height = 1
+    }
+    if (variant.includes('metric ascent')) {
+      item.rect = [500, 10.9, 520, 12.9]
+      item.baseline = 12.9
+      item.height = 2
+    }
+    f.pageItems.push(item)
+    f.pageFontItems!.push({
+      ...item,
+      fontAscent: variant.includes('metric ascent') ? 1.2 : 0.9,
+      fontDescent: variant.includes('metric descent') ? -0.8 : -0.2
+    })
+    if (variant === 'missing foreign metrics') f.pageFontItems!.pop()
+  }
+  if (variant === 'distant original crop') f.cropRect[1] = f.table.cropRect[1] = 13
+  const before = f.cropRect[1]
+  trim(f)
+  expect(f.cropRect[1]).toBe(variant === 'caption overlaps opening' ? 12.5 : before)
+  expect([f.cropRect[0], f.cropRect[2]]).toEqual([0.4, 179.6])
+})
+
+it.each([
+  'missing opening segment',
+  'missing divider segment',
+  'missing closing segment',
+  'nearby segment gap',
+  'nearby segment baseline',
+  'overlapping segments',
+  'extra horizontal rule',
+  'internal vertical rule',
+  'incomplete final record',
+  'wrong final literal',
+  'duplicate final source',
+  'foreign opening strip',
+  'foreign closing strip',
+  'caption mismatch',
+  'clipped source',
+  'unassigned source',
+  'distant closing'
+])('declines the above-caption descriptive frame without exact %s evidence', (variant) => {
+  const f = aboveSegmentedRecordFrame()
+  if (variant === 'missing opening segment') f.rules.splice(1, 1)
+  if (variant === 'missing divider segment') f.rules.splice(4, 1)
+  if (variant === 'missing closing segment') f.rules.splice(7, 1)
+  if (variant === 'nearby segment gap') f.rules[7][0] += 0.005
+  if (variant === 'nearby segment baseline') f.rules[7][1] = f.rules[7][3] += 0.005
+  if (variant === 'overlapping segments') f.rules[7][0] -= 0.005
+  if (variant === 'extra horizontal rule') f.rules.push([0, 60, 180, 60])
+  if (variant === 'internal vertical rule') f.rules.push([60, 10, 60, 85])
+  if (variant === 'incomplete final record') f.table.cells.at(-1)!.sourceRects = []
+  if (variant === 'wrong final literal') {
+    f.table.cells.at(-1)!.text = 'Different'
+    f.table.grid.at(-1)![2] = 'Different'
+  }
+  if (variant === 'duplicate final source') f.pageItems.push({ ...f.pageItems.at(-2)! })
+  if (variant === 'foreign opening strip') f.pageItems.push(source('Foreign', 50, 10.1))
+  if (variant === 'foreign closing strip') f.pageItems.push(source('Foreign', 50, 85.3))
+  if (variant === 'caption mismatch') f.caption.lines[0] += ' Missing'
+  if (variant === 'clipped source') Object.assign(f.table, { clipped: [{}] })
+  if (variant === 'unassigned source') f.table.unassigned.push({})
+  if (variant === 'distant closing') f.cropRect[3] = f.table.cropRect[3] = 80
+  const bottom = f.cropRect[3]
+  trim(f)
+  expect(f.cropRect[3]).toBe(bottom)
 })
 
 it.each([

@@ -7,6 +7,7 @@ import {
   readdirSync,
   symlinkSync,
   unlinkSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -33,7 +34,7 @@ const powershell = join(
 )
 
 // Node 24.14's native cpSync directory path corrupts Unicode on this Windows host. Individual
-// fs calls preserve it. This only prepares fixtures; the native test executes NSIS CopyFiles.
+// fs calls preserve it. This only prepares fixtures; the native test executes the production macro.
 function copyFixture(source: string, target: string): void {
   mkdirSync(target, { recursive: true })
   for (const entry of readdirSync(source, { withFileTypes: true })) {
@@ -76,7 +77,9 @@ function action(
       '-InstallPath',
       f.install,
       '-StatePath',
-      f.state
+      f.state,
+      '-ReportPath',
+      join(f.root, `${operation}-evidence.json`)
     ],
     {
       encoding: 'utf16le',
@@ -112,6 +115,18 @@ function setFixtureAcl(path: string, nonPropagating = false): void {
   )
   expect(result.error).toBeUndefined()
   expect(result.status, result.stderr).toBe(0)
+}
+
+function readFixtureAcl(path: string, directory = false): string {
+  const command = `[IO.${directory ? 'Directory' : 'File'}]::GetAccessControl('${path.replaceAll("'", "''")}').GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Access, Owner, Group')`
+  const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30_000
+  })
+  expect(result.error).toBeUndefined()
+  expect(result.status, result.stderr).toBe(0)
+  return result.stdout.trim()
 }
 
 describe.skipIf(process.platform !== 'win32')('real Windows payload publication', () => {
@@ -167,6 +182,33 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
   }, 30_000)
 
   it.skipIf(process.env.OPEN_SCIENCE_INSTALL_PUBLICATION_NATIVE !== '1')(
+    'reports the conflicting publication destination without moving either directory',
+    () => {
+      const f = fixture()
+      setFixtureAcl(f.install)
+      expect(action(f, 'prepare').status).toBe(0)
+      const state = JSON.parse(readFileSync(f.state, 'utf8'))
+      expect(state.useMove).toBe(true)
+      copyFixture(f.payload, state.stage)
+      const destination = join(f.install, 'resources')
+      mkdirSync(destination)
+      writeFileSync(join(destination, 'keep.txt'), 'existing destination')
+
+      expect(action(f, 'publish').status).toBe(20)
+      const report = JSON.parse(readFileSync(join(f.root, 'publish-evidence.json'), 'utf8'))
+      expect(report.errors[0]).toMatchObject({
+        operation: 'validate-payload-destination',
+        path: destination
+      })
+      expect(readFileSync(join(destination, 'keep.txt'), 'utf8')).toBe('existing destination')
+      expect(readFileSync(join(state.stage, 'resources/backend/index.js'), 'utf8')).toBe(
+        'synthetic backend'
+      )
+      expect(action(f, 'cleanup').status).toBe(0)
+    },
+    30_000
+  )
+  it.skipIf(process.env.OPEN_SCIENCE_INSTALL_PUBLICATION_NATIVE !== '1')(
     'retries the remaining directory after a locked second directory fails publication',
     async () => {
       const f = fixture()
@@ -178,7 +220,8 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
       copyFixture(f.payload, state.stage)
 
       const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
-      const command = `$stream=[IO.File]::Open(${quote(join(state.stage, 'locales/en.pak'))},'Open','Read','Read'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -Action publish -InstallPath ${quote(f.install)} -StatePath ${quote(f.state)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
+      const report = join(f.root, 'locked-publication.json')
+      const command = `$stream=[IO.File]::Open(${quote(join(state.stage, 'locales/en.pak'))},'Open','Read','Read'); try { & ${quote(powershell)} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ${quote(script)} -Action publish -InstallPath ${quote(f.install)} -StatePath ${quote(f.state)} -ReportPath ${quote(report)}; $code=$LASTEXITCODE } finally { $stream.Dispose() }; exit $code`
       const failed = spawnSync(
         powershell,
         [
@@ -191,6 +234,20 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
       )
       expect(failed.error).toBeUndefined()
       expect(failed.status).toBe(20)
+      const diagnostic = JSON.parse(readFileSync(report, 'utf8'))
+      expect(diagnostic).toMatchObject({ phase: 'publish-new-program-files', status: 'failed' })
+      expect(diagnostic.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: 'move-payload-directory',
+            path: join(state.stage, 'locales'),
+            // Directory.Move reports this held child as access denied, not sharing violation.
+            // Preserve the Windows evidence rather than inferring the code from the fixture.
+            windowsErrorCode: 5,
+            nativeErrorCode: null
+          })
+        ])
+      )
       expect(existsSync(join(f.install, 'resources/backend/index.js'))).toBe(true)
       expect(existsSync(join(state.stage, 'locales/en.pak'))).toBe(true)
 
@@ -280,6 +337,9 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
       'valid',
       'unicode-profile',
       'copy-fallback',
+      'copy-replacement',
+      'destination-junction',
+      'destination-type-conflict',
       'truncated',
       'corrupt',
       'long-path',
@@ -288,7 +348,15 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
       'warning',
       'cancelled',
       'launch-failure',
-      'fallback-boundary',
+      'prepare-failure',
+      'cleanup-failure',
+      'tool-32',
+      'tool-33',
+      'visible-extract-failure',
+      'visible-copy-cancel',
+      'visible-copy-retry',
+      'unwritable-diagnostic',
+      'long-source-copy',
       'universal-x64'
     ])(
       'handles %s archives through the production installer macro',
@@ -296,25 +364,69 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         const f = fixture()
         setFixtureAcl(
           f.install,
-          mode === 'copy-fallback' || mode === 'long-copy-fallback' || mode === 'fallback-boundary'
+          ['copy-fallback', 'copy-replacement', 'long-copy-fallback', 'long-source-copy'].includes(
+            mode
+          )
         )
-        const boundaryRelative = 'resources/' + 'nested-'.repeat(7) + 'leaf.txt'
+        const sourceRelative = 'resources/' + 'nested-'.repeat(6) + '/source-only.txt'
         const temporary = join(
           f.root,
-          mode === 'unicode-profile' ? 'profile 数据 with spaces/Temp' : 'temp-' + 't'.repeat(45)
+          mode === 'unicode-profile'
+            ? 'profile 数据 with spaces/Temp'
+            : 'temp-' + 't'.repeat(Math.max(1, 200 - f.root.length - 6))
         )
         if (mode === 'unicode-profile') mkdirSync(temporary, { recursive: true })
-        if (mode === 'fallback-boundary') {
+        if (mode === 'long-source-copy') {
           mkdirSync(temporary)
-          mkdirSync(join(f.payload, boundaryRelative, '..'), { recursive: true })
-          writeFileSync(join(f.payload, boundaryRelative), 'fallback boundary payload')
+          mkdirSync(join(f.payload, sourceRelative, '..'), { recursive: true })
+          writeFileSync(join(f.payload, sourceRelative), 'long source payload')
         }
 
-        const longRelative = 'resources/' + 'nested-folder-'.repeat(10) + '/leaf.txt'
-        if (mode.startsWith('long-')) {
+        // Derive the boundary from this checkout: native CI and a developer worktree have
+        // different root lengths. Keep each component legal while exceeding MAX_PATH overall.
+        const longRelative =
+          'resources/' +
+          'nested-'.repeat(
+            Math.ceil(Math.max(7, 280 - join(f.install, 'resources/leaf.txt').length) / 7)
+          ) +
+          '/leaf.txt'
+        if (mode === 'long-path' || mode === 'long-copy-fallback') {
           mkdirSync(join(f.payload, longRelative, '..'), { recursive: true })
           writeFileSync(join(f.payload, longRelative), 'long path payload')
         }
+        if (mode === 'copy-replacement') {
+          const timestamp = new Date('2026-01-01T00:00:00Z')
+          writeFileSync(join(f.install, 'app.exe'), 'X'.repeat('synthetic executable'.length))
+          for (const root of [f.payload, f.install])
+            utimesSync(join(root, 'app.exe'), timestamp, timestamp)
+          for (const name of [
+            'OpenScience',
+            'Open-Science',
+            'unrelated',
+            'resources/custom-data/content',
+            'locales/custom-config'
+          ]) {
+            mkdirSync(join(f.install, name), { recursive: true })
+            writeFileSync(join(f.install, name, 'keep.txt'), name)
+          }
+          mkdirSync(join(f.payload, 'empty'))
+          writeFileSync(join(f.install, 'permission-reference.txt'), 'permission reference')
+          writeFileSync(join(f.payload, 'new.txt'), 'new file')
+        }
+        const originalAcl =
+          mode === 'copy-replacement'
+            ? {
+                directory: readFixtureAcl(f.install, true),
+                existing: readFixtureAcl(join(f.install, 'app.exe')),
+                inherited: readFixtureAcl(join(f.install, 'permission-reference.txt'))
+              }
+            : undefined
+        if (mode === 'destination-junction') {
+          mkdirSync(join(f.root, 'external'))
+          writeFileSync(join(f.root, 'external/en.pak'), 'external data')
+          symlinkSync(join(f.root, 'external'), join(f.install, 'locales'), 'junction')
+        }
+        if (mode === 'destination-type-conflict') mkdirSync(join(f.install, 'app.exe'))
         const archive = join(f.root, 'payload.7z')
         const pack = spawnSync(sevenZip!, ['a', '-t7z', '-m0=lzma2', '-mf=off', archive, '.'], {
           cwd: f.payload,
@@ -323,7 +435,12 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           timeout: 30_000
         })
         expect(pack.status, pack.stdout + pack.stderr).toBe(0)
-        if (mode === 'truncated') writeFileSync(archive, readFileSync(archive).subarray(0, 40))
+        // Inject corrupt runtime data while generating selectors from the valid fixture.
+        // Normal builds use the same archive and reject damaged headers at compile time.
+        const manifestArchive = join(f.root, 'manifest.7z')
+        writeFileSync(manifestArchive, readFileSync(archive))
+        if (['truncated', 'visible-extract-failure', 'unwritable-diagnostic'].includes(mode))
+          writeFileSync(archive, readFileSync(archive).subarray(0, 40))
         if (mode === 'corrupt') {
           const bytes = readFileSync(archive)
           bytes[40] ^= 0xff
@@ -347,7 +464,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           )
         }
         if (mode === 'launch-failure') writeFileSync(extractor, 'not an executable')
-        if (mode === 'warning' || mode === 'cancelled') {
+        if (['warning', 'cancelled', 'tool-32', 'tool-33'].includes(mode)) {
           const decoderSource = join(f.root, 'decoder.nsi')
           writeFileSync(
             decoderSource,
@@ -357,7 +474,8 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               'SilentInstall silent',
               'OutFile "' + extractor + '"',
               'Section',
-              'SetErrorLevel ' + (mode === 'warning' ? 1 : 255),
+              'SetErrorLevel ' +
+                ({ warning: 1, cancelled: 255, 'tool-32': 32, 'tool-33': 33 }[mode] ?? 1),
               'SectionEnd'
             ].join('\n')
           )
@@ -370,24 +488,59 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         }
         const source = join(f.root, 'fixture.nsi')
         const exe = join(f.root, 'fixture.exe')
+        const resources = join(f.root, 'build')
+        const hostLog = join(f.root, 'publication-host.txt')
+        if (mode === 'unwritable-diagnostic')
+          writeFileSync(join(f.root, 'logs'), 'preserve this file')
+        mkdirSync(resources)
+        for (const file of [
+          'prepare-windows-extraction.cjs',
+          'windows-extract-payload.ps1',
+          'windows-install-diagnostics.ps1',
+          'windows-install-diagnostics.nsh'
+        ])
+          writeFileSync(join(resources, file), readFileSync(resolve('build', file)))
+        writeFileSync(
+          join(resources, 'windows-install-publication.ps1'),
+          readFileSync(script, 'utf8').replace(
+            '$handles =',
+            `[IO.File]::AppendAllText('${hostLog.replaceAll("'", "''")}', [Environment]::Is64BitProcess.ToString() + [Environment]::NewLine)\n$handles =`
+          )
+        )
+        if (mode === 'cleanup-failure') {
+          const helperScript = join(resources, 'windows-install-publication.ps1')
+          writeFileSync(
+            helperScript,
+            readFileSync(helperScript, 'utf8').replace(
+              "[IO.Directory]::Delete(('\\\\?\\' + $stage), $true)",
+              "throw [IO.IOException]::new('Fixture staging cleanup failure')"
+            )
+          )
+        }
         writeFileSync(
           source,
           '\ufeff' +
             [
               'Unicode true',
               'RequestExecutionLevel user',
-              'SilentInstall silent',
+              `SilentInstall ${mode.startsWith('visible-') ? 'normal' : 'silent'}`,
+              'AutoCloseWindow true',
               `OutFile "${exe}"`,
               '!include LogicLib.nsh',
               `!define PROJECT_DIR "${f.root}"`,
-              `!define APP_64 "${archive}"`,
+              `!define APP_64 "${manifestArchive}"`,
               ...(mode === 'universal-x64' ? [`!define APP_ARM64 "${archive}"`] : []),
-              `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
+              `!define BUILD_RESOURCES_DIR "${resources}"`,
+              `!include "${resolve('build/windows-install-diagnostics.nsh')}"`,
               '!macro quitFailedUpdate',
               'FileOpen $0 "$EXEDIR\\failure.txt" w',
-              'FileWrite $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
+              'FileWriteUTF16LE $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
               'FileClose $0',
               'Call cleanupInstallPublication',
+              'Call showInstallPublicationFailure',
+              'FileOpen $0 "$EXEDIR\\notice.txt" w',
+              'FileWriteUTF16LE $0 "$publicationMessage"',
+              'FileClose $0',
               'SetErrorLevel 2',
               'Quit',
               '!macroend',
@@ -396,6 +549,22 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               'LangString appCannotBeClosed 1033 "Cannot replace files"',
               'Section',
               'InitPluginsDir',
+              `StrCpy $installDiagnosticDirectory "${join(f.root, 'logs')}"`,
+              ...(mode === 'prepare-failure'
+                ? [
+                    'FileOpen $0 "$PLUGINSDIR\\publication-state.json" w',
+                    'FileWrite $0 "existing state"',
+                    'FileClose $0'
+                  ]
+                : []),
+              // Process architecture can be AMD64 under emulation on ARM64 Windows.
+              'FileOpen $0 "$EXEDIR\\native-amd64.txt" w',
+              '${If} ${IsNativeAMD64}',
+              'FileWrite $0 "true"',
+              '${Else}',
+              'FileWrite $0 "false"',
+              '${EndIf}',
+              'FileClose $0',
               'FileOpen $0 "$EXEDIR\\plugin-directory.txt" w',
               'FileWrite $0 "$PLUGINSDIR"',
               'FileClose $0',
@@ -416,8 +585,75 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         })
         writeFileSync(join(f.root, 'compile.log'), compile.stdout + compile.stderr)
         expect(compile.status, compile.stdout + compile.stderr).toBe(0)
-        const run =
-          mode === 'locked-root'
+        const observedDialogs = join(f.root, 'dialogs.json')
+        const run = mode.startsWith('visible-')
+          ? (() => {
+              const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+              const target = join(f.install, 'app.exe')
+              if (mode !== 'visible-extract-failure') writeFileSync(target, 'occupied original')
+              const observer = `Add-Type @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class PublicationDialogs {
+  static HashSet<IntPtr> Dismissed = new HashSet<IntPtr>();
+  public static List<string> Observed = new List<string>();
+  delegate bool Callback(IntPtr window, IntPtr value);
+  [DllImport("user32.dll")] static extern bool EnumWindows(Callback callback, IntPtr value);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr window, Callback callback, IntPtr value);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, uint message, IntPtr word, IntPtr data);
+  [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr window, int id);
+  public static void Act(uint process, bool retry, Action release) {
+    EnumWindows(delegate(IntPtr window, IntPtr unused) {
+      uint owner; GetWindowThreadProcessId(window, out owner);
+      if (owner != process) return true;
+      string text = "";
+      EnumChildWindows(window, delegate(IntPtr child, IntPtr ignored) {
+        var buffer = new StringBuilder(4096); GetWindowText(child, buffer, buffer.Capacity);
+        text += buffer.ToString() + "\\n"; return true;
+      }, IntPtr.Zero);
+      if (text.Contains("could not finish updating.")) {
+        var hasRetry = GetDlgItem(window, 4) != IntPtr.Zero;
+        var id = hasRetry ? (retry ? 4 : 2) : (GetDlgItem(window, 1) != IntPtr.Zero ? 1 : 2);
+        if (GetDlgItem(window, id) != IntPtr.Zero) {
+          if (Dismissed.Add(window)) Observed.Add(text);
+          if (hasRetry && retry) release();
+          PostMessage(window, 0x111, new IntPtr(id), IntPtr.Zero);
+        }
+      }
+      return true;
+    }, IntPtr.Zero);
+  }
+}
+'@
+$stream=$null
+${mode !== 'visible-extract-failure' ? `$stream=[IO.File]::Open(${quote(target)},'Open','Read','Read')` : ''}
+try {
+  $process=Start-Process -FilePath ${quote(exe)} -WindowStyle Hidden -PassThru
+  $timer=[Diagnostics.Stopwatch]::StartNew()
+  while (!$process.HasExited -and $timer.Elapsed.TotalSeconds -lt 50) {
+    [PublicationDialogs]::Act($process.Id,$${mode === 'visible-copy-retry' ? 'true' : 'false'},[Action]{ if ($stream) { $stream.Dispose() } })
+    Start-Sleep -Milliseconds 25
+  }
+  [IO.File]::WriteAllText(${quote(observedDialogs)},(ConvertTo-Json -InputObject @([PublicationDialogs]::Observed)))
+  if (!$process.HasExited) { $process.Kill(); throw 'Publication fixture did not exit' }
+  exit $process.ExitCode
+} finally { if ($stream) { $stream.Dispose() } }`
+              return spawnSync(
+                powershell,
+                [
+                  '-NoProfile',
+                  '-NonInteractive',
+                  '-EncodedCommand',
+                  Buffer.from(observer, 'utf16le').toString('base64')
+                ],
+                { encoding: 'utf8', windowsHide: true, timeout: 60_000 }
+              )
+            })()
+          : mode === 'locked-root'
             ? (() => {
                 const target = join(f.install, 'app.exe')
                 writeFileSync(target, 'occupied original')
@@ -438,7 +674,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
                 encoding: 'utf8',
                 windowsHide: true,
                 timeout: 60_000,
-                ...(['fallback-boundary', 'unicode-profile'].includes(mode)
+                ...(['long-source-copy', 'unicode-profile'].includes(mode)
                   ? { env: { ...process.env, TEMP: temporary, TMP: temporary } }
                   : {})
               })
@@ -451,38 +687,146 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           'valid',
           'unicode-profile',
           'copy-fallback',
+          'copy-replacement',
           'long-path',
-          'fallback-boundary',
-          'universal-x64'
+          'long-copy-fallback',
+          'long-source-copy',
+          'universal-x64',
+          'visible-copy-retry'
         ].includes(mode)
         expect(
           run.status,
           existsSync(join(f.root, 'failure.txt'))
-            ? readFileSync(join(f.root, 'failure.txt'), 'utf8')
+            ? readFileSync(join(f.root, 'failure.txt'), 'utf16le')
             : run.stdout + run.stderr
         ).toBe(success ? 0 : 2)
         expect(existsSync(join(f.root, 'success.txt'))).toBe(success)
-        expect(
-          readdirSync(f.install).filter((name) => name.startsWith('.open-science-install-'))
-        ).toEqual([])
+        const logDirectory = join(f.root, 'logs')
+        if (mode === 'unwritable-diagnostic') {
+          expect(readFileSync(logDirectory, 'utf8')).toBe('preserve this file')
+          const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+          expect(notice).toContain('extracting the new application files')
+          expect(notice).toContain('The diagnostic could not be saved.')
+          expect(notice).not.toContain('Diagnostic:')
+        } else if (!success) {
+          expect(existsSync(logDirectory)).toBe(true)
+          const logs = readdirSync(logDirectory)
+          expect(logs).toHaveLength(1)
+          const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')
+          expect(diagnostic).toContain('phase=')
+          expect(diagnostic).toContain('installationIncomplete')
+          if (mode === 'truncated' || mode === 'corrupt') {
+            expect(diagnostic).toContain('extract-new-program-files')
+            expect(diagnostic).toContain('7za')
+          }
+          if (
+            mode === 'launch-failure' &&
+            readFileSync(join(f.root, 'native-amd64.txt'), 'utf8') === 'true'
+          ) {
+            expect(diagnostic).toMatch(/"errorSource":\s*"powershell-extractor"/)
+            expect(diagnostic).toMatch(/"operation":\s*"start-extractor"/)
+            expect(diagnostic).toContain('7za.exe')
+            const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+            expect(notice).toContain('Error source: powershell-extractor; result: 1.')
+            expect(notice).not.toContain('Error source: 7za;')
+          }
+          if (mode === 'prepare-failure') {
+            expect(diagnostic).toContain('prepare-new-program-files')
+            expect(diagnostic).toContain('Publication state already exists')
+            // The attempted cleanup cannot deserialize this existing state. Its independent
+            // failure must not erase the original prepare error or replace its output.
+            expect(diagnostic).toContain('Temporary payload cleanup')
+            expect(diagnostic).toContain('read-publication-state')
+          }
+          if (mode === 'cleanup-failure') {
+            expect(diagnostic).toContain('cleanup-payload-staging')
+            expect(diagnostic).toContain('Fixture staging cleanup failure')
+          }
+          if (mode === 'tool-32' || mode === 'tool-33') {
+            expect(diagnostic).toMatch(new RegExp('"toolExitCode":\\s*' + mode.slice(5)))
+            const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+            expect(notice).toContain('extracting the new application files')
+            expect(notice).toContain(`Error source: 7za; result: ${mode.slice(5)}.`)
+            expect(notice).not.toContain('An application file is in use')
+            expect(notice).toContain('Installation is incomplete')
+          }
+          if (mode === 'locked-root' || mode === 'visible-copy-cancel') {
+            expect(diagnostic).toContain('robocopy-reported-win32')
+            expect(diagnostic).toContain('app.exe')
+            expect(diagnostic).toMatch(/"windowsErrorCode":\s*32/)
+            const notice = readFileSync(join(f.root, 'notice.txt'), 'utf16le')
+            expect(notice).toContain(
+              'Windows reports that an application file or directory is in use.'
+            )
+            expect(notice).toContain('app.exe')
+          }
+        } else if (mode === 'visible-copy-retry') {
+          const logs = readdirSync(logDirectory)
+          expect(logs).toHaveLength(1)
+          const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')
+          expect(diagnostic).toContain('outcome=recovered')
+          expect(diagnostic).toContain('"installationIncomplete":  false')
+        } else {
+          expect(existsSync(logDirectory)).toBe(false)
+        }
+        if (mode.startsWith('visible-')) {
+          const dialogs = JSON.parse(readFileSync(observedDialogs, 'utf8'))
+          expect(dialogs).toHaveLength(1)
+          expect(dialogs[0]).toContain('Diagnostic:')
+          const log = readdirSync(logDirectory)[0]
+          expect(dialogs[0]).toContain(join(logDirectory, log))
+          expect(dialogs[0]).toContain('Installation is incomplete')
+          expect(dialogs[0]).not.toContain('Restoration of old files')
+        }
+        if (mode === 'valid' && readFileSync(join(f.root, 'native-amd64.txt'), 'utf8') === 'true') {
+          expect(readFileSync(hostLog, 'utf8').trim().split(/\r?\n/)).toEqual([
+            'True',
+            'True',
+            'True'
+          ])
+        }
+        if (mode !== 'cleanup-failure')
+          expect(
+            readdirSync(f.install).filter((name) => name.startsWith('.open-science-install-'))
+          ).toEqual([])
         if (success)
           expect(readFileSync(join(f.install, 'resources/backend/index.js'), 'utf8')).toBe(
             'synthetic backend'
           )
-        if (mode === 'long-path')
+        if (mode === 'long-path' || mode === 'long-copy-fallback') {
+          expect(join(f.install, longRelative).length).toBeGreaterThan(260)
           expect(readFileSync(join(f.install, longRelative), 'utf8')).toBe('long path payload')
-        if (mode === 'fallback-boundary') {
+        }
+        if (mode === 'long-source-copy') {
           const pluginDirectory = readFileSync(join(f.root, 'plugin-directory.txt'), 'utf8')
-          expect(join(pluginDirectory, '7z-out', boundaryRelative).length).toBeLessThan(260)
-          expect(
-            join(pluginDirectory, '.open-science-install-' + '0'.repeat(32), boundaryRelative)
-              .length
-          ).toBeGreaterThan(260)
-          expect(readFileSync(join(f.install, boundaryRelative), 'utf8')).toBe(
-            'fallback boundary payload'
-          )
+          expect(join(pluginDirectory, '7z-out', sourceRelative).length).toBeGreaterThan(260)
+          expect(join(f.install, sourceRelative).length).toBeLessThan(260)
+          expect(readFileSync(join(f.install, sourceRelative), 'utf8')).toBe('long source payload')
+        }
+        if (mode === 'copy-replacement') {
+          expect(readFileSync(join(f.install, 'app.exe'), 'utf8')).toBe('synthetic executable')
+          expect(readdirSync(join(f.install, 'empty'))).toEqual([])
+          for (const name of [
+            'OpenScience',
+            'Open-Science',
+            'unrelated',
+            'resources/custom-data/content',
+            'locales/custom-config'
+          ])
+            expect(readFileSync(join(f.install, name, 'keep.txt'), 'utf8')).toBe(name)
+          expect(readFixtureAcl(f.install, true)).toBe(originalAcl!.directory)
+          expect(readFixtureAcl(join(f.install, 'app.exe'))).toBe(originalAcl!.existing)
+          expect(readFixtureAcl(join(f.install, 'new.txt'))).toBe(originalAcl!.inherited)
+        }
+        if (mode === 'destination-junction') {
+          expect(readFileSync(join(f.root, 'external/en.pak'), 'utf8')).toBe('external data')
+          unlinkSync(join(f.install, 'locales'))
         }
         if (mode === 'locked-root') {
+          const failure = readFileSync(join(f.root, 'failure.txt'), 'utf16le')
+          expect(Number.parseInt(failure, 10)).toBeGreaterThanOrEqual(8)
+          expect(failure).toContain('0x00000020')
+          expect(failure).toContain('app.exe')
           expect(readFileSync(join(f.install, 'app.exe'), 'utf8')).toBe('occupied original')
           expect(readFileSync(join(f.install, 'resources/backend/index.js'), 'utf8')).toBe(
             'synthetic backend'

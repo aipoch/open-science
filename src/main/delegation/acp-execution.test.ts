@@ -59,6 +59,8 @@ const makeHarness = (
     runtimeHome?(input: DelegateExecutionInput): string
     workspace?(input: DelegateExecutionInput): string
     shutdownResult?(): Promise<{ reaped: boolean }>
+    revoke?(): Promise<void>
+    confirmProcessCleanup?: PreparedDelegateExecution['confirmProcessCleanup']
     createRuntimeError?: Error
     dispose?(): Promise<void>
     createSessionError?(executionId: string): Error | undefined
@@ -101,8 +103,10 @@ const makeHarness = (
         capability: {
           revoke: async () => {
             cleanup.push(`revoke:${input.attemptId}`)
+            await scopePaths.revoke?.()
           }
         },
+        confirmProcessCleanup: scopePaths.confirmProcessCleanup,
         releaseResources: async () => {
           cleanup.push(`release:${input.attemptId}`)
         },
@@ -302,6 +306,40 @@ delegatedWorkCertificationContract((options) => {
 })
 
 describe('ACP delegate execution production adapter', () => {
+  it.each([false, true])(
+    'retains resources until Notebook cleanup is confirmed even with provider recovery=%s',
+    async (recoverProvider) => {
+      let notebookReaped = false
+      const revoke = vi.fn(async () => {
+        if (!notebookReaped) throw new Error('Notebook lane process tree was not reaped')
+      })
+      const { execution, controls, cleanup } = makeHarness(1, {
+        revoke,
+        ...(recoverProvider ? { confirmProcessCleanup: async () => true as const } : {})
+      })
+      const reservation = await execution.reserve(1)
+      const running = execution.run(makeInput('notebook-cleanup'), reservation.slotIds[0])
+      await running.accepted
+      controls.get('notebook-cleanup')!.complete()
+      await expect(running.completion).resolves.toMatchObject({
+        status: 'completed',
+        cleanupError: expect.any(DelegateExecutionCleanupError)
+      })
+      expect(cleanup).toContain('shutdown:notebook-cleanup')
+      expect(cleanup).not.toContain('resources:notebook-cleanup')
+      await reservation.releaseAll()
+      await expect(execution.reserve(1)).rejects.toThrow()
+      await expect(execution.recoverCleanup!()).rejects.toThrow()
+      expect(cleanup).not.toContain('resources:notebook-cleanup')
+      notebookReaped = true
+      await execution.recoverCleanup!()
+      expect(revoke).toHaveBeenCalledTimes(3)
+      expect(cleanup.filter((entry) => entry === 'resources:notebook-cleanup')).toHaveLength(1)
+      expect(cleanup.filter((entry) => entry === 'shutdown:notebook-cleanup')).toHaveLength(1)
+      await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+    }
+  )
+
   it('composes initial prompts from task, read-only inputs, and structured output without leaking identities', async () => {
     const cases: Array<
       Readonly<{

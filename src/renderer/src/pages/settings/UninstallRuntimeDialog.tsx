@@ -18,7 +18,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 
 type UninstallRuntimeDialogProps = {
   // The framework whose app-managed runtime is being removed; null keeps the dialog closed.
-  framework: 'claude' | 'opencode' | 'codex' | 'codebuddy' | null
+  framework: 'claude' | 'opencode' | 'codex' | 'codebuddy' | 'pi' | null
   isUninstalling: boolean
   onCancel: () => void
   onConfirm: () => void
@@ -27,11 +27,12 @@ type UninstallRuntimeDialogProps = {
 const confirmButtonClassName =
   'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
 
-const DISPLAY_NAME: Record<'claude' | 'opencode' | 'codex' | 'codebuddy', string> = {
+const DISPLAY_NAME: Record<'claude' | 'opencode' | 'codex' | 'codebuddy' | 'pi', string> = {
   claude: 'Claude',
   opencode: 'OpenCode',
   codex: 'Codex',
-  codebuddy: 'CodeBuddy'
+  codebuddy: 'CodeBuddy',
+  pi: 'Pi'
 }
 
 // Confirms removal of an app-managed agent runtime. Only the copy the app downloaded into its own data

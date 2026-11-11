@@ -1434,3 +1434,1249 @@ it('preserves ordinary wrapped descriptions and explicit numeric sequences', () 
   }
   expect(reviewedKinds(n)).not.toContain('collapsed-native-numeric-lanes')
 })
+
+function sparseIntegerTail(): Data {
+  const f = evidence(4, 3)
+  f.table.cropRect = [0, 0, 180, 100]
+  for (let c = 0; c < 3; c++) {
+    f.cell(0, c, [f.font(['Index', 'Reading', 'Count'][c], c * 60 + 5, 0)])
+  }
+  for (let r = 1; r < 4; r++) {
+    for (let c = 0; c < 3; c++) {
+      const fonts =
+        c === 2
+          ? []
+          : r < 3
+            ? [f.font(c === 0 ? String(5 + r) : String(20 + r), c * 60 + 5, r * 16)]
+            : [
+                f.font(c === 0 ? '8' : '23', c * 60 + 5, 48),
+                f.font(c === 0 ? '9' : '24', c * 60 + 5, 64)
+              ]
+      const cell = f.cell(r, c, fonts)
+      cell.rect = [c * 60, r * 16, (c + 1) * 60, r === 3 ? 80 : (r + 1) * 16]
+    }
+  }
+  f.proved = f.proved.filter((p: Data) => p.fonts.length)
+  f.rules = [
+    [0, -5, 180, -5],
+    [0, 95, 180, 95]
+  ]
+  return f
+}
+
+it('withdraws sparse integer rows when two consecutive native records share a model tail', () => {
+  expect(reviewedKinds(sparseIntegerTail())).toContain('merged-native-sparse-numeric-records')
+})
+
+it.each([
+  'missing-bottom',
+  'nonconsecutive',
+  'different-pitch',
+  'wrapped-prose',
+  'missing-proof',
+  'source-alias',
+  'foreign-ink',
+  'same-baseline',
+  'wrong-literal',
+  'partial-source'
+])('does not withdraw sparse integer mapping from incomplete %s evidence', (variant) => {
+  const f = sparseIntegerTail(),
+    tail = f.proved.filter((p: Data) => p.cell.row === 3)
+  const second = tail[0].fonts[1]
+  if (variant === 'missing-bottom') f.rules.pop()
+  if (variant === 'nonconsecutive') second.text = second.sourceItem.text = '11'
+  if (variant === 'different-pitch') {
+    second.baseline += 2
+    second.rect[1] += 2
+    second.rect[3] += 2
+  }
+  if (variant === 'wrapped-prose') second.text = second.sourceItem.text = 'continued'
+  if (variant === 'missing-proof') f.proved.pop()
+  if (variant === 'source-alias')
+    f.inventory.push({ ...f.inventory[0], rect: [300, 300, 330, 308] })
+  if (variant === 'foreign-ink') f.font('other', 35, 53, 10)
+  if (variant === 'same-baseline') {
+    second.baseline = tail[0].fonts[0].baseline
+    second.rect = [...tail[0].fonts[0].rect]
+  }
+  if (variant === 'wrong-literal') second.sourceItem.text = 'other'
+  if (variant === 'partial-source') {
+    second.sourceSegment = { ...second.sourceItem, start: 0, end: 1 }
+    delete second.sourceItem
+  }
+  expect(reviewedKinds(f)).not.toContain('merged-native-sparse-numeric-records')
+})
+
+function pairedNativeParents(omitted = false): Data {
+  const f = evidence(4, 5)
+  f.table.cropRect = [0, 0, 300, 100]
+  const labels = omitted
+    ? ['Code', 'First (%)', 'Second (%)', 'First', 'Second']
+    : ['Code', 'Value', 'Share', 'Value', 'Share']
+  for (let c = 0; c < 5; c++) {
+    const lower = f.font(labels[c], c * 60 + 5, 20, c && omitted ? 45 : 25)
+    const upper =
+      !omitted && [2, 4].includes(c)
+        ? f.font(c === 2 ? 'Baseline' : 'Variant', c * 60 - 35, 5, 50)
+        : null
+    f.cell(0, c, upper ? [upper, lower] : [lower])
+  }
+  for (let r = 1; r < 4; r++)
+    for (let c = 0; c < 5; c++) {
+      f.cell(r, c, [
+        f.font(c ? String(10 + r + c) : String.fromCharCode(64 + r), c * 60 + 5, r * 20 + 20)
+      ])
+    }
+  if (omitted) {
+    f.font('Scope (%)', 190, 5, 90)
+    f.table.unassigned = ['Scope (%)']
+  }
+  return f
+}
+
+it.each([false, true])(
+  'withdraws complete native parent/leaf contradictions (omitted %s)',
+  (omitted) => {
+    expect(reviewedKinds(pairedNativeParents(omitted))).toContain(
+      'native-parent-leaf-contradiction'
+    )
+  }
+)
+
+it.each([
+  'missing-proof',
+  'source-alias',
+  'foreign-ink',
+  'wrong-literal',
+  'outside-parent',
+  'single-parent'
+])('does not infer parent hierarchy from incomplete %s evidence', (variant) => {
+  const f = pairedNativeParents(),
+    parent = f.inventory.find((i: Data) => i.text === 'Baseline')
+  if (variant === 'missing-proof') f.proved.pop()
+  if (variant === 'source-alias') f.inventory.push({ ...parent, rect: [800, 800, 900, 808] })
+  if (variant === 'foreign-ink') f.font('other', 95, 10, 10)
+  if (variant === 'wrong-literal') parent.sourceItem.text = 'different'
+  if (variant === 'outside-parent') parent.rect[0] = -1
+  if (variant === 'single-parent') {
+    const p = f.proved.find((p: Data) => p.fonts.some((i: Data) => i.text === 'Variant'))
+    p.fonts = p.fonts.filter((i: Data) => i.text !== 'Variant')
+    p.cell.text = p.fonts.map((i: Data) => i.text).join(' ')
+    f.table.grid[0][p.cell.column] = p.cell.text
+  }
+  expect(reviewedKinds(f)).not.toContain('native-parent-leaf-contradiction')
+})
+
+function numberedNativeRails(): Data {
+  const f = evidence(4, 3)
+  f.table.cropRect = [0, 0, 240, 100]
+  f.cell(0, 0, [f.font('Index', 5, 5, 20), f.font('Description', 40, 5, 70)])
+  f.cell(0, 1, [f.font('Result', 125, 5, 30)])
+  f.cell(0, 2, [f.font('Status', 185, 5, 30)])
+  for (let r = 1; r < 4; r++) {
+    f.cell(r, 0, [
+      f.font(String(r), 5, r * 20 + 5, 5),
+      f.font('Complete record.', 40, r * 20 + 5, 70)
+    ])
+    f.cell(r, 1, [f.font(String(10 + r), 125, r * 20 + 5, 20)])
+    f.cell(r, 2, [f.font('Pass', 185, r * 20 + 5, 20)])
+  }
+  return f
+}
+
+it('withdraws a merged native ordinal and description rail without inventing columns', () => {
+  expect(reviewedKinds(numberedNativeRails())).toContain('merged-native-ordinal-stub')
+})
+
+it.each([
+  'missing-proof',
+  'source-alias',
+  'foreign-ink',
+  'nonconsecutive',
+  'crossing-description',
+  'no-independent-field'
+])('declines an ordinal-rail contradiction with %s evidence', (variant) => {
+  const f = numberedNativeRails()
+  const row = f.proved.find((p: Data) => p.cell.row === 2 && p.cell.column === 0)
+  if (variant === 'missing-proof') f.proved.pop()
+  if (variant === 'source-alias') f.inventory.push({ ...row.fonts[0], rect: [500, 500, 510, 508] })
+  if (variant === 'foreign-ink') f.font('Other', 30, 30, 10)
+  if (variant === 'nonconsecutive') row.fonts[0].text = row.fonts[0].sourceItem.text = '8'
+  if (variant === 'crossing-description') row.fonts[1].rect[0] -= 1
+  if (variant === 'no-independent-field')
+    for (const p of f.proved.filter((p: Data) => p.cell.row === 2 && p.cell.column > 0))
+      p.fonts[0].baseline += 2
+  expect(reviewedKinds(f)).not.toContain('merged-native-ordinal-stub')
+})
+
+const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+const { nativePageTextPacketInventory } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
+)
+const { createNativeTableFontRoleWitness, nativeTableFontRoleWitnessCurrent } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-table-font-role.mjs')).href
+)
+function anonymousRepeatedGroups(mode = 'positive'): Data {
+  const category = mode.startsWith('category'),
+    terminal = mode.startsWith('terminal')
+  const width = 300,
+    height = 160,
+    items: Data[] = [],
+    fnArray: number[] = [],
+    argsArray: Data[] = [],
+    glyphs: Data = { F: [], G: [] },
+    tokens: Data[] = [],
+    inventory: Data[] = [],
+    proved: Data[] = []
+  const viewport = {
+    width,
+    height,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, height],
+    convertToViewportPoint: (x: number, y: number) => [x, height - y]
+  }
+  const add = (op: number, args: Data = null): void => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  const text = (str: string, x: number, top: number, fontName = 'F'): Data => {
+    const size = 8
+    add(OPS.setFont, [fontName, size])
+    add(OPS.beginText)
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, height - top - size]])
+    add(OPS.showText, [
+      [
+        {
+          unicode: str,
+          fontChar: str,
+          width: str.length * 500,
+          isSpace: false,
+          isInFont: true,
+          accent: null
+        }
+      ]
+    ])
+    add(OPS.endText)
+    if (!glyphs[fontName].some((g: Data) => g.fontChar === str))
+      glyphs[fontName].push({ fontChar: str, bounds: [0, -0.1, str.length * 0.5, 0.7] })
+    const sourceItem = { pageNumber: 1, index: items.length, text: str }
+    items.push({
+      str,
+      dir: 'ltr',
+      width: size * str.length * 0.5,
+      height: size,
+      transform: [size, 0, 0, size, x, height - top - size],
+      fontName,
+      hasEOL: true,
+      sourceItem
+    })
+    const t = {
+      text: str,
+      rect: [x, top, x + str.length * 4, top + 8],
+      baseline: top + 8,
+      height: 8,
+      horizontal: true,
+      inlineSymbol: false,
+      sourceItem
+    }
+    tokens.push(t)
+    inventory.push(t)
+    return t
+  }
+  const grid: string[][] = Array.from({ length: category ? 3 : 6 }, () => Array(3).fill('')),
+    cells: Data[] = []
+  const bounds = category
+    ? [
+        [0, 17],
+        [17, 65],
+        [65, 132]
+      ]
+    : terminal
+      ? [
+          [0, 17],
+          [17, 32],
+          [32, 47],
+          [47, 62],
+          [62, 92],
+          [92, 112]
+        ]
+      : [
+          [0, 17],
+          [17, 32],
+          [32, 62],
+          [62, 82],
+          [82, 112],
+          [112, 132]
+        ]
+  const cell = (r: number, c: number, fonts: Data[]): Data => {
+    const a = {
+      row: r,
+      column: c,
+      rowSpan: 1,
+      colSpan: 1,
+      text: fonts.map((f) => f.text).join(' '),
+      rect: [
+        c === 0 ? 5 : c === 1 ? 115 : 205,
+        bounds[r][0],
+        c === 0 ? 110 : c === 1 ? 200 : 295,
+        bounds[r][1]
+      ],
+      sourceItems: fonts.map((f) => f.sourceItem),
+      sourceRects: fonts.map((f) => f.rect)
+    }
+    cells.push(a)
+    grid[r][c] = a.text
+    if (fonts.length) proved.push({ cell: a, fonts })
+    return a
+  }
+  if (category) {
+    for (const [c, label] of ['Group', 'Setting', 'Value'].entries())
+      cell(0, c, [text(label, 10 + c * 100, 5)])
+    for (let row = 1; row <= 2; row++) {
+      const lanes: Data[][] = [[], [], []]
+      for (let n = 0; n < 3; n++) {
+        const y = (row === 1 ? 20 : 75) + n * 15
+        lanes[0].push(
+          text(
+            mode === 'category-wrapped' ? `Clause ${n}` : row === 1 ? 'Phase A' : 'Phase B',
+            10,
+            y
+          )
+        )
+        if (mode === 'category-fragment-boundaries') {
+          const parts = [['ab', 'c'], ['a', 'bc'], ['abc']][n]
+          parts.forEach((part, index) => lanes[1].push(text(part, 115 + index * 20, y)))
+        } else {
+          lanes[1].push(
+            text(
+              mode === 'category-one-setting'
+                ? 'One setting'
+                : mode === 'category-native-spaces'
+                  ? ['a b', 'ab', 'a  b'][n]
+                  : `Field ${n}`,
+              115,
+              y
+            )
+          )
+        }
+        if (mode !== 'category-one-peer' || n === 0)
+          lanes[2].push(
+            text(String(20 + row * 10 + n), 215, y + (mode === 'category-stagger' ? 3 : 0))
+          )
+      }
+      lanes.forEach((fonts, c) => cell(row, c, fonts))
+    }
+  } else {
+    cell(0, 0, terminal ? [text('Label', 10, 5)] : [])
+    cell(0, 1, [text('Left', 120, 5)])
+    cell(0, 2, [text('Right', 210, 5)])
+    cell(1, 0, [text('Group A', 10, 20, 'G')]).colSpan = 3
+    for (const [r, y, word, group] of (terminal
+      ? [
+          [2, 35, 'Item one', null],
+          [3, 50, 'Item two', null],
+          [4, 65, 'Item three', 'Group C'],
+          [5, 95, 'Item four', null]
+        ]
+      : [
+          [2, 35, 'Item one', 'Group B'],
+          [3, 65, 'Item two', null],
+          [4, 85, 'Item three', 'Group C'],
+          [5, 115, 'Item four', null]
+        ]) as [number, number, string, string | null][]) {
+      if (terminal && r === 3 && mode !== 'terminal-single-anchor') {
+        cell(r, 0, [text('Group B', 10, y, 'G')]).colSpan = 3
+        continue
+      }
+      const fonts = [text(word, 10, y)]
+      if (group && !(terminal && r === 2))
+        fonts.push(
+          text(
+            group,
+            mode === 'emphasis' || mode === 'terminal-emphasis' ? 30 : 10,
+            y + (mode === 'terminal-pitch' ? 14 : 15),
+            mode === 'single' && r === 4 ? 'F' : 'G'
+          )
+        )
+      cell(r, 0, fonts)
+      const right = [text(String(r * 10 + 1), 120, y)]
+      if ((mode === 'right-peer' || mode === 'terminal-right-peer') && group)
+        right.push(text('Peer', 120, y + 15))
+      cell(r, 1, right)
+      cell(r, 2, [text(String(r * 10 + 2), 210, y)])
+    }
+  }
+  if (mode === 'foreign-ink' || mode === 'category-foreign' || mode === 'terminal-foreign') {
+    text('Other', 170, 50)
+    text('Else', 170, 100)
+  }
+  const graphicsBounds: Data[] = []
+  if (mode === 'foreign-path' || mode === 'category-foreign-path') {
+    for (const y of [50, 100]) {
+      const i = fnArray.length
+      add(OPS.constructPath, [
+        OPS.fill,
+        [
+          [
+            0,
+            170,
+            height - y,
+            1,
+            180,
+            height - y,
+            1,
+            180,
+            height - y - 5,
+            1,
+            170,
+            height - y - 5,
+            4
+          ]
+        ],
+        [170, height - y - 5, 180, height - y]
+      ])
+      graphicsBounds.push({
+        operationIndex: i,
+        kind: 'path',
+        normalizedRect: [170 / width, y / height, 180 / width, (y + 5) / height]
+      })
+    }
+  }
+  const context = {
+    operators: { fnArray, argsArray },
+    viewport,
+    content: {
+      items,
+      styles: {
+        F: { ascent: 0.7, descent: -0.1, vertical: false },
+        G: { ascent: 0.7, descent: -0.1, vertical: false }
+      }
+    },
+    graphicsBounds,
+    glyphBounds: Object.entries(glyphs).map(([fontName, glyphs]) => ({ fontName, glyphs })),
+    pageNumber: 1,
+    sourceSha256: 'c'.repeat(64)
+  }
+  const page = {
+    pageNumber: 1,
+    width,
+    height,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds,
+    lines: tokens.map((t) => ({
+      text: t.text,
+      x: t.rect[0],
+      y: t.rect[1],
+      width: t.rect[2] - t.rect[0],
+      height: t.height,
+      fontSize: t.height
+    }))
+  }
+  return {
+    page,
+    tokens,
+    context,
+    table: { grid, cells, cropRect: [5, 0, 295, 132] },
+    inventory,
+    proof: { proved },
+    rules: [],
+    runs: []
+  }
+}
+
+const fontRoleKinds = (x: Data, w: Data): string[] =>
+  detectNativeTableAmbiguity(x.proof, x.table, x.inventory, x.rules, x.runs, w).map(
+    (p: Data) => p.kind
+  )
+it('withdraws two embedded native section roles without rewriting any table payload', () => {
+  const x = anonymousRepeatedGroups(),
+    before = JSON.stringify(x.table)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)?.records).toHaveLength(17)
+  const w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(w).toBeDefined()
+  expect(nativeTableFontRoleWitnessCurrent(w)).toBe(true)
+  expect(fontRoleKinds(x, w)).toContain('merged-native-font-role-sections')
+  expect(JSON.stringify(x.table)).toBe(before)
+})
+it.each(['right-peer', 'single', 'emphasis', 'foreign-ink', 'foreign-path'])(
+  'declines a font-role withdrawal with %s native evidence',
+  (mode) => {
+    const x = anonymousRepeatedGroups(mode)
+    expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+    const w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+    expect(w).toBeDefined()
+    expect(fontRoleKinds(x, w)).not.toContain('merged-native-font-role-sections')
+  }
+)
+it.each(['source', 'font', 'items', 'operators', 'token-rect'])(
+  'revokes a font-role witness after late %s mutation',
+  (mode) => {
+    const x = anonymousRepeatedGroups(),
+      w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+    expect(w).toBeDefined()
+    expect(fontRoleKinds(x, w)).toContain('merged-native-font-role-sections')
+    if (mode === 'source') x.context.content.items[0].sourceItem.text = 'changed'
+    if (mode === 'font') x.context.content.styles.G.ascent = 0.6
+    if (mode === 'items') x.context.content.items = [...x.context.content.items]
+    if (mode === 'operators') x.context.operators.fnArray = [...x.context.operators.fnArray]
+    if (mode === 'token-rect') x.tokens[0].rect = [...x.tokens[0].rect]
+    expect(nativeTableFontRoleWitnessCurrent(w)).toBe(false)
+    expect(fontRoleKinds(x, w)).not.toContain('merged-native-font-role-sections')
+  }
+)
+it('declines a missing or forged font-role witness', () => {
+  const x = anonymousRepeatedGroups()
+  expect(fontRoleKinds(x, undefined)).not.toContain('merged-native-font-role-sections')
+  expect(fontRoleKinds(x, Object.freeze({}))).not.toContain('merged-native-font-role-sections')
+})
+
+function nativePolynomialFixture(mode = 'continuous'): Data {
+  const width = 300,
+    height = 130,
+    items: Data[] = [],
+    tokens: Data[] = [],
+    glyphs: Data = { F: [], M: [] },
+    fnArray: number[] = [],
+    argsArray: Data[] = [],
+    inventory: Data[] = [],
+    proved: Data[] = [],
+    cells: Data[] = [],
+    grid = Array.from({ length: 3 }, () => Array(3).fill(''))
+  const add = (op: number, args: Data = null): void => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  const font = (str: string, x: number, y: number, size = 8, name = 'F'): Data => {
+    add(OPS.setFont, [name, size])
+    add(OPS.beginText)
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, height - y - size]])
+    add(OPS.showText, [
+      [
+        {
+          unicode: str,
+          fontChar: str,
+          width: str.length * 500,
+          isSpace: false,
+          isInFont: true,
+          accent: null
+        }
+      ]
+    ])
+    add(OPS.endText)
+    if (!glyphs[name].some((g: Data) => g.fontChar === str))
+      glyphs[name].push({ fontChar: str, bounds: [0, -0.1, str.length * 0.5, 0.7] })
+    const sourceItem = { pageNumber: 1, index: items.length, text: str }
+    items.push({
+      str,
+      dir: 'ltr',
+      width: str.length * size * 0.5,
+      height: size,
+      transform: [size, 0, 0, size, x, height - y - size],
+      fontName: name,
+      hasEOL: true,
+      sourceItem
+    })
+    const f = {
+      text: str,
+      rect: [x, y, x + str.length * size * 0.5, y + size],
+      baseline: y + size,
+      height: size,
+      horizontal: true,
+      inlineSymbol: false,
+      sourceItem
+    }
+    tokens.push(f)
+    inventory.push(f)
+    return f
+  }
+  const nativeTerm = (
+    sign: string,
+    coef: string,
+    x: number,
+    y: number,
+    exponent = false
+  ): Data[] => {
+    const fs: Data[] = []
+    const push = (s: string, name = 'F'): void => {
+      const f = font(s, x, y, 8, name)
+      fs.push(f)
+      x = f.rect[2] + 1
+    }
+    if (sign) push(sign)
+    push(coef)
+    push('q', 'M')
+    push('(')
+    push('1')
+    push(')')
+    if (exponent) fs.push(font('2', x - 1, y - 1, 6))
+    return fs
+  }
+  const order = mode === 'source-order' ? [0, 3, 6, 1, 4, 7, 2, 5, 8] : [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    slots: Data = new Map()
+  for (const n of order) {
+    const row = Math.floor(n / 3),
+      col = n % 3,
+      y = 10 + row * 15
+    let fs: Data[]
+    if (mode === 'independent-equations') {
+      fs =
+        col === 0
+          ? nativeTerm('', String(row + 1), 8, y)
+          : col === 1
+            ? [font('=', 150, y)]
+            : [font('0', 260, y)]
+      slots.set(n, fs)
+      continue
+    }
+    if (mode === 'coefficient-list' && n < 8) {
+      slots.set(n, nativeTerm('', String(n + 1), col * 100 + 8, y))
+      continue
+    }
+    if (n === 8) fs = [font('=', 260, y), font('0', 275, y), font('.', 280, y)]
+    else if (n === 5) {
+      const plus = font('+', 196, y)
+      const previous = slots.get(4)
+      if (mode === 'no-cut') {
+        fs = [plus, ...nativeTerm('', String(n + 1), 202, y)]
+      } else {
+        if (previous) previous.push(plus)
+        else slots.set('pending', [plus])
+        fs = nativeTerm('', String(n + 1), 202, y)
+      }
+    } else {
+      fs = nativeTerm(
+        n === 0 ? '' : n % 2 ? '+' : '−',
+        String(n + 1),
+        n === 4 ? 164 : col * 100 + 8,
+        y,
+        n === 0
+      )
+      if (n === 4 && slots.has('pending')) {
+        fs.push(...slots.get('pending'))
+        slots.delete('pending')
+      }
+    }
+    if (mode === 'missing-term' && n === 4) slots.set(n, [])
+    else slots.set(n, fs)
+  }
+  for (let n = 0; n < 9; n++) {
+    const row = Math.floor(n / 3),
+      column = n % 3,
+      fs = slots.get(n)
+    const cell = {
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text: fs.map((f: Data) => f.text).join(' '),
+      rect: [column * 100, [0, 22, 37][row], 100 + column * 100, [22, 37, 55][row]],
+      sourceItems: fs.map((f: Data) => f.sourceItem),
+      sourceRects: fs.map((f: Data) => f.rect)
+    }
+    cells.push(cell)
+    grid[row][column] = cell.text
+    if (fs.length) proved.push({ cell, fonts: fs })
+  }
+  if (mode === 'foreign-term') nativeTerm('+', '7', 60, 20)
+  const viewport = {
+      width,
+      height,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x: number, y: number) => [x, height - y]
+    },
+    context = {
+      operators: { fnArray, argsArray },
+      viewport,
+      content: {
+        items,
+        styles: {
+          F: { ascent: 0.7, descent: -0.1, vertical: false },
+          M: { ascent: 0.7, descent: -0.1, vertical: false }
+        }
+      },
+      graphicsBounds: [],
+      glyphBounds: Object.entries(glyphs).map(([fontName, glyphs]) => ({ fontName, glyphs })),
+      pageNumber: 1,
+      sourceSha256: 'd'.repeat(64)
+    },
+    page = {
+      pageNumber: 1,
+      width,
+      height,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [],
+      lines: tokens.map((f) => ({
+        text: f.text,
+        x: f.rect[0],
+        y: f.rect[1],
+        width: f.rect[2] - f.rect[0],
+        height: f.height,
+        fontSize: f.height
+      }))
+    }
+  return {
+    page,
+    tokens,
+    context,
+    table: { grid, cells, cropRect: [0, 0, 300, 55] },
+    inventory,
+    proof: { proved },
+    rules: [],
+    runs: []
+  }
+}
+
+const { proveNativeUniqueWholeFonts } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-evidence.mjs')).href
+)
+it.each([
+  'continuous',
+  'coefficient-list',
+  'independent-equations',
+  'source-order',
+  'missing-term',
+  'foreign-term',
+  'no-cut'
+])('withdraws only a closed native polynomial with a real cell cut: %s', (mode) => {
+  const x = nativePolynomialFixture(mode),
+    before = JSON.stringify(x.table)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  expect(
+    proveNativeUniqueWholeFonts(
+      x.proof.proved.flatMap((p: Data) => p.fonts),
+      x.inventory
+    )
+  ).toBe(true)
+  const w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(w).toBeDefined()
+  const kinds = detectNativeTableAmbiguity(x.proof, x.table, x.inventory, x.rules, x.runs, w).map(
+    (p: Data) => p.kind
+  )
+  expect(kinds.includes('native-continuous-polynomial-cut')).toBe(mode === 'continuous')
+  expect(JSON.stringify(x.table)).toBe(before)
+})
+it.each(['source-array', 'operator-array', 'glyph-array', 'font-metric'])(
+  'revokes a complete polynomial witness after late %s mutation',
+  (mode) => {
+    const x = nativePolynomialFixture(),
+      w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+    expect(w).toBeDefined()
+    expect(
+      detectNativeTableAmbiguity(x.proof, x.table, x.inventory, x.rules, x.runs, w).map(
+        (p: Data) => p.kind
+      )
+    ).toContain('native-continuous-polynomial-cut')
+    if (mode === 'source-array') x.context.content.items = [...x.context.content.items]
+    if (mode === 'operator-array')
+      x.context.operators.argsArray = [...x.context.operators.argsArray]
+    if (mode === 'glyph-array') x.context.glyphBounds = [...x.context.glyphBounds]
+    if (mode === 'font-metric') x.context.content.styles.M.ascent = 0.6
+    expect(nativeTableFontRoleWitnessCurrent(w)).toBe(false)
+    expect(
+      detectNativeTableAmbiguity(x.proof, x.table, x.inventory, x.rules, x.runs, w).map(
+        (p: Data) => p.kind
+      )
+    ).not.toContain('native-continuous-polynomial-cut')
+  }
+)
+
+function nativePairedRows(mode = 'repeated'): Data {
+  const width = 400,
+    height = 160,
+    items: Data[] = [],
+    tokens: Data[] = [],
+    inventory: Data[] = [],
+    glyphs: Data = { F: [], G: [] },
+    fnArray: number[] = [],
+    argsArray: Data[] = [],
+    proved: Data[] = [],
+    cells: Data[] = [],
+    grid = Array.from({ length: 5 }, () => Array(4).fill(''))
+  const add = (o: number, a: Data = null): void => {
+    fnArray.push(o)
+    argsArray.push(a)
+  }
+  const text = (str: string, x: number, y: number, name = 'F'): Data => {
+    const size = 8
+    add(OPS.setFont, [name, size])
+    add(OPS.beginText)
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, height - y - size]])
+    add(OPS.showText, [
+      [
+        {
+          unicode: str,
+          fontChar: str,
+          width: str.length * 500,
+          isSpace: false,
+          isInFont: true,
+          accent: null
+        }
+      ]
+    ])
+    add(OPS.endText)
+    if (!glyphs[name].some((g: Data) => g.fontChar === str))
+      glyphs[name].push({ fontChar: str, bounds: [0, -0.1, str.length * 0.5, 0.7] })
+    const sourceItem = { pageNumber: 1, index: items.length, text: str }
+    items.push({
+      str,
+      dir: 'ltr',
+      width: str.length * 4,
+      height: size,
+      transform: [size, 0, 0, size, x, height - y - size],
+      fontName: name,
+      hasEOL: true,
+      sourceItem
+    })
+    const f = {
+      text: str,
+      rect: [x, y, x + str.length * 4, y + size],
+      height: size,
+      baseline: y + size,
+      horizontal: true,
+      inlineSymbol: false,
+      sourceItem
+    }
+    tokens.push(f)
+    inventory.push(f)
+    return f
+  }
+  const cell = (r: number, c: number, fs: Data[]): void => {
+    const t = {
+      row: r,
+      column: c,
+      rowSpan: 1,
+      colSpan: 1,
+      text: fs.map((f) => f.text).join(' '),
+      rect: [
+        c * 100,
+        fs.length ? Math.min(...fs.map((f) => f.rect[1])) : 0,
+        (c + 1) * 100,
+        fs.length ? Math.max(...fs.map((f) => f.rect[3])) : 1
+      ],
+      sourceItems: fs.map((f) => f.sourceItem),
+      sourceRects: fs.map((f) => f.rect)
+    }
+    cells.push(t)
+    grid[r][c] = t.text
+    if (fs.length) proved.push({ cell: t, fonts: fs })
+  }
+  for (const [c, s] of ['Group', 'Label', 'Value A', 'Value B'].entries())
+    cell(0, c, [text(s, c * 100 + 5, 5)])
+  for (const [r, y, label] of [
+    [1, 25, 'Amber'],
+    [2, 40, 'Blue']
+  ] as [number, number, string][]) {
+    cell(r, 0, [])
+    cell(r, 1, [text(label, 105, y)])
+    cell(r, 2, [text('10 (2)', 205, y)])
+    cell(r, 3, [text('20 (3)', 305, y)])
+  }
+  for (const [r, y] of [
+    [3, 65],
+    [4, 105]
+  ]) {
+    const duplicate =
+        ['categories', 'spanning-prefix'].includes(mode) || (mode === 'single-group' && r === 3),
+      labels = duplicate ? ['Low', 'High'] : ['Amber', 'Blue']
+    cell(r, 0, [text('Set ' + r, 5, y)])
+    const coords = [y, y + (mode === 'leading' ? 20 : 15)],
+      fields: Data[][] = [[], [], []]
+    for (const [n, label] of labels.entries()) {
+      fields[0].push(
+        text(
+          mode === 'prose' ? 'ordinary sentence.' : label,
+          105,
+          coords[n],
+          mode === 'continuation-font' && n === 1 ? 'G' : 'F'
+        )
+      )
+      for (const c of [2, 3])
+        fields[c - 1].push(
+          text(
+            mode === 'prose-numeric'
+              ? 'continued text'
+              : String(c * 10 + n) + ' (3' + (mode === 'categories' ? '%' : '') + ')',
+            c * 100 + 5,
+            coords[n] + (mode === 'misaligned' && c === 3 && n === 1 ? 3 : 0)
+          )
+        )
+    }
+    for (const c of [1, 2, 3]) cell(r, c, fields[c - 1])
+  }
+  if (mode === 'foreign-text') for (const y of [80, 120]) text('Foreign', 155, y)
+  const graphicsBounds: Data[] = []
+  if (mode === 'foreign-path')
+    for (const y of [75, 115]) {
+      const i = fnArray.length
+      add(OPS.constructPath, [
+        OPS.fill,
+        [
+          [
+            0,
+            180,
+            height - y,
+            1,
+            190,
+            height - y,
+            1,
+            190,
+            height - y - 5,
+            1,
+            180,
+            height - y - 5,
+            4
+          ]
+        ],
+        [180, height - y - 5, 190, height - y]
+      ])
+      graphicsBounds.push({
+        operationIndex: i,
+        kind: 'path',
+        normalizedRect: [180 / width, y / height, 190 / width, (y + 5) / height]
+      })
+    }
+  const viewport = {
+      width,
+      height,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x: number, y: number) => [x, height - y]
+    },
+    context = {
+      operators: { fnArray, argsArray },
+      viewport,
+      content: {
+        items,
+        styles: {
+          F: { ascent: 0.7, descent: -0.1, vertical: false },
+          G: { ascent: 0.7, descent: -0.1, vertical: false }
+        }
+      },
+      graphicsBounds,
+      glyphBounds: Object.entries(glyphs).map(([fontName, glyphs]) => ({ fontName, glyphs })),
+      pageNumber: 1,
+      sourceSha256: 'e'.repeat(64)
+    },
+    page = {
+      pageNumber: 1,
+      width,
+      height,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds,
+      lines: tokens.map((f) => ({
+        text: f.text,
+        x: f.rect[0],
+        y: f.rect[1],
+        width: f.rect[2] - f.rect[0],
+        height: f.height,
+        fontSize: f.height
+      }))
+    }
+  if (mode === 'split' || mode === 'single-group') {
+    const original = [...proved]
+    cells.length = 0
+    proved.length = 0
+    grid.length = 0
+    let nr = 0
+    for (let r = 0; r < 5; r++) {
+      const ps = original.filter((p) => p.cell.row === r),
+        count = (mode === 'split' && r >= 3) || (mode === 'single-group' && r === 4) ? 2 : 1
+      for (let n = 0; n < count; n++) {
+        grid.push(Array(4).fill(''))
+        for (let c = 0; c < 4; c++) {
+          const p = ps.find((p) => p.cell.column === c),
+            fs = p
+              ? count === 1
+                ? p.fonts
+                : c === 0
+                  ? n === 0
+                    ? p.fonts
+                    : []
+                  : [p.fonts[n]]
+              : []
+          cell(nr, c, fs)
+        }
+        nr++
+      }
+    }
+  }
+  if (mode === 'spanning-prefix') {
+    cells.find((c) => c.row === 3 && c.column === 0).rowSpan = 2
+    const omitted = cells.find((c) => c.row === 4 && c.column === 0)
+    cells.splice(cells.indexOf(omitted), 1)
+    proved.splice(
+      proved.findIndex((p) => p.cell === omitted),
+      1
+    )
+    grid[4][0] = ''
+  }
+  return {
+    page,
+    tokens,
+    context,
+    inventory,
+    proof: { proved },
+    table: { grid, cells, cropRect: [0, 0, 400, 145] },
+    rules: [
+      [0, 0, 400, 0],
+      [0, 20, 400, 20],
+      [0, 145, 400, 145]
+    ],
+    runs: []
+  }
+}
+
+it.each([
+  'repeated',
+  'categories',
+  'split',
+  'single-group',
+  'prose',
+  'prose-numeric',
+  'misaligned',
+  'foreign-text',
+  'foreign-path',
+  'spanning-prefix',
+  'continuation-font',
+  'leading'
+])('withdraws only complete native tuple-record ambiguity: %s', (mode) => {
+  const x = nativePairedRows(mode),
+    before = JSON.stringify(x.table)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  expect(
+    proveNativeUniqueWholeFonts(
+      x.proof.proved.flatMap((p: Data) => p.fonts),
+      x.inventory
+    )
+  ).toBe(true)
+  const w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(w).toBeDefined()
+  const kinds = detectNativeTableAmbiguity(x.proof, x.table, x.inventory, x.rules, x.runs, w).map(
+    (p: Data) => p.kind
+  )
+  expect(kinds.includes('native-aligned-tuple-records')).toBe(
+    ['repeated', 'categories'].includes(mode)
+  )
+  expect(JSON.stringify(x.table)).toBe(before)
+})
+function ruledPairedNative(mode = 'disjoint'): Data {
+  const base = ['split', 'spanning-prefix', 'continuation-font'].includes(mode) ? mode : 'repeated',
+    x = nativePairedRows(base),
+    o = x.context.operators
+  for (const y of mode === 'touch' ? [66, 106] : [62, 102]) {
+    o.fnArray.push(OPS.setLineWidth, OPS.setLineCap)
+    o.argsArray.push([1], [mode === 'cap' ? 2 : 0])
+    const index = o.fnArray.length,
+      diagonal = mode === 'unknown-rule'
+    o.fnArray.push(OPS.constructPath)
+    o.argsArray.push([
+      OPS.stroke,
+      [[0, 100, 160 - y, 1, 390, 160 - y - (diagonal ? 2 : 0)]],
+      [100, 160 - y - (diagonal ? 2 : 0), 390, 160 - y]
+    ])
+    const carrier = [99.5, y - 0.5, 390.5, y + 0.5 + (diagonal ? 2 : 0)],
+      normalizedRect = carrier.map(
+        (n, k) =>
+          (k < 2
+            ? Math.floor((n / (k % 2 ? 160 : 400)) * 256)
+            : Math.ceil((n / (k % 2 ? 160 : 400)) * 256) + 1) / 256
+      )
+    x.context.graphicsBounds.push({ operationIndex: index, kind: 'path', normalizedRect })
+  }
+  if (mode === 'foreign-paint') {
+    const n = o.fnArray.length
+    o.fnArray.push(OPS.constructPath)
+    o.argsArray.push([
+      OPS.fill,
+      [[0, 180, 85, 1, 190, 85, 1, 190, 80, 1, 180, 80, 4]],
+      [180, 80, 190, 85]
+    ])
+    x.context.graphicsBounds.push({
+      operationIndex: n,
+      kind: 'path',
+      normalizedRect: [180 / 400, 75 / 160, 190 / 400, 80 / 160]
+    })
+  }
+  if (mode === 'rounded-token-bounds') {
+    // Reproduce the real sourceViewport 1.5 -> nativeViewport 1 conversion.
+    for (const raw of x.context.content.items) raw.transform[4] += 0.1
+    for (const [n, op] of x.context.operators.fnArray.entries())
+      if (op === OPS.setTextMatrix) x.context.operators.argsArray[n][0][4] += 0.1
+    for (const f of x.inventory) {
+      f.rect[0] += 0.1
+      f.rect[2] += 0.1
+    }
+    x.tokens = x.tokens.map((f: Data) => ({
+      ...f,
+      rect: f.rect.map((v: number) => (v * 1.5) / 1.5)
+    }))
+  }
+  return x
+}
+
+it.each([
+  'disjoint',
+  'rounded-token-bounds',
+  'touch',
+  'split',
+  'spanning-prefix',
+  'continuation-font',
+  'unknown-rule',
+  'cap',
+  'foreign-paint'
+])('requires complete native ruled paint before tuple withdrawal: %s', (mode) => {
+  const x = ruledPairedNative(mode),
+    before = JSON.stringify(x.table)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  expect(
+    proveNativeUniqueWholeFonts(
+      x.proof.proved.flatMap((p: Data) => p.fonts),
+      x.inventory
+    )
+  ).toBe(true)
+  if (mode === 'rounded-token-bounds')
+    expect(
+      x.tokens.some((f: Data, i: number) =>
+        f.rect.some((v: number, n: number) => v !== x.inventory[i].rect[n])
+      )
+    ).toBe(true)
+  const witness = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(witness).toBeDefined()
+  expect(fontRoleKinds(x, witness).includes('native-aligned-tuple-records')).toBe(
+    ['disjoint', 'rounded-token-bounds'].includes(mode)
+  )
+  expect(JSON.stringify(x.table)).toBe(before)
+})
+it.each(['graphic', 'width'])(
+  'revokes complete tuple rule evidence after late %s mutation',
+  (mode) => {
+    const x = ruledPairedNative(),
+      witness = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+    expect(witness).toBeDefined()
+    expect(fontRoleKinds(x, witness)).toContain('native-aligned-tuple-records')
+    if (mode === 'graphic') x.context.graphicsBounds = [...x.context.graphicsBounds]
+    if (mode === 'width')
+      x.context.operators.argsArray[x.context.operators.fnArray.indexOf(OPS.setLineWidth)][0] = 2
+    expect(nativeTableFontRoleWitnessCurrent(witness)).toBe(false)
+    expect(fontRoleKinds(x, witness)).not.toContain('native-aligned-tuple-records')
+  }
+)
+
+// Generated native programs exercise the real private witness and whole-Source
+// ambiguity seam; no paper text, file identity or downloaded fixture is retained.
+it.each([
+  ['category', 'native-repeated-category-records'],
+  ['terminal', 'merged-native-font-role-sections']
+])('reviews independently repeated native topology: %s', (mode, kind) => {
+  const x = anonymousRepeatedGroups(mode),
+    before = JSON.stringify(x.table)
+  expect(hasDisjointNativeTableSlots(x.table)).toBe(true)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  const w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(w).toBeDefined()
+  expect(fontRoleKinds(x, w)).toContain(kind)
+  expect(JSON.stringify(x.table)).toBe(before)
+})
+it.each([
+  'category-wrapped',
+  'category-one-setting',
+  'category-one-peer',
+  'category-stagger',
+  'category-foreign',
+  'category-foreign-path',
+  'terminal-single-anchor',
+  'terminal-emphasis',
+  'terminal-right-peer',
+  'terminal-pitch',
+  'terminal-foreign'
+])('retains legal or incomplete native topology: %s', (mode) => {
+  const x = anonymousRepeatedGroups(mode)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  const w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(w).toBeDefined()
+  expect(fontRoleKinds(x, w)).not.toContain(
+    mode.startsWith('category')
+      ? 'native-repeated-category-records'
+      : 'merged-native-font-role-sections'
+  )
+})
+it.each(['category', 'terminal'])(
+  'revokes new topology after each late native mutation: %s',
+  (mode) => {
+    for (const mutation of ['source', 'font', 'items', 'operators', 'token-rect']) {
+      const x = anonymousRepeatedGroups(mode),
+        w = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+      const kind =
+        mode === 'category'
+          ? 'native-repeated-category-records'
+          : 'merged-native-font-role-sections'
+      expect(fontRoleKinds(x, w)).toContain(kind)
+      if (mutation === 'source') x.context.content.items[0].sourceItem.text = 'changed'
+      if (mutation === 'font') x.context.content.styles.G.ascent = 0.6
+      if (mutation === 'items') x.context.content.items = [...x.context.content.items]
+      if (mutation === 'operators') x.context.operators.fnArray = [...x.context.operators.fnArray]
+      if (mutation === 'token-rect') x.tokens[0].rect = [...x.tokens[0].rect]
+      expect(nativeTableFontRoleWitnessCurrent(w)).toBe(false)
+      expect(fontRoleKinds(x, w)).not.toContain(kind)
+    }
+  }
+)
+
+it('retains an explicitly spanning category owner with complete native peers', () => {
+  const x = anonymousRepeatedGroups('category'),
+    a = x.proof.proved.find((p: Data) => p.cell.row === 1 && p.cell.column === 0),
+    b = x.proof.proved.find((p: Data) => p.cell.row === 2 && p.cell.column === 0)
+  a.cell.rowSpan = 2
+  a.fonts.push(...b.fonts)
+  a.cell.text = a.fonts.map((f: Data) => f.text).join(' ')
+  a.cell.sourceItems = a.fonts.map((f: Data) => f.sourceItem)
+  a.cell.sourceRects = a.fonts.map((f: Data) => f.rect)
+  x.table.grid[1][0] = a.cell.text
+  x.table.grid[2][0] = ''
+  x.table.cells = x.table.cells.filter((c: Data) => c !== b.cell)
+  x.proof.proved = x.proof.proved.filter((p: Data) => p !== b)
+  expect(hasDisjointNativeTableSlots(x.table)).toBe(true)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  const witness = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(witness).toBeDefined()
+  expect(fontRoleKinds(x, witness)).not.toContain('native-repeated-category-records')
+})
+
+it('keeps distinct native word and fragment boundaries when comparing settings', () => {
+  const x = anonymousRepeatedGroups('category-fragment-boundaries'),
+    before = JSON.stringify(x)
+  expect(nativePageTextPacketInventory(x.page, x.tokens, x.context, true)).toBeDefined()
+  const witness = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(witness).toBeDefined()
+  expect(fontRoleKinds(x, witness)).toContain('native-repeated-category-records')
+  expect(JSON.stringify(x)).toBe(before)
+})
+it('rejects an altered cell Source word boundary while retaining the actual native witness', () => {
+  const x = anonymousRepeatedGroups('category-native-spaces')
+  const witness = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(witness).toBeDefined()
+  const owner = x.proof.proved.find((p: Data) => p.cell.row === 1 && p.cell.column === 1)
+  expect(owner.cell.sourceItems[0].text).toBe('a b')
+  owner.cell.sourceItems[0] = { ...owner.cell.sourceItems[0], text: 'ab' }
+  expect(nativeTableFontRoleWitnessCurrent(witness)).toBe(true)
+  expect(fontRoleKinds(x, witness)).not.toContain('native-repeated-category-records')
+})
+it('retains exact legitimate native whitespace and rejects a later literal change', () => {
+  const x = anonymousRepeatedGroups('category-native-spaces'),
+    before = JSON.stringify(x)
+  const witness = createNativeTableFontRoleWitness(x.page, x.tokens, x.context)
+  expect(witness).toBeDefined()
+  expect(fontRoleKinds(x, witness)).toContain('native-repeated-category-records')
+  expect(JSON.stringify(x)).toBe(before)
+  const source = x.context.content.items.find((item: Data) => item.str === 'a  b')
+  source.str = 'a b'
+  expect(nativeTableFontRoleWitnessCurrent(witness)).toBe(false)
+  expect(fontRoleKinds(x, witness)).not.toContain('native-repeated-category-records')
+})

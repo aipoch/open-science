@@ -28,22 +28,19 @@ for (const kind of ['skills', 'connectors']) {
     await expect(popup.getByRole('switch', { name: 'Researcher', exact: true })).toBeChecked()
     await popup.getByRole('switch', { name: 'Researcher', exact: true }).click()
     await expect(popup.getByRole('switch', { name: 'Researcher', exact: true })).not.toBeChecked()
-    await page.locator('header').click()
+    await page.locator('main > header').click()
     await expect(popup).toHaveCount(0)
     await expect(page.getByRole('tooltip')).toHaveCount(0)
     await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
     await page.getByRole('checkbox', { name: `Select ${name}`, exact: true }).check()
-    const checkbox = row.getByRole('checkbox')
-    const content = row.locator('[data-slot="resource-row-content"]')
-    const checkboxBounds = (await checkbox.boundingBox())!
-    const contentBounds = (await content.boundingBox())!
-    expect(checkboxBounds.x + checkboxBounds.width).toBeLessThan(contentBounds.x)
-    await checkbox.hover()
-    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(content).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await content.hover()
-    await expect(content).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    const selectedCard = page.locator('[data-slot="settings-list-row"]').filter({
+      has: page.getByRole('checkbox', { name: `Select ${name}`, exact: true })
+    })
+    await expect(selectedCard).toHaveAttribute('data-selected', 'true')
+    await expect(selectedCard.locator('[data-slot="resource-row-content"]')).toHaveAttribute(
+      'inert',
+      ''
+    )
     const bar = page.getByRole('region', { name: 'Selected resources' })
     await expect(bar.getByRole('button', { name: /Unlink Specialists/ })).toHaveCount(0)
     await expect(bar.getByRole('button', { name: 'Delete selected' })).toHaveCount(0)
@@ -57,7 +54,7 @@ for (const kind of ['skills', 'connectors']) {
     await page.getByRole('button', { name: 'Researcher', exact: true }).click()
     const unlink = bar.getByRole('button', { name: /Unlink Specialists/ })
     await expect(unlink).toBeVisible()
-    await unlink.focus()
+    await unlink.hover()
     await expect(page.getByRole('tooltip')).toContainText('Future Specialist tasks')
     await unlink.click()
     await expect(unlink).toHaveCount(0)
@@ -77,13 +74,14 @@ for (const kind of ['skills', 'connectors']) {
     }, kind)
     await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
     const row = page.locator('[data-slot="settings-list-row"]').filter({
-      has: page.getByRole('button', { name: `Manage access for ${name}`, exact: true })
+      has: page.getByRole('checkbox', { name: `Select ${name}`, exact: true })
     })
     await row.getByRole('checkbox').check()
     await page.getByRole('button', { name: /Stop Main Agent loading/ }).click()
-    const trigger = row.locator('[data-slot="resource-assignment-trigger"]')
-    await expect(trigger).toBeDisabled()
-    await trigger.click({ force: true })
+    const checkbox = row.getByRole('checkbox')
+    await expect(checkbox).toBeDisabled()
+    await checkbox.click({ force: true })
+    await expect(checkbox).toBeChecked()
     await expect(row).toBeVisible()
     await expect(page.getByRole('region', { name: 'Selected resources' })).toBeVisible()
   })
@@ -99,7 +97,7 @@ for (const kind of ['skills', 'connectors']) {
     await usage.click()
     await expect(page.locator('[data-slot="skill-usage-agents-popover"]')).toBeVisible()
     await expect(row).toBeVisible()
-    await page.locator('header').click()
+    await page.locator('main > header').click()
     await row.getByRole('button', { name: 'Manage Tags', exact: true }).click()
     await expect(row).toBeVisible()
     await page.keyboard.press('Escape')
@@ -130,18 +128,16 @@ for (const kind of ['skills', 'connectors']) {
     await scroller.evaluate((element) => {
       element.scrollTop = 380
     })
-    const filter = page.locator(`[data-slot="${kind}-filter-bar"]`)
-    const section = page
-      .locator(`[data-slot="${kind}-source-group"]`)
-      .first()
-      .locator(':scope > div')
-      .first()
-    await expect.poll(async () => (await filter.boundingBox())!.y).toBeLessThanOrEqual(62)
-    const filterBottom = await filter.evaluate(
-      (element) => element.closest('.sticky')!.getBoundingClientRect().bottom
+    const filterContainer = scroller.locator('[data-slot="resource-catalog-header"]')
+    const section = scroller.locator('[data-slot="resource-group-header"]').first()
+    const scrollTop = (await scroller.boundingBox())!.y
+    await expect
+      .poll(async () => (await filterContainer.boundingBox())!.y)
+      .toBeCloseTo(scrollTop, 0)
+    const filterBottom = await filterContainer.evaluate(
+      (element) => element.getBoundingClientRect().bottom
     )
     expect((await section.boundingBox())!.y).toBeCloseTo(filterBottom, 0)
-    const filterContainer = kind === 'skills' ? filter.locator('xpath=..') : filter
     const surfaceColor = await page
       .locator('main')
       .evaluate((element) => getComputedStyle(element).backgroundColor)
@@ -168,6 +164,7 @@ for (const width of [375, 880]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true
       )
+      await page.getByRole('button', { name: '清除选择' }).click()
       await page.getByRole('button', { name: '管理“AlphaFold2”的访问权限' }).click()
       const popup = page.getByRole('dialog')
       await expect(popup.getByRole('switch', { name: '主智能体' })).toBeVisible()
@@ -192,6 +189,7 @@ for (const kind of ['skills', 'connectors']) {
         throw new Error('review simulated save failure')
       }
     }, kind)
+    await page.getByRole('button', { name: 'Filters', exact: true }).click()
     await page
       .getByRole('combobox', {
         name: kind === 'skills' ? 'Filter Skills by agent' : 'Filter Connectors by agent'

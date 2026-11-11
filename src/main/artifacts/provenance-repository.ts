@@ -44,6 +44,7 @@ import {
 } from './provenance-version-writer'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import { canonicalJson, sha256 } from './provenance-canonical'
+import { readNativeEvidence } from './execution-evidence-log'
 import { computeEvidenceOwnsSource } from './compute-output-evidence'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
 import {
@@ -495,10 +496,12 @@ class ArtifactProvenanceRepository {
                     })
                   : undefined
                 if (!hasImmutableExecutionFileEvidenceReference(summary)) continue
-                const evidenceBytes = await readFile(
-                  join(options.storageRoot, ...summary.storageKey.split('/'))
+                const evidenceBytes = await readNativeEvidence(
+                  options.storageRoot,
+                  summary.storageKey,
+                  summary.checksum,
+                  16 * 1024 * 1024
                 )
-                if (sha256(evidenceBytes) !== summary.checksum) continue
                 const evidence = JSON.parse(evidenceBytes.toString('utf8')) as unknown
                 if (
                   computeEvidenceOwnsSource(evidence, {
@@ -1339,12 +1342,25 @@ class ArtifactProvenanceRepository {
     if (version.contentBlobId) {
       const verification = await this.contentRepository.verify(version.contentBlobId)
       if (verification.state === 'available') return { state: 'available' }
+      // Quarantine blocks subsequent opens; preserve the observed content failure instead of
+      // relabeling an already diagnosed checksum failure as a missing file.
+      const reason =
+        verification.reason === 'not-available'
+          ? (
+              await (
+                await this.options.getClient()
+              ).contentBlob.findUnique({
+                where: { id: version.contentBlobId },
+                select: { lastVerificationFailure: true }
+              })
+            )?.lastVerificationFailure
+          : verification.reason
       return {
         state: 'unavailable',
         reason:
-          verification.reason === 'checksum-mismatch' ||
-          verification.reason === 'size-mismatch' ||
-          verification.reason === 'changed-during-verification'
+          reason === 'checksum-mismatch' ||
+          reason === 'size-mismatch' ||
+          reason === 'changed-during-verification'
             ? 'checksum-mismatch'
             : 'missing'
       }

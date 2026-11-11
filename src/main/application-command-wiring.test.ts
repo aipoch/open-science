@@ -664,6 +664,9 @@ vi.mock('./composition/delegation', () => ({ composeDelegation: vi.fn(() => root
 vi.mock('./composition/desktop-utilities', () => ({
   composeDesktopUtilities: vi.fn(() => rootFixture.owners)
 }))
+vi.mock('./composition/research-film', () => ({
+  composeResearchFilm: vi.fn(() => rootFixture.owners)
+}))
 vi.mock('./composition/document-reading', () => ({
   composeDocumentReading: vi.fn(() => rootFixture.owners)
 }))
@@ -762,10 +765,13 @@ it('connects committed deletion to the same credential broker used by approval s
   const runtime = { prepareForQuit: vi.fn(async () => 'completed'), abortQuitPreparation: vi.fn() }
   const shutdown = vi.fn(async () => 'completed')
   const resumeAfterHandoff = vi.fn()
+  const releaseAuthentication = vi.fn()
   const setClosePreference = vi.fn(async () => undefined)
   const currentSnapshotAfter = vi.fn(async (value) => value)
   const resolveSpecialist = vi.fn()
   const owners = {
+    // Construction only: this test does not start the runner or write its profiles.
+    configRoot: resolve(process.env.TMPDIR ?? projectRoot, 'command-wiring-config'),
     credentialRequestBroker: broker,
     approvalBroker: {},
     skillImportApprovalBroker: {},
@@ -777,6 +783,10 @@ it('connects committed deletion to the same credential broker used by approval s
     shutdownCoordinator: { runForQuitPreparation: shutdown },
     reviewerModelRuntimeShutdown: { current: { hasActiveWork: vi.fn(() => true) } },
     settingsService: {
+      quiesceAuthentication: vi.fn(() => ({
+        settled: Promise.resolve(),
+        release: releaseAuthentication
+      })),
       setClosePreference,
       getActiveInstallId: vi.fn(() => 'install'),
       holdInstallAdmission: vi.fn()
@@ -901,6 +911,12 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(resolveSpecialist).toHaveBeenCalledWith('specialist')
   expect(await result.prepareForQuit()).toBe('completed')
   expect(shutdown).toHaveBeenCalledOnce()
+  expect(await result.prepareForQuit()).toBe('completed')
+  expect(owners.settingsService.quiesceAuthentication).toHaveBeenCalledOnce()
+  result.abortQuitPreparation()
+  expect(releaseAuthentication).toHaveBeenCalledOnce()
+  runtime.abortQuitPreparation.mockClear()
+  resumeAfterHandoff.mockClear()
   runtime.prepareForQuit.mockResolvedValueOnce('timeout')
   expect(await result.prepareForQuit()).toBe('timeout')
   expect(shutdown).toHaveBeenCalledOnce()

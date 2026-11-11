@@ -38,7 +38,6 @@ import { renderPdfNativeLinks } from './pdf-native-links'
 import * as translationJobs from './use-pdf-translation-job'
 import * as translationDocuments from './use-pdf-translation-document'
 import type { PdfDocumentSource } from '../../../../../../shared/pdf-document-source'
-import type { PdfProseRegion } from '../../../../../../shared/pdf-text'
 
 // Keep the real reader behavior while allowing the layout-admission spy below.
 vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
@@ -389,123 +388,8 @@ describe('PdfPreviewContent', () => {
     })
   })
 
-  it('confirms body bounds and an adjustable divider, replacing only the current page', async () => {
+  it('keeps reading free of manual body controls and ignores legacy region overlays', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
-    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
-      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
-      destroy: vi.fn().mockResolvedValue(undefined)
-    } as never)
-    const original: PdfProseRegion[] = [
-      { page: 1, left: 0.2, top: 0.2, right: 0.8, bottom: 0.8, split: 0.5 },
-      { page: 2, left: 0.1, top: 0.1, right: 0.9, bottom: 0.9, split: 0.5 }
-    ]
-    const onChange = vi.fn()
-    const render = async (regions: readonly PdfProseRegion[]): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <PdfPreviewContent
-            path="/body.pdf"
-            name="body.pdf"
-            pdfProseRegions={regions}
-            pdfProseRegionIdentityKey="scope/binding"
-            onPdfProseRegionsChange={onChange}
-          />
-        )
-        await flush()
-      })
-    }
-    await render(original)
-    expect(container.querySelectorAll('[data-pdf-prose-region]')).toHaveLength(2)
-    await act(async () =>
-      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
-    )
-    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
-    overlay.setPointerCapture = vi.fn()
-    overlay.hasPointerCapture = vi.fn(() => true)
-    overlay.releasePointerCapture = vi.fn()
-    overlay.getBoundingClientRect = () => new DOMRect(100, 80, 400, 560)
-    await act(async () =>
-      dispatchPointer(overlay, 'pointerdown', { clientX: 140, clientY: 136, button: 0 })
-    )
-    await act(async () =>
-      dispatchPointer(overlay, 'pointerup', { clientX: 460, clientY: 584, button: 0 })
-    )
-    expect(onChange).not.toHaveBeenCalled()
-    await act(async () =>
-      fireEvent.change(screen.getByRole('slider', { name: 'Column divider' }), {
-        target: { value: '60' }
-      })
-    )
-    expect(
-      container.querySelector<HTMLElement>('[data-pdf-prose-draft] [data-pdf-prose-split]')?.style
-        .left
-    ).toBe('60%')
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save body area' })))
-    const confirmed = onChange.mock.calls[0][0] as PdfProseRegion[]
-    expect(confirmed).toHaveLength(2)
-    expect(confirmed[0]).toMatchObject({ page: 1, left: 0.1, top: 0.1, right: 0.9 })
-    expect(confirmed[0].bottom).toBeCloseTo(0.9)
-    expect(confirmed[0].split).toBeCloseTo(0.58)
-    expect(confirmed[1]).toEqual(original[1])
-    expect(container.querySelector('[data-pdf-prose-draft]')).toBeNull()
-    await render(confirmed)
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Clear this page' })))
-    expect(onChange).toHaveBeenLastCalledWith([original[1]])
-  })
-
-  it('drops an unconfirmed body draft on identity change and cancels without publishing a region', async () => {
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
-    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
-      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
-      destroy: vi.fn().mockResolvedValue(undefined)
-    } as never)
-    const onChange = vi.fn()
-    const render = async (identity: string): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <PdfPreviewContent
-            path="/body.pdf"
-            name="body.pdf"
-            pdfProseRegionIdentityKey={identity}
-            onPdfProseRegionsChange={onChange}
-          />
-        )
-        await flush()
-      })
-    }
-    await render('branch-a/binding')
-    const acquisitions = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
-    await act(async () =>
-      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
-    )
-    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
-    overlay.setPointerCapture = vi.fn()
-    overlay.hasPointerCapture = vi.fn(() => true)
-    overlay.releasePointerCapture = vi.fn()
-    overlay.getBoundingClientRect = () => new DOMRect(0, 0, 400, 560)
-    await act(async () =>
-      dispatchPointer(overlay, 'pointerdown', { clientX: 40, clientY: 56, button: 0 })
-    )
-    await act(async () =>
-      dispatchPointer(overlay, 'pointerup', { clientX: 360, clientY: 504, button: 0 })
-    )
-    expect(screen.getByRole('button', { name: 'Save body area' })).toBeTruthy()
-    await render('branch-b/binding')
-    expect(screen.queryByRole('button', { name: 'Save body area' })).toBeNull()
-    await act(async () =>
-      fireEvent.keyDown(container.querySelector('[data-pdf-preview-root]')!, { key: 'Escape' })
-    )
-    expect(container.querySelector('[data-pdf-region-selection]')).toBeNull()
-    expect(onChange).not.toHaveBeenCalled()
-    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(acquisitions)
-  })
-
-  it('refuses body selection on rotated pages without enabling annotation or Agent actions', async () => {
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
-    const page = await (
-      getPage as ReturnType<typeof vi.fn<() => Promise<{ getViewport: ReturnType<typeof vi.fn> }>>>
-    )()
-    page.getViewport.mockReturnValue({ width: 800, height: 600, rotation: 90 })
     vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
       promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
       destroy: vi.fn().mockResolvedValue(undefined)
@@ -514,18 +398,18 @@ describe('PdfPreviewContent', () => {
     await act(async () => {
       root.render(
         <PdfPreviewContent
-          path="/rotated.pdf"
-          name="rotated.pdf"
+          path="/body.pdf"
+          name="body.pdf"
+          pdfProseRegions={[{ page: 1, left: 0.1, top: 0.1, right: 0.9, bottom: 0.9, split: 0.5 }]}
           onPdfProseRegionsChange={onChange}
         />
       )
       await flush()
     })
-    await act(async () =>
-      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
-    )
-    expect(screen.getAllByText('Body areas are unavailable on rotated pages.')).toHaveLength(2)
-    expect(container.querySelector('[data-pdf-region-selection]')).toBeNull()
+    expect(container.querySelector('[data-pdf-prose-controls]')).toBeNull()
+    expect(container.querySelector('[data-pdf-prose-region]')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Set two-column body' })).toBeNull()
+    expect(container.querySelector('[data-page-number="1"]')).not.toBeNull()
     expect(onChange).not.toHaveBeenCalled()
   })
 
@@ -623,7 +507,7 @@ describe('PdfPreviewContent', () => {
     }
   }
 
-  it.each(['select', 'new', 'cancel', 'navigate'] as const)(
+  it.each(['select', 'new', 'cancel', 'navigate', 'empty'] as const)(
     'handles the %s edition action with its own layout and lifetime',
     async (action) => {
       useSettingsStore.setState({
@@ -719,6 +603,10 @@ describe('PdfPreviewContent', () => {
         }
       })
       const first = saved('11111111-1111-4111-8111-111111111111', 'first-model', '上一份译文')
+      if (action === 'empty') {
+        first.translations = []
+        first.translatedSourceIndices = []
+      }
       const second = saved('22222222-2222-4222-8222-222222222222', 'second-model', '新译本内容')
       let resolveSelection!: (value: PdfTranslationCheckpoint) => void
       let finishVerification!: () => void
@@ -769,6 +657,22 @@ describe('PdfPreviewContent', () => {
         root.render(<PdfPreviewContent {...props} translationExecutor={executor} />)
         await flush()
       })
+      if (action === 'empty') {
+        const originalCheckpoint = JSON.stringify(first)
+        await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+        const resume = await screen.findByRole('button', { name: 'Continue translation' })
+        expect((resume as HTMLButtonElement).disabled).toBe(false)
+        expect(screen.getByRole('combobox', { name: 'Saved translations' })).toBeTruthy()
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'New translation' }))
+        )
+        expect(screen.getByRole('dialog', { name: 'New translation' })).toBeTruthy()
+        expect(executor.begin).not.toHaveBeenCalled()
+        expect(executor.translate).not.toHaveBeenCalled()
+        expect(window.api.pdfTranslation?.generatePdf).not.toHaveBeenCalled()
+        expect(JSON.stringify(first)).toBe(originalCheckpoint)
+        return
+      }
       await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
       const selector = await screen.findByRole<HTMLButtonElement>('combobox', {
         name: 'Saved translations'

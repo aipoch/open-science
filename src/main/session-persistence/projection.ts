@@ -20,7 +20,8 @@ import { deriveSessionAttention } from '../../shared/session-persistence'
 // Session projection writes contend with upload publication and other metadata writes on the
 // shared single-connection SQLite client. Keep transaction admission bounded, but allow the
 // Windows disk contention seen during large upload batches to drain before failing the save.
-// Execution deadlines and rollback behavior remain Prisma defaults.
+// Large projections can also exceed Prisma's default five-second execution budget under load.
+// Bound execution separately from admission; failed transactions still roll back atomically.
 const runProjectionTransaction = async <Result>(
   client: Pick<PrismaClient, '$transaction'>,
   operation: (transaction: Prisma.TransactionClient) => Promise<Result>
@@ -33,7 +34,7 @@ const runProjectionTransaction = async <Result>(
         admittedAt = performance.now()
         return operation(transaction)
       },
-      { maxWait: 30_000 }
+      { maxWait: 30_000, timeout: 10_000 }
     )
   } catch (error) {
     const failedAt = performance.now()
@@ -454,6 +455,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
 
   return {
     summary: {
+      ...(session.parentSessionId ? { parentSessionId: session.parentSessionId } : {}),
       id: session.id,
       projectId: session.projectId,
       title: session.title,
@@ -494,6 +496,7 @@ const sessionData = (
   number,
   id: projection.summary.id,
   projectId: projection.summary.projectId,
+  parentSessionId: projection.summary.parentSessionId ?? null,
   title: projection.summary.title,
   status: projection.summary.status,
   presentedStatus: projection.summary.presentedStatus,
@@ -553,6 +556,7 @@ const replaceChildren = async (
 }
 
 const toSummary = (row: {
+  parentSessionId: string | null
   number: number
   id: string
   projectId: string
@@ -573,6 +577,7 @@ const toSummary = (row: {
   number: row.number,
   id: row.id,
   projectId: row.projectId,
+  ...(row.parentSessionId ? { parentSessionId: row.parentSessionId } : {}),
   title: row.title,
   status: row.status as PersistedSessionStatus,
   presentedStatus: row.presentedStatus as PersistedSessionStatus,
@@ -642,6 +647,39 @@ export class SessionProjectionRepository {
     return client.session.findMany({ select: { id: true, number: true } })
   }
 
+  async discussionChildCandidates(
+    projectId: string,
+    parentSessionId: string
+  ): Promise<Array<{ id: string; indexedChild: boolean }>> {
+    const client = await this.client()
+    // An interrupted child save can leave its parent only in JSON until reconciliation.
+    const [children, pending] = await Promise.all([
+      client.session.findMany({
+        where: { projectId, parentSessionId, deletedAtMs: null },
+        select: { id: true }
+      }),
+      client.pendingSessionReconciliation.findMany({
+        where: { projectId, operation: 'save' },
+        select: { sessionId: true }
+      })
+    ])
+    const indexed = new Set(children.map(({ id }) => id))
+    return [
+      ...children.map(({ id }) => ({ id, indexedChild: true })),
+      ...pending
+        .filter(({ sessionId }) => !indexed.has(sessionId))
+        .map(({ sessionId }) => ({ id: sessionId, indexedChild: false }))
+    ]
+  }
+
+  async isDeleted(projectId: string, id: string): Promise<boolean> {
+    const client = await this.client()
+    return !!(await client.session.findFirst({
+      where: { projectId, id, deletedAtMs: { not: null } },
+      select: { id: true }
+    }))
+  }
+
   async prepareSave(session: PersistedChatSession): Promise<PreparedSessionSave> {
     const client = await this.client()
     const projection = buildSessionProjection(session)
@@ -653,6 +691,23 @@ export class SessionProjectionRepository {
       })
       if (!project) throw new Error('Cannot save a Session for a deleted Project.')
       const existing = await tx.session.findUnique({ where: { id: session.id } })
+      if (session.parentSessionId && existing?.parentSessionId !== session.parentSessionId) {
+        const parentId = session.parentSessionId
+        if (
+          await tx.session.findFirst({
+            where: { id: parentId, projectId: session.projectId, deletedAtMs: { not: null } },
+            select: { id: true }
+          })
+        )
+          throw new Error('The discussion source was permanently deleted.')
+        if (
+          await tx.pendingSessionReconciliation.findFirst({
+            where: { sessionId: parentId, projectId: session.projectId, operation: 'delete' },
+            select: { sessionId: true }
+          })
+        )
+          throw new Error('The discussion source is being deleted.')
+      }
       if (existing && existing.deletedAtMs !== null)
         throw new Error('Cannot save a deleted Session.')
       if (existing && existing.projectId !== session.projectId) {
@@ -814,7 +869,18 @@ export class SessionProjectionRepository {
     })
   }
 
-  async commitDelete(projectId: string, sessionId: string): Promise<void> {
+  async clearPendingDelete(projectId: string, sessionId: string): Promise<void> {
+    const client = await this.client()
+    await client.pendingSessionReconciliation.deleteMany({
+      where: { projectId, sessionId, operation: 'delete' }
+    })
+  }
+
+  async commitDelete(
+    projectId: string,
+    sessionId: string,
+    options: { retainDeleteIntent?: boolean } = {}
+  ): Promise<void> {
     const client = await this.client()
     await runProjectionTransaction(client, async (tx) => {
       const existing = await tx.session.findUnique({
@@ -830,10 +896,12 @@ export class SessionProjectionRepository {
       if (pending?.projectId === projectId && pending.operation === 'delete') {
         await tx.bookmark.deleteMany({ where: { projectId, sessionId } })
       }
-      if (!existing) {
+      // Unreadable unindexed saves cannot block the tombstone. Keep the explicit intent
+      // for replay so a repaired child can be detached without inferring deletion from absence.
+      if (!options.retainDeleteIntent || pending?.operation !== 'delete') {
         await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
-        return
       }
+      if (!existing) return
       await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
       await tx.sessionAuxiliaryTurnUsage.deleteMany({ where: { sessionId } })
       await tx.sessionRun.deleteMany({ where: { sessionId } })
@@ -842,7 +910,6 @@ export class SessionProjectionRepository {
         where: { id: sessionId, projectId, deletedAtMs: null },
         data: { deletedAtMs: BigInt(Date.now()) }
       })
-      await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
     })
   }
 

@@ -61,6 +61,9 @@ export function createDesktopUpdateIntegration(options: {
   client(): DesktopRuntimeClient
   currentVersion: string
   allowedProcessIds(): number[]
+  // Only while the backend is running: its owned children must pass admission so the cleanup gate
+  // can stop them. Handoff/recovery after stop deliberately receive no such exemption.
+  ownedRuntimeProcessIds?(client: DesktopRuntimeClient): Promise<number[]>
   verifyArtifact(status: UpdateStatus, signal?: AbortSignal): Promise<InstallationManifest>
   // True when the downloaded channel lacks supervised-replacement acceptance. Such installs keep
   // the pre-supervision electron-updater handoff behind the same runtime stop and occupancy checks.
@@ -95,6 +98,35 @@ export function createDesktopUpdateIntegration(options: {
   const checkCancellation = (): void => {
     if (cancelRequested)
       throw new UpdateLifecycleError('user-cancelled', 'Installation was cancelled before handoff.')
+  }
+  const preparingProcessIds = async (
+    client: DesktopRuntimeClient,
+    signal: AbortSignal
+  ): Promise<number[]> => {
+    try {
+      return [
+        ...options.allowedProcessIds(),
+        ...(options.ownedRuntimeProcessIds
+          ? await boundedRead(options.ownedRuntimeProcessIds(client), signal)
+          : [])
+      ]
+    } catch (cause) {
+      signal.throwIfAborted()
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'Application process ownership could not be verified.',
+        {
+          phase: 'preparing',
+          runtime: 'running',
+          installation: 'unchanged',
+          canCancel: true,
+          canRecover: false,
+          canRetryInstall: false,
+          detail: 'occupancy-unknown'
+        },
+        { cause }
+      )
+    }
   }
   let pendingRestart:
     | {
@@ -503,7 +535,7 @@ export function createDesktopUpdateIntegration(options: {
                 generation: info.generation,
                 configRoot: info.startupOptions.configRoot
               },
-              allowedProcessIds: options.allowedProcessIds()
+              allowedProcessIds: () => preparingProcessIds(client, cancellation.signal)
             },
             cancellation.signal
           )
@@ -526,7 +558,7 @@ export function createDesktopUpdateIntegration(options: {
               configRoot: info.startupOptions.configRoot
             },
             startupOptions: info.startupOptions,
-            allowedProcessIds: options.allowedProcessIds()
+            allowedProcessIds: () => preparingProcessIds(client, cancellation.signal)
           },
           cancellation.signal
         )
@@ -785,7 +817,7 @@ export function createDesktopUpdateIntegration(options: {
                 generation: info.generation,
                 configRoot: info.startupOptions.configRoot
               },
-              allowedProcessIds: options.allowedProcessIds()
+              allowedProcessIds: () => preparingProcessIds(client, checking)
             },
             checking
           )

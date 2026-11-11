@@ -61,6 +61,8 @@ it.skipIf(process.platform !== 'win32').each(['stale', 'missing', 'compiler-fail
         'dev must not start with an obsolete Notebook AppContainer host');
     `
       )
+      // Pi is unrelated to the Windows host ordering exercised by this fixture.
+      put('scripts/build-pi-acp.mjs', '')
       // Node renamed to cargo.exe is a portable external-compiler fixture. It executes the file
       // named "build", accepting the actual Cargo arguments supplied by the production build script.
       mkdirSync(join(fixture, 'bin'))

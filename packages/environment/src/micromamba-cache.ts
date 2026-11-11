@@ -238,6 +238,8 @@ export const isTrustedWindowsCacheAcl = (acl: WindowsCacheAcl): boolean => {
 export const windowsCacheAclReadScript = (path: string): string => {
   const literal = powershellLiteral(path)
   return (
+    // Avoid global module discovery for ConvertTo-Json on isolated Windows profiles.
+    String.raw`Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop; ` +
     `$acl=[System.IO.Directory]::GetAccessControl('${literal}'); ` +
     `$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ` +
     `$owner=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; ` +

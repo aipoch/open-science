@@ -3,9 +3,10 @@ import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfe
 import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
+import type { Duplex } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
@@ -468,6 +469,8 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
 
 export type RunningWebServer = {
   port: number
+  listenExternal?: (host: string, port: number) => Promise<number>
+  stopExternal?: () => Promise<void>
   // Invalidates retained replay access before closing the matching remotely authorized sockets.
   closeExternalConnections: (principalId?: string) => void
   close: () => Promise<void>
@@ -487,6 +490,12 @@ const json = (
   value: unknown,
   maxBytes = Number.POSITIVE_INFINITY
 ): void => {
+  // Cleanup can fail after a streamed response. Never replace bytes already sent to the client.
+  if (response.writableEnded || response.destroyed) return
+  if (response.headersSent) {
+    response.destroy()
+    return
+  }
   const content = stringifyRpcJson(value)
   const contentBytes = Buffer.byteLength(content)
   if (contentBytes > maxBytes) throw new WebRpcResponseBudgetExceededError()
@@ -1413,7 +1422,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   ): Promise<void> => {
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
-      const auth = authenticateRequest(request, url, options.token)
+      const auth =
+        request.socket.localAddress === options.host
+          ? authenticateRequest(request, url, options.token)
+          : { ok: false, queryToken: false, localBearer: false }
       let authorized = auth.ok
       let externalAuthorization: ExternalWebAccessAuthorization | undefined
       if (!authorized && options.externalAccess) {
@@ -1609,6 +1621,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           return
         }
         const callerContext = createWebCallerContext(clientId, {
+          authorities:
+            auth.localBearer && channel === 'sessions:import-package'
+              ? ['import-local-package-path']
+              : [],
           ...(externalAuthorization
             ? {
                 location: 'remote' as const,
@@ -1719,12 +1735,16 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const server = createServer((request, response) =>
     runWithDiagnosticCorrelation(() => handleRequest(request, response))
   )
+  let externalServer: Server | undefined
 
-  server.on('upgrade', (request, socket, head) => {
+  const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
     void (async () => {
       try {
         const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
-        const auth = authenticateRequest(request, url, options.token)
+        const auth =
+          request.socket.localAddress === options.host
+            ? authenticateRequest(request, url, options.token)
+            : { ok: false, queryToken: false }
         const externalAuthorization =
           !auth.ok && options.externalAccess
             ? await options.externalAccess.authorizeWebSocket(request, url)
@@ -1756,7 +1776,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         socket.destroy()
       }
     })()
-  })
+  }
+  server.on('upgrade', handleUpgrade)
 
   wsServer.on('connection', (socket, request) => {
     senders.set(
@@ -1966,6 +1987,35 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   return {
     port,
+    listenExternal: async (host, requestedPort) => {
+      if (externalServer) throw new Error('External listener is already running.')
+      const listener = createServer((request, response) =>
+        runWithDiagnosticCorrelation(() => handleRequest(request, response))
+      )
+      listener.on('upgrade', handleUpgrade)
+      try {
+        await new Promise<void>((resolve, reject) => {
+          listener.once('error', reject)
+          listener.listen(requestedPort, host, () => {
+            listener.off('error', reject)
+            resolve()
+          })
+        })
+      } catch (error) {
+        listener.close()
+        throw error
+      }
+      externalServer = listener
+      const address = listener.address()
+      return typeof address === 'object' && address ? address.port : requestedPort
+    },
+    stopExternal: async () => {
+      const listener = externalServer
+      externalServer = undefined
+      if (!listener) return
+      listener.closeAllConnections()
+      await new Promise<void>((resolve) => listener.close(() => resolve()))
+    },
     closeExternalConnections: (principalId) => {
       if (principalId === undefined) remoteReplayFloors.clear()
       else remoteReplayFloors.delete(principalId)
@@ -1976,6 +2026,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
     },
     close: async () => {
+      const listener = externalServer
+      externalServer = undefined
+      if (listener) {
+        listener.closeAllConnections()
+        await new Promise<void>((resolve) => listener.close(() => resolve()))
+      }
       taskIdempotencyRegistry.clear()
       remoteReplayFloors.clear()
       clearInterval(eventHeartbeatInterval)

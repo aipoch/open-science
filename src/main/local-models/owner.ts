@@ -1,4 +1,4 @@
-import type { LocalModelApi, LocalModelCapability } from '../../shared/local-models'
+import type { LocalModelApi, LocalModelCapability, OcrLanguage } from '../../shared/local-models'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, rename, rmdir, unlink } from 'node:fs/promises'
@@ -14,10 +14,11 @@ import { PDF_TABLE_MODEL_REVISIONS, type LocalModelRevision } from './catalog'
 import { downloadLocalModelAsset } from './download'
 
 type Dependencies = {
-  namespace?: 'pdf-tables' | 'pdf-translation'
+  namespace?: string
   dataRoot?: () => string
   acquireWriter?: () => () => void
   revisions?: readonly LocalModelRevision[]
+  requireRecommendedRevision?: boolean
   download?: typeof resilientDownload
 }
 class IncompatibleReceiptError extends Error {}
@@ -28,7 +29,11 @@ const bytes = (revision: LocalModelRevision): number =>
   revision.assets.reduce((total, asset) => total + asset.size, 0)
 
 // One owner per application process. No renderer-provided paths, URLs or revisions are accepted.
-export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalModelOwner => {
+export const createLocalModelOwner = (
+  dependencies: Dependencies = {}
+): LocalModelOwner & {
+  installForUse(signal: AbortSignal): Promise<LocalModelSnapshot>
+} => {
   const namespace = dependencies.namespace ?? 'pdf-tables'
   const revisions = dependencies.revisions ?? PDF_TABLE_MODEL_REVISIONS
   const recommended = revisions[0]
@@ -36,7 +41,11 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
   for (const revision of revisions) {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(revision.revision)) throw new Error('Invalid model revision.')
     for (const asset of revision.assets) {
-      if (!/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|wasm|txt|json)$/.test(asset.file))
+      if (
+        !/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|cjs|js|wasm|txt|json|bin|node|dylib|dll|so(?:\.[0-9.]+)?|(?:traineddata|bin)\.gz)$/.test(
+          asset.file
+        )
+      )
         throw new Error('Invalid model asset.')
     }
   }
@@ -227,6 +236,8 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
       }
       if (closed) throw new Error('Local model owner is closed.')
       if (!installed) throw new Error(LOCAL_MODEL_NOT_INSTALLED)
+      if (dependencies.requireRecommendedRevision && installed.revision !== recommended.revision)
+        throw new Error('Install or update Research narration in Settings before generating.')
       use.revision = installed.revision
       return {
         revision: installed.revision,
@@ -318,7 +329,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
               }
             }
             if (download) await download(asset.url, target, options)
-            else await downloadLocalModelAsset(asset, target, options)
+            else await downloadLocalModelAsset(asset, target, { ...options, namespace })
           }
           if (controller.signal.aborted) return
           if (!(await validAsset(target, asset))) throw new DownloadChecksumError()
@@ -429,38 +440,74 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
     // owner can release its use after verified termination; a timeout must not revoke it.
     await usesDrained
   }
-  return { getSnapshot, install, cancel, remove, acquireUse, close }
+  const installForUse = async (signal: AbortSignal): Promise<LocalModelSnapshot> => {
+    signal.throwIfAborted()
+    await install()
+    const download = operation
+    if (download?.kind === 'install') {
+      const abort = (): void => download.controller.abort()
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+      try {
+        await download.done
+      } finally {
+        signal.removeEventListener('abort', abort)
+      }
+    }
+    signal.throwIfAborted()
+    return currentSnapshot()
+  }
+  return { getSnapshot, install, installForUse, cancel, remove, acquireUse, close }
 }
 
 export type LocalModelUse = Readonly<{
   revision: string
   assets: readonly Readonly<{ file: string; path: string; size: number; sha256: string }>[]
+  languages?: readonly OcrLanguage[]
   release(): void
 }>
 
 export type LocalModelOwner = {
-  acquireUse(): Promise<LocalModelUse>
+  acquireUse(languages?: readonly OcrLanguage[]): Promise<LocalModelUse>
   close(): Promise<void>
   getSnapshot(): Promise<LocalModelSnapshot>
   install(): Promise<LocalModelSnapshot>
   cancel(): Promise<LocalModelSnapshot>
   remove(): Promise<LocalModelSnapshot>
+  setOcrLanguages?: (languages: readonly OcrLanguage[]) => Promise<LocalModelSnapshot>
 }
 
 // Both Electron and host commands use the same capability validation and owner routing.
 export const createLocalModelApi = (
   tables: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
-  translation: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
+  translation: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
+  ocr?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'> &
+    Pick<LocalModelOwner, 'setOcrLanguages'>,
+  narration?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
+  videoExport?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
 ): LocalModelApi => {
   const owner = (capability?: LocalModelCapability): typeof tables => {
     if (capability === undefined || capability === 'pdf-tables') return tables
     if (capability === 'pdf-translation') return translation
+    if (capability === 'ocr' && ocr) return ocr
+    if (capability === 'research-narration' && narration) return narration
+    if (capability === 'video-export' && videoExport) return videoExport
     throw new Error('Unsupported local model capability.')
   }
   return {
     getSnapshot: (capability) => owner(capability).getSnapshot(),
-    install: (capability) => owner(capability).install(),
+    install: (capability) => {
+      const target = owner(capability)
+      // Retain historical model management, but do not download weights with no app runtime.
+      if (capability === 'pdf-translation')
+        return Promise.reject(new Error('Local translation is unavailable.'))
+      return target.install()
+    },
     cancel: (capability) => owner(capability).cancel(),
-    remove: (capability) => owner(capability).remove()
+    remove: (capability) => owner(capability).remove(),
+    setOcrLanguages: (languages) => {
+      if (!ocr?.setOcrLanguages) throw new Error('OCR language selection is unavailable.')
+      return ocr.setOcrLanguages(languages)
+    }
   }
 }
