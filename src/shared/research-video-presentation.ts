@@ -14,6 +14,7 @@ export type ResearchVideoPresentationRequest = z.infer<
   typeof researchVideoPresentationRequestSchema
 >
 export const researchVideoStartRequestSchema = researchVideoPresentationRequestSchema.extend({
+  resume: z.boolean().optional(),
   installNarration: z.boolean().optional()
 })
 export type ResearchVideoStartRequest = z.infer<typeof researchVideoStartRequestSchema>
@@ -29,6 +30,8 @@ export type ResearchVideoPresentation = {
   duration: number
 }
 export type ResearchVideoPresentationStatus = {
+  canResume?: boolean
+  filmStep?: number
   narrationDownload?: LocalModelSnapshot
   generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
   progress?: ResearchVideoProgress

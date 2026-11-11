@@ -117,6 +117,16 @@ export function ResearchVideoButton({
       'Check the selected model and credentials in Settings before generating a research film.'
     )
   }
+  const filmErrors: Record<string, string> = {
+    'The model returned no research film content. Try again or select another model.': t(
+      'The model returned no film content.'
+    ),
+    'Research film generation stopped before completing (max_turn_requests). Try again or select another model.':
+      t('The model reached a generation limit before completing this step.'),
+    'Narration installation did not finish. Retry to continue.': t(
+      'Narration installation did not finish. Retry to continue.'
+    )
+  }
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
     : status.preflightError && (preflightMessages[status.preflightError] ?? status.preflightError)
@@ -183,7 +193,7 @@ export function ResearchVideoButton({
       clearTimeout(timer)
     }
   }, [projectId, sessionId, branchId, deletionScope, desktop])
-  const generate = async (regenerate = false): Promise<void> => {
+  const generate = async (regenerate = false, resume = false): Promise<void> => {
     if (pending || busy || installing) {
       setOpen(true)
       return
@@ -195,7 +205,11 @@ export function ResearchVideoButton({
       const current = await window.api.researchVideo.status({ ...request, checkReadiness: true })
       if (!live.current) return
       setStatus(current)
-      if (current.narrationDownload || (current.result && !regenerate)) return
+      if (
+        current.narrationDownload ||
+        (current.result && !current.canResume && !regenerate && !resume)
+      )
+        return
       if (current.generationBlock || current.preflightError) return
       if (
         current.progress &&
@@ -205,7 +219,11 @@ export function ResearchVideoButton({
       const snapshot = await window.api.localModels.getSnapshot('research-narration')
       if (!live.current) return
       setModel(snapshot)
-      if (narrationReady(snapshot)) setStatus(await window.api.researchVideo.start(request))
+      if (current.canResume && !regenerate && !resume) return
+      if (narrationReady(snapshot))
+        setStatus(
+          await window.api.researchVideo.start(resume ? { ...request, resume: true } : request)
+        )
     } catch (caught) {
       if (live.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -217,7 +235,11 @@ export function ResearchVideoButton({
     setPending(true)
     setError(undefined)
     try {
-      const next = await window.api.researchVideo.start({ ...request, installNarration: true })
+      const next = await window.api.researchVideo.start({
+        ...request,
+        installNarration: true,
+        ...(status.canResume ? { resume: true } : {})
+      })
       if (live.current) {
         statusVersion.current++
         setStatus(next)
@@ -304,7 +326,11 @@ export function ResearchVideoButton({
       {open && (
         <WorkflowDialogFrame
           title={t('Research film')}
-          description={status.result ? undefined : t('Create a short film from this conversation.')}
+          description={
+            status.result || status.filmStep
+              ? undefined
+              : t('Create a short film from this conversation.')
+          }
           descriptionClassName="truncate"
           busy={false}
           onClose={() => {
@@ -322,7 +348,11 @@ export function ResearchVideoButton({
           }}
           className="w-[min(480px,calc(100vw-2rem))]"
           footer={
-            (busy || installing || status.result || model?.availability === 'ready') && (
+            (busy ||
+              installing ||
+              status.canResume ||
+              status.result ||
+              model?.availability === 'ready') && (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
@@ -397,10 +427,10 @@ export function ResearchVideoButton({
                   </div>
                 ) : (
                   <>
-                    {(status.result || model?.availability === 'ready') && (
+                    {(status.canResume || status.result || model?.availability === 'ready') && (
                       <Button
                         ref={regenerateRef}
-                        variant={status.result ? 'ghost' : 'default'}
+                        variant={status.canResume || status.result ? 'ghost' : 'default'}
                         size="sm"
                         disabled={pending || Boolean(blocked)}
                         title={blocked}
@@ -413,6 +443,15 @@ export function ResearchVideoButton({
                           <RotateCcw aria-hidden="true" />
                         )}
                         {t('Generate again')}
+                      </Button>
+                    )}
+                    {status.canResume && (
+                      <Button
+                        size="sm"
+                        disabled={pending || Boolean(blocked)}
+                        onClick={() => void generate(false, true)}
+                      >
+                        {t('Continue generation')}
                       </Button>
                     )}
                     {status.result && (
@@ -472,10 +511,7 @@ export function ResearchVideoButton({
                   inline
                   tone="amber"
                   description={
-                    error ??
-                    (status.error === 'Narration installation did not finish. Retry to continue.'
-                      ? t('Narration installation did not finish. Retry to continue.')
-                      : status.error)
+                    error ?? (status.error && (filmErrors[status.error] ?? status.error))
                   }
                 />
               )}
@@ -517,7 +553,10 @@ export function ResearchVideoButton({
               ) : (
                 status.progress &&
                 (!status.result || status.progress.phase !== 'completed') && (
-                  <ResearchVideoProgressLine progress={status.progress} />
+                  <ResearchVideoProgressLine
+                    progress={status.progress}
+                    filmStep={status.filmStep}
+                  />
                 )
               )}
               {model && !narrationReady(model) && !installing && !busy && !blocked && (

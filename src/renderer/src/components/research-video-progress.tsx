@@ -5,9 +5,11 @@ import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
 export function ResearchVideoProgressLine({
   progress,
+  filmStep,
   compact = false
 }: {
   progress: ResearchVideoProgress
+  filmStep?: number
   compact?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
@@ -73,7 +75,36 @@ export function ResearchVideoProgressLine({
   return (
     <div className="min-w-0 space-y-2 text-xs text-muted-foreground">
       <div role="status" className="space-y-1">
-        <p className="text-sm font-medium text-foreground">{labels[progress.phase]}</p>
+        {filmStep ? (
+          <>
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">
+                {
+                  [
+                    t('Preparing research materials…'),
+                    t('Writing research film…'),
+                    t('Generating animations…'),
+                    t('Generating narration and aligning captions…'),
+                    t('Building player and source package…')
+                  ][filmStep - 1]
+                }
+              </p>
+              <span className="shrink-0 tabular-nums">
+                {t('Step {{current}} of {{total}}', { current: filmStep, total: 5 })}
+              </span>
+            </div>
+            <div className="flex gap-1 py-1" aria-hidden="true">
+              {[1, 2, 3, 4, 5].map((step) => (
+                <span
+                  key={step}
+                  className={`h-1 flex-1 rounded-full ${step < filmStep ? 'bg-primary' : step === filmStep ? 'bg-primary/50' : 'bg-muted'}`}
+                />
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm font-medium text-foreground">{labels[progress.phase]}</p>
+        )}
         {counted && (
           <p className="tabular-nums">
             {progress.totalLines === undefined
@@ -90,7 +121,7 @@ export function ResearchVideoProgressLine({
           </p>
         )}
       </div>
-      {!terminal && (
+      {!terminal && !filmStep && (
         <ProgressBar
           value={
             counted && progress.total! > 0

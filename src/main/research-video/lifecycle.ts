@@ -91,7 +91,7 @@ export function createResearchFilmLifecycle(options: {
         .object({ id: z.string().uuid() })
         .safeParse(await readReceipt(join(base, 'latest.json'), 4096))
       for (const id of await directories(base)) {
-        if (!uuid.safeParse(id).success) continue
+        if (id !== 'pending' && !uuid.safeParse(id).success) continue
         const directory = join(base, id)
         const parsed = sourceOwner.safeParse(
           await readReceipt(join(directory, 'session.json'), RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
@@ -105,6 +105,7 @@ export function createResearchFilmLifecycle(options: {
         )
         if (!keys.includes(key) || !remove(owner.sessionId)) continue
         deleted.add(owner.sessionId)
+        if (id === 'pending') await rm(join(base, 'pending.json'), { force: true })
         if (latest.success && latest.data.id === id)
           await rm(join(base, 'latest.json'), { force: true })
         await rm(directory, { recursive: true, force: true })
