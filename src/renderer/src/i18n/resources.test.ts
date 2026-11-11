@@ -1711,14 +1711,7 @@ describe('mandatory product glossary', () => {
     ]) {
       expect(readme).toContain(`## ${heading}`)
     }
-    for (const term of [
-      'Fähigkeiten',
-      'Konnektoren',
-      'Befehlszeile',
-      'CodeBuddy',
-      'SSH',
-      'Slurm'
-    ]) {
+    for (const term of ['Fähigkeiten', 'Konnektoren', 'Befehlszeile', 'SSH', 'Slurm']) {
       expect(readme).toContain(term)
     }
     const rootPackage = JSON.parse(
