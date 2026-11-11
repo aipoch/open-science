@@ -512,6 +512,7 @@ const sendIntentKeys = [
   'sessionId',
   'messageId',
   'onMessageAppended',
+  'onPromptAccepted',
   'branchSourceSessionId',
   'branchSourceMessageId',
   'text',

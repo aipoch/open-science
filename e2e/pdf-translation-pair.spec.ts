@@ -407,7 +407,7 @@ for (const variant of [
     if (variant === 'direct-api') {
       const guidance = 'Direct API only supports API models. Subscription models must use Agent.'
       await expect(panel.getByText(guidance, { exact: true })).toHaveCount(0)
-      await panel.getByRole('button', { name: 'Model settings', exact: true }).hover()
+      await panel.getByRole('button', { name: 'More information', exact: true }).hover()
       await expect(page.getByRole('tooltip')).toHaveText(guidance)
       await page.mouse.move(0, 0, { steps: 5 })
       await expect(page.getByRole('tooltip')).toBeHidden()

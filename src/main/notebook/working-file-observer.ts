@@ -133,6 +133,7 @@ type EvidenceWorkerBlobPoolBinding = {
 }
 type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'begin'
+  poolAddressed?: boolean
   expectedRootIdentity: FileIdentity
   receiptName: string
   stagingName: string
@@ -265,15 +266,34 @@ type EvidenceWorkerCleanupRequest = EvidenceWorkerBlobPoolBinding & {
 }
 type EvidenceWorkerDeleteProjectRequest = {
   operation: 'delete-project'
+  importOperationId?: string
   expectedRootIdentity: FileIdentity
   projectName: string
 }
 type EvidenceWorkerEnsureProjectRequest = {
   operation: 'ensure-project'
+  importOperationId?: string
   expectedRootIdentity: FileIdentity
   projectName: string
 }
+type HistoricalEvidenceOwner = Pick<
+  EvidenceWorkerCompleteRequest,
+  'activityId' | 'activityKind' | 'parentActivityId' | 'evidenceId' | 'checksum'
+>
 type EvidenceWorkerRequest =
+  | (EvidenceWorkerBlobPoolBinding & {
+      operation: 'backfill-history'
+      expectedRootIdentity: FileIdentity
+      storageKeyPrefix: string
+      owners: HistoricalEvidenceOwner[]
+      maxEvidenceBytes: number
+      diskReserveBytes: number
+    })
+  | (EvidenceWorkerBlobPoolBinding & {
+      operation: 'publish-imported-pool' | 'rollback-imported-pool'
+      expectedRootIdentity: FileIdentity
+      maxEvidenceBytes: number
+    })
   | EvidenceWorkerBeginRequest
   | EvidenceWorkerHistoryRequest
   | EvidenceWorkerEnsureCaptureRequest
@@ -301,6 +321,7 @@ type EvidenceWorkerResult =
   | { ok: true; recoveredFileEvidence: ExecutionFileEvidenceSummary | null }
   | {
       ok: true
+      shadowError?: string
       generations: Array<{ path: string; generationId: string; checksum: string }>
       fileEvidence: ExecutionFileEvidenceSummary
     }
@@ -312,6 +333,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
+  | { ok: true; poolPublished: boolean }
   | { ok: true; maintainedFiles: number }
 
 type ActiveEvidenceCapture = {
@@ -698,15 +720,80 @@ const runSerializedEvidenceWorker = async (
   evidenceMutationTail = tail
   try {
     await waitForEvidenceMutationTurn(previous, signal, timeoutMs)
-    return await worker(evidenceRoot, request, signal)
+    const result = await worker(evidenceRoot, request, signal)
+    if ('shadowError' in result && result.shadowError)
+      log.warn('Notebook shadow evidence write failed', { reason: result.shadowError })
+    return result
   } catch (error) {
     ensuredEvidenceProjects.clear()
     throw error
   } finally {
     if (request.operation === 'delete-project') ensuredEvidenceProjects.clear()
     release()
-    if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
+    void tail.then(() => {
+      if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
+    })
   }
+}
+
+// Bound batches leave room for live captures between historical publications.
+export async function backfillWorkingFileEvidence(
+  storageRoot: string,
+  lane: string,
+  owners: HistoricalEvidenceOwner[],
+  signal?: AbortSignal
+): Promise<void> {
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, lane), false)
+  const project = projectEvidenceScope(storageRoot, join(storageRoot, lane), lane)
+  if (!project) throw new Error('Invalid historical evidence lane.')
+  const pool = await secureEvidenceRoot(storageRoot, join(project.projectRoot, 'blobs'))
+  for (let offset = 0; offset < owners.length; offset += 32) {
+    await runSerializedEvidenceWorker(
+      runEvidenceWorker,
+      root.path,
+      {
+        operation: 'backfill-history',
+        expectedRootIdentity: root.identity,
+        storageKeyPrefix: lane,
+        owners: owners.slice(offset, offset + 32),
+        blobRoot: pool.path,
+        expectedBlobRootIdentity: pool.identity,
+        blobStorageKeyPrefix: project.blobStorageKeyPrefix,
+        maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+        diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+      },
+      signal
+    )
+  }
+}
+
+// The import journal owns fresh lane directories. Only the project worker may add
+// verified content to an existing pool; rollback must never claim that directory.
+export async function updateImportedEvidencePool(
+  operation: 'publish-imported-pool' | 'rollback-imported-pool',
+  storageRoot: string,
+  projectId: string,
+  stagedRoot: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const publish = operation === 'publish-imported-pool'
+  if (publish) await ensureWorkingFileEvidenceProject(storageRoot, projectId)
+  const source = await secureEvidenceRoot(storageRoot, stagedRoot, false)
+  const prefix = EXECUTION_FILE_EVIDENCE_DIR + '/' + projectId + '/blobs'
+  const pool = await secureEvidenceRoot(storageRoot, join(storageRoot, prefix), publish)
+  await runSerializedEvidenceWorker(
+    runEvidenceWorker,
+    source.path,
+    {
+      operation,
+      expectedRootIdentity: source.identity,
+      blobRoot: pool.path,
+      expectedBlobRootIdentity: pool.identity,
+      blobStorageKeyPrefix: prefix,
+      maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes
+    },
+    signal
+  )
 }
 
 const evidenceReaders = new Map<string, number>()
@@ -787,7 +874,8 @@ export const maintainWorkingFileEvidence = (
 const ensureWorkingFileEvidenceProject = async (
   storageRoot: string,
   projectId: string,
-  worker: typeof runEvidenceWorker = runEvidenceWorker
+  worker: typeof runEvidenceWorker = runEvidenceWorker,
+  importOperationId?: string
 ): Promise<void> => {
   if (!SAFE_ACTIVITY_ID.test(projectId))
     throw new Error('Unsafe Execution file-evidence Project ID.')
@@ -801,6 +889,7 @@ const ensureWorkingFileEvidenceProject = async (
   if (existing) return existing
   const ensuring = runSerializedEvidenceWorker(worker, evidenceRoot.path, {
     operation: 'ensure-project',
+    importOperationId,
     expectedRootIdentity: evidenceRoot.identity,
     projectName: projectId
   }).then((result) => {
@@ -844,7 +933,8 @@ const projectEvidenceScope = (
 const deleteFileEvidenceProjectAtRoot = async (
   storageRoot: string,
   evidenceDirectory: string,
-  projectId: string
+  projectId: string,
+  importOperationId?: string
 ): Promise<void> => {
   const root = await secureEvidenceRoot(storageRoot, join(storageRoot, evidenceDirectory))
   const result = await runSerializedEvidenceWorker(
@@ -852,6 +942,7 @@ const deleteFileEvidenceProjectAtRoot = async (
     root.path,
     {
       operation: 'delete-project',
+      importOperationId,
       expectedRootIdentity: root.identity,
       projectName: projectId
     },
@@ -862,6 +953,13 @@ const deleteFileEvidenceProjectAtRoot = async (
     throw new Error('File-evidence Project deletion returned an invalid result.')
   }
 }
+
+export const releaseImportedEvidenceProject = (
+  storageRoot: string,
+  projectId: string,
+  operation: string
+): Promise<void> =>
+  deleteFileEvidenceProjectAtRoot(storageRoot, EXECUTION_FILE_EVIDENCE_DIR, projectId, operation)
 
 const deleteWorkingFileEvidenceProject = async (
   storageRoot: string,
@@ -1724,6 +1822,7 @@ const beginEvidenceCapture = async (
       capture.evidenceRoot.path,
       {
         operation: 'begin',
+        poolAddressed: Boolean(projectScope),
         expectedRootIdentity: capture.evidenceRoot.identity,
         receiptName: capture.receiptName,
         stagingName: capture.stagingName,
@@ -2386,6 +2485,7 @@ const beginComputeJobFileEvidence = async (request: {
   try {
     const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
       operation: 'begin',
+      poolAddressed: true,
       expectedRootIdentity: evidenceRoot.identity,
       receiptName: receiptNameForActivity(request.jobId),
       stagingName,
@@ -2422,7 +2522,7 @@ const beginComputeJobFileEvidence = async (request: {
       if (!generation) throw new Error(`Compute input could not be frozen: ${input.label}`)
       return {
         ...input,
-        frozenPath: join(evidenceRoot.path, stagingName, 'blobs', `sha256-${generation.checksum}`),
+        frozenPath: join(blobRoot.path, `sha256-${generation.checksum}`),
         generationId: generation.generationId,
         checksum: generation.checksum,
         sizeBytes: generation.sizeBytes
@@ -2506,6 +2606,7 @@ const publishComputeJobFileEvidence = async (request: {
   const freeBytes = await availableBytes(evidenceRoot.path)
   const capture = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
     operation: 'ensure-capture',
+    poolAddressed: true,
     expectedRootIdentity: evidenceRoot.identity,
     receiptName: receiptNameForActivity(request.jobId),
     stagingName: `staging-${request.jobId}`,

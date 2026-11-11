@@ -202,3 +202,25 @@ describe('sanitizeSessionDetailsModel', () => {
     expect(sanitizeSessionDetailsModel({ mode: 'disabled' })).toEqual({ mode: 'disabled' })
   })
 })
+
+it.each(['modalRuntime', 'huggingFaceRuntime'] as const)(
+  'preserves explicit %s independently of account credentials and ignores malformed shapes',
+  (field) => {
+    expect(sanitizeSettings({})[field]).toBeUndefined()
+    for (const modalRuntime of [
+      { kind: 'managed' },
+      { kind: 'custom', pythonPath: '/missing/venv/bin/python' }
+    ]) {
+      const settings = sanitizeSettings({ [field]: modalRuntime })
+      expect(settings[field]).toEqual(modalRuntime)
+      expect(sanitizeSettings(JSON.parse(JSON.stringify(settings)))[field]).toEqual(modalRuntime)
+    }
+    for (const modalRuntime of [
+      null,
+      { kind: 'custom' },
+      { kind: 'unknown' },
+      { kind: 'managed', token: 'secret' }
+    ])
+      expect(sanitizeSettings({ [field]: modalRuntime })[field]).toBeUndefined()
+  }
+)

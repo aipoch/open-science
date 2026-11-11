@@ -1,5 +1,13 @@
 import type { TFunction } from 'i18next'
-import { Captions, ChevronRight, Eye, SearchCheck, Workflow, type LucideIcon } from 'lucide-react'
+import {
+  Captions,
+  ChevronRight,
+  Eye,
+  SearchCheck,
+  WandSparkles,
+  Workflow,
+  type LucideIcon
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -21,6 +29,7 @@ import { resolveProviderReasoningEffortProfile } from '../../../../shared/provid
 import type { ProviderView } from '../../../../shared/settings'
 import { SettingsSection } from './SettingsLayout'
 import {
+  PromptOptimizationModelSelect,
   ReviewerModelSelect,
   SessionDetailsModelSelect,
   SubagentModelSelect,
@@ -29,7 +38,7 @@ import {
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'
 
-type ScenarioId = 'session-details' | 'subagent' | 'reviewer' | 'vision'
+type ScenarioId = 'session-details' | 'subagent' | 'reviewer' | 'vision' | 'prompt-optimization'
 
 // One-line summary of a scenario's routing policy, derived from the same catalog the in-row
 // selectors use so the row and the expanded selector never disagree on availability.
@@ -283,6 +292,7 @@ const ScenarioModelList = (): React.JSX.Element => {
   const sessionDetailsModel = useSettingsStore((state) => state.sessionDetailsModel)
   const reviewerModel = useSettingsStore((state) => state.reviewerModel)
   const visionModel = useSettingsStore((state) => state.visionModel)
+  const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
 
   // Accordion: at most one row open, and clicking the open row closes it. Never persisted.
   const [expanded, setExpanded] = useState<ScenarioId | null>(null)
@@ -357,6 +367,17 @@ const ScenarioModelList = (): React.JSX.Element => {
               }
             : resolveFixedSummary(sessionDetailsModel, catalog, providers, t),
       selector: <SessionDetailsModelSelect />
+    },
+    {
+      id: 'prompt-optimization',
+      icon: WandSparkles,
+      name: t('Prompt optimization'),
+      description: t('Select the model and provider used to optimize questions.'),
+      summary:
+        promptOptimizationModel.mode === 'inherit'
+          ? { kind: 'inherit', label: t('Same as main model') }
+          : resolveFixedSummary(promptOptimizationModel, catalog, providers, t),
+      selector: <PromptOptimizationModelSelect />
     }
   ]
 

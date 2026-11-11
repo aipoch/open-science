@@ -7,7 +7,7 @@ import {
 import { researchVideoFilename } from '../../../shared/research-video-presentation'
 import { dialogBodyClassName, dialogFooterClassName } from './ui/dialog-chrome'
 import { WorkflowDialogFrame } from './ui/workflow-dialog-frame'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   Video,
   Loader2,
@@ -18,7 +18,7 @@ import {
   MoreHorizontal,
   Trash2
 } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
 import { DownloadProgressLine } from './DownloadProgressLine'
@@ -30,9 +30,14 @@ import type {
   ResearchVideoPresentationStatus
 } from '../../../shared/research-video-presentation'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 export type ResearchVideoTriggerState = { label: string; disabledReason?: string }
+
+const missingModel = 'Select a model in Settings before generating a research film.'
+const missingRuntime =
+  'Set up the selected agent runtime in Settings before generating a research film.'
 
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
@@ -68,7 +73,7 @@ export function ResearchVideoButton({
   const [statusLoadedScope, setStatusLoadedScope] = useState<string>()
   const [model, setModel] = useState<LocalModelSnapshot>()
   const [pending, setPending] = useState(false)
-  const [installing, setInstalling] = useState(false)
+  const installing = Boolean(status.narrationDownload)
   const [error, setError] = useState<string>()
   const triggerRef = useRef<HTMLSpanElement>(null)
   const regenerateRef = useRef<HTMLButtonElement>(null)
@@ -77,9 +82,9 @@ export function ResearchVideoButton({
     if (confirmRegeneration) cancelRegenerationRef.current?.focus()
     else regenerateRef.current?.focus()
   }, [confirmRegeneration])
+  const settingsAfterClose = useRef(false)
   const statusVersion = useRef(0)
   const live = useRef(true)
-  const startAfterInstall = useRef(false)
   const statusLoaded = statusLoadedScope === deletionScope
   const busy =
     status.progress && !['completed', 'failed', 'cancelled'].includes(status.progress.phase)
@@ -91,9 +96,7 @@ export function ResearchVideoButton({
     busy: t('Wait for the current response to finish before generating.')
   }
   const preflightMessages: Record<string, string> = {
-    'Select a model in Settings before generating a research film.': t(
-      'Select a model in Settings before generating a research film.'
-    ),
+    [missingModel]: t('Select a model in Settings before generating a research film.'),
     'The selected provider credentials are unavailable. Check them in Settings.': t(
       'The selected provider credentials are unavailable. Check them in Settings.'
     ),
@@ -107,7 +110,7 @@ export function ResearchVideoButton({
       t(
         'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
       ),
-    'Set up the selected agent runtime in Settings before generating a research film.': t(
+    [missingRuntime]: t(
       'Set up the selected agent runtime in Settings before generating a research film.'
     ),
     'Check the selected model and credentials in Settings before generating a research film.': t(
@@ -117,6 +120,11 @@ export function ResearchVideoButton({
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
     : status.preflightError && (preflightMessages[status.preflightError] ?? status.preflightError)
+  const modelSettingsAvailable =
+    !status.generationBlock &&
+    status.preflightError &&
+    status.preflightError !== missingRuntime &&
+    Object.hasOwn(preflightMessages, status.preflightError)
   const triggerState: ResearchVideoTriggerState = {
     label: !statusLoaded
       ? t('Loading…')
@@ -131,51 +139,50 @@ export function ResearchVideoButton({
         ? blocked
         : undefined
   }
+  const renderSettingsButton = (label?: string): React.JSX.Element => (
+    <button
+      type="button"
+      className="cursor-pointer rounded-sm text-left text-primary underline underline-offset-2 focus-visible:outline-ring"
+      onClick={() => {
+        settingsAfterClose.current = true
+        setOpen(false)
+      }}
+    >
+      {label}
+    </button>
+  )
   const desktop = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true'
+  const wasInstalling = useEffectEvent(() => installing)
   useEffect(() => {
     live.current = true
     let timer: ReturnType<typeof setTimeout>
+    let subscribed = true
     const poll = async (): Promise<void> => {
       if (!desktop) return
       const version = statusVersion.current
-      const finishingInstallation = startAfterInstall.current
       try {
         const next = await window.api.researchVideo.status({ projectId, sessionId, branchId })
-        if (live.current && version === statusVersion.current) {
+        const refreshedModel =
+          subscribed && wasInstalling() && !next.narrationDownload
+            ? await window.api.localModels.getSnapshot('research-narration')
+            : undefined
+        if (subscribed && version === statusVersion.current) {
+          if (refreshedModel) setModel(refreshedModel)
           setStatus(next)
           setStatusLoadedScope(deletionScope)
         }
-        if (startAfterInstall.current) {
-          const snapshot = await window.api.localModels.getSnapshot('research-narration')
-          if (!live.current) return
-          setModel(snapshot)
-          if (narrationReady(snapshot)) {
-            startAfterInstall.current = false
-            setInstalling(false)
-            if (!next.generationBlock)
-              setStatus(await window.api.researchVideo.start({ projectId, sessionId, branchId }))
-          } else if (snapshot.availability !== 'installing') {
-            startAfterInstall.current = false
-            setInstalling(false)
-            setError(t('Narration installation did not finish. Retry to continue.'))
-          }
-        }
-      } catch (caught) {
-        if (live.current && finishingInstallation) {
-          startAfterInstall.current = false
-          setInstalling(false)
-          setError(caught instanceof Error ? caught.message : String(caught))
-        }
+      } catch {
+        // Retry transient status failures on the next poll.
       }
-      if (live.current) timer = setTimeout(() => void poll(), 750)
+      if (subscribed) timer = setTimeout(() => void poll(), 750)
     }
     void poll()
     return () => {
       live.current = false
-      startAfterInstall.current = false
+      subscribed = false
       clearTimeout(timer)
     }
-  }, [projectId, sessionId, branchId, deletionScope, desktop, t])
+  }, [projectId, sessionId, branchId, deletionScope, desktop])
   const generate = async (regenerate = false): Promise<void> => {
     if (pending || busy || installing) {
       setOpen(true)
@@ -188,7 +195,7 @@ export function ResearchVideoButton({
       const current = await window.api.researchVideo.status({ ...request, checkReadiness: true })
       if (!live.current) return
       setStatus(current)
-      if (current.result && !regenerate) return
+      if (current.narrationDownload || (current.result && !regenerate)) return
       if (current.generationBlock || current.preflightError) return
       if (
         current.progress &&
@@ -210,15 +217,11 @@ export function ResearchVideoButton({
     setPending(true)
     setError(undefined)
     try {
-      const current = await window.api.researchVideo.status({ ...request, checkReadiness: true })
-      if (!live.current) return
-      setStatus(current)
-      if (current.generationBlock || current.preflightError) return
-      const snapshot = await window.api.localModels.install('research-narration')
-      if (!live.current) return
-      setModel(snapshot)
-      startAfterInstall.current = true
-      setInstalling(true)
+      const next = await window.api.researchVideo.start({ ...request, installNarration: true })
+      if (live.current) {
+        statusVersion.current++
+        setStatus(next)
+      }
     } catch (caught) {
       if (live.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -226,13 +229,10 @@ export function ResearchVideoButton({
     }
   }
   const cancel = async (): Promise<void> => {
-    startAfterInstall.current = false
     setPending(true)
     try {
-      if (installing) await window.api.localModels.cancel('research-narration')
-      else await window.api.researchVideo.cancel(request)
+      await window.api.researchVideo.cancel(request)
       if (live.current) {
-        setInstalling(false)
         setStatus(await window.api.researchVideo.status(request))
       }
     } catch (caught) {
@@ -315,6 +315,10 @@ export function ResearchVideoButton({
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             triggerRef.current?.querySelector('button')?.focus()
+            if (settingsAfterClose.current) {
+              useSettingsStore.getState().openSettingsToPanel('model')
+              settingsAfterClose.current = false
+            }
           }}
           className="w-[min(480px,calc(100vw-2rem))]"
           footer={
@@ -445,9 +449,35 @@ export function ResearchVideoButton({
         >
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`} data-workflow-body>
             <div className="space-y-4" data-workflow-content>
-              {blocked && !busy && <ErrorNotice inline level="warning" description={blocked} />}
+              {blocked && !busy && (
+                <ErrorNotice
+                  inline
+                  level="warning"
+                  content={
+                    modelSettingsAvailable && status.preflightError === missingModel ? (
+                      <Trans
+                        i18nKey="<chooseModel>Select a model</chooseModel> in Settings before generating a research film."
+                        components={{ chooseModel: renderSettingsButton() }}
+                      />
+                    ) : modelSettingsAvailable ? (
+                      renderSettingsButton(blocked)
+                    ) : (
+                      blocked
+                    )
+                  }
+                />
+              )}
               {!blocked && (error || status.error) && (
-                <ErrorNotice inline tone="amber" description={error ?? status.error} />
+                <ErrorNotice
+                  inline
+                  tone="amber"
+                  description={
+                    error ??
+                    (status.error === 'Narration installation did not finish. Retry to continue.'
+                      ? t('Narration installation did not finish. Retry to continue.')
+                      : status.error)
+                  }
+                />
               )}
               {status.result && (
                 <section className="space-y-4" aria-label={t('Research film ready')}>
@@ -480,8 +510,10 @@ export function ResearchVideoButton({
                   {t('Preparing research materials…')}
                 </p>
               )}
-              {installing && model ? (
-                <DownloadProgressLine progress={localModelDownloadProgress(model)} />
+              {status.narrationDownload ? (
+                <DownloadProgressLine
+                  progress={localModelDownloadProgress(status.narrationDownload)}
+                />
               ) : (
                 status.progress &&
                 (!status.result || status.progress.phase !== 'completed') && (

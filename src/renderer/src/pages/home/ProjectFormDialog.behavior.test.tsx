@@ -32,6 +32,39 @@ beforeEach(() => useProjectStore.setState(createInitialProjectState()))
 afterEach(cleanup)
 
 describe('project form public submission behavior', () => {
+  it('groups both agent fields in a collapsed section and saves their values while collapsed', async () => {
+    const create = vi.fn(async () => project)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { projects: { create } }
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('Create fixture'))
+    const toggle = screen.getByText('Advanced agent options')
+    const section = toggle.closest('details')!
+    expect(section.open).toBe(false)
+    fireEvent.click(toggle)
+    expect(section.open).toBe(true)
+    const context = screen.getByLabelText('Agent Context') as HTMLTextAreaElement
+    const prompt = screen.getByLabelText('Optimization prompt') as HTMLTextAreaElement
+    expect(section.contains(context)).toBe(true)
+    expect(section.contains(prompt)).toBe(true)
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } })
+    fireEvent.change(context, { target: { value: 'Cite sources.' } })
+    fireEvent.change(prompt, { target: { value: 'Clarify the task.' } })
+    fireEvent.click(toggle)
+    expect(section.open).toBe(false)
+    expect(context.value).toBe('Cite sources.')
+    expect(prompt.value).toBe('Clarify the task.')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Create project' })))
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentContext: 'Cite sources.',
+        optimizationPrompt: 'Clarify the task.'
+      })
+    )
+  })
+
   it.each(['Escape', 'Close', 'Cancel'])(
     '%s protects drafts and restores editing focus',
     async (exit) => {
@@ -39,6 +72,7 @@ describe('project form public submission behavior', () => {
       const trigger = screen.getByText('Create fixture')
       trigger.focus()
       fireEvent.click(trigger)
+      fireEvent.click(screen.getByText('Advanced agent options'))
       const name = screen.getByLabelText('Name') as HTMLInputElement
       const context = screen.getByLabelText('Agent Context') as HTMLTextAreaElement
       fireEvent.change(name, { target: { value: 'Research draft' } })
@@ -92,6 +126,7 @@ describe('project form public submission behavior', () => {
       })
       render(<Harness />)
       fireEvent.click(screen.getByText(mode === 'create' ? 'Create fixture' : 'Edit fixture'))
+      fireEvent.click(screen.getByText('Advanced agent options'))
       fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } })
       fireEvent.change(screen.getByLabelText('Description'), {
         target: { value: 'Draft description' }

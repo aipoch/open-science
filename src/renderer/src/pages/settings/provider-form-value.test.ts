@@ -29,7 +29,8 @@ describe('defaultProviderKindKey', () => {
 describe('defaultCustomApiEndpoint', () => {
   it('uses each framework capability set to choose its preferred custom API format', () => {
     expect(defaultCustomApiEndpoint(['messages'])).toBe('messages')
-    expect(defaultCustomApiEndpoint(['messages', 'chat-completions'])).toBe('chat-completions')
+    expect(defaultCustomApiEndpoint(['chat-completions', 'messages'])).toBe('chat-completions')
+    expect(defaultCustomApiEndpoint(['messages', 'chat-completions'])).toBe('messages')
     expect(defaultCustomApiEndpoint(['responses'])).toBe('responses')
   })
 

@@ -39,7 +39,8 @@ it('upgrades the prior schema with empty unified tables and is idempotent', asyn
       '0053_literature_doi_identity',
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
-      '0056_compute_kubernetes_workspace'
+      '0056_compute_kubernetes_workspace',
+      '0057_project_optimization_prompt'
     ]
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual({

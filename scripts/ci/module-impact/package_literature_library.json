@@ -12,6 +12,7 @@
     "packages/literature-library/src/client/pages.ts",
     "packages/literature-library/src/client/ports.ts",
     "packages/literature-library/src/client/reconcile.ts",
+    "packages/literature-library/src/client/reference-csv.ts",
     "packages/literature-library/src/contracts.ts",
     "packages/literature-library/src/duplicate-metadata.ts",
     "packages/literature-library/src/duplicates.ts",

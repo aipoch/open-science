@@ -84,7 +84,7 @@ describe('provider registry', () => {
     })
   })
 
-  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])(
+  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'])(
     'offers %s with its published capabilities and preserves the default',
     (model) => {
       expect(getVendorModelIds('anthropic')).toContain(model)
@@ -572,7 +572,8 @@ describe('provider registry', () => {
   it('offers GLM-4.5-Air through the official Zhipu provider', () => {
     expect(getOfficialVendor('zhipu')?.models).toContainEqual({
       id: 'glm-4.5-air',
-      contextWindow: 128_000
+      contextWindow: 128_000,
+      maxOutputTokens: 98_304
     })
   })
 
@@ -580,6 +581,7 @@ describe('provider registry', () => {
     expect(getOfficialVendor('zhipu')?.models).toContainEqual({
       id: 'glm-5.3',
       contextWindow: 1_000_000,
+      maxOutputTokens: 131_072,
       reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
     })
   })
@@ -588,6 +590,7 @@ describe('provider registry', () => {
     const expected = {
       id: 'glm-5.3-flash',
       contextWindow: 1_000_000,
+      maxOutputTokens: 131_072,
       reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
     }
 
@@ -1173,8 +1176,8 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('apodex')).toBeUndefined()
     expect(usesVendorMessagesApiKeyHeader('apodex')).toBe(true)
     expect(getOfficialVendor('apodex')?.models).toEqual([
-      { id: 'apodex-1.1', contextWindow: 262_144 },
-      { id: 'apodex-1.1-mini', contextWindow: 262_144 }
+      { id: 'apodex-1.1', contextWindow: 262_144, maxOutputTokens: 262_144 },
+      { id: 'apodex-1.1-mini', contextWindow: 262_144, maxOutputTokens: 262_144 }
     ])
 
     expect(isVendorModelMultimodal('apodex', 'apodex-1.1')).toBe(false)

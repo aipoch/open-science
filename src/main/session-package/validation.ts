@@ -8,7 +8,7 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import { decodeReviewScopeSnapshot } from '../artifacts/provenance-snapshot-decoder'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createPackageMaterializer } from './materialize'
-import { executionEvidenceKeys } from './execution-evidence'
+import { executionEvidenceKeys, hasComputeLogEvidence } from './execution-evidence'
 import { validatePackageLiterature } from './literature'
 import {
   nativeStorageKeys,
@@ -63,6 +63,13 @@ export const validatePackageRecords = async (
 ): Promise<void> => {
   if (Boolean(records.literature) !== Boolean(manifest.requiredFeatures?.includes('literature')))
     throw new Error('Literature package capability declaration is invalid.')
+  if (
+    hasComputeLogEvidence(records.logEvidence) !==
+    Boolean(manifest.requiredFeatures?.includes('compute-log-evidence'))
+  )
+    throw new Error('Invalid Compute log feature declaration.')
+  if (Boolean(records.logEvidence) !== Boolean(manifest.requiredFeatures?.includes('log-evidence')))
+    throw new Error('Invalid execution log feature declaration.')
   validateResearchFilms(records, manifest)
   validatePackageLiterature(records)
   for (const file of manifest.excludedFiles) assertPortablePackageStorageKey(file.storageKey)
@@ -72,6 +79,13 @@ export const validatePackageRecords = async (
   const portableKeys = new Set<string>()
   for (const entry of manifest.inventory) {
     if (!entry.storageKey) continue
+    if (
+      entry.storageKey.startsWith('execution-file-evidence/') &&
+      entry.storageKey
+        .split('/')
+        .some((segment) => segment === '.shadow-evidence' || segment === '.shadow-evidence-v1')
+    )
+      throw new Error('Reserved local evidence metadata path.')
     if (excluded.has(entry.storageKey))
       throw new Error('Excluded package content must not be included.')
     assertPortablePackageStorageKey(entry.storageKey)
@@ -80,6 +94,21 @@ export const validatePackageRecords = async (
       throw new Error('Session package has colliding storage paths.')
     portableKeys.add(normalized)
     files.set(entry.storageKey, entry)
+  }
+  for (const lane of records.logEvidence ?? []) {
+    const [, project, session] = lane.key.split('/')
+    if (
+      project !== manifest.source.projectId ||
+      session === 'blobs' ||
+      (session !== manifest.source.sessionId &&
+        !records.tables.FileOriginSession.some(
+          (row) => row.projectId === project && row.sessionId === session
+        ))
+    )
+      throw new Error('Execution log is outside its Session scope.')
+    for (const record of lane.records)
+      if (files.has(lane.key + '/activity-' + record.activityId + '/evidence.json'))
+        throw new Error('Duplicate native and log evidence owner.')
   }
   for (const key of nativeStorageKeys(records)) {
     if (!files.has(key) && !excluded.has(key))
@@ -147,7 +176,11 @@ export const validatePackageRecords = async (
     await installPackageReproducibility(root, records, excluded)
     await validatePackageReproducibility(root, records, manifest, sourceIdentity)
     const notebooks = await readPackageNotebooks(root, [...files.keys()])
-    await executionEvidenceKeys(root, records, notebooks, signal)
+    const evidenceKeys = new Set(await executionEvidenceKeys(root, records, notebooks, signal))
+    for (const key of files.keys()) {
+      if (/^execution-file-evidence\/[^/]+\/blobs\//u.test(key) && !evidenceKeys.has(key))
+        throw new Error('Unreferenced evidence pool object.')
+    }
     await validatePackageRoCrateMetadata(directory, manifest, records, signal)
     reportValidation(0.35)
     // File and reproducibility checks still apply to conversation-only packages. With no

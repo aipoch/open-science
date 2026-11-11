@@ -116,6 +116,7 @@ import { createWorkspaceComputeHostAccessController } from './workspace-compute-
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
 import { resolveWorkspaceAgentControlAvailability } from './workspace-agent-control-availability'
 import { useWorkspaceSessionDelegationControlOwner } from './workspace-session-delegation-control-owner'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { annotationRequiresImageInput } from '../../../../shared/annotations'
 
@@ -597,7 +598,7 @@ const WorkspacePage = ({
     activeAnnotations: composer.view.annotations,
     onAddAnnotation: (annotation: Parameters<typeof composer.actions.addAnnotation>[0]) => {
       if (annotationRequiresImageInput(annotation) && supportsImageInput !== true) {
-        composer.actions.setError(annotationValidationMessage('visual-model-required', t))
+        composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return 'visual-model-required' as const
       }
       const error = composer.actions.addAnnotation(annotation)
@@ -609,7 +610,11 @@ const WorkspacePage = ({
     onUndoAnnotation: composer.actions.undo,
     onRedoAnnotation: composer.actions.redo,
     onAnnotationError: (error: Parameters<typeof annotationValidationMessage>[0]) =>
-      composer.actions.setError(annotationValidationMessage(error, t)),
+      composer.actions.setError(
+        error === 'visual-model-required'
+          ? VISION_MODEL_NOT_CONFIGURED_MESSAGE
+          : annotationValidationMessage(error, t)
+      ),
     onLinkReadingContext: composer.actions.linkReadingContext,
     onUnlinkReadingContext: composer.actions.unlinkReadingContext
   }

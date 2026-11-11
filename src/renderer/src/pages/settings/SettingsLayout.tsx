@@ -1,5 +1,12 @@
 import { ErrorNotice } from '@/components/error-notice'
-import type { ComponentProps, ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  type ComponentProps,
+  type ReactNode
+} from 'react'
+import { createPortal } from 'react-dom'
 import { LoaderCircle, Plus, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,6 +16,49 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 
 export type SettingsEditorLeaveState = { dirty: boolean; busy: boolean }
+
+// The shell supplies placement; editors keep ownership of validation and mutations.
+type EditorActionsTarget = {
+  container: HTMLElement | null
+  onBusyChange: (busy: boolean) => void
+}
+
+const SettingsEditorActionsTarget = createContext<EditorActionsTarget | null>(null)
+
+export const SettingsEditorActionsProvider = ({
+  target,
+  children
+}: {
+  target: EditorActionsTarget | null
+  children: ReactNode
+}): React.JSX.Element => (
+  <SettingsEditorActionsTarget.Provider value={target}>
+    {children}
+  </SettingsEditorActionsTarget.Provider>
+)
+
+export const SettingsEditorActions = ({
+  children,
+  busy,
+  className
+}: {
+  children: ReactNode
+  busy: boolean
+  className?: string
+}): React.JSX.Element => {
+  const target = useContext(SettingsEditorActionsTarget)
+  const onBusyChange = target?.onBusyChange
+  useLayoutEffect(() => {
+    onBusyChange?.(busy)
+    return () => onBusyChange?.(false)
+  }, [busy, onBusyChange])
+  const actions = <div className="flex shrink-0 items-center gap-2">{children}</div>
+  return target?.container ? (
+    createPortal(actions, target.container)
+  ) : (
+    <div className={className}>{actions}</div>
+  )
+}
 
 type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
   title: ReactNode

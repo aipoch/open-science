@@ -17,6 +17,7 @@ import type {
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
   SetReviewerModelRequest,
+  SetPromptOptimizationModelRequest,
   SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
@@ -170,6 +171,12 @@ export const settingsSetReviewerModelContracts = {
   'settings.setSessionDetailsModel': callable<
     (request: SetSessionDetailsModelRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-session-details-model'])
+} as const
+
+export const settingsSetPromptOptimizationModelContracts = {
+  'settings.setPromptOptimizationModel': callable<
+    (request: SetPromptOptimizationModelRequest) => Promise<SettingsSnapshot>
+  >()('settings', ['settings:set-prompt-optimization-model'])
 } as const
 
 export const settingsSetSubagentModelContracts = {

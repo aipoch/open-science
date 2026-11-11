@@ -228,6 +228,7 @@ describe('reviewer IPC handlers', () => {
     expect(getReviewsForSession).not.toHaveBeenCalled()
     finishRecovery(1)
     await expect(pendingRead).resolves.toEqual([])
+    expect(sessionLoadOne).not.toHaveBeenCalled()
     expect(recoverInterruptedReviews).toHaveBeenCalledTimes(1)
   })
 

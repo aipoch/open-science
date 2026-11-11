@@ -55,6 +55,7 @@ import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { buildProviderValidationPatch } from './provider-validation-state'
 import { sanitizePackageMirror } from './record-codec'
 import {
+  buildPromptOptimizationModelMutation,
   buildReviewerModelMutation,
   buildSessionDetailsModelMutation,
   buildSubagentModelMutation,
@@ -655,6 +656,12 @@ class SettingsRepository {
             reasoningEffort: settings.sessionDetailsModel.reasoningEffort
           }
         }
+        if (
+          settings.promptOptimizationModel?.mode === 'fixed' &&
+          removedIds.has(settings.promptOptimizationModel.providerId)
+        ) {
+          next.promptOptimizationModel = { mode: 'inherit' }
+        }
         if (settings.visionModel && removedIds.has(settings.visionModel.providerId)) {
           delete next.visionModel
         }
@@ -809,6 +816,11 @@ class SettingsRepository {
     ...args: Parameters<typeof buildReviewerModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildReviewerModelMutation(...args))
+  }
+  async setPromptOptimizationModel(
+    ...args: Parameters<typeof buildPromptOptimizationModelMutation>
+  ): Promise<StoredSettings> {
+    return this.mutate(buildPromptOptimizationModelMutation(...args))
   }
   async setSessionDetailsModel(
     ...args: Parameters<typeof buildSessionDetailsModelMutation>
@@ -1030,6 +1042,16 @@ class SettingsRepository {
   }
 
   // Applies one catalog change to the latest persisted paths inside the write queue.
+  async setComputePythonRuntime(
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider,
+    selection: import('../../shared/compute-python-runtime').ComputePythonSelection
+  ): Promise<void> {
+    await this.mutate((settings) => ({
+      ...settings,
+      [provider === 'modal' ? 'modalRuntime' : 'huggingFaceRuntime']: selection
+    }))
+  }
+
   async setManualInterpreters(
     language: NotebookLanguage,
     update: (current: string[]) => string[]

@@ -15,7 +15,7 @@ import {
   type Json
 } from '@aipoch/agent-harness'
 import { createChatCompletionsModel } from '@aipoch/agent-harness/chat-completions'
-import { createResponsesModel } from '@aipoch/agent-harness/responses'
+import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/responses'
 import { createMessagesModel } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
@@ -379,7 +379,11 @@ export function createHarnessAcpAgent(directory: string): {
       const announced = new Set<string>(),
         completed = new Set<string>()
       const meter = createContextMeter()
-      const inputBudget = Math.floor(config.contextWindow * 0.9) - config.maxOutputTokens
+      // Reserve room for generation independently of the limit sent to the provider.
+      const answerLimit =
+        config.maxOutputTokens ?? (config.protocol === 'messages' ? 16_384 : undefined)
+      const outputReserve = Math.min(answerLimit ?? 4096, Math.floor(config.contextWindow / 4))
+      const inputBudget = Math.floor(config.contextWindow * 0.9) - outputReserve
       const clearing = createToolResultClearing(inputBudget, meter)
       let overflow = false
       const onEvent = (event: AgentEvent): void => {
@@ -503,13 +507,26 @@ export function createHarnessAcpAgent(directory: string): {
         parameters: target.parameters as Record<string, Json>
       })
       const admit = (request: ModelRequest, message: string): void => {
-        if (meter.measure(request) + request.maxOutputTokens > target.contextWindow)
+        if (
+          meter.measure(request) + Math.min(outputReserve, request.maxOutputTokens) >
+          target.contextWindow
+        )
           throw new Error(message)
       }
       session = await openAgentSession({
         sessionId: id,
         store,
-        model,
+        model: {
+          ...model,
+          stream(request, signal) {
+            if (request.useProviderOutputDefault) return model.stream(request, signal)
+            const available = target.contextWindow - meter.measure(request)
+            return model.stream(
+              { ...request, maxOutputTokens: Math.min(request.maxOutputTokens, available) },
+              signal
+            )
+          }
+        },
         tools: mcp.tools,
         // Original results are already authorized evidence in this exact session; no external access.
         toolResults: toolLess
@@ -521,11 +538,12 @@ export function createHarnessAcpAgent(directory: string): {
         signal,
         instructions,
         maxSteps: 64,
-        maxOutputTokens: target.maxOutputTokens,
+        maxOutputTokens: answerLimit ?? outputReserve,
+        useProviderOutputDefault: answerLimit === undefined,
         compaction: {
           inputBudget,
           keepRecentItems: 1,
-          maxOutputTokens: Math.min(2048, target.maxOutputTokens),
+          maxOutputTokens: Math.min(2048, outputReserve),
           measure: meter.measure,
           admit: (request) => {
             admit(request, 'Summary exceeds the model context budget')
@@ -684,6 +702,20 @@ export function createHarnessAcpAgent(directory: string): {
               .catch(async (error: unknown) => {
                 await entry.flush()
                 if (!entry.cancelled) assertKnown(await entry.session.inspect())
+                if (
+                  error instanceof ResponsesError &&
+                  [
+                    'insufficient_quota',
+                    'rate_limit_exceeded',
+                    'model_not_found',
+                    'authentication_error'
+                  ].includes(error.code)
+                )
+                  throw new acp.RequestError(-32603, error.message, {
+                    errorName: 'APIError',
+                    errorKind: error.code,
+                    ...(error.status === undefined ? {} : { status: error.status })
+                  })
                 throw error
               })
             await entry.flush()

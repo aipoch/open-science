@@ -256,7 +256,12 @@ describe('project repository', () => {
     await repository.create({ name: '  Trimmed  ' })
 
     expect(project.create).toHaveBeenCalledWith({
-      data: { name: 'Trimmed', description: '', agentContext: '' }
+      data: {
+        name: 'Trimmed',
+        description: '',
+        agentContext: '',
+        optimizationPrompt: ''
+      }
     })
   })
 
@@ -504,7 +509,12 @@ describe('project repository', () => {
     await repository.create({ name: 'Research', agentContext: '  Always cite DOIs.  ' })
 
     expect(project.create).toHaveBeenCalledWith({
-      data: { name: 'Research', description: '', agentContext: 'Always cite DOIs.' }
+      data: {
+        name: 'Research',
+        description: '',
+        agentContext: 'Always cite DOIs.',
+        optimizationPrompt: ''
+      }
     })
   })
 
@@ -558,6 +568,36 @@ describe('project repository', () => {
       data: {
         pinned: true,
         agentContext: 'Always cite DOIs.',
+        updatedAt: expect.any(Date)
+      }
+    })
+  })
+
+  it('persists the optimization prompt when pinning in the same update', async () => {
+    const { client, executeRaw, project } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(createRow({ pinned: true, optimizationPrompt: 'Keep it concise.' })),
+      updateMany: () => Promise.resolve({ count: 1 })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await repository.update({
+      id: 'project-1',
+      pinned: true,
+      optimizationPrompt: 'Keep it concise.',
+      expectedUpdatedAt: 1710000000100
+    })
+
+    expect(executeRaw).not.toHaveBeenCalled()
+    expect(project.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'project-1',
+        deletedAt: null,
+        updatedAt: new Date(1710000000100)
+      },
+      data: {
+        pinned: true,
+        optimizationPrompt: 'Keep it concise.',
         updatedAt: expect.any(Date)
       }
     })

@@ -69,6 +69,27 @@ describe('independent protocol adapter subpaths', () => {
       usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 3 }
     })
   })
+  it('rejects unknown Responses error events even after a completion without retaining provider prose', async () => {
+    const model = createResponsesModel({
+      endpoint: 'https://fixture.example/responses',
+      model: 'fixture',
+      apiKey: () => 'key',
+      fetch: async () =>
+        response(
+          sse([
+            { type: 'response.completed', response: {} },
+            {
+              type: 'error',
+              error: { code: 'unknown_private_code', message: 'private account details' }
+            }
+          ])
+        )
+    })
+    await expect(finish(model)).rejects.toMatchObject({
+      code: 'protocol',
+      message: 'Responses protocol error'
+    })
+  })
   it('maps Anthropic Messages SSE thinking, tool use and stop reason', async () => {
     const fetch = vi.fn(async () =>
       response(

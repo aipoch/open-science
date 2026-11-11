@@ -5,7 +5,9 @@ import {
   normalizeSessionArtifactImages,
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,
+  resolveRelativeReplyPath,
   resolveMessageArtifactReference,
+  resolveSessionDataFileReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
 
@@ -24,6 +26,14 @@ const createArtifact = (overrides: Partial<MessageArtifact> = {}): MessageArtifa
 })
 
 describe('session message artifact references', () => {
+  it('uses the Notebook data directory or conversation working directory for qualified relative paths', () => {
+    expect(resolveRelativeReplyPath('data/plot.csv', '/work', '/frame/data')).toBe(
+      '/frame/data/plot.csv'
+    )
+    expect(resolveRelativeReplyPath('a/report.csv', '/work')).toBe('/work/a/report.csv')
+    expect(resolveRelativeReplyPath('report.csv', '/work')).toBeUndefined()
+  })
+
   it('resolves explicit artifact ids and unique relative filenames', () => {
     const artifact = createArtifact()
 
@@ -50,6 +60,12 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('sin_curve.png', artifacts)).toBe(undefined)
   })
 
+  it('counts two records for the same file as one filename match', () => {
+    const artifact = createArtifact()
+    const working = { ...artifact, id: 'working', kind: 'workspace-file' as const }
+    expect(resolveMessageArtifactReference('sin_curve.png', [working, artifact])).toBe(artifact)
+  })
+
   it('resolves Windows absolute artifact paths before checking URL schemes', () => {
     const artifact = createArtifact({
       path: 'C:/managed/session/sin_curve.png',
@@ -59,7 +75,7 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('C:/managed/session/sin_curve.png', [artifact])).toBe(
       artifact
     )
-    expect(resolveMessageArtifactReference('C:/other/sin_curve.png', [artifact])).toBe(artifact)
+    expect(resolveMessageArtifactReference('C:/other/sin_curve.png', [artifact])).toBeUndefined()
     expect(
       normalizeSessionArtifactReferences(
         '![Curve](C:/managed/session/sin_curve.png)\n[Curve](C:/managed/session/sin_curve.png)',
@@ -233,13 +249,15 @@ describe('createSessionArtifactReferenceNormalizer', () => {
     }
   }
 
-  it('returns the input unchanged when there are no artifacts to rewrite', () => {
+  it('preserves unresolved filenames for display while streaming', () => {
     const incremental = createSessionArtifactReferenceNormalizer()
     const content = '![Curve](sin_curve.png)\n\n[Download](sin_curve.png)'
 
-    expect(incremental(content, [])).toBe(content)
+    const normalized =
+      '![Curve](sin_curve.png)\n\n[Download](/.open-science/unresolved-file/sin_curve.png)'
+    expect(incremental(content, [])).toBe(normalized)
     expect(incremental(`${content}\n\n![More](sin_curve.png)`, [])).toBe(
-      `${content}\n\n![More](sin_curve.png)`
+      `${normalized}\n\n![More](sin_curve.png)`
     )
   })
 
@@ -334,5 +352,144 @@ describe('createSessionArtifactReferenceNormalizer', () => {
     const incremental = createSessionArtifactReferenceNormalizer()
     expect(incremental('', [createArtifact()])).toBe('')
     expectAppendStreamMatchesFull(['![Curve](sin_curve.png)', '\n\nDone.'])
+  })
+})
+
+describe('Notebook data file URL normalization', () => {
+  const dataRoot = '/Users/example/sessions/session-1/data'
+  const path = `${dataRoot}/测试报告.md`
+  const content = `[打开报告](file://${path})`
+  const internalReference = (value: string): string =>
+    `/.open-science/notebook-data/${encodeURIComponent(value).replace(/\(/gu, '%28').replace(/\)/gu, '%29')}`
+
+  it.each([`file://${path}`, `file://${encodeURI(path)}`, `file://localhost${path}`])(
+    'normalizes the DEV #1179 hostless file URL before sanitization: %s',
+    (href) => {
+      expect(normalizeSessionArtifactReferences(`[打开报告](${href})`, [], dataRoot)).toBe(
+        `[打开报告](${internalReference(path)})`
+      )
+    }
+  )
+
+  it('preserves formatting, titles and Markdown-sensitive path characters', () => {
+    const href = `file://${dataRoot}/测试%20报告_(1)%23%3F%25.md`
+    expect(normalizeSessionArtifactReferences(`[**打开报告**](${href} "报告")`, [], dataRoot)).toBe(
+      `[**打开报告**](${internalReference(`${dataRoot}/测试 报告_(1)#?%.md`)} "报告")`
+    )
+  })
+
+  it('decodes file URL paths once, preserving encoded characters in real filenames', () => {
+    const href = `file://${dataRoot}/%252e%252e%252ftest.md`
+    expect(normalizeSessionArtifactReferences(`[Report](${href})`, [], dataRoot)).toBe(
+      `[Report](${internalReference(`${dataRoot}/%2e%2e%2ftest.md`)})`
+    )
+  })
+
+  it.each([
+    `file:///${path}`,
+    `file://${dataRoot}/../private/测试报告.md`,
+    `file://${dataRoot}/%2e%2e/private/测试报告.md`,
+    `file://${dataRoot}/%5cprivate/测试报告.md`,
+    `file://${dataRoot}/%00测试报告.md`,
+    `file://${dataRoot}/%E0%A4%A.md`,
+    `file://${path}?download=1`,
+    `file://${path}#heading`,
+    `file://${dataRoot}/`
+  ])('leaves unsafe or unsupported URLs to the sanitizer: %s', (href) => {
+    const markdown = `[打开报告](${href})`
+    expect(normalizeSessionArtifactReferences(markdown, [], dataRoot)).toBe(markdown)
+  })
+
+  it('routes files outside the current Notebook to the system', () => {
+    expect(normalizeSessionArtifactReferences(content, [])).toContain('/.open-science/local-file/')
+    expect(normalizeSessionArtifactReferences(content, [], '/other/data')).toContain(
+      '/.open-science/local-file/'
+    )
+  })
+
+  it('keeps code and unresolved images intact', () => {
+    const markdown = [
+      `\`${content}\``,
+      '```md',
+      content,
+      '```',
+      `    ${content}`,
+      `![报告](file://${path})`
+    ].join('\n')
+    expect(normalizeSessionArtifactReferences(markdown, [], dataRoot)).toBe(markdown)
+  })
+
+  it('prioritizes a registered managed artifact over Notebook data import', () => {
+    const artifact = createArtifact({ path, fileUrl: `file://${path}` })
+    expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
+      '[打开报告](/.open-science/artifact/version-1)'
+    )
+  })
+
+  it('keeps a normalized file URL separate from an unrelated same-name artifact', () => {
+    const artifact = createArtifact({ path: '/other/测试报告.md', name: '测试报告.md' })
+    const reference = internalReference(path)
+    expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
+      `[打开报告](${reference})`
+    )
+    expect(resolveMessageArtifactReference(reference, [artifact])).toBeUndefined()
+    expect(resolveSessionDataFileReference(reference, dataRoot)).toBe(path)
+    expect(resolveSessionDataFileReference(reference, '/other/data')).toBeUndefined()
+    expect(resolveMessageArtifactReference(path, [artifact])).toBeUndefined()
+  })
+
+  it('preserves exact managed-path matches without fileUrl metadata', () => {
+    const artifact = createArtifact({ path, fileUrl: undefined, name: '测试报告.md' })
+    expect(normalizeSessionArtifactReferences(content, [artifact], dataRoot)).toBe(
+      '[打开报告](/.open-science/artifact/version-1)'
+    )
+  })
+
+  it.each([
+    [
+      'C:\\Users\\example\\data',
+      'file:///c:/users/example/data/report.md',
+      'C:\\Users\\example\\data\\report.md'
+    ],
+    [
+      'C:\\Users\\example\\data',
+      'c:/users/example/data/report.md',
+      'C:\\Users\\example\\data\\report.md'
+    ],
+    [
+      '\\\\server\\share\\data',
+      'file://SERVER/share/data/report.md',
+      '\\\\server\\share\\data\\report.md'
+    ]
+  ])(
+    'matches registered Windows paths across slash style and drive case: %s',
+    (root, href, artifactPath) => {
+      const artifact = createArtifact({ path: artifactPath, fileUrl: undefined, name: 'report.md' })
+      expect(normalizeSessionArtifactReferences(`[Report](${href})`, [artifact], root)).toBe(
+        '[Report](/.open-science/artifact/version-1)'
+      )
+    }
+  )
+
+  it('does not reinterpret a drive-shaped segment under a POSIX root', () => {
+    expect(
+      normalizeSessionArtifactReferences('[Report](file:///C:/data/report.md)', [], '/C:/data')
+    ).toBe(`[Report](${internalReference('/C:/data/report.md')})`)
+  })
+
+  it('keeps streaming normalization consistent and invalidates cached roots', () => {
+    const normalize = createSessionArtifactReferenceNormalizer()
+    const artifacts: MessageArtifact[] = []
+    let streamed = ''
+    for (const chunk of ['Start.\n\n[打开', `报告](file://${path})`, '\n\nDone.']) {
+      streamed += chunk
+      expect(normalize(streamed, artifacts, dataRoot)).toBe(
+        normalizeSessionArtifactReferences(streamed, artifacts, dataRoot)
+      )
+    }
+    expect(normalize(streamed, artifacts, '/other/data')).toContain('/.open-science/local-file/')
+    expect(normalize(streamed, artifacts, dataRoot)).toBe(
+      normalizeSessionArtifactReferences(streamed, artifacts, dataRoot)
+    )
   })
 })

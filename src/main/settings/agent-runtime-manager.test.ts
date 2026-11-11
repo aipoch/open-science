@@ -344,6 +344,36 @@ describe('AgentRuntimeManager', () => {
     )
   }
 
+  it('prepares missing authentication runtime without switching the built-in Agent selection', async () => {
+    await repository.setAgentFramework('open-science-agent')
+    const install = vi.fn(async () => {
+      await mkdir(dirname(managedAdapterPath), { recursive: true })
+      await writeFile(
+        managedAdapterPath,
+        await readFile(
+          new URL('./fixtures/codex-acp-1.6.2-error-handler.txt', import.meta.url),
+          'utf8'
+        )
+      )
+      await chmod(managedAdapterPath, 0o755)
+      inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+      inventory.codexNative.set(managedCodexPath, 'codex-cli 0.157.1')
+      return {
+        result: { installId: 'auth', ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexPath,
+        codexVersion: '0.157.1'
+      }
+    })
+    manager = createManager({ installManagedCodexImpl: install })
+    await expect(manager.prepareCodexAuthenticationRuntime()).resolves.toBe(managedAdapterPath)
+    expect(install).toHaveBeenCalledOnce()
+    expect((await repository.getSettings()).agentFrameworkId).toBe('open-science-agent')
+    await manager.prepareCodexAuthenticationRuntime()
+    expect(install).toHaveBeenCalledOnce()
+  })
+
   const createManager = (
     overrides: Partial<ManagerOptions> = {}
   ): InstanceType<typeof AgentRuntimeManager> => {

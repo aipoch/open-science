@@ -444,6 +444,62 @@ describe('VisionModelSelect', () => {
     act(() => root.unmount())
   })
 
+  it.each(['imported', 'isolated'] as const)(
+    'offers %s Codex models for built-in Subagents',
+    (codexAuthMode) => {
+      useSettingsStore.setState({
+        agentFrameworkId: 'open-science-agent',
+        agentFrameworks: [
+          {
+            id: 'open-science-agent',
+            displayName: 'Open-Science Agent',
+            supportsSkills: true,
+            supportedApiTypes: ['responses', 'messages', 'chat-completions']
+          }
+        ],
+        providers: [
+          {
+            id: 'builtin-codex-subscription',
+            type: 'codex-isolated',
+            codexAuthMode,
+            name: 'Codex subscription',
+            apiEndpoints: ['responses'],
+            models: ['gpt-5.5'],
+            supportsImageInput: true,
+            hasKey: false,
+            needsKey: false
+          }
+        ]
+      })
+      const container = document.createElement('div')
+      document.body.append(container)
+      const root = createRoot(container)
+      act(() => root.render(<SubagentModelSelect />))
+      const trigger = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Subagent model Model"]'
+      )
+      act(() => {
+        trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+        trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((candidate) => candidate.textContent?.includes('gpt-5.5'))
+      expect(option).toBeDefined()
+      act(() => {
+        option?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+        option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      expect(useSettingsStore.getState().setSubagentModel).toHaveBeenCalledWith({
+        mode: 'fixed',
+        providerId: 'builtin-codex-subscription',
+        model: 'gpt-5.5',
+        reasoningEffort: 'default'
+      })
+      act(() => root.unmount())
+    }
+  )
+
   it('offers an image-capable Codex subscription model', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'codex',

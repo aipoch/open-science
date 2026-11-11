@@ -20,7 +20,6 @@ import { type ReasoningEffortPresetSetting } from '../../../../shared/reasoning-
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
-  preferredEndpoint,
   xaiSubscriptionProviderIdentity,
   type AgentFrameworkId,
   type CodexSubscriptionTransport,
@@ -144,7 +143,7 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
 // legacy Messages default remains the safe fallback while framework capabilities are still loading.
 export const defaultCustomApiEndpoint = (
   frameworkEndpoints: readonly ModelProtocol[]
-): ModelProtocol => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'messages'
+): ModelProtocol => frameworkEndpoints[0] ?? 'messages'
 
 // Built-in providers resolve the exact protocol for the selected/default model. `apiEndpoint` only
 // represents the single format selected for a custom gateway and may be stale after switching

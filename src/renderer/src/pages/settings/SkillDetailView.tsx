@@ -1,4 +1,6 @@
-import { ScrollText } from 'lucide-react'
+import { ResourceDetailHeader } from '../marketplace/ResourceDetailLayout'
+import { ResourceMarketplaceIdentity } from '../marketplace/ResourceMarketplaceIdentity'
+import { ResourceTagSummary } from './ResourceTagControls'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -13,6 +15,7 @@ import { type SpecialistUsage } from './specialist-resource-scope'
 type SkillDetailViewProps = {
   skillId: string
   onOpenSpecialist?: (usage: SpecialistUsage) => void
+  onOpenTag?: (tagId: string) => void
 }
 
 // Elapsed whole days since an ISO date, or null when it can't be parsed. Stays pure and locale-free
@@ -48,7 +51,8 @@ const DEDICATED_METADATA_KEYS = new Set([
 // control live in the settings header, not here.
 const SkillDetailView = ({
   skillId,
-  onOpenSpecialist
+  onOpenSpecialist,
+  onOpenTag
 }: SkillDetailViewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
@@ -132,23 +136,21 @@ const SkillDetailView = ({
 
   return (
     <div className="p-5">
-      {/* Header: icon + name + source badge, then updated + description below. */}
-      <div className="flex items-start gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <ScrollText className="size-6 shrink-0 text-primary" aria-hidden="true" />
-          <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-base font-semibold text-foreground">{name}</h1>
-            <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              {sourceLabel}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {updated ? <p className="mt-1 text-xs text-muted-foreground">{updated}</p> : null}
-      {description ? (
-        <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">{description}</p>
-      ) : null}
+      <ResourceDetailHeader
+        identity={
+          <ResourceMarketplaceIdentity id={skillId} displayName={skill?.displayName ?? name} />
+        }
+        name={skill?.displayName ?? name}
+        description={description}
+      >
+        <span data-slot="resource-detail-source">{sourceLabel}</span>
+        {updated ? <span>{updated}</span> : null}
+      </ResourceDetailHeader>
+      <ResourceTagSummary
+        reference={{ resourceType: 'catalog.skill', resourceId: skillId }}
+        className="mt-4"
+        onOpenTag={onOpenTag}
+      />
 
       <ResourceAvailability
         resource={{

@@ -1,3 +1,4 @@
+import { harnessFramework } from '../agent-framework/harness'
 import { createAgentRunner, type AgentStep, type TurnOutcome } from '@aipoch/agent-harness'
 import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
@@ -67,7 +68,7 @@ const usable = (
     provider,
     model
   )
-  const endpoint = preferredEndpoint(endpoints, ['responses', 'chat-completions', 'messages'])
+  const endpoint = preferredEndpoint(endpoints, harnessFramework.supportedApiTypes)
   return !!endpoint && !providerValidationFailed(provider, { model, endpoint })
 }
 

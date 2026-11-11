@@ -280,7 +280,8 @@ const onHideWindowFind = vi.fn((listener: () => void) => {
   }
 })
 
-vi.mock('@/stores/preview-workbench-store', () => ({
+vi.mock('@/stores/preview-workbench-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/stores/preview-workbench-store')>()),
   usePreviewWorkbenchStore: {
     getState: () => ({ openFileDialog, upsertAndActivateItem })
   },
@@ -4291,6 +4292,42 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       })
     )
     expect(previewItem).not.toHaveProperty('selectedVersionId')
+  })
+
+  it('opens a sent Skill reference in the resource pane without changing its message', async () => {
+    Object.assign(window.api, {
+      settings: { getSkillDetail: vi.fn().mockResolvedValue({ id: 'lit' }) }
+    })
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          content: '/Literature analyze',
+          parts: [
+            { type: 'skill', id: 'lit', name: 'Literature' },
+            { type: 'text', text: ' analyze' }
+          ]
+        })
+      ]
+    })
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Open skill Literature"]')!.click()
+    )
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:project:marketplace',
+        skillDetailRequest: { skillId: 'lit' }
+      })
+    )
+    expect(session.messages[0].content).toBe('/Literature analyze')
+    expect(container.textContent).toContain('analyze')
   })
 
   const linkedFolderSession = (): ChatSession =>

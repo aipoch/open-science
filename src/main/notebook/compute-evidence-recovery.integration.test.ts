@@ -1,3 +1,4 @@
+import { readNativeEvidence } from '../artifacts/execution-evidence-log'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import {
@@ -9,6 +10,7 @@ import {
   rm,
   symlink,
   unlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -77,7 +79,12 @@ const publish = async (sessionId: string, jobId: string): Promise<Job> => {
 }
 
 const readEvidence = async (job: Job): Promise<Buffer> =>
-  readFile(join(storageRoot, job.file_evidence!.storageKey!))
+  readNativeEvidence(
+    storageRoot,
+    job.file_evidence!.storageKey!,
+    job.file_evidence!.checksum!,
+    64 * 1024 ** 2
+  )
 
 const expectSharedBlob = async (job: Job): Promise<void> => {
   const sidecar = JSON.parse((await readEvidence(job)).toString()) as {
@@ -110,6 +117,13 @@ describe('Compute evidence Project batch recovery with the real worker', () => {
     await begin('session-orphan', 'job-orphan')
     await writeFile(join(storageRoot, 'input.csv'), 'uncommitted orphan bytes')
     await publish('session-uncommitted', 'job-uncommitted')
+    const orphanName =
+      'sha256-' + createHash('sha256').update('uncommitted orphan bytes').digest('hex')
+    await utimes(
+      join(storageRoot, 'execution-file-evidence', projectId, 'blobs', orphanName),
+      new Date(0),
+      new Date(0)
+    )
     await writeFile(join(storageRoot, 'input.csv'), sharedBytes)
     const cancelled = await begin('session-cancelled', 'job-cancelled')
     cancelled.cancellation_status = 'cancelled'
@@ -319,6 +333,11 @@ describe('Compute evidence Project batch recovery with the real worker', () => {
       const orphan = await publish('session-later', 'job-orphan')
       const blobRoot = join(storageRoot, 'execution-file-evidence', projectId, 'blobs')
       expect(await readdir(blobRoot)).toHaveLength(2)
+      await utimes(
+        join(blobRoot, 'sha256-' + createHash('sha256').update('orphan-only bytes').digest('hex')),
+        new Date(0),
+        new Date(0)
+      )
       const committedBytes = await readEvidence(committed)
       const preload = join(storageRoot, 'crash-preload.cjs')
       const marker = join(storageRoot, 'crash-reached.txt')

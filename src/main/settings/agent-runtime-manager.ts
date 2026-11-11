@@ -28,6 +28,7 @@ import type {
 } from '../../shared/settings'
 import {
   isProviderUsableByFramework,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   requiresChatCompletionsBridge
 } from '../../shared/settings'
@@ -514,11 +515,10 @@ export class AgentRuntimeManager {
               activeEndpoints ?? [],
               activeProvider.type === 'xai-subscription'
                 ? (['responses'] as const)
-                : framework.id === 'codex'
-                  ? (['messages', 'chat-completions', 'responses'] as const)
-                  : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
-                    ? (activeEndpoints ?? [])
-                    : framework.supportedApiTypes
+                : framework.id === 'codex' ||
+                    requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
+                  ? DEFAULT_ENDPOINT_ORDER
+                  : framework.supportedApiTypes
             )
           }
         : undefined
@@ -741,6 +741,28 @@ export class AgentRuntimeManager {
         if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
       }
     }, signal)
+  }
+
+  async prepareCodexAuthenticationRuntime(): Promise<string> {
+    const resolve = async (): Promise<string> => {
+      const { codex } = await this.repository.getSettings()
+      return this.resolveCodexExecutable(codex?.resolvedPath, codex?.nativePath)
+    }
+    try {
+      return await resolve()
+    } catch {
+      await this.detectCodex()
+    }
+    try {
+      return await resolve()
+    } catch {
+      const result = await this.installCodex({ source: 'managed' }, () => undefined)
+      if (!result.ok)
+        throw new Error(
+          'Codex authentication runtime could not be prepared. Install Codex in Settings.'
+        )
+    }
+    return resolve()
   }
 
   async bootstrapCodex(onEvent: (event: ClaudeInstallEvent) => void): Promise<void> {

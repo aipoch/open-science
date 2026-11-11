@@ -1,0 +1,27 @@
+{
+  "ownerPaths": ["src/main/artifacts/execution-evidence-log.ts"],
+  "interfacePaths": ["src/main/artifacts/execution-evidence-log.ts"],
+  "consumerModules": [
+    "main_session_package",
+    "notebook_application",
+    "artifact_provenance",
+    "compute_external_runtime"
+  ],
+  "testFiles": {
+    "owner": [],
+    "contract": [
+      "src/main/session-package/archive.test.ts",
+      "src/main/notebook/file-evidence-publication.integration.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
+    "consumer": [
+      "src/main/session-package/service.test.ts",
+      "src/main/notebook/analysis-file-evidence.test.ts",
+      "src/main/compute/harvest-engine.test.ts",
+      "src/main/artifacts/provenance-write-contract.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["windows_sensitive"],
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "A persisted Notebook worker format is shared by archive import, dependency analysis and provenance. Validate its cross-host readers and publication contracts in full CI."
+}

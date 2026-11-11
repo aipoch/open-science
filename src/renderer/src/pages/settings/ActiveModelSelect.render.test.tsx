@@ -46,7 +46,7 @@ const FRAMEWORKS: AgentFrameworkView[] = [
     id: 'opencode',
     displayName: 'OpenCode',
     supportsSkills: true,
-    supportedApiTypes: ['messages', 'chat-completions']
+    supportedApiTypes: ['chat-completions', 'messages']
   },
   {
     id: 'codex',

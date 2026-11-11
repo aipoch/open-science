@@ -45,6 +45,8 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     get: vi.fn(async () => host),
     create: vi.fn(async () => host),
     accountStatus: vi.fn(),
+    getComputePythonRuntime: vi.fn(),
+    selectComputePythonRuntime: vi.fn(),
     connectAccount: vi.fn(),
     useLocalAccount: vi.fn(),
     cancelAccountConnection: vi.fn(),
@@ -108,14 +110,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 55 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 57 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(55)
+    expect(publicComputeChannels).toHaveLength(57)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -125,6 +127,54 @@ describe('Compute application commands', () => {
       )
     ).toBe(false)
   })
+
+  it.each(['modal', 'hugging-face'] as const)(
+    'routes %s environment and connection operations with provider-scoped identity',
+    async (provider) => {
+      const dependencies = createDependencies()
+      const router = createApplicationCommandRouter()
+      registerComputeApplicationCommands(router.registrar, dependencies)
+      const operation = { operationId: 'dialog-operation', revision: 2 }
+      const request = { ...operation, selection: { kind: 'managed' as const } }
+      await router.dispatcher.invoke(
+        computeApplicationCommands.getComputePythonRuntime,
+        invocation([provider])
+      )
+      await router.dispatcher.invoke(
+        computeApplicationCommands.selectComputePythonRuntime,
+        invocation([provider, request])
+      )
+      await router.dispatcher.invoke(
+        computeApplicationCommands.connectAccount,
+        invocation([provider, operation])
+      )
+      await router.dispatcher.invoke(
+        computeApplicationCommands.useLocalAccount,
+        invocation([provider, operation])
+      )
+      await router.dispatcher.invoke(
+        computeApplicationCommands.cancelAccountConnection,
+        invocation([provider, operation])
+      )
+      expect(dependencies.compute.getComputePythonRuntime).toHaveBeenCalledExactlyOnceWith(provider)
+      expect(dependencies.compute.selectComputePythonRuntime).toHaveBeenCalledExactlyOnceWith(
+        provider,
+        request
+      )
+      expect(dependencies.compute.connectAccount).toHaveBeenCalledExactlyOnceWith(
+        provider,
+        operation
+      )
+      expect(dependencies.compute.useLocalAccount).toHaveBeenCalledExactlyOnceWith(
+        provider,
+        operation
+      )
+      expect(dependencies.compute.cancelAccountConnection).toHaveBeenCalledExactlyOnceWith(
+        provider,
+        operation
+      )
+    }
+  )
 
   it('routes collection retry through its existing compute owner', async () => {
     const dependencies = createDependencies()

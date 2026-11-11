@@ -1112,10 +1112,11 @@ class SessionRepository {
   // mutations omit it after loading within the coordinator's matching Session lane.
   async saveSession(
     session: PersistedChatSession,
-    expectedRevision?: number
+    expectedRevision?: number,
+    onJsonCommitted?: (session: PersistedChatSession) => void
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, () =>
-      this.saveSessionNow(session, expectedRevision)
+      this.saveSessionNow(session, expectedRevision, false, onJsonCommitted)
     )
   }
 
@@ -1140,7 +1141,8 @@ class SessionRepository {
   private async saveSessionNow(
     session: PersistedChatSession,
     expectedRevision?: number,
-    preserveBindingBackup = false
+    preserveBindingBackup = false,
+    onJsonCommitted?: (session: PersistedChatSession) => void
   ): Promise<PersistedChatSession> {
     // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
     // including when imported history belongs to an existing Project.
@@ -1240,6 +1242,16 @@ class SessionRepository {
         }
       }
       throw error
+    }
+    // Only the atomic JSON replacement proves a transcript durable. Catalog projection still
+    // runs in this lane before the next write can enter.
+    try {
+      onJsonCommitted?.(durableSession)
+    } catch (error) {
+      createLogger('session-persistence').warn(
+        'Session JSON commit observer failed',
+        diagnosticErrorFields(error)
+      )
     }
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(key, {

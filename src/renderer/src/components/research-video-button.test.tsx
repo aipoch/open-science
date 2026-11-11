@@ -3,6 +3,7 @@ import { ResearchVideoProgressLine } from './research-video-progress'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { useSettingsStore } from '@/stores/settings-store'
 import { i18next } from '@/i18n'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import type { ResearchVideoPresentationStatus } from '../../../shared/research-video-presentation'
@@ -23,7 +24,10 @@ const request = { projectId: 'p', sessionId: 'imported', branchId: 'branch' }
 const api = {
   researchVideo: {
     status: vi.fn(async () => status),
-    start: vi.fn(async () => (status = { progress: { phase: 'writing', startedAt: Date.now() } })),
+    start: vi.fn(
+      async (): Promise<ResearchVideoPresentationStatus> =>
+        (status = { progress: { phase: 'writing', startedAt: Date.now() } })
+    ),
     remove: vi.fn(async () => (status = {})),
     cancel: vi.fn(async () => {
       status = { progress: { phase: 'cancelled', startedAt: Date.now() } }
@@ -171,23 +175,27 @@ it('keeps saved playback available while blocking regeneration during a live res
   expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ path: '/saved.html' }))
   expect(api.researchVideo.start).not.toHaveBeenCalled()
 })
-it('offers installation inline and starts automatically only after resources are ready', async () => {
-  snapshot = {
-    ...snapshot,
-    availability: 'notInstalled',
-    hasFiles: false,
-    installedRevision: undefined
-  }
+it('submits the installation and film as one scoped request and restores progress on return', async () => {
+  snapshot = { ...snapshot, availability: 'notInstalled', installedRevision: undefined }
   await click('Generate research film')
   expect(api.researchVideo.start).not.toHaveBeenCalled()
-  expect(api.localModels.install).not.toHaveBeenCalled()
+  const download = { narrationDownload: { ...snapshot, availability: 'installing' as const } }
+  api.researchVideo.start.mockImplementationOnce(async () => (status = download))
   await click('Install and generate')
-  expect(api.localModels.install).toHaveBeenCalledExactlyOnceWith('research-narration')
-  await act(async () => vi.advanceTimersByTimeAsync(750))
-  expect(api.researchVideo.start).not.toHaveBeenCalled()
-  snapshot = { ...snapshot, availability: 'ready' }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
-  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    installNarration: true
+  })
+  await act(async () => root.render(null))
+  status = {}
+  await act(async () => root.render(<ResearchVideoButton {...request} sessionId="other" />))
+  expect(container.textContent).toContain('Generate research film')
+  status = download
+  await act(async () => root.render(<ResearchVideoButton {...request} />))
+  await click('View generation progress')
+  await click('Cancel')
+  expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
+  expect(api.researchVideo.start).toHaveBeenCalledTimes(1)
 })
 it('reopens a persisted player and stops polling after leaving the session', async () => {
   status = {
@@ -305,23 +313,15 @@ it('requires confirmation and permits cancellation before starting a replacement
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
 })
 
-it('offers installation for a transferred narration revision and waits for the current revision', async () => {
+it('requires installation consent for a transferred narration revision', async () => {
   snapshot = { ...snapshot, installedRevision: 'other-platform', updateAvailable: true }
   await click('Generate research film')
   expect(api.researchVideo.start).not.toHaveBeenCalled()
   await click('Install and generate')
-  snapshot = { ...snapshot, availability: 'ready' }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
-  expect(api.researchVideo.start).not.toHaveBeenCalled()
-  await click('Install and generate')
-  snapshot = {
-    ...snapshot,
-    availability: 'ready',
-    installedRevision: 'voice',
-    updateAvailable: false
-  }
-  await act(async () => vi.advanceTimersByTimeAsync(750))
-  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    installNarration: true
+  })
 })
 
 it('requires inline confirmation to delete a film and closes its preview after deletion', async () => {
@@ -390,10 +390,27 @@ it('blocks known failures before narration download and rechecks when the entry 
   status = {}
   await click('Generate research film')
   expect(document.body.textContent).toContain('Install and generate')
-  status = { preflightError: 'Model unavailable' }
+  api.researchVideo.start.mockResolvedValueOnce({ preflightError: 'Model unavailable' })
   await click('Install and generate')
   expect(api.localModels.install).not.toHaveBeenCalled()
   expect(document.body.textContent).toContain('Model unavailable')
+})
+
+it('opens model settings from the missing-model warning without starting a film', async () => {
+  await act(async () => {
+    await i18next.changeLanguage('zh-Hans')
+  })
+  status = { preflightError: 'Select a model in Settings before generating a research film.' }
+  await click('生成研究短片')
+  expect(document.querySelector('[data-notice-level="warning"]')?.textContent).toBe(
+    '生成研究短片前，请在设置中选择模型。'
+  )
+  await click('选择模型')
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(useSettingsStore.getState().pendingSettingsIntent?.route.panel).toBe('model')
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  useSettingsStore.getState().closeSettings()
 })
 
 it('still plays an existing film when generation preflight is blocked', async () => {

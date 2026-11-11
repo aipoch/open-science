@@ -16,7 +16,7 @@ import { LiteratureCatalog } from '../literature/catalog'
 import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 const DOI_MIGRATION_ID = '0053_literature_doi_identity'
-const CURRENT_MIGRATION_ID = '0056_compute_kubernetes_workspace'
+const CURRENT_MIGRATION_ID = '0057_project_optimization_prompt'
 
 describe('DOI identity migration', () => {
   let root: string | undefined
@@ -214,6 +214,7 @@ describe('DOI identity migration', () => {
         DOI_MIGRATION_ID,
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
+        '0056_compute_kubernetes_workspace',
         CURRENT_MIGRATION_ID
       ]
     })
@@ -374,6 +375,7 @@ describe('DOI identity migration', () => {
         DOI_MIGRATION_ID,
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
+        '0056_compute_kubernetes_workspace',
         CURRENT_MIGRATION_ID
       ]
     })
@@ -463,6 +465,7 @@ describe('DOI identity migration', () => {
         DOI_MIGRATION_ID,
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
+        '0056_compute_kubernetes_workspace',
         CURRENT_MIGRATION_ID
       ]
     })
@@ -522,6 +525,7 @@ describe('DOI identity migration', () => {
         DOI_MIGRATION_ID,
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
+        '0056_compute_kubernetes_workspace',
         CURRENT_MIGRATION_ID
       ]
     })

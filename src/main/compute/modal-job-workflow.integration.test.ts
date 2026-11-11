@@ -15,12 +15,14 @@ import { harvestJob } from './harvest-engine'
 import { ComputeJobRepository } from './job-repository'
 import { createModalJobRuntime } from './modal-job-runtime'
 import * as sdk from './modal-sdk'
+import { MODAL_CREATION_UNCONFIRMED } from './modal-job-journal'
 import { ModalTargetCatalog } from './modal-target-catalog'
 import { ComputeHostRepository } from './repository'
 import { getJobHarvestDir } from './workspace-path'
 
 vi.mock('./modal-sdk', async (load) => ({
   ...(await load<typeof import('./modal-sdk')>()),
+  withModalExecution: vi.fn(async (fn) => fn(vi.fn())),
   resolveModalApp: vi.fn(),
   inspectModalTarget: vi.fn(),
   createModalVolume: vi.fn(),
@@ -396,4 +398,78 @@ with patch.dict(sys.modules, {'modal':sdk, 'modal.config':config}), patch('impor
       .split(/\r?\n/)
       .map((line) => JSON.parse(line))
   ).toEqual([{ error: 'sandbox-not-started' }, { error: 'AuthError' }])
+})
+
+it.each([
+  ['volume', 'local rejection'],
+  ['sandbox', 'local rejection'],
+  ['volume', 'queued expiry'],
+  ['sandbox', 'queued expiry']
+])('admits %s creation before recording intent: %s', async (resource, outcome) => {
+  const root = await mkdtemp(join(tmpdir(), 'modal-create-admission-'))
+  const client = createProjectDbClient(root)
+  const jobs = new ComputeJobRepository(async () => client)
+  const runtime = createModalJobRuntime({
+    jobRepository: jobs,
+    storageRoot: root,
+    onJobUpdated: () => undefined,
+    harvest: vi.fn()
+  })
+  const scope = { providerId: 'modal:' + randomUUID(), projectId: 'project', sessionId: 'session' }
+  const target = {
+    environmentName: 'dev',
+    appName: 'research',
+    appId: 'ap-local',
+    image: 'ubuntu:24.04',
+    cpus: 1,
+    memoryMiB: 512
+  }
+  const id = randomUUID()
+  vi.clearAllMocks()
+  vi.mocked(sdk.resolveModalApp).mockResolvedValue({ appId: target.appId })
+  vi.mocked(sdk.createModalVolume).mockResolvedValue({ volumeId: 'vo-local' })
+  vi.mocked(sdk.stageModalInputs).mockResolvedValue(undefined)
+  let clock: ReturnType<typeof vi.spyOn> | undefined
+  try {
+    await migrateApplicationDatabase(client)
+    await jobs.createApprovedModalJob(
+      {
+        ...scope,
+        id,
+        intent: 'local admission regression',
+        command: 'true',
+        commandHash: digest(Buffer.from('true')),
+        shape: 'bridge_runner',
+        timeoutSeconds: 120,
+        allowUnencryptedPersistence: true
+      },
+      target
+    )
+    if (resource === 'sandbox') {
+      runtime.start()
+      await runtime.tick()
+    }
+    const before = (await jobs.get(id))!
+    const create = resource === 'volume' ? sdk.createModalVolume : sdk.createModalSandbox
+    vi.mocked(create).mockClear()
+    vi.mocked(sdk.withModalExecution).mockImplementationOnce(async (execute) => {
+      if (outcome === 'local rejection') throw new Error('RUNTIME_DISABLED')
+      clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 180000)
+      return execute(vi.fn())
+    })
+    if (resource === 'volume') runtime.start()
+    await runtime.tick()
+    expect(create).not.toHaveBeenCalled()
+    const after = (await jobs.get(id))!
+    if (outcome === 'local rejection') {
+      expect(after.remote_handle).toBe(before.remote_handle)
+      expect(after.status).toBe('submitted')
+      expect(after.last_poll_error).not.toBe(MODAL_CREATION_UNCONFIRMED)
+    } else expect(after.status).toBe('timeout')
+  } finally {
+    clock?.mockRestore()
+    await runtime.stop()
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
+  }
 })

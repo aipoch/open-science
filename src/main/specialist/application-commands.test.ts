@@ -619,6 +619,99 @@ describe('Specialist Remote Web application commands', () => {
   })
 })
 
+describe('Web Specialist Marketplace lifecycle', () => {
+  it('uses distinct server-owned candidates per Web caller and preserves update confirmations', async () => {
+    const f = await fixture()
+    const request = {
+      sourceId: 'official',
+      specialistId: 'research',
+      version: '1.0.1',
+      selectedSkillIds: [],
+      selectedConnectorIds: []
+    }
+    await f.first.invoke('specialist:marketplace-install-prepare', request)
+    const id = f.marketplace.prepareInstall.mock.calls[0][1]
+    expect(id).toBeLessThan(0)
+    const update = {
+      candidateToken: 'candidate',
+      confirmOverwrite: true,
+      skillConflictResolutions: []
+    }
+    await f.first.invoke('specialist:marketplace-install', update)
+    expect(f.marketplace.install).toHaveBeenCalledWith(update, id)
+    await f.second.invoke('specialist:marketplace-candidate-cancel', {
+      candidateToken: 'candidate'
+    })
+    expect(f.marketplace.cancel.mock.calls[0][1]).not.toBe(id)
+    await f.first.invoke('specialist:marketplace-candidate-cancel', { candidateToken: 'candidate' })
+    expect(f.marketplace.cancel).toHaveBeenLastCalledWith('candidate', id)
+    f.first.release()
+    expect(f.marketplace.dispose).toHaveBeenCalledWith(id)
+    await expect(f.first.invoke('specialist:marketplace-install', update)).rejects.toThrow()
+    expect(f.marketplace.install).toHaveBeenCalledTimes(1)
+  })
+
+  it('disposes a verified candidate that arrives after its Web caller disconnects', async () => {
+    const f = await fixture()
+    let complete!: (value: unknown) => void
+    f.marketplace.prepareInstall.mockReturnValue(
+      new Promise((resolve) => {
+        complete = resolve
+      })
+    )
+    const pending = f.first.invoke('specialist:marketplace-install-prepare', {})
+    const rejected = expect(pending).rejects.toThrow()
+    const id = f.marketplace.prepareInstall.mock.calls[0][1]
+    f.first.release()
+    const disposals = f.marketplace.dispose.mock.calls.length
+    complete({ candidateToken: 'late' })
+    await rejected
+    expect(f.marketplace.dispose.mock.calls.length).toBeGreaterThan(disposals)
+    expect(f.marketplace.dispose).toHaveBeenLastCalledWith(id)
+  })
+
+  it('previews and removes a real imported Specialist while preserving revision and protected-target checks', async () => {
+    const f = await fixture()
+    const preview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    const installed = await f.first.invoke<SpecialistPackageInstallResult>(
+      'specialist:package-install',
+      { candidateToken: preview.candidateToken }
+    )
+    expect(installed.status).toBe('installed')
+    const deletion = await f.first.invoke<{ expectedRevision: number }>(
+      'specialist:delete-preview',
+      { id: 'web-research' }
+    )
+    await expect(
+      f.first.invoke('specialist:delete', {
+        id: 'web-research',
+        expectedRevision: deletion.expectedRevision + 1,
+        deleteSkillIds: []
+      })
+    ).resolves.toMatchObject({ status: 'failed', code: 'revision-conflict' })
+    await expect(
+      f.first.invoke('specialist:delete', {
+        id: 'reviewer',
+        expectedRevision: 1,
+        deleteSkillIds: []
+      })
+    ).resolves.toMatchObject({ status: 'failed', code: 'protected-target' })
+    await expect(
+      f.first.invoke('specialist:delete', {
+        id: 'web-research',
+        expectedRevision: deletion.expectedRevision,
+        deleteSkillIds: []
+      })
+    ).resolves.toMatchObject({ status: 'deleted' })
+    expect(
+      (await f.service.listForSettingsSnapshot()).items.some((item) => item.id === 'web-research')
+    ).toBe(false)
+  })
+})
+
 describe('Specialist desktop document ownership', () => {
   it('rejects Web authority for every native workflow before invoking an owner', async () => {
     const f = await fixture()

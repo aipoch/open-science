@@ -6038,7 +6038,8 @@ describe('LiteratureLibraryPage', () => {
       expect(createProjectApi).toHaveBeenCalledWith({
         name: 'Reading project',
         description: '',
-        agentContext: ''
+        agentContext: '',
+        optimizationPrompt: ''
       })
     )
     await waitFor(() =>
@@ -9957,6 +9958,187 @@ describe('LiteratureLibraryPage', () => {
     expect(request.mimeType).toBe('application/x-bibtex;charset=utf-8')
     expect(new TextDecoder().decode(request.data)).toContain('@article{item-1')
   })
+
+  it.each(['CSV', 'BibTeX', 'RIS'] as const)(
+    'reports a failed cross-page export membership read and allows retry as %s',
+    async (format) => {
+      const entries = Array.from({ length: 26 }, (_, index) => createLibraryItem(index + 1))
+      let failMembership = true
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope !== 'library') return { entries: [] }
+        if (request.allItemIds) {
+          if (failMembership) throw new Error('Membership read failed')
+          return { entries: [], itemIds: entries.map(({ id }) => id) }
+        }
+        const matching = request.itemIds
+          ? entries.filter(({ id }) => request.itemIds!.includes(id))
+          : entries
+        const offset = request.offset ?? 0
+        const next = offset + (request.limit ?? 25)
+        return {
+          entries: matching.slice(offset, next),
+          totalCount: matching.length,
+          nextOffset: next < matching.length ? next : undefined
+        }
+      })
+      formatReferences.mockImplementation(async ({ itemIds }: { itemIds: string[] }) => ({
+        references: itemIds.map((itemId) => ({ itemId, reference: itemId, inText: itemId })),
+        exports: {
+          bibtex: itemIds.map((id) => `@article{${id}, title={${id}}}`).join('\n'),
+          ris: itemIds.map((id) => `TY  - JOUR\nTI  - ${id}\nER  -`).join('\n')
+        }
+      }))
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText('Reference 1')
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
+      await openMenu(await selectionButton('Export'))
+      fireEvent.click(await exportMenuItem(format))
+      await screen.findAllByText('References could not be exported.')
+      expect(saveBlobFile).not.toHaveBeenCalled()
+      expect(formatReferences).not.toHaveBeenCalled()
+      expect(screen.getByText('26 selected')).not.toBeNull()
+
+      failMembership = false
+      await openMenu(await selectionButton('Export'))
+      fireEvent.click(await exportMenuItem(format))
+      await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+      expect(screen.queryAllByText('References could not be exported.')).toHaveLength(0)
+      expect(screen.getByText('26 selected')).not.toBeNull()
+    }
+  )
+
+  it('exports selected CSV metadata without citation formatting and keeps the selection', async () => {
+    const second = createLibraryItem(2)
+    const completeItems = [libraryItem, second].map((entry) => ({
+      ...entry,
+      item: { ...entry.item, abstract: `Complete metadata for ${entry.id}` }
+    }))
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(
+        request.scope === 'library'
+          ? { entries: request.itemIds ? completeItems : [libraryItem, second], totalCount: 2 }
+          : { entries: [] }
+      )
+    )
+    let finishSaving!: (result: { saved: boolean }) => void
+    saveBlobFile.mockImplementationOnce(() => new Promise((resolve) => (finishSaving = resolve)))
+
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(
+      await screen.findByLabelText('Select Corrective Retrieval Augmented Generation')
+    )
+    fireEvent.click(screen.getByLabelText('Select Reference 2'))
+    await openMenu(await selectionButton('Export'))
+    fireEvent.click(await exportMenuItem('CSV'))
+
+    await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+    const exporting = screen.getByRole('button', { name: 'Exporting…' })
+    expect(exporting.getAttribute('aria-busy')).toBe('true')
+    expect((exporting as HTMLButtonElement).disabled).toBe(true)
+    expect(formatReferences).not.toHaveBeenCalled()
+    expect(search).toHaveBeenCalledWith({
+      scope: 'library',
+      lifecycle: 'active',
+      itemIds: [libraryItem.id, second.id],
+      limit: 2,
+      offset: 0
+    })
+    const file = saveBlobFile.mock.calls[0]?.[0] as {
+      suggestedName: string
+      mimeType: string
+      data: ArrayBuffer
+    }
+    expect(file.suggestedName).toBe('selected-references.csv')
+    expect(file.mimeType).toBe('text/csv;charset=utf-8')
+    const csv = new TextDecoder().decode(file.data)
+    expect(csv).toContain('Complete metadata for item-1')
+    expect(csv).toContain('Complete metadata for item-2')
+    await act(async () => finishSaving({ saved: true }))
+    expect(await screen.findByRole('button', { name: 'Saved' })).not.toBeNull()
+    expect((screen.getByLabelText('Select Reference 2') as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByText('2 selected')).not.toBeNull()
+  })
+
+  it.each(['Project', 'Collection'] as const)(
+    'exports the complete current %s as CSV across metadata transport pages',
+    async (scope) => {
+      const collection = {
+        id: 'collection-csv',
+        name: 'CSV review queue',
+        description: '',
+        itemCount: 101,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const entries = Array.from({ length: 101 }, (_, index) => createLibraryItem(index + 1))
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return Promise.resolve({ entries: [collection], totalCount: 1 })
+        if (request.scope !== 'library') return Promise.resolve({ entries: [] })
+        if (request.allItemIds)
+          return Promise.resolve({ entries: [], itemIds: entries.map(({ id }) => id) })
+        if (request.itemIds) {
+          const matching = entries.filter(({ id }) => request.itemIds?.includes(id))
+          const offset = request.offset ?? 0
+          const next = offset + Math.min(request.limit ?? 100, 37)
+          return Promise.resolve({
+            entries: matching.slice(offset, next),
+            totalCount: matching.length,
+            nextOffset: next < matching.length ? next : undefined
+          })
+        }
+        return Promise.resolve({ entries: [entries[0]], totalCount: entries.length })
+      })
+      useNavigationStore.setState(
+        scope === 'Project'
+          ? { pendingLiteratureProjectId: 'project-1' }
+          : { pendingLiteratureCollectionId: collection.id }
+      )
+
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', {
+        name: scope === 'Project' ? 'Retrieval research' : collection.name
+      })
+      await screen.findByText('Reference 1')
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+      fireEvent.click(await exportMenuItem('CSV'))
+
+      await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+      expect(formatReferences).not.toHaveBeenCalled()
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'library',
+          ...(scope === 'Project' ? { projectId: 'project-1' } : { collectionId: collection.id }),
+          lifecycle: 'active',
+          allItemIds: true
+        })
+      )
+      const metadataReads = search.mock.calls
+        .map(([request]) => request as LiteratureCatalogSearchRequest)
+        .filter((request) => request.itemIds)
+      expect(metadataReads.map(({ itemIds, offset }) => [itemIds?.length, offset])).toEqual([
+        [100, 0],
+        [100, 37],
+        [100, 74],
+        [1, 0]
+      ])
+      const file = saveBlobFile.mock.calls[0]?.[0] as {
+        suggestedName: string
+        mimeType: string
+        data: ArrayBuffer
+      }
+      expect(file.suggestedName).toBe(
+        `${scope === 'Project' ? 'Retrieval research' : collection.name}-references.csv`
+      )
+      expect(file.mimeType).toBe('text/csv;charset=utf-8')
+      const csv = new TextDecoder().decode(file.data)
+      expect(csv.trim().split('\r\n')).toHaveLength(102)
+      for (const entry of entries) expect(csv).toContain(entry.item.title)
+    }
+  )
 
   it.each([2, 201])(
     'rejects duplicate BibTeX keys among %s entries before saving a file',

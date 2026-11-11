@@ -452,7 +452,10 @@ describe('SettingsGlobalSearch', () => {
       )
       .map((entry) => readFileSync(join(entry.parentPath, entry.name), 'utf8'))
 
-    const anchored = SETTINGS_SEARCH_INDEX.filter((entry) => !entry.skipAnchor)
+    // Resource entries leave Settings; only local panels own Settings jump anchors.
+    const anchored = SETTINGS_SEARCH_INDEX.filter(
+      (entry) => !entry.skipAnchor && !['skills', 'connectors', 'specialists'].includes(entry.panel)
+    )
     expect(anchored.length).toBeGreaterThan(0)
     for (const entry of anchored) {
       const hits = sources.filter(

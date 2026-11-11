@@ -28,13 +28,11 @@ import type {
   DuplicateSpecialistRequest,
   ResolveSessionSpecialistRequest
 } from '../../shared/specialist'
-import type { SpecialistExportRequest, SpecialistDeleteRequest } from '@aipoch/specialists'
+import type { SpecialistExportRequest } from '@aipoch/specialists'
 import type {
   InspectGitHubMarketplaceSourceRequest,
   AddMarketplaceSourceRequest,
   RemoveMarketplaceSourceRequest,
-  PrepareMarketplaceInstallRequest,
-  MarketplaceInstallRequest,
   MarketplaceDownloadProgress
 } from '../../shared/specialist-marketplace'
 
@@ -43,24 +41,11 @@ export type SpecialistDesktopDependencies = {
   service: Pick<SpecialistService, 'create' | 'duplicate'>
   packages: Pick<
     SpecialistPackageService,
-    | 'preview'
-    | 'previewOversizedArchive'
-    | 'dispose'
-    | 'report'
-    | 'previewExport'
-    | 'export'
-    | 'previewSpecialistDelete'
-    | 'deleteSpecialist'
+    'preview' | 'previewOversizedArchive' | 'dispose' | 'report' | 'previewExport' | 'export'
   >
   marketplace: Pick<
     MarketplaceService,
-    | 'inspectGitHubSource'
-    | 'addSource'
-    | 'removeSource'
-    | 'prepareInstall'
-    | 'install'
-    | 'cancel'
-    | 'dispose'
+    'inspectGitHubSource' | 'addSource' | 'removeSource' | 'dispose'
   >
   bindings: Pick<SessionBindingService, 'resolve'>
   translate: NativeTranslator
@@ -77,7 +62,6 @@ const exportRequest = z
     includedSkillIds: z.array(z.string())
   })
   .strict()
-const deletePreview = z.object({ id: z.string() }).strict()
 const assertCaller = (invocation: Invocation): void => {
   requireDesktopCaller(invocation.callerContext)
   invocation.callerLease.signal.throwIfAborted()
@@ -153,12 +137,6 @@ export function createSpecialistDesktopCommands(
     'specialist:duplicate': (
       invocation: ApplicationInvocation<readonly [DuplicateSpecialistRequest]>
     ) => owned(invocation, () => deps.service.duplicate(invocation.args[0].id)),
-    'specialist:delete': (invocation: ApplicationInvocation<readonly [SpecialistDeleteRequest]>) =>
-      owned(invocation, () => deps.packages.deleteSpecialist(invocation.args[0])),
-    'specialist:delete-preview': (invocation: ApplicationInvocation<readonly [{ id: string }]>) =>
-      owned(invocation, () =>
-        deps.packages.previewSpecialistDelete(deletePreview.parse(invocation.args[0]))
-      ),
     'specialist:export-preview': (
       invocation: ApplicationInvocation<
         readonly [{ specialistId: string; includedSkillIds?: readonly string[] }]
@@ -232,28 +210,7 @@ export function createSpecialistDesktopCommands(
     ) => owned(invocation, (id) => deps.marketplace.addSource(invocation.args[0], id)),
     'specialist:marketplace-source-remove': (
       invocation: ApplicationInvocation<readonly [RemoveMarketplaceSourceRequest]>
-    ) => owned(invocation, () => deps.marketplace.removeSource(invocation.args[0])),
-    'specialist:marketplace-install-prepare': (
-      invocation: ApplicationInvocation<readonly [PrepareMarketplaceInstallRequest]>
-    ) =>
-      owned(invocation, (id) =>
-        deps.marketplace.prepareInstall(invocation.args[0], id, (progress) => {
-          if (invocation.callerLease.isCurrent() && !invocation.callerLease.signal.aborted)
-            deps.reportProgress(invocation.callerContext.clientId, progress)
-        })
-      ),
-    'specialist:marketplace-install': (
-      invocation: ApplicationInvocation<readonly [MarketplaceInstallRequest]>
-    ) => owned(invocation, (id) => deps.marketplace.install(invocation.args[0], id)),
-    'specialist:marketplace-candidate-cancel': async (
-      invocation: ApplicationInvocation<readonly [{ candidateToken: string }]>
-    ) => {
-      assertCaller(invocation)
-      deps.marketplace.cancel(
-        candidate.parse(invocation.args[0]).candidateToken,
-        callerId(invocation)
-      )
-    }
+    ) => owned(invocation, () => deps.marketplace.removeSource(invocation.args[0]))
   }
 }
 export type SpecialistDesktopCommands = ReturnType<typeof createSpecialistDesktopCommands>
@@ -268,8 +225,6 @@ const command = <Name extends keyof SpecialistDesktopCommands>(name: Name) =>
 export const specialistDesktopCommandGroup = defineApplicationCommandGroup('specialist-desktop', [
   command('specialist:create'),
   command('specialist:duplicate'),
-  command('specialist:delete'),
-  command('specialist:delete-preview'),
   command('specialist:export-preview'),
   command('specialist:export-save'),
   command('specialist:package-select'),
@@ -278,8 +233,5 @@ export const specialistDesktopCommandGroup = defineApplicationCommandGroup('spec
   command('specialist:resolve-session-specialist'),
   command('specialist:marketplace-source-inspect-github'),
   command('specialist:marketplace-source-add'),
-  command('specialist:marketplace-source-remove'),
-  command('specialist:marketplace-install-prepare'),
-  command('specialist:marketplace-install'),
-  command('specialist:marketplace-candidate-cancel')
+  command('specialist:marketplace-source-remove')
 ] as const)

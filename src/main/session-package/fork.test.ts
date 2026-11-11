@@ -154,6 +154,20 @@ it.each(['local', 'imported'] as const)(
     })
 
     const child = await service.fork(source)
+    const origin = join(
+      fixture.storageRoot,
+      'artifacts',
+      child.projectId,
+      child.sessionId,
+      '.session-fork'
+    )
+    expect((await fileSystem.readdir(join(origin, 'source'))).sort()).toEqual([
+      'manifest.json',
+      'records.json'
+    ])
+    expect((await service.readOrigin(child)).sourceManifest.source.sessionId).toBe(
+      sourceKind === 'local' ? source.sessionId : 'session-1'
+    )
     expect(
       (await repository.loadSession(child.projectId, child.sessionId))?.forkOrigin
     ).toBeTruthy()
@@ -393,6 +407,13 @@ it('recovers the same child after committed records fail to publish, without cop
   const child = await repository.loadSession('project-1', failed.recovery.sessionId)
   expect(child?.forkOrigin?.importId).toBe(failed.recovery.operationId)
   expect(child?.packageOrigin).toBeUndefined()
+  expect(
+    (
+      await fileSystem.readdir(
+        join(fixture.storageRoot, 'artifacts', 'project-1', child!.id, '.session-fork', 'source')
+      )
+    ).sort()
+  ).toEqual(['manifest.json', 'records.json'])
   const copied = (await repository.loadAll()).sessions.filter((s) => s.forkOrigin)
   expect(copied).toHaveLength(1)
   await service.recover()

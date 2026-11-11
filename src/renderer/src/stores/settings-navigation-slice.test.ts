@@ -8,6 +8,7 @@ import {
   type SettingsNavigationState
 } from './settings-navigation-slice'
 import { takeSettingsReturnFocusTarget } from './settings-return-focus'
+import { useNavigationStore } from './navigation-store'
 
 type TestStore = SettingsNavigationState & SettingsNavigationActions
 
@@ -26,6 +27,7 @@ describe('settings navigation slice', () => {
   beforeEach(() => {
     takeSettingsReturnFocusTarget()
     store = createHarness()
+    useNavigationStore.setState({ view: 'home', resourceCenterIntent: undefined })
   })
 
   it('lands on the exact account or connector without launching authorization', () => {
@@ -40,6 +42,8 @@ describe('settings navigation slice', () => {
       view: { kind: 'list', recoveryProviderId: 'codex-account', recoveryModel: 'pinned-model' }
     })
     store.getState().openSettingsToConnector('connector-a')
+    expect(store.getState().isSettingsOpen).toBe(true)
+    expect(useNavigationStore.getState().view).toBe('home')
     expect(store.getState().pendingSettingsIntent?.route).toEqual({
       panel: 'connectors',
       view: { kind: 'list', recoveryConnectorId: 'connector-a' }
@@ -129,54 +133,46 @@ describe('settings navigation slice', () => {
       { panel: 'credentials', view: { kind: 'service', serviceId: 'openalex' } }
     ],
     [
-      'Skill',
-      () => store.getState().openSettingsToSkill('skill-1'),
-      { panel: 'skills', view: { kind: 'detail', id: 'skill-1' } }
-    ],
-    [
-      'Specialist',
-      () => store.getState().openSettingsToSpecialist('specialist-1'),
-      { panel: 'specialists', view: { kind: 'edit', id: 'specialist-1' } }
-    ],
-    [
       'Compute',
       () => store.getState().openSettingsToCompute(),
       { panel: 'compute', view: { kind: 'list' } }
     ]
   ] as const)('opens the exact %s route as one intent', (_label, open, route) => {
-    store.getState().openSettingsToSkill('stale-skill')
-
     open()
 
     expect(store.getState().isSettingsOpen).toBe(true)
     expect(store.getState().pendingSettingsIntent?.route).toEqual(route)
   })
 
-  it('consumes one landing intent without closing the dialog', () => {
+  it('redirects legacy Skill and Specialist entry points into Resource Center', () => {
     store.getState().openSettingsToSkill('skill-1')
-    const requestId = store.getState().pendingSettingsIntent!.requestId
-
-    store.getState().consumePendingSettingsIntent(requestId)
-
     expect(store.getState()).toMatchObject({
-      isSettingsOpen: true,
+      isSettingsOpen: false,
       pendingSettingsIntent: undefined
+    })
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'marketplace',
+      resourceCenterIntent: { resource: 'skills', skillId: 'skill-1' }
+    })
+
+    store.getState().openSettingsToSpecialist('specialist-1')
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({
+      resource: 'specialists',
+      specialistId: 'specialist-1'
     })
   })
 
-  it('does not consume a newer intent when an older effect completes', () => {
-    store.getState().openSettingsToSkill('skill-1')
-    const staleRequestId = store.getState().pendingSettingsIntent!.requestId
-    store.getState().openSettingsToSpecialist('specialist-1')
-    const latestIntent = store.getState().pendingSettingsIntent
-
-    store.getState().consumePendingSettingsIntent(staleRequestId)
-
-    expect(store.getState().pendingSettingsIntent).toEqual(latestIntent)
+  it('routes legacy panel opens for Skills and Specialists into Resource Center', () => {
+    store.getState().openSettingsToPanel('connectors')
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({ resource: 'connectors' })
+    store.getState().openSettingsToPanel('skills')
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({ resource: 'skills' })
+    store.getState().openSettingsToPanel('specialists')
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({ resource: 'specialists' })
   })
 
   it('clears a stale intent on close so a normal reopen starts fresh', () => {
-    store.getState().openSettingsToSpecialist('specialist-1')
+    store.getState().openSettingsToPanel('storage')
 
     store.getState().closeSettings()
     store.getState().openSettings()

@@ -551,7 +551,7 @@ export const UseCaseCarousel = ({
                 className="inline-flex cursor-pointer items-center gap-1 rounded-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <GalleryHorizontalEnd className="size-4 text-text-100" aria-hidden="true" />
-                {t('Use Case Gallery')}
+                {t('Use Cases')}
               </button>
             </h2>
             <Button

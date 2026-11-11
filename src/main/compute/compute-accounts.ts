@@ -61,7 +61,18 @@ function failStatus(
     reason
   }
 }
-type Flow = { controller: AbortController; status: ComputeAccountStatus }
+export type AccountRuntimeContext = {
+  adapter: ComputeAccountAdapter
+  assertCurrent: () => void
+  signal: AbortSignal
+  operationId: string
+  revision: number
+}
+type Flow = {
+  controller: AbortController
+  status: ComputeAccountStatus
+  runtime?: AccountRuntimeContext
+}
 export class ComputeAccounts {
   private readonly protection
   private readonly adapters
@@ -209,18 +220,36 @@ export class ComputeAccounts {
   ): Promise<ComputeAccountStatus> {
     const actual = await this.inspect(provider)
     const failure = failStatus(provider, error)
-    return this.remember({ ...actual, reason: failure.reason ?? 'authorization' })
+    return this.remember({
+      ...actual,
+      reason:
+        failure.reason ??
+        (error instanceof AccountAuthError && error.reason === 'missing'
+          ? 'missing'
+          : 'authorization')
+    })
   }
-  connect(provider: ComputeAccountProvider): Promise<ComputeAccountStatus> {
+  connect(
+    provider: ComputeAccountProvider,
+    runtime?: AccountRuntimeContext
+  ): Promise<ComputeAccountStatus> {
     return this.queue(provider, async () => {
+      runtime?.assertCurrent()
       const existing = this.flows.get(provider)
-      if (existing?.status.source === 'managed') return existing.status
+      if (existing?.status.source === 'managed' && existing.runtime === runtime)
+        return existing.status
       if (existing) this.stop(provider)
       if (!this.protection.isAvailable())
         return this.failedChange(provider, new AccountAuthError('storage'))
       const flow: Flow = {
         controller: new AbortController(),
-        status: { provider, state: 'pending', source: 'managed' }
+        runtime,
+        status: {
+          provider,
+          state: 'pending',
+          source: 'managed',
+          runtimeRevision: runtime?.revision
+        }
       }
       this.flows.set(provider, flow)
       void this.authorize(provider, flow)
@@ -228,10 +257,15 @@ export class ComputeAccounts {
     })
   }
   private async authorize(provider: ComputeAccountProvider, flow: Flow): Promise<void> {
-    const signal = AbortSignal.any([flow.controller.signal, AbortSignal.timeout(10 * 60 * 1000)])
+    const signal = AbortSignal.any([
+      flow.controller.signal,
+      ...(flow.runtime ? [flow.runtime.signal] : []),
+      AbortSignal.timeout(10 * 60 * 1000)
+    ])
+    const adapter = flow.runtime?.adapter ?? this.adapters[provider]
     let expiry: ReturnType<typeof setTimeout> | undefined
     try {
-      const material = await this.adapters[provider].authorize(async (url, userCode, expiresAt) => {
+      const material = await adapter.authorize(async (url, userCode, expiresAt) => {
         signal.throwIfAborted()
         const remaining = expiresAt - Date.now()
         if (remaining <= 0) throw new AccountAuthError('timeout')
@@ -241,18 +275,29 @@ export class ComputeAccounts {
         await this.options.openExternal(url)
       }, signal)
       signal.throwIfAborted()
-      const identity = await this.adapters[provider].probe(material, signal)
+      const identity = await adapter.probe(material, signal)
       await this.queue(provider, async () => {
         if (this.flows.get(provider) !== flow) return
         signal.throwIfAborted()
+        flow.runtime?.assertCurrent()
         await this.storeMaterial(provider, material)
         this.flows.delete(provider)
-        this.remember({ provider, state: 'connected', source: 'managed', identity })
+        this.remember({
+          provider,
+          state: 'connected',
+          source: 'managed',
+          identity,
+          runtimeRevision: flow.runtime?.revision
+        })
       })
     } catch (e) {
       await this.queue(provider, async () => {
         if (this.flows.get(provider) !== flow) return
         this.flows.delete(provider)
+        if (flow.runtime?.signal.aborted) {
+          this.remember({ provider, state: 'disconnected', reason: 'cancelled' })
+          return
+        }
         await this.failedChange(provider, signal.aborted ? new AccountAuthError('timeout') : e)
       })
     } finally {
@@ -264,40 +309,82 @@ export class ComputeAccounts {
     this.flows.delete(provider)
     this.cached.delete(provider)
   }
+  commitRuntimeSelection<T>(
+    provider: ComputeAccountProvider,
+    commit: () => Promise<T>
+  ): Promise<T> {
+    return this.queue(provider, async () => {
+      const result = await commit()
+      this.stop(provider)
+      return result
+    })
+  }
+  cancelOperation(
+    provider: ComputeAccountProvider,
+    operationId: string
+  ): Promise<ComputeAccountStatus> {
+    return this.queue(provider, async () => {
+      const flow = this.flows.get(provider)
+      if (flow?.runtime?.operationId === operationId) {
+        this.stop(provider)
+        return { provider, state: 'disconnected' }
+      }
+      // Late dialog cleanup must preserve a completed account or a newer flow. Cancellation
+      // does not need a fresh account probe, including when the last known status has expired.
+      return (
+        flow?.status ?? this.cached.get(provider)?.status ?? { provider, state: 'disconnected' }
+      )
+    })
+  }
   async cancel(provider: ComputeAccountProvider): Promise<ComputeAccountStatus> {
     await this.queue(provider, async () => this.stop(provider))
     return this.status(provider)
   }
-  async useLocal(provider: ComputeAccountProvider): Promise<ComputeAccountStatus> {
+  async useLocal(
+    provider: ComputeAccountProvider,
+    runtime?: AccountRuntimeContext
+  ): Promise<ComputeAccountStatus> {
     const flow: Flow = {
       controller: new AbortController(),
-      status: { provider, state: 'pending', source: 'local' }
+      runtime,
+      status: { provider, state: 'pending', source: 'local', runtimeRevision: runtime?.revision }
     }
     await this.queue(provider, async () => {
+      runtime?.assertCurrent()
       this.stop(provider)
       this.flows.set(provider, flow)
     })
-    const signal = AbortSignal.any([flow.controller.signal, AbortSignal.timeout(15000)])
+    const signal = AbortSignal.any([
+      flow.controller.signal,
+      ...(runtime ? [runtime.signal] : []),
+      AbortSignal.timeout(15000)
+    ])
     // Leave the queue during discovery so cancel can invalidate even a CLI response already in flight.
-    const result = await this.adapters[provider]
+    const result = await (runtime?.adapter ?? this.adapters[provider])
       .probe(undefined, signal)
       .catch((error: unknown) => ({ error }))
     return this.queue(provider, async () => {
-      if (this.flows.get(provider) !== flow)
+      if (this.flows.get(provider) !== flow) {
+        if (runtime) return { provider, state: 'disconnected', reason: 'cancelled' }
         return { ...(await this.currentStatus(provider)), reason: 'cancelled' }
+      }
       this.flows.delete(provider)
       try {
         if (signal.aborted) throw new AccountAuthError('timeout')
         if (typeof result !== 'string') throw result.error
+        runtime?.assertCurrent()
         await this.save(provider, { version: 1, source: 'local' })
         return this.remember({
           provider,
           source: 'local',
           state: 'connected',
           localAvailable: true,
+          runtimeRevision: runtime?.revision,
           identity: result
         })
       } catch (e) {
+        if (runtime?.signal.aborted)
+          return this.remember({ provider, state: 'disconnected', reason: 'cancelled' })
         return this.failedChange(provider, e)
       }
     })

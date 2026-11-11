@@ -1,3 +1,9 @@
+import type {
+  ComputeAccountOperation,
+  ComputePythonSelect,
+  ComputePythonResult,
+  ComputePythonSnapshot
+} from '../../shared/compute-python-runtime'
 import type { ComputeAccountProvider, ComputeAccountStatus } from '../../shared/compute-accounts'
 import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../../shared/artifacts'
 import type {
@@ -41,14 +47,31 @@ import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
 
 export type ComputeHandlers = {
+  getComputePythonRuntime: (provider: ComputeAccountProvider) => Promise<ComputePythonSnapshot>
+  selectComputePythonRuntime: (
+    provider: ComputeAccountProvider,
+    request: ComputePythonSelect
+  ) => Promise<ComputePythonResult>
   accountStatus: (
     provider: ComputeAccountProvider,
     force?: boolean
   ) => Promise<ComputeAccountStatus>
-  connectAccount: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
-  useLocalAccount: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
-  cancelAccountConnection: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
-  disconnectAccount: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  connectAccount: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  useLocalAccount: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  cancelAccountConnection: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
+  disconnectAccount: (
+    provider: ComputeAccountProvider,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus>
   listRayTokens: () => Promise<string[]>
   setRayToken: (endpoint: string, token: string) => Promise<void>
   removeRayToken: (endpoint: string) => Promise<void>

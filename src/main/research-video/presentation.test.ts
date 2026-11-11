@@ -4,7 +4,6 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { LocalModelOwner } from '../local-models/owner'
 import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 
@@ -69,7 +68,7 @@ async function fixture(): Promise<{
       revision: 'model',
       assets: [{ file: 'model_quantized.onnx', path: join(root, 'model_quantized.onnx') }]
     }))
-  } as unknown as LocalModelOwner
+  } as unknown as Options['models']
   const loadSession = vi.fn(async () => session)
   const writeScreenplay = vi.fn(
     async (
@@ -153,6 +152,24 @@ it('generates a persistent presentation directly from read-only history without 
   f.setRoot(moved)
   expect((await reopened.status(request)).result?.playerPath).toContain(moved)
   await reopened.close()
+})
+it('continues exactly once for the requesting session when narration finishes in the background', async () => {
+  const f = await fixture()
+  const download = Promise.withResolvers<Awaited<ReturnType<Options['models']['installForUse']>>>()
+  f.options.models.installForUse = vi.fn(() => download.promise)
+  const owner = createResearchVideoPresentationOwner(f.options)
+  const start = { ...request, installNarration: true }
+  expect((await owner.start(start)).narrationDownload).toBeDefined()
+  expect((await owner.start(start)).narrationDownload).toBeDefined()
+  const other = { ...request, sessionId: 'other' }
+  expect((await owner.status(other)).narrationDownload).toBeUndefined()
+  owner.cancel(other)
+  expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+  download.resolve({ ...(await f.options.models.getSnapshot()), availability: 'ready' })
+  await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+  expect(f.options.models.installForUse).toHaveBeenCalledOnce()
+  expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
+  await owner.close()
 })
 it('cancels the background authoring operation and releases the model lease', async () => {
   const f = await fixture()

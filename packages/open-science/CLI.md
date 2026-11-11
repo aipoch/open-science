@@ -823,6 +823,11 @@ attachment imports, citation style imports, and journal binding are not availabl
 
 ## Current scope
 
+For Kubernetes, Hugging Face Jobs, Modal and Ray, `--compute-host` (or `computeHostIds` in the
+Task SDK) selects a configured target for the Session. The agent can request a job on that target.
+Each submission requires human approval in the desktop or Web UI. The CLI and Task SDK expose
+no direct job submission or Compute approval command.
+
 The CLI does not expose file/directory attachments or per-run Agent framework selection.
 New Sessions accept provider/model selection; resumed Sessions use `session config update`.
 The help listing still includes `cli install`, but the Node host cannot perform this desktop-only

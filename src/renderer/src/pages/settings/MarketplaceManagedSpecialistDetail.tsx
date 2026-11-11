@@ -1,9 +1,9 @@
+import { ResourceDetailActions, ResourceDetailHeader } from '../marketplace/ResourceDetailLayout'
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · slop: pass */
 import { AlertTriangle, ArrowLeft, Copy, Download, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { SettingsToggle } from './SettingsLayout'
 import type { MarketplaceSpecialistListing } from '../../../../shared/specialist-marketplace'
@@ -15,6 +15,7 @@ type MarketplaceSpecialist = Extract<SpecialistListItem, { kind: 'custom' }> & {
 }
 
 type Props = {
+  hideBack?: boolean
   specialist: MarketplaceSpecialist
   update?: MarketplaceSpecialistListing
   sourceMissing: boolean
@@ -30,6 +31,7 @@ type Props = {
 
 const MarketplaceManagedSpecialistDetail = ({
   specialist,
+  hideBack,
   update,
   sourceMissing,
   disabled,
@@ -63,59 +65,39 @@ const MarketplaceManagedSpecialistDetail = ({
        * motion: existing control transitions only · slop: pass
        */}
       <div className="max-w-3xl">
-        <Button type="button" variant="ghost" size="sm" className="mb-4" onClick={onBack}>
-          <ArrowLeft data-icon="inline-start" aria-hidden="true" />
-          {t('Back')}
-        </Button>
+        {!hideBack && (
+          <Button type="button" variant="ghost" size="sm" className="mb-4" onClick={onBack}>
+            <ArrowLeft data-icon="inline-start" aria-hidden="true" />
+            {t('Back')}
+          </Button>
+        )}
 
-        <div className="flex flex-wrap items-start gap-3">
-          <SpecialistAppearancePicker
-            name={specialist.displayName ?? specialist.name}
-            iconKey={specialist.iconKey}
-            colorKey={specialist.colorKey}
-            disabled={disabled}
-            onChange={onAppearanceChange}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-xl font-semibold text-foreground">
-                {specialist.displayName ?? specialist.name}
-              </h2>
-              <Badge variant="secondary">{t('Marketplace')}</Badge>
-              {update?.updateAvailable ? (
-                <Badge className="border-primary/20 bg-primary/10 text-primary">
-                  {t('Update available')}
-                </Badge>
-              ) : null}
-            </div>
-            {specialist.description ? (
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                {specialist.description}
-              </p>
-            ) : null}
-            <p className="mt-2 text-xs text-muted-foreground">
-              {t('Version {{version}}', { version: specialist.packageVersion ?? '0.1.0' })}
-              {specialist.marketplaceProvenance?.publisher
-                ? ` / ${t('Publisher: {{publisher}}', {
-                    publisher: specialist.marketplaceProvenance.publisher
-                  })}`
-                : ''}
-            </p>
-          </div>
-          <div className="flex min-h-10 items-center gap-2 rounded-lg border border-border px-3">
-            <span className="text-sm text-muted-foreground">
-              {specialist.enabled ? t('Enabled') : t('Disabled')}
-            </span>
-            <SettingsToggle
-              enabled={specialist.enabled}
+        <ResourceDetailHeader
+          identity={
+            <SpecialistAppearancePicker
+              name={specialist.displayName ?? specialist.name}
+              iconKey={specialist.iconKey}
+              colorKey={specialist.colorKey}
               disabled={disabled}
-              aria-label={t('Toggle {{name}}', {
-                name: specialist.displayName ?? specialist.name
-              })}
-              onToggle={onToggle}
+              onChange={onAppearanceChange}
             />
-          </div>
-        </div>
+          }
+          name={specialist.displayName ?? specialist.name}
+          description={specialist.description}
+        >
+          <span>{t('Marketplace')}</span>
+          <span>{t('Version {{version}}', { version: specialist.packageVersion ?? '0.1.0' })}</span>
+          {specialist.marketplaceProvenance?.publisher ? (
+            <span>
+              {t('Publisher: {{publisher}}', {
+                publisher: specialist.marketplaceProvenance.publisher
+              })}
+            </span>
+          ) : null}
+          {update?.updateAvailable ? (
+            <span className="text-primary">{t('Update available')}</span>
+          ) : null}
+        </ResourceDetailHeader>
 
         {sourceMissing ? (
           <div className={`${inlineNoticeClassName} mt-5 block`}>
@@ -164,10 +146,6 @@ const MarketplaceManagedSpecialistDetail = ({
                 })}
               </p>
             </div>
-            <Button type="button" size="sm" onClick={onUpdate}>
-              <Download data-icon="inline-start" aria-hidden="true" />
-              {t('Update Specialist')}
-            </Button>
           </div>
         ) : null}
 
@@ -201,27 +179,47 @@ const MarketplaceManagedSpecialistDetail = ({
           </div>
         </section>
 
-        <div className="mt-8 flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={disabled || !onDuplicate}
-            onClick={onDuplicate}
-          >
-            <Copy data-icon="inline-start" aria-hidden="true" />
-            {t('Create editable copy')}
-          </Button>
+        <ResourceDetailActions
+          leading={
+            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              {specialist.enabled ? t('Enabled') : t('Disabled')}
+              <SettingsToggle
+                enabled={specialist.enabled}
+                disabled={disabled}
+                aria-label={t('Toggle {{name}}', {
+                  name: specialist.displayName ?? specialist.name
+                })}
+                onToggle={onToggle}
+              />
+            </label>
+          }
+        >
           <Button
             type="button"
             variant="ghost"
-            className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
             disabled={disabled || !onUninstall}
             onClick={onUninstall}
           >
             <Trash2 data-icon="inline-start" aria-hidden="true" />
             {t('Uninstall')}
           </Button>
-        </div>
+          <Button
+            type="button"
+            variant={update?.updateAvailable ? 'outline' : 'default'}
+            disabled={disabled || !onDuplicate}
+            onClick={onDuplicate}
+          >
+            <Copy data-icon="inline-start" aria-hidden="true" />
+            {t('Create editable copy')}
+          </Button>
+          {update?.updateAvailable ? (
+            <Button type="button" disabled={disabled} onClick={onUpdate}>
+              <Download data-icon="inline-start" aria-hidden="true" />
+              {t('Update Specialist')}
+            </Button>
+          ) : null}
+        </ResourceDetailActions>
       </div>
     </div>
   )
