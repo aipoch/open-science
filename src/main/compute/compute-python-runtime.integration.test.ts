@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import {
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
-  realpath,
   rm,
   symlink,
   writeFile
@@ -119,11 +119,14 @@ it.each(['selected path', 'canonical identity'] as const)(
   async (keyKind) => {
     const root = await mkdtemp(join(tmpdir(), 'modal-external-admission-'))
     const runtimeRoot = getRuntimeRoot(root)
-    const python = join(root, 'external-python')
-    const selected = process.platform === 'win32' ? python : join(root, 'selected-python')
-    await writeFile(python, '')
-    if (selected !== python) await symlink(python, selected)
-    const identity = keyKind === 'selected path' ? selected : await realpath(selected)
+    const bin = join(root, 'bin')
+    const alias = join(root, 'selected-bin')
+    await mkdir(bin)
+    await writeFile(join(bin, 'external-python'), '')
+    await symlink(bin, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const selected = join(alias, 'external-python')
+    // Discovery uses realpathSync to key interpreter enablement.
+    const identity = keyKind === 'selected path' ? selected : realpathSync(selected)
     let disabled = true
     const service = new NotebookRuntimeService({
       projectId: 'test-project',
