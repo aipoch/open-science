@@ -5,6 +5,7 @@ import { initI18n } from '@/i18n'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SkillUsageAgents } from '@/pages/settings/SkillUsageAgents'
+import { SpecialistAvatar } from '@/pages/settings/specialist-avatar'
 import { CitationStylesView } from '@/pages/literature/CitationStylesView'
 import { LiteratureRendererProvider } from '@/pages/literature/public/host'
 import { literatureRendererHost } from '@/lib/literature-renderer-host'
@@ -75,11 +76,14 @@ export function Fixture(): React.JSX.Element {
         </div>
       </TooltipProvider>
       <section className="flex gap-16" aria-label="Information previews">
-        <SkillUsageAgents
-          mainEnabled
-          usages={[{ id: 'analyst', name: 'Analyst', kind: 'custom' }]}
-          onOpenSpecialist={(usage) => setOpened(usage.name)}
-        />
+        <div className="resource-installed-card">
+          <SpecialistAvatar />
+          <SkillUsageAgents
+            mainEnabled
+            usages={[{ id: 'analyst', name: 'Analyst', kind: 'custom' }]}
+            onOpenSpecialist={(usage) => setOpened(usage.name)}
+          />
+        </div>
         <div className="flex w-28 flex-col gap-12">
           <SessionHoverPreviewProvider>
             {['First', 'Second'].map((name) => (
