@@ -59,8 +59,8 @@ describe('provider registry', () => {
     }
   )
 
-  it('offers GPT-6.1 Sol with its published capabilities and preserves the default', () => {
-    expect(getVendorModelIds('openai')).toContain('gpt-6.1-sol')
+  it('defaults OpenAI to GPT-6.1 Sol with its published capabilities', () => {
+    expect(getVendorModelIds('openai')[0]).toBe('gpt-6.1-sol')
 
     expect(getVendorModelContextWindow('openai', 'gpt-6.1-sol')).toBe(1_050_000)
     expect(isVendorModelMultimodal('openai', 'gpt-6.1-sol')).toBe(true)
@@ -71,10 +71,9 @@ describe('provider registry', () => {
     })
   })
 
-  it('offers GPT-6.1 Terra with published capabilities without changing the default', () => {
+  it('offers GPT-6.1 Terra with its published capabilities', () => {
     const model = 'gpt-6.1-terra'
     expect(getVendorModelIds('openai')).toContain(model)
-    expect(getVendorModelIds('openai')[0]).toBe('gpt-5.6-sol')
     expect(getVendorModelContextWindow('openai', model)).toBe(1_050_000)
     expect(isVendorModelMultimodal('openai', model)).toBe(true)
     expect(resolveVendorModelApiEndpoints('openai', model)).toEqual(['responses'])

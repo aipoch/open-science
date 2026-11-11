@@ -16,6 +16,12 @@ const definitions: readonly OfficialVendor[] = [
     // The API exposes a broader mixed catalog (embeddings, image, and audio models); keep the coding
     // catalog curated here instead of importing every id from /v1/models.
     models: [
+      // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+      {
+        id: 'gpt-6.1-sol',
+        contextWindow: 1_050_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       {
         id: 'gpt-5.6-sol',
         contextWindow: 1_050_000,
@@ -23,12 +29,6 @@ const definitions: readonly OfficialVendor[] = [
       },
       {
         id: 'gpt-6-astra',
-        contextWindow: 1_050_000,
-        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
-      },
-      // https://developers.openai.com/api/docs/models/gpt-6.1-sol
-      {
-        id: 'gpt-6.1-sol',
         contextWindow: 1_050_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
@@ -79,8 +79,8 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
     models: [
-      { id: 'claude-opus-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-opus-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      { id: 'claude-opus-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       // https://platform.claude.com/docs/en/models/fable-5-2/overview
       { id: 'claude-fable-5-2', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-fable-5-1', contextWindow: 1_000_000, maxOutputTokens: 128_000 },

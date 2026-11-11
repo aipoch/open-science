@@ -41,8 +41,8 @@ it('uses the configured size and falls back to 200k when the user leaves it blan
   expect(resolveCustomModelContextWindow(undefined)).toBe(200_000)
 })
 it.each([
-  ['openai', undefined, 'gpt-5.6-sol'],
-  ['anthropic', undefined, 'claude-opus-5'],
+  ['openai', undefined, 'gpt-6.1-sol'],
+  ['anthropic', undefined, 'claude-opus-5-5'],
   ['opencode-go', undefined, 'kimi-k2.7-code'],
   ['opencode', undefined, 'kimi-k2.7-code'],
   ['nvidia', undefined, 'nvidia/nemotron-3.5-lightning-30b-a3b'],
