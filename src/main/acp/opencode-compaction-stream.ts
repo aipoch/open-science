@@ -10,6 +10,7 @@ type TrackedRequest = {
   sessionId?: string
   cwd?: string
   classificationFailed?: boolean
+  cancellation?: AbortController
 }
 type PendingSummary = MessageIdentity & { owners: readonly TrackedRequest[] }
 const MAX_CACHE_ENTRIES = 256
@@ -74,23 +75,31 @@ export function createOpenCodeCompactionStream(
     for (const request of activeOwners) request.classificationFailed = true
     return true
   }
-  const readMetadata = async (url: URL): Promise<unknown> => {
-    if (!options.api || signal.aborted) throw classificationError()
+  const readMetadata = async (url: URL, sessionId: string): Promise<unknown> => {
+    // Stop is written while metadata may be blocking the inbound ACP stream. Interrupt
+    // only this prompt's lookup so the native cancellation acknowledgement can drain.
+    const requestSignal = AbortSignal.any([
+      signal,
+      ...[...requests.values()].flatMap((request) =>
+        request.sessionId === sessionId && request.cancellation ? [request.cancellation.signal] : []
+      )
+    ])
+    if (!options.api || requestSignal.aborted) throw classificationError()
     for (let attempt = 1; attempt <= METADATA_LOOKUP_ATTEMPTS; attempt++) {
       let response: Response
       try {
         response = await (options.fetchImpl ?? fetch)(url, {
           headers: { authorization: options.api.authorization },
-          signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)])
+          signal: AbortSignal.any([requestSignal, AbortSignal.timeout(2_000)])
         })
       } catch {
-        if (!signal.aborted && attempt < METADATA_LOOKUP_ATTEMPTS) continue
+        if (!requestSignal.aborted && attempt < METADATA_LOOKUP_ATTEMPTS) continue
         throw classificationError()
       }
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined)
         if (
-          !signal.aborted &&
+          !requestSignal.aborted &&
           attempt < METADATA_LOOKUP_ATTEMPTS &&
           RETRYABLE_METADATA_STATUS.has(response.status)
         )
@@ -99,11 +108,11 @@ export function createOpenCodeCompactionStream(
       }
       try {
         const body: unknown = await response.json()
-        if (signal.aborted) throw classificationError()
+        if (requestSignal.aborted) throw classificationError()
         return body
       } catch (error) {
         if (
-          !signal.aborted &&
+          !requestSignal.aborted &&
           attempt < METADATA_LOOKUP_ATTEMPTS &&
           !(error instanceof SyntaxError)
         )
@@ -132,7 +141,7 @@ export function createOpenCodeCompactionStream(
           sessionCwds.get(identity.sessionId) ??
           options.resolveSessionCwd(identity.sessionId)
       )
-      const body = await readMetadata(url)
+      const body = await readMetadata(url, identity.sessionId)
       const messages = Array.isArray(body)
         ? body
         : isRecord(body) && Array.isArray(body.data)
@@ -176,7 +185,7 @@ export function createOpenCodeCompactionStream(
           sessionCwds.get(identity.sessionId) ??
           options.resolveSessionCwd(identity.sessionId)
       )
-      const body = await readMetadata(url)
+      const body = await readMetadata(url, identity.sessionId)
       const info = isRecord(body) ? body.info : undefined
       if (
         signal.aborted ||
@@ -233,6 +242,16 @@ export function createOpenCodeCompactionStream(
       async write(message) {
         if (
           'method' in message &&
+          message.method === 'session/cancel' &&
+          isRecord(message.params) &&
+          typeof message.params.sessionId === 'string'
+        ) {
+          for (const request of requests.values()) {
+            if (request.sessionId === message.params.sessionId) request.cancellation?.abort()
+          }
+        }
+        if (
+          'method' in message &&
           'id' in message &&
           [
             'session/new',
@@ -248,6 +267,7 @@ export function createOpenCodeCompactionStream(
           requests.set(message.id, {
             id: message.id,
             method: message.method,
+            ...(message.method === 'session/prompt' ? { cancellation: new AbortController() } : {}),
             ...(typeof message.params.sessionId === 'string'
               ? { sessionId: message.params.sessionId }
               : {}),
@@ -293,7 +313,15 @@ export function createOpenCodeCompactionStream(
             }
             requests.delete(message.id)
             controller.enqueue(
-              request?.classificationFailed
+              request?.classificationFailed &&
+                // Do not turn an acknowledged Stop into a classification error. An ignored
+                // Stop that returns success after output was withheld must still fail.
+                !(
+                  request.cancellation?.signal.aborted &&
+                  'result' in message &&
+                  isRecord(message.result) &&
+                  message.result.stopReason === 'cancelled'
+                )
                 ? {
                     jsonrpc: '2.0',
                     id: message.id,
@@ -318,7 +346,11 @@ export function createOpenCodeCompactionStream(
           const owners = [...requests.values()].filter(
             (request) => request.sessionId === params.sessionId && contentRequest(request.method)
           )
-          if (owners.some((request) => request.classificationFailed)) {
+          if (
+            owners.some(
+              (request) => request.classificationFailed || request.cancellation?.signal.aborted
+            )
+          ) {
             // Withheld output must not leave another possible owner reporting success.
             failRequests(owners)
             return

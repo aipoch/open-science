@@ -483,6 +483,7 @@
       "runner": "playwright",
       "paths": [
         "e2e/opencode-first-turn-stop.spec.ts",
+        "e2e/opencode-classification-close.spec.ts",
         "e2e/session-storage-recovery.spec.ts",
         "e2e/desktop-composer-draft-restart.spec.ts",
         "e2e/prompt-optimization.spec.ts",
