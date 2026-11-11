@@ -39,6 +39,16 @@ type RenderResult = {
 
 const ASPIRIN_SMILES = 'CC(=O)Oc1ccccc1C(=O)O'
 
+// Supply simple non-overlapping coordinates for the large V3000 input fixtures.
+function carbonChain(atoms: number): Molecule {
+  const molecule = Molecule.fromSmiles('C'.repeat(atoms), { noCoordinates: true })
+  for (let i = 0; i < atoms; i++) {
+    molecule.setAtomX(i, i)
+    molecule.setAtomY(i, i % 2)
+  }
+  return molecule
+}
+
 describe('molecule/render_molecule', () => {
   it('validates and normalizes a SMILES into a canonical molfile with descriptors', async () => {
     const out = (await renderMolecule.run!(ctx, {
@@ -64,7 +74,7 @@ describe('molecule/render_molecule', () => {
     'round-trips a %i-atom structure from SMILES and V3000 input',
     async (atoms) => {
       const smiles = 'C'.repeat(atoms)
-      const source = Molecule.fromSmiles(smiles)
+      const source = carbonChain(atoms)
       for (const args of [{ smiles }, { molfile: source.toMolfileV3() }]) {
         const out = (await renderMolecule.run!(ctx, args)) as RenderResult
         expect(out.valid).toBe(true)
@@ -82,7 +92,7 @@ describe('molecule/render_molecule', () => {
   )
 
   it.each([999, 1000])('round-trips a structure with 999 atoms and %i bonds', async (bonds) => {
-    const source = Molecule.fromSmiles('C'.repeat(999))
+    const source = carbonChain(999)
     source.addBond(0, 2)
     if (bonds === 1000) source.addBond(3, 5)
     expect(source.getAllAtoms()).toBe(999)
