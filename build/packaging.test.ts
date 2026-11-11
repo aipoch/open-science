@@ -109,6 +109,176 @@ function findNsisCompiler(): string | undefined {
 
 const nsisCompiler = findNsisCompiler()
 
+describe.skipIf(!nsisCompiler)('NSIS manual uninstall coordination', () => {
+  it.each(['installer-first', 'uninstaller-first', 'nested-update', 'lock-unavailable'])(
+    'coordinates %s without touching an installation',
+    async (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-uninstall-lock-'))
+      const ready = join(root, 'ready')
+      const release = join(root, 'release')
+      const processCheck = join(root, 'process-check')
+      const children: ReturnType<typeof spawn>[] = []
+      const exits: Promise<unknown>[] = []
+      try {
+        const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+        const hook = include.match(
+          /!macro checkManualUninstallCoordination\b[\s\S]*?!macroend/
+        )?.[0]
+        expect(hook).toBeDefined()
+        const processHook = readFileSync(
+          join(repoRoot, 'build/windows-app-running.nsh'),
+          'utf8'
+        ).match(/!macro customCheckAppRunning\b[\s\S]*?!macroend/)?.[0]
+        expect(processHook).toBeDefined()
+        const upstream = readFileSync(
+          join(appBuilderLibRoot, 'templates/nsis/uninstaller.nsh'),
+          'utf8'
+        )
+        // Keep the real silent/interactive initialization order, but compile as a harmless fixture.
+        const initialize = upstream
+          .match(/Function un.onInit\b[\s\S]*?FunctionEnd/)![0]
+          .replace('un.onInit', '.onInit')
+          .replaceAll('un.checkAppRunning', 'checkAppRunning')
+        const appCheck = readFileSync(
+          join(appBuilderLibRoot, 'templates/nsis/include/allowOnlyOneInstallerInstance.nsh'),
+          'utf8'
+        ).match(/!macro CHECK_APP_RUNNING\b[\s\S]*?!macroend/)![0]
+        const compile = (name: string, mode: string, hold = false): string => {
+          const executable = join(root, `${name}.exe`)
+          const source = join(root, `${name}.nsi`)
+          writeFileSync(
+            source,
+            [
+              'Unicode true',
+              'RequestExecutionLevel user',
+              'SilentInstall silent',
+              `OutFile "${executable}"`,
+              '!include LogicLib.nsh',
+              `!addincludedir "${join(appBuilderLibRoot, 'templates/nsis/include')}"`,
+              '!include FileFunc.nsh',
+              `!define APP_GUID "${root.split(/[/\\]/).at(-1)}"`,
+              `!define isUpdated "0 == ${mode === 'nested' ? '0' : '1'}"`,
+              hook!,
+              ...(mode === 'installer' || mode === 'event'
+                ? [
+                    '!include allowOnlyOneInstallerInstance.nsh',
+                    'Function .onInit',
+                    ...(mode === 'installer'
+                      ? ['!insertmacro ALLOW_ONLY_ONE_INSTALLER_INSTANCE']
+                      : mode === 'event'
+                        ? [
+                            'System::Call \'kernel32::CreateEventW(p 0, i 0, i 0, w "${APP_GUID}") p.r0\'',
+                            '${If} $0 == 0',
+                            'SetErrorLevel 3',
+                            'Abort',
+                            '${EndIf}'
+                          ]
+                        : []),
+                    'FunctionEnd'
+                  ]
+                : [
+                    '!define BUILD_UNINSTALLER',
+                    processHook!,
+                    appCheck,
+                    '!define LogSet DetailPrint',
+                    '!macro check64BitAndSetRegView',
+                    '!macroend',
+                    '!macro initMultiUser',
+                    '!macroend',
+                    '!macro IS_POWERSHELL_AVAILABLE',
+                    '!macroend',
+                    // Observe the exact boundary that can terminate application processes.
+                    '!macro _CHECK_APP_RUNNING',
+                    `FileOpen $0 "${processCheck}" w`,
+                    'FileClose $0',
+                    '!macroend',
+                    'Function checkAppRunning',
+                    '!insertmacro CHECK_APP_RUNNING',
+                    'FunctionEnd',
+                    initialize
+                  ]),
+              'Section',
+              ...(hold
+                ? [
+                    `FileOpen $0 "${ready}" w`,
+                    'FileClose $0',
+                    'wait:',
+                    `IfFileExists "${release}" done`,
+                    'Sleep 25',
+                    'Goto wait',
+                    'done:'
+                  ]
+                : []),
+              'SectionEnd'
+            ].join('\n')
+          )
+          const result = spawnSync(nsisCompiler!, ['/V2', source], {
+            windowsHide: true,
+            encoding: 'utf8',
+            timeout: 30_000
+          })
+          expect(result.status, result.stdout + result.stderr).toBe(0)
+          return executable
+        }
+        const holder = compile(
+          'holder',
+          scenario === 'uninstaller-first'
+            ? 'manual'
+            : scenario === 'lock-unavailable'
+              ? 'event'
+              : 'installer',
+          true
+        )
+        const probe = compile(
+          'probe',
+          scenario === 'uninstaller-first'
+            ? 'installer'
+            : scenario === 'nested-update'
+              ? 'nested'
+              : 'manual'
+        )
+        const child = spawn(holder, ['/S'], { windowsHide: true })
+        children.push(child)
+        exits.push(once(child, 'close'))
+        const deadline = Date.now() + 10_000
+        while (!existsSync(ready) && child.exitCode === null && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        expect(existsSync(ready), 'The fixture must hold the named object').toBe(true)
+        const result = spawnSync(probe, ['/S'], { windowsHide: true, timeout: 10_000 })
+        expect(result.error).toBeUndefined()
+        expect(result.status).toBe(
+          scenario === 'nested-update' ? 0 : scenario === 'lock-unavailable' ? 1 : 2
+        )
+        if (scenario !== 'uninstaller-first')
+          expect(existsSync(processCheck)).toBe(scenario === 'nested-update')
+        writeFileSync(release, '')
+        let timeout: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            Promise.all(exits),
+            new Promise((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error('Fixture did not release its lock')),
+                10_000
+              )
+            })
+          ])
+        } finally {
+          clearTimeout(timeout)
+        }
+        const retry = spawnSync(probe, ['/S'], { windowsHide: true, timeout: 10_000 })
+        expect(retry.error).toBeUndefined()
+        expect(retry.status).toBe(0)
+      } finally {
+        for (const child of children) if (child.exitCode === null) child.kill()
+        await Promise.all(exits)
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    90_000
+  )
+})
+
 describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
   it('runs the upstream check with native PowerShell on AMD64', () => {
     const root = mkdtempSync(join(tmpdir(), 'nsis-app-check-'))

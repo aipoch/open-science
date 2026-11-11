@@ -25,6 +25,13 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       'no-storage',
       'partial',
       'active',
+      'inherited-read',
+      'inherited-write',
+      'untrusted-active-helper',
+      'untrusted-hidden-helper',
+      'hidden-owner',
+      'locked-helper',
+      'inventory-failure',
       'foreign',
       'other-installation',
       'reused-parent',
@@ -51,7 +58,12 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           '/grant:r',
           `${identity}:(OI)(CI)F`,
           '*S-1-5-18:(OI)(CI)F',
-          '*S-1-5-32-544:(OI)(CI)F'
+          '*S-1-5-32-544:(OI)(CI)F',
+          ...(scenario === 'inherited-read'
+            ? ['*S-1-5-32-545:(OI)(CI)R']
+            : scenario === 'inherited-write' || scenario.startsWith('untrusted-')
+              ? ['*S-1-5-32-545:(OI)(CI)W']
+              : [])
         ],
         { encoding: 'utf8', timeout: 10_000 }
       )
@@ -69,7 +81,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           schema: 1,
           operationId,
           parentPid:
-            scenario === 'active'
+            scenario === 'active' || scenario === 'hidden-owner'
               ? 2001
               : scenario === 'reused-parent'
                 ? process.pid
@@ -105,19 +117,27 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       // The cleanup script excludes its own ancestor chain. Model an active owner with a
       // non-ancestor WMI record so this fixture continues to exercise the active guard.
       const processInventory =
-        scenario === 'active'
+        scenario === 'untrusted-hidden-helper' || scenario === 'hidden-owner'
           ? `@(
+  [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = $null; Name = 'helper.exe' }
+)`
+          : scenario === 'untrusted-active-helper'
+            ? `@(
+  [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = '${join(directory, 'helper.exe').replaceAll("'", "''")}' }
+)`
+            : scenario === 'active'
+              ? `@(
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = '${process.execPath.replaceAll("'", "''")}' }
 )`
-          : scenario === 'reused-uninstaller-parent'
-            ? `@(
+              : scenario === 'reused-uninstaller-parent'
+                ? `@(
   [pscustomobject]@{ ProcessId = $PID; ParentProcessId = 2001; ExecutablePath = $null }
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = $null }
 )`
-            : undefined
+                : undefined
       writeFileSync(
         target,
-        scenario === 'no-storage'
+        scenario === 'no-storage' || scenario === 'inventory-failure'
           ? redirected.replace(
               "$ErrorActionPreference = 'Stop'",
               "$ErrorActionPreference = 'Stop'\nfunction Get-CimInstance { throw 'No storage should not require WMI' }"
@@ -133,7 +153,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         resolve('build/windows-runtime-cache-uninstall.ps1'),
         join(root, 'windows-runtime-cache-uninstall.ps1')
       )
-      const run = (stage: string): ReturnType<typeof spawnSync> => {
+      const run = (stage: string, scriptPath = target): ReturnType<typeof spawnSync> => {
         const started = Date.now()
         const result = spawnSync(
           join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
@@ -143,7 +163,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
             '-ExecutionPolicy',
             'Bypass',
             '-File',
-            target,
+            scriptPath,
             '-InstallPath',
             install
           ],
@@ -155,15 +175,31 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         ).toBeUndefined()
         return result
       }
-      const result = run('initial uninstall')
-      if (scenario === 'active') {
-        expect(result.status).not.toBe(0)
-        expect(result.stderr).toContain('still active')
+      // Keep a real handle denying deletion; the production removal must preserve request.json.
+      const lockPath = join(directory, 'helper.exe')
+      const lockedTarget = join(root, 'locked-uninstall.ps1')
+      if (scenario === 'locked-helper') {
+        writeFileSync(
+          lockedTarget,
+          `$lock = [IO.File]::Open('${lockPath.replaceAll("'", "''")}', 'Open', 'Read', 'Read')\ntry { & '${target.replaceAll("'", "''")}' -InstallPath '${install.replaceAll("'", "''")}' } finally { $lock.Dispose() }`
+        )
+      }
+      const result = run('initial uninstall', scenario === 'locked-helper' ? lockedTarget : target)
+      if (scenario === 'active' || scenario === 'untrusted-active-helper') {
+        expect(result.status).toBe(2)
+        expect(result.stdout).toContain('still active')
+      } else if (scenario === 'inventory-failure') {
+        expect(result.status).toBe(1)
+        expect(result.stderr).toContain('No storage should not require WMI')
+      } else if (scenario === 'hidden-owner') {
+        expect(result.status).toBe(1)
+        expect(result.stdout).toContain('Could not inspect a recorded owner')
       } else expect(result.status, result.stderr || result.stdout).toBe(0)
       const removed =
         scenario === 'no-storage' ||
         scenario === 'unknown' ||
         scenario === 'partial' ||
+        scenario === 'inherited-read' ||
         scenario.startsWith('reused-')
       expect(existsSync(directory)).toBe(!removed)
       if (removed) {
@@ -172,6 +208,16 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       }
       if (scenario === 'foreign')
         expect(readFileSync(join(directory, 'unrelated-file'), 'utf8')).toBe('preserve')
+      if (
+        scenario === 'inherited-write' ||
+        scenario === 'untrusted-hidden-helper' ||
+        scenario === 'locked-helper'
+      ) {
+        expect(result.stdout).toContain('Retained update records')
+        expect(result.stdout).toContain(operations)
+        expect(readFileSync(join(directory, 'helper.exe'), 'utf8')).toBe('owned fixture')
+        expect(existsSync(join(directory, 'request.json'))).toBe(true)
+      }
       expect(process.kill(process.pid, 0)).toBe(true)
     },
     // Cover ACL setup (10 s), both bounded PowerShell calls (30 s each), and fixture assertions.

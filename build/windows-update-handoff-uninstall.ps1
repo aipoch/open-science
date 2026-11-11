@@ -10,13 +10,6 @@ $roots = @(
 )
 $roots = @($roots | Where-Object { Test-Path -LiteralPath $_ })
 if ($roots.Count -eq 0) { exit 0 }
-# Validate both fixed roots before removing anything; retain historical configuration leases.
-foreach ($root in $roots) {
-  if (-not (Test-Path -LiteralPath $root)) { continue }
-  if (-not (Test-NoReparsePointInPath $root) -or -not (Test-TrustedAcl $root)) {
-    throw 'Update presentation storage ownership could not be verified.'
-  }
-}
 $installation = [IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 # Read-only process inventory. An unavailable inventory must not authorize deletion.
 $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
@@ -30,9 +23,26 @@ while ($cursor -and $cursor.ParentProcessId -and $ancestors.Add([uint32]$cursor.
   $cursor = $processes | Where-Object { $_.ProcessId -eq $parentPid } | Select-Object -First 1
 }
 $uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+# NSIS holds the installer mutex independently of these optional records. Older detached helpers
+# have their own lifetime: identify them from the process inventory even when storage is untrusted.
+foreach ($process in $processes) {
+  if ($process.ProcessId -eq $PID -or $ancestors.Contains([uint32]$process.ProcessId)) { continue }
+  if (-not $process.ExecutablePath) { continue }
+  foreach ($root in $roots) {
+    if ($process.ExecutablePath -imatch ('^' + [regex]::Escape($root) + "\\$uuid\\helper\.exe$")) {
+      Write-Output "Update helper is still active: $($process.ExecutablePath)"
+      exit 2
+    }
+  }
+}
 $owned = "^(request\.json|config\.bin|helper\.exe|cancel|(accepted|installing|installed|failed|ready|closed|aborted|handoff|unconfirmed)\.receipt)(?:\.$uuid\.tmp|\.tmp)?$"
 foreach ($root in $roots) {
+try {
 if (-not (Test-Path -LiteralPath $root)) { continue }
+if (-not (Test-NoReparsePointInPath $root) -or -not (Test-TrustedAcl $root)) {
+  Write-Output "Retained update records at '$root': storage ownership could not be verified."
+  continue
+}
 foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   if (-not $directory.PSIsContainer -or $directory.Name -cnotmatch "^$uuid$" -or
       -not (Test-NoReparsePointInPath $directory.FullName) -or
@@ -68,8 +78,13 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
         $_.ExecutablePath -ieq $request.installerPath
     }
   })
+  if (@($active | Where-Object { -not $_.ExecutablePath }).Count -gt 0) {
+    Write-Output "Could not inspect a recorded owner of update operation $($directory.Name). Retry uninstall after closing its update window."
+    exit 1
+  }
   if ($active.Count -gt 0) {
-    throw "Update operation $($directory.Name) is still active; close its presentation after installation finishes and retry uninstall."
+    Write-Output "Update operation $($directory.Name) is still active; close its presentation after installation finishes and retry uninstall."
+    exit 2
   }
   # Remove the executable first (Windows refuses if still mapped), the request last so retry retains
   # its ownership evidence. Unknown outcomes may be removed only during an explicit product uninstall.
@@ -81,5 +96,11 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   }
   Remove-Item -LiteralPath $requestPath -Force
   [IO.Directory]::Delete($directory.FullName, $false)
+}
+}
+catch {
+  # Optional record cleanup must not trap product removal. Preserve remaining ownership evidence
+  # for a later cleanup; never repair ACLs or recursively remove content we cannot verify.
+  Write-Output "Retained update records at '$root': $($_.Exception.Message)"
 }
 }
