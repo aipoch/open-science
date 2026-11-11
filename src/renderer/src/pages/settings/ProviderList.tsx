@@ -222,9 +222,13 @@ const ProviderList = ({
         {displayedProviders.map((provider) => {
           const isActiveSource = provider.id === activeProviderId
           const isBusy = provider.id === busyProviderId
-          // Show the latest failed test on the provider card. Targeted failures only exclude the
-          // matching model/protocol from pickers; provider-wide failures still exclude everything.
-          const failure = providerValidationFailed(provider, provider.lastValidationFailure?.target)
+          const validationScope = providerValidationRoute(provider, agentFrameworkId)
+          // Keep the latest failed model visible, but evaluate its recovery in the current agent.
+          // Native recovery must not erase the HTTP failure for other frameworks.
+          const failure = providerValidationFailed(provider, {
+            ...provider.lastValidationFailure?.target,
+            ...validationScope
+          })
             ? provider.lastValidationFailure
             : undefined
           const providerRoutes = providerEndpoints(provider)
@@ -233,7 +237,7 @@ const ProviderList = ({
             provider.model ??
             (provider.vendorId ? defaultVendorModel(provider.vendorId, provider.region) : undefined)
           const activeValidationTarget = {
-            ...providerValidationRoute(provider, agentFrameworkId),
+            ...validationScope,
             model: effectiveModel,
             endpoint: preferredEndpoint(
               providerRoutes,
