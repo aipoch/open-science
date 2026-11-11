@@ -415,7 +415,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         (selection, signal) =>
           probeWindowsRuntimeComponent(
             selection,
-            (request) => this.prepare(request),
+            // Compatibility checks need only their fixture and runtime, not unrelated user grants.
+            (request) => this.prepare(request, false),
             signal,
             (message) => this.log.warn(message)
           )
@@ -573,7 +574,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+  private async prepare(
+    invocation: NotebookSandboxInvocation,
+    includeGrantedLocalRoots = true
+  ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
     const windowsProtectionRequired = nativeWindows
@@ -598,7 +602,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    const grantedRoots = includeGrantedLocalRoots
+      ? ((await this.options.getGrantedLocalRoots?.()) ?? [])
+      : []
     // Broad writable ancestors must never make application authority or its future staging
     // files writable. Keep explicit descendant workspaces and caches usable.
     const physicalPath = (path: string): string => {

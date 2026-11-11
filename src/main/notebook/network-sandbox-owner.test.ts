@@ -103,7 +103,10 @@ import {
   type NotebookNetworkDecision
 } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
-import { WindowsRuntimeComponentStore } from './windows-runtime-components'
+import {
+  WindowsRuntimeComponentStore,
+  type WindowsRuntimeComponentDependencies
+} from './windows-runtime-components'
 import { NotebookRuntimeService } from './runtime-service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { runShellCommand } from './shell-process'
@@ -236,6 +239,98 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it('prepares Windows runtimes without granting unrelated user folders to compatibility probes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-runtime-probe-grants-'))
+    fixtureDirectories.push(root)
+    const unrelatedRoot = join(root, 'restricted-software')
+    const getGrantedLocalRoots = vi.fn(async () => [
+      { id: 'software', name: 'Software', path: unrelatedRoot, access: 'rw' as const }
+    ])
+    // Replace component acquisition only; exercise the owner's real compatibility callback,
+    // runtime probe and filesystem projection before the native launcher boundary.
+    const select = vi
+      .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
+      .mockImplementation(async function (this: WindowsRuntimeComponentStore, releases, request) {
+        const selection = {
+          release: releases.find(
+            (release) => release.component === request.component && release.source === 'patched'
+          )!,
+          root: join(root, request.component),
+          executable: process.execPath
+        }
+        await (this as unknown as { deps: WindowsRuntimeComponentDependencies }).deps.probe(
+          selection,
+          request.signal
+        )
+        return selection
+      })
+    backend.wrap.mockImplementation(async (request) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        request.filesystem.readWriteRoots.includes(unrelatedRoot)
+          ? 'process.stderr.write("WINDOWS_ACL_ACCESS_DENIED: write command ACL"); process.exit(1)'
+          : 'process.stdout.write("RUNTIME_PROBE_OK")'
+      ],
+      env: process.env,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: async (
+        _reason: NotebookSandboxCleanupReason,
+        outcome: NotebookSandboxProcessOutcome
+      ) => backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      windowsRuntimeRoot: join(root, 'runtimes'),
+      temporaryRoot: join(root, 'commands'),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getGrantedLocalRoots,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(owner.installWindows()).resolves.toEqual({ cancelled: false })
+      await expect(owner.status()).resolves.toMatchObject({ kind: 'ready' })
+      expect(backend.wrap).toHaveBeenCalledTimes(2)
+      expect(getGrantedLocalRoots).not.toHaveBeenCalled()
+      for (const [request] of backend.wrap.mock.calls) {
+        expect(request.windowsProtectionRequired).toBe(true)
+        expect(request.filesystem.readOnlyRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readWriteRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readWriteRoots).toContain(request.cwd)
+        expect(request.filesystem.deniedReadRoots).toEqual([expect.stringContaining('private.txt')])
+      }
+      // Ordinary execution still receives the saved grant, even with the probe's session label.
+      const command = await owner.wrap({
+        executable: process.execPath,
+        args: ['-e', '0'],
+        env: {},
+        cwd: root,
+        commandText: '0',
+        runtime: 'repl',
+        sessionId: 'runtime-preparation',
+        projectId: 'runtime-preparation',
+        windowsProtectionRequired: true,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      expect(getGrantedLocalRoots).toHaveBeenCalledTimes(1)
+      expect(backend.wrap.mock.lastCall![0].filesystem.readWriteRoots).toContain(unrelatedRoot)
+      await command.cleanup('spawn-failed', { processesTerminated: true })
+    } finally {
+      select.mockRestore()
+      await owner.dispose()
+    }
+  })
+
   it.each([
     { visitSettings: false, background: false, failure: undefined },
     { visitSettings: true, background: false, failure: undefined },
