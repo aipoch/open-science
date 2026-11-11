@@ -168,6 +168,22 @@ $raw = fixture.cmd upgrade --check 2>$null
 Get-Sample`
           )
           expect(nested).toMatchObject({ exitCode: 0, stdout: 'reached|0|sample', stderr: '' })
+          const classMethod = await execute(
+            `class CaptureSample {
+  static [string] Read() {
+    $value = cmd.exe /d /c 'echo class& echo advisory 1>&2' 2>$null
+    return $value
+  }
+}
+[Console]::Write([CaptureSample]::Read())`
+          )
+          expect(classMethod).toMatchObject({ exitCode: 0, stdout: 'class', stderr: '' })
+          const alias = await execute(
+            `Set-Alias Invoke-SampleNative cmd.exe
+$value = Invoke-SampleNative /d /c 'echo alias& echo advisory 1>&2' 2>$null
+[Console]::Write($value)`
+          )
+          expect(alias).toMatchObject({ exitCode: 0, stdout: 'alias', stderr: '' })
           const variable = await execute(
             `function Invoke-Sample {
   $payload = $args[0]

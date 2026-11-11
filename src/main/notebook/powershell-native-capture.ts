@@ -43,21 +43,26 @@ const compileNativeCapture = String.raw`& { param($source)
     } elseif ($call.CommandElements[0] -is [System.Management.Automation.Language.VariableExpressionAst]) {
       $target = $call.CommandElements[0].Extent.Text
     } else { continue }
-    $test = '$ErrorActionPreference -eq ''Stop'' -and {0} -is [string] -and $ExecutionContext.InvokeCommand.GetCommand({0}, ''All'') -is [System.Management.Automation.ApplicationInfo]' -f $target
+    # Class methods require scope-qualified references to external variables at parse time.
+    $commands = '$global:ExecutionContext.InvokeCommand'
+    $preference = '$global:ExecutionContext.SessionState.PSVariable.Get(''ErrorActionPreference'')'
+    $native = '(& { param($info) if ($info -is [System.Management.Automation.AliasInfo]) { $info = $info.ResolvedCommand }; $info -is [System.Management.Automation.ApplicationInfo] } (' + $commands + '.GetCommand(' + $target + ', ''All'')))'
+    $test = $preference + '.Value -eq ''Stop'' -and ' + $target + ' -is [string] -and ' + $native
     # Respect a preference the caller has explicitly locked.
-    $test += ' -and !($ExecutionContext.SessionState.PSVariable.Get(''ErrorActionPreference'').Options -band [Management.Automation.ScopedItemOptions]''ReadOnly, Constant'')'
+    $test += ' -and !(' + $preference + '.Options -band [Management.Automation.ScopedItemOptions]''ReadOnly, Constant'')'
     $original = $assignment.Extent.Text
     $capture = $original
     if ($pipeline.Count -eq 2) {
-      $test += ' -and $ExecutionContext.InvokeCommand.GetCommand(''Out-String'', ''All'') -is [System.Management.Automation.CmdletInfo]'
+      $test += ' -and ' + $commands + '.GetCommand(''Out-String'', ''All'') -is [System.Management.Automation.CmdletInfo]'
       $capture += ' -ErrorAction Stop'
     }
     # Set the existing variable so restoring it also preserves its original owning scope.
-    $pref = '$ExecutionContext.SessionState.PSVariable.Get(''ErrorActionPreference'').Value'
+    $pref = $preference + '.Value'
     # Restoring the preference sets $? to true. Ignore marks the statement unsuccessful for a
     # real native failure without emitting another diagnostic or adding to the error history.
     $restore = $pref + ' = ''Stop''; if ($global:LASTEXITCODE -ne 0) { Microsoft.PowerShell.Utility\Write-Error ''Native command failed'' -ErrorAction Ignore }'
-    $replacement = 'if (' + $test + ') { try { ' + $pref + ' = ''Continue''; ' + $capture + ' } finally { ' + $restore + ' } } else { ' + $original + ' }'
+    # An explicit rethrow lets the 5.1 class parser prove the target was assigned on success.
+    $replacement = 'if (' + $test + ') { try { ' + $pref + ' = ''Continue''; ' + $capture + ' } catch { throw } finally { ' + $restore + ' } } else { ' + $original + ' }'
     $source = $source.Remove($assignment.Extent.StartOffset, $original.Length).Insert($assignment.Extent.StartOffset, $replacement)
   }
   if ($source -ceq $block.ToString()) { return $block }
