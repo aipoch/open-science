@@ -4,7 +4,7 @@ import {
   resolveResponsesReasoningTransport
 } from '@aipoch/providers/protocol'
 import { getOfficialVendor } from '@aipoch/providers'
-import { HARNESS_ENDPOINT_PREFERENCE } from '../../shared/settings'
+import { preferredEndpoint } from '../../shared/settings'
 import { spawn } from 'node:child_process'
 import { isAbsolute, join } from 'node:path'
 import { resolvePermissionProfileApplication } from '../acp/permission-profile-controller'
@@ -37,7 +37,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
   }),
   acceptsStdioMcp: false,
   supportsLiveEffortChange: false,
-  supportedApiTypes: HARNESS_ENDPOINT_PREFERENCE,
+  supportedApiTypes: ['responses', 'messages', 'chat-completions'],
   spawn(input) {
     if (
       !isAbsolute(input.executablePath) ||
@@ -65,8 +65,10 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
       throw new Error('Built-in Agent requires a host-owned model connection')
     const contextWindow = provider.contextWindow ?? 32_768
     const protocol =
-      HARNESS_ENDPOINT_PREFERENCE.find((endpoint) => provider.apiEndpoints?.includes(endpoint)) ??
-      'responses'
+      preferredEndpoint(
+        provider.apiEndpoints ?? ['responses'],
+        harnessFramework.supportedApiTypes
+      ) ?? 'responses'
     const reasoning = context.reasoningEffort
       ? resolveChatReasoningTransport(
           provider.vendorId,

@@ -261,22 +261,13 @@ export const isProviderUsableByFramework = (
   return isProviderCompatibleWith(endpoints, framework.supportedApiTypes)
 }
 
-export const HARNESS_ENDPOINT_PREFERENCE = ['responses', 'messages', 'chat-completions'] as const
+export const DEFAULT_ENDPOINT_ORDER = ['responses', 'chat-completions', 'messages'] as const
 
-export const preferredEndpoint = <const FrameworkEndpoints extends readonly ModelProtocol[]>(
+// Frameworks list their native protocols in preference order. Bridges use the default order.
+export const preferredEndpoint = <const Endpoint extends ModelProtocol>(
   endpoints: readonly ModelProtocol[],
-  frameworkEndpoints: FrameworkEndpoints,
-  frameworkId?: AgentFrameworkId
-): FrameworkEndpoints[number] | undefined => {
-  const preference: readonly ModelProtocol[] =
-    frameworkId === 'open-science-agent'
-      ? HARNESS_ENDPOINT_PREFERENCE
-      : ['responses', 'chat-completions', 'messages']
-  return preference.find(
-    (endpoint): endpoint is FrameworkEndpoints[number] =>
-      endpoints.includes(endpoint) && frameworkEndpoints.includes(endpoint)
-  )
-}
+  preference: readonly Endpoint[]
+): Endpoint | undefined => preference.find((endpoint) => endpoints.includes(endpoint))
 
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
 export type ClaudeInfo = {

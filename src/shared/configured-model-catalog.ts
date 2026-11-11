@@ -11,6 +11,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
@@ -143,14 +144,9 @@ export const buildConfiguredModelCatalog = (
       apiEndpoints,
       provider.type === 'xai-subscription'
         ? (['responses'] as const)
-        : input.frameworkId === 'codex'
-          ? (['messages', 'chat-completions', 'responses'] as const)
-          : usesCompatibilityTransport
-            ? apiEndpoints
-            : frameworkCompatible
-              ? input.frameworkEndpoints
-              : (['messages', 'chat-completions', 'responses'] as const),
-      input.frameworkId
+        : input.frameworkId === 'codex' || usesCompatibilityTransport || !frameworkCompatible
+          ? DEFAULT_ENDPOINT_ORDER
+          : input.frameworkEndpoints
     )
     if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)

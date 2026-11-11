@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { type ModelProtocol, usesVendorMessagesApiKeyHeader } from '@aipoch/providers'
 
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
-import { preferredEndpoint } from '../../shared/settings'
+import { DEFAULT_ENDPOINT_ORDER, preferredEndpoint } from '../../shared/settings'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { toErrorMessage } from '../error-message'
 import {
@@ -104,7 +104,6 @@ const nativeResponsesCompatibilityProbeBody = (model: string): Record<string, un
 // The endpoint preference to intersect the provider against when no active framework is supplied. A
 // direct caller (or unit test) that doesn't care about a specific framework probes the provider's own
 // best route: Responses > Chat Completions > Messages.
-const ALL_ENDPOINTS: readonly ModelProtocol[] = ['messages', 'chat-completions', 'responses']
 
 const buildValidationRequest = (
   provider: ResolvedProvider,
@@ -112,7 +111,7 @@ const buildValidationRequest = (
   // The routes the active agent framework can drive. The probe targets the endpoint shared by the
   // provider and the framework, so a passing test proves the exact route the agent will run — not just
   // some route the provider happens to speak. Defaults to every route (framework-agnostic probe).
-  frameworkEndpoints: readonly ModelProtocol[] = ALL_ENDPOINTS
+  frameworkEndpoints: readonly ModelProtocol[] = DEFAULT_ENDPOINT_ORDER
 ): ValidationHttpRequest => {
   if (!provider.baseUrl) {
     throw new Error('Missing base URL.')

@@ -1,3 +1,4 @@
+import { harnessFramework } from '../agent-framework/harness'
 import { createAgentRunner, type AgentStep, type TurnOutcome } from '@aipoch/agent-harness'
 import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
@@ -6,7 +7,7 @@ import {
   type HarnessModelObserver,
   type HarnessModelResult
 } from './harness-model-request'
-import { HARNESS_ENDPOINT_PREFERENCE, providerValidationFailed } from '../../shared/settings'
+import { preferredEndpoint, providerValidationFailed } from '../../shared/settings'
 import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import type { ProviderTransportOwner, HarnessProviderLease } from './provider-transport-owner'
 import type { SettingsRepository } from './repository'
@@ -67,7 +68,7 @@ const usable = (
     provider,
     model
   )
-  const endpoint = HARNESS_ENDPOINT_PREFERENCE.find((protocol) => endpoints.includes(protocol))
+  const endpoint = preferredEndpoint(endpoints, harnessFramework.supportedApiTypes)
   return !!endpoint && !providerValidationFailed(provider, { model, endpoint })
 }
 
