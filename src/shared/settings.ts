@@ -261,25 +261,13 @@ export const isProviderUsableByFramework = (
   return isProviderCompatibleWith(endpoints, framework.supportedApiTypes)
 }
 
-// The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
-// /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
-// undefined when the pair is incompatible.
-export const preferredEndpoint = <const FrameworkEndpoints extends readonly ModelProtocol[]>(
+export const DEFAULT_ENDPOINT_ORDER = ['responses', 'chat-completions', 'messages'] as const
+
+// Frameworks list their native protocols in preference order. Bridges use the default order.
+export const preferredEndpoint = <const Endpoint extends ModelProtocol>(
   endpoints: readonly ModelProtocol[],
-  frameworkEndpoints: FrameworkEndpoints
-): FrameworkEndpoints[number] | undefined => {
-  const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
-    endpoints.includes(endpoint)
-  )
-
-  if (shared.length === 0) return undefined
-
-  return (
-    shared.find((endpoint) => endpoint === 'responses') ??
-    shared.find((endpoint) => endpoint === 'chat-completions') ??
-    shared.find((endpoint) => endpoint === 'messages')
-  )
-}
+  preference: readonly Endpoint[]
+): Endpoint | undefined => preference.find((endpoint) => endpoints.includes(endpoint))
 
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
 export type ClaudeInfo = {

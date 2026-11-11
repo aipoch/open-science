@@ -273,8 +273,7 @@ async function fixture(
         model: 'test',
         modelIdentity: 'provider:test',
         contextWindow,
-        inputCapabilities,
-        maxOutputTokens: 1024
+        inputCapabilities
       }
     }
   })
@@ -410,6 +409,7 @@ it('sends task-only instructions without a tool catalog on the provider wire', a
   })
   await prompt(a.connection, created.sessionId, 'Cell')
   expect(model.requests).toHaveLength(1)
+  expect(model.requests[0]).not.toHaveProperty('max_tokens')
   expect(model.requests[0].tools ?? []).toEqual([])
   expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])
   expect(JSON.stringify(model.requests[0].messages)).toContain('Translate faithfully.')
@@ -1174,6 +1174,8 @@ it.each(['messages', 'responses'] as const)(
     expect(f.approvals).toHaveLength(1)
     expect(headers).toEqual([sessionId, sessionId])
     expect(received).toHaveLength(2)
+    if (protocol === 'messages') expect(received[0].max_tokens).toBe(16_384)
+    else expect(received[0]).not.toHaveProperty('max_output_tokens')
     const image =
       protocol === 'messages'
         ? { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } }

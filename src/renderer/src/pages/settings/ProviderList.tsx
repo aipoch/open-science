@@ -32,6 +32,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
@@ -236,11 +237,10 @@ const ProviderList = ({
               providerRoutes,
               isXaiSubscriptionProvider(provider.type)
                 ? (['responses'] as const)
-                : agentFrameworkId === 'codex'
-                  ? (['messages', 'chat-completions', 'responses'] as const)
-                  : requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
-                    ? providerRoutes
-                    : frameworkEndpoints
+                : agentFrameworkId === 'codex' ||
+                    requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
+                  ? DEFAULT_ENDPOINT_ORDER
+                  : frameworkEndpoints
             )
           }
           // A passing test shows a green check. Suppressed while a test is in flight.

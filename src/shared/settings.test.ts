@@ -103,10 +103,13 @@ describe('provider endpoint compatibility', () => {
   it('prefers the OpenAI endpoint when both sides support it (both + both → openai)', () => {
     const openCodeEndpoint = preferredEndpoint(
       ['messages', 'chat-completions'],
-      ['messages', 'chat-completions']
+      ['chat-completions', 'messages']
     )
     expectTypeOf(openCodeEndpoint).toEqualTypeOf<'messages' | 'chat-completions' | undefined>()
     expect(openCodeEndpoint).toBe('chat-completions')
+    expect(
+      preferredEndpoint(['chat-completions', 'messages'], ['messages', 'chat-completions'])
+    ).toBe('messages')
     // A both-provider on an anthropic-only framework falls back to the shared anthropic endpoint.
     expect(preferredEndpoint(['messages', 'chat-completions'], ['messages'])).toBe('messages')
     // Single-endpoint providers resolve to that endpoint when shared.
@@ -180,7 +183,7 @@ describe('provider endpoint compatibility', () => {
     const claude = { id: 'claude-code' as const, supportedApiTypes: ['messages'] as const }
     const opencode = {
       id: 'opencode' as const,
-      supportedApiTypes: ['messages', 'chat-completions'] as const
+      supportedApiTypes: ['chat-completions', 'messages'] as const
     }
 
     for (const type of ['codex-shared', 'codex-isolated'] as const) {

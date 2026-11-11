@@ -319,6 +319,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
 
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
+  /** Native protocols in preference order, most preferred first. */
   readonly supportedApiTypes: readonly ModelProtocol[]
 }
 

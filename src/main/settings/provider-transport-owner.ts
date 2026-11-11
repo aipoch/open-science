@@ -1,3 +1,4 @@
+import { harnessFramework } from '../agent-framework/harness'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { isLoopbackProviderBaseUrl } from '@aipoch/providers/transport'
 import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings'
@@ -322,11 +323,7 @@ class ProviderTransportOwner {
     const model = snapshot.effectiveModel ?? provider.model
     const usesXaiOAuth = snapshot.providerType === 'xai-subscription'
     const usesCodexOAuth = isCodexSubscriptionProvider(snapshot.providerType)
-    const wire = preferredEndpoint(snapshot.apiEndpoints, [
-      'responses',
-      'chat-completions',
-      'messages'
-    ])
+    const wire = preferredEndpoint(snapshot.apiEndpoints, harnessFramework.supportedApiTypes)
     if (
       !['custom', 'official', 'xai-subscription', 'codex-isolated', 'codex-shared'].includes(
         snapshot.providerType

@@ -115,7 +115,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ]
@@ -140,7 +140,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ]
@@ -160,7 +160,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ]

@@ -33199,6 +33199,7 @@ it('connects the optional built-in harness through the host runtime and releases
         type: 'custom',
         model: 'fixture-model',
         agentProviderId: 'host-fixture',
+        apiEndpoints: ['chat-completions'],
         contextWindow: 32768
       },
       {

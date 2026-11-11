@@ -28,6 +28,7 @@ import type {
 } from '../../shared/settings'
 import {
   isProviderUsableByFramework,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   requiresChatCompletionsBridge
 } from '../../shared/settings'
@@ -514,11 +515,10 @@ export class AgentRuntimeManager {
               activeEndpoints ?? [],
               activeProvider.type === 'xai-subscription'
                 ? (['responses'] as const)
-                : framework.id === 'codex'
-                  ? (['messages', 'chat-completions', 'responses'] as const)
-                  : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
-                    ? (activeEndpoints ?? [])
-                    : framework.supportedApiTypes
+                : framework.id === 'codex' ||
+                    requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
+                  ? DEFAULT_ENDPOINT_ORDER
+                  : framework.supportedApiTypes
             )
           }
         : undefined

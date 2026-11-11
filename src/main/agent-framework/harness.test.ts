@@ -28,7 +28,8 @@ describe('built-in Agent host boundary', () => {
     ).not.toMatch(/upstream-secret|revocable-local-token/)
     expect(config.authentication?._meta?.['open-science-agent']).toMatchObject({
       token: 'revocable-local-token',
-      parameters: { reasoning_effort: 'high' },
+      protocol: 'responses',
+      parameters: { reasoning: { effort: 'high' } },
       contextWindow: 64000
     })
     expect(isRuntimeHelper(['node', 'main.cjs', ...config.args!])).toBe(true)
@@ -83,7 +84,14 @@ it.each(['chat-completions', 'messages', 'responses'] as const)(
   'binds native %s to its loopback path',
   (protocol) => {
     const config = harnessFramework.prepareModelConfig(
-      { type: 'custom', model: 'm', agentProviderId: 'p/m', apiEndpoints: [protocol] },
+      {
+        type: 'custom',
+        model: 'm',
+        agentProviderId: 'p/m',
+        apiEndpoints: [protocol],
+        contextWindow: 32768,
+        maxOutputTokens: 24000
+      },
       {
         storageRoot: resolve('data'),
         executablePath: resolve('out/backend/index.cjs'),
@@ -91,6 +99,7 @@ it.each(['chat-completions', 'messages', 'responses'] as const)(
       }
     )
     const value = harnessConfigSchema.parse(config.authentication?._meta?.['open-science-agent'])
+    expect(value.maxOutputTokens).toBe(24000)
     expect(value.protocol).toBe(protocol)
     expect(value.endpoint).toBe(
       `http://127.0.0.1:1234/v1/${protocol === 'chat-completions' ? 'chat/completions' : protocol}`
@@ -110,6 +119,26 @@ it.each(['chat-completions', 'messages', 'responses'] as const)(
     ).toBe(true)
   }
 )
+
+it('uses the catalog output limit for an official Messages target projected as custom', () => {
+  const config = harnessFramework.prepareModelConfig(
+    {
+      type: 'custom',
+      vendorId: 'anthropic',
+      model: 'claude-opus-5-5',
+      agentProviderId: 'provider/model',
+      apiEndpoints: ['messages']
+    },
+    {
+      storageRoot: resolve('data'),
+      executablePath: resolve('main.cjs'),
+      responsesConnection: { baseUrl: 'http://127.0.0.1:1234', token: 'local' }
+    }
+  )
+  expect(
+    harnessConfigSchema.parse(config.authentication?._meta?.['open-science-agent']).maxOutputTokens
+  ).toBe(128_000)
+})
 
 it.each(['MiniMax-M3', 'MiniMax-M3.1-Flash', 'MiniMax-M2.7'])(
   'narrows native media capabilities for documented MiniMax model %s',

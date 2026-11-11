@@ -34,6 +34,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
   requiresChatCompletionsBridge,
@@ -666,11 +667,7 @@ class ProviderAccountsModule {
         model: provider.model,
         endpoint: preferredEndpoint(
           provider.apiEndpoints ?? ['messages'],
-          this.validationFrameworkEndpoints(provider, settings) ?? [
-            'messages',
-            'chat-completions',
-            'responses'
-          ]
+          this.validationFrameworkEndpoints(provider, settings) ?? DEFAULT_ENDPOINT_ORDER
         )
       }
     }
@@ -687,7 +684,7 @@ class ProviderAccountsModule {
       : !incompatibility &&
           framework.id === 'codebuddy' &&
           requiresChatCompletionsBridge(provider, framework)
-        ? providerEndpoints(provider)
+        ? DEFAULT_ENDPOINT_ORDER
         : incompatibility || framework.id === 'codex'
           ? undefined
           : framework.supportedApiTypes
@@ -813,7 +810,7 @@ class ProviderAccountsModule {
             model: resolved.provider.model,
             endpoint: preferredEndpoint(
               resolved.provider.apiEndpoints ?? ['messages'],
-              validationFrameworkEndpoints ?? ['messages', 'chat-completions', 'responses']
+              validationFrameworkEndpoints ?? DEFAULT_ENDPOINT_ORDER
             )
           })
     const validationPatch = buildProviderValidationPatch(stored, result, validationTarget)
