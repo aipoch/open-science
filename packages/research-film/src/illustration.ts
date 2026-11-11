@@ -1,11 +1,11 @@
 import { z } from 'zod'
 
+export const videoCuePattern = /^(end|\d+(?:\.end|:[^\s+-]+)?)(?:[+-]\d+(?:\.\d+)?)?$/
+
 // Timing hints are optional presentation metadata; malformed hints use the player's defaults.
 export const videoCueSchema = z.preprocess(
   (value) =>
-    typeof value === 'string' &&
-    value.length <= 100 &&
-    /^(end|\d+)(\.end|:[^\s+-]+)?([+-]\d+(?:\.\d+)?)?$/.test(value)
+    typeof value === 'string' && value.length <= 100 && videoCuePattern.test(value)
       ? value
       : undefined,
   z.string().optional()

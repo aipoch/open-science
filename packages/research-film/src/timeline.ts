@@ -150,6 +150,51 @@ function panelTiming(panel: VideoPanel, scene: ResolvedScene, hook: boolean): Re
   return result
 }
 
+/** Use the authored reveal window first. Any unread text continues after narration,
+ * including when an explicit exit reserves the middle of the scene for another panel. */
+function scheduleVerdictReading(scene: ResolvedScene): void {
+  const authoredEnd = scene.dur
+  const continuations: ResolvedPanel[] = []
+  for (const panel of scene.panels) {
+    if (panel.type !== 'verdict' || typeof panel.text !== 'string' || panel.text.length <= 40)
+      continue
+    // Approximate reading time independently of the actual page breaks in each aspect ratio.
+    const units = Array.from(panel.text).reduce(
+      (sum, char) =>
+        sum +
+        (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(char)
+          ? 2
+          : 1),
+      0
+    )
+    const end = panel.t_out ?? authoredEnd
+    const available = end - panel.t_in
+    const duration = Math.max(available, units / 18 + 0.8)
+    panel.reading = { offset: 0, duration }
+    if (duration <= available) continue
+    if (end === authoredEnd && scene.dur === authoredEnd) {
+      scene.dur = round(authoredEnd + duration - available)
+      panel.t_out = scene.dur
+    } else {
+      const start = scene.dur
+      scene.dur = round(start + duration - available)
+      continuations.push({
+        ...panel,
+        t_in: start,
+        t_out: scene.dur,
+        occ_from: start,
+        reading: { offset: available, duration }
+      })
+      panel.t_out = end
+    }
+  }
+  if (scene.dur > authoredEnd) {
+    for (const panel of scene.panels)
+      if (panel.type === 'verdict' && panel.t_out === null) panel.t_out = authoredEnd
+    scene.panels.push(...continuations)
+  }
+}
+
 /** Estimated timing is explicitly preview-only. Published narration requires measured durations. */
 export type VideoTimeline = {
   fps: number
@@ -256,8 +301,9 @@ export function buildVideoTimeline(
           .filter((q) => q !== p && q.t_out !== null && q.t_out <= p.t_in + 1e-6)
           .map((q) => q.t_out!)
       )
+    scheduleVerdictReading(resolved)
     scenes.push(resolved)
-    start += dur
+    start += resolved.dur
   }
   if (start > 3600) throw new Error('Video exceeds one hour')
   const chunks: Array<{ words: WordTime[]; end: number }> = []

@@ -192,6 +192,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다."
   },
   "renderer": {
+    "The model returned no film content.": "모델이 영상 콘텐츠를 반환하지 않았습니다.",
+    "The model reached a generation limit before completing this step.": "이 단계를 마치기 전에 모델의 생성 한도에 도달했습니다.",
     "Connect {{provider}}": "{{provider}} 연결",
     "Connect the account before adding this configuration.": "이 구성을 추가하기 전에 계정을 연결하세요.",
     "Details and possible scenarios": "세부 정보 및 가능한 사용 상황",
@@ -7799,7 +7801,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "생성하려면 내레이션 리소스({{size}} MiB)를 설치하세요. 이후 해설에서도 재사용됩니다.",
     "Install and generate": "설치 후 생성",
     "English narration": "영어 내레이션",
-    "You can close this window. Generation continues in the background.": "이 창을 닫아도 생성은 백그라운드에서 계속됩니다.",
     "View generation progress": "생성 진행 상황 보기",
     "Generate again?": "다시 생성할까요?",
     "Start generation": "생성 시작",
@@ -7810,6 +7811,8 @@
     "Generate research film": "연구 단편 영상 생성",
     "View research film": "연구 단편 영상 보기",
     "Play research film": "연구 단편 영상 재생",
+    "Continue generation": "생성 계속",
+    "Generating animations…": "애니메이션 생성 중…",
     "Writing research film…": "연구 단편 영상 구성 중…",
     "Create a short film from this conversation.": "기존 대화를 바탕으로 연구 단편 영상을 만듭니다.",
     "Generating a new film may take several minutes. Continue?": "새 영상을 생성하는 데 몇 분이 걸릴 수 있습니다. 계속하시겠습니까?",

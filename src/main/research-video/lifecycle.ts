@@ -17,6 +17,7 @@ const jobOwner = z.object({
   appSessionId: identity
 })
 const uuid = z.string().uuid()
+const receiptId = z.object({ id: uuid })
 const info = async (path: string): Promise<Stats | undefined> =>
   lstat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return undefined
@@ -87,11 +88,10 @@ export function createResearchFilmLifecycle(options: {
     for (const key of await directories(presentations)) {
       if (!/^[a-f0-9]{64}$/.test(key)) continue
       const base = join(presentations, key)
-      const latest = z
-        .object({ id: z.string().uuid() })
-        .safeParse(await readReceipt(join(base, 'latest.json'), 4096))
+      const latest = receiptId.safeParse(await readReceipt(join(base, 'latest.json'), 4096))
+      const pending = receiptId.safeParse(await readReceipt(join(base, 'pending.json'), 4096))
       for (const id of await directories(base)) {
-        if (!uuid.safeParse(id).success) continue
+        if (id !== 'pending' && !uuid.safeParse(id).success) continue
         const directory = join(base, id)
         const parsed = sourceOwner.safeParse(
           await readReceipt(join(directory, 'session.json'), RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
@@ -105,6 +105,9 @@ export function createResearchFilmLifecycle(options: {
         )
         if (!keys.includes(key) || !remove(owner.sessionId)) continue
         deleted.add(owner.sessionId)
+        // Publishing renames the job before clearing its pointer. Either directory can own it.
+        if (id === 'pending' || (pending.success && pending.data.id === id))
+          await rm(join(base, 'pending.json'), { force: true })
         if (latest.success && latest.data.id === id)
           await rm(join(base, 'latest.json'), { force: true })
         await rm(directory, { recursive: true, force: true })

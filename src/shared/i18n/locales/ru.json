@@ -195,6 +195,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены."
   },
   "renderer": {
+    "The model returned no film content.": "Модель не вернула содержимое фильма.",
+    "The model reached a generation limit before completing this step.": "Модель достигла предела генерации до завершения этого шага.",
     "Connect {{provider}}": "Подключение к {{provider}}",
     "Connect the account before adding this configuration.": "Подключите учётную запись перед добавлением этой конфигурации.",
     "Details and possible scenarios": "Подробности и возможные сценарии",
@@ -8282,7 +8284,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Установите ресурсы озвучивания ({{size}} МиБ) для создания объяснения. Они будут повторно использоваться в следующих объяснениях.",
     "Install and generate": "Установить и создать",
     "English narration": "Озвучка на английском",
-    "You can close this window. Generation continues in the background.": "Можно закрыть это окно. Создание продолжится в фоновом режиме.",
     "View generation progress": "Показать ход создания",
     "Generate again?": "Создать заново?",
     "Start generation": "Начать создание",
@@ -8293,6 +8294,8 @@
     "Generate research film": "Создать исследовательский фильм",
     "View research film": "Посмотреть исследовательский фильм",
     "Play research film": "Воспроизвести исследовательский фильм",
+    "Continue generation": "Продолжить создание",
+    "Generating animations…": "Создание анимаций…",
     "Writing research film…": "Подготовка исследовательского фильма…",
     "Create a short film from this conversation.": "Создать короткий фильм на основе этого диалога.",
     "Generating a new film may take several minutes. Continue?": "Создание нового фильма может занять несколько минут. Продолжить?",

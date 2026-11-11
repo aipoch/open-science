@@ -42,6 +42,47 @@ const missingRuntime =
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
 
+function FilmErrorNotice({
+  summary,
+  detail
+}: {
+  summary: string
+  detail: string
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  return (
+    <>
+      <ErrorNotice
+        inline
+        tone="amber"
+        role="alert"
+        title={summary}
+        diagnosticsLabel={t('Details')}
+        errorCode={detail}
+        className="[&_pre]:max-h-40 [&_pre]:overflow-auto [&_pre]:overscroll-contain [&_pre]:select-text"
+        secondaryButton={{
+          variant: 'ghost',
+          label: copyStatus === 'copied' ? t('Copied') : t('Copy error'),
+          onClick: async () => {
+            try {
+              await navigator.clipboard.writeText(detail)
+              setCopyStatus('copied')
+            } catch {
+              setCopyStatus('failed')
+            }
+          }
+        }}
+      />
+      {copyStatus === 'failed' && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t('Could not copy details. Select the text and copy it manually.')}
+        </p>
+      )}
+    </>
+  )
+}
+
 export function ResearchVideoButton({
   renderTrigger,
   ...request
@@ -117,14 +158,30 @@ export function ResearchVideoButton({
       'Check the selected model and credentials in Settings before generating a research film.'
     )
   }
+  const filmErrors: Record<string, string> = {
+    'The model returned no research film content. Try again or select another model.': t(
+      'The model returned no film content.'
+    ),
+    'Research film generation stopped before completing (max_turn_requests). Try again or select another model.':
+      t('The model reached a generation limit before completing this step.'),
+    'Narration installation did not finish. Retry to continue.': t(
+      'Narration installation did not finish. Retry to continue.'
+    )
+  }
+  const failure = error || status.error
+  const preflight = status.preflightError
+  const knownPreflight = preflight && Object.hasOwn(preflightMessages, preflight)
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
-    : status.preflightError && (preflightMessages[status.preflightError] ?? status.preflightError)
+    : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
+  const diagnostic = blocked
+    ? !busy && !status.generationBlock && !knownPreflight && preflight
+    : failure
   const modelSettingsAvailable =
     !status.generationBlock &&
     status.preflightError &&
     status.preflightError !== missingRuntime &&
-    Object.hasOwn(preflightMessages, status.preflightError)
+    knownPreflight
   const triggerState: ResearchVideoTriggerState = {
     label: !statusLoaded
       ? t('Loading…')
@@ -183,7 +240,7 @@ export function ResearchVideoButton({
       clearTimeout(timer)
     }
   }, [projectId, sessionId, branchId, deletionScope, desktop])
-  const generate = async (regenerate = false): Promise<void> => {
+  const generate = async (regenerate = false, resume = false): Promise<void> => {
     if (pending || busy || installing) {
       setOpen(true)
       return
@@ -195,7 +252,11 @@ export function ResearchVideoButton({
       const current = await window.api.researchVideo.status({ ...request, checkReadiness: true })
       if (!live.current) return
       setStatus(current)
-      if (current.narrationDownload || (current.result && !regenerate)) return
+      if (
+        current.narrationDownload ||
+        (current.result && !current.canResume && !regenerate && !resume)
+      )
+        return
       if (current.generationBlock || current.preflightError) return
       if (
         current.progress &&
@@ -205,7 +266,11 @@ export function ResearchVideoButton({
       const snapshot = await window.api.localModels.getSnapshot('research-narration')
       if (!live.current) return
       setModel(snapshot)
-      if (narrationReady(snapshot)) setStatus(await window.api.researchVideo.start(request))
+      if (current.canResume && !regenerate && !resume) return
+      if (narrationReady(snapshot))
+        setStatus(
+          await window.api.researchVideo.start(resume ? { ...request, resume: true } : request)
+        )
     } catch (caught) {
       if (live.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -217,7 +282,11 @@ export function ResearchVideoButton({
     setPending(true)
     setError(undefined)
     try {
-      const next = await window.api.researchVideo.start({ ...request, installNarration: true })
+      const next = await window.api.researchVideo.start({
+        ...request,
+        installNarration: true,
+        ...(status.canResume ? { resume: true } : {})
+      })
       if (live.current) {
         statusVersion.current++
         setStatus(next)
@@ -304,7 +373,11 @@ export function ResearchVideoButton({
       {open && (
         <WorkflowDialogFrame
           title={t('Research film')}
-          description={status.result ? undefined : t('Create a short film from this conversation.')}
+          description={
+            status.result || status.filmStep
+              ? undefined
+              : t('Create a short film from this conversation.')
+          }
           descriptionClassName="truncate"
           busy={false}
           onClose={() => {
@@ -322,15 +395,24 @@ export function ResearchVideoButton({
           }}
           className="w-[min(480px,calc(100vw-2rem))]"
           footer={
-            (busy || installing || status.result || model?.availability === 'ready') && (
+            (busy ||
+              installing ||
+              status.canResume ||
+              status.result ||
+              model?.availability === 'ready') && (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
-                    <p className="min-w-0 flex-1 self-center text-xs leading-relaxed text-muted-foreground">
-                      {t('You can close this window. Generation continues in the background.')}
-                    </p>
-                    <Button variant="ghost" disabled={pending} onClick={() => void cancel()}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => void cancel()}
+                    >
                       {t('Cancel')}
+                    </Button>
+                    <Button size="sm" onClick={() => setOpen(false)}>
+                      {t('Run in background')}
                     </Button>
                   </>
                 ) : confirmDeletion ? (
@@ -397,10 +479,10 @@ export function ResearchVideoButton({
                   </div>
                 ) : (
                   <>
-                    {(status.result || model?.availability === 'ready') && (
+                    {(status.canResume || status.result || model?.availability === 'ready') && (
                       <Button
                         ref={regenerateRef}
-                        variant={status.result ? 'ghost' : 'default'}
+                        variant={status.canResume || status.result ? 'ghost' : 'default'}
                         size="sm"
                         disabled={pending || Boolean(blocked)}
                         title={blocked}
@@ -413,6 +495,15 @@ export function ResearchVideoButton({
                           <RotateCcw aria-hidden="true" />
                         )}
                         {t('Generate again')}
+                      </Button>
+                    )}
+                    {status.canResume && (
+                      <Button
+                        size="sm"
+                        disabled={pending || Boolean(blocked)}
+                        onClick={() => void generate(false, true)}
+                      >
+                        {t('Continue generation')}
                       </Button>
                     )}
                     {status.result && (
@@ -449,7 +540,7 @@ export function ResearchVideoButton({
         >
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`} data-workflow-body>
             <div className="space-y-4" data-workflow-content>
-              {blocked && !busy && (
+              {blocked && !busy && !diagnostic && (
                 <ErrorNotice
                   inline
                   level="warning"
@@ -467,15 +558,14 @@ export function ResearchVideoButton({
                   }
                 />
               )}
-              {!blocked && (error || status.error) && (
-                <ErrorNotice
-                  inline
-                  tone="amber"
-                  description={
-                    error ??
-                    (status.error === 'Narration installation did not finish. Retry to continue.'
-                      ? t('Narration installation did not finish. Retry to continue.')
-                      : status.error)
+              {diagnostic && (
+                <FilmErrorNotice
+                  key={diagnostic}
+                  detail={diagnostic}
+                  summary={
+                    Object.hasOwn(filmErrors, diagnostic)
+                      ? filmErrors[diagnostic]
+                      : t('Research video failed')
                   }
                 />
               )}
@@ -517,7 +607,10 @@ export function ResearchVideoButton({
               ) : (
                 status.progress &&
                 (!status.result || status.progress.phase !== 'completed') && (
-                  <ResearchVideoProgressLine progress={status.progress} />
+                  <ResearchVideoProgressLine
+                    progress={status.progress}
+                    filmStep={status.filmStep}
+                  />
                 )
               )}
               {model && !narrationReady(model) && !installing && !busy && !blocked && (

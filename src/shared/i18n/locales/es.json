@@ -194,6 +194,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes."
   },
   "renderer": {
+    "The model returned no film content.": "El modelo no devolvió contenido para el vídeo.",
+    "The model reached a generation limit before completing this step.": "El modelo alcanzó su límite de generación antes de completar este paso.",
     "Connect {{provider}}": "Conectar con {{provider}}",
     "Connect the account before adding this configuration.": "Conecta la cuenta antes de añadir esta configuración.",
     "Details and possible scenarios": "Detalles y posibles situaciones de uso",
@@ -8137,7 +8139,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Instalar los recursos de narración ({{size}} MiB) para generar la explicación. Se reutilizarán en las próximas explicaciones.",
     "Install and generate": "Instalar y generar",
     "English narration": "Narración en inglés",
-    "You can close this window. Generation continues in the background.": "Puede cerrar esta ventana. La generación continúa en segundo plano.",
     "View generation progress": "Ver progreso de generación",
     "Generate again?": "¿Volver a generar?",
     "Start generation": "Iniciar generación",
@@ -8148,6 +8149,8 @@
     "Generate research film": "Generar cortometraje de investigación",
     "View research film": "Ver cortometraje de investigación",
     "Play research film": "Reproducir cortometraje de investigación",
+    "Continue generation": "Continuar la generación",
+    "Generating animations…": "Generando animaciones…",
     "Writing research film…": "Preparando el cortometraje de investigación…",
     "Create a short film from this conversation.": "Crear un cortometraje a partir de esta conversación.",
     "Generating a new film may take several minutes. Continue?": "Generar un nuevo cortometraje puede tardar varios minutos. ¿Continuar?",

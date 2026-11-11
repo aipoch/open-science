@@ -194,6 +194,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés."
   },
   "renderer": {
+    "The model returned no film content.": "Le modèle n’a renvoyé aucun contenu pour le film.",
+    "The model reached a generation limit before completing this step.": "Le modèle a atteint sa limite de génération avant la fin de cette étape.",
     "Connect {{provider}}": "Se connecter à {{provider}}",
     "Connect the account before adding this configuration.": "Connectez votre compte avant d’ajouter cette configuration.",
     "Details and possible scenarios": "Détails et scénarios possibles",
@@ -8137,7 +8139,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Installez les ressources de narration ({{size}} MiB) pour générer l’explication. Elles seront réutilisées pour les prochaines explications.",
     "Install and generate": "Installer et générer",
     "English narration": "Narration en anglais",
-    "You can close this window. Generation continues in the background.": "Vous pouvez fermer cette fenêtre. La génération continue en arrière-plan.",
     "View generation progress": "Voir la progression de la génération",
     "Generate again?": "Générer à nouveau ?",
     "Start generation": "Lancer la génération",
@@ -8148,6 +8149,8 @@
     "Generate research film": "Générer un court-métrage de recherche",
     "View research film": "Voir le court-métrage de recherche",
     "Play research film": "Lire le court-métrage de recherche",
+    "Continue generation": "Reprendre la génération",
+    "Generating animations…": "Génération des animations…",
     "Writing research film…": "Préparation du court-métrage de recherche…",
     "Create a short film from this conversation.": "Créer un court-métrage à partir de cette conversation.",
     "Generating a new film may take several minutes. Continue?": "La génération d’un nouveau film peut prendre plusieurs minutes. Continuer ?",
