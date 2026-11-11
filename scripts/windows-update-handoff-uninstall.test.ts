@@ -48,8 +48,25 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
   )(
     'handles %s operations in %s without terminating processes or deleting unknown content',
     (scenario, storage) => {
-      const root = mkdtempSync(join(tmpdir(), 'update-uninstall-'))
-      roots.push(root)
+      const createdRoot = mkdtempSync(join(tmpdir(), 'update-uninstall-'))
+      roots.push(createdRoot)
+      let root = createdRoot
+      if (scenario === 'other-installation') {
+        // Windows runners may supply TEMP through an 8.3 alias. Enumeration can expand it.
+        const shortPath = spawnSync(
+          join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${createdRoot.replaceAll("'", "''")}').ShortPath`
+          ],
+          { encoding: 'utf8', timeout: 10_000 }
+        )
+        expect(shortPath.status, shortPath.stderr).toBe(0)
+        root = shortPath.stdout.trim()
+        expect(root).not.toBe('')
+      }
       const identity = [process.env.USERDOMAIN, process.env.USERNAME].filter(Boolean).join('\\')
       const acl = spawnSync(
         'icacls.exe',

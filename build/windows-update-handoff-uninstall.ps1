@@ -56,7 +56,8 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   $helper = Join-Path $directory.FullName 'helper.exe'
   if ($requestInstallation -ine $installation) {
     # Only a trusted record can establish that this helper belongs to a different installation.
-    $otherInstallationHelpers += $helper
+    # Enumeration can expand 8.3 ancestors; retain the root spelling used by the fallback scan.
+    $otherInstallationHelpers += Join-Path (Join-Path $root $directory.Name) 'helper.exe'
     continue
   }
   $active = @($processes | Where-Object {
