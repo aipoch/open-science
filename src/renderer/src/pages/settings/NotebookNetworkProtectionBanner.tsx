@@ -7,6 +7,7 @@ import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { SettingsSection } from './SettingsLayout'
+import { NotebookNetworkAccessSummary } from './NotebookNetworkAccessSummary'
 
 type NotebookNetworkProtectionBannerPreviewState =
   'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success'
@@ -47,16 +48,10 @@ const NotebookNetworkProtectionBanner = ({
   const runtimeStatus = useNotebookNetworkStatus(!previewState && suppliedStatus === undefined)
   const status = previewState ? previewStatus(previewState) : (suppliedStatus ?? runtimeStatus)
 
-  const presentation: BannerPresentation = (() => {
+  const presentation: BannerPresentation | null = (() => {
     switch (status.kind) {
       case 'ready':
-        return {
-          title: t('Network protection on'),
-          description: t(
-            'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
-          ),
-          level: 'info'
-        }
+        return null
       case 'setupRequired':
         return {
           title:
@@ -98,6 +93,16 @@ const NotebookNetworkProtectionBanner = ({
         : previewState === 'active'
           ? 'translate-y-px'
           : ''
+
+  if (!presentation) {
+    return (
+      <NotebookNetworkAccessSummary
+        onOpen={onOpen}
+        testId="notebook-network-protection-banner"
+        buttonClassName={previewButtonClassName}
+      />
+    )
+  }
 
   return (
     <SettingsSection

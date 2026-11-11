@@ -104,7 +104,6 @@ export function NotebookNetworkAccessEditor({
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [savedMessage, setSavedMessage] = useState(false)
   const [pendingMode, setPendingMode] = useState<NotebookNetworkMode>()
   const [modeError, setModeError] = useState('')
   const [switching, setSwitching] = useState(false)
@@ -180,7 +179,6 @@ export function NotebookNetworkAccessEditor({
       setSwitching(changingMode)
       if (changingMode) setModeError('')
       else setError('')
-      setSavedMessage(false)
       try {
         const result = await save(
           next,
@@ -193,7 +191,6 @@ export function NotebookNetworkAccessEditor({
         setSettings(result)
         // Close the draft before adopting another window's merged mode or rules.
         setEditor(undefined)
-        setSavedMessage(true)
         if (changingMode || (result.mode ?? 'relaxed') !== (next.mode ?? 'relaxed')) {
           setPendingMode(undefined)
           setModeError('')
@@ -235,7 +232,6 @@ export function NotebookNetworkAccessEditor({
     else {
       setPendingMode(mode)
       setModeError('')
-      setSavedMessage(false)
     }
   }
   const confirmModeChange = (): void => {
@@ -264,7 +260,6 @@ export function NotebookNetworkAccessEditor({
     setGroup(rule?.groupId ?? '')
     setNewGroup('')
     setError('')
-    setSavedMessage(false)
     setEditor({ base: settings, id: rule?.id, original })
   }
   const confirm = (): void => {
@@ -517,7 +512,7 @@ export function NotebookNetworkAccessEditor({
           </span>
           <div
             ref={modeOptions}
-            className="grid min-h-9 w-48 max-w-full grid-cols-2 rounded-lg border border-border bg-bg-10 p-0.5 [@media(pointer:coarse)]:min-h-11"
+            className="grid min-h-9 w-48 max-w-full grid-cols-2 rounded-lg bg-bg-10 p-0.5 [@media(pointer:coarse)]:min-h-11"
             role="radiogroup"
             aria-label={t('Select a network mode to confirm')}
             aria-describedby={pendingMode ? `${id}-mode-status` : undefined}
@@ -531,7 +526,7 @@ export function NotebookNetworkAccessEditor({
                 aria-checked={selectedMode === mode}
                 tabIndex={selectedMode === mode ? 0 : -1}
                 disabled={busy}
-                className={`min-w-0 rounded-md border px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? `${mode === 'strict' ? 'notebook-network-strict' : 'notebook-network-relaxed'} ${pendingMode ? 'border-dashed' : ''}` : 'border-transparent'}`}
+                className={`min-w-0 rounded-md px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? (mode === 'strict' ? 'notebook-network-strict' : 'notebook-network-relaxed') : ''}`}
                 onKeyDown={(event) => {
                   if (
                     ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(
@@ -584,14 +579,14 @@ export function NotebookNetworkAccessEditor({
           <div className="space-y-1 text-sm leading-6">
             <p className="font-medium">
               {pendingMode === 'strict'
-                ? t('Connections outside the whitelist will be blocked.')
+                ? t(
+                    'Strict mode uses a whitelist. Connections outside it will be blocked without requesting authorization.'
+                  )
                 : t('Network access will expand.')}
             </p>
             <p className="text-muted-foreground">
               {pendingMode === 'strict'
-                ? t(
-                    'Temporary authorization will be unavailable. Trusted unsafe networks will no longer allow connections.'
-                  )
+                ? t('Trusted unsafe networks will no longer allow connections.')
                 : t(
                     'HTTPS hostnames will be allowed by default. HTTP and direct IP connections can request authorization, and saved trusted addresses will apply again.'
                   )}
@@ -619,7 +614,7 @@ export function NotebookNetworkAccessEditor({
       ) : null}
       <details
         key={strict ? 'strict' : 'relaxed'}
-        className={`group rounded-xl border ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
+        className={`group rounded-xl ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
       >
         <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl p-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           <Check className="size-4" aria-hidden="true" />
@@ -675,7 +670,7 @@ export function NotebookNetworkAccessEditor({
         className="overflow-hidden rounded-xl border border-border bg-card"
         aria-label={strict ? t('Strict whitelist') : t('Trusted unsafe networks')}
       >
-        <div className={showSearch ? undefined : 'flex items-start justify-between gap-4'}>
+        <div className={showSearch ? undefined : 'flex items-end justify-between gap-4'}>
           <div className="min-w-0 flex-1 p-4">
             <h3 className="font-medium">
               {strict ? t('Strict whitelist') : t('Trusted unsafe networks')}
@@ -869,13 +864,7 @@ export function NotebookNetworkAccessEditor({
           </p>
         ) : null}
       </section>
-      {error && !editor ? (
-        <ErrorNotice level="error" role="alert" description={error} />
-      ) : savedMessage ? (
-        <p className="text-xs text-muted-foreground" role="status">
-          {t('Network rules saved.')}
-        </p>
-      ) : null}
+      {error && !editor ? <ErrorNotice level="error" role="alert" description={error} /> : null}
     </div>
   )
 }

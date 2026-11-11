@@ -738,7 +738,7 @@ it.each([
     'relaxed',
     'Strict',
     'Trusted unsafe networks',
-    'Connections outside the whitelist will be blocked.'
+    'Strict mode uses a whitelist. Connections outside it will be blocked without requesting authorization.'
   ],
   ['strict', 'Relaxed', 'Strict whitelist', 'Network access will expand.']
 ] as const)(

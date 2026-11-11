@@ -36,10 +36,18 @@ for (const mode of ['Relaxed', 'Strict'] as const) {
         .getByRole('heading', { name: 'Trusted unsafe networks', exact: true })
         .boundingBox()
       const action = await add.boundingBox()
+      const description = await settings
+        .getByText('Authorize HTTP or direct IP access to an exact protocol, host and port.', {
+          exact: true
+        })
+        .boundingBox()
       expect(heading).not.toBeNull()
       expect(action).not.toBeNull()
       expect(action!.x).toBeGreaterThanOrEqual(heading!.x + heading!.width)
-      expect(action!.y).toBeLessThan(heading!.y + heading!.height)
+      expect(description).not.toBeNull()
+      expect(
+        Math.abs(action!.y + action!.height - (description!.y + description!.height))
+      ).toBeLessThanOrEqual(1)
       await settings
         .getByRole('region', { name: 'Trusted unsafe networks', exact: true })
         .screenshot({

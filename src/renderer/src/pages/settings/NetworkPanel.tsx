@@ -1,18 +1,7 @@
 import { readWithDeadline } from '@/lib/read-with-deadline'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import {
-  Ban,
-  Check,
-  ChevronRight,
-  CircleHelp,
-  EthernetPort,
-  List,
-  Network,
-  RefreshCw,
-  Wifi,
-  WifiOff
-} from 'lucide-react'
+import { EthernetPort, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -34,6 +23,7 @@ import {
   type NetworkEditorLeaveState
 } from './NotebookNetworkDomainsForm'
 import { SettingsSection } from './SettingsLayout'
+import { NotebookNetworkAccessSummary } from './NotebookNetworkAccessSummary'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
@@ -75,57 +65,6 @@ const NetworkPanel = ({
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
-  const notebookNetwork = useSettingsStore((state) => state.notebookNetwork)
-  const strictNetwork = notebookNetwork.mode === 'strict'
-  // Global grants also have derived trusted entries. Count the same records as the manager once.
-  const savedAddressCount =
-    (notebookNetwork.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)
-      .length +
-    (notebookNetwork.destinationGrants ?? []).filter((grant) => grant.revokedAt === undefined)
-      .length
-  const notebookRows = [
-    {
-      icon: Check,
-      title: strictNetwork
-        ? t('Whitelist matches can connect')
-        : t('HTTPS domains connect directly'),
-      description: strictNetwork
-        ? t('Protocol, host and port must all match.')
-        : t('Includes localhost and domains that resolve to private networks.')
-    },
-    {
-      icon: strictNetwork ? Ban : CircleHelp,
-      title: strictNetwork
-        ? t('Unlisted connections are blocked')
-        : t('HTTP and direct IP connections require authorization'),
-      description: strictNetwork
-        ? t('Authorization is unavailable. Add the address manually.')
-        : t('Trusted addresses do not need repeated authorization.')
-    },
-    {
-      icon: List,
-      title: strictNetwork ? t('Strict whitelist') : t('Trusted unsafe addresses'),
-      description: strictNetwork ? (
-        <>
-          {t('{{count}} rules', {
-            count: notebookNetwork.strictWhitelist?.length ?? 0,
-            defaultValue_one: '{{count}} rule'
-          })}
-          {' · '}
-          {t('{{count}} groups', {
-            count: notebookNetwork.strictWhitelistGroups?.length ?? 0,
-            defaultValue_one: '{{count}} group'
-          })}
-        </>
-      ) : (
-        t('{{count}} saved addresses', {
-          count: savedAddressCount,
-          defaultValue_one: '{{count}} saved address'
-        })
-      ),
-      manage: true
-    }
-  ]
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery,
@@ -362,51 +301,7 @@ const NetworkPanel = ({
       ) : null}
 
       {!isConfiguring && notebookNetworkAvailable ? (
-        <SettingsSection
-          title={t('Notebook network access')}
-          action={
-            <span
-              className={cn(
-                'inline-flex rounded-md border px-2 py-1 text-xs font-medium',
-                strictNetwork ? 'notebook-network-strict' : 'notebook-network-relaxed'
-              )}
-              role="status"
-            >
-              {strictNetwork ? t('Strict mode') : t('Relaxed mode')}
-            </span>
-          }
-          aria-label={t('Notebook network access')}
-          data-settings-anchor="network.domains"
-        >
-          <ul className="divide-y divide-border rounded-xl border border-border px-4">
-            {notebookRows.map(({ icon: Icon, title, description, manage }, index) => (
-              <li key={index} className="flex flex-wrap items-center gap-3 py-4">
-                <span
-                  className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground"
-                  aria-hidden="true"
-                >
-                  <Icon className="size-4" />
-                </span>
-                <div className="min-w-0 flex-1 basis-48">
-                  <p className="text-sm font-medium leading-5">{title}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
-                </div>
-                {manage ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="ml-auto shrink-0"
-                    onClick={() => onNavigate({ kind: 'domains' })}
-                  >
-                    {t('Manage access')}
-                    <ChevronRight className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </SettingsSection>
+        <NotebookNetworkAccessSummary onOpen={() => onNavigate({ kind: 'domains' })} />
       ) : null}
 
       {!isConfiguring ? (
