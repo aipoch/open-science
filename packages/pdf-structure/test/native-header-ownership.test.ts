@@ -1434,6 +1434,90 @@ const wholeParentTiers = (
   }
 }
 
+const scriptedWholeParentTiers = (): ReturnType<typeof JSON.parse> => {
+  const f = wholeParentTiers(true)
+  const first = f.tokens.find((i) => i.text === 'Group A')
+  const at = f.tokens.indexOf(first)
+  const font = (
+    text: string,
+    left: number,
+    right: number,
+    baseline: number,
+    height = 10
+  ): object => ({
+    ...first,
+    text,
+    rect: [left, baseline - height, right, baseline],
+    baseline,
+    height
+  })
+  f.tokens.splice(
+    at,
+    1,
+    font('P', 90, 95, 32),
+    font('min', 95.1, 101, 33.5, 7.3),
+    font('=', 103, 109, 32),
+    font('2', 111, 116, 32)
+  )
+  for (const [index, i] of f.tokens.entries()) i.sourceItem = { pageNumber: 1, index, text: i.text }
+  f.context.sourceContent.items = f.tokens.map((i) => ({
+    str: i.text,
+    dir: 'ltr',
+    width: i.rect[2] - i.rect[0],
+    height: i.height,
+    transform: [i.height, 0, 0, i.height, i.rect[0], 200 - i.baseline],
+    fontName: 'Regular',
+    sourceItem: { ...i.sourceItem }
+  }))
+  return f
+}
+
+it('retains a whole source parent expression with its adjacent native subscript', () => {
+  const f = scriptedWholeParentTiers(),
+    before = structuredClone(f)
+  const p = recoverTwoTier(f.table, f.tokens, f.captions, f.rules, f.context)
+  expect(p?.rows).toHaveLength(6)
+  expect(p?.spans).toContainEqual({ row: 0, column: 1, rowSpan: 1, colSpan: 2 })
+  expect(p?.spans).toContainEqual({ row: 0, column: 3, rowSpan: 1, colSpan: 2 })
+  expect(p?.ownedTokens.size).toBe(f.tokens.length - 1)
+  expect([...p.ownedTokens].map((i) => i.sourceItem)).toContainEqual(
+    f.tokens.find((i) => i.text === 'min').sourceItem
+  )
+  expect(f).toEqual(before)
+})
+
+it.each(['detached', 'same-baseline', 'too-small', 'changed-original', 'duplicate-origin'])(
+  'declines an unsupported parent script: %s',
+  (kind) => {
+    const f = scriptedWholeParentTiers(),
+      i = f.tokens.find((t) => t.text === 'min')
+    const raw = f.context.sourceContent.items[i.sourceItem.index]
+    if (kind === 'detached') {
+      i.rect[0] += 9
+      i.rect[2] += 9
+      raw.transform[4] += 9
+    }
+    if (kind === 'same-baseline') {
+      i.baseline -= 1.5
+      i.rect[1] -= 1.5
+      i.rect[3] -= 1.5
+      raw.transform[5] += 1.5
+    }
+    if (kind === 'too-small') {
+      i.height = 3
+      i.rect[1] = i.baseline - 3
+      raw.height = 3
+      raw.transform[0] = raw.transform[3] = 3
+    }
+    if (kind === 'changed-original') raw.str += '!'
+    if (kind === 'duplicate-origin')
+      i.sourceItem = { ...f.tokens.find((t) => t.text === 'P').sourceItem }
+    const before = structuredClone(f)
+    expect(recoverTwoTier(f.table, f.tokens, f.captions, f.rules, f.context)).toBeUndefined()
+    expect(f).toEqual(before)
+  }
+)
+
 it.each([false, true])(
   'retains whole two-tier parents and independent records with a lower-tier stub: %s',
   (lowerStub) => {

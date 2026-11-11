@@ -213,15 +213,19 @@ it.each(['nodes', 'text'] as const)(
         text: kind === 'nodes' ? 'x' : 'x'.repeat(190000),
         start: 0,
         end: 1,
-        rect: [10, 10, 20, 20]
+        rect: [10 + index / 1000, 10, 20 + index / 1000, 20]
       })
     )
+    table.cells[0].sourceRects = table.cells[0].sourceSegments.map(({ rect }) => [...rect])
     Reflect.deleteProperty(table.cells[1], 'sourceSegments')
     Object.assign(table.cells[1], { sourceItems: [{ pageNumber: 1, index: 4, text: 'whole' }] })
     const result = await read(value)
     expect(
       result.elements[0].table!.cells.every((cell) => !cell.sourceSegments && !cell.sourceItems)
     ).toBe(true)
+    table.cells[0].sourceRects.pop()
+    await expect(read(value)).rejects.toThrow('exclusively account')
+    table.cells[0].sourceRects.push([...table.cells[0].sourceSegments.at(-1)!.rect])
     table.cells[1].text = 'x'.repeat(262145)
     await expect(read(value)).rejects.toThrow('budget')
   }

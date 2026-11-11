@@ -1,4 +1,20 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { nativeSubcaptionFormFamilies } from './literature-pdf-figure-native-subcaption-families.mjs'
+import { nativeVerticalSubcaptionFormFamily } from './literature-pdf-figure-native-vertical-subcaptions.mjs'
+import { nativeIndependentlyCaptionedForm } from './literature-pdf-figure-native-captioned-single-form.mjs'
+import {
+  nativeForeignProcedureScopeExclusions,
+  nativeFramedForeignProcedureTopCrop
+} from './literature-pdf-figure-native-foreign-procedure-scope.mjs'
+import {
+  nativeMesh4PixelCrop,
+  nativeMesh4PixelPngSafe
+} from './literature-pdf-figure-native-mesh-scope.mjs'
+import {
+  nativeBoundedProgramPixelCrop,
+  nativeBoundedProgramPixelPngSafe
+} from './literature-pdf-figure-native-bounded-scope.mjs'
 import {
   nativeNormalRasterPairPixelCrop,
   nativeFourMarkerRasterPairPixelCrop,
@@ -7,13 +23,20 @@ import {
   nativeNormalRasterPairPixelCurrent,
   nativeNormalRasterPairPixelPngSafe,
   createNativeFigurePaintCertificate,
+  createNativeCompactFigurePixelCertificate,
+  nativeCompactFigurePixelCertificateData,
+  createNativeArrayBoundFigurePixelCertificate,
+  nativeArrayBoundFigurePixelCertificateData,
   createNativeLeadingType3PixelCertificate,
   nativeFigurePaintCertificateData,
   createNativeSavedUncoloredPixelEvidence,
   nativeSavedUncoloredPixelEvidenceData
 } from './literature-pdf-figure-native-plot-labels.mjs'
 const completePicturePaintPlans = new WeakMap()
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
+const pixelPaintData = (handle, page, tokens, context) =>
+  nativeFigurePaintCertificateData(handle, page, tokens, context) ??
+  nativeCompactFigurePixelCertificateData(handle, page, tokens, context) ??
+  nativeArrayBoundFigurePixelCertificateData(handle, page, tokens, context)
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   nativeCompositingFigureCrop,
@@ -46,7 +69,11 @@ import {
   MAX_EDGE,
   MAX_SCALE
 } from './literature-pdf-crop.mjs'
-import { findCaptionCandidates, groupPageLines } from './literature-pdf-caption-group.mjs'
+import {
+  findCaptionCandidates,
+  groupPageLines,
+  captionKind
+} from './literature-pdf-caption-group.mjs'
 import {
   nativeClosedProgramFigureCrop,
   nativeClosedProgramPngSafe
@@ -57,6 +84,7 @@ import {
 } from './literature-pdf-figure-native-isolated-form.mjs'
 import { union } from './literature-pdf-page-geometry.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import { nativeOrdinaryFormFigureCrop } from './literature-pdf-figure-native-ordinary-form.mjs'
 
 const certificates = new WeakMap(),
   inside = (a, b) => b.every((x, i) => (i < 2 ? x >= a[i] - 1e-6 : x <= a[i] + 1e-6)),
@@ -299,7 +327,8 @@ export function nativeRecoveryFigureCrop(page, figure, captions, tables, tokens,
     const result = data.nested
       ? wholeNestedScope(page, figure, captions, tables, tokens, context, profile, data)
       : (nativeClosedProgramFigureCrop(page, figure, captions, tables, tokens, context, profile) ??
-        nativeIsolatedFormFigureCrop(page, figure, captions, tables, tokens, context, profile))
+        nativeIsolatedFormFigureCrop(page, figure, captions, tables, tokens, context, profile) ??
+        nativeOrdinaryFormFigureCrop(page, figure, captions, tables, tokens, context, profile))
     if (!result) return
     const unchanged = retainNativeRecoveryInputs([figure, captions, tables])
     if (!unchanged) return
@@ -3275,12 +3304,15 @@ function pictureKeyedFormGrid(data, items, figure, pageCaps, page, tokens, conte
   return { own, kind: 'complete-native-keyed-form-grid' }
 }
 
-function pictureMultipart(data, items, figure, pageCaps, first = 0) {
+function pictureMultipart(data, items, figure, pageCaps, first = 0, tables = []) {
   // Later table/figure captions remain global exclusions; they do not
   // invalidate a complete multipart family above its own caption.
+  const earlier = pageCaps.filter(
+    (c) => c !== figure.caption && c.rect[1] <= figure.caption.rect[3]
+  )
   if (
     pageCaps.filter((c) => c === figure.caption).length !== 1 ||
-    pageCaps.some((c) => c !== figure.caption && c.rect[1] <= figure.caption.rect[3])
+    earlier.some((c) => !pictureValid(c.rect) || captionKind(c.lines?.[0] ?? '') !== 'table')
   )
     return
   const forms = data.scopes.filter(
@@ -3343,6 +3375,50 @@ function pictureMultipart(data, items, figure, pageCaps, first = 0) {
     )
       return
     own.push(...parts, ...label.pieces)
+  }
+  // A separate earlier table is not another panel. Authenticate its complete
+  // visible caption and unique existing table exclusion only after this whole
+  // native family closes. Keep both in the caller's global exclusions.
+  const family = pictureExpand(union(own.map((p) => p.bound)), 2 / 1.5),
+    usedTables = new Set()
+  for (const caption of earlier) {
+    const c = caption.rect,
+      fonts = items.filter(
+        (p) =>
+          p.kind === 'glyph' &&
+          pictureValid(p.advance) &&
+          p.advance.every((n, i) => (i < 2 ? n >= c[i] - 0.02 : n <= c[i] + 0.02))
+      )
+    if (
+      !fonts.length ||
+      !Array.isArray(caption.lines) ||
+      pictureCompact(fonts.map((p) => p.text).join('')) !==
+        pictureCompact(caption.lines.join('')) ||
+      fonts.some(
+        (p) =>
+          p.fillAlpha !== 1 ||
+          !/^#[a-f0-9]{6}$/iu.test(p.fillColor ?? '') ||
+          p.fillColor.toLowerCase() === '#ffffff' ||
+          p.potentialClipEnvelope !== undefined ||
+          p.originalClipQuads !== undefined ||
+          !pictureValid(p.paintClip) ||
+          !pictureInside(p.paintClip, p.fullInk) ||
+          !pictureInside(p.paintClip, p.advance)
+      ) ||
+      pictureHit(family, c)
+    )
+      return
+    const matches = tables.filter(
+      (t) =>
+        pictureValid(t) &&
+        t[1] >= c[3] &&
+        t[1] - c[3] <= Math.max(2, c[3] - c[1]) &&
+        t[3] < family[1] &&
+        Math.max(0, Math.min(t[2], c[2]) - Math.max(t[0], c[0])) >=
+          Math.max(t[2] - t[0], c[2] - c[0]) * 0.6
+    )
+    if (matches.length !== 1 || usedTables.has(matches[0])) return
+    usedTables.add(matches[0])
   }
   return { own, kind: 'complete-native-subcaption-family' }
 }
@@ -6050,6 +6126,137 @@ function pictureLeadingType3Forms(data, items, figure, pageCaps, tokens) {
   return { own, kind: 'complete-native-leading-type3-forms' }
 }
 
+// An unresolved original caption has no published crop to expand. Its seed is
+// derived only from two current, hashed native image operations; the existing
+// multipart selector must still close every original label and foreign paint.
+function unresolvedMultipartRasterSeed(page, figure, captions, tables, tokens, context, peers) {
+  const input =
+    nativeRecoveryOwnValues(figure) && retainNativeRecoveryInputs([figure, captions, tables, peers])
+  if (
+    !input ||
+    figure?.rect !== undefined ||
+    figure.reason !== 'no-unambiguous-adjacent-graphics' ||
+    figure.issue !== undefined ||
+    figure.sourceItems !== undefined ||
+    figure.parts !== undefined ||
+    figure.cropRects !== undefined ||
+    figure.fallbackFigure !== undefined ||
+    ![captions, tables, tokens, peers].every(Array.isArray) ||
+    context?.type3GlyphPrograms !== undefined ||
+    context?.pixelType3Programs !== undefined
+  )
+    return
+  const pageCaps = captions.filter((c) => c.page === page.pageNumber)
+  if (pageCaps.length !== 1 || pageCaps[0] !== figure.caption || !pictureValid(figure.caption.rect))
+    return
+  const handle = createNativeFigurePaintCertificate(page, tokens, context)
+  const data = nativeFigurePaintCertificateData(handle, page, tokens, context)
+  if (!data || data.scopes.some((s) => s.op !== OPS.save)) return
+  const items = data.pieces.flatMap((p, serial) => {
+    const bound = pictureBounds(p, 1.5)
+    return bound ? [{ ...p, bound, serial }] : []
+  })
+  const images = items
+    .filter((p) => p.kind === 'image')
+    .sort((a, b) => a.operationIndex - b.operationIndex)
+  if (
+    images.length !== 2 ||
+    items.some((p) => !['image', 'glyph'].includes(p.kind)) ||
+    images[0].rect[3] >= images[1].rect[1]
+  )
+    return
+  for (const image of images) {
+    const graphics = context.graphicsBounds.filter(
+      (g) => g.kind === 'image' && g.operationIndex === image.operationIndex
+    )
+    if (
+      graphics.length !== 1 ||
+      graphics[0].imageHash !== image.imageHash ||
+      !/^[a-f0-9]{64}$/u.test(image.imageHash ?? '') ||
+      !pictureValid(graphics[0].paintedNormalizedRect)
+    )
+      return
+  }
+  const rect = union(images.map((p) => p.rect))
+  if (!pictureValid(rect) || rect[3] >= figure.caption.rect[1]) return
+  const seed = { rect, caption: figure.caption, fallbackFigure: figure }
+  const family = pictureMultipart(data, items, seed, pageCaps, 0, tables)
+  if (family?.kind !== 'complete-native-subcaption-family') return
+  const source = nativePageTextPacketInventory(
+    page,
+    tokens,
+    context,
+    true,
+    new Set(tokens.map((t) => t.sourceItem?.index))
+  )
+  if (!source) return
+  const owned = new Set(family.own),
+    glyphs = items.filter((p) => p.kind === 'glyph'),
+    same = (a, b) => a?.length === b?.length && a.every((n, i) => Math.abs(n - b[i]) < 1e-7),
+    recordParts = new Map(),
+    wholeVisible = (p) =>
+      p.fillAlpha === 1 &&
+      /^#[a-f0-9]{6}$/iu.test(p.fillColor ?? '') &&
+      p.fillColor.toLowerCase() !== '#ffffff' &&
+      p.potentialClipEnvelope === undefined &&
+      p.originalClipQuads === undefined &&
+      pictureValid(p.paintClip) &&
+      pictureInside(p.paintClip, p.fullInk) &&
+      pictureInside(p.paintClip, p.advance)
+  for (const r of source.records) {
+    const parts = []
+    for (const { g } of r.part) {
+      const match = glyphs.filter(
+        (p) =>
+          p.operationIndex === g.i &&
+          p.fontName === g.fontName &&
+          p.text === g.text &&
+          same(p.advance, g.advance) &&
+          same(p.fullInk, g.ink)
+      )
+      if (match.length !== 1) return
+      if (!parts.includes(match[0])) parts.push(match[0])
+    }
+    if (
+      r.r !== context.content.items[r.index] ||
+      pictureCompact(r.part.map((p) => p.c).join('')) !== pictureCompact(r.r.str)
+    )
+      return
+    const claims = tokens.filter((t) => t.sourceItem?.index === r.index),
+      count = parts.filter((p) => owned.has(p)).length
+    if (
+      count &&
+      (count !== parts.length ||
+        r.advanceComplete !== true ||
+        parts.some((p) => !wholeVisible(p)) ||
+        claims.length !== 1 ||
+        claims[0].text !== r.r.str ||
+        claims[0].sourceItem.text !== r.r.str ||
+        claims[0].sourceItem.pageNumber !== page.pageNumber)
+    )
+      return
+    recordParts.set(r, parts)
+  }
+  const records = source.records.filter((r) =>
+    r.rect.every((n, i) =>
+      i < 2 ? n >= figure.caption.rect[i] - 0.02 : n <= figure.caption.rect[i] + 0.02
+    )
+  )
+  if (
+    !records.length ||
+    records.some(
+      (r) =>
+        r.advanceComplete !== true ||
+        tokens.filter((t) => t.sourceItem?.index === r.index && t.text === r.r.str).length !== 1 ||
+        recordParts.get(r).some((p) => !wholeVisible(p))
+    ) ||
+    pictureCompact(records.map((r) => r.r.str).join('')) !==
+      pictureCompact(figure.caption.lines.join(''))
+  )
+    return
+  return input() ? seed : undefined
+}
+
 export function nativeCertifiedFigurePixelCrop(
   page,
   figure,
@@ -6062,6 +6269,41 @@ export function nativeCertifiedFigurePixelCrop(
   live
 ) {
   try {
+    if (figure?.rect === undefined && originalCropRect === undefined) {
+      const seed = unresolvedMultipartRasterSeed(
+        page,
+        figure,
+        captions,
+        tables,
+        tokens,
+        context,
+        peers
+      )
+      return seed
+        ? nativeCertifiedFigurePixelCrop(
+            page,
+            seed,
+            captions,
+            tables,
+            tokens,
+            context,
+            peers,
+            seed.rect,
+            live
+          )
+        : undefined
+    }
+    const mesh = nativeMesh4PixelCrop(
+      page,
+      figure,
+      captions,
+      tables,
+      tokens,
+      context,
+      peers,
+      originalCropRect
+    )
+    if (mesh) return mesh
     const normalPair = nativeNormalRasterPairPixelCrop(
       page,
       figure,
@@ -6155,9 +6397,22 @@ export function nativeCertifiedFigurePixelCrop(
       return
     const ordinaryHandle = createNativeFigurePaintCertificate(page, tokens, context),
       handle =
-        ordinaryHandle ?? createNativeLeadingType3PixelCertificate(page, tokens, context, live),
-      data = nativeFigurePaintCertificateData(handle, page, tokens, context)
-    if (!data) return
+        ordinaryHandle ??
+        createNativeCompactFigurePixelCertificate(page, tokens, context) ??
+        createNativeArrayBoundFigurePixelCertificate(page, tokens, context) ??
+        createNativeLeadingType3PixelCertificate(page, tokens, context, live),
+      data = pixelPaintData(handle, page, tokens, context)
+    if (!data)
+      return nativeBoundedProgramPixelCrop(
+        page,
+        figure,
+        captions,
+        tables,
+        tokens,
+        context,
+        peers,
+        originalCropRect
+      )
     const minScale = 1.5,
       items = data.pieces.flatMap((p, serial) => {
         const bound = pictureBounds(p, minScale)
@@ -6177,7 +6432,17 @@ export function nativeCertifiedFigurePixelCrop(
           pictureOpeningParagraphForm(data, items, figure, pageCaps, page, tokens, context) ??
           picturePairedSavedDiagrams(data, items, figure, pageCaps, page, tokens, context) ??
           pictureKeyedFormGrid(data, items, figure, pageCaps, page, tokens, context) ??
-          pictureMultipart(data, items, figure, pageCaps) ??
+          pictureMultipart(data, items, figure, pageCaps, 0, tables) ??
+          nativeSubcaptionFormFamilies(data, items, figure, pageCaps, tokens, context, peers) ??
+          nativeVerticalSubcaptionFormFamily(
+            data,
+            items,
+            figure,
+            pageCaps,
+            page,
+            tokens,
+            context
+          ) ??
           pictureFormWithBoxedPanel(data, items, figure, pageCaps, page, tokens, context) ??
           pictureCaptionedFormGrid(data, items, figure, pageCaps) ??
           pictureCaptionedRasterRows(
@@ -6193,6 +6458,16 @@ export function nativeCertifiedFigurePixelCrop(
           picturePairedRasterSave(data, items, figure) ??
           pictureRepeatedPaintHeader(data, items, figure, page, context) ??
           pictureSavedScope(data, items, figure) ??
+          nativeIndependentlyCaptionedForm(
+            data,
+            items,
+            figure,
+            pageCaps,
+            page,
+            tokens,
+            context,
+            peers
+          ) ??
           pictureAboveCaptionNotes(data, items, figure, pageCaps, page, tokens, context) ??
           pictureRasterPanelsWithNotes(data, items, figure, pageCaps, page, tokens, context) ??
           pictureAboveHeadingTwinScope(data, items, figure, tokens, context) ??
@@ -6261,14 +6536,38 @@ export function nativeCertifiedFigurePixelCrop(
         picked.closedProofTail = true
       }
     }
+    const procedure = nativeForeignProcedureScopeExclusions(
+      data,
+      items,
+      picked,
+      page,
+      figure,
+      context,
+      originalCropRect,
+      pageCaps
+    )
+    if (procedure) picked.excluded = procedure
+    const framedProcedure = procedure
+      ? undefined
+      : nativeFramedForeignProcedureTopCrop(
+          data,
+          items,
+          picked,
+          page,
+          figure,
+          context,
+          originalCropRect,
+          pageCaps
+        )
+    if (framedProcedure) picked.excluded = framedProcedure.excluded
     const owned = [...new Set(picked.own)],
       ids = new Set(owned.map((p) => p.serial)),
       foreign = items.filter((p) => !ids.has(p.serial)),
-      rect = pictureExpand(union(owned.map((p) => p.bound)), 2 / minScale)
+      rect = framedProcedure?.rect ?? pictureExpand(union(owned.map((p) => p.bound)), 2 / minScale)
     const captionBlank = pictureCaptionAdvanceBlank(figure, picked, rect, page, tokens, context)
     // A non-member of one drawing scope can still be another panel in the
     // established figure. Only an independently repeated native header or a
-    // complete separately printed Notes paragraph may leave the old crop.
+    // complete separately printed Notes paragraph or closed procedure may leave the old crop.
     // Every other original paint remains protected, including panel descriptions.
     const repeatedHeader = pictureRepeatedHeader(items, page, figure, context, tokens)
     if (
@@ -6347,7 +6646,11 @@ export function nativeCertifiedFigurePixelCrop(
       ) ||
       tables.some((t) => !pictureValid(t) || pictureHit(t, rect)) ||
       peers.some(
-        (f) => f !== figure && f.rect && (!pictureValid(f.rect) || pictureHit(f.rect, rect))
+        (f) =>
+          f !== figure &&
+          f.rect &&
+          (!pictureValid(f.rect) ||
+            (pictureHit(f.rect, rect) && !picked.exteriorPeers?.includes(f)))
       ) ||
       foreign.some((p) =>
         pictureHit(rect, pictureExpand(p.bound, 2 / (captionBlank?.scaleLower ?? minScale)))
@@ -6405,6 +6708,10 @@ export function nativeCertifiedFigurePixelCrop(
 }
 export function nativeCertifiedFigurePixelPngSafe(plan, png, rect, page) {
   try {
+    const mesh = nativeMesh4PixelPngSafe(plan, png, rect, page)
+    if (mesh !== undefined) return mesh
+    const bounded = nativeBoundedProgramPixelPngSafe(plan, png, rect, page)
+    if (bounded !== undefined) return bounded
     if (nativeNormalRasterPairPixelCurrent(plan, page))
       return nativeNormalRasterPairPixelPngSafe(plan, png, rect, page)
     const uncolored = savedUncoloredPixelPlans.get(plan)
@@ -6443,7 +6750,7 @@ export function nativeCertifiedFigurePixelPngSafe(plan, png, rect, page) {
       p.rect === rect &&
       p.current() &&
       p.outputCurrent() &&
-      nativeFigurePaintCertificateData(p.handle, p.page, p.tokens, p.context) &&
+      pixelPaintData(p.handle, p.page, p.tokens, p.context) &&
       r &&
       (!p.next ||
         nativeFigurePaintCertificateData(

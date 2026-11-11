@@ -419,19 +419,20 @@ export type PdfStructureIdentity = Pick<
   'extractionId' | 'engineFingerprint' | 'sourceChecksum' | 'sourceSizeBytes' | 'requestedPages'
 >
 
-export const checkPdfStructureDecodingBudget = (input: unknown): void => {
+const checkDecodingBudget = (input: unknown, workerSourceOverflow = false): void => {
   // Main-process decoding has its own budget, independent of later worker CPU/RAM/page limits.
   // Walk before Zod/refinements so large, deep or cyclic in-process inputs cannot stall validation.
-  const pending = [{ value: input, depth: 0 }]
+  const pending = [{ value: input, depth: 0, source: false }]
   const seen = new Set<object>()
   let nodes = 0
   let textLength = 0
   let cells = 0
   while (pending.length) {
-    const { value, depth } = pending.pop()!
-    if (++nodes > 32768 || depth > 32) throw new Error('PDF result exceeds its decoding budget.')
+    const { value, depth, source } = pending.pop()!
+    if ((!source && ++nodes > 32768) || depth > 32)
+      throw new Error('PDF result exceeds its decoding budget.')
     if (typeof value === 'string') {
-      textLength += value.length
+      if (!source) textLength += value.length
       if (value.length > 262144 || textLength > 2 * 1024 * 1024)
         throw new Error('PDF result text exceeds its decoding budget.')
     } else if (value && typeof value === 'object') {
@@ -439,7 +440,7 @@ export const checkPdfStructureDecodingBudget = (input: unknown): void => {
       seen.add(value)
       if (Array.isArray(value)) {
         if (value.length > 8192) throw new Error('PDF result array exceeds its decoding budget.')
-        for (const entry of value) pending.push({ value: entry, depth: depth + 1 })
+        for (const entry of value) pending.push({ value: entry, depth: depth + 1, source })
       } else {
         if (Object.getPrototypeOf(value) !== Object.prototype)
           throw new Error('PDF result must contain plain JSON objects.')
@@ -451,18 +452,39 @@ export const checkPdfStructureDecodingBudget = (input: unknown): void => {
             if (entry.length > MAX_TABLE_CELLS || cells > 8192)
               throw new Error('PDF result cells exceed the decoding budget.')
           }
-          pending.push({ value: entry, depth: depth + 1 })
+          pending.push({
+            value: entry,
+            depth: depth + 1,
+            source:
+              source ||
+              (workerSourceOverflow &&
+                [
+                  'sourceItems',
+                  'sourceSegments',
+                  'nativeBody',
+                  'unreliableMathSourceItems'
+                ].includes(key))
+          })
         }
       }
     }
   }
 }
 
-export const parsePdfStructureResult = (
+export const checkPdfStructureDecodingBudget = (input: unknown): void => checkDecodingBudget(input)
+
+// Internal worker boundary only: the input file is already capped at 8 MiB. Validate every
+// source packet before optional budgeting, retaining all per-value/tree/core-content limits.
+// IPC and cache decoding always use the strict aggregate budget above.
+export const checkWorkerSourceMetadataBudget = (input: unknown): void =>
+  checkDecodingBudget(input, true)
+
+const parseResult = (
   input: unknown,
-  expected: PdfStructureIdentity
+  expected: PdfStructureIdentity,
+  workerSourceOverflow = false
 ): PdfStructureResult => {
-  checkPdfStructureDecodingBudget(input)
+  checkDecodingBudget(input, workerSourceOverflow)
   const result = manifest.parse(input)
   for (const key of [
     'extractionId',
@@ -692,6 +714,18 @@ export const parsePdfStructureResult = (
   }
   return result
 }
+
+export const parsePdfStructureResult = (
+  input: unknown,
+  expected: PdfStructureIdentity
+): PdfStructureResult => parseResult(input, expected)
+
+// Never use for unbounded IPC/cache input. The worker reader validates the original complete
+// evidence here, then applies the strict budget to the selected complete-element bundles.
+export const validateWorkerSourceMetadata = (
+  input: unknown,
+  expected: PdfStructureIdentity
+): PdfStructureResult => parseResult(input, expected, true)
 
 export const decodePdfStructureResult = (input: unknown): PdfStructureResult => {
   checkPdfStructureDecodingBudget(input)

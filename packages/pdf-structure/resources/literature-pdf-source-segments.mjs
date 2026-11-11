@@ -843,3 +843,150 @@ export function attachMeasuredTableSourceSegments(table, tokens) {
     delete plan.cell.sourceItems
   }
 }
+
+// Run after the strict measured-segment assembly and all table repairs. A model
+// can subdivide one ordinary literal geometrically while copying its whole
+// origin into every child. Failure to prove segments is not whole ownership.
+// This final negative review grants no new segment, column or Source rights.
+export function withdrawUnprovedPartialWholeSources(table, tokens) {
+  if (!Array.isArray(tokens)) return
+  const entries = tableCells(table),
+    fonts = new Map(),
+    claims = new Map()
+  const rect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  const word = (s) =>
+    typeof s === 'string' &&
+    /^[\p{L}\p{M}]+(?:[-'’][\p{L}\p{M}]+)*$/u.test(s) &&
+    [...s].filter((c) => /\p{L}/u.test(c)).length >= 2
+  for (const token of tokens) {
+    const o = token.sourceItem
+    if (
+      !o ||
+      !Number.isSafeInteger(o.pageNumber) ||
+      o.pageNumber < 1 ||
+      !Number.isSafeInteger(o.index) ||
+      o.index < 0
+    )
+      continue
+    const k = sourceKey(o)
+    if (!fonts.has(k)) fonts.set(k, [])
+    fonts.get(k).push(token)
+  }
+  for (const entry of entries)
+    for (const origin of arrayOrEmpty(entry.cell.sourceItems)) {
+      const key = sourceKey(origin)
+      if (!claims.has(key)) claims.set(key, [])
+      if (!claims.get(key).includes(entry)) claims.get(key).push(entry)
+    }
+  for (const [key, group] of claims) {
+    if (group.length < 2 || group.length > 8) continue
+    const originals = fonts.get(key)
+    if (originals?.length !== 1) continue
+    const font = originals[0],
+      origin = font.sourceItem
+    if (
+      font.sourceSegment ||
+      font.sourceSegments ||
+      font.inlineSymbol ||
+      typeof origin.text !== 'string' ||
+      !origin.text.trim() ||
+      font.text !== origin.text ||
+      !font.horizontal ||
+      !rect(font.rect) ||
+      !Number.isFinite(font.height) ||
+      font.height <= 0 ||
+      !Number.isFinite(font.baseline)
+    )
+      continue
+    if (
+      tokens.some(
+        (t) =>
+          sourceCarriers(t).some((o) => sourceKey(o) === key) &&
+          (t.sourceSegment || t.sourceToken?.sourceSegment)
+      ) ||
+      entries.some(
+        (entry) =>
+          cellOrigins(entry.cell).some((o) => sourceKey(o) === key) && !group.includes(entry)
+      )
+    )
+      continue
+    group.sort((a, b) => a.cell.column - b.cell.column)
+    const first = group[0],
+      owner = first.table,
+      pieces = group.map(({ cell }) => cell.text),
+      ranges = measuredSourceRanges({ str: font.text, sourceItem: origin }, pieces)
+    // Literal coverage below only identifies the unsupported parent. It is
+    // deliberately not a measuredSourceRanges -> SourceSegments signing path.
+    if (
+      !ranges ||
+      !pieces.every(word) ||
+      !Array.isArray(owner.unassigned) ||
+      !owner.unassigned.every((s) => typeof s === 'string') ||
+      (owner.issues !== undefined &&
+        (!Array.isArray(owner.issues) || !owner.issues.every((s) => typeof s === 'string')))
+    )
+      continue
+    const partial = group.every(({ cell, table: item }, index) => {
+      const token = cell.sourceTokens?.[0],
+        box = cell.sourceRects?.[0]
+      return (
+        item === owner &&
+        Number.isSafeInteger(cell.row) &&
+        cell.row >= 0 &&
+        cell.row === first.cell.row &&
+        cell.rowSpan === 1 &&
+        cell.colSpan === 1 &&
+        cell.column === first.cell.column + index &&
+        !cell.textRuns &&
+        !cell.sourceSegments &&
+        cell.sourceItems?.length === 1 &&
+        sameOrigin(cell.sourceItems[0], origin) &&
+        owner.grid?.[cell.row]?.[cell.column] === cell.text &&
+        cell.sourceRects?.length === 1 &&
+        cell.sourceTokens?.length === 1 &&
+        rect(box) &&
+        containsRect(font.rect, box) &&
+        !sameRect(font.rect, box) &&
+        Math.abs(box[1] - font.rect[1]) < 1e-6 &&
+        Math.abs(box[3] - font.rect[3]) < 1e-6 &&
+        token?.text === cell.text &&
+        sameRect(token.rect, box) &&
+        Number.isFinite(token.baseline) &&
+        Number.isFinite(token.height) &&
+        !token.inlineSymbol &&
+        !token.sourceSegment &&
+        !token.sourceSegments &&
+        !token.sourceItems &&
+        !token.sourceToken?.sourceToken &&
+        sourceCarriers(token).every((o) => sameOrigin(o, origin)) &&
+        (index === 0
+          ? Math.abs(box[0] - font.rect[0]) < 1e-6
+          : Math.abs(box[0] - group[index - 1].cell.sourceRects[0][2]) < 1e-6) &&
+        (index !== group.length - 1 || Math.abs(box[2] - font.rect[2]) < 1e-6)
+      )
+    })
+    if (!partial) continue
+    // Keep every original occurrence, even when several distinct fonts print
+    // identical words. A second review is inert because these whole claims and
+    // all sourceToken carrier paths have already been removed.
+    owner.unassigned.push(origin.text)
+    owner.issues = [
+      ...new Set([
+        ...(owner.issues ?? []),
+        'unassigned-source-text',
+        'native-table-structure-ambiguous'
+      ])
+    ]
+    owner.reviewCandidate = false
+    for (const { cell } of group) {
+      delete cell.sourceItems
+      cell.sourceTokens = cell.sourceTokens.map(({ text, rect, baseline, height }) => ({
+        text,
+        rect,
+        baseline,
+        height
+      }))
+    }
+  }
+}

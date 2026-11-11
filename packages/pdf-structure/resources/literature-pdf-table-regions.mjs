@@ -11,6 +11,7 @@ import {
   nativeCompleteRuledPaintCrop
 } from './literature-pdf-native-leaf-record-repair.mjs'
 import { groupSourceRowsWithScripts } from './literature-pdf-source-records.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
 
 // eslint-disable-next-line no-control-regex -- This intentionally detects C0/C1 control glyphs in source text.
 const encodedControls = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u
@@ -839,11 +840,26 @@ export function deduplicateTableRegions(tables, items, captions = []) {
 }
 
 // Equal cell inventories may survive model-crop deduplication. Remove an uncaptioned
-// duplicate, or one whose caption remains on a separate proven owner. Retained
+// duplicate, including an equivalent pair without captions, or one whose caption
+// remains on a separate proven owner. Retained
 // objects, including their captions, thumbnails and metadata, are not rewritten.
-function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
+function deduplicateEquivalentSourceTables(
+  tables,
+  tokens,
+  measuredWhitespace,
+  onEquivalentRemoval
+) {
   const key = (s) => `${s.pageNumber}:${s.index}`
   const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  const tableMetadata = (table) => {
+    const metadata = { ...table }
+    // Only these known assembly fields may differ. In particular, keep the
+    // Source normalization viewport, diagnostics, native bodies and unknown
+    // future table fields in the comparison. Cell evidence is compared below.
+    for (const key of ['id', 'cropRect', 'region', 'thumbnail', 'repairs', 'cells'])
+      delete metadata[key]
+    return metadata
+  }
   const rect = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
   const contains = (a, b) =>
@@ -869,6 +885,59 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
       if (!global.has(k)) global.set(k, [])
       global.get(k).push({ token: t, source: s })
     }
+  const matchesWholeCellText = (cell) => {
+    if (
+      cell.sourceItems
+        .map((s) => s.text)
+        .join('')
+        .replace(/\s/gu, '') === cell.text.replace(/\s/gu, '')
+    )
+      return true
+    // The original PDF can paint the upper sibling before the lower one.
+    // Compare the existing rich display only for one complete native base
+    // and its two adjacent script lanes; never reorder or create a Source.
+    if (
+      cell.sourceItems.length !== 3 ||
+      cell.textRuns?.length !== 3 ||
+      cell.textRuns.map((run) => run.text).join('') !== cell.text ||
+      cell.textRuns.some((run) => !/^\p{L}$/u.test(run.text)) ||
+      !eq(
+        cell.textRuns.map((run) => run.position),
+        ['normal', 'subscript', 'superscript']
+      )
+    )
+      return false
+    const native = cell.sourceItems.map((source) => {
+      const owners = global.get(key(source))
+      return owners?.length === 1 ? owners[0].token : undefined
+    })
+    if (
+      native.some(
+        (token) =>
+          !token?.horizontal ||
+          !rect(token.rect) ||
+          !Number.isFinite(token.baseline) ||
+          !(token.height > 0) ||
+          !/^\p{L}$/u.test(token.text)
+      )
+    )
+      return false
+    const bases = native.filter((base) =>
+      native.every((other) => other === base || isAdjacentTableScript(other, base))
+    )
+    if (bases.length !== 1) return false
+    const base = bases[0],
+      lower = native.filter((token) => token !== base && token.baseline > base.baseline),
+      upper = native.filter((token) => token !== base && token.baseline < base.baseline)
+    return (
+      lower.length === 1 &&
+      upper.length === 1 &&
+      eq(
+        [base.text, lower[0].text, upper[0].text],
+        cell.textRuns.map((run) => run.text)
+      )
+    )
+  }
   const proof = (t) => {
     if (
       t.parts ||
@@ -901,15 +970,7 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
       )
         return
       slots.add(`${c.row}:${c.column}`)
-      if (
-        !c.sourceItems?.length ||
-        !c.sourceRects?.length ||
-        c.sourceItems
-          .map((s) => s.text)
-          .join('')
-          .replace(/\s/gu, '') !== c.text.replace(/\s/gu, '')
-      )
-        return
+      if (!c.sourceItems?.length || !c.sourceRects?.length || !matchesWholeCellText(c)) return
       const cellOwners = []
       for (let j = 0; j < c.sourceItems.length; j++) {
         let s = c.sourceItems[j],
@@ -976,7 +1037,8 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
     return { keys: seen, cells: cells.toSorted((a, b) => a.row - b.row || a.column - b.column) }
   }
   const proofs = tables.map(proof),
-    removed = new Set()
+    removed = new Set(),
+    equivalentPairs = []
   for (let a = 0; a < tables.length; a++)
     for (let b = a + 1; b < tables.length; b++) {
       let A = tables[a],
@@ -1012,7 +1074,29 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
         continue
       const validCaption = (t) =>
         t.caption?.text && t.caption.page === t.page && rect(t.caption.rect)
-      if ([A, B].filter(validCaption).length === 1) {
+      const previousRemovalCount = removed.size
+      if (!A.caption && !B.caption) {
+        if (
+          !eq(tableMetadata(A), tableMetadata(B)) ||
+          !Number.isFinite(A.sourceViewport?.width) ||
+          !Number.isFinite(A.sourceViewport?.height) ||
+          A.sourceViewport.width <= 0 ||
+          A.sourceViewport.height <= 0 ||
+          tables.some(
+            (t, i) =>
+              i !== a &&
+              i !== b &&
+              t.page === A.page &&
+              rect(t.cropRect) &&
+              (intersects(t.cropRect, A.cropRect) || intersects(t.cropRect, B.cropRect))
+          )
+        )
+          continue
+        // Preserve the enclosing crop, so removing its complete native copy
+        // cannot discard paint. Equal crops retain their existing order.
+        if (containsRect(A.cropRect, B.cropRect)) removed.add(b)
+        else if (containsRect(B.cropRect, A.cropRect)) removed.add(a)
+      } else if ([A, B].filter(validCaption).length === 1) {
         removed.add(A.caption ? b : a)
       } else if (validCaption(A) && validCaption(B) && !eq(A.caption, B.caption)) {
         // A duplicate may also carry the caption of a different, disjoint table.
@@ -1041,14 +1125,27 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
           dropB = preservedElsewhere(B)
         if (dropA !== dropB) removed.add(dropA ? a : b)
       }
+      if (removed.size > previousRemovalCount)
+        equivalentPairs.push(removed.has(a) ? [B, A] : [A, B])
     }
-  return tables.filter((_, i) => !removed.has(i))
+  const kept = tables.filter((_, i) => !removed.has(i))
+  // Notify only after all strict proof work has finished. The observer receives
+  // original objects, never an added result field or a weakened subset proof.
+  if (typeof onEquivalentRemoval === 'function')
+    for (const [survivor, discarded] of equivalentPairs)
+      if (kept.includes(survivor)) onEquivalentRemoval(survivor, discarded)
+  return kept
 }
 
 // A narrow detector and a complete detector can survive early deduplication
 // because the latter owns an additional column. Compare original PDF identities
 // only after cell assembly; equal strings or overlapping crops are not owners.
-export function deduplicateSourceOwnedTableSubsets(tables, nativeTokens, measuredRuns = []) {
+export function deduplicateSourceOwnedTableSubsets(
+  tables,
+  nativeTokens,
+  measuredRuns = [],
+  onEquivalentRemoval
+) {
   const key = (source) => `${source.pageNumber}:${source.index}`
   const normalize = (text) => text.replace(/\s/gu, '')
   const originals = new Map()
@@ -1094,7 +1191,12 @@ export function deduplicateSourceOwnedTableSubsets(tables, nativeTokens, measure
       )
     })
   }
-  tables = deduplicateEquivalentSourceTables(tables, nativeTokens, measuredWhitespace)
+  tables = deduplicateEquivalentSourceTables(
+    tables,
+    nativeTokens,
+    measuredWhitespace,
+    onEquivalentRemoval
+  )
   const prove = (table) => {
     if (
       table.parts ||
@@ -3039,7 +3141,9 @@ export function recoverCaptionedBorderlessMathTables(
 
 // Consecutive table numbers with full-width rules or separate centered titles
 // can split one detector box. Subsections A/B and continued titles cannot.
-export function splitCaptionedTableRegions(table, captions, rules) {
+export function splitCaptionedTableRegions(table, captions, rules, nativeContext) {
+  const nativeParts = splitPrintedNativeCaptionFrames(table, captions, rules, nativeContext)
+  if (nativeParts) return nativeParts
   const [left, top, right, bottom] = table.cropRect
   const anchors = captions
     .flatMap((caption) => {
@@ -3116,6 +3220,423 @@ export function splitCaptionedTableRegions(table, captions, rules) {
   return parts.every((p) => p.structure.objects.filter((o) => o.label === 'table row').length >= 3)
     ? parts
     : [table]
+}
+
+// A descriptive title is eligible only with its printed originals and a complete
+// painted frame. Partition before refinement so another table's title cannot
+// become a cell owner in a coarse detector grid.
+function nativeTableFrameGraphicsClosed(graphics, frames, corridor, viewport) {
+  if (!Array.isArray(graphics)) return false
+  const dx = (viewport?.width ?? 0) / 256,
+    dy = (viewport?.height ?? 0) / 256
+  return graphics.every((graphic) => {
+    if (!validRect(graphic?.rect) || !['path', 'image'].includes(graphic.kind)) return false
+    if (intersect(graphic.rect, corridor) <= 0) return true
+    if (graphic.kind === 'image') return false
+    // Probe bounds use floor(min*256), ceil(max*256)+1. Keep every path in
+    // one frame, allowing only that asymmetric quantization envelope.
+    return frames.some((frame) =>
+      containsRect(
+        [frame[0] - dx, frame[1] - dy, frame[2] + 2 * dx, frame[3] + 2 * dy],
+        graphic.rect
+      )
+    )
+  })
+}
+
+function splitPrintedNativeCaptionFrames(table, captions, rules, context) {
+  if (!validRect(table?.cropRect) || !Array.isArray(table.structure?.objects)) return
+  if (!Array.isArray(context?.items) || !Array.isArray(context.runs)) return
+  if (!(context.rulePaintBounds instanceof Map)) return
+  const crop = table.cropRect,
+    epsilon = 0.02
+  const full = rules
+    .filter(
+      (r) =>
+        Array.isArray(r) &&
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[1] === r[3] &&
+        Math.abs(r[0] - crop[0]) < 15 &&
+        Math.abs(r[2] - crop[2]) < 15
+    )
+    .sort((a, b) => a[1] - b[1])
+  const anchors = captions
+    .flatMap((caption) => {
+      const number = /^Table\s+(\d+)\s*:\s*\S/i.exec(caption.lines?.[0] ?? '')?.[1]
+      if (
+        !number ||
+        !validRect(caption.rect) ||
+        caption.rect[3] >= crop[3] ||
+        caption.rect[1] < crop[1] - 100 ||
+        caption.rect[0] < crop[0] ||
+        caption.rect[2] > crop[2]
+      )
+        return []
+      const opening = full.find(
+        (r) =>
+          r[1] > caption.rect[3] && r[1] - caption.rect[3] < (caption.rect[3] - caption.rect[1]) * 4
+      )
+      return opening ? [{ caption, opening, number: Number(number) }] : []
+    })
+    .sort((a, b) => a.opening[1] - b.opening[1])
+  if (
+    anchors.length < 2 ||
+    anchors[0].opening[1] > crop[1] + 20 ||
+    anchors.some((a, n) => n && a.number !== anchors[n - 1].number + 1)
+  )
+    return
+  const parts = []
+  for (const [index, anchor] of anchors.entries()) {
+    const fonts = context.items.filter(
+      (i) => i.text?.trim() && validRect(i.rect) && intersect(i.rect, anchor.caption.rect) > 0
+    )
+    if (
+      !fonts.length ||
+      fonts.some(
+        (i) =>
+          !i.horizontal ||
+          !containsRect(
+            anchor.caption.rect.map((v, n) => v + (n < 2 ? -epsilon : epsilon)),
+            i.rect
+          )
+      )
+    )
+      return
+    if (
+      fonts
+        .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+        .map((i) => i.text)
+        .join('')
+        .replace(/\s/gu, '') !== anchor.caption.lines.join('').replace(/\s/gu, '')
+    )
+      return
+    if (
+      !proveNativeUniqueWholeFonts(fonts, context.items) ||
+      fonts.some((font) => {
+        const matches = context.runs.filter(
+          (run) => run.text === font.text && sameRect(run.rect, font.rect)
+        )
+        return (
+          matches.length !== 1 ||
+          !matches[0].glyphRuns?.length ||
+          matches[0].glyphRuns.some((g) => !Number.isInteger(g) || g < 0)
+        )
+      })
+    )
+      return
+    const next = anchors[index + 1]
+    const frame = full.filter(
+      (r) =>
+        r[1] >= anchor.opening[1] &&
+        r[1] < (next?.caption.rect[3] ?? crop[3]) &&
+        Math.abs(r[0] - anchor.opening[0]) < epsilon &&
+        Math.abs(r[2] - anchor.opening[2]) < epsilon
+    )
+    if (frame.length < 3) return
+    const paint = frame.map((r) => context.rulePaintBounds.get(r.join(',')))
+    if (paint.some((r) => !validRect(r))) return
+    const rect = [
+      Math.min(...paint.map((r) => r[0])),
+      Math.min(...paint.map((r) => r[1])),
+      Math.max(...paint.map((r) => r[2])),
+      Math.max(...paint.map((r) => r[3]))
+    ]
+    if (parts.some((part) => intersect(part.cropRect, rect) > 0)) return
+    if (
+      context.items.some(
+        (i) =>
+          i.text?.trim() &&
+          validRect(i.rect) &&
+          intersect(i.rect, rect) > 0 &&
+          !containsRect(rect, i.rect) &&
+          !fonts.includes(i) &&
+          !(next && intersect(i.rect, next.caption.rect) > 0)
+      )
+    )
+      return
+    const body = context.items.filter((i) => i.text?.trim() && containsRect(rect, i.rect))
+    if (new Set(body.map((i) => i.baseline)).size < 3 || body.some((i) => !i.horizontal)) return
+    const objects = table.structure.objects.flatMap((object) => {
+      const absolute = object.rect.map((v, n) => v + crop[n % 2])
+      if (intersect(absolute, rect) <= 0) return []
+      if (object.label === 'table spanning cell' && !containsRect(rect, absolute)) return []
+      const clipped = [
+        Math.max(rect[0], absolute[0]),
+        Math.max(rect[1], absolute[1]),
+        Math.min(rect[2], absolute[2]),
+        Math.min(rect[3], absolute[3])
+      ]
+      return [{ ...object, rect: clipped.map((v, n) => v - rect[n % 2]) }]
+    })
+    if (objects.filter((o) => o.label === 'table row').length < 3) return
+    parts.push({
+      ...table,
+      id: `${table.id}-part-${index + 1}`,
+      caption: anchor.caption,
+      splitCaptionedRegion: true,
+      cropRect: rect,
+      structure: { ...table.structure, objects }
+    })
+  }
+  const captionFonts = context.items.filter(
+    (i) =>
+      i.text?.trim() &&
+      validRect(i.rect) &&
+      anchors.some((a) => intersect(i.rect, a.caption.rect) > 0)
+  )
+  if (
+    context.items.some(
+      (i) =>
+        i.text?.trim() &&
+        validRect(i.rect) &&
+        intersect(i.rect, crop) > 0 &&
+        !captionFonts.includes(i) &&
+        !parts.some((p) => containsRect(p.cropRect, i.rect))
+    )
+  )
+    return
+  if (
+    !nativeTableFrameGraphicsClosed(
+      context.graphics,
+      parts.map((p) => p.cropRect),
+      crop,
+      context.viewport
+    )
+  )
+    return
+  return parts
+}
+
+// Consecutive printed subtitles and repeated complete numeric records can
+// recover a missed panel without copying the surviving panel's model grid.
+export function recoverNativeStackedCaptionFrames(tables, items, captions, rules, page, context) {
+  if (
+    !Array.isArray(tables) ||
+    tables.length !== 2 ||
+    !Array.isArray(items) ||
+    !Array.isArray(context?.runs) ||
+    !(context.rulePaintBounds instanceof Map)
+  )
+    return
+  const titles = captions.filter((c) => c.page === page && captionKind(c.lines?.[0]) === 'table')
+  if (titles.length !== 1) return
+  const caption = titles[0],
+    epsilon = 0.02
+  const subtitles = items
+    .filter(
+      (i) =>
+        i.text?.trim() &&
+        /^\([ab]\)\s+\p{L}/u.test(i.text) &&
+        validRect(i.rect) &&
+        i.rect[1] > caption.rect[3]
+    )
+    .sort((a, b) => a.rect[1] - b.rect[1])
+  if (
+    subtitles.length !== 2 ||
+    !/^\(a\)/.test(subtitles[0].text) ||
+    !/^\(b\)/.test(subtitles[1].text)
+  )
+    return
+  const full = rules
+    .filter(
+      (r) =>
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[1] === r[3] &&
+        Math.abs(r[0] - subtitles[0].rect[0]) < epsilon &&
+        r[2] >= Math.max(...subtitles.map((i) => i.rect[2])) &&
+        r[1] > caption.rect[3]
+    )
+    .sort((a, b) => a[1] - b[1])
+  const captionFonts = items.filter(
+    (i) => i.text?.trim() && validRect(i.rect) && intersect(i.rect, caption.rect) > 0
+  )
+  if (
+    captionFonts
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/gu, '') !== caption.lines.join('').replace(/\s/gu, '')
+  )
+    return
+  const panels = []
+  for (const [n, subtitle] of subtitles.entries()) {
+    const frame = full.filter(
+      (r) =>
+        r[1] > subtitle.rect[3] &&
+        r[1] < (subtitles[n + 1]?.rect[1] ?? subtitle.rect[3] + subtitle.height * 12)
+    )
+    if (
+      frame.length < 3 ||
+      frame.some(
+        (r) => Math.abs(r[0] - frame[0][0]) > epsilon || Math.abs(r[2] - frame[0][2]) > epsilon
+      )
+    )
+      return
+    const paint = frame.map((r) => context.rulePaintBounds.get(r.join(',')))
+    if (paint.some((r) => !validRect(r))) return
+    const crop = [
+      Math.min(...paint.map((r) => r[0])),
+      subtitle.rect[1],
+      Math.max(...paint.map((r) => r[2])),
+      Math.max(...paint.map((r) => r[3]))
+    ]
+    const source = items.filter(
+      (i) => i.text?.trim() && validRect(i.rect) && intersect(i.rect, crop) > 0
+    )
+    if (
+      source.some(
+        (i) => !containsRect([crop[0] - epsilon, crop[1], crop[2] + epsilon, crop[3]], i.rect)
+      )
+    )
+      return
+    crop[0] = Math.min(crop[0], ...source.map((i) => i.rect[0]))
+    crop[2] = Math.max(crop[2], ...source.map((i) => i.rect[2]))
+    const sourceRows = []
+    for (const font of [...source].sort(
+      (a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]
+    )) {
+      let row = sourceRows.find(
+        (r) => Math.abs(r[0].baseline - font.baseline) < subtitle.height * 0.25
+      )
+      if (!row) sourceRows.push((row = []))
+      row.push(font)
+    }
+    const body = sourceRows.filter(
+      (r) => Math.min(...r.map((i) => i.baseline)) > frame[1][1] + subtitle.height * 0.5
+    )
+    const islands = (row) => {
+      const result = []
+      for (const font of [...row].sort((a, b) => a.rect[0] - b.rect[0])) {
+        let group = result.at(-1)
+        if (
+          !group ||
+          font.rect[0] - Math.max(...group.map((i) => i.rect[2])) > subtitle.height * 0.5
+        )
+          result.push((group = []))
+        group.push(font)
+      }
+      return result
+    }
+    const records = body
+      .map(islands)
+      .filter(
+        (r) =>
+          r.length >= 3 &&
+          r.slice(1).every((g) => /^(?:[+−-]?(?:\d|\.\d)|N\/A)/.test(g.map((i) => i.text).join('')))
+      )
+    if (records.length < 2 || records.some((r) => r.length !== records[0].length)) return
+    const columns = records[0].map((_, c) => [
+      Math.min(...records.flatMap((r) => r[c]).map((i) => i.rect[0])),
+      Math.max(...records.flatMap((r) => r[c]).map((i) => i.rect[2]))
+    ])
+    if (columns.some((r, c) => c && r[0] <= columns[c - 1][1])) return
+    const cuts = [crop[0], ...columns.slice(1).map((r, c) => (columns[c][1] + r[0]) / 2), crop[2]]
+    const rowRects = sourceRows.map((r) => [
+      crop[0],
+      Math.min(...r.map((i) => i.rect[1])),
+      crop[2],
+      Math.max(...r.map((i) => i.rect[3]))
+    ])
+    if (rowRects.some((r, i) => i && r[1] < rowRects[i - 1][3])) return
+    const spanningRows = sourceRows.flatMap((row, r) => {
+      if (row.length !== 1 || row[0].rect[2] <= cuts[1]) return []
+      const font = row[0]
+      if (
+        font !== subtitle &&
+        !frame.some(
+          (rule) =>
+            font.baseline - rule[1] >= subtitle.height * 0.5 &&
+            font.baseline - rule[1] < subtitle.height * 1.5 &&
+            Math.abs(font.rect[0] - rule[0]) < epsilon
+        )
+      )
+        return [undefined]
+      return [{ label: 'table spanning cell', rect: rowRects[r] }]
+    })
+    if (spanningRows.some((row) => !row)) return
+    const objects = [
+      ...rowRects.map((rect) => ({ label: 'table row', rect })),
+      ...cuts
+        .slice(1)
+        .map((right, c) => ({ label: 'table column', rect: [cuts[c], crop[1], right, crop[3]] })),
+      ...spanningRows,
+      { label: 'table column header', rect: [crop[0], crop[1], crop[2], frame[1][1]] }
+    ]
+    panels.push({
+      id: tables[n].id,
+      recoveredGrid: true,
+      cropRect: crop,
+      structure: {
+        objects: objects.map((o) => ({ ...o, rect: o.rect.map((v, i) => v - crop[i % 2]) }))
+      },
+      source
+    })
+  }
+  const source = [...captionFonts, ...panels.flatMap((p) => p.source)]
+  const corridor = [
+    Math.min(...panels.map((p) => p.cropRect[0])),
+    panels[0].cropRect[1],
+    Math.max(...panels.map((p) => p.cropRect[2])),
+    panels[1].cropRect[3]
+  ]
+  if (
+    !nativeTableFrameGraphicsClosed(
+      context.graphics,
+      panels.map((p) => p.cropRect),
+      corridor,
+      context.viewport
+    )
+  )
+    return
+  if (
+    items.some(
+      (font) =>
+        font.text?.trim() &&
+        validRect(font.rect) &&
+        intersect(font.rect, corridor) > 0 &&
+        !panels.some((panel) => panel.source.includes(font))
+    )
+  )
+    return
+  if (
+    !proveNativeUniqueWholeFonts(source, items) ||
+    source.some((font) => {
+      if (font.sourceItem.pageNumber !== page) return true
+      const runs = context.runs.filter((r) => r.text === font.text && sameRect(r.rect, font.rect))
+      return (
+        runs.length !== 1 ||
+        !runs[0].glyphRuns?.length ||
+        runs[0].glyphRuns.some((g) => !Number.isInteger(g) || g < 0)
+      )
+    })
+  )
+    return
+  // This repair replaces competing proposals for the same surviving body only.
+  // An independent detector region remains untouched.
+  const lower = panels[1].cropRect
+  if (
+    tables.some(
+      (t) =>
+        !validRect(t.cropRect) ||
+        intersect(t.cropRect, lower) / Math.min(area(t.cropRect), area(lower)) < 0.6
+    ) ||
+    intersect(tables[0].cropRect, tables[1].cropRect) /
+      Math.min(...tables.map((t) => area(t.cropRect))) <
+      0.8
+  )
+    return
+  return {
+    caption,
+    replaced: tables,
+    tables: panels.map(({ id, recoveredGrid, cropRect, structure }) => ({
+      id,
+      recoveredGrid,
+      cropRect,
+      structure
+    }))
+  }
 }
 
 // Two independently captioned booktabs frames can prove that a padded model
