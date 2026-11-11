@@ -1212,16 +1212,21 @@ class AcpPermissionContext {
       const isNativeSkillCandidate =
         params.toolCall.kind === 'other' && params.toolCall.title?.trim().toLowerCase() === 'skill'
       if (!isMcpRequest && !isNativeSkillCandidate) return restored
-      // A binding handoff requires the matching provider observation, even when the permission
-      // request already has arguments. Notifications and requests may reach their handlers apart.
-      const isNotebookBindingCandidate =
-        resolveCanonicalMcpToolIdentity(params.toolCall.title ?? '', mcpServerNames) ===
-        'open-science-notebook/notebook_bind_runtime'
+      // Plan Auto approval and Notebook binding require a matching provider observation, even
+      // when permission arguments arrive first. Otherwise a valid Plan enters the human queue
+      // before its trusted identity is available, and a later notification cannot release it.
+      const candidateIdentity = resolveCanonicalMcpToolIdentity(
+        params.toolCall.title ?? '',
+        mcpServerNames
+      )
+      const requiresObservedIdentity =
+        candidateIdentity === 'open-science-notebook/notebook_bind_runtime' ||
+        candidateIdentity === 'open-science-plan/generate_plan'
       if (
         isMcpRequest &&
         isRecord(restored.toolCall.rawInput) &&
         Object.keys(restored.toolCall.rawInput).length > 0 &&
-        (!isNotebookBindingCandidate || trustedMcpToolIdentity(restored) !== undefined)
+        (!requiresObservedIdentity || trustedMcpToolIdentity(restored) !== undefined)
       ) {
         return restored
       }
