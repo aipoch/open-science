@@ -164,9 +164,9 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: [
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       // DeepSeek V4.1 Flash uses the stable API id deepseek-flash.
       { id: 'deepseek-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000, maxOutputTokens: 384_000 }
     ],
@@ -331,13 +331,13 @@ const definitions: readonly OfficialVendor[] = [
     ],
     models: [
       {
-        id: 'glm-5.3',
+        id: 'glm-5.3-flash',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
-        id: 'glm-5.3-flash',
+        id: 'glm-5.3',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
@@ -389,13 +389,13 @@ const definitions: readonly OfficialVendor[] = [
     // The coding plan omits glm-5v-turbo, but serves the natively multimodal GLM-5.3-Flash.
     models: [
       {
-        id: 'glm-5.3',
+        id: 'glm-5.3-flash',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
-        id: 'glm-5.3-flash',
+        id: 'glm-5.3',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }

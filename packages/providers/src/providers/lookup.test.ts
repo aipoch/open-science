@@ -495,8 +495,8 @@ describe('provider registry', () => {
     expect(
       getOfficialVendor('deepseek')?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ])

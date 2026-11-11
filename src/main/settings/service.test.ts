@@ -4395,7 +4395,7 @@ describe('SettingsService: official vendors', () => {
     ).providers[0]
 
     const catalogDefault = defaultVendorModel('zhipu')
-    expect(catalogDefault).toBe('glm-5.3')
+    expect(catalogDefault).toBe('glm-5.3-flash')
 
     // A model in the catalog is honored.
     let snapshot = await service.setActiveProvider(created.id, 'glm-5.2')
@@ -4798,7 +4798,7 @@ describe('SettingsService: image-input capability', () => {
     const minimax = minimaxSnapshot.providers.find((p) => p.vendorId === 'minimax')
     expect(minimax?.supportsImageInput).toBe(true)
 
-    // DeepSeek's default model is text-only.
+    // The stable DeepSeek Flash default supports images.
     const deepseekSnapshot = await service.upsertProvider({
       type: 'official',
       name: 'DeepSeek',
@@ -4806,7 +4806,7 @@ describe('SettingsService: image-input capability', () => {
       key: 'k'
     })
     const deepseek = deepseekSnapshot.providers.find((p) => p.vendorId === 'deepseek')
-    expect(deepseek?.supportsImageInput).toBe(false)
+    expect(deepseek?.supportsImageInput).toBe(true)
   })
 
   it('tracks the active model for a vendor with mixed vision support (DeepSeek)', async () => {
