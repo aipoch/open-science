@@ -4,7 +4,17 @@ import { isRecord } from '../value-guards'
 
 type MessageIdentity = { sessionId: string; messageId: string }
 type Classification = { summary: boolean; finished: boolean; succeeded: boolean }
+type TrackedRequest = {
+  id: JsonRpcId
+  method: string
+  sessionId?: string
+  cwd?: string
+  classificationFailed?: boolean
+}
+type PendingSummary = MessageIdentity & { owners: readonly TrackedRequest[] }
 const MAX_CACHE_ENTRIES = 256
+const METADATA_LOOKUP_ATTEMPTS = 2
+const RETRYABLE_METADATA_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 
 const classificationError = (): Error =>
   new Error(
@@ -38,8 +48,8 @@ export function createOpenCodeCompactionStream(
   }
 ): Stream {
   const cache = new Map<string, Classification>()
-  const pending = new Map<string, MessageIdentity>()
-  const requests = new Map<JsonRpcId, { method: string; sessionId?: string; cwd?: string }>()
+  const pending = new Map<string, PendingSummary>()
+  const requests = new Map<JsonRpcId, TrackedRequest>()
   const sessionCwds = new Map<string, string>()
   const partMessages = new Map<string, string>()
   const abort = new AbortController()
@@ -52,6 +62,57 @@ export function createOpenCodeCompactionStream(
     partMessages.clear()
   }
   signal.addEventListener('abort', clear, { once: true })
+  const contentRequest = (method: string): boolean =>
+    ['session/prompt', 'session/load', 'session/resume'].includes(method)
+  const sharesOwnership = (
+    left: readonly TrackedRequest[],
+    right: readonly TrackedRequest[]
+  ): boolean => left.some((owner) => right.includes(owner))
+  const failRequests = (owners: readonly TrackedRequest[]): boolean => {
+    const activeOwners = owners.filter((request) => requests.get(request.id) === request)
+    if (activeOwners.length === 0) return false
+    for (const request of activeOwners) request.classificationFailed = true
+    return true
+  }
+  const readMetadata = async (url: URL): Promise<unknown> => {
+    if (!options.api || signal.aborted) throw classificationError()
+    for (let attempt = 1; attempt <= METADATA_LOOKUP_ATTEMPTS; attempt++) {
+      let response: Response
+      try {
+        response = await (options.fetchImpl ?? fetch)(url, {
+          headers: { authorization: options.api.authorization },
+          signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)])
+        })
+      } catch {
+        if (!signal.aborted && attempt < METADATA_LOOKUP_ATTEMPTS) continue
+        throw classificationError()
+      }
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined)
+        if (
+          !signal.aborted &&
+          attempt < METADATA_LOOKUP_ATTEMPTS &&
+          RETRYABLE_METADATA_STATUS.has(response.status)
+        )
+          continue
+        throw classificationError()
+      }
+      try {
+        const body: unknown = await response.json()
+        if (signal.aborted) throw classificationError()
+        return body
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          attempt < METADATA_LOOKUP_ATTEMPTS &&
+          !(error instanceof SyntaxError)
+        )
+          continue
+        throw classificationError()
+      }
+    }
+    throw classificationError()
+  }
   const resolveMessageId = async (identity: MessageIdentity): Promise<MessageIdentity> => {
     try {
       if (!identity.messageId.startsWith('prt_')) return identity
@@ -71,12 +132,7 @@ export function createOpenCodeCompactionStream(
           sessionCwds.get(identity.sessionId) ??
           options.resolveSessionCwd(identity.sessionId)
       )
-      const response = await (options.fetchImpl ?? fetch)(url, {
-        headers: { authorization: options.api.authorization },
-        signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)])
-      })
-      if (!response.ok) throw classificationError()
-      const body: unknown = await response.json()
+      const body = await readMetadata(url)
       const messages = Array.isArray(body)
         ? body
         : isRecord(body) && Array.isArray(body.data)
@@ -120,12 +176,7 @@ export function createOpenCodeCompactionStream(
           sessionCwds.get(identity.sessionId) ??
           options.resolveSessionCwd(identity.sessionId)
       )
-      const response = await (options.fetchImpl ?? fetch)(url, {
-        headers: { authorization: options.api.authorization },
-        signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)])
-      })
-      if (!response.ok) throw classificationError()
-      const body: unknown = await response.json()
+      const body = await readMetadata(url)
       const info = isRecord(body) ? body.info : undefined
       if (
         signal.aborted ||
@@ -148,14 +199,33 @@ export function createOpenCodeCompactionStream(
   }
   const finish = async (
     sessionId: string,
+    owners: readonly TrackedRequest[],
     controller: TransformStreamDefaultController<AnyMessage>
-  ): Promise<void> => {
+  ): Promise<boolean> => {
+    let verified = true
     for (const [key, identity] of pending) {
-      if (identity.sessionId !== sessionId) continue
-      const info = await classify(identity)
+      if (
+        identity.sessionId !== sessionId ||
+        (identity.owners.length > 0 && !sharesOwnership(identity.owners, owners))
+      )
+        continue
+      let info: Classification
+      try {
+        info = await classify(identity)
+      } catch (error) {
+        // A summary keeps its first owners. Unowned lookup failures remain transport-fatal.
+        if (signal.aborted || !failRequests(identity.owners)) throw error
+        // One failed probe does not establish the outcome of other pending summaries.
+        controller.enqueue(lifecycle(identity, 'failed'))
+        pending.delete(key)
+        cache.delete(key)
+        verified = false
+        continue
+      }
       controller.enqueue(lifecycle(identity, info.succeeded ? 'completed' : 'failed'))
       pending.delete(key)
     }
+    return verified
   }
   const writer = stream.writable.getWriter()
   return {
@@ -176,6 +246,7 @@ export function createOpenCodeCompactionStream(
           isRecord(message.params)
         ) {
           requests.set(message.id, {
+            id: message.id,
             method: message.method,
             ...(typeof message.params.sessionId === 'string'
               ? { sessionId: message.params.sessionId }
@@ -197,11 +268,8 @@ export function createOpenCodeCompactionStream(
           if (signal.aborted) throw classificationError()
           if (!('method' in message)) {
             const request = requests.get(message.id)
-            if (
-              request?.sessionId &&
-              ['session/prompt', 'session/load', 'session/resume'].includes(request.method)
-            ) {
-              await finish(request.sessionId, controller)
+            if (request?.sessionId && contentRequest(request.method)) {
+              await finish(request.sessionId, [request], controller)
             }
             if (request && 'result' in message) {
               const providerSessionId =
@@ -224,7 +292,15 @@ export function createOpenCodeCompactionStream(
               }
             }
             requests.delete(message.id)
-            controller.enqueue(message)
+            controller.enqueue(
+              request?.classificationFailed
+                ? {
+                    jsonrpc: '2.0',
+                    id: message.id,
+                    error: { code: -32603, message: classificationError().message }
+                  }
+                : message
+            )
             return
           }
           const params = message.params
@@ -237,44 +313,60 @@ export function createOpenCodeCompactionStream(
             controller.enqueue(message)
             return
           }
-          if (
-            !isRecord(params) ||
-            typeof params.sessionId !== 'string' ||
-            typeof update.messageId !== 'string' ||
-            !update.messageId
+          if (!isRecord(params) || typeof params.sessionId !== 'string') throw classificationError()
+          // Preserve arrival-time ownership across metadata awaits; later writes cannot claim it.
+          const owners = [...requests.values()].filter(
+            (request) => request.sessionId === params.sessionId && contentRequest(request.method)
           )
-            throw classificationError()
-          const incoming = { sessionId: params.sessionId, messageId: update.messageId }
-          const identity = await resolveMessageId(incoming)
-          const normalized =
-            identity.messageId === incoming.messageId
-              ? message
-              : ({
-                  ...message,
-                  params: {
-                    ...params,
-                    update: { ...update, messageId: identity.messageId }
-                  }
-                } as AnyMessage)
-          const key = JSON.stringify([identity.sessionId, identity.messageId])
-          let info = cache.get(key)
-          if (!info) {
-            info = await classify(identity)
-            // Bound per-connection identity memory; eviction only causes another safe lookup.
-            if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!)
-            cache.set(key, info)
-            if (info.summary) {
-              controller.enqueue(
-                lifecycle(
-                  identity,
-                  info.finished ? (info.succeeded ? 'completed' : 'failed') : 'started'
-                )
-              )
-              if (!info.finished) pending.set(key, identity)
-            }
+          if (owners.some((request) => request.classificationFailed)) {
+            // Withheld output must not leave another possible owner reporting success.
+            failRequests(owners)
+            return
           }
-          if (info.summary) return
-          await finish(identity.sessionId, controller)
+          let normalized: AnyMessage = message
+          try {
+            if (typeof update.messageId !== 'string' || !update.messageId)
+              throw classificationError()
+            const incoming = { sessionId: params.sessionId, messageId: update.messageId }
+            const identity = await resolveMessageId(incoming)
+            normalized =
+              identity.messageId === incoming.messageId
+                ? message
+                : ({
+                    ...message,
+                    params: {
+                      ...params,
+                      update: { ...update, messageId: identity.messageId }
+                    }
+                  } as AnyMessage)
+            const key = JSON.stringify([identity.sessionId, identity.messageId])
+            let info = cache.get(key)
+            if (!info) {
+              info = await classify(identity)
+              // Bound per-connection identity memory; eviction only causes another safe lookup.
+              if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!)
+              cache.set(key, info)
+              if (info.summary) {
+                controller.enqueue(
+                  lifecycle(
+                    identity,
+                    info.finished ? (info.succeeded ? 'completed' : 'failed') : 'started'
+                  )
+                )
+                if (!info.finished && !pending.has(key)) pending.set(key, { ...identity, owners })
+              }
+            }
+            if (info.summary) return
+          } catch (error) {
+            // Unknown output stays withheld. A metadata failure belongs to its content request;
+            // keep consuming control traffic until its native terminal can reject that request.
+            if (signal.aborted || !failRequests(owners)) throw error
+            return
+          }
+          if (!(await finish(params.sessionId, owners, controller))) {
+            failRequests(owners)
+            return
+          }
           controller.enqueue(normalized)
         },
         flush: clear
