@@ -443,7 +443,8 @@ const composeAcpRuntimePromptOwners = (
             planDeliveryCommandId,
             delegatedMessageId,
             applicationPrompt,
-            approvedHandoffContinuation
+            approvedHandoffContinuation,
+            continuationAdmission
           ) => {
             const provenance = request.provenanceContext
             if (
@@ -482,7 +483,8 @@ const composeAcpRuntimePromptOwners = (
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
                 ...(applicationPrompt ? { applicationPrompt } : {}),
                 ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
-              }
+              },
+              continuationAdmission
             )
           },
           assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
