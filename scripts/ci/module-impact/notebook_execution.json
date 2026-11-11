@@ -121,6 +121,7 @@
     "src/main/notebook/failure-diagnostic.ts",
     "src/main/notebook/mirror-probe.test.ts",
     "src/main/notebook/mirror-probe.ts",
+    "src/main/notebook/powershell-native-capture.ts",
     "src/main/notebook/powershell-search-parser.ts",
     "src/main/notebook/scientific-output-analysis.test.ts",
     "src/main/notebook/scientific-output-analysis.ts",
