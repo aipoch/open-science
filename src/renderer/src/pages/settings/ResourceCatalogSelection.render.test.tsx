@@ -92,6 +92,17 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('category resource selection', () => {
+  it('exposes selection mode before the first pick and exits when selection is cleared', () => {
+    render(<Harness />)
+    expect(screen.queryByRole('region', { name: 'Selected resources' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    expect(screen.getByRole('status').textContent).toBe('0 selected')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Personal skill' }))
+    expect(screen.getByRole('status').textContent).toBe('1 selected')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.queryByRole('region', { name: 'Selected resources' })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: 'Select Personal skill' })).toBeNull()
+  })
   it.each([0, 1, 5, 6])('shows batch search only above five eligible Specialists: %i', (count) => {
     useSpecialistStore.setState({
       items: Array.from({ length: count }, (_, index) => ({

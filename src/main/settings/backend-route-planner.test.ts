@@ -173,6 +173,52 @@ describe('BackendRoutePlanner route matrix', () => {
     expect(plan.transport.kind).toBe(kind)
   })
 
+  it.each(['codex-shared', 'codex-isolated'] as const)(
+    'keeps built-in %s routes and fixed model identities on the harness',
+    (type) => {
+      const provider = makeStoredProvider({
+        id: 'builtin-codex-subscription',
+        type,
+        model: 'gpt-5.5',
+        apiEndpoints: ['responses'],
+        keyRef: undefined
+      })
+      const settings = {
+        ...makeSettings(provider),
+        agentFrameworkId: 'open-science-agent' as const
+      }
+      const target = makeTarget(provider)
+      const planner = makePlanner()
+      const plan = planner.planBackend({
+        settings,
+        frameworkId: 'open-science-agent',
+        target,
+        effortIntent: 'high',
+        conversationSkillImportEnabled: true
+      })
+      expect(plan).toMatchObject({
+        modelRoute: 'open-science-agent',
+        backendProviderId: provider.id,
+        transport: { kind: 'direct' }
+      })
+      expect(
+        planner.projectModelChange({
+          settings,
+          frameworkId: 'open-science-agent',
+          target,
+          effortIntent: 'high'
+        })
+      ).toMatchObject({
+        frameworkId: 'open-science-agent',
+        providerId: provider.id,
+        backendId: `open-science-agent:${provider.id}`,
+        route: 'open-science-agent',
+        model: 'gpt-5.5',
+        sessionModel: 'gpt-5.5'
+      })
+    }
+  )
+
   it('keeps Codex subscription authentication on its direct transport', () => {
     const provider = makeStoredProvider({
       id: 'builtin-codex-subscription',

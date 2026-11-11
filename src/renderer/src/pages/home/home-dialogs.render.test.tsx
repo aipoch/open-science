@@ -4,6 +4,7 @@ import * as AlertDialog from '@/components/ui/alert-dialog'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
+import { DEFAULT_OPTIMIZATION_PROMPT } from '../../../../shared/prompt-optimization'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
 
@@ -133,11 +134,13 @@ describe('home dialogs shared chrome', () => {
       nameDraft: '',
       descriptionDraft: '',
       agentContextDraft: '',
+      optimizationPromptDraft: '',
       isSubmitting: false,
       error: undefined,
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
       onAgentContextChange: vi.fn(),
+      onOptimizationPromptChange: vi.fn(),
       discardConfirmationOpen: false,
       onKeepEditing: vi.fn(),
       onDiscardChanges: vi.fn(),
@@ -154,6 +157,18 @@ describe('home dialogs shared chrome', () => {
       "Shown in the project list for your reference — not included in the agent's prompt."
     )
     const elements = collectElements(tree)
+    expect(
+      elements.find((element) => element.props.id === 'project-optimization-scope')
+    ).toBeUndefined()
+    expect(getTextContent(tree)).toContain(
+      'Used only when optimizing a question in this project. Leave empty to use the built-in default.'
+    )
+    const optimizationPromptField = elements.find(
+      (element) => element.props.id === 'project-optimization-prompt'
+    )
+    expect(optimizationPromptField?.props.placeholder).toBe(DEFAULT_OPTIMIZATION_PROMPT)
+    expect(getTextContent(tree)).not.toContain('Use built-in template')
+    expect(getTextContent(tree)).not.toContain('Restore default')
     const nameField = elements.find((element) => element.props.id === 'project-form-name')
     const descriptionField = elements.find((element) => element.type === 'textarea')
     const agentContextField = elements.find(
@@ -210,11 +225,13 @@ describe('home dialogs shared chrome', () => {
       nameDraft: 'Research',
       descriptionDraft: '',
       agentContextDraft: 'Always cite DOIs.',
+      optimizationPromptDraft: '',
       isSubmitting: false,
       error: undefined,
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
       onAgentContextChange,
+      onOptimizationPromptChange: vi.fn(),
       discardConfirmationOpen: false,
       onKeepEditing: vi.fn(),
       onDiscardChanges: vi.fn(),

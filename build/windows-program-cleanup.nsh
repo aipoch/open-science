@@ -2,6 +2,8 @@
 !define OPEN_SCIENCE_PROGRAM_CLEANUP_INCLUDED
 
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.nsh"
 
 !ifdef BUILD_UNINSTALLER
 Var programSourceRoot
@@ -11,12 +13,49 @@ Var programConfigRoot
 Var programConfigTarget
 Var programDataRoot
 Var programDataTarget
+Var programMoveOperation
+Var programMoveError
+Var programMovePath
+Var programOwnDiagnostic
+Var programCleanupArguments
+
+Function un.persistCleanupFailure
+  ${if} $programOwnDiagnostic == "1"
+    Push $R0
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action finalize -ReportPath "$cleanupReport" -ReportsDirectory "$PLUGINSDIR" -InstallPath "$INSTDIR" -ExitCode 2 -AppVersion "${OPEN_SCIENCE_DIAGNOSTIC_VERSION}" -ProductName "${OPEN_SCIENCE_DIAGNOSTIC_PRODUCT}" -Language $LANGUAGE'
+    Pop $R0
+    Pop $R0
+  ${endif}
+FunctionEnd
+
+Function un.recordCleanupFailure
+  # $R0 often holds the failed path or helper result. Diagnostics must not change that verdict.
+  Push $R0
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action record -ReportPath "$cleanupReport" -Operation "$programMoveOperation" -FailedPath "$programMovePath" -NativeErrorCode $programMoveError'
+  Pop $R0
+  Pop $R0
+FunctionEnd
+
+!macro recordProgramMoveBack RESULT
+  Push $R0
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-diagnostics.ps1" -Action record -ReportPath "$cleanupReport" -MoveBack ${RESULT} -Operation "$programMoveOperation" -FailedPath "$programMovePath" -NativeErrorCode $programMoveError'
+  Pop $R0
+  Pop $R0
+!macroend
 
 Function un.loadProgramDataPaths
   InitPluginsDir
   SetOutPath $PLUGINSDIR
   File "${BUILD_RESOURCES_DIR}\windows-program-data-paths.ps1"
   File "${BUILD_RESOURCES_DIR}\windows-program-cleanup.ps1"
+  File "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.ps1"
+  # Manual uninstall owns a local context too. Upgrade children receive a private parent path.
+  ${GetParameters} $R0
+  ${GetOptions} $R0 "--cleanup-report=" $cleanupReport
+  ${if} $cleanupReport == ""
+    StrCpy $cleanupReport "$PLUGINSDIR\cleanup-attempt-manual.json"
+    StrCpy $programOwnDiagnostic "1"
+  ${endif}
   # The shared managed helper is AnyCPU, including in universal installers.
   !ifdef APP_64
     File "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
@@ -29,6 +68,11 @@ Function un.loadProgramDataPaths
   Pop $R0
   ${if} $R0 != 0
     DetailPrint `Open-Science windows-program-data-paths.ps1 exit code=$R0 phase=resolve-configured-data-locations`
+    StrCpy $programMoveOperation "resolve-configured-data-locations"
+    StrCpy $programMovePath $INSTDIR
+    StrCpy $programMoveError -1
+    Call un.recordCleanupFailure
+    Call un.persistCleanupFailure
     SetErrorLevel 2
     Abort "Could not resolve the configured data locations."
   ${endif}
@@ -40,6 +84,11 @@ Function un.loadProgramDataPaths
   FileReadUTF16LE $R1 $programDataTarget
   FileClose $R1
   ${if} ${Errors}
+    StrCpy $programMoveOperation "read-configured-data-locations"
+    StrCpy $programMovePath "$PLUGINSDIR\program-data-paths.txt"
+    StrCpy $programMoveError -1
+    Call un.recordCleanupFailure
+    Call un.persistCleanupFailure
     SetErrorLevel 2
     Abort "Could not read the configured data locations."
   ${endif}
@@ -104,6 +153,9 @@ Function un.moveProgramTree
     ${orIf} $R4 == 3
       StrCpy $R3 0
     ${else}
+      StrCpy $programMoveOperation "read-move-source-attributes"
+      StrCpy $programMovePath "$programSourceRoot\$R0"
+      StrCpy $programMoveError $R4
       StrCpy $R3 "$programSourceRoot\$R0"
     ${endif}
     Goto programMove_done
@@ -124,10 +176,21 @@ Function un.moveProgramTree
     ClearErrors
     CreateDirectory "$programTargetRoot\$R0"
     ${if} ${Errors}
+      StrCpy $programMoveOperation "create-move-target-directory"
+      StrCpy $programMovePath "$programTargetRoot\$R0"
+      StrCpy $programMoveError -1
       StrCpy $R3 "$programTargetRoot\$R0"
       Goto programMove_done
     ${endif}
+    ClearErrors
     FindFirst $R1 $R2 "$programSourceRoot\$R0\*.*"
+    ${if} ${Errors}
+      StrCpy $programMoveOperation "enumerate-move-source"
+      StrCpy $programMovePath "$programSourceRoot\$R0"
+      StrCpy $programMoveError -1
+      StrCpy $R3 "$programSourceRoot\$R0"
+      Goto programMove_done
+    ${endif}
     programMove_next:
       StrCmp $R2 "" programMove_close
       StrCmp $R2 "." programMove_continue
@@ -146,11 +209,16 @@ Function un.moveProgramTree
       FindClose $R1
       StrCpy $R3 0
   ${else}
-    ClearErrors
-    Rename "$programSourceRoot\$R0" "$programTargetRoot\$R0"
-    StrCpy $R3 0
-    ${if} ${Errors}
+    # Same non-replacing move as Rename, with the actual Win32 result retained for diagnosis.
+    System::Call 'kernel32::MoveFile(t "$programSourceRoot\$R0", t "$programTargetRoot\$R0") i.R3 ?e'
+    Pop $R4
+    ${if} $R3 == 0
+      StrCpy $programMoveOperation "move-program-file"
+      StrCpy $programMovePath "$programSourceRoot\$R0"
+      StrCpy $programMoveError $R4
       StrCpy $R3 "$programSourceRoot\$R0"
+    ${else}
+      StrCpy $R3 0
     ${endif}
   ${endif}
   programMove_done:
@@ -231,6 +299,7 @@ FunctionEnd
   Pop $R0
   ${if} $R0 != 0
     DetailPrint `Could not stage application file: $R0`
+    Call un.recordCleanupFailure
     Goto programCleanup_rollback
   ${endif}
 !macroend
@@ -254,6 +323,11 @@ FunctionEnd
     CreateDirectory "$programStagingDirectory"
   ${endif}
   ${if} ${Errors}
+    StrCpy $programMoveOperation "prepare-program-staging"
+    StrCpy $programMovePath $INSTDIR
+    StrCpy $programMoveError -1
+    Call un.recordCleanupFailure
+    Call un.persistCleanupFailure
     SetErrorLevel 2
     Abort "Could not prepare application cleanup."
   ${endif}
@@ -285,7 +359,14 @@ FunctionEnd
   !insertmacro stageProgramEntry "${UNINSTALL_FILENAME}"
   # Hold all deletion dispositions until the complete program payload can be removed. A late
   # access/sharing failure cancels earlier dispositions, leaving every byte available to restore.
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-cleanup.ps1" -StagingPath "$programStagingDirectory"'
+  StrCpy $programCleanupArguments ""
+  !ifdef isUpdated
+    ${if} ${isUpdated}
+      StrCpy $programCleanupArguments "-Upgrade"
+    ${endif}
+  !endif
+  # Silent manual uninstalls retain one attempt. Only the explicit update flag opts in.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-cleanup.ps1" -StagingPath "$programStagingDirectory" -ReportPath "$cleanupReport" $programCleanupArguments'
   Pop $R0
   ${if} $R0 != 0
     DetailPrint `Open-Science windows-program-cleanup.ps1 exit code=$R0 phase=remove-staged-program-files`
@@ -332,6 +413,11 @@ FunctionEnd
         Pop $R0
         IfFileExists "$programStagingDirectory" 0 +2
         StrCpy $R0 $programStagingDirectory
+        ${if} $R0 != 0
+          StrCpy $programMoveOperation "remove-empty-staging"
+          StrCpy $programMovePath $R0
+          StrCpy $programMoveError -1
+        ${endif}
       ${endif}
       ${if} $R0 != 0
         IntOp $R5 $R5 - 1
@@ -340,7 +426,14 @@ FunctionEnd
           Goto programCleanup_restoreAttempt
         ${endif}
         DetailPrint `Could not restore or clean up application file: $R0. Remaining program files: $programStagingDirectory`
+        !insertmacro recordProgramMoveBack failed
+      ${else}
+        StrCpy $programMoveOperation ""
+        StrCpy $programMovePath ""
+        StrCpy $programMoveError -1
+        !insertmacro recordProgramMoveBack succeeded
       ${endif}
+    Call un.persistCleanupFailure
     SetErrorLevel 2
     Abort
   programCleanup_done:

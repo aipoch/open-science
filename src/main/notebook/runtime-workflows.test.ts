@@ -698,3 +698,16 @@ it('notifies other clients after committing the environment creation policy', as
   expect(await settingsService.getAgentEnvironmentCreationEnabled()).toBe(false)
   expect(onPolicyChanged).toHaveBeenCalledOnce()
 })
+
+it('lists Modal Python candidates without scanning R or probing their packages', async () => {
+  const settingsService = fakeSettingsService()
+  const listPackages = vi.fn()
+  const workflows = createRuntimeWorkflows({
+    settingsService,
+    runtimeRoot: () => '/runtime',
+    listPackages
+  })
+  expect(await workflows.listPythonEnvironments()).toEqual(discoveryState.python)
+  expect(discoveryState.calls).toEqual(['python'])
+  expect(listPackages).not.toHaveBeenCalled()
+})

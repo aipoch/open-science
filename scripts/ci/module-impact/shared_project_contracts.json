@@ -4,7 +4,9 @@
     "src/shared/project-scope.ts",
     "src/shared/project-files.ts",
     "src/shared/projects.test.ts",
-    "src/shared/project-scope.test.ts"
+    "src/shared/project-scope.test.ts",
+    "src/shared/prompt-optimization.ts",
+    "src/shared/prompt-optimization.test.ts"
   ],
   "interfacePaths": [
     "src/shared/projects.ts",
@@ -13,7 +15,11 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/shared/projects.test.ts", "src/shared/project-scope.test.ts"],
+    "owner": [
+      "src/shared/projects.test.ts",
+      "src/shared/project-scope.test.ts",
+      "src/shared/prompt-optimization.test.ts"
+    ],
     "contract": [],
     "consumer": ["src/shared/notebook-env.typecheck.test.ts"]
   },

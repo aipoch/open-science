@@ -39,6 +39,7 @@ type PreviewItemBase = {
 export type PreviewFileItem = PreviewItemBase & {
   type: 'file'
   source?: PreviewFileSource
+  fromNotebookDataLink?: boolean
   path: string
   format: PreviewFileFormat
   name: string
@@ -58,6 +59,8 @@ export type PreviewToolItem = PreviewItemBase & {
   sideChatId?: string
   // A message chip can request a transient Library scope without changing the durable tab format.
   libraryScopeRequest?: { section?: 'inbox'; collectionId?: string; collectionName?: string }
+  // Runtime-only reveal request; a fresh object also reopens the same Skill after Back.
+  skillDetailRequest?: { skillId: string }
   toolKind?:
     | 'notebook'
     | 'files'

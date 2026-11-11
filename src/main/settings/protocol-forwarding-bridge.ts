@@ -56,6 +56,12 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
   endpoint: string
   key?: string
   model: string
+  /** Host-only OAuth resolution. These requests never replay errors or expose upstream diagnostics. */
+  resolveConnection?: (
+    signal: AbortSignal
+  ) => Promise<
+    Readonly<{ endpoint: string; key: string; headers?: Readonly<Record<string, string>> }>
+  >
   adaptRequest?: (request: Record<string, unknown>) => Record<string, unknown>
   adaptStream?: (records: AsyncIterable<string>) => AsyncIterable<string>
 }>
@@ -175,6 +181,21 @@ export class ProtocolForwardingBridge {
     request: ProviderLoopbackHttpRequest,
     response: ServerResponse
   ): Promise<void> {
+    const privateCredentials = Boolean(this.target.resolveConnection)
+    try {
+      await this.handleRequest(request, response)
+    } catch (error) {
+      // OAuth owners and network errors can contain account or credential details. ACP gets only
+      // a stable failure; the auth owner is responsible for its own bounded diagnostics.
+      if (privateCredentials) throw new Error('Codex provider request failed.')
+      throw error
+    }
+  }
+
+  private async handleRequest(
+    request: ProviderLoopbackHttpRequest,
+    response: ServerResponse
+  ): Promise<void> {
     if (request.method !== 'POST') {
       json(response, 405, {
         error: { type: 'invalid_request_error', message: 'Method not allowed' }
@@ -191,19 +212,31 @@ export class ProtocolForwardingBridge {
     const target = this.target
     const parsed = await request.readJsonObject()
     const adapted = target.adaptRequest?.(parsed) ?? parsed
-    const endpoint = new URL(target.endpoint)
+    const connection = await target.resolveConnection?.(request.signal)
+    request.signal.throwIfAborted()
+    const endpoint = new URL(connection?.endpoint ?? target.endpoint)
     if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
       throw new Error('The protocol forwarding provider target has no valid endpoint URL.')
     }
     const body = JSON.stringify({ ...adapted, model: target.model })
-    const headersToForward = requestHeaders(request, target.key)
+    // Account routing and bearer credentials come exclusively from main. Client headers cannot
+    // override the selected account, attach cookies, or route an OAuth request to another host.
+    const headersToForward = connection
+      ? new Headers({
+          'content-type': 'application/json',
+          accept: 'text/event-stream',
+          'user-agent': 'open-science-agent/0.1.0',
+          ...connection.headers,
+          authorization: `Bearer ${connection.key}`
+        })
+      : requestHeaders(request, target.key)
     const replayKey = providerRequestFingerprint(
       target.id,
       requestUrl.pathname,
       providerRequestHeadersFingerprint(headersToForward),
       body
     )
-    const replay = this.deterministicErrors.get(replayKey)
+    const replay = connection ? undefined : this.deterministicErrors.get(replayKey)
     if (replay) {
       response.writeHead(replay.status, replay.headers)
       response.end(replay.body)
@@ -211,13 +244,47 @@ export class ProtocolForwardingBridge {
     }
 
     const startedAt = Date.now()
-    const upstream = await fetchProviderRequest(this.fetchImpl, endpoint, {
+    // Chromium's net.fetch does not reliably surface manual POST redirects. Fail the request
+    // at the first redirect and keep the browser cookie jar out of subscription traffic.
+    const transport: typeof fetch = connection
+      ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
+      : this.fetchImpl
+    const upstream = await fetchProviderRequest(transport, endpoint, {
       method: 'POST',
       headers: headersToForward,
       body,
       signal: request.signal
     })
-    const headers = responseHeaders(upstream.headers)
+    if (connection && !upstream.ok) {
+      const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
+      let code = 'provider_error'
+      if (upstreamBody.complete) {
+        try {
+          const error = JSON.parse(upstreamBody.body.toString('utf8')).error
+          const allowed = [
+            'subscription_sharing_usage_limit_exceeded',
+            'subscription_sharing_usage_unavailable',
+            'invalid_api_key',
+            'authentication_error',
+            'model_not_found',
+            'rate_limit_exceeded',
+            'insufficient_quota',
+            'context_length_exceeded'
+          ]
+          if (allowed.includes(error?.code)) code = error.code
+        } catch {
+          // Raw OAuth errors must not cross the loopback boundary, including malformed bodies.
+        }
+      }
+      response.setHeader('x-open-science-upstream-status', String(upstream.status))
+      json(response, upstream.status >= 400 ? upstream.status : 502, {
+        error: { code, message: 'Codex provider request failed.' }
+      })
+      return
+    }
+    const headers = connection
+      ? { 'content-type': upstream.headers.get('content-type') ?? 'text/event-stream' }
+      : responseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal

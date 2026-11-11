@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const HARNESS_ACP_ARG = '--internal-agent-acp'
 export const HARNESS_AUTH_METHOD = 'open-science-agent'
 export const HARNESS_INSTRUCTIONS = 'open-science-agent/instructions'
+export const HARNESS_TOOL_LESS = 'open-science-agent/tool-less'
 export const HARNESS_OWNER = 'open-science-agent/owner'
 export const harnessOwnerSchema = z
   .object({
@@ -48,7 +49,7 @@ export const harnessConfigSchema = z
       .optional(),
     sessionHeader: z.literal('x-opencode-session').optional(),
     contextWindow: z.number().int().min(4096),
-    maxOutputTokens: z.number().int().positive(),
+    maxOutputTokens: z.number().int().positive().optional(),
     parameters: z.record(z.string(), z.unknown()).default({})
   })
   .strict()
@@ -57,5 +58,4 @@ export const harnessConfigSchema = z
       new URL(value.endpoint).pathname ===
       `/v1/${value.protocol === 'chat-completions' ? 'chat/completions' : value.protocol}`
   )
-  .refine((value) => value.maxOutputTokens < value.contextWindow / 2)
 export type HarnessConfig = z.infer<typeof harnessConfigSchema>

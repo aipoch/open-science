@@ -1,3 +1,4 @@
+import type { ComputeAccountOperation } from '../../../../shared/compute-python-runtime'
 import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
@@ -20,7 +21,10 @@ export type ComputeAccountController = {
   busy: boolean
   error: boolean
   check: (force?: boolean) => Promise<void>
-  run: (operation: Operation) => Promise<ComputeAccountStatus | undefined>
+  run: (
+    operation: Operation,
+    context?: ComputeAccountOperation
+  ) => Promise<ComputeAccountStatus | undefined>
 }
 export function computeAccountStatusLabel(
   { status, error }: Pick<ComputeAccountController, 'status' | 'error'>,
@@ -43,18 +47,28 @@ export function computeAccountStatusLabel(
   }
 }
 
-export function useComputeAccount(provider?: ComputeAccountProvider): ComputeAccountController {
+export function useComputeAccount(
+  provider?: ComputeAccountProvider,
+  enabled = true
+): ComputeAccountController {
   const [status, setStatus] = useState<ComputeAccountStatus>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const gate = useRef({ sequence: 0, actionPending: false })
+  const gate = useRef({ sequence: 0, actionPending: false, polling: false })
   const check = useCallback(
     async (force = false) => {
-      if (!provider || gate.current.actionPending || !computeAccountActionsAvailable()) return
+      if (
+        (!enabled && !gate.current.polling) ||
+        !provider ||
+        gate.current.actionPending ||
+        !computeAccountActionsAvailable()
+      )
+        return
       const seq = ++gate.current.sequence
       await window.api.compute.accountStatus(provider, force).then(
         (next) => {
           if (seq === gate.current.sequence) {
+            gate.current.polling = next.state === 'pending'
             setStatus(next)
             setError(false)
           }
@@ -64,7 +78,7 @@ export function useComputeAccount(provider?: ComputeAccountProvider): ComputeAcc
         }
       )
     },
-    [provider]
+    [provider, enabled]
   )
   useEffect(() => {
     const owner = gate.current
@@ -97,17 +111,23 @@ export function useComputeAccount(provider?: ComputeAccountProvider): ComputeAcc
   }, [check, pending])
 
   const run = useCallback(
-    async (operation: Operation): Promise<ComputeAccountStatus | undefined> => {
+    async (
+      operation: Operation,
+      context?: ComputeAccountOperation
+    ): Promise<ComputeAccountStatus | undefined> => {
       if (!provider || !computeAccountActionsAvailable()) return
       // A close can arrive before the outstanding browser-start call returns.
-      if (gate.current.actionPending && operation !== 'cancelAccountConnection') return
+      if (gate.current.actionPending && operation !== 'cancelAccountConnection' && !context) return
       const seq = ++gate.current.sequence
       gate.current.actionPending = true
       setBusy(true)
       setError(false)
       try {
-        const next = await window.api.compute[operation](provider)
+        const next = context
+          ? await window.api.compute[operation](provider, context)
+          : await window.api.compute[operation](provider)
         if (seq === gate.current.sequence) {
+          gate.current.polling = next.state === 'pending'
           setStatus(next)
           return next
         }

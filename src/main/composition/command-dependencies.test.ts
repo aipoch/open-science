@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { composeCommandDependencies } from './command-dependencies'
+import { createWebCallerContext } from '../caller-context'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 
 // Only infrastructure constructors are replaced. The composition and Literature command owner
@@ -461,10 +462,13 @@ it('stages Web exports only when the caller supplied no destination', async () =
 it('resolves Web uploads and releases the resolved package under the write gate', async () => {
   const f = fixture()
   const e = f.compose().dataContent.electron
-  const options = { strategy: 'copy' }
+  const options = { nonInteractive: true }
   f.desktop.import.mockResolvedValue('imported')
   await expect(
-    e.importSessionPackage(invocation('web', ['project', '/upload-token', options]) as never)
+    e.importSessionPackage({
+      ...invocation('web', ['project', '/upload-token', options]),
+      callerContext: createWebCallerContext('client')
+    } as never)
   ).resolves.toBe('imported')
   expect(f.input.uploadRepository.resolveManagedUploadPath).toHaveBeenCalledWith(
     { path: '/upload-token' },
@@ -472,7 +476,7 @@ it('resolves Web uploads and releases the resolved package under the write gate'
   )
   expect(f.desktop.import).toHaveBeenCalledWith(
     'client',
-    'lifecycle',
+    'web:client',
     'project',
     '/staged/package.science',
     false,
@@ -490,6 +494,28 @@ it('resolves Web uploads and releases the resolved package under the write gate'
   expect(infrastructure.warn).toHaveBeenCalledWith('Could not release staged package upload', {
     error
   })
+})
+
+it('passes the local CLI package directly to import without scheduling upload deletion', async () => {
+  const f = fixture()
+  const path = '/backups/session.science'
+  const options = { nonInteractive: true }
+  const context = createWebCallerContext('cli', { authorities: ['import-local-package-path'] })
+  for (const target of [{ projectId: 'existing' }, { projectName: 'New' }]) {
+    await f.compose().dataContent.electron.importSessionPackage({
+      ...invocation('web', [target, path, options]),
+      callerContext: context
+    } as never)
+    expect(f.desktop.import).toHaveBeenLastCalledWith(
+      'cli',
+      'web:cli',
+      target,
+      path,
+      false,
+      options
+    )
+  }
+  expect(f.input.uploadRepository.resolveManagedUploadPath).not.toHaveBeenCalled()
 })
 
 it('preserves explicit native package paths without upload resolution or release callbacks', async () => {

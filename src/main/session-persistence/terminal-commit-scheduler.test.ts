@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -88,11 +88,13 @@ const harness = async () => {
     runtimeSegmentId: graph.runtimeSegments[0].id,
     executionId: 'execution-1'
   }
-  const coordinator = new SessionPersistenceCoordinator(repository, fileIndex())
+  const index = fileIndex()
+  const coordinator = new SessionPersistenceCoordinator(repository, index)
   const owner = new RuntimeSessionOwner({
     loadSession: (identity) =>
       coordinator.loadSessionForContinuation(identity.projectId, identity.sessionId),
-    mutateSession: (identity, mutate) => coordinator.mutateRuntimeSession(identity, mutate),
+    mutateSession: (identity, mutate, onJsonCommitted) =>
+      coordinator.mutateRuntimeSession(identity, mutate, onJsonCommitted),
     finalizeArtifacts: async () => [],
     onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
       coordinator.recordRuntimeTerminalFailure(event, retry, waitForWriteRelease),
@@ -124,6 +126,8 @@ const harness = async () => {
     }
   }
   return {
+    index,
+    root,
     repository,
     coordinator,
     owner,
@@ -136,6 +140,31 @@ const harness = async () => {
 }
 
 describe('terminal recovery through the real Session persistence scheduler', () => {
+  it('publishes a durable terminal while its file index is still pending', async () => {
+    const h = await harness()
+    const entered = deferred()
+    const release = deferred()
+    vi.spyOn(h.index, 'syncSession').mockImplementationOnce(async () => {
+      entered.resolve()
+      await release.promise
+      return []
+    })
+    const publish = vi.fn()
+    const terminal = h.owner.commitTerminal(h.event, publish)
+    try {
+      await entered.promise
+      const file = join(h.root, 'sessions', h.scope.projectId, `${h.scope.sessionId}.json`)
+      expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({
+        session: { status: 'idle' }
+      })
+      await terminal
+      expect(publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: h.event.id }))
+      expect(h.coordinator.listRuntimeTerminalFailures()).toHaveLength(0)
+    } finally {
+      release.resolve()
+    }
+  })
+
   it.each([false, true])(
     'waits outside the Session lane for a slow terminal write (abort=%s)',
     async (abort) => {
@@ -265,6 +294,12 @@ describe('terminal recovery through the real Session persistence scheduler', () 
       status: 'rejected',
       error: { message: 'Main runtime completion has not committed yet.' }
     })
+    expect(publish).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(
+      TERMINAL_COMMIT_RETRY_BUDGET_MS +
+        TERMINAL_COMMIT_INITIAL_BUDGET_MS -
+        TERMINAL_ADMISSION_WAIT_BUDGET_MS
+    )
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ interruptionCause: 'terminal-commit-failed' })
     )
@@ -280,9 +315,7 @@ describe('terminal recovery through the real Session persistence scheduler', () 
         (session) => ({ status: 'saved' as const, session }),
         (error: unknown) => ({ status: 'rejected' as const, error })
       )
-    await vi.advanceTimersByTimeAsync(
-      TERMINAL_COMMIT_INITIAL_BUDGET_MS + TERMINAL_COMMIT_RETRY_BUDGET_MS
-    )
+    await vi.advanceTimersByTimeAsync(TERMINAL_ADMISSION_WAIT_BUDGET_MS)
     const saveResult = await Promise.race([blockedSave, Promise.resolve(unsettled)])
     expect(saveResult).not.toBe(unsettled)
     expect(saveResult).toMatchObject({
@@ -292,6 +325,7 @@ describe('terminal recovery through the real Session persistence scheduler', () 
 
     physicalWrite.resolve()
     await h.owner.flush(h.scope.sessionId, h.scope.promptMessageId)
+    expect(h.coordinator.listRuntimeTerminalFailures()).toHaveLength(0)
     const recovered = await h.read()
     expect(recovered.status).toBe('found')
     if (recovered.status !== 'found') throw new Error('Expected durable Session authority.')

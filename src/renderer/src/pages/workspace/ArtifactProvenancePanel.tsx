@@ -131,16 +131,6 @@ type ArtifactProvenancePanelProps = {
   tooltipClassName?: string
 }
 
-const tabs: Array<{ id: ProvenanceTab; label: string }> = [
-  { id: 'code', label: 'Code' },
-  { id: 'execution', label: 'Execution Log' },
-  { id: 'messages', label: 'Messages' },
-  { id: 'environment', label: 'Environment' },
-  { id: 'reproducibility', label: 'Reproducibility' },
-  { id: 'review', label: 'Review' }
-]
-const sourcesTab = { id: 'sources', label: 'Literature' } as const
-
 const tabActionBarClassName = 'flex items-center gap-3 border-b border-border-300/50 px-4 py-2'
 
 const scriptDownloadFormats = {
@@ -1181,6 +1171,15 @@ const ArtifactProvenancePanel = ({
       ? literatureResult.value
       : undefined
     : provenance?.literature
+  const tabs: Array<{ id: ProvenanceTab; label: string }> = [
+    { id: 'code', label: t('Code') },
+    { id: 'execution', label: t('Execution Log') },
+    { id: 'messages', label: t('Messages') },
+    { id: 'environment', label: t('Environment') },
+    { id: 'reproducibility', label: t('Reproducibility') },
+    { id: 'review', label: t('Review', { context: 'audit' }) }
+  ]
+  const sourcesTab = { id: 'sources', label: t('Literature') } as const
   const visibleTabs = isUserEdit
     ? literature
       ? [sourcesTab]
@@ -1195,7 +1194,6 @@ const ArtifactProvenancePanel = ({
     }
   }, [selectedTab, requestedTab, provenance, onTabChange])
   const deferredTabLabel = deferredTab ? tabs.find((tab) => tab.id === activeTab)?.label : undefined
-  const translatedDeferredTabLabel = deferredTabLabel ? t(deferredTabLabel) : undefined
   const deferredSectionLoading = Boolean(deferredSectionKey && deferredSectionState === undefined)
   const deferredSectionReady = !deferredSectionKey || deferredSectionState === 'loaded'
   const hasLoadedProvenance = Boolean(coreProvenance)
@@ -1740,11 +1738,11 @@ const ArtifactProvenancePanel = ({
             <Tabs.Trigger
               key={tab.id}
               value={tab.id}
-              title={t(tab.label)}
+              title={tab.label}
               onClick={() => setActiveTab(tab.id)}
               className={`min-w-0 truncate whitespace-nowrap rounded px-2 py-1 text-xs focus-visible:keyboard-focus focus-visible:-outline-offset-2 ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             >
-              {t(tab.label)}
+              {tab.label}
             </Tabs.Trigger>
           ))}
         </Tabs.List>
@@ -1808,13 +1806,13 @@ const ArtifactProvenancePanel = ({
             <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>
         ) : null}
-        {provenance && translatedDeferredTabLabel && deferredSectionLoading ? (
+        {provenance && deferredTabLabel && deferredSectionLoading ? (
           <div
             className="flex h-full items-center justify-center gap-2 text-sm text-text-300"
-            aria-label={t('Loading {{label}}', { label: translatedDeferredTabLabel })}
+            aria-label={t('Loading {{label}}', { label: deferredTabLabel })}
           >
             <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-            {t('Loading {{label}}', { label: translatedDeferredTabLabel })}
+            {t('Loading {{label}}', { label: deferredTabLabel })}
           </div>
         ) : null}
         {provenance && deferredSectionResult?.state === 'error' ? (

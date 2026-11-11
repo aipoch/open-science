@@ -163,18 +163,20 @@ describe('Auto operation completeness against real tool registrations', () => {
         // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
-        // Reviewed: descriptions and argument errors state one next step; abstract/PDF reads drop
-        // scope "items". Save validation, trusted origin and allow-once disposition are unchanged.
+        // Reviewed: save_to_inbox/acquire_pdf advertise candidates as objects; the same strict
+        // candidate schema now validates inline records in the handler before any save or download.
+        // Citation tool descriptions are shortened only. Trusted origin, permission inputs and
+        // allow-once disposition are unchanged.
         'literature/library-mcp-server.ts':
-          '69ec7871599cb7005e6738ac66f9c25cf044c74f95716208da463c326baf3b68',
+          '400ea9fb1739b849dad3f55d453b02be9879bda3e86fde29ebb34084d3e7e33e',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
-        // Reviewed: failed cells and background Runs set isError, RPC errors gain a status-based
-        // next step, and descriptions are clarified. Schemas and Auto dispositions are unchanged.
+        // Reviewed: completed REPL results can carry visual evidence or an image diagnostic.
+        // The change only formats tool output; operation inputs and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '5e1e1a43b45176218fea7610a0680c54d57619730ffa5e97e8621c959ffe7ba7',
+          '0acd2a6ed97552600c52da35baaaf0f13799c70ed1dac61cc6f6759ccf275e5b',
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':

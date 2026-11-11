@@ -1,4 +1,4 @@
-import { sessionPackageCommandContracts } from './session-package'
+import { sessionPackageCommandContracts, sessionPackageManifestSchema } from './session-package'
 import { expect, it } from 'vitest'
 import { packageOperationRequestSchema, sessionPackageImportRequestSchema } from './session-package'
 
@@ -187,4 +187,9 @@ it('accepts faster transfer budgets while retaining existing numeric requests', 
   for (const rate of [0, -1, NaN, Infinity, 1024 ** 3 + 1]) {
     expect(packageOperationRequestSchema.safeParse(request(rate)).success).toBe(false)
   }
+})
+
+it('allows every supported package feature in one manifest', () => {
+  const features = sessionPackageManifestSchema.shape.requiredFeatures.unwrap()
+  expect(features.parse(features.element.options)).toEqual(features.element.options)
 })

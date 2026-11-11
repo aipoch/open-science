@@ -102,6 +102,8 @@ const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 // id, so generate one inside the isolated app-owned config and scope it to Go-backed provider ids.
 const OPENCODE_GO_SESSION_PLUGIN = 'open-science-opencode-go-session.js'
 
+const OPENCODE_ENDPOINT_ORDER = ['chat-completions', 'messages'] as const
+
 // OpenCode rejects a model limit that declares context without output. Keep maxOutputTokens optional
 // in the provider model, but reserve a conservative adapter-only output budget when it is absent so
 // the generated config remains valid and OpenCode can calculate its native compaction threshold.
@@ -192,8 +194,7 @@ const resolveOpencodeEndpoint = (
   const bareModel = provider.model
   // opencode drives both endpoints; pick the one for this provider (openai wins when it offers both).
   const endpoint =
-    preferredEndpoint(provider.apiEndpoints ?? ['messages'], ['messages', 'chat-completions']) ??
-    'messages'
+    preferredEndpoint(provider.apiEndpoints ?? ['messages'], OPENCODE_ENDPOINT_ORDER) ?? 'messages'
   const { id: defaultProviderId, npm } = OPENCODE_ENDPOINT_PROVIDER[endpoint]
   const providerId = provider.agentProviderId ?? defaultProviderId
   // The @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so hand it the
@@ -559,7 +560,7 @@ export const createOpencodeFramework = ({
   // generated config's per-model options, so a change must respawn to take effect.
   supportsLiveEffortChange: false,
   // opencode speaks both Anthropic /v1/messages and OpenAI /v1/chat/completions.
-  supportedApiTypes: ['messages', 'chat-completions'],
+  supportedApiTypes: OPENCODE_ENDPOINT_ORDER,
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     return spawnOpenCodeProcess(input, 'acp', { platform, sourceEnv, spawnProcess })

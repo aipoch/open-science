@@ -22,7 +22,7 @@ export type NoticePresentation = Readonly<{
   level: 'warning' | 'error' | 'info'
   titleKey: string
   descriptionKey: string
-  primaryAction: NoticeActionId
+  primaryAction?: NoticeActionId
   secondaryActions: readonly NoticeActionId[]
   feedback: 'link' | 'primary' | 'none'
 }>
@@ -79,8 +79,29 @@ export const noticeCatalog = {
   }
 } as const satisfies Record<FailureCategory, NoticePresentation>
 
-// Reason-specific copy is intentionally outside this change; unknown reasons retain category copy.
+// Unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'service/prompt-optimization': {
+    level: 'warning',
+    titleKey: 'Optimize question',
+    descriptionKey: 'Could not optimize your question. Your draft was kept. Please try again.',
+    secondaryActions: [],
+    feedback: 'none'
+  },
+  'input/prompt-optimization-too-long': {
+    level: 'info',
+    titleKey: 'Optimize question',
+    descriptionKey: 'Shorten your question to optimize it (maximum 16,000 characters).',
+    secondaryActions: [],
+    feedback: 'none'
+  },
+  'input/prompt-optimization-changed': {
+    level: 'info',
+    titleKey: 'Optimize question',
+    descriptionKey: 'Your input changed while optimizing. Please try again.',
+    secondaryActions: [],
+    feedback: 'none'
+  },
   'session/tool-outcome-unknown': {
     level: 'warning',
     titleKey: 'Check the interrupted tool result',

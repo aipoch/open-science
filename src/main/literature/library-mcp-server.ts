@@ -382,10 +382,26 @@ const candidateTitles = (candidates: readonly LiteratureLibraryDiscovery[]): str
     .filter(Boolean)
     .slice(0, 3)
 
+// The model-facing schema only describes a candidate as an object, so its full bibliographic schema
+// is not repeated in every request. Inline candidates are validated here with the file schema.
+const parseInlineCandidates = (
+  candidates: readonly unknown[]
+): readonly LiteratureLibraryDiscovery[] => {
+  const parsed = literatureDiscoveryBatchSchema.safeParse({ candidates })
+  if (parsed.success) return parsed.data.candidates
+  throw new Error(
+    'INVALID_CANDIDATES: Candidate fields do not match the candidate record schema:\n' +
+      z.prettifyError(parsed.error).slice(0, 2_000) +
+      '\nNo records were saved by this call. Fix the indicated fields or pass existing DOI/PMID refs instead. ' +
+      LITERATURE_SAVE_ARGUMENT_RECOVERY,
+    { cause: parsed.error }
+  )
+}
+
 const resolveSaveCandidates = async (
   request: {
     refs?: readonly string[]
-    candidates?: readonly LiteratureLibraryDiscovery[]
+    candidates?: readonly unknown[]
     filename?: string
   },
   handler: LiteratureLibraryMcpHandler,
@@ -411,7 +427,7 @@ const resolveSaveCandidates = async (
     }
     return handler.resolveSaveReferences(request.refs, signal)
   }
-  if (request.candidates) return request.candidates
+  if (request.candidates) return parseInlineCandidates(request.candidates)
   if (!handler.readCandidateFile) {
     throw new Error(
       'CANDIDATE_FILE_UNAVAILABLE: Candidate files cannot be read in this session, so filename cannot be used. Call the same tool again with refs or candidates.'
@@ -526,7 +542,7 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Format literature references',
         description:
-          'Format trusted Literature Library records for Markdown, plain text, or chat output. Pass the exact itemIds; styleId and locale default to apa and en-US, so set them when the user names a style or language. Use the returned inText and reference strings verbatim; do not hand-format or invent citation metadata. For DOCX use format_citation_document instead.',
+          'Format Library records as citations for Markdown, plain text, or chat. Pass exact itemIds; set styleId/locale (default apa, en-US) when the user names a style or language. Use the returned strings verbatim; never hand-format or invent citation metadata. For DOCX use format_citation_document.',
         inputSchema: {
           itemIds: z
             .array(z.string().trim().min(1).max(512))
@@ -560,7 +576,7 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Format citation document',
         description:
-          'Format and attach an already-saved DOCX that contains semantic {{cite:itemId}} markers and an optional {{bibliography}} marker. Open-Science resolves the Literature items, formats the visible citations and bibliography, embeds Zotero-compatible Word Fields, and attaches the resulting DOCX with trusted citation provenance. The returned file is already attached; do not call write_artifact_file. Do not construct Zotero fields or repeat Literature metadata yourself.',
+          'Format an already-saved DOCX with {{cite:itemId}} markers and an optional {{bibliography}} marker: renders citations and bibliography as Zotero-compatible Word Fields and attaches the result. Do not call write_artifact_file afterward or write Zotero fields yourself.',
         inputSchema: {
           filename: z
             .string()
@@ -599,7 +615,7 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Prepare LaTeX bundle',
         description:
-          'Prepare and attach an already-saved UTF-8 .tex file that contains semantic {{cite:itemId}} markers and an optional {{bibliography}} marker. Open-Science resolves the Literature items, replaces markers with stable \\cite{key} commands, generates references.bib and a revision manifest, and attaches an Overleaf-compatible ZIP with trusted citation provenance. The source should use BibLaTeX with \\addbibresource{references.bib}; {{bibliography}} becomes \\printbibliography. The returned file is already attached; do not call write_artifact_file.',
+          'Package an already-saved UTF-8 .tex file with {{cite:itemId}} markers and an optional {{bibliography}} marker: markers become \\cite{key} and \\printbibliography, references.bib is generated, and an Overleaf-compatible ZIP is attached. Use BibLaTeX with \\addbibresource{references.bib}. Do not call write_artifact_file afterward.',
         inputSchema: {
           filename: z
             .string()
@@ -774,12 +790,12 @@ const createLiteratureLibraryMcpServer = (
             'An array of 1–10 DOI/PMID references, not a single string. For example ["pmid:35486828", "doi:10.1016/j.cell.2011.03.019"].'
           ),
         candidates: z
-          .array(literatureDiscoverySchema)
+          .array(z.record(z.string(), z.unknown()))
           .min(1)
           .max(10)
           .optional()
           .describe(
-            'An array of 1–10 records, each with item (bibliographic metadata, including itemType and title) and source (provider and rawMetadata). Reuse retrieved metadata; do not invent missing fields.'
+            'An array of 1–10 records, each { item, source }: item is the bibliographic metadata (itemType, title, creators, identifiers…) and source is { provider, rawMetadata } as returned by literature discovery. Pass retrieved records unchanged; do not invent missing fields. Invalid fields are reported by path.'
           ),
         filename: z
           .string()
@@ -830,9 +846,12 @@ const createLiteratureLibraryMcpServer = (
             .max(512)
             .optional()
             .describe('One DOI or PMID, for example "doi:10.1016/j.cell.2011.03.019".'),
-          candidate: literatureDiscoverySchema
+          candidate: z
+            .record(z.string(), z.unknown())
             .optional()
-            .describe('One record with item and source, for a work without a DOI or PMID.'),
+            .describe(
+              'One { item, source } record from literature discovery, for a work without a DOI or PMID. Pass it unchanged.'
+            ),
           pdfUrl: z
             .string()
             .url()

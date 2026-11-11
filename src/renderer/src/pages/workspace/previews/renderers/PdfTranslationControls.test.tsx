@@ -269,7 +269,10 @@ it('keeps API guidance in a tooltip and explains an unavailable model option', a
   expect(
     screen.queryByText('Direct API only supports API models. Subscription models must use Agent.')
   ).toBeNull()
-  const info = screen.getByRole('button', { name: 'Model settings' })
+  const info = within(screen.getByText('Model', { selector: 'span[id]' }).parentElement!).getByRole(
+    'button',
+    { name: 'More information' }
+  )
   fireEvent.focus(info)
   expect(await screen.findByRole('tooltip')).toHaveProperty(
     'textContent',
@@ -1168,9 +1171,16 @@ it('explains disabled new translation actions when API model availability change
   )
   fireEvent.click(start)
   expect(onNewTranslation).not.toHaveBeenCalled()
-  act(() => useSettingsStore.setState({ providers: [apiProvider] }))
-  expect(start.disabled).toBe(false)
-  fireEvent.click(start)
+  fireEvent.click(dialog.getByRole('button', { name: 'Model settings' }))
+  expect(useSettingsStore.getState().pendingSettingsIntent?.route.panel).toBe('model')
+  expect(screen.queryByRole('dialog', { name: 'New translation' })).toBeNull()
+  act(() => {
+    useSettingsStore.setState({ providers: [apiProvider] })
+    useSettingsStore.getState().closeSettings()
+  })
+  const resumed = within(screen.getByRole('dialog', { name: 'New translation' }))
+  expect(resumed.getByRole('combobox', { name: 'Model' }).textContent).toContain('first-model')
+  fireEvent.click(resumed.getByRole('button', { name: 'Translate document' }))
   expect(onNewTranslation).toHaveBeenCalledOnce()
 })
 

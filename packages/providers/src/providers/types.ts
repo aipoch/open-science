@@ -53,6 +53,7 @@ export type OfficialModel = {
   readonly id: string
   // Advertised context-window size for this exact model, in tokens.
   readonly contextWindow: number
+  readonly maxOutputTokens?: number
   // Optional exact protocol override for mixed-protocol vendor catalogs. Absent means the model uses
   // the vendor-level endpoint set.
   readonly apiEndpoint?: ModelProtocol

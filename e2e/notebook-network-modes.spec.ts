@@ -120,8 +120,8 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
   )
   test.setTimeout(240_000)
   const python = process.env.OPEN_SCIENCE_TEST_PYTHON
-  if (!python)
-    throw new Error('Provide an isolated Python with ipykernel via OPEN_SCIENCE_TEST_PYTHON')
+  test.skip(!python, 'Requires an isolated Python with ipykernel via OPEN_SCIENCE_TEST_PYTHON')
+  if (!python) return
   let requests = 0
   const server = createServer((_request, response) => {
     requests++
@@ -167,7 +167,7 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
     await expect(settings.getByRole('radio', { name: 'Strict', exact: true })).toBeChecked()
     await expect(settings.getByLabel('Hostname', { exact: true })).toHaveValue('incomplete address')
     expect(
-      (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork.mode ??
+      (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork?.mode ??
         'relaxed'
     ).toBe('relaxed')
     await settings.getByRole('button', { name: 'Switch to Strict mode', exact: true }).click()
@@ -251,7 +251,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     const strict = settings.getByRole('radio', { name: 'Strict', exact: true })
     const panel = settings.getByRole('region', { name: 'Confirm network mode change', exact: true })
     const active = async (): Promise<'relaxed' | 'strict'> =>
-      (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork.mode ??
+      (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork?.mode ??
       'relaxed'
     const selector = settings.getByRole('radiogroup', { name: 'Select a network mode to confirm' })
     const bounds = await selector.boundingBox()

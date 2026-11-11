@@ -44,7 +44,7 @@ const Probe = (): React.JSX.Element => {
         <div ref={projectsRef} />
         <section ref={galleryRef}>
           <div data-gallery-bar>
-            <h2>Use Case Gallery</h2>
+            <h2>Use Cases</h2>
           </div>
           <article />
         </section>

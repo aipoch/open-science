@@ -1024,6 +1024,40 @@ describe('ProviderAccountsModule', () => {
     expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(auth)
   })
 
+  it('rejects CLI login completion after switching to the built-in Agent without queuing validation', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    await repository.setAgentFramework('open-science-agent')
+    const before = await repository.getSettings()
+    await expect(module.completeBootstrapCodex()).rejects.toMatchObject({
+      code: 'configuration_conflict'
+    })
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
+  it('leaves account health unchanged when authentication is held during built-in validation', async () => {
+    await repository.setAgentFramework('codex')
+    await module.prepareBootstrapCodex()
+    await writeFile(
+      join(codexSubscriptionStorageDir(dir), 'auth.json'),
+      JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'synthetic' })
+    )
+    await module.completeBootstrapCodex()
+    await repository.setAgentFramework('open-science-agent')
+    const before = await repository.getSettings()
+    const hold = module.quiesceAuthentication()
+    await hold.settled
+    try {
+      await expect(
+        module.validateProvider({ providerId: 'builtin-codex-subscription' })
+      ).resolves.toMatchObject({ ok: false, applied: false })
+      expect(await repository.getSettings()).toEqual(before)
+    } finally {
+      hold.release()
+    }
+  })
+
   it('does not activate rejected subscription credentials', async () => {
     await repository.setAgentFramework('codex')
     await module.prepareBootstrapCodex()
@@ -1957,10 +1991,13 @@ describe('ProviderAccountsModule', () => {
     expect(done).toHaveBeenCalledOnce()
   })
 
-  it('preserves the authentication quit lease through the account facade', () => {
+  it('drains credential writes and releases both authentication owners after a cancelled quit', async () => {
     const lease = { settled: Promise.resolve(), release: vi.fn() }
     vi.mocked(xaiOAuth.quiesce).mockReturnValue(lease)
-    expect(module.quiesceAuthentication()).toBe(lease)
+    const combined = module.quiesceAuthentication()
+    await combined.settled
+    combined.release()
+    expect(lease.release).toHaveBeenCalledOnce()
     expect(xaiOAuth.quiesce).toHaveBeenCalledOnce()
   })
 

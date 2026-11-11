@@ -680,7 +680,10 @@ describe.runIf(platformSupported)('strict whitelist with a real Python client', 
         response.end()
       } else response.end('strict-python-ok')
     })
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    // Both loopback families must reach the fixture when relaxed policy pins the first DNS result.
+    await new Promise<void>((resolve) =>
+      server.listen({ port: 0, host: '::', ipv6Only: false }, resolve)
+    )
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('Missing fixture port')
     const port = address.port
@@ -698,6 +701,13 @@ describe.runIf(platformSupported)('strict whitelist with a real Python client', 
       resources: { root: resolve(import.meta.dirname, '../vendor') }
     })
     const approval = vi.fn(async () => true)
+    // Exercise hosts where localhost resolves to IPv6 first, as on the Linux CI runner.
+    const dnsFixture = vi
+      .mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup)
+      .mockResolvedValue([
+        { address: '::1', family: 6 },
+        { address: '127.0.0.1', family: 4 }
+      ])
     const python = process.env.OPEN_SCIENCE_TEST_PYTHON ?? '/usr/bin/python3'
     const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
     const request = async (path = '/'): Promise<Awaited<ReturnType<typeof runAndCleanup>>> => {
@@ -730,7 +740,11 @@ describe.runIf(platformSupported)('strict whitelist with a real Python client', 
         allowedDomains: [],
         deniedDomains: []
       })
-      expect(await request()).toMatchObject({ code: 0, stdout: 'strict-python-ok\n' })
+      const allowed = await request()
+      expect(allowed, allowed.annotatedStderr).toMatchObject({
+        code: 0,
+        stdout: 'strict-python-ok\n'
+      })
       expect(requests).toBe(1)
       const redirected = await request('/redirect')
       expect(redirected.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
@@ -741,7 +755,11 @@ describe.runIf(platformSupported)('strict whitelist with a real Python client', 
         allowedDomains: [],
         deniedDomains: []
       })
-      expect(await request()).toMatchObject({ code: 0, stdout: 'strict-python-ok\n' })
+      const restored = await request()
+      expect(restored, restored.annotatedStderr).toMatchObject({
+        code: 0,
+        stdout: 'strict-python-ok\n'
+      })
       expect(requests).toBe(3)
       sandbox.updatePolicy({
         mode: 'strict',
@@ -754,6 +772,7 @@ describe.runIf(platformSupported)('strict whitelist with a real Python client', 
       expect(requests).toBe(3)
       expect(approval).not.toHaveBeenCalled()
     } finally {
+      dnsFixture.mockRestore()
       await sandbox.dispose()
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))

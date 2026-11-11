@@ -38,6 +38,7 @@ export type NativeRow = Record<string, string | number | boolean | null>
 export type PackageRecords = {
   schemaVersion: 1
   tables: Record<NativeTable, NativeRow[]>
+  logEvidence?: import('../artifacts/execution-evidence-log').PortableEvidence
   researchFilms?: PackageResearchFilms
   pdfNotes?: PackagePdfNotes
   literature?: PackageLiterature

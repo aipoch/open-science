@@ -281,6 +281,7 @@ export async function composeDocumentReading({
         appVersion: runtimeMetadata().version,
         configRoot: resolveConfigRoot(),
         profileNamespace: 'pdf-translation',
+        taskOnly: true,
         resolveTarget: (target, context) =>
           settingsService.resolveExplicitAgentBackend(target, context)
       })

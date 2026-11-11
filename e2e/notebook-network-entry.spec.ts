@@ -43,6 +43,7 @@ for (const theme of ['Light', 'Dark'] as const) {
         await settings.getByRole('button', { name: 'Back', exact: true }).click()
         const config = (await page.evaluate(() => window.api.settings.getSettings()))
           .notebookNetwork
+        if (!config) throw new Error('Expected saved Notebook network settings')
         const ruleCount = config.strictWhitelist?.length ?? 0
         const groupCount = config.strictWhitelistGroups?.length ?? 0
         await expect(entry).toContainText(`${ruleCount} ${ruleCount === 1 ? 'rule' : 'rules'}`)

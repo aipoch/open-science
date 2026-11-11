@@ -268,7 +268,7 @@ export const createCodeBuddyFramework = ({
       : undefined
     const promptPrefix = [
       ...ctx.systemPromptAppends,
-      externalRetrievalGuidance,
+      ctx.toolLess ? undefined : externalRetrievalGuidance,
       skillLoaderGuidance,
       ...(ctx.turnPromptReminders ?? [])
     ]

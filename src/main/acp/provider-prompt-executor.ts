@@ -32,7 +32,7 @@ type ProviderPromptExecutionInput = Readonly<{
   frameworkId: AgentFrameworkId
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
-  captureStop: () => boolean
+  captureStop: (response: PromptResponse) => boolean
   onDispatched?: () => void
   onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
@@ -300,7 +300,7 @@ class AcpProviderPromptExecutor {
           input.routeNotification(message.notification)
           continue
         }
-        if (!input.captureStop()) {
+        if (!input.captureStop(message.response)) {
           await cancelProbe()
           return Object.freeze({ kind: 'superseded', response: message.response })
         }

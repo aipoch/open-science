@@ -76,7 +76,11 @@
     "src/renderer/src/pages/settings/useSpecialistEditorForm.ts",
     "src/renderer/src/pages/settings/ResourceAvailability.tsx",
     "src/renderer/src/pages/settings/SavedSkillRepositories.tsx",
-    "src/renderer/src/pages/settings/SavedSkillRepositories.render.test.tsx"
+    "src/renderer/src/pages/settings/SavedSkillRepositories.render.test.tsx",
+    "src/renderer/src/pages/settings/ConnectorResourcePanel.tsx",
+    "src/renderer/src/pages/marketplace/ResourceCenterModeTabs.tsx",
+    "src/renderer/src/pages/marketplace/ResourceMarketplaceIdentity.tsx",
+    "src/renderer/src/pages/marketplace/ResourceDetailLayout.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/ConnectorAddForm.tsx",
@@ -139,7 +143,11 @@
     "src/renderer/src/pages/settings/token-usage-analytics.ts",
     "src/renderer/src/pages/settings/use-file-credential-notice.ts",
     "src/renderer/src/pages/settings/validation-message.ts",
-    "src/renderer/src/pages/settings/SavedSkillRepositories.tsx"
+    "src/renderer/src/pages/settings/SavedSkillRepositories.tsx",
+    "src/renderer/src/pages/settings/ConnectorResourcePanel.tsx",
+    "src/renderer/src/pages/marketplace/ResourceCenterModeTabs.tsx",
+    "src/renderer/src/pages/marketplace/ResourceMarketplaceIdentity.tsx",
+    "src/renderer/src/pages/marketplace/ResourceDetailLayout.tsx"
   ],
   "consumerModules": [],
   "testFiles": {

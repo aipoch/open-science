@@ -1,21 +1,23 @@
+import { ResourceDetailActions, ResourceDetailHeader } from '../marketplace/ResourceDetailLayout'
+import { Users } from 'lucide-react'
 import type { SpecialistMarketplaceView } from '../../lib/settings-navigation'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as AlertDialog from '@/components/ui/alert-dialog'
+import * as Dialog from '@/components/ui/dialog'
 import {
   BadgeCheck,
   CheckCircle2,
   ChevronDown,
   GitBranch,
   Loader2,
-  RefreshCw,
+  Plus,
   ScrollText,
-  Settings2,
   ShieldCheck,
   Trash2,
   X
@@ -23,6 +25,13 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem
+} from '@/components/ui/select'
 import { useDateTimeFormat, useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
 import {
   specialistDiagnosticCopy,
@@ -53,6 +62,17 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsIconAction } from './SettingsLayout'
+import {
+  ResourceCatalogHeader,
+  ResourceCatalogFilter,
+  ResourceCatalogToolbar,
+  ResourceCatalogActions,
+  ResourceCenterModeTabs
+} from '../marketplace/ResourceCenterModeTabs'
+import {
+  ResourceMarketplaceIdentity,
+  ResourceMarketplaceCardContent
+} from '../marketplace/ResourceMarketplaceIdentity'
 import { ConnectorsNavIcon } from './connector-icons'
 import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
 import {
@@ -63,7 +83,13 @@ import {
 
 export type { SpecialistMarketplaceView } from '../../lib/settings-navigation'
 
+const SpecialistIdentity = ResourceMarketplaceIdentity
+
 type Props = {
+  onUninstall?: (id: string) => void
+  uninstallBusy?: boolean
+  uninstallError?: string
+  addAction?: React.ReactNode
   view: SpecialistMarketplaceView
   onNavigate: (
     view: SpecialistMarketplaceView | { kind: 'list' } | { kind: 'edit'; id: string }
@@ -86,49 +112,6 @@ type MarketplaceFilter = 'all' | 'official' | 'community' | 'updates'
 
 const marketplaceListingKey = (item: MarketplaceSpecialistListing): string =>
   `${item.sourceId}:${item.id}`
-
-const identityTones = [
-  'bg-chart-1/15 text-chart-1 ring-chart-1/20',
-  'bg-chart-2/15 text-chart-2 ring-chart-2/20',
-  'bg-chart-3/15 text-chart-3 ring-chart-3/20',
-  'bg-chart-4/15 text-chart-4 ring-chart-4/20'
-] as const
-
-const specialistInitials = (displayName: string): string => {
-  const words = displayName.trim().split(/\s+/).filter(Boolean)
-  if (words.length === 0) return 'SP'
-  return words
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
-    .join('')
-}
-
-const SpecialistIdentity = ({
-  id,
-  displayName,
-  size = 'md'
-}: {
-  id: string
-  displayName: string
-  size?: 'md' | 'lg'
-}): React.JSX.Element => {
-  const tone =
-    identityTones[
-      [...id].reduce((total, character) => total + character.charCodeAt(0), 0) %
-        identityTones.length
-    ]
-  return (
-    <div
-      role="img"
-      aria-label={displayName}
-      className={`grid shrink-0 place-items-center font-semibold tracking-tight ring-1 ${tone} ${
-        size === 'lg' ? 'size-14 rounded-xl text-base' : 'size-10 rounded-lg text-xs'
-      }`}
-    >
-      {specialistInitials(displayName)}
-    </div>
-  )
-}
 
 const MarketplaceError = ({
   message,
@@ -161,7 +144,14 @@ const MarketplaceLoading = ({ label }: { label: string }): React.JSX.Element => 
   </div>
 )
 
-const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element => {
+const SpecialistMarketplace = ({
+  view,
+  onNavigate,
+  addAction,
+  onUninstall,
+  uninstallBusy,
+  uninstallError
+}: Props): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const formatRelative = useRelativeTimeFormat()
@@ -183,9 +173,15 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     typeof window.api.specialist?.inspectGitHubMarketplaceSource === 'function'
   const canInstallSpecialist =
     typeof window.api.specialist?.prepareMarketplaceInstall === 'function'
+  const [uninstallArmedKey, setUninstallArmedKey] = useState<string>()
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<MarketplaceFilter>('all')
   const [repositoryUrl, setRepositoryUrl] = useState('')
+  const [sourceFormOpen, setSourceFormOpen] = useState(false)
+  const sourceInput = useRef<HTMLInputElement>(null)
+  const sourceMenuTrigger = useRef<HTMLButtonElement>(null)
+  const addSourceTrigger = useRef<HTMLButtonElement>(null)
+  const restoreAddSourceFocus = useRef(false)
   const [sourceCandidate, setSourceCandidate] = useState<MarketplaceSourceCandidate>()
   const [sourceBusy, setSourceBusy] = useState(false)
   const [sourceError, setSourceError] = useState<string>()
@@ -199,6 +195,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [skillsExpanded, setSkillsExpanded] = useState(false)
   const [connectorsExpanded, setConnectorsExpanded] = useState(false)
   const [installBusy, setInstallBusy] = useState(false)
+  const installInFlight = useRef(false)
+  const startedCardInstall = useRef<string | undefined>(undefined)
   const [installPreview, setInstallPreview] = useState<MarketplaceInstallPreview>()
   const [installError, setInstallError] = useState<string>()
   const [installErrorCode, setInstallErrorCode] = useState<SpecialistInstallFailureCode>()
@@ -227,6 +225,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
   useEffect(() => {
     viewKeyRef.current = viewKey
+    startedCardInstall.current = undefined
     return () => {
       viewKeyRef.current = undefined
     }
@@ -268,50 +267,6 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     if (view.kind !== 'marketplace' && view.kind !== 'marketplace-sources') return
     void Promise.resolve().then(() => refreshMarketplace())
   }, [refreshMarketplace, view.kind])
-
-  useEffect(() => {
-    if (view.kind !== 'marketplace-release') return
-    let active = true
-    void Promise.resolve().then(async () => {
-      if (!active) return
-      setRelease(undefined)
-      setReleaseError(undefined)
-      setReleaseLoading(true)
-      setSkillsExpanded(false)
-      setConnectorsExpanded(false)
-      setInstallPreview(undefined)
-      setInstallError(undefined)
-      setInstallErrorCode(undefined)
-      setInstallRecoveryPending(false)
-      setDownloadProgress(undefined)
-      setSkillConflictResolutions({})
-      try {
-        const value = await window.api.specialist.getMarketplaceRelease({
-          sourceId: view.sourceId,
-          specialistId: view.id,
-          version: view.version
-        })
-        if (!active) return
-        setRelease(value)
-        setSelectedSkillIds(new Set(value.defaultSkillIds))
-        setSelectedConnectorIds(
-          new Set([
-            ...value.defaultConnectorIds,
-            ...value.connectors
-              .filter((connector) => connector.required)
-              .map((connector) => connector.id)
-          ])
-        )
-      } catch {
-        if (active) setReleaseError(t('Could not load this Specialist release.'))
-      } finally {
-        if (active) setReleaseLoading(false)
-      }
-    })
-    return () => {
-      active = false
-    }
-  }, [t, view])
 
   // Card status is shared by the grid and the "Updates available" filter chip, so it is derived
   // once per snapshot instead of per card render.
@@ -371,6 +326,26 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     return stamps.sort().at(-1)
   }, [snapshot])
 
+  useEffect(() => {
+    if (sourceFormOpen) sourceInput.current?.focus()
+    else if (restoreAddSourceFocus.current) {
+      restoreAddSourceFocus.current = false
+      addSourceTrigger.current?.focus({ preventScroll: true })
+    }
+  }, [sourceFormOpen])
+  const invalidateSourceCandidate = (): void => {
+    cancelCandidate(sourceCandidateTokenRef.current)
+    sourceCandidateTokenRef.current = undefined
+    setSourceCandidate(undefined)
+    setSourceError(undefined)
+  }
+  const cancelSourceForm = (): void => {
+    invalidateSourceCandidate()
+    setRepositoryUrl('')
+    restoreAddSourceFocus.current = true
+    setSourceFormOpen(false)
+  }
+
   const inspectSource = async (): Promise<void> => {
     const startedViewKey = viewKey
     cancelCandidate(sourceCandidateTokenRef.current)
@@ -407,6 +382,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       sourceCandidateTokenRef.current = undefined
       setRepositoryUrl('')
       setSourceCandidate(undefined)
+      restoreAddSourceFocus.current = true
+      setSourceFormOpen(false)
       // Source configuration changed: force past the TTL so every source reports live state.
       void refreshMarketplace({ forceRefresh: true })
     } catch {
@@ -440,24 +417,35 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     setInstallErrorCode(undefined)
   }
 
-  const install = async (): Promise<void> => {
-    if (!release || view.kind !== 'marketplace-release') return
+  const install = async (selection?: {
+    skillIds: string[]
+    connectorIds: string[]
+  }): Promise<void> => {
+    if (
+      (!release && !selection) ||
+      view.kind !== 'marketplace-release' ||
+      !canInstallSpecialist ||
+      installInFlight.current
+    )
+      return
+    installInFlight.current = true
     const startedViewKey = viewKey
     setInstallBusy(true)
     setInstallError(undefined)
     setInstallErrorCode(undefined)
-    if (!installPreview) setDownloadProgress(undefined)
+    const currentPreview = selection ? undefined : installPreview
+    if (!currentPreview) setDownloadProgress(undefined)
     try {
       const preview =
-        installPreview ??
+        currentPreview ??
         (await window.api.specialist.prepareMarketplaceInstall({
           sourceId: view.sourceId,
           specialistId: view.id,
           version: view.version,
-          selectedSkillIds: [...selectedSkillIds],
-          selectedConnectorIds: [...selectedConnectorIds]
+          selectedSkillIds: selection?.skillIds ?? [...selectedSkillIds],
+          selectedConnectorIds: selection?.connectorIds ?? [...selectedConnectorIds]
         }))
-      const preparedNow = !installPreview
+      const preparedNow = !currentPreview
       if (preparedNow) {
         installCandidateTokenRef.current = preview.package.candidateToken
         if (viewKeyRef.current !== startedViewKey) {
@@ -514,15 +502,74 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         setInstallErrorCode(undefined)
         return
       }
+      await refreshMarketplace()
       onNavigate({ kind: 'list' })
     } catch {
       setDownloadProgress(undefined)
       setInstallErrorCode(undefined)
       setInstallError(t('Could not install this Specialist.'))
     } finally {
+      installInFlight.current = false
       setInstallBusy(false)
     }
   }
+
+  const beginCardInstall = useEffectEvent(
+    (selection: { skillIds: string[]; connectorIds: string[] }) => {
+      if (!canInstallSpecialist || startedCardInstall.current === viewKey) return
+      startedCardInstall.current = viewKey
+      void install(selection)
+    }
+  )
+
+  useEffect(() => {
+    if (view.kind !== 'marketplace-release') return
+    let active = true
+    void Promise.resolve().then(async () => {
+      if (!active) return
+      setRelease(undefined)
+      setReleaseError(undefined)
+      setReleaseLoading(true)
+      setSkillsExpanded(false)
+      setConnectorsExpanded(false)
+      setInstallPreview(undefined)
+      setInstallError(undefined)
+      setInstallErrorCode(undefined)
+      setInstallRecoveryPending(false)
+      setDownloadProgress(undefined)
+      setSkillConflictResolutions({})
+      try {
+        const value = await window.api.specialist.getMarketplaceRelease({
+          sourceId: view.sourceId,
+          specialistId: view.id,
+          version: view.version
+        })
+        if (!active) return
+        setRelease(value)
+        const skillIds = [...value.defaultSkillIds]
+        const connectorIds = [
+          ...new Set([
+            ...value.defaultConnectorIds,
+            ...value.connectors
+              .filter((connector) => connector.required)
+              .map((connector) => connector.id)
+          ])
+        ]
+        setSelectedSkillIds(new Set(skillIds))
+        setSelectedConnectorIds(new Set(connectorIds))
+        if (view.installRequested && (!view.installedVersion || view.updateAvailable)) {
+          beginCardInstall({ skillIds, connectorIds })
+        }
+      } catch {
+        if (active) setReleaseError(t('Could not load this Specialist release.'))
+      } finally {
+        if (active) setReleaseLoading(false)
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [t, view])
 
   const marketplaceSkillConflicts = specialistSkillConflicts(
     installPreview?.package.summary?.skills
@@ -559,90 +606,58 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       (failure) => failure.code === 'network' || failure.code === 'unavailable'
     )
 
-  if (view.kind === 'marketplace-sources') {
-    return (
-      <TooltipProvider delayDuration={200}>
-        <div className="p-5">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">{t('Marketplace sources')}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t(
-                'Add a public GitHub repository that follows the Specialist Marketplace protocol.'
-              )}
-            </p>
-          </div>
-
-          <div className="mt-5 rounded-lg border border-border p-4">
-            <label htmlFor="marketplace-repository" className="text-sm font-medium text-foreground">
-              {t('GitHub repository')}
-            </label>
-            <div className="mt-2 flex items-center gap-2">
-              <Input
-                id="marketplace-repository"
-                value={repositoryUrl}
-                onChange={(event) => setRepositoryUrl(event.target.value)}
-                placeholder={t('https://github.com/owner/repository')}
-                disabled={sourceBusy}
-              />
+  const sourceDrawer = (
+    <Dialog.Root
+      open={view.kind === 'marketplace-sources'}
+      onOpenChange={(open) => {
+        if (!open && !sourceBusy && !sourceRemovalBusy) {
+          invalidateSourceCandidate()
+          setSourceFormOpen(false)
+          setRepositoryUrl('')
+          setSourcePendingRemoval(undefined)
+          onNavigate({ kind: 'marketplace' })
+        }
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className={dialogOverlayClassName} />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed inset-y-0 right-0 flex w-full flex-col border-l border-border bg-card text-foreground shadow-dialog outline-none sm:w-[min(38rem,calc(100vw-4rem))] data-[state=closed]:pointer-events-none data-[state=open]:animate-in data-[state=open]:slide-in-from-right data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right motion-reduce:animate-none"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            sourceMenuTrigger.current?.focus({ preventScroll: true })
+          }}
+        >
+          <div className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border px-5">
+            <Dialog.Title className="min-w-0 flex-1 text-sm font-semibold">
+              {t('Marketplace sources')}
+            </Dialog.Title>
+            <Dialog.Close asChild>
               <Button
-                type="button"
-                onClick={() => void inspectSource()}
-                disabled={sourceBusy || !repositoryUrl.trim() || !canManageSources}
-                aria-busy={Boolean(sourceBusy)}
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                disabled={sourceBusy || sourceRemovalBusy}
               >
-                <span key={String(sourceBusy)} className="button-feedback">
-                  {sourceBusy ? (
-                    <Loader2 className="animate-spin" aria-hidden="true" />
-                  ) : (
-                    <GitBranch aria-hidden="true" />
-                  )}
-                  {t('Inspect source')}
-                </span>
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </Dialog.Close>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-medium">{t('Configured sources')}</h3>
+              <Button
+                ref={addSourceTrigger}
+                variant="outline"
+                size="sm"
+                disabled={sourceFormOpen || !canManageSources}
+                onClick={() => setSourceFormOpen(true)}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+                {t('Add source')}
               </Button>
             </div>
-
-            {sourceCandidate ? (
-              <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3">
-                <div className="flex items-start gap-2">
-                  <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{sourceCandidate.name}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {sourceCandidate.repositoryUrl} / {sourceCandidate.ref}
-                    </p>
-                    <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
-                      {t('Signing key fingerprint: {{fingerprint}}', {
-                        fingerprint: sourceCandidate.keyFingerprint
-                      })}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {t('{{count}} Specialists. Installed Skills can change Agent behavior.', {
-                        count: sourceCandidate.specialistCount
-                      })}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    type="button"
-                    onClick={() => void addSource()}
-                    disabled={sourceBusy || !canManageSources}
-                  >
-                    {t('Trust and add source')}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          {sourceError && !sourcePendingRemoval ? (
-            <div className="mt-4">
-              <MarketplaceError message={sourceError} />
-            </div>
-          ) : null}
-
-          <div className="mt-6">
-            <h3 className="text-sm font-semibold text-foreground">{t('Configured sources')}</h3>
             {loading ? (
               <MarketplaceLoading label={t('Loading…')} />
             ) : !snapshot && lastRefreshFailed ? (
@@ -663,17 +678,35 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
             ) : snapshot?.sources.length ? (
               <ul className="mt-2 divide-y divide-border">
                 {snapshot.sources.map((source) => (
-                  <li key={source.id} className="flex min-h-14 items-center gap-3 py-2.5">
+                  <li key={source.id} className="flex min-h-14 items-start gap-3 py-2.5">
                     <GitBranch
                       className="size-4 shrink-0 text-muted-foreground"
                       aria-hidden="true"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-foreground">{source.name}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {source.trust === 'official' ? t('Official') : t('User-added source')}{' '}
-                        {source.repositoryUrl} / {source.ref}
+                      <p className="break-words text-sm font-medium text-foreground">
+                        {source.name}
                       </p>
+                      <p className="mt-1 break-all text-xs text-muted-foreground">
+                        {source.repositoryUrl.replace('https://github.com/', '')}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span
+                          className={
+                            source.trust === 'official'
+                              ? 'inline-flex items-center gap-1 text-primary'
+                              : undefined
+                          }
+                        >
+                          {source.trust === 'official' ? (
+                            <BadgeCheck className="size-3.5" aria-hidden="true" />
+                          ) : null}
+                          {source.trust === 'official' ? t('Official') : t('User-added source')}
+                        </span>
+                        <span className="min-w-0 break-all">
+                          {t('Branch or tag')}: {source.ref}
+                        </span>
+                      </div>
                     </div>
                     {source.removable ? (
                       <SettingsIconAction
@@ -695,8 +728,110 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                 {t('No Marketplace sources configured.')}
               </p>
             )}
+            {sourceFormOpen ? (
+              <form
+                id="marketplace-source-form"
+                aria-label={t('Add source')}
+                className="mt-5 border-t border-border pt-5"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (sourceBusy || !canManageSources || !repositoryUrl.trim()) return
+                  if (sourceCandidate) void addSource()
+                  else void inspectSource()
+                }}
+              >
+                <label htmlFor="marketplace-repository" className="text-sm font-medium">
+                  {t('Source URL')}
+                </label>
+                <Input
+                  ref={sourceInput}
+                  id="marketplace-repository"
+                  type="url"
+                  required
+                  className="mt-2"
+                  aria-describedby="marketplace-source-help"
+                  value={repositoryUrl}
+                  onChange={(event) => {
+                    invalidateSourceCandidate()
+                    setRepositoryUrl(event.target.value)
+                  }}
+                  placeholder={t('https://github.com/owner/repository')}
+                  disabled={sourceBusy}
+                />
+                <p id="marketplace-source-help" className="mt-2 text-xs text-muted-foreground">
+                  {t(
+                    'Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.'
+                  )}
+                </p>
+                {sourceCandidate ? (
+                  <section
+                    className="mt-4 space-y-3 rounded-lg border border-border p-4"
+                    aria-label={sourceCandidate.name}
+                  >
+                    <div className="flex items-start gap-2">
+                      <ShieldCheck
+                        className="mt-0.5 size-4 shrink-0 text-primary"
+                        aria-hidden="true"
+                      />
+                      <h4 className="min-w-0 break-words text-sm font-medium">
+                        {sourceCandidate.name}
+                      </h4>
+                    </div>
+                    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                      <dt className="text-muted-foreground">{t('Branch or tag')}</dt>
+                      <dd className="break-all">{sourceCandidate.ref}</dd>
+                      <dt className="text-muted-foreground">{t('Specialists')}</dt>
+                      <dd>{sourceCandidate.specialistCount}</dd>
+                    </dl>
+                    <p className="break-all font-mono text-[11px] text-muted-foreground">
+                      {t('Signing key fingerprint: {{fingerprint}}', {
+                        fingerprint: sourceCandidate.keyFingerprint
+                      })}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        'Installed Skills can change Agent behavior. Only trust sources you recognize.'
+                      )}
+                    </p>
+                  </section>
+                ) : null}
+              </form>
+            ) : null}
+            {sourceError && !sourcePendingRemoval ? (
+              <div className="mt-4">
+                <MarketplaceError message={sourceError} />
+              </div>
+            ) : null}
           </div>
-
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-5 py-3">
+            {sourceFormOpen ? (
+              <>
+                <Button variant="ghost" disabled={sourceBusy} onClick={cancelSourceForm}>
+                  {t('Cancel', { ns: 'common' })}
+                </Button>
+                <Button
+                  type="submit"
+                  form="marketplace-source-form"
+                  disabled={sourceBusy || !repositoryUrl.trim() || !canManageSources}
+                  aria-busy={sourceBusy}
+                >
+                  {sourceBusy ? (
+                    <Loader2
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {sourceCandidate ? t('Trust and add source') : t('Inspect source')}
+                </Button>
+              </>
+            ) : (
+              <Dialog.Close asChild>
+                <Button variant="outline" className="ml-auto" disabled={sourceRemovalBusy}>
+                  {t('Close')}
+                </Button>
+              </Dialog.Close>
+            )}
+          </div>
           <AlertDialog.Root
             open={sourcePendingRemoval !== undefined}
             onOpenChange={(open) => {
@@ -790,10 +925,10 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               </AlertDialog.Content>
             </AlertDialog.Portal>
           </AlertDialog.Root>
-        </div>
-      </TooltipProvider>
-    )
-  }
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
 
   if (view.kind === 'marketplace-release') {
     return (
@@ -807,62 +942,37 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           ) : null}
           {release ? (
             <div className="mx-auto max-w-4xl">
-              <div className="flex flex-wrap items-start gap-4">
-                <SpecialistIdentity
-                  id={release.specialistId}
-                  displayName={release.displayName}
-                  size="lg"
-                />
-                <div className="min-w-64 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                      {release.displayName}
-                    </h2>
-                    {releaseStatus === 'installed' ? (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        {t('Installed')}
-                      </span>
-                    ) : null}
-                    {releaseStatus === 'update-available' ? (
-                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-                        {t('Update available')}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">
-                    {release.summary}
-                  </p>
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]">
-                    {view.sourceTrust === 'official' ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 font-medium text-primary">
-                        <BadgeCheck className="size-3.5" aria-hidden="true" />
-                        {t('Official')}
-                      </span>
-                    ) : null}
-                    <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                      {t('Publisher: {{publisher}}', { publisher: release.publisher.name })}
-                    </span>
-                    {release.author ? (
-                      <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                        {t('Author: {{author}}', { author: release.author })}
-                      </span>
-                    ) : null}
-                    <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                      v{release.version}
-                    </span>
-                    <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                      {release.license}
-                    </span>
-                    <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                      {formatBytes(release.compressedBytes)}
-                    </span>
-                    {view.sourceName ? (
-                      <span className="rounded-full border border-border px-2 py-1 text-muted-foreground">
-                        {view.sourceName}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
+              <ResourceDetailHeader
+                identity={
+                  <SpecialistIdentity id={release.specialistId} displayName={release.displayName} />
+                }
+                name={release.displayName}
+                description={release.summary}
+              >
+                {releaseStatus === 'installed' ? <span>{t('Installed')}</span> : null}
+                {releaseStatus === 'update-available' ? (
+                  <span className="text-primary">{t('Update available')}</span>
+                ) : null}
+                <span>{t('Publisher: {{publisher}}', { publisher: release.publisher.name })}</span>
+                {release.author ? (
+                  <span>{t('Author: {{author}}', { author: release.author })}</span>
+                ) : null}
+                <span>
+                  {t('Version')}: {release.version}
+                </span>
+                <span>
+                  {t('License')}: {release.license}
+                </span>
+                <span>{formatBytes(release.compressedBytes)}</span>
+                {view.sourceName ? <span>{view.sourceName}</span> : null}
+                {view.sourceTrust === 'official' ? (
+                  <span className="inline-flex items-center gap-1 text-primary">
+                    <BadgeCheck className="size-3.5" aria-hidden="true" />
+                    {t('Official')}
+                  </span>
+                ) : null}
+              </ResourceDetailHeader>
+              <ResourceDetailActions>
                 <Button
                   type="button"
                   className="shrink-0"
@@ -903,7 +1013,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                               : t('Install Specialist')}
                   </span>
                 </Button>
-              </div>
+              </ResourceDetailActions>
 
               {installBusy && !installPreview ? (
                 <div className="mt-4 space-y-1.5" role="status" aria-live="polite">
@@ -939,13 +1049,13 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                 </div>
               ) : null}
 
-              <div className="mt-5 space-y-3">
-                <section className="overflow-hidden rounded-xl border border-border bg-background">
+              <div className="mt-6 space-y-6">
+                <section className="border-t border-border pt-4">
                   <button
                     type="button"
                     aria-expanded={skillsExpanded}
                     onClick={() => setSkillsExpanded((expanded) => !expanded)}
-                    className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    className="flex min-h-11 w-full items-center gap-3 rounded py-1 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
                     <ScrollText
                       className="size-5 shrink-0 text-muted-foreground"
@@ -997,12 +1107,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   ) : null}
                 </section>
 
-                <section className="overflow-hidden rounded-xl border border-border bg-background">
+                <section className="border-t border-border pt-4">
                   <button
                     type="button"
                     aria-expanded={connectorsExpanded}
                     onClick={() => setConnectorsExpanded((expanded) => !expanded)}
-                    className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    className="flex min-h-11 w-full items-center gap-3 rounded py-1 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
                     <ConnectorsNavIcon className="size-5 shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
@@ -1166,117 +1276,116 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   return (
     <TooltipProvider delayDuration={200}>
       <div className="p-5">
-        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-foreground">{t('Marketplace')}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t('Browse and install Specialists from configured sources.')}
-            </p>
-          </div>
-          <div className="flex items-center gap-1">
-            <SettingsIconAction
-              label={t('Refresh Marketplace')}
-              icon={RefreshCw}
-              disabled={isRefreshing}
-              className={
-                isRefreshing ? '[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none' : ''
+        <ResourceCatalogHeader
+          icon={Users}
+          title={t('Specialists')}
+          actions={addAction}
+          toolbar={
+            <ResourceCatalogToolbar
+              onResetFilters={() => {
+                setFilter('all')
+              }}
+              activeFilterCount={Number(filter !== 'all')}
+              search={
+                <SettingsSearchInput
+                  aria-label={t('Search Marketplace')}
+                  placeholder={t('Search Marketplace…')}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
               }
-              onClick={() => void refreshMarketplace({ forceRefresh: true })}
-            />
-            <SettingsIconAction
-              label={t('Manage Marketplace sources')}
-              icon={Settings2}
-              onClick={() => onNavigate({ kind: 'marketplace-sources' })}
-            />
-          </div>
-        </div>
-        <div className="mb-4 flex items-center gap-2">
-          <SettingsSearchInput
-            aria-label={t('Search Marketplace')}
-            placeholder={t('Search Marketplace…')}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+              trailing={
+                <>
+                  {snapshot && snapshot.sources.length > 0 && !lastRefreshFailed ? (
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="ml-auto flex min-h-4 items-center gap-1.5 text-xs text-muted-foreground"
+                    >
+                      {isRefreshing ? (
+                        <>
+                          <Loader2
+                            className="size-3.5 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                          <span className="font-medium text-foreground">
+                            {t('Refreshing Marketplace…')}
+                          </span>
+                          {lastDataAt ? (
+                            <span>
+                              /{' '}
+                              {t('Showing data from {{time}}', {
+                                time: formatRelative(lastDataAt)
+                              })}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : lastDataAt ? (
+                        <span>{t('Updated {{time}}', { time: formatRelative(lastDataAt) })}</span>
+                      ) : null}
+                    </p>
+                  ) : null}
+
+                  <ResourceCatalogActions
+                    menuTriggerRef={sourceMenuTrigger}
+                    onRefresh={() => void refreshMarketplace({ forceRefresh: true })}
+                    refreshing={isRefreshing}
+                    items={[
+                      {
+                        label: t('Manage Marketplace sources'),
+                        onSelect: () => onNavigate({ kind: 'marketplace-sources' })
+                      }
+                    ]}
+                  />
+                </>
+              }
+            >
+              {snapshot && snapshot.specialists.length > 0 ? (
+                <ResourceCatalogFilter label={t('Category')}>
+                  <Select
+                    value={filter}
+                    onValueChange={(value) => setFilter(value as MarketplaceFilter)}
+                  >
+                    <SelectTrigger
+                      aria-label={t('Filter Marketplace Specialists')}
+                      className="w-44"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(
+                        [
+                          ['all', t('All'), filterCounts.all],
+                          ['official', t('Official'), filterCounts.official],
+                          ['community', t('Community'), filterCounts.community],
+                          ...(filterCounts.updates > 0 || filter === 'updates'
+                            ? [['updates', t('Updates available'), filterCounts.updates] as const]
+                            : [])
+                        ] as const
+                      ).map(([key, label, count]) => (
+                        <SelectItem key={key} value={key}>
+                          {label}
+                          <span className="ml-2 tabular-nums text-muted-foreground">{count}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </ResourceCatalogFilter>
+              ) : null}
+            </ResourceCatalogToolbar>
+          }
+        >
+          <ResourceCenterModeTabs
+            count={installedSpecialists.length}
+            installedLabel={t('Installed', { context: 'specialists' })}
+            value="marketplace"
+            onChange={(value) => {
+              if (value === 'installed') onNavigate({ kind: 'list' })
+            }}
           />
-        </div>
-        {!loading &&
-        snapshot &&
-        (snapshot.specialists.length > 0 || (snapshot.sources.length > 0 && !lastRefreshFailed)) ? (
-          <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            {snapshot.specialists.length > 0 ? (
-              <div
-                role="group"
-                aria-label={t('Filter Marketplace Specialists')}
-                className="flex flex-wrap items-center gap-1.5"
-              >
-                {(
-                  [
-                    ['all', t('All'), filterCounts.all],
-                    ['official', t('Official'), filterCounts.official],
-                    ['community', t('Community'), filterCounts.community]
-                  ] as const
-                ).map(([key, label, count]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={filter === key}
-                    onClick={() => setFilter(key)}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
-                      filter === key
-                        ? 'bg-primary/10 font-medium text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    {label}
-                    <span className="tabular-nums">{count}</span>
-                  </button>
-                ))}
-                {filterCounts.updates > 0 || filter === 'updates' ? (
-                  <button
-                    type="button"
-                    aria-pressed={filter === 'updates'}
-                    onClick={() => setFilter('updates')}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors motion-reduce:transition-none ${
-                      filter === 'updates'
-                        ? 'bg-primary/10 font-medium text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                    }`}
-                  >
-                    {t('Updates available')}
-                    <span className="tabular-nums">{filterCounts.updates}</span>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            {/* Stale-while-revalidate status: neutral while content is on screen, and distinct from
-              the warning banners below, which mean degraded data rather than merely old data. */}
-            {snapshot.sources.length > 0 && !lastRefreshFailed ? (
-              <p
-                role="status"
-                aria-live="polite"
-                className="ml-auto flex min-h-4 items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                {isRefreshing ? (
-                  <>
-                    <Loader2
-                      className="size-3.5 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                    <span className="font-medium text-foreground">
-                      {t('Refreshing Marketplace…')}
-                    </span>
-                    {lastDataAt ? (
-                      <span>
-                        / {t('Showing data from {{time}}', { time: formatRelative(lastDataAt) })}
-                      </span>
-                    ) : null}
-                  </>
-                ) : lastDataAt ? (
-                  <span>{t('Updated {{time}}', { time: formatRelative(lastDataAt) })}</span>
-                ) : null}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        </ResourceCatalogHeader>
+
+        {uninstallError ? <MarketplaceError message={uninstallError} /> : null}
         {loading ? <MarketplaceLoading label={t('Loading Marketplace…')} /> : null}
         {!loading && !snapshot && lastRefreshFailed ? (
           <MarketplaceError
@@ -1358,11 +1467,21 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           </div>
         ) : null}
         {!loading && visibleListings.length ? (
-          <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,240px),1fr))] gap-3">
+          <ul className="resource-marketplace-grid grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3">
             {visibleListings.map((item) => {
               const status = statusByKey.get(marketplaceListingKey(item)) ?? ('available' as const)
               const opensDetails = status === 'available' || status === 'update-available'
-              const navigate = (): void => {
+              const installed = installedSpecialists.find((specialist) => specialist.id === item.id)
+              const canUninstall = Boolean(
+                status === 'installed' &&
+                installed?.kind === 'custom' &&
+                installed.origin === 'marketplace' &&
+                onUninstall &&
+                !uninstallBusy
+              )
+              const key = marketplaceListingKey(item)
+              const uninstallArmed = canUninstall && uninstallArmedKey === key
+              const navigate = (installRequested = false): void => {
                 if (!opensDetails) {
                   onNavigate({ kind: 'edit', id: item.id })
                   return
@@ -1375,82 +1494,91 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   id: item.id,
                   version: item.version,
                   installedVersion: item.installedVersion,
-                  updateAvailable: item.updateAvailable
+                  updateAvailable: item.updateAvailable,
+                  ...(installRequested ? { installRequested: true } : {})
                 })
               }
               return (
                 <li
                   key={marketplaceListingKey(item)}
-                  className="group relative flex flex-col rounded-xl border border-border bg-background p-4 text-center transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
+                  className="resource-marketplace-card flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
                 >
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 cursor-pointer flex-col items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring after:absolute after:-inset-px after:rounded-[inherit]"
-                    onClick={navigate}
-                  >
-                    <SpecialistIdentity id={item.id} displayName={item.displayName} size="lg" />
-                    <span className="mt-3 block max-w-full truncate text-sm font-semibold text-foreground">
-                      {item.displayName}
-                    </span>
-                    <span className="mt-1.5 flex min-h-5 flex-wrap items-center justify-center gap-1 text-[11px]">
-                      {status !== 'available' ? (
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${
-                            status === 'update-available'
-                              ? 'bg-primary/10 text-primary'
-                              : 'bg-muted text-muted-foreground'
-                          }`}
-                        >
-                          {status === 'update-available'
-                            ? t('Update available')
-                            : status === 'setup-incomplete'
-                              ? t('Setup incomplete')
-                              : t('Installed')}
-                        </span>
-                      ) : null}
-                      {item.sourceTrust === 'official' ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
-                          <BadgeCheck className="size-3.5" aria-hidden="true" />
-                          {t('Official')}
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
-                          {t('Community')}
-                        </span>
-                      )}
-                    </span>
-                    <span className="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-muted-foreground">
-                      {item.summary}
-                    </span>
-                    <span className="mt-2 block max-w-full truncate text-[11px] text-muted-foreground">
-                      {item.publisher.name} / v{item.version}
-                    </span>
-                    {item.author ? (
-                      <span className="mt-0.5 block max-w-full truncate text-[11px] text-muted-foreground">
-                        {t('Author: {{author}}', { author: item.author })}
-                      </span>
-                    ) : null}
-                  </button>
-                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
-                    <span className="min-w-0 truncate text-left text-[11px] text-muted-foreground">
-                      {item.sourceName}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="relative z-10 shrink-0 cursor-pointer"
-                      onClick={navigate}
-                    >
-                      {opensDetails ? t('View details') : t('Manage')}
-                    </Button>
-                  </div>
+                  <ResourceMarketplaceCardContent
+                    id={item.id}
+                    name={item.displayName}
+                    publisher={item.publisher.name}
+                    summary={item.summary}
+                    onOpen={() => navigate()}
+                    primaryAction={
+                      <Button
+                        type="button"
+                        variant={uninstallArmed ? 'destructive' : 'outline'}
+                        size="sm"
+                        className="skill-marketplace-install-action shrink-0"
+                        data-installed={status === 'installed' && !uninstallArmed}
+                        aria-live="polite"
+                        disabled={
+                          uninstallBusy ||
+                          (status === 'installed' && !canUninstall) ||
+                          (opensDetails && !canInstallSpecialist)
+                        }
+                        onPointerEnter={(event) => {
+                          if (event.pointerType === 'mouse' && canUninstall)
+                            setUninstallArmedKey(key)
+                        }}
+                        onPointerLeave={(event) => {
+                          if (event.pointerType === 'mouse') setUninstallArmedKey(undefined)
+                        }}
+                        onFocus={(event) => {
+                          if (canUninstall && event.currentTarget.matches(':focus-visible'))
+                            setUninstallArmedKey(key)
+                        }}
+                        onBlur={() => setUninstallArmedKey(undefined)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape' && uninstallArmed) {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            setUninstallArmedKey(undefined)
+                          }
+                        }}
+                        onClick={() => {
+                          if (canUninstall) {
+                            if (uninstallArmed) onUninstall?.(item.id)
+                            else setUninstallArmedKey(key)
+                          } else navigate(true)
+                        }}
+                      >
+                        {status === 'installed' ? (
+                          uninstallArmed ? (
+                            <Trash2 className="size-4" aria-hidden="true" />
+                          ) : (
+                            <CheckCircle2 className="size-4" aria-hidden="true" />
+                          )
+                        ) : null}
+                        {status === 'installed'
+                          ? t(uninstallArmed ? 'Uninstall' : 'Installed')
+                          : status === 'setup-incomplete'
+                            ? t('Finish setup')
+                            : status === 'update-available'
+                              ? t('Update')
+                              : t('Install')}
+                      </Button>
+                    }
+                    status={
+                      status === 'update-available'
+                        ? t('Update available')
+                        : status === 'setup-incomplete'
+                          ? t('Setup incomplete')
+                          : undefined
+                    }
+                  />
                 </li>
               )
             })}
           </ul>
         ) : null}
       </div>
+      {sourceDrawer}
     </TooltipProvider>
   )
 }

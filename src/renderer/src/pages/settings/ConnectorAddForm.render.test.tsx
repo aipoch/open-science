@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConnectorAddForm } from './ConnectorAddForm'
+import { ConnectorResourcePanel } from './ConnectorResourcePanel'
 import {
   parseConnectorTemplate,
   buildConnectorTemplateExport
@@ -1979,3 +1980,140 @@ it.each(['closed', 'replaced'] as const)(
       )
   }
 )
+
+it.each(['refresh', 'save-race'] as const)(
+  'preserves an edited Connector draft when deletion is detected by %s',
+  async (deletion) => {
+    const server = {
+      id: 'custom-server-uuid',
+      name: 'my-mcp',
+      displayName: 'My MCP',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx'
+    }
+    const update = vi
+      .fn()
+      .mockRejectedValue(new Error('Unknown custom connector: custom-server-uuid'))
+    const add = vi.fn()
+    const onDone = vi.fn()
+    const originalUpdate = useSettingsStore.getState().updateCustomServer
+    useSettingsStore.setState({ updateCustomServer: update, addCustomServer: add })
+    const render = (present: boolean): void =>
+      root.render(
+        <ConnectorAddForm
+          editServerId={server.id}
+          editServer={present ? server : undefined}
+          onDone={onDone}
+          onCancel={vi.fn()}
+        />
+      )
+    try {
+      await act(async () => render(true))
+      setValue('Display name', 'Unsaved research server')
+      if (deletion === 'refresh') await act(async () => render(false))
+      const save = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent?.trim() === 'Save changes'
+      )!
+      if (deletion === 'refresh') {
+        expect(save.disabled).toBe(true)
+        expect(document.body.textContent).toContain(
+          'This Connector no longer exists. Your draft has not been saved.'
+        )
+        expect(update).not.toHaveBeenCalled()
+      } else {
+        await act(async () => save.click())
+        expect(update).toHaveBeenCalledWith(
+          expect.objectContaining({ id: server.id, displayName: 'Unsaved research server' })
+        )
+        expect(document.body.textContent).toContain('Unknown custom connector: custom-server-uuid')
+      }
+      expect(document.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value).toBe(
+        'Unsaved research server'
+      )
+      expect(add).not.toHaveBeenCalled()
+      expect(onDone).not.toHaveBeenCalled()
+    } finally {
+      useSettingsStore.setState({ updateCustomServer: originalUpdate })
+    }
+  }
+)
+
+it('retains Connector fields when the parent returns from nested credential creation', async () => {
+  const onCredentialViewChange = vi.fn()
+  const render = (credentialViewOpen: boolean): void =>
+    root.render(
+      <ConnectorAddForm
+        initialTransport="local"
+        credentialViewOpen={credentialViewOpen}
+        onCredentialViewChange={onCredentialViewChange}
+        onDone={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+  await act(async () => render(false))
+  setValue('Display name', 'Draft research server')
+  openAdvancedSettings()
+  setValue('Variable name', 'API_TOKEN')
+  selectOption('Credential for API_TOKEN', 'New credential')
+  expect(onCredentialViewChange).toHaveBeenLastCalledWith(true)
+  await act(async () => render(true))
+  expect(document.querySelector('[aria-label="Display name"]')).toBeNull()
+  await act(async () => render(false))
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value).toBe(
+    'Draft research server'
+  )
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Variable name"]')?.value).toBe(
+    'API_TOKEN'
+  )
+})
+
+it('resolves a custom Connector reference after the catalog finishes loading', async () => {
+  let finish!: () => void
+  const loadConnectors = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  useSettingsStore.setState({ connectorsLoaded: false, customServers: [], loadConnectors })
+  const onNavigate = vi.fn()
+  await act(async () =>
+    root.render(
+      <ConnectorResourcePanel
+        view={{ kind: 'detail', id: 'research-connector' }}
+        onNavigate={onNavigate}
+        onCancel={vi.fn()}
+      />
+    )
+  )
+  expect(container.textContent).toContain('Loading Connectors')
+  expect(onNavigate).not.toHaveBeenCalled()
+  await act(async () => {
+    useSettingsStore.setState({
+      connectorsLoaded: true,
+      customServers: [
+        {
+          id: 'custom-record',
+          name: 'research-connector',
+          displayName: 'Research',
+          transport: 'stdio',
+          enabled: true
+        }
+      ]
+    })
+    finish()
+  })
+  expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'edit', id: 'custom-record' })
+  const onRetainedNavigate = vi.fn()
+  await act(async () =>
+    root.render(
+      <ConnectorResourcePanel
+        view={{ kind: 'detail', id: 'research-connector' }}
+        onNavigate={onRetainedNavigate}
+        onCancel={vi.fn()}
+      />
+    )
+  )
+  expect(onRetainedNavigate).not.toHaveBeenCalled()
+})

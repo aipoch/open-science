@@ -116,7 +116,7 @@ t('{{count}} files', { count: n, defaultValue_one: '{{count}} file' })
 Use `_verb` when the same English word is used as both a noun and a verb and a translated locale
 needs different copy (example: "Archive" → 压缩包 as noun, 归档 as verb). Add the context at the call
 site: `t('Archive', { context: 'verb' })`. Both the bare key and the `_verb` key need catalog entries when both meanings are used.
-The guard currently permits context suffixes `ago`, `duration`, `files`, `inUse`, `language`,
+The guard currently permits context suffixes `ago`, `audit`, `duration`, `files`, `inUse`, `language`,
 `runtime`, `specialists`, `step`, `theme`, `verb`, and `window`; new contexts must be added
 to the guard deliberately, with their call sites and translations.
 

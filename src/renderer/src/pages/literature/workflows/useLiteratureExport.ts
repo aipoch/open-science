@@ -3,7 +3,14 @@ import type { LiteratureCitationStyle } from '@aipoch/literature-citations/contr
 import { useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { createReferenceExporter } from '@aipoch/literature-library/client'
+import {
+  createLiteratureClient,
+  createReferenceExporter,
+  type ReferenceExportRequest
+} from '@aipoch/literature-library/client'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+
+type ReferenceExportFormat = ReferenceExportRequest['format']
 
 export function useLiteratureExport({
   citationStyle: citationStyleRef,
@@ -20,26 +27,45 @@ export function useLiteratureExport({
   resolveSelectedItemIds: () => Promise<string[]>
   onError: (message: string | undefined) => void
 }): {
-  exportSelectedItems: (format: 'bibtex' | 'ris') => Promise<boolean>
-  exportCurrentScope: (format: 'bibtex' | 'ris') => Promise<boolean>
+  exportSelectedItems: (format: ReferenceExportFormat) => Promise<boolean>
+  exportCurrentScope: (format: ReferenceExportFormat) => Promise<boolean>
 } {
   const { api: hostApi } = useLiteratureHost()
 
   const { t } = useTranslation()
-  const [exportReferences] = useState(() =>
-    createReferenceExporter({
+  const [exportReferences] = useState(() => {
+    const client = createLiteratureClient(hostApi.literature)
+    return createReferenceExporter({
       format: (request) => hostApi.literature.formatReferences(request),
+      readItems: async (itemIds) => {
+        const page = await client.readLiteratureSelectionPage({
+          scope: 'library',
+          lifecycle: 'active',
+          itemIds: [...itemIds],
+          limit: itemIds.length,
+          offset: 0
+        })
+        if (page.entries.length !== itemIds.length || page.nextOffset !== undefined)
+          throw new Error('Literature metadata is incomplete.')
+        const items: LiteratureItemView[] = []
+        for (const entry of page.entries) {
+          if (!('item' in entry)) throw new Error('Literature metadata is unavailable.')
+          items.push(entry)
+        }
+        return items
+      },
       save: (file) => hostApi.saveBlobFile(file)
     })
-  )
+  })
 
   const exportReferenceIds = async (
-    itemIds: readonly string[],
-    format: 'bibtex' | 'ris',
+    resolveItemIds: () => Promise<readonly string[]>,
+    format: ReferenceExportFormat,
     filenameStem: string
   ): Promise<boolean> => {
     setError(undefined)
     try {
+      const itemIds = await resolveItemIds()
       return await exportReferences({
         itemIds,
         format,
@@ -53,31 +79,28 @@ export function useLiteratureExport({
     }
   }
 
-  const exportSelectedItems = async (format: 'bibtex' | 'ris'): Promise<boolean> =>
-    exportReferenceIds(await resolveSelectedItemIds(), format, 'selected-references')
+  const exportSelectedItems = async (format: ReferenceExportFormat): Promise<boolean> =>
+    exportReferenceIds(resolveSelectedItemIds, format, 'selected-references')
 
-  const exportCurrentScope = async (format: 'bibtex' | 'ris'): Promise<boolean> => {
+  const exportCurrentScope = async (format: ReferenceExportFormat): Promise<boolean> => {
     if (!selectedProject && !selectedCollection) return false
-    try {
-      const page = await hostApi.literature.search({
-        scope: 'library',
-        ...(selectedProject ? { projectId: selectedProject.id } : {}),
-        ...(selectedCollection ? { collectionId: selectedCollection.id } : {}),
-        lifecycle: 'active',
-        sortBy: 'title',
-        sortDirection: 'asc',
-        allItemIds: true
-      })
-      if (!page.itemIds) throw new Error('Literature membership is unavailable.')
-      return await exportReferenceIds(
-        page.itemIds,
-        format,
-        `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
-      )
-    } catch (error) {
-      setError(t('References could not be exported.'))
-      throw error
-    }
+    return exportReferenceIds(
+      async () => {
+        const page = await hostApi.literature.search({
+          scope: 'library',
+          ...(selectedProject ? { projectId: selectedProject.id } : {}),
+          ...(selectedCollection ? { collectionId: selectedCollection.id } : {}),
+          lifecycle: 'active',
+          sortBy: 'title',
+          sortDirection: 'asc',
+          allItemIds: true
+        })
+        if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+        return page.itemIds
+      },
+      format,
+      `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
+    )
   }
 
   return { exportSelectedItems, exportCurrentScope }

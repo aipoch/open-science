@@ -103,10 +103,13 @@ describe('provider endpoint compatibility', () => {
   it('prefers the OpenAI endpoint when both sides support it (both + both → openai)', () => {
     const openCodeEndpoint = preferredEndpoint(
       ['messages', 'chat-completions'],
-      ['messages', 'chat-completions']
+      ['chat-completions', 'messages']
     )
     expectTypeOf(openCodeEndpoint).toEqualTypeOf<'messages' | 'chat-completions' | undefined>()
     expect(openCodeEndpoint).toBe('chat-completions')
+    expect(
+      preferredEndpoint(['chat-completions', 'messages'], ['messages', 'chat-completions'])
+    ).toBe('messages')
     // A both-provider on an anthropic-only framework falls back to the shared anthropic endpoint.
     expect(preferredEndpoint(['messages', 'chat-completions'], ['messages'])).toBe('messages')
     // Single-endpoint providers resolve to that endpoint when shared.
@@ -175,16 +178,23 @@ describe('provider endpoint compatibility', () => {
     expect(isModelBridgeSupported({ vendorId: 'deepseek' }, undefined)).toBe(true)
   })
 
-  it('allows Codex subscription profiles only with the Codex framework', () => {
+  it('allows Codex subscription profiles with Codex and the built-in Agent', () => {
     const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
     const claude = { id: 'claude-code' as const, supportedApiTypes: ['messages'] as const }
     const opencode = {
       id: 'opencode' as const,
-      supportedApiTypes: ['messages', 'chat-completions'] as const
+      supportedApiTypes: ['chat-completions', 'messages'] as const
     }
 
     for (const type of ['codex-shared', 'codex-isolated'] as const) {
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, codex)).toBe(true)
+      expect(
+        isProviderUsableByFramework(
+          { type },
+          { id: 'open-science-agent', supportedApiTypes: ['responses'] }
+        )
+      ).toBe(true)
+      expect(providerEndpoints({ type, apiEndpoints: ['messages'] })).toEqual(['responses'])
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, claude)).toBe(false)
       expect(isProviderUsableByFramework({ type, apiEndpoints: ['responses'] }, opencode)).toBe(
         false

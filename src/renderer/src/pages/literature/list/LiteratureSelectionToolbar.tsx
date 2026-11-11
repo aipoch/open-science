@@ -35,6 +35,7 @@ import type { useSmartDecisionBatch } from '../collections/useSmartDecisionBatch
 import { type BatchLookupMode } from '../workflows/LiteratureBatchLookupDialog'
 import { LiteratureExportMenu } from './LiteratureLibraryMenus'
 import type { LiteratureSelectionStore } from './literature-selection'
+import type { ReferenceExportRequest } from '@aipoch/literature-library/client'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200
 
@@ -114,7 +115,7 @@ export function LiteratureSelectionToolbar({
   addSelectedItemsToProject: (projectId: string) => Promise<void>
   items: LiteratureItemView[]
   previewRestoreSelection: () => Promise<void>
-  exportSelectedItems: (format: 'bibtex' | 'ris') => Promise<boolean>
+  exportSelectedItems: (format: ReferenceExportRequest['format']) => Promise<boolean>
   requestBatchLookup: (mode: BatchLookupMode) => Promise<void>
   setMergeSurvivorId: React.Dispatch<React.SetStateAction<string>>
   setMergeFieldSources: React.Dispatch<React.SetStateAction<Record<string, string>>>

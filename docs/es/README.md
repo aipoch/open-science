@@ -51,36 +51,21 @@ Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el c�
 
 ### 💡 AIPOCH Open-Science v1.2.0 — Novedades
 
-_8 de noviembre de 2026_
+_9 de noviembre de 2026_
 
-- **Cómputo remoto**: Ejecute trabajos aprobados en Kubernetes, Hugging Face Jobs, Modal o Ray junto a SSH y Slurm, con aprobación por trabajo y recuperación tras reinicios.
-- **Agente integrado**: Un runtime de agente integrado e independiente es ahora el predeterminado en las nuevas instalaciones, con Claude Code, OpenCode, Codex, CodeBuddy y Pi aún disponibles.
-- **Actualizaciones de macOS más rápidas**: Las descargas diferenciales obtienen solo los bloques modificados de la imagen de la aplicación, con respaldo a la descarga completa.
-- **Discusiones por paso**: Pregunte desde un paquete `.science` importado o un paso de reproducción para abrir una conversación hija vinculada a ese paso.
-- **Espacio de trabajo pulido**: Los grupos de la barra lateral se reordenan con una única lista de recientes, el historial importado promueve «fork to continue» y enviar desde un turno anterior conserva su posición de lectura.
-- **Correcciones de fiabilidad**: Las comprobaciones de actualización verifican la aplicación en ejecución y nombran los archivos bloqueantes, Windows ajusta la ventana al área de la barra de tareas y la traducción de PDF conserva las páginas correctas cuando una falla.
+- **Cómputo remoto**: Ejecute trabajos aprobados en destinos Kubernetes, Hugging Face Jobs, Modal o Ray conectados por usted, además de SSH y Slurm, con aprobación por trabajo y recuperación de la recogida de resultados tras reinicios.
+- **Agente integrado**: Open-Science Agent es el entorno independiente predeterminado en las nuevas instalaciones; Claude Code, OpenCode, Codex, CodeBuddy y Pi siguen disponibles.
+- **Actualizaciones de macOS más rápidas**: Descargue solo los bloques modificados de la imagen de la aplicación, con descarga completa automática si es necesario.
+- **Discusiones por paso**: Las preguntas desde una investigación `.science` importada o un paso de reproducción abren una conversación secundaria vinculada al paso; la importación sigue siendo de solo lectura.
+- **Vista previa de fuentes**: Al pasar el cursor sobre un enlace se muestra el dominio de destino y, para fuentes HTTPS aprobadas, el título y la descripción.
+- **Mejoras del espacio de trabajo**: Barra lateral más sencilla, acción «Fork to continue» destacada y posición de lectura estable al enviar desde un turno anterior.
+- **Fiabilidad**: macOS verifica la aplicación en ejecución antes de actualizar; Windows identifica los archivos bloqueantes y mantiene la entrada sobre la barra de tareas. La traducción de PDF de diseño fijo conserva las páginas correctas si una falla.
 
 [Notas completas v1.2.0](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
 </p>
-
-## Tabla de contenido
-
-- [Inicio rápido](#-inicio-rápido)
-- [Paquetes de investigación `.science` de AIPOCH Open-Science](#paquetes-de-investigación-science-de-aipoch-open-science)
-- [AIPOCH Open-Science: artículo y cita](#aipoch-open-science-artículo-y-cita)
-- [Resultados de benchmarks](#rendimiento-en-benchmarks)
-- [Capacidades principales](#capacidades-principales)
-- [Proveedores de modelos](#proveedores-de-modelos)
-- [Datos, permisos y confianza](#datos-permisos-y-confianza)
-- [Desarrollo y empaquetado](#desarrollo-y-empaquetado)
-- [Preguntas frecuentes](#preguntas-frecuentes)
-- [Colaboradores](#colaboradores)
-- [Participe](#participe)
-- [Licencia](#licencia)
-- [Historial de estrellas](#historial-de-estrellas)
 
 ## 🚀 Inicio rápido
 
@@ -134,6 +119,8 @@ Complete las comprobaciones obligatorias del entorno y del runtime del agente y 
 
 En los ajustes del sistema encontrará las opciones de apariencia y notificaciones. La sección **General** incluye la guía de instalación y actualización manuales.
 
+La antigua pestaña Modelo ahora se llama **Capacidades locales** e incluye extracción de PDF, paquetes de idioma OCR y narración de investigaciones. La narración requiere un modelo de voz instalado localmente.
+
 <table>
 <tr>
 <td width="50%"> <img src="../images/readme/onboarding-environment.jpg" alt="Comprobaciones automáticas del entorno durante el primer inicio de AIPOCH Open-Science"> </td>
@@ -167,48 +154,25 @@ La exportación y la importación están disponibles en la aplicación de escrit
 
 Los registros importados siguen siendo de solo lectura; ver la reproducción no ejecuta código, no llama a modelos ni restaura credenciales. La primera pregunta crea una conversación editable asociada; utilice **Fork to continue** para crear una copia de trabajo. Volver a ejecutar un resultado sigue requiriendo una receta completa, los datos necesarios y un entorno disponible.
 
+Las preguntas desde una investigación importada o un paso de reproducción abren discusiones secundarias vinculadas al paso sin modificar la importación. Se conservan al archivar; al eliminar la sesión principal se convierten en conversaciones normales.
+
 Se excluyen las conversaciones Side Chat, los marcadores privados de lectura y las credenciales; los archivos incluidos dependen de la selección de exportación. Los registros de verificación recibidos describen las comprobaciones del remitente, no una nueva ejecución en este equipo. Consulte la [guía de paquetes `.science`](https://aipoch.com/docs/guides/research-packages/).
-
-## AIPOCH Open-Science: artículo y cita
-
-**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
-
-Preprint de arXiv · [v1](https://arxiv.org/abs/2610.17110v1) · Enviado el 12 de octubre de 2026.
-
-Nuestro preprint presenta AIPOCH Open-Science, un entorno de investigación con IA de código abierto que utiliza paquetes `.science` portátiles para compartir el contexto de investigación, las versiones de artefactos y los registros de verificación. Consulte el artículo para conocer el diseño de intercambio de paquetes y la evaluación controlada.
-
-Si utiliza AIPOCH Open-Science en su investigación, puede citar el preprint:
-
-<details>
-<summary>Cita BibTeX</summary>
-
-```bibtex
-@misc{ouyang2026aipochopenscienceopensourceai,
-      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
-      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
-      year={2026},
-      eprint={2610.17110},
-      archivePrefix={arXiv},
-      primaryClass={cs.SE},
-      url={https://arxiv.org/abs/2610.17110},
-}
-```
-
-</details>
 
 <a id="rendimiento-en-benchmarks"></a>
 
 ## Resultados de benchmarks
 
-AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo, responder preguntas sobre su contenido y ejecutar un plan de investigación. Los resultados siguientes proceden de ejecuciones propias de AIPOCH. Cada puntuación corresponde a una tarea y una configuración de evaluación concretas.
+AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo, responder preguntas sobre su contenido y ejecutar un plan de investigación. Los resultados siguientes proceden de ejecuciones propias de AIPOCH. Cada puntuación corresponde a una tarea y una configuración de evaluación concretas. La evaluación también abarca la reproducción de resultados computacionales y la formulación de hipótesis a partir de datos.
 
-| Tarea                               | Resultado de AIPOCH Open-Science                                                                                                                                                                           |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Encontrar el artículo objetivo      | En **68 de las 75 preguntas de prueba**, el artículo objetivo apareció entre los primeros 30 resultados de LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                     |
-| Responder a partir de la literatura | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
-| Elaborar una síntesis con citas     | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
-| Ejecutar flujos de investigación    | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
-| Analizar datos biomédicos           | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
+| Tarea                                | Resultado de AIPOCH Open-Science                                                                                                                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Encontrar el artículo objetivo       | En **68 de las 75 preguntas de prueba**, el artículo objetivo apareció entre los primeros 30 resultados de LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                     |
+| Responder a partir de la literatura  | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
+| Elaborar una síntesis con citas      | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
+| Ejecutar flujos de investigación     | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
+| Analizar datos biomédicos            | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
+| Reproducir resultados publicados     | CORE-Bench-Hard — 36 de 37 tareas de prueba correctas (97,30 %) en la evaluación local. El recuento incluye repeticiones.                                                                                  |
+| Formular hipótesis a partir de datos | DiscoveryBench — En un subconjunto de 25 tareas de validación, la puntuación media del modelo evaluador local fue de 0,7467/1.                                                                             |
 
 ### AstaBench — Tareas de literatura
 
@@ -245,6 +209,22 @@ La puntuación compuesta se expresa en una escala de 0 a 1; no es el porcentaje 
 
 </details>
 
+### AstaBench — Reproducibilidad y formulación de hipótesis
+
+<details>
+<summary><strong>CORE-Bench-Hard — 36/37</strong></summary>
+
+El 6 de noviembre, AIPOCH utilizó DeepSeek Flash con razonamiento Max para reproducir resultados a partir del código, los datos y el README de un estudio. El evaluador programático oficial se ejecutó localmente y asignó un punto solo si todas las respuestas requeridas eran correctas. Se puntuaron las 37 tareas y el recuento incluye repeticiones. [AIPOCH](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
+
+</details>
+
+<details>
+<summary><strong>DiscoveryBench — 0,7467/1</strong></summary>
+
+El 9 de noviembre, AIPOCH utilizó deepseek-v4-flash tanto para generar hipótesis como para puntuarlas con una implementación local del procedimiento de evaluación. De las 25 tareas, 18 obtuvieron la puntuación máxima, dos una puntuación parcial y cinco un cero. El conjunto de tareas y el evaluador difieren de los de la prueba oficial completa, por lo que no se pueden comparar posiciones.
+
+</details>
+
 ### ASI-Bench — Seguir un plan y elegir métodos
 
 Las cuatro condiciones piden al agente ejecutar un plan especificado (B1), organizar un flujo de trabajo (B2), elegir métodos (B3) o investigar con información distractora (B4). Las dos primeras filas del gráfico comparan ejecuciones locales con el mismo modelo GPT-6 Astra.
@@ -274,42 +254,26 @@ El gráfico combina entradas con distinta cobertura de jueces. Su «#1» describ
 
 Consulte el [informe de AstaBench y ASI-Bench](https://aipoch.com/benchmark/open-science) y el [informe de BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) para conocer los detalles.
 
-## Capacidades principales
+<a id="capacidades-principales"></a>
 
-AIPOCH Open-Science combina gestión de proyectos, ejecución de agentes multimodelo, Notebooks de Python y R, conectores de datos científicos, versiones inmutables de artefactos con procedencia y control humano autorizado en un espacio de trabajo local. La aplicación instalada y las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) son la fuente de referencia para los catálogos actuales, los detalles de empaquetado y las opciones recién incorporadas.
+## ¿Por qué usar AIPOCH Open-Science?
 
-| Área                                                | Capacidad central                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Habilidades científicas**                         | Amplíe la investigación con **24 habilidades integradas** y **525 habilidades** del [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace), con instalación y actualizaciones en un clic. Cree habilidades mediante conversación o trabajo completado, importe paquetes o fuentes de GitHub y guarde repositorios de GitHub para reutilizarlos en el flujo de importación. Guardar un repositorio no instala sus habilidades. Las aportaciones se publican tras revisión; una importación local no las publica.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Conectores**                                      | Acceda a recursos científicos con **48 conectores integrados** o añada conectores MCP locales y remotos personalizados. Algunas fuentes integradas están desactivadas de forma predeterminada y requieren activación voluntaria por fuente. Gestione permisos por herramienta e importe o exporte configuraciones.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **Especialistas y delegación**                      | Instale **10 especialistas** del [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) o cree especialistas personales para recibir tareas del agente principal. Los paquetes admiten importación y exportación; las aportaciones se revisan antes de publicarse y las importaciones locales no las publican.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Modelos y backends de agentes**                   | Use modelos en la nube, pasarelas compatibles o inicios de sesión de suscripciones Claude y Codex. Elija Claude Code, OpenCode, Codex, CodeBuddy o Pi como backend, con pruebas de conexión, entrada de imágenes y ajustes de razonamiento.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **Proyectos, sesiones y paquetes de investigación** | Organice proyectos con sesiones fijadas, ramas de mensajes, conversaciones laterales e historial recuperable. Traslade un **paquete de investigación `.science` portátil** a otro proyecto o equipo con ramas de conversación, versiones de archivos seleccionadas, registros de Notebook y evidencia de verificación. Las importaciones son de solo lectura, sin ejecutar código ni restaurar credenciales; se excluyen conversaciones laterales y marcadores, y los archivos dependen de la selección de exportación.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| **Agente revisor**                                  | Active la revisión automática opcional para comprobar, en un contexto separado, las respuestas, registros de ejecución y evidencias de archivos relacionados con un turno completado del agente. Obtenga comprobaciones fundamentadas con resultados de aprobación, advertencia o fallo, con un número limitado de ciclos de corrección por el agente principal y nueva revisión cuando se detecten problemas. Se conservan los registros de revisión y el estado de resolución de los problemas; la revisión se limita a los registros disponibles para ese turno.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Python, R, Notebooks y HPC**                      | Ejecute Python, R, Notebook y shell localmente con entornos gestionados o intérpretes propios, con ejecución en segundo plano e historial. SSH y Slurm requieren el host, software, recursos y permisos descritos en la FAQ de cálculo remoto.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Biblioteca de referencias**                       | Importe y gestione referencias y PDF con colecciones, etiquetas, vínculos a proyectos, notas y fusión de duplicados. Descubra referencias y trabajos que citan un artículo mediante Semantic Scholar, descargue y previsualice adjuntos complementarios e importe PDF o archivos bibliográficos mediante arrastrar y soltar. Busque textos completos de acceso abierto, lea PDF, extraiga figuras y tablas y utilice fuentes de la biblioteca para el análisis asistido por IA. Para referencias con DOI válido, consulte manualmente en Crossref retractaciones o correcciones conocidas; la comprobación envía el DOI a Crossref y, dada su cobertura incompleta, la ausencia de aviso no demuestra que el trabajo no esté afectado. Genere bibliografías, exporte referencias en BibTeX o RIS y decisiones de Smart Screening en CSV. Establezca manualmente el estado de lectura como No leído, En lectura o Lectura finalizada, actualice las referencias seleccionadas en lote y filtre por estado. Busque en las notas personales desde el campo de búsqueda de referencias existente. |
-| **Archivos científicos y vistas previas**           | Suba archivos de hasta **10 GiB cada uno**, organice los archivos del proyecto y previsualice datos científicos, PDF, documentos Office, imágenes, código y estructuras moleculares. El límite de subida no garantiza que un modelo lea todo el archivo: contexto, análisis de adjuntos y vistas previas tienen límites propios. Los archivos grandes suelen necesitar lectura o análisis por bloques mediante código.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Artefactos y procedencia**                        | Conserve versiones inmutables de resultados con código generador, entradas, historial de ejecución, entorno y evidencia de revisión disponibles. Importe artefactos desde carpetas autorizadas; AIPOCH Open-Science copia cada archivo importado al almacenamiento gestionado de artefactos. En el escritorio, reproduzca versiones aptas con una receta completa, las entradas necesarias y un entorno utilizable, compare salidas y exporte registros de verificación. La falta de evidencia puede impedir la verificación, y reproducir resultados no demuestra validez científica.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+1. **Lee artículos y analiza datos en un mismo proyecto.**
+   - Importa referencias desde Zotero o pega hasta 100 identificadores o enlaces de artículos a la vez. Tras configurar un modelo de cribado, aplica tus criterios de inclusión y exclusión. Compara las decisiones del modelo con las tuyas y consulta los PDF para verificar un hallazgo en su contexto.
+   - Visualiza datos científicos, documentos, imágenes y estructuras moleculares junto a los artículos. Ejecuta Python o R en un cuaderno para generar una tabla o figura con los datos del proyecto y contrasta el resultado con los archivos de origen.
 
-Al consultar el eQTL Catalogue por coordenadas, Open-Science comprueba que correspondan al ensamblaje de referencia GRCh38.
+2. **Comprueba cómo se obtuvo un resultado y qué respalda la respuesta.**
+   - Abre una versión concreta de una figura, tabla o informe en **Provenance** para consultar las entradas, el código y el historial disponibles. Si dispones de las entradas, el procedimiento y el entorno de ejecución, vuelve a ejecutar esa versión en la aplicación de escritorio y compara los resultados.
+   - Activa **Reviewer** para contrastar la respuesta del agente con los registros de ejecución y los archivos disponibles para ese turno. Consulta los problemas que detecta y la revisión posterior a las correcciones del agente.
 
-Importe referencias, etiquetas, colecciones y enlaces a las fuentes desde Zotero 10 o posterior en ejecución en el mismo equipo. Puede elegir copiar los archivos PDF adjuntos locales; la importación es unidireccional y no modifica Zotero.
+3. **Comparte con tus colegas el contexto de un resultado.**
+   - Elige las ramas de conversación, versiones de archivos, registros del cuaderno y pruebas de verificación que incluirás en un paquete `.science`. Otra persona puede abrirlo en otro equipo y consultar los pasos que dieron lugar a una figura o tabla.
+   - El registro importado se abre en modo de solo lectura. La importación no ejecuta código ni restaura credenciales. Las verificaciones corresponden al equipo de origen. Para explorar otra pregunta, tu colega puede seleccionar **Fork to continue** y trabajar en una copia editable.
 
-Añada una referencia mediante un DOI, un identificador de arXiv, un PMID, un PMCID o un enlace de artículo compatible, o pegue hasta 100 referencias, una por línea. Revise y edite una referencia individual antes de guardar, o seleccione las referencias que desea importar por lotes. Los PDF de texto completo se pueden añadir por separado.
-
-Dispone de anotaciones PDF persistentes y notas de documentos. Con un modelo de cribado configurado, las colecciones inteligentes evalúan referencias según sus criterios de inclusión y exclusión. Las decisiones de IA y las manuales se registran por separado para apoyar la revisión humana.
-
-En el modo de lectura, los agentes pueden enumerar, localizar y crear notas y marcas en los PDF vinculados. Las anotaciones PDF están ligadas a la versión del archivo anotado y no se sincronizan entre equipos.
-
-En la vista de detalle del artículo, el modelo principal configurado resume la pregunta de investigación, la población estudiada, los métodos, los principales hallazgos y las limitaciones. La ficha indica si se basa en el texto completo o en el resumen del artículo.
-
-El OCR opcional reconoce las páginas PDF escaneadas una vez descargados el componente y los paquetes de idioma necesarios. Hay nueve paquetes de idioma disponibles: inglés, chino simplificado, chino tradicional, alemán, español, francés, japonés, coreano y ruso. Los indicadores de cobertura por página muestran qué páginas aún carecen de texto.
-
-Los PDF traducidos pueden refluir de forma opcional el texto del cuerpo y los pies de figura en una disposición de una sola columna centrada en el contenido, conservando imágenes, tablas, fórmulas y bibliografía en su forma original, con correspondencias entre páginas de origen y salida para comparar. En instalaciones nuevas, las restricciones de carpetas de Notebook y la línea de comandos están activadas de forma predeterminada y limitan esos entornos al espacio de trabajo, las carpetas aprobadas y los archivos necesarios para las herramientas; este ajuste no controla las herramientas nativas del agente ni los equipos remotos.
-
-En la aplicación de escritorio también puede exportar la procedencia de artefactos como RO-Crate 1.1. Un paquete de entorno ligado a una versión solo puede crear un entorno gestionado si la captura está completa y es compatible con la plataforma de destino; no es una copia de seguridad completa del equipo.
-
-Explore casos de investigación en el centro de recursos, filtre por categoría, busque por palabra clave y descargue paquetes desde los detalles de cada caso.
+4. **Elige herramientas y recursos de cómputo para tu análisis.**
+   - Selecciona un proveedor de modelos y accede a fuentes de datos científicos mediante **48 conectores integrados**. Algunos deben activarse primero.
+   - Usa las **24 habilidades integradas** para tareas recurrentes. El [mercado de habilidades](https://github.com/aipoch/openscience-skill-marketplace) ofrece **525 habilidades** que puedes instalar. Para delegar parte del trabajo, elige entre los **10 especialistas** del [mercado de especialistas](https://github.com/aipoch/openscience-specialist-marketplace).
+   - Ejecuta el análisis localmente o envíalo a un entorno que administres mediante SSH, Slurm, Kubernetes, Hugging Face Jobs, Modal o Ray. Revisa el destino, el comando, los recursos y las salidas antes de aprobar un trabajo remoto. Los trabajos en la nube pueden generar cargos en la cuenta conectada.
 
 ## Proveedores de modelos
 
@@ -319,7 +283,7 @@ AIPOCH Open-Science es independiente del modelo a nivel de producto: conéctelo 
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Proveedores de nube integrados** | Elija de la lista de proveedores que muestra la aplicación instalada y autentíquese con la clave solicitada.                                                                                                                                                                                                                                                                                                                                                                 |
 | **Puerta de enlace personalizada** | Indique la URL base, el ID exacto del modelo y un protocolo API compatible con el backend elegido (Messages, Chat Completions o Responses), y pruebe la conexión. Las pasarelas remotas requieren HTTPS y clave API. Las direcciones de loopback como `localhost`, `127.0.0.1` o `[::1]` permiten HTTP sin clave; hay ajustes predefinidos para Ollama, LM Studio, llama.cpp y vLLM. El formato API predeterminado no garantiza la compatibilidad del servidor o del modelo. |
-| **Suscripción de Codex**           | Seleccione el framework de agentes Codex y luego elija Suscripción de Codex como tipo de proveedor.                                                                                                                                                                                                                                                                                                                                                                          |
+| **Suscripción de Codex**           | Seleccione Open-Science Agent o Codex y luego elija Suscripción de Codex como tipo de proveedor. Importe un inicio de sesión de Codex existente o inicie sesión con Open-Science.                                                                                                                                                                                                                                                                                            |
 | **Suscripción de Claude**          | Inicie sesión con una suscripción de Claude en dos modos: **compartido** (un inicio de sesión en el navegador que almacena las credenciales en el perfil predeterminado `~/.claude`) o **aislado** (un flujo `claude setup-token` gestionado por la aplicación bajo un `CLAUDE_CONFIG_DIR` propio y completamente aislado de `~/.claude/`, con la opción alternativa de pegar un token).                                                                                     |
 | **xAI (Grok) OAuth**               | Utilice el inicio de sesión de dispositivo integrado de xAI (Grok) OAuth. El acceso depende de la cuenta de xAI y de los protocolos del backend elegido; valide la conexión en la aplicación.                                                                                                                                                                                                                                                                                |
 
@@ -351,7 +315,7 @@ Revise los parámetros del conector y la actividad de la herramienta antes de ap
 
 ## Desarrollo y empaquetado
 
-AIPOCH Open-Science consta de un backend Node convencional y un cliente de escritorio Electron, con React, TypeScript, Prisma/SQLite y un entorno de agentes basado en ACP.
+AIPOCH Open-Science consta de un backend Node convencional y un cliente de escritorio Electron, con React, TypeScript, Prisma/SQLite y Open-Science Agent integrado junto con backends de agentes opcionales.
 
 Requisitos previos para desarrollar desde el código fuente:
 
@@ -424,6 +388,8 @@ R: El paso actual no cumple la condición requerida. Corrija cualquier fila del 
 <summary>¿Cómo ejecuto trabajos en un clúster HPC remoto?</summary>
 
 R: **Computación remota (SSH)** permanece siempre habilitada y no necesita activarse en Configuración. Registre un host de cálculo SSH en **Configuración → Conexiones → Cálculo**, hágalo disponible para la sesión actual y utilice lenguaje natural o `/remote-compute-ssh`. Se necesita un host SSH accesible, autenticación válida, permisos sobre los directorios necesarios y el software, las dependencias y los recursos de cálculo que requiera la tarea. Direct SSH no requiere planificador; el modo Slurm exige un entorno Slurm operativo y permiso para enviar trabajos. “Siempre habilitada” se refiere a la habilidad, no a la disponibilidad permanente de cada host registrado.
+
+También puede usar Kubernetes, Hugging Face Jobs, Modal y Ray en destinos conectados por usted. Antes de cada envío externo, apruebe el destino, el comando, los recursos y las salidas. Los registros de recuperación permiten retomar la recogida de resultados tras un reinicio; los resultados publicados se abren en Compute Preview. Debe proporcionar las cuentas, el software, los recursos y los permisos; los trabajos en la nube pueden generar cargos.
 
 </details>
 
@@ -499,6 +465,29 @@ Antes de abrir una incidencia pública, elimine de los registros y las capturas 
 > Si AIPOCH Open-Science le resulta útil, dé una estrella al repositorio en GitHub.
 
 Las capacidades entregadas, parciales y previstas aparecen en el [mapa de capacidades](../ROADMAP.md#capability-map).
+
+<a id="aipoch-open-science-artículo-y-cita"></a>
+
+## Cómo citar
+
+Si utilizas AIPOCH Open-Science en tu investigación, cita la [prepublicación de AIPOCH Open-Science](https://arxiv.org/abs/2610.17110).
+
+<details>
+<summary>Cita BibTeX</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## Licencia
 

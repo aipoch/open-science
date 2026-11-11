@@ -181,6 +181,7 @@ export type ModelConfigContext = {
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
 // privacy). The framework decides HOW it is delivered — see SessionSetup.
 export type SessionSetupContext = {
+  toolLess?: boolean
   systemPromptAppends: string[]
   // Short, high-priority reminders that must reach each turn when the framework carries the complete
   // appends only in session metadata. Frameworks whose appends already ride each prompt may omit them.
@@ -318,6 +319,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
 
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
+  /** Native protocols in preference order, most preferred first. */
   readonly supportedApiTypes: readonly ModelProtocol[]
 }
 

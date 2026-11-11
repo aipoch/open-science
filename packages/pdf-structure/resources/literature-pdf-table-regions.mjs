@@ -31,12 +31,33 @@ const containsRect = (outer, inner) =>
   inner[1] >= outer[1] &&
   inner[2] <= outer[2] &&
   inner[3] <= outer[3]
+const arrayOrEmpty = (value) => (Array.isArray(value) ? value : [])
+const partsOf = (table) => (Array.isArray(table?.parts) ? table.parts : [])
+
+// Preserve the graphical-table fallback contract when a late assembly path
+// produced a complete thumbnail but forgot its diagnostic marker.
+export function ensureGraphicalTableIssue(table) {
+  if (
+    !table ||
+    table.parts !== undefined ||
+    !Array.isArray(table.grid) ||
+    table.grid.length ||
+    !Array.isArray(table.cells) ||
+    table.cells.length ||
+    typeof table.thumbnail !== 'string' ||
+    !table.thumbnail
+  )
+    return table
+  if (table.issues === undefined) return { ...table, issues: ['no-source-cell-grid'] }
+  if (!Array.isArray(table.issues) || table.issues.includes('no-source-cell-grid')) return table
+  return { ...table, issues: [...table.issues, 'no-source-cell-grid'] }
+}
 
 function provedSingleHeaderBottom(table, glyphs, rules) {
   if (table.grid?.length !== 2 || table.cells.some((cell) => (cell.rowSpan ?? 1) !== 1)) return
   const header = table.cells.filter((cell) => cell.row === 0 && cell.sourceRects?.length)
   if (header.length < 2) return
-  const sourceRects = table.cells.flatMap((cell) => cell.sourceRects ?? [])
+  const sourceRects = table.cells.flatMap((cell) => arrayOrEmpty(cell.sourceRects))
   if (!sourceRects.length || sourceRects.some((rect) => !containsRect(table.cropRect, rect))) return
   const left = Math.min(...sourceRects.map((rect) => rect[0])),
     right = Math.max(...sourceRects.map((rect) => rect[2]))
@@ -979,9 +1000,9 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
           (t, i) =>
             i !== a &&
             i !== b &&
-            [t, ...(t.parts ?? [])].some((part) =>
+            [t, ...partsOf(t)].some((part) =>
               part.cells?.some((c) =>
-                [...(c.sourceItems ?? []), ...(c.sourceSegments ?? [])].some((s) =>
+                [...arrayOrEmpty(c.sourceItems), ...arrayOrEmpty(c.sourceSegments)].some((s) =>
                   pa.keys.has(key(s))
                 )
               )
@@ -1008,9 +1029,9 @@ function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
               rect(t.cropRect) &&
               !intersects(t.cropRect, candidate.cropRect) &&
               t.cells?.some((c) => c.sourceItems?.length) &&
-              [t, ...(t.parts ?? [])].every((part) =>
+              [t, ...partsOf(t)].every((part) =>
                 part.cells?.every((c) =>
-                  [...(c.sourceItems ?? []), ...(c.sourceSegments ?? [])].every(
+                  [...arrayOrEmpty(c.sourceItems), ...arrayOrEmpty(c.sourceSegments)].every(
                     (s) => !pa.keys.has(key(s))
                   )
                 )
@@ -1266,10 +1287,10 @@ export function deduplicateSourceOwnedTableSubsets(tables, nativeTokens, measure
                 [...target.values()].some(
                   ({ native }) => intersect(native.rect, third.cropRect) > 0
                 )) ||
-              [third, ...(third.parts ?? [])].some((part) =>
+              [third, ...partsOf(third)].some((part) =>
                 part.cells?.some((cell) =>
-                  [...(cell.sourceItems ?? []), ...(cell.sourceSegments ?? [])].some((origin) =>
-                    target.has(key(origin))
+                  [...arrayOrEmpty(cell.sourceItems), ...arrayOrEmpty(cell.sourceSegments)].some(
+                    (origin) => target.has(key(origin))
                   )
                 )
               ))

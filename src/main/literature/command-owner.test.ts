@@ -198,6 +198,23 @@ describe('Literature command workflows', () => {
     expect(journalAttributes.run).toHaveBeenCalledWith(request)
   })
 
+  it('uses the requested item order for citations and both export formats', async () => {
+    const first = { id: 'first', item: { title: 'First paper' } }
+    const second = { id: 'second', item: { title: 'Second paper' } }
+    const formatReferences = vi.fn()
+    const exportReferences = vi.fn()
+    const owner = createLiteratureCommandOwner({
+      literatureCatalog: { getMany: vi.fn().mockResolvedValue([first, second]) },
+      literatureCitationFormatter: { formatReferences, exportReferences }
+    } as unknown as Services)
+
+    await owner.formatReferences({ itemIds: ['second', 'first'], styleId: 'apa', locale: 'en-US' })
+
+    expect(formatReferences).toHaveBeenCalledWith([second, first], 'apa', 'en-US')
+    expect(exportReferences).toHaveBeenCalledWith([second, first], 'bibtex')
+    expect(exportReferences).toHaveBeenCalledWith([second, first], 'ris')
+  })
+
   it('previews references without acquiring a file lease or creating a version', async () => {
     const { owner, versions, formatter } = fixture()
     await expect(owner.formatDocument({ ...request, mode: 'preview' })).resolves.toEqual({
@@ -429,8 +446,11 @@ describe('selected reference import', () => {
 it.each([
   ['10.1234/paper', 'doi:10.1234/paper'],
   ['pmid:12345', 'pmid:12345'],
+  [' PMID:12345 ', 'PMID:12345'],
   ['pmcid:PMC12345', 'pmcid:PMC12345'],
-  ['arxiv:2401.12345', 'arxiv:2401.12345']
+  [' PMCID:PMC12345 ', 'PMCID:PMC12345'],
+  ['arxiv:2401.12345', 'arxiv:2401.12345'],
+  [' ArXiv:2401.12345 ', 'ArXiv:2401.12345']
 ])('looks up %s without mutating the library', async (input, reference) => {
   const item = { title: 'Resolved reference' }
   const lookup = vi.fn().mockResolvedValue({ item })

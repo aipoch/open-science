@@ -32,6 +32,7 @@ import type { AcpTurnTokenUsage } from '../../../../shared/acp-usage-contract'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { resolvePdfPreparationScope } from '../../../../shared/pdf-preparation-scope'
 import type {
   LiteratureReference,
@@ -134,6 +135,8 @@ type ReviewerCorrectionState = 'waiting' | 'responding' | 'completed' | 'failed'
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   projectId?: string
+  workspaceCwd?: string
+  notebookReference?: NotebookSessionReference
   isPackageSession?: boolean
   deletedDiscussionSourceId?: string
   onPreviewArtifact: (artifact: MessageArtifact) => void
@@ -142,6 +145,7 @@ type WorkspaceMessageItemProps = {
   onOpenSkillMention: (skillId: string, name: string) => void
   onOpenLibraryMention?: (scope: LibraryMentionScopeRequest) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
+  fileReferences?: MessageArtifact[]
   artifacts?: MessageArtifact[]
   // Inline editing is only enabled once the session's run settles; confirming forks the
   // conversation at this message and resends the adjusted doc as a fresh turn.
@@ -1321,6 +1325,8 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   projectId,
+  workspaceCwd,
+  notebookReference,
   isPackageSession = false,
   deletedDiscussionSourceId,
   onPreviewArtifact,
@@ -1345,6 +1351,7 @@ const WorkspaceMessageItemImpl = ({
   subsequentTurns = 0,
   revisionNavigation,
   artifacts = [],
+  fileReferences = artifacts,
   staticParts,
   onPresentationChange,
   presentationSourceOpen,
@@ -1955,7 +1962,9 @@ const WorkspaceMessageItemImpl = ({
                     <SessionMessageMarkdown
                       content={assistantPresentation.content}
                       isAnimating={isAssistantPresenting}
-                      artifacts={artifacts}
+                      artifacts={fileReferences}
+                      workspaceCwd={workspaceCwd}
+                      notebookReference={notebookReference}
                       onPreviewArtifact={onPreviewArtifact}
                       onPreviewArtifactModal={onPreviewArtifactModal}
                     />
@@ -1964,7 +1973,9 @@ const WorkspaceMessageItemImpl = ({
                   <SessionMessageMarkdown
                     content={assistantPresentation.content}
                     isAnimating={isAssistantPresenting}
-                    artifacts={artifacts}
+                    artifacts={fileReferences}
+                    workspaceCwd={workspaceCwd}
+                    notebookReference={notebookReference}
                     onPreviewArtifact={onPreviewArtifact}
                     onPreviewArtifactModal={onPreviewArtifactModal}
                   />
@@ -2081,6 +2092,8 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.projectId === next.projectId &&
+  previous.workspaceCwd === next.workspaceCwd &&
+  previous.notebookReference === next.notebookReference &&
   previous.deletedDiscussionSourceId === next.deletedDiscussionSourceId &&
   (previous.isPackageSession ?? false) === (next.isPackageSession ?? false) &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
@@ -2103,6 +2116,7 @@ const areWorkspaceMessageItemPropsEqual = (
   (previous.showAssistantFooter ?? true) === (next.showAssistantFooter ?? true) &&
   (previous.subsequentTurns ?? 0) === (next.subsequentTurns ?? 0) &&
   previous.staticParts === next.staticParts &&
+  previous.fileReferences === next.fileReferences &&
   areMessageArtifactsEqual(previous.artifacts, next.artifacts) &&
   areRuntimeIdentitiesEqual(previous.runtimeIdentity, next.runtimeIdentity) &&
   areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&

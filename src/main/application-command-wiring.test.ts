@@ -770,6 +770,8 @@ it('connects committed deletion to the same credential broker used by approval s
   const currentSnapshotAfter = vi.fn(async (value) => value)
   const resolveSpecialist = vi.fn()
   const owners = {
+    // Construction only: this test does not start the runner or write its profiles.
+    configRoot: resolve(process.env.TMPDIR ?? projectRoot, 'command-wiring-config'),
     credentialRequestBroker: broker,
     approvalBroker: {},
     skillImportApprovalBroker: {},

@@ -1,3 +1,4 @@
+import { indexPortableEvidence } from '../artifacts/execution-evidence-log'
 import {
   captureResearchFilms,
   appendResearchFilms,
@@ -9,7 +10,11 @@ import type {
   ResearchVideoPresentationRequest,
   ResearchVideoPresentation
 } from '../../shared/research-video-presentation'
-import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
+import {
+  withWorkingFileEvidenceRead,
+  updateImportedEvidencePool,
+  releaseImportedEvidenceProject
+} from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import {
   createLogger,
@@ -22,6 +27,7 @@ import type { PrismaClient } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -33,7 +39,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -95,7 +101,12 @@ import { assertPackageCapacity } from './capacity'
 import { createPackageContentVerifier } from './materialize'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { SessionPackageDeletion } from './deletion'
-import { executionEvidenceKeys } from './execution-evidence'
+import {
+  collectPackageLogEvidence,
+  executionEvidenceKeys,
+  hasComputeLogEvidence,
+  inheritedComputeChecksums
+} from './execution-evidence'
 import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './fork-session'
 import { capturePackageHistory, type PackageHistory } from './history'
 import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
@@ -112,6 +123,8 @@ import {
   notebookStorageKeys,
   parseNativeRecords,
   prepareNativeImport,
+  logIdentityPlanSchema,
+  type LogIdentityPlan,
   prepareNativePublication,
   readPackageNotebooks,
   remapStorageKey,
@@ -152,9 +165,14 @@ import {
 import { withPackageTransfer } from './transfer'
 import { assertPortablePackageStorageKey, validatePackageRecords } from './validation'
 
+const activeLogImports = new Set<string>()
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
     schemaVersion: z.literal(1),
+    retryPlanName: z
+      .string()
+      .regex(/^[a-f0-9]{64}\.json$/u)
+      .optional(),
     directories: z
       .array(
         z
@@ -504,7 +522,7 @@ export class SessionPackageService {
       await this.deletion.prepareRetained(session)
       return
     }
-    await this.deletion.prepare(session, receipt, origin.originSessionIds)
+    await this.deletion.prepare(session, receipt, origin.originSessionIds, origin.logSessionIds)
   }
 
   private serialize<Result>(work: () => Promise<Result>, signal?: AbortSignal): Promise<Result> {
@@ -683,7 +701,7 @@ export class SessionPackageService {
       if (!options.consumeSnapshot && !options.allowSensitiveContent)
         await assertShareable(records, this.signal, 'records.json')
     }
-    if (session.packageOrigin) {
+    if (session.packageOrigin && !filmOrigin?.nativeLogOrigin) {
       diagnostic.phase('validate-retained-package')
       if (this.options.isSessionActive?.(request.projectId, request.sessionId))
         throw new Error('The Session is still active.')
@@ -930,7 +948,9 @@ export class SessionPackageService {
       // Published forks own this recovery marker. It is not Notebook evidence and must
       // never replace the fresh destination's marker on refork or export/import.
       const ownerKey = `notebooks/${request.projectId}/${request.sessionId}/.session-package-owner`
-      return session.forkOrigin ? keys.filter((key) => key !== ownerKey) : keys
+      return session.forkOrigin || session.packageOrigin
+        ? keys.filter((key) => key !== ownerKey)
+        : keys
     }
     const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
@@ -959,7 +979,8 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
-    const retainedOrigin = session.forkOrigin ? filmOrigin : undefined
+    const retainedOrigin =
+      session.forkOrigin || filmOrigin?.nativeLogOrigin ? filmOrigin : undefined
     if (retainedOrigin?.literature)
       records.literature = mapPackageReferences(
         retainedOrigin.literature,
@@ -1003,6 +1024,20 @@ export class SessionPackageService {
     ]
     const selectable = selectablePackageFiles(records, notebooks)
     diagnostic.phase('collect-execution-evidence')
+    const logEvidence = await collectPackageLogEvidence(
+      this.options.storageRoot,
+      records,
+      notebooks,
+      this.signal,
+      options.consumeSnapshot ? undefined : request
+    )
+    if (logEvidence) {
+      records.logEvidence = logEvidence
+      if (!options.consumeSnapshot && !options.allowSensitiveContent) {
+        for (const [key, record] of indexPortableEvidence(logEvidence))
+          await assertShareable(JSON.parse(record.bytes.toString()), this.signal, key)
+      }
+    }
     const executionKeys = await executionEvidenceKeys(
       this.options.storageRoot,
       records,
@@ -1246,6 +1281,10 @@ export class SessionPackageService {
           })
         }
         const requiredFeatures = [
+          ...(records.logEvidence ? (['log-evidence'] as const) : []),
+          ...(hasComputeLogEvidence(records.logEvidence)
+            ? (['compute-log-evidence'] as const)
+            : []),
           ...(records.literature ? (['literature'] as const) : []),
           ...(deduplicated ? (['content-dedupe'] as const) : [])
         ]
@@ -1253,7 +1292,8 @@ export class SessionPackageService {
           format: 'open-science-session',
           ...(requiredFeatures.length ? { requiredFeatures } : {}),
           schemaVersion: 1,
-          createdAt: Date.now(),
+          createdAt:
+            options.consumeSnapshot && records.logEvidence ? session.updatedAt : Date.now(),
           source: { ...request, projectName: project.name, title: session.title },
           inventory,
           excludedFiles,
@@ -1320,6 +1360,13 @@ export class SessionPackageService {
           request.sessionId
         )
         const currentRecords = await captureNativeRecords(client, request, versionIds)
+        if (records.logEvidence)
+          currentRecords.logEvidence = await collectPackageLogEvidence(
+            this.options.storageRoot,
+            records,
+            notebooks,
+            this.signal
+          )
         if (records.researchFilms) currentRecords.researchFilms = records.researchFilms
         if (retainedOrigin?.literature)
           currentRecords.literature = mapPackageReferences(
@@ -1379,7 +1426,21 @@ export class SessionPackageService {
     })
     if (!session.packageOrigin && !session.forkOrigin) return current
     const origin = await this.readOrigin({ projectId: session.projectId, sessionId: session.id })
-    const inherited = mapPackageReferences(origin.history, origin.identities) as
+    const checksums = Object.fromEntries(
+      origin.files.map((f) => [f.sourceChecksum, f.localChecksum])
+    )
+    if (origin.nativeLogOrigin)
+      Object.assign(
+        checksums,
+        await inheritedComputeChecksums(
+          this.options.storageRoot,
+          'execution-file-evidence/' + session.projectId + '/' + session.id,
+          origin.history,
+          origin.identities,
+          (session.packageOrigin ?? session.forkOrigin)!.manifestChecksum
+        )
+      )
+    const inherited = mapPackageReferences(origin.history, origin.identities, '', checksums) as
       PackageHistory | undefined
     return {
       taskRuns: [...(inherited?.taskRuns ?? []), ...current.taskRuns],
@@ -1469,11 +1530,105 @@ export class SessionPackageService {
     target: SessionPackageImportRequest,
     forkSource?: PersistedChatSession
   ): Promise<{ projectId: string; sessionId: string }> {
-    const operationId = randomUUID()
-    const projectId = target.projectId ?? `import-${operationId}`
-    return withWorkingFileEvidenceRead(this.options.storageRoot, projectId, () =>
-      this.importSnapshot(path, onProgress, confirm, target, { operationId, projectId }, forkSource)
-    )
+    const retries = join(this.configRoot, 'session-package-log-retries')
+    const intentPath = async (): Promise<string> => {
+      const digest = await fileChecksum(
+        forkSource ? join(path, 'manifest.json') : path,
+        this.signal
+      )
+      return join(
+        retries,
+        sha256(
+          JSON.stringify([
+            digest,
+            target.projectId ?? null,
+            target.projectName ?? null,
+            forkSource?.id ?? null
+          ])
+        ) + '.json'
+      )
+    }
+    // Most imports have no interrupted operation. Preserve the old inspector-first path
+    // and avoid an extra file pass unless an allocation must be saved or recovered.
+    const pending = await readdir(retries).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    })
+    let retryPath: string | undefined
+    let previous: LogIdentityPlan | undefined
+    if (pending.length) {
+      retryPath = await intentPath()
+      const saved = await readPackageJson(retryPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+      if (saved) previous = logIdentityPlanSchema.parse(saved)
+    }
+    const operationId = previous?.operationId ?? randomUUID()
+    const projectId = target.projectId ?? 'import-' + operationId
+    if (previous && previous.projectId !== projectId)
+      throw new Error('Invalid log import retry scope.')
+    const lease: { path?: string } = {}
+    const claim = (key: string): void => {
+      if (activeLogImports.has(key)) throw new Error('This evidence import is already in progress.')
+      activeLogImports.add(key)
+      lease.path = key
+    }
+    try {
+      if (previous && retryPath) {
+        claim(retryPath)
+        await this.recoverNow(previous.operationId)
+        const client = await this.options.getClient()
+        const witness = await client.fileOriginSession.findUnique({
+          where: { projectId_sessionId: { projectId, sessionId: previous.sessionId } }
+        })
+        if (witness) {
+          await rm(retryPath, { force: true })
+          return { projectId, sessionId: previous.sessionId }
+        }
+      }
+      const allocate = async (
+        manifestChecksum: string
+      ): Promise<{ path: string; operationId: string; previous?: LogIdentityPlan }> => {
+        if (previous && previous.manifestChecksum !== manifestChecksum)
+          throw new Error('Source manifest changed during import retry.')
+        await mkdir(retries, { recursive: true, mode: 0o700 })
+        // A fork snapshot is transferred into the operation stage before allocation.
+        const key =
+          retryPath ??
+          (forkSource
+            ? join(
+                retries,
+                sha256(
+                  JSON.stringify([
+                    manifestChecksum,
+                    target.projectId ?? null,
+                    target.projectName ?? null,
+                    forkSource.id
+                  ])
+                ) + '.json'
+              )
+            : await intentPath())
+        if (!lease.path) claim(key)
+        return { path: key, operationId, previous }
+      }
+      return await withWorkingFileEvidenceRead(this.options.storageRoot, projectId, () =>
+        this.importSnapshot(
+          path,
+          onProgress,
+          confirm,
+          target,
+          {
+            operationId,
+            projectId,
+            sessionId: previous?.sessionId ?? (forkSource ? randomUUID() : 'import-' + randomUUID())
+          },
+          allocate,
+          forkSource
+        )
+      )
+    } finally {
+      if (lease.path) activeLogImports.delete(lease.path)
+    }
   }
 
   private async importSnapshot(
@@ -1481,12 +1636,18 @@ export class SessionPackageService {
     onProgress: ((progress: PackageProgress) => void) | undefined,
     confirm: ((preview: SessionPackagePreview, signal: AbortSignal) => Promise<void>) | undefined,
     target: SessionPackageImportRequest,
-    { operationId, projectId }: { operationId: string; projectId: string },
+    {
+      operationId,
+      projectId,
+      sessionId
+    }: { operationId: string; projectId: string; sessionId: string },
+    allocate: (
+      checksum: string
+    ) => Promise<{ path: string; operationId: string; previous?: LogIdentityPlan }>,
     forkSource?: PersistedChatSession
   ): Promise<{ projectId: string; sessionId: string }> {
     if (target.projectId) await this.assertImportProject(target.projectId)
     // Only read-only imports use the import identity convention consumed by the lazy catalog.
-    const sessionId = forkSource ? randomUUID() : `import-${randomUUID()}`
     const operationRoot = join(this.options.storageRoot, 'session-package-imports', operationId)
     const configOperationRoot = join(this.configRoot, 'session-package-imports', operationId)
     const sourceRoot = join(operationRoot, 'source')
@@ -1519,6 +1680,7 @@ export class SessionPackageService {
     }
     let published: boolean | undefined = false
     let journal: ImportJournal | undefined
+    let retryPlan: Awaited<ReturnType<typeof allocate>> | undefined
     const recoveryError = (cause: unknown): PackageImportRecoveryRequiredError =>
       new PackageImportRecoveryRequiredError({ projectId, sessionId }, resume, cause)
     const resume = (signal?: AbortSignal): Promise<SessionPackageRequest | undefined> =>
@@ -1579,6 +1741,8 @@ export class SessionPackageService {
       const records = parseNativeRecords(await readPackageJson(join(sourceRoot, 'records.json')))
       validateResearchFilms(records, manifest, sourceSession)
       validatePackageLiteratureSession(records, sourceSession)
+      const manifestChecksum = await fileChecksum(join(sourceRoot, 'manifest.json'))
+      if (records.logEvidence) retryPlan = await allocate(manifestChecksum)
       const native = await prepareNativeImport(
         sourceRoot,
         destinationRoot,
@@ -1588,7 +1752,8 @@ export class SessionPackageService {
         sessionId,
         sourceSession,
         this.signal,
-        onProgress
+        onProgress,
+        retryPlan
       )
       await installPackageReproducibility(
         destinationRoot,
@@ -1597,7 +1762,6 @@ export class SessionPackageService {
           manifest.excludedFiles.map((file) => remapStorageKey(file.storageKey, native.identities))
         )
       )
-      const manifestChecksum = await fileChecksum(join(sourceRoot, 'manifest.json'))
       // Upstream files can belong to retained/deleted source Sessions. They are imported evidence
       // too, so the same read-only admission marker covers each destination source scope.
       for (const origin of native.records.tables.FileOriginSession) {
@@ -1761,7 +1925,15 @@ export class SessionPackageService {
         true
       )
       onProgress?.({ importStage: 'publish', phase: 'importing' })
-      await rename(sourceRoot, join(evidenceDirectory, 'source'))
+      // Fork origin readers need only these two files. Leave the transfer in operation staging
+      // so both successful publication and restart recovery retire its payloads.
+      if (records.logEvidence || forkSource) {
+        const metadata = join(evidenceDirectory, records.logEvidence ? 'origin-metadata' : 'source')
+        await mkdir(metadata)
+        for (const name of ['manifest.json', 'records.json'])
+          await copyFile(join(sourceRoot, name), join(metadata, name))
+      }
+      if (!forkSource) await rename(sourceRoot, join(evidenceDirectory, 'source'))
       await writeDurableJsonFile(
         join(evidenceDirectory, 'receipt.json'),
         JSON.stringify(
@@ -1770,6 +1942,7 @@ export class SessionPackageService {
             ...(session.packageOrigin ?? session.forkOrigin),
             projectId,
             sessionId,
+            ...(records.logEvidence ? { nativeLogOrigin: true } : {}),
             identities: native.identities,
             files
           })
@@ -1786,9 +1959,18 @@ export class SessionPackageService {
       ] as const) {
         const staged = join(destinationRoot, scope, projectId)
         if (!(await lstat(staged).catch(() => undefined))) continue
-        for (const child of await readdir(staged)) directories.push({ scope, sessionId: child })
+        for (const child of await readdir(staged)) {
+          if (scope === 'execution-file-evidence' && child === 'blobs') continue
+          directories.push({ scope, sessionId: child })
+        }
       }
-      journal = importJournalSchema.parse({ schemaVersion: 1, projectId, sessionId, directories })
+      journal = importJournalSchema.parse({
+        schemaVersion: 1,
+        projectId,
+        sessionId,
+        directories,
+        ...(retryPlan ? { retryPlanName: basename(retryPlan.path) } : {})
+      })
       // SessionRepository owns its encoding; capacity uses known journal bytes and the shared
       // reserve, without scanning its private storage or serializing the Session twice.
       const journalContents = JSON.stringify(journal)
@@ -1804,7 +1986,12 @@ export class SessionPackageService {
         const root = this.options.storageRoot
         const parent = join(root, entry.scope, projectId)
         if (entry.scope === 'execution-file-evidence')
-          await ensureWorkingFileEvidenceProject(root, projectId)
+          await ensureWorkingFileEvidenceProject(
+            root,
+            projectId,
+            undefined,
+            records.logEvidence ? operationId : undefined
+          )
         else await mkdir(parent, { recursive: true })
         await assertPackageSourcePath(root, `${entry.scope}/${projectId}`)
         const directory = join(parent, entry.sessionId)
@@ -1825,6 +2012,23 @@ export class SessionPackageService {
         }
         await this.syncTree(directory)
         await defaultFileDurability.syncDirectory(join(root, entry.scope))
+      }
+      const poolKey = 'execution-file-evidence/' + projectId + '/blobs'
+      const stagedPool = join(destinationRoot, poolKey)
+      // Zero-generation activities still own log/view bytes under the project budget.
+      if (records.logEvidence) await mkdir(stagedPool, { recursive: true, mode: 0o700 })
+      if (
+        await lstat(stagedPool).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+      ) {
+        await updateImportedEvidencePool(
+          'publish-imported-pool',
+          this.options.storageRoot,
+          projectId,
+          stagedPool,
+          this.signal
+        )
       }
       const bookmarkIdentities = { ...native.identities }
       if (forkSource?.packageOrigin) {
@@ -1911,7 +2115,7 @@ export class SessionPackageService {
       if (published === false) {
         // Preserve validation/cancellation/transaction failure while exposing retryable cleanup.
         // Retry removes only this uncommitted import; it must never replay publication.
-        return withPackageCleanup(
+        return await withPackageCleanup(
           async () => {
             throw error
           },
@@ -1933,7 +2137,7 @@ export class SessionPackageService {
         )
       throw recoveryError(error)
     }
-    return withPackageCleanup(async () => ({ projectId, sessionId }), cleanupStaging)
+    return await withPackageCleanup(async () => ({ projectId, sessionId }), cleanupStaging)
   }
 
   // Call before catalog hydration. The imported origin row witnesses the native transaction.
@@ -1945,7 +2149,7 @@ export class SessionPackageService {
     })
   }
 
-  private async recoverNow(): Promise<void> {
+  private async recoverNow(onlyOperation?: string): Promise<void> {
     const counts = { inspected: 0, recovered: 0, retained: 0, failed: 0 }
     const diagnostic = startDiagnosticOperation(createLogger('session-package'), {
       operation: 'session-package.import-recovery'
@@ -1958,6 +2162,7 @@ export class SessionPackageService {
         throw error
       })
       for (const operation of operations) {
+        if (onlyOperation && operation !== onlyOperation) continue
         this.signal.throwIfAborted()
         counts.inspected += 1
         activeItem = true
@@ -2132,6 +2337,7 @@ export class SessionPackageService {
   }
 
   async readOrigin(request: SessionPackageRequest): Promise<{
+    nativeLogOrigin?: true
     sourceManifest: SessionPackageManifest
     identities: Record<string, string>
     files: SessionPackageReceipt['files']
@@ -2140,6 +2346,7 @@ export class SessionPackageService {
     pdfNotes?: PackagePdfNotes
     researchFilms?: PackageResearchFilms
     originSessionIds: string[]
+    logSessionIds: string[]
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
     const root = join(this.options.storageRoot, 'artifacts', safe.projectId, safe.sessionId)
@@ -2153,14 +2360,16 @@ export class SessionPackageService {
     const receipt = sessionPackageReceiptSchema.parse(
       await readPackageJson(join(directory, 'receipt.json'))
     )
+    const metadataDirectory = receipt.nativeLogOrigin ? 'origin-metadata' : 'source'
     if (
       receipt.projectId !== safe.projectId ||
       receipt.sessionId !== safe.sessionId ||
-      receipt.manifestChecksum !== (await fileChecksum(join(directory, 'source', 'manifest.json')))
+      receipt.manifestChecksum !==
+        (await fileChecksum(join(directory, metadataDirectory, 'manifest.json')))
     )
       throw new Error('Session package receipt integrity mismatch.')
     const sourceManifest = sessionPackageManifestSchema.parse(
-      await readPackageJson(join(directory, 'source', 'manifest.json'))
+      await readPackageJson(join(directory, metadataDirectory, 'manifest.json'))
     )
     if (
       sourceManifest.source.projectId !== receipt.sourceProjectId ||
@@ -2168,12 +2377,16 @@ export class SessionPackageService {
     )
       throw new Error('Session package receipt source identity mismatch.')
     const recordsEntry = sourceManifest.inventory.find((entry) => entry.path === 'records.json')
-    if (recordsEntry?.checksum !== (await fileChecksum(join(directory, 'source', 'records.json'))))
+    if (
+      recordsEntry?.checksum !==
+      (await fileChecksum(join(directory, metadataDirectory, 'records.json')))
+    )
       throw new Error('Session package source records checksum mismatch.')
     const records = parseNativeRecords(
-      await readPackageJson(join(directory, 'source', 'records.json'))
+      await readPackageJson(join(directory, metadataDirectory, 'records.json'))
     )
     return {
+      nativeLogOrigin: receipt.nativeLogOrigin,
       sourceManifest,
       identities: receipt.identities,
       files: receipt.files,
@@ -2181,6 +2394,11 @@ export class SessionPackageService {
       literature: records.literature,
       pdfNotes: records.pdfNotes,
       researchFilms: records.researchFilms,
+      logSessionIds: [
+        ...new Set(
+          (records.logEvidence ?? []).map((lane) => receipt.identities[lane.key.split('/')[2]])
+        )
+      ],
       originSessionIds: records.tables.FileOriginSession.map(
         (row) => receipt.identities[String(row.sessionId)]
       )
@@ -2226,6 +2444,23 @@ export class SessionPackageService {
         await rm(directory, { recursive: true, force: true })
         await defaultFileDurability.syncDirectory(parent)
       }
+      const root = this.options.storageRoot
+      const stage = join(root, 'session-package-imports', operation)
+      const pool = join(stage, 'destination', 'execution-file-evidence', journal.projectId, 'blobs')
+      if (await this.ownsDirectory(stage, operation)) {
+        const receipt = await lstat(join(pool, '.import-pool-receipt.json')).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+          }
+        )
+        if (receipt)
+          await updateImportedEvidencePool('rollback-imported-pool', root, journal.projectId, pool)
+        if (
+          journal.retryPlanName &&
+          journal.directories.some((entry) => entry.scope === 'execution-file-evidence')
+        )
+          await releaseImportedEvidenceProject(root, journal.projectId, operation)
+      }
     })
   }
 
@@ -2237,12 +2472,28 @@ export class SessionPackageService {
     const identity =
       knownIdentity ??
       importJournalSchema.parse(await readPackageJson(join(operationRoot, 'journal.json')))
+    const retirePlan = async (): Promise<void> => {
+      if (!identity.retryPlanName) return
+      const directory = join(this.configRoot, 'session-package-log-retries')
+      const path = join(directory, identity.retryPlanName)
+      const raw = await readPackageJson(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+      if (!raw) return
+      const plan = logIdentityPlanSchema.parse(raw)
+      // Recovery of an old operation must leave a later allocation for the same input intact.
+      if (plan.operationId !== operation) return
+      if (plan.projectId !== identity.projectId || plan.sessionId !== identity.sessionId)
+        throw new Error('Import retry allocation identity mismatch.')
+      await rm(path, { force: true })
+      await defaultFileDurability.syncDirectory(directory)
+    }
     const client = await this.options.getClient()
     const projected = await client.session.findUnique({ where: { id: identity.sessionId } })
     if (projected && projected.projectId !== identity.projectId)
       throw new Error('Import publication Session identity mismatch.')
     // A cleanup retry cannot revive a Session deleted after successful publication.
-    if (projected?.deletedAtMs != null) return
+    if (projected?.deletedAtMs != null) return retirePlan()
     const repository = new SessionRepository(
       this.configRoot,
       {},
@@ -2275,6 +2526,7 @@ export class SessionPackageService {
       : await work()
     // Adoption also enters the owner lane, so publish only after the complete write has released it.
     await publish(saved)
+    await retirePlan()
     // Keep the directory claims after publication. Startup package deletion requires these exact
     // import identities before it can retire any native scope, including retained upstream scopes.
   }
