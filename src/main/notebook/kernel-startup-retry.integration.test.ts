@@ -63,6 +63,7 @@ it.skipIf(process.platform !== 'win32').each([
     }
     const processSandbox: NotebookProcessSandbox = {
       async wrap(invocation) {
+        console.error('[DEBUG-kernel-recovery] filesystem', invocation.filesystem)
         const wrapped = windowsLaunch({
           ...invocation,
           command: '',
@@ -138,6 +139,8 @@ it.skipIf(process.platform !== 'win32').each([
         expect(error).toBeInstanceOf(NotebookExecutionStopError)
         return undefined
       })
+      console.error('[DEBUG-kernel-recovery] first result', failed)
+      console.error('[DEBUG-kernel-recovery] fixture files', await readdir(root))
       if (failed) {
         expect(failed.status).toBe('failed')
         expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
