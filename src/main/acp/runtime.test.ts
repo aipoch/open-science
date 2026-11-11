@@ -23163,6 +23163,51 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().contextUsageBySession.s1).toEqual(beforeFailure)
   })
 
+  it('keeps the OpenCode session connected after a classification rejection and accepts the next prompt', async () => {
+    const process = new FakeAgentProcess()
+    let rejectPrompt = true
+    const agent = startFakeAgent(process, ['s1'], {
+      onPrompt: () => {
+        if (rejectPrompt) {
+          throw acp.RequestError.internalError(
+            undefined,
+            'OpenCode message classification failed. Output was withheld.'
+          )
+        }
+      }
+    })
+    const spawnAgent = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent,
+      framework: opencodeFramework
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+      await expect(
+        runtime.sendPrompt({ sessionId: 's1', text: 'first turn' })
+      ).rejects.toMatchObject({
+        code: -32603
+      })
+      expect(runtime.getSnapshot()).toMatchObject({ status: 'connected', sessionIds: ['s1'] })
+
+      rejectPrompt = false
+      await expect(
+        runtime.sendPrompt({ sessionId: 's1', text: 'next turn' })
+      ).resolves.toMatchObject({
+        stopReason: 'end_turn'
+      })
+      expect(spawnAgent).toHaveBeenCalledOnce()
+      expect(agent.prompts).toEqual([
+        { sessionId: 's1', text: expect.stringContaining('first turn') },
+        { sessionId: 's1', text: expect.stringContaining('next turn') }
+      ])
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
   it('publishes the persisted Plan after a provider prompt fails and releases the interaction', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'], {
