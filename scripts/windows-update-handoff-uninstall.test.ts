@@ -28,6 +28,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       'inherited-read',
       'inherited-write',
       'untrusted-active-helper',
+      'untrusted-other-installation',
       'untrusted-hidden-helper',
       'hidden-owner',
       'locked-helper',
@@ -91,7 +92,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           ...(scenario === 'reused-helper' ? { helperPid: process.pid } : {}),
           ...(scenario === 'reused-successor' ? { successorPid: process.pid } : {}),
           applicationPath: join(
-            scenario === 'other-installation' ? root : install,
+            scenario.endsWith('other-installation') ? root : install,
             'application.exe'
           ),
           installerPath: scenario === 'active' ? process.execPath : join(root, 'installer.exe')
@@ -121,7 +122,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           ? `@(
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = $null; Name = 'helper.exe' }
 )`
-          : scenario === 'untrusted-active-helper'
+          : scenario === 'untrusted-active-helper' || scenario.endsWith('other-installation')
             ? `@(
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = '${join(directory, 'helper.exe').replaceAll("'", "''")}' }
 )`
@@ -185,7 +186,11 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         )
       }
       const result = run('initial uninstall', scenario === 'locked-helper' ? lockedTarget : target)
-      if (scenario === 'active' || scenario === 'untrusted-active-helper') {
+      if (
+        scenario === 'active' ||
+        scenario === 'untrusted-active-helper' ||
+        scenario === 'untrusted-other-installation'
+      ) {
         expect(result.status).toBe(2)
         expect(result.stdout).toContain('still active')
       } else if (scenario === 'inventory-failure') {

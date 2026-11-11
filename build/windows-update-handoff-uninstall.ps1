@@ -23,18 +23,7 @@ while ($cursor -and $cursor.ParentProcessId -and $ancestors.Add([uint32]$cursor.
   $cursor = $processes | Where-Object { $_.ProcessId -eq $parentPid } | Select-Object -First 1
 }
 $uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-# NSIS holds the installer mutex independently of these optional records. Older detached helpers
-# have their own lifetime: identify them from the process inventory even when storage is untrusted.
-foreach ($process in $processes) {
-  if ($process.ProcessId -eq $PID -or $ancestors.Contains([uint32]$process.ProcessId)) { continue }
-  if (-not $process.ExecutablePath) { continue }
-  foreach ($root in $roots) {
-    if ($process.ExecutablePath -imatch ('^' + [regex]::Escape($root) + "\\$uuid\\helper\.exe$")) {
-      Write-Output "Update helper is still active: $($process.ExecutablePath)"
-      exit 2
-    }
-  }
-}
+$otherInstallationHelpers = @()
 $owned = "^(request\.json|config\.bin|helper\.exe|cancel|(accepted|installing|installed|failed|ready|closed|aborted|handoff|unconfirmed)\.receipt)(?:\.$uuid\.tmp|\.tmp)?$"
 foreach ($root in $roots) {
 try {
@@ -60,11 +49,16 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
     if ($request.schema -ne 1 -or $request.operationId -cne $directory.Name -or
         -not [IO.Path]::IsPathRooted([string]$request.applicationPath) -or
         -not [IO.Path]::IsPathRooted([string]$request.installerPath) -or
-        [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($request.applicationPath)).TrimEnd('\') -ine $installation -or
         $request.parentPid -le 0) { continue }
+    $requestInstallation = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($request.applicationPath)).TrimEnd('\')
   }
   catch { continue }
   $helper = Join-Path $directory.FullName 'helper.exe'
+  if ($requestInstallation -ine $installation) {
+    # Only a trusted record can establish that this helper belongs to a different installation.
+    $otherInstallationHelpers += $helper
+    continue
+  }
   $active = @($processes | Where-Object {
     if ($_.ProcessId -eq $PID -or $ancestors.Contains([uint32]$_.ProcessId)) { return $false }
     # Historic PIDs can be reused by unrelated processes after an update or reboot. A readable
@@ -103,4 +97,17 @@ catch {
   # for a later cleanup; never repair ACLs or recursively remove content we cannot verify.
   Write-Output "Retained update records at '$root': $($_.Exception.Message)"
 }
+}
+# NSIS holds the installer mutex independently of these optional records. Older detached helpers
+# have their own lifetime: identify them from the captured process inventory even when storage is
+# untrusted, except where a verified record established a different installation above.
+foreach ($process in $processes) {
+  if ($process.ProcessId -eq $PID -or $ancestors.Contains([uint32]$process.ProcessId)) { continue }
+  if (-not $process.ExecutablePath -or $otherInstallationHelpers -icontains $process.ExecutablePath) { continue }
+  foreach ($root in $roots) {
+    if ($process.ExecutablePath -imatch ('^' + [regex]::Escape($root) + "\\$uuid\\helper\.exe$")) {
+      Write-Output "Update helper is still active: $($process.ExecutablePath)"
+      exit 2
+    }
+  }
 }
