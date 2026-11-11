@@ -247,6 +247,22 @@ for (const theme of ['Light', 'Dark'] as const) {
     await page.setViewportSize({ width: 791, height: 874 })
     const settings = await openSettingsPage(page, 'Network')
     await settings.getByRole('button', { name: 'Manage access', exact: true }).click()
+    const checkRuleDisclosure = async (mode: 'Relaxed' | 'Strict'): Promise<void> => {
+      const summary = settings.locator('summary').filter({ hasText: `How ${mode} mode works` })
+      const disclosure = summary.locator('..')
+      // Hit the surrounding padding, not the label, to cover the full disclosure header.
+      await disclosure.click({ position: { x: 8, y: 8 } })
+      await expect(disclosure).toHaveAttribute('open', '')
+      const bounds = await summary.boundingBox()
+      await summary.click({ position: { x: bounds!.width - 8, y: 8 } })
+      await expect(disclosure).not.toHaveAttribute('open', '')
+      await summary.focus()
+      await summary.press('Enter')
+      await expect(disclosure).toHaveAttribute('open', '')
+      await summary.press('Space')
+      await expect(disclosure).not.toHaveAttribute('open', '')
+    }
+    await checkRuleDisclosure('Relaxed')
     const relaxed = settings.getByRole('radio', { name: 'Relaxed', exact: true })
     const strict = settings.getByRole('radio', { name: 'Strict', exact: true })
     const panel = settings.getByRole('region', { name: 'Confirm network mode change', exact: true })
@@ -261,7 +277,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     await expect(panel).toBeVisible()
     await expect(strict).toBeChecked()
     await expect(relaxed).not.toBeChecked()
-    await expect(settings.getByText('Current: Relaxed', { exact: true })).toBeVisible()
+    await expect(settings.getByText('Current: Relaxed', { exact: true })).toHaveClass('sr-only')
     expect(await active()).toBe('relaxed')
     await page.screenshot({
       animations: 'disabled',
@@ -286,8 +302,9 @@ for (const theme of ['Light', 'Dark'] as const) {
     ).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(panel).toHaveCount(0)
-    await expect(settings.getByText('Current: Strict', { exact: true })).toBeVisible()
+    await expect(settings.getByText('Current: Strict', { exact: true })).toHaveClass('sr-only')
     expect(await active()).toBe('strict')
+    await checkRuleDisclosure('Strict')
     await page.screenshot({
       animations: 'disabled',
       path: testInfo.outputPath('confirmed-strict.png')
@@ -296,7 +313,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     expect(await active()).toBe('strict')
     await expect(panel.getByText('Network access will expand.', { exact: true })).toBeVisible()
     await panel.getByRole('button', { name: 'Switch to Relaxed mode', exact: true }).click()
-    await expect(settings.getByText('Current: Relaxed', { exact: true })).toBeVisible()
+    await expect(settings.getByText('Current: Relaxed', { exact: true })).toHaveClass('sr-only')
     expect(await active()).toBe('relaxed')
     await strict.click()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'de' }))

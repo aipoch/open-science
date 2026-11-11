@@ -512,10 +512,7 @@ export function NotebookNetworkAccessEditor({
           </p>
         </div>
         <div className="flex max-w-full flex-wrap items-center gap-3">
-          <span
-            className={`rounded-md border px-2 py-1 text-xs font-medium ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
-            role="status"
-          >
+          <span className="sr-only" role="status">
             {strict ? t('Current: Strict') : t('Current: Relaxed')}
           </span>
           <div
@@ -622,9 +619,9 @@ export function NotebookNetworkAccessEditor({
       ) : null}
       <details
         key={strict ? 'strict' : 'relaxed'}
-        className={`group rounded-xl border p-4 ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
+        className={`group rounded-xl border ${strict ? 'notebook-network-strict' : 'notebook-network-relaxed'}`}
       >
-        <summary className="flex cursor-pointer list-none items-center gap-3 text-sm font-medium">
+        <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl p-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           <Check className="size-4" aria-hidden="true" />
           {strict ? t('How Strict mode works') : t('How Relaxed mode works')}
           <ChevronRight
@@ -632,7 +629,7 @@ export function NotebookNetworkAccessEditor({
             className="ml-auto size-4 transition-transform group-open:rotate-90"
           />
         </summary>
-        <ul className="mt-3 list-disc space-y-2 pl-8 text-sm leading-6 text-muted-foreground">
+        <ul className="list-disc space-y-2 pr-4 pb-4 pl-12 text-sm leading-6 text-muted-foreground">
           {strict ? (
             <>
               <li>

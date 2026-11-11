@@ -42,7 +42,7 @@ for (const theme of ['Light', 'Dark'] as const) {
         await manage.click()
         await settings.getByRole('radio', { name: 'Strict', exact: true }).click()
         await settings.getByRole('button', { name: 'Switch to Strict mode', exact: true }).click()
-        await expect(settings.getByText('Current: Strict', { exact: true })).toBeVisible()
+        await expect(settings.getByText('Current: Strict', { exact: true })).toHaveClass('sr-only')
         await settings.getByRole('button', { name: 'Back', exact: true }).click()
         const config = (await page.evaluate(() => window.api.settings.getSettings()))
           .notebookNetwork
@@ -54,6 +54,17 @@ for (const theme of ['Light', 'Dark'] as const) {
         await expect(entry).not.toContainText('saved address')
       }
       await expect(entry.getByText(`${mode} mode`, { exact: true })).toBeVisible()
+      if (theme === 'Dark') {
+        const badge = entry.getByText(`${mode} mode`, { exact: true })
+        await expect(badge).toHaveCSS(
+          'background-color',
+          mode === 'Relaxed' ? 'rgb(52, 63, 53)' : 'rgb(53, 53, 66)'
+        )
+        await expect(badge).toHaveCSS(
+          'color',
+          mode === 'Relaxed' ? 'rgb(177, 199, 184)' : 'rgb(194, 195, 223)'
+        )
+      }
       if (mode === 'Strict') {
         expect(
           await entry
