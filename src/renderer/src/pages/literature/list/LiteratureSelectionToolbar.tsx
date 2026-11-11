@@ -281,22 +281,24 @@ export function LiteratureSelectionToolbar({
                     onSelectProject={(id) => void addSelectedItemsToProject(id)}
                   />
                 ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={
-                      isBatching ||
-                      (!selection.allMatchingSelected &&
-                        [...selection.selectedIds].every((id) =>
-                          items.some((item) => item.id === id && Boolean(item.mergedIntoItemId))
-                        ))
-                    }
-                    onClick={() => void previewRestoreSelection()}
-                  >
-                    <RotateCcw className="size-3.5" aria-hidden="true" />
-                    {t('Restore')}
-                  </Button>
+                  <PopoverClose asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        isBatching ||
+                        (!selection.allMatchingSelected &&
+                          [...selection.selectedIds].every((id) =>
+                            items.some((item) => item.id === id && Boolean(item.mergedIntoItemId))
+                          ))
+                      }
+                      onClick={() => void previewRestoreSelection()}
+                    >
+                      <RotateCcw className="size-3.5" aria-hidden="true" />
+                      {t('Restore')}
+                    </Button>
+                  </PopoverClose>
                 )}
                 <hr className="my-1 border-border" />
                 <LiteratureExportMenu

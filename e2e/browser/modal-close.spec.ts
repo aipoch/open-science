@@ -41,8 +41,7 @@ async function openDialog(page: Page, name: string): Promise<void> {
       .getByRole('checkbox', { name: 'Select Audit trashed reference', exact: true })
       .check()
     if (name === 'library-restore') {
-      const actions = page.getByRole('button', { name: 'More actions', exact: true }).first()
-      if ((await actions.getAttribute('aria-expanded')) !== 'true') await actions.click()
+      await page.getByRole('button', { name: 'More actions', exact: true }).first().click()
       await page.getByRole('button', { name: 'Restore', exact: true }).click()
     } else {
       await page.getByRole('button', { name: 'More actions', exact: true }).last().click()
