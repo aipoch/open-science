@@ -63,7 +63,6 @@ it.skipIf(process.platform !== 'win32').each([
     }
     const processSandbox: NotebookProcessSandbox = {
       async wrap(invocation) {
-        console.error('[DEBUG-kernel-recovery] filesystem', invocation.filesystem)
         const wrapped = windowsLaunch({
           ...invocation,
           command: '',
@@ -105,7 +104,7 @@ it.skipIf(process.platform !== 'win32').each([
       notebookSessionRoot: root,
       dataRoot: root,
       runtimeRoot: join(root, 'runtime'),
-      // A real child process reproduces startup exit without requiring an installed R or changing ACLs.
+      // Exercise the R lane protocol with real Node processes, without requiring an installed R.
       resolvedInterpreter: {
         command: protectedMode
           ? resolve(
@@ -141,8 +140,6 @@ it.skipIf(process.platform !== 'win32').each([
         expect(error).toBeInstanceOf(NotebookExecutionStopError)
         return undefined
       })
-      console.error('[DEBUG-kernel-recovery] first result', failed)
-      console.error('[DEBUG-kernel-recovery] fixture files', await readdir(root))
       if (failed) {
         expect(failed.status, failed.stderr).toBe('failed')
         expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
@@ -186,7 +183,6 @@ it.skipIf(process.platform !== 'win32').each([
         }
       }
       const shutdown = await executor.shutdown()
-      console.error('[DEBUG-kernel-recovery] shutdown', shutdown)
       expect(shutdown).toEqual({ reaped: true })
       await rm(root, { recursive: true, force: true })
     }
