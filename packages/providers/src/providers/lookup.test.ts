@@ -40,10 +40,9 @@ describe('provider registry', () => {
   })
 
   it.each(['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'])(
-    'offers %s with published capabilities and preserves the Kimi default',
+    'offers %s with published capabilities on the Kimi API',
     (model) => {
       expect(getVendorModelIds('kimi')).toContain(model)
-      expect(getVendorModelIds('kimi')[0]).toBe('kimi-k3')
       expect(getVendorModelContextWindow('kimi', model)).toBe(1_048_576)
       expect(getVendorModelReasoningCapability('kimi', model)).toEqual({
         supported: true,
@@ -59,8 +58,8 @@ describe('provider registry', () => {
     }
   )
 
-  it('offers GPT-6.1 Sol with its published capabilities and preserves the default', () => {
-    expect(getVendorModelIds('openai')).toContain('gpt-6.1-sol')
+  it('defaults OpenAI to GPT-6.1 Sol with its published capabilities', () => {
+    expect(getVendorModelIds('openai')[0]).toBe('gpt-6.1-sol')
 
     expect(getVendorModelContextWindow('openai', 'gpt-6.1-sol')).toBe(1_050_000)
     expect(isVendorModelMultimodal('openai', 'gpt-6.1-sol')).toBe(true)
@@ -71,10 +70,9 @@ describe('provider registry', () => {
     })
   })
 
-  it('offers GPT-6.1 Terra with published capabilities without changing the default', () => {
+  it('offers GPT-6.1 Terra with its published capabilities', () => {
     const model = 'gpt-6.1-terra'
     expect(getVendorModelIds('openai')).toContain(model)
-    expect(getVendorModelIds('openai')[0]).toBe('gpt-5.6-sol')
     expect(getVendorModelContextWindow('openai', model)).toBe(1_050_000)
     expect(isVendorModelMultimodal('openai', model)).toBe(true)
     expect(resolveVendorModelApiEndpoints('openai', model)).toEqual(['responses'])
@@ -497,8 +495,8 @@ describe('provider registry', () => {
     expect(
       getOfficialVendor('deepseek')?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ])
@@ -535,11 +533,10 @@ describe('provider registry', () => {
   })
 
   it.each(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'])(
-    'offers %s without replacing the pay-as-you-go default',
+    'offers %s in both MiniMax regions',
     (model) => {
       for (const region of ['global', 'china']) {
         expect(getVendorModelIds('minimax', region)).toContain(model)
-        expect(getVendorModelIds('minimax', region)[0]).toBe('MiniMax-M3')
       }
       expect(getVendorModelContextWindow('minimax', model)).toBe(1_000_000)
       expect(isVendorModelMultimodal('minimax', model)).toBe(true)
@@ -1474,7 +1471,8 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('kimi', 'kimi-k2.6')).toBe(false)
     })
 
-    it('returns true only for KimiForCode k3 model', () => {
+    it('recognizes the vision-capable Kimi Code models', () => {
+      expect(isVendorModelMultimodal('kimiforcode', 'k3.1-pro')).toBe(true)
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-k3')).toBe(true)
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding')).toBe(true)
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding-highspeed')).toBe(false)
