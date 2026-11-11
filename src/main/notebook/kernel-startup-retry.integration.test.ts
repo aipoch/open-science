@@ -1,5 +1,4 @@
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
-import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -36,6 +35,8 @@ it.skipIf(process.platform !== 'win32').each([
         const child = require('node:child_process').spawn(process.argv[4], process.argv.slice(5), {
           stdio: 'inherit', windowsHide: true
         })
+        child.once('error', () => process.exit(126))
+        child.once('exit', code => process.exit(code ?? 1))
         fs.writeFileSync('native.pid', String(child.pid))
         setInterval(() => {
           if (fs.existsSync('loop.pid')) {
@@ -55,17 +56,24 @@ it.skipIf(process.platform !== 'win32').each([
       policy: { allowedDomains: [], deniedDomains: [] },
       resources: { root: resolve('packages/notebook-network-sandbox/vendor') }
     })
+    const installationId = process.env.OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID
+    const ownershipRoot = process.env.OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT
+    if (Boolean(installationId) !== Boolean(ownershipRoot)) {
+      throw new Error('A test sandbox identity requires its matching ownership root.')
+    }
     const processSandbox: NotebookProcessSandbox = {
       async wrap(invocation) {
         const wrapped = windowsLaunch({
           ...invocation,
           command: '',
-          filesystem: invocation.filesystem,
+          // This fixture launches only absolute Node paths. Granting every toolchain inherited
+          // from the CI runner's PATH measures unrelated ACL preparation before it can start.
+          filesystem: { ...invocation.filesystem, optionalReadOnlyRoots: [] },
           gatewayPort: 61200,
           gatewayCredentials: { username: 'offline', password: 'offline' },
           hostPath: config.windowsHostPath,
-          installationId: config.installationId,
-          ownershipRoot: config.windowsOwnershipRoot
+          installationId: installationId ?? config.installationId,
+          ownershipRoot: ownershipRoot ?? config.windowsOwnershipRoot
         })
         return {
           ...wrapped,
@@ -96,8 +104,17 @@ it.skipIf(process.platform !== 'win32').each([
       notebookSessionRoot: root,
       dataRoot: root,
       runtimeRoot: join(root, 'runtime'),
-      // A real child process reproduces startup exit without requiring an installed R or changing ACLs.
-      resolvedInterpreter: { command: process.execPath, args: ['--preserve-symlinks-main'] },
+      // Exercise the R lane protocol with real Node processes, without requiring an installed R.
+      resolvedInterpreter: {
+        command: protectedMode
+          ? resolve(
+              process.env.OPEN_SCIENCE_TEST_WINDOWS_RUNTIME_ROOT ??
+                'packages/notebook-network-sandbox/vendor/windows-runtime/x64',
+              'node/node.exe'
+            )
+          : process.execPath,
+        args: ['--preserve-symlinks-main']
+      },
       sessionId: 'startup-retry',
       projectId: 'startup-retry',
       timeoutMs: 5_000
@@ -124,11 +141,14 @@ it.skipIf(process.platform !== 'win32').each([
         return undefined
       })
       if (failed) {
-        expect(failed.status).toBe('failed')
+        expect(failed.status, failed.stderr).toBe('failed')
         expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
       }
       if (protectedMode && !crashAdmission) {
         descendantPid = Number(await readFile(join(root, 'descendant.pid'), 'utf8'))
+      }
+      if (crashAdmission) {
+        descendantPid = Number(await readFile(join(root, 'loop.pid'), 'utf8'))
       }
       const ledger = join(root, 'runtime', 'kernel-processes')
       const entries = await readdir(ledger)
@@ -136,6 +156,7 @@ it.skipIf(process.platform !== 'win32').each([
         const record = JSON.parse(await readFile(join(ledger, entry), 'utf8'))
         expect(() => process.kill(record.pid, 0)).toThrow()
       }
+      if (crashAdmission) await rm(join(root, 'loop.pid'))
       await writeFile(
         loop,
         `process.stdin.once('data', data => {
@@ -144,27 +165,16 @@ it.skipIf(process.platform !== 'win32').each([
         })\n`
       )
       const retry = executor.execute(request)
-      if (protectedMode && !crashAdmission) {
-        await expect(retry).resolves.toMatchObject({
-          status: 'completed',
-          stdout: 'RETRY_OK'
-        })
+      await expect(retry).resolves.toMatchObject({
+        status: 'completed',
+        stdout: 'RETRY_OK'
+      })
+      if (descendantPid) {
         // Do not wait for descendant cleanup before requesting the replacement. Admission must
         // complete the teardown itself; the crashed workload cannot survive a successful retry.
         expect(() => process.kill(descendantPid!, 0)).toThrow()
-      } else {
-        // A dead ordinary parent does not prove that its descendants were reaped.
-        await expect(retry).rejects.toBeInstanceOf(NotebookExecutionStopError)
-        if (crashAdmission) {
-          expect(Number(await readFile(join(root, 'loop.pid'), 'utf8'))).toBeGreaterThan(0)
-        }
       }
     } finally {
-      if (crashAdmission) {
-        const nativePid = Number(await readFile(join(root, 'native.pid'), 'utf8'))
-        // This PID belongs to this test's native host, whose live Job Object owns the workload.
-        spawnSync('taskkill', ['/PID', String(nativePid), '/T', '/F'], { windowsHide: true })
-      }
       if (descendantPid) {
         try {
           process.kill(descendantPid, 'SIGKILL')
@@ -172,7 +182,8 @@ it.skipIf(process.platform !== 'win32').each([
           /* Already reaped by the native job. */
         }
       }
-      await executor.shutdown()
+      const shutdown = await executor.shutdown()
+      expect(shutdown).toEqual({ reaped: true })
       await rm(root, { recursive: true, force: true })
     }
   }

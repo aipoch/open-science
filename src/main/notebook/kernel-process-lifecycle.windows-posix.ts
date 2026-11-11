@@ -20,6 +20,7 @@ import {
   type ProcessTreeKillResult
 } from '../process-tree'
 import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
+import { reapWindowsOwnedJob } from '../process-tree-windows'
 import {
   readProcessStartToken,
   bootTokenProvesReboot,
@@ -54,6 +55,7 @@ type KernelProcessRecord = KernelProcessSpawnScope & {
   commandIdentityMarker?: string
   bootToken?: string
   windowsProcessTreeProof?: WindowsProcessTreeProof
+  windowsJobName?: string
 }
 
 type KernelProcessSpawnIntent = Readonly<{
@@ -153,6 +155,12 @@ const decodeRecord = (contents: string): KernelProcessRecord | undefined => {
         typeof value.commandIdentityMarker !== 'string') ||
       (value.windowsProcessTreeProof !== undefined &&
         !isWindowsProcessTreeProof(value.windowsProcessTreeProof)) ||
+      (value.windowsJobName !== undefined &&
+        (value.platform !== 'win32' ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+            value.receiptId
+          ) ||
+          value.windowsJobName !== `Local\\OpenScience.Notebook.${value.receiptId}`)) ||
       (value.bootToken !== undefined && !isValidBootToken(value.bootToken))
     ) {
       return undefined
@@ -265,6 +273,13 @@ const defaultController = (
 ): KernelProcessRecoveryController => ({
   probe: async (record) => {
     if (record.platform !== platform) return 'dead'
+    // New hosts are atomically created inside this exact Job before they can activate a receipt.
+    // Its identity survives the proof publisher; a missing Job proves there are no members left.
+    if (record.windowsJobName) {
+      return (await reapWindowsOwnedJob(record.windowsJobName).catch(() => false))
+        ? 'dead'
+        : 'unknown'
+    }
     if (!record.pid) return 'unknown'
 
     if (platform !== 'win32') {
@@ -347,8 +362,13 @@ class KernelProcessLifecycleOwner {
   }
 
   ensureReady(): Promise<void> {
-    this.recovery ??= this.recoverRecords()
-    return this.recovery
+    if (this.recovery) return this.recovery
+    const recovery = this.recoverRecords()
+    this.recovery = recovery
+    void recovery.catch(() => {
+      if (this.recovery === recovery) this.recovery = undefined
+    })
+    return recovery
   }
 
   ensureReadyForLane(laneKey: string): Promise<void> {
@@ -374,7 +394,12 @@ class KernelProcessLifecycleOwner {
     // Tolerant startup recovery must not satisfy a later strict ensureReady() call used by
     // environment mutation. Exact process admission remains fenced by beginSpawn().
     if (!options.allowUnverifiedReceipts) this.recovery = recovery
-    await recovery
+    try {
+      await recovery
+    } catch (error) {
+      if (this.recovery === recovery) this.recovery = undefined
+      throw error
+    }
   }
 
   createOwnerToken(): string {
@@ -384,7 +409,8 @@ class KernelProcessLifecycleOwner {
   beginSpawn(
     scope: KernelProcessSpawnScope,
     ownerToken = this.createOwnerToken(),
-    windowsProcessTreeProof?: WindowsProcessTreeProof
+    windowsProcessTreeProof?: WindowsProcessTreeProof,
+    ownWindowsJob = false
   ): KernelProcessSpawnIntent {
     const prefix = recordFilePrefix(scope)
     mkdirSync(this.directory, { recursive: true })
@@ -410,6 +436,9 @@ class KernelProcessLifecycleOwner {
       spawnedAt: Date.now(),
       ...(bootToken ? { bootToken } : {}),
       ...(windowsProcessTreeProof ? { windowsProcessTreeProof } : {}),
+      ...(ownWindowsJob && this.platform === 'win32'
+        ? { windowsJobName: `Local\\OpenScience.Notebook.${receiptId}` }
+        : {}),
       ...scope
     }
     writeRecordSync(path, record)

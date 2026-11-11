@@ -1,3 +1,4 @@
+import { spawnWindowsOwnedProcess } from '../process-tree-windows'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -36,6 +37,105 @@ import { NotebookExecutionStopError } from '../../shared/notebook-execution-erro
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 configureTestRuntimeMetadata()
+
+it
+  .skipIf(process.platform !== 'win32')
+  .each(['termination-unknown', 'missing', 'live-tree'] as const)(
+  'recovers an interrupted Windows kernel with %s evidence (issue 4252)',
+  async (proofState) => {
+    const root = await mkdtemp(join(tmpdir(), 'kernel-supervisor-crash-'))
+    const readyPath = join(root, 'ready.json')
+    const loopPath = join(root, 'loop.cjs')
+    await writeFile(
+      loopPath,
+      `require('node:fs').writeFileSync(${JSON.stringify(readyPath)}, JSON.stringify({
+        pid: process.pid, supervisorPid: process.ppid
+      })); setTimeout(() => process.exit(0), 30000)`
+    )
+    const launch = windowsSupervisedLaunch({
+      command: '',
+      executable: process.execPath,
+      args: [loopPath],
+      cwd: root,
+      env: process.env,
+      gatewayPort: 61200,
+      gatewayCredentials: { username: 'offline', password: 'offline' },
+      ownershipRoot: root,
+      hostPath: resolve(
+        'packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe'
+      )
+    })
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intent = owner.beginSpawn(
+      { laneKey: 'crashed-session', processKey: 'python:default-python', kernelEpochId: 'epoch' },
+      undefined,
+      launch.processTreeProof,
+      true
+    )
+    // Use the same outer admission host and inner native Job supervisor as kernel-executor.
+    const host = spawnWindowsOwnedProcess(
+      intent.record.windowsJobName!,
+      process.execPath,
+      [
+        resolve('resources/notebook/kernel_process_host.js'),
+        intent.path,
+        intent.record.receiptId,
+        ...launch.argv
+      ],
+      { cwd: root, env: launch.env, windowsHide: true, stdio: 'pipe' }
+    )
+    const exited = new Promise<void>((resolve, reject) => {
+      host.once('error', reject)
+      host.once('exit', () => resolve())
+    })
+    try {
+      let workload: { pid: number; supervisorPid: number } | undefined
+      await vi.waitFor(
+        async () => {
+          workload = JSON.parse(await readFile(readyPath, 'utf8'))
+        },
+        { timeout: 5000 }
+      )
+      // A recovering owner must reap a still-live tree before admitting another kernel.
+      // Killing the supervisor separately reproduces the lost proof publisher.
+      if (proofState === 'live-tree') {
+        expect(() => process.kill(host.pid!, 0)).not.toThrow()
+        expect(() => process.kill(workload!.pid, 0)).not.toThrow()
+      } else {
+        process.kill(workload!.supervisorPid, 'SIGKILL')
+        await exited
+        await vi.waitFor(
+          () =>
+            expect(() => process.kill(workload!.pid, 0)).toThrow(
+              expect.objectContaining({ code: 'ESRCH' })
+            ),
+          { timeout: 5000 }
+        )
+        expect(() => process.kill(host.pid!, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+      }
+      const proof = JSON.parse(await readFile(launch.processTreeProof.path, 'utf8'))
+      expect(proof.processState).toBe('termination-unknown')
+      // The missing-proof case replays the report's missing artifact; the crash above naturally
+      // reproduces the comment's termination-unknown artifact without editing the proof.
+      if (proofState === 'missing') await rm(launch.processTreeProof.path)
+      const restarted = new KernelProcessLifecycleOwner({ storageRoot: root })
+      await expect(restarted.ensureReady()).resolves.toBeUndefined()
+      await exited
+      expect(() => process.kill(workload!.pid, 0)).toThrow(
+        expect.objectContaining({ code: 'ESRCH' })
+      )
+      expect(() => process.kill(workload!.supervisorPid, 0)).toThrow(
+        expect.objectContaining({ code: 'ESRCH' })
+      )
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+    } finally {
+      // A setup failure leaves only a bounded fixture, which exits by itself within 30 seconds.
+      await exited
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  40000
+)
 
 it.skipIf(process.platform !== 'win32')(
   'uses the production standard launcher to prove a naturally exiting REPL',
