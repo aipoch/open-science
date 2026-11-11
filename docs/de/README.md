@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  KI-Forschungsumgebung für reproduzierbare Wissenschaft — quelloffen, lokal betrieben und modellunabhängig.
+  AIPOCH Open-Science ist eine quelloffene, lokal ausgerichtete KI-Forschungsumgebung für reproduzierbare Wissenschaft mit flexibler Modellauswahl. Exportieren Sie ausgewählte Arbeit als portables <code>.science</code>-Paket, damit andere den Forschungsnachweis prüfen können.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science Demo zur Erstellung eines .science-Pakets" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">Auf YouTube ansehen: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,10 +53,6 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) ist eine quelloffene Arbeitsumgebung für die Forschung mit KI. Beginnen Sie mit einer Frage, einer wissenschaftlichen Veröffentlichung oder einer Datendatei. Beschreiben Sie in eigenen Worten, was Sie herausfinden möchten, und arbeiten Sie mit einem KI-Agenten, um Belege zu sichten, Daten zu analysieren oder ein Diagramm zu erstellen.
-
-Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
-
 ### 💡 AIPOCH Open-Science v1.2.1 — Neuerungen
 
 _11. November 2026_
@@ -62,10 +66,6 @@ _11. November 2026_
 - **Zuverlässigkeit**: Verbesserte Windows-Update-Wiederherstellung, Fortsetzung nach beantworteten Fragen und Forschungsfilme beim Sitzungswechsel; Interpreter werden nach 15 Minuten ohne Sitzungsaktivität freigegeben.
 
 [Vollständige Versionshinweise v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
-</p>
 
 ## 🚀 Schnellstart
 

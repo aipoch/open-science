@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  Entorno de investigación con IA para una ciencia reproducible — de código abierto, centrado en la ejecución local e independiente del modelo.
+  AIPOCH Open-Science es un entorno de investigación con IA de código abierto, centrado en el trabajo local y con modelos flexibles para una ciencia reproducible. Exporte el trabajo seleccionado como un paquete <code>.science</code> portátil para que otras personas puedan examinar el registro de investigación.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="Demostración de AIPOCH Open-Science para crear un paquete .science" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">Ver en YouTube: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,10 +53,6 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) es un entorno de investigación de código abierto que incorpora inteligencia artificial. Empiece con una pregunta, un artículo científico o un archivo de datos. Describa con sus propias palabras qué quiere averiguar y trabaje con un agente de IA para examinar las pruebas, analizar datos o crear un gráfico.
-
-Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el código y el historial de ejecución disponibles. Para compartir su trabajo, elija las ramas de conversación, las versiones de los archivos, los registros del Notebook y las pruebas de verificación que quiera incluir y expórtelos en un paquete `.science`.
-
 ### 💡 AIPOCH Open-Science v1.2.1 — Novedades
 
 _11 de noviembre de 2026_
@@ -62,10 +66,6 @@ _11 de noviembre de 2026_
 - **Fiabilidad**: Mejoras en la recuperación de actualizaciones de Windows, la continuación tras responder preguntas y los vídeos de investigación al cambiar de sesión; los intérpretes se liberan tras 15 minutos sin actividad de la sesión.
 
 [Notas completas v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
-
-<p align="center">
- <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
-</p>
 
 ## 🚀 Inicio rápido
 

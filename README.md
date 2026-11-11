@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  AI research workbench for reproducible science — open-source, local-first, and model-agnostic.
+  AIPOCH Open-Science is a local-first open-source AI research workbench for reproducible science, with flexible model backends. Export selected work as a portable <code>.science</code> Research Package so others can inspect the research record.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Research Generation Demo — AIPOCH Open-Science .science Research Package" src="docs/images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">Watch on YouTube: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -43,10 +51,6 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) is an open-source AI research workbench. Start with a question, a paper, or a data file. Describe what you want to find out in your own words, and work with an AI agent to explore the evidence, analyze data, or create a chart.
-
-When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
-
 ### 💡 AIPOCH Open-Science v1.2.1 updates
 
 _November 11, 2026_
@@ -60,10 +64,6 @@ _November 11, 2026_
 - **Reliability improvements**: Windows update recovery, answered questions, and research films across session switches improve; idle interpreters are reclaimed after 15 minutes without session activity.
 
 [View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
-</p>
 
 ## 🚀 Quick Start
 

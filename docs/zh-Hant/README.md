@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  面向可重現科學研究的 AI 研究工作台——開源、本機優先、模型無關。
+  AIPOCH Open-Science 是一款面向可重現科學研究的本機優先、開源 AI 研究工作台，可靈活選擇模型。將選定的研究內容匯出為可移交的 <code>.science</code> 包，讓他人檢查研究紀錄。
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science Research Generation Demo — .science 包產生示範" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">在 YouTube 觀看: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,10 +53,6 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) 是一款開源 AI 研究工作台。你可以從一個問題、一篇論文或一個資料檔開始。用自己的話說明你想釐清什麼，再和 AI 智能體一起檢視證據、分析資料或繪製圖表。
-
-想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
-
 ### 💡 AIPOCH Open-Science v1.2.1 更新
 
 _2026 年 11 月 11 日_
@@ -62,10 +66,6 @@ _2026 年 11 月 11 日_
 - **可靠性改進**：改善 Windows 更新復原、回答提問後的繼續執行，以及切換會話時的研究影片產生；會話無活動 15 分鐘後回收閒置直譯器。
 
 [查看 v1.2.1 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
-</p>
 
 ## 🚀 快速開始
 
