@@ -4,7 +4,12 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { runtimeModuleSpecifiers } from '../../../../../test/module-boundary-assertions'
 import type { FailureCategory, FailureReason } from '../../../../shared/failure/contract'
-import { noticeCatalog, noticePresentation, reasonCatalog } from './catalog'
+import {
+  formatNoticeDiagnostics,
+  noticeCatalog,
+  noticePresentation,
+  reasonCatalog
+} from './catalog'
 
 const root = resolve(__dirname, '../../../../..')
 const sources = (directory: string): string[] =>
@@ -36,6 +41,25 @@ for (const statement of contract.statements) {
         categories.push(member.literal.text)
   }
 }
+
+it('does not repeat the displayed description when an operation uses it as its raw diagnostic', () => {
+  const description = 'Could not optimize your question. Your draft was kept. Please try again.'
+  expect(
+    formatNoticeDiagnostics(
+      {
+        id: 'optimization',
+        source: 'operation',
+        occurredAt: 0,
+        failure: {
+          category: 'service',
+          diagnostics: { raw: description, requestId: 'request-id' }
+        }
+      },
+      'Optimize question',
+      description
+    )
+  ).toBe(`Optimize question\n${description}\nrequestId: request-id`)
+})
 
 describe('composer notice boundaries', () => {
   it('has one classifier importing recognizers; projections and renderer consume its public contract', () => {

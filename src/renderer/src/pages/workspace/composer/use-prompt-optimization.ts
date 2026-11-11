@@ -7,6 +7,7 @@ import {
   type OptimizationEvent
 } from '../../../../../shared/prompt-optimization'
 import type { SessionAgentConfiguration } from '../../../../../shared/settings'
+import type { FailureDiagnostics } from '../../../../../shared/failure/contract'
 import type { ComposerDoc, ComposerNode } from './composer-doc'
 
 type Options = {
@@ -29,6 +30,7 @@ type OptimizationState = {
   edited: () => void
   pending: boolean
   notice?: 'changed' | 'failed'
+  diagnostics?: FailureDiagnostics
   canUndo: boolean
   tooLong: boolean
   canOptimize: boolean
@@ -61,6 +63,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
   }
   const [pending, setPending] = useState(false)
   const [notice, setNotice] = useState<'changed' | 'failed'>()
+  const [diagnostics, setDiagnostics] = useState<FailureDiagnostics>()
   const [previous, setPrevious] = useState<ComposerDoc>()
   const [stateScope, setStateScope] = useState(scope)
   if (stateScope !== scope) {
@@ -160,6 +163,11 @@ export function usePromptOptimization(options: Options): OptimizationState {
         // Service rejections already have diagnostics; only report renderer-local failures here.
         if (resultStage)
           record({ action: 'failed', requestId: remoteRequest.requestId, stage: resultStage })
+        // Correlate with safe main-process diagnostics without exposing model/provider output.
+        setDiagnostics({
+          requestId: remoteRequest.requestId,
+          ...(resultStage ? { code: `prompt-optimization/${resultStage}` } : {})
+        })
         setNotice('failed')
       }
     } finally {
@@ -218,6 +226,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
     edited,
     pending,
     notice,
+    diagnostics: notice === 'failed' ? diagnostics : undefined,
     canUndo: Boolean(previous),
     tooLong: textLength > PROMPT_OPTIMIZATION_INPUT_LIMIT,
     canOptimize: Boolean(
