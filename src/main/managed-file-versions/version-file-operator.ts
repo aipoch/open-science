@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { constants, type BigIntStats, type Dirent } from 'node:fs'
+import { constants, lstatSync, realpathSync, type BigIntStats, type Dirent } from 'node:fs'
 import {
   link,
   lstat,
@@ -337,9 +337,17 @@ const errorChainHasCode = (error: unknown, expectedCode: string): boolean => {
 
 class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecovery {
   private readonly fileSystem: VersionFileSystem
+  private readonly rootAlias?: string
 
   constructor(private readonly options: NodeVersionFileOperatorOptions) {
     if (!options.storageRoot) throw new Error('Version file storage root is required.')
+    // The configured root is the trust boundary, not a child storage reference. Bind an existing
+    // directory alias once; later retargeting must not redirect immutable reads or publications.
+    // Keep the caller's logical path untouched (settings and migration receipts retain it).
+    if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      this.rootAlias = options.storageRoot
+      this.options = { ...options, storageRoot: realpathSync(options.storageRoot) }
+    }
     this.fileSystem = {
       link: options.fileSystem?.link ?? link,
       lstat: options.fileSystem?.lstat ?? lstat,
@@ -1418,6 +1426,15 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   private async verifyStorageRoot(): Promise<void> {
+    if (
+      this.rootAlias &&
+      (await this.fileSystem.realpath(this.rootAlias)) !== this.options.storageRoot
+    ) {
+      throw new VersionFileOperatorError(
+        'INTEGRITY_FAILED',
+        'Immutable version storage root alias changed after initialization.'
+      )
+    }
     const rootStats = await this.fileSystem.lstat(this.options.storageRoot)
     if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
       throw new VersionFileOperatorError(

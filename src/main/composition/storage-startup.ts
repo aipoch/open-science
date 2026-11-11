@@ -14,6 +14,7 @@ import { NetworkProxyRuntime } from '../settings/network-proxy-runtime'
 import { SettingsService } from '../settings/service'
 import {
   computeDefaultDataRoot,
+  initDataRoot,
   resolveConfigRoot,
   resolveDataRoot,
   samePath
@@ -69,8 +70,9 @@ export async function composeStorageStartup({
     environment: process.env,
     processSandbox: notebookNetworkSandbox
   })
-  // Settings bootstrap already selected and acquired the runtime data directory. Do not resolve
-  // its saved alias again here: it may have been retargeted since ownership was acquired.
+  // Prime the data-root cache from settings before any data repository is constructed below. A change
+  // to this value only takes effect after a restart, so reading it once here is sufficient.
+  initDataRoot(storedSettings.dataRoot, storedSettings.onboardingCompletedAt)
   const configuredDataRootMissing =
     (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
     (await isDataRootMissing(resolveDataRoot()))

@@ -1228,13 +1228,13 @@ describe('NodeVersionFileOperator', () => {
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
-  it('rejects a symbolic-link storage root before creating version directories', async () => {
+  it('rejects a storage root replaced with a symbolic link after initialization', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const storageRoot = join(cleanupRoot, 'storage')
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
-    await symlink(outsideRoot, storageRoot, process.platform === 'win32' ? 'junction' : 'dir')
     const operator = new module.NodeVersionFileOperator({ storageRoot })
+    await symlink(outsideRoot, storageRoot, process.platform === 'win32' ? 'junction' : 'dir')
     const planInput = {
       operationId: 'operation-root-symlink',
       scope: {

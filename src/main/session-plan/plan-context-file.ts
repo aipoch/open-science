@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
-import { chmod, lstat, mkdir, open, rename, rm } from 'node:fs/promises'
+import { constants, lstatSync, realpathSync } from 'node:fs'
+import { chmod, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
 import type { ActivePlanProjection, PlanLifecycle } from '../../shared/session-plan/contract'
@@ -112,8 +112,16 @@ const tombstone: PlanContextFile = { schemaVersion: 1, active: false }
 
 export class PlanContextFileStore {
   private readonly lanes = new Map<string, Promise<void>>()
+  private readonly rootAlias?: string
 
-  constructor(private readonly options: PlanContextFileStoreOptions) {}
+  constructor(private readonly options: PlanContextFileStoreOptions) {
+    // Match immutable file storage: accept the configured directory alias at construction,
+    // then keep all descendant and replacement checks anchored to its original physical root.
+    if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      this.rootAlias = options.storageRoot
+      this.options = { ...options, storageRoot: realpathSync(options.storageRoot) }
+    }
+  }
 
   async refresh(
     projectId: string,
@@ -194,6 +202,9 @@ export class PlanContextFileStore {
   }
 
   private async ensureContextDirectory(projectId: string, sessionId: string): Promise<string> {
+    if (this.rootAlias && (await realpath(this.rootAlias)) !== this.options.storageRoot) {
+      throw new Error('Session Plan storage root alias changed after initialization.')
+    }
     const storageRoot = resolve(this.options.storageRoot)
     await assertDirectory(storageRoot, 'Storage root')
 

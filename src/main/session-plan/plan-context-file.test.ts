@@ -85,6 +85,29 @@ const readJson = async (path: string): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
 
 describe('PlanContextFileStore', () => {
+  it('writes through a configured root alias and rejects retargeting', async () => {
+    const root = await temporaryRoot()
+    const physical = join(root, 'physical')
+    const alias = join(root, 'selected')
+    await mkdir(physical)
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const options = { storageRoot: alias, readCurrent: async () => projection() }
+    const store = new PlanContextFileStore(options)
+    await store.refresh('project-1', 'session-1')
+    expect(await readJson(contextPath(physical, 'project-1', 'session-1'))).toMatchObject({
+      active: true,
+      artifactVersionId: 'plan-version-1'
+    })
+    expect(options.storageRoot).toBe(alias)
+
+    const other = join(root, 'other')
+    await mkdir(other)
+    await rm(alias, { recursive: true })
+    await symlink(other, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(store.refresh('project-1', 'session-1')).rejects.toThrow('root alias changed')
+    expect(await readdir(other)).toEqual([])
+  })
+
   it('writes the complete selected projection as pretty JSON with platform publication permissions', async () => {
     const root = await temporaryRoot()
     const current = projection()

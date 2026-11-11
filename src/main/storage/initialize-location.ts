@@ -8,7 +8,7 @@ import { SettingsRepository } from '../settings/repository'
 // incomplete onboarding only offers the new default and never saves a root.
 export const initializeDataLocation = async (repository: SettingsRepository): Promise<void> => {
   const settings = await repository.getSettings()
-  const selectedRoot = initDataRoot(settings.dataRoot, settings.onboardingCompletedAt)
+  initDataRoot(settings.dataRoot, settings.onboardingCompletedAt)
   const root = resolveDataRoot()
   if (
     (settings.dataRoot !== undefined || settings.onboardingCompletedAt !== undefined) &&
@@ -19,8 +19,8 @@ export const initializeDataLocation = async (repository: SettingsRepository): Pr
     )
   await ownRuntimeDataDirectory(root)
   if (settings.dataRoot === undefined && settings.onboardingCompletedAt !== undefined) {
-    // Keep the historical selection on disk and the already owned physical root in memory.
-    await repository.persistLegacyDataRoot(selectedRoot, settings.onboardingCompletedAt)
+    await repository.persistLegacyDataRoot(root, settings.onboardingCompletedAt)
+    initDataRoot(root, settings.onboardingCompletedAt)
   }
 }
 

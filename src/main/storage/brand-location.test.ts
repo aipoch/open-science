@@ -1,16 +1,6 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  realpath,
-  rm,
-  writeFile,
-  symlink
-} from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises'
 import { existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,9 +19,6 @@ import { SettingsPreferencesModule } from '../settings/preferences'
 import { ManagedUploadResolver } from '../uploads/managed-upload-resolver'
 import { getSessionUploadDir } from '../uploads/storage-helpers'
 import { initializeDataLocation, prepareApplicationLocations } from './initialize-location'
-import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
-import { PlanContextFileStore } from '../session-plan/plan-context-file'
-import { getNotebookInputRoot } from '../notebook/input-staging'
 
 let fixture: string
 beforeEach(async () => {
@@ -55,64 +42,6 @@ const seed = async (root: string): Promise<void> => {
   await mkdir(join(root, 'workspaces'), { recursive: true })
   await writeFile(join(root, 'workspaces', 'history.json'), '{"session":"retained"}')
 }
-
-it.each(['saved', 'legacy'] as const)(
-  'binds a %s root alias for immutable attachments and Session Plan without rewriting its selection',
-  async (kind) => {
-    const physical = join(fixture, 'physical')
-    const selected = join(fixture, kind === 'legacy' ? 'OpenScience' : 'selected')
-    await seed(physical)
-    await symlink(physical, selected, process.platform === 'win32' ? 'junction' : 'dir')
-    const configRoot = resolveConfigRoot()
-    await mkdir(configRoot, { recursive: true })
-    const settings = {
-      version: 2,
-      onboardingCompletedAt: 1,
-      ...(kind === 'saved' ? { dataRoot: selected } : {})
-    }
-    await writeFile(join(configRoot, 'settings.json'), JSON.stringify(settings))
-    const bytes = Buffer.from('valid attachment')
-    await writeFile(join(physical, 'attachment.txt'), bytes)
-    const { repository } = await prepareApplicationLocations(configRoot)
-
-    const operator = new NodeVersionFileOperator({ storageRoot: resolveDataRoot() })
-    const lease = await operator.openImmutable('attachment.txt', {
-      sizeBytes: bytes.length,
-      checksum: createHash('sha256').update(bytes).digest('hex')
-    })
-    try {
-      expect(Buffer.from(await lease.readRange(0, bytes.length))).toEqual(bytes)
-    } finally {
-      await lease.close()
-    }
-    const plans = new PlanContextFileStore({
-      storageRoot: resolveDataRoot(),
-      readCurrent: async () => undefined
-    })
-    await plans.refresh('project', 'session')
-    const contextPath = join(
-      getNotebookInputRoot(physical, 'project', 'session'),
-      'session-plan',
-      'current.json'
-    )
-    expect(JSON.parse(await readFile(contextPath, 'utf8'))).toEqual({
-      schemaVersion: 1,
-      active: false
-    })
-    expect((await repository.getSettings()).dataRoot).toBe(selected)
-    expect(dataRootForPicked(selected)).toBe(selected)
-    expect(resolveDataRoot()).toBe(await realpath(physical))
-
-    // Retargeting the configured alias must not redirect an already running application.
-    const other = join(fixture, 'other')
-    await mkdir(other)
-    await rm(selected, { recursive: true })
-    await symlink(other, selected, process.platform === 'win32' ? 'junction' : 'dir')
-    expect(resolveDataRoot()).toBe(await realpath(physical))
-    await plans.refresh('project', 'session')
-    expect(await readdir(other)).toEqual([])
-  }
-)
 
 it('retains an explicitly selected custom path even if both defaults exist', async () => {
   await seed(join(fixture, 'OpenScience'))

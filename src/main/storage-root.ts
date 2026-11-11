@@ -1,5 +1,5 @@
 import { runtimeMetadata } from './runtime-metadata'
-import { existsSync, lstatSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { directoryHasFiles } from './storage/location-evidence'
@@ -52,7 +52,7 @@ const dataRootForPicked = (picked: string): string => {
   // choices or application ownership receipts can make an unbranded selection a root itself.
   // The adoption owner validates receipt contents before allowing a pointer switch.
   const direct =
-    (selectedDataRoot !== undefined && samePath(resolved, resolve(selectedDataRoot))) ||
+    (configuredDataRoot !== undefined && samePath(resolved, resolve(configuredDataRoot))) ||
     samePath(resolved, resolveConfigRoot()) ||
     directoryHasFiles(join(resolved, 'workspaces', MANAGED_WORKSPACE_OWNERSHIP_DIR))
   if (candidates.length > 1 || (direct && candidates.length))
@@ -90,10 +90,9 @@ const isPathInsideOrEqual = (parent: string, child: string): boolean => {
 // Relocatable data root. Cached once at startup from settings (a change requires a restart), so this
 // stays a synchronous pure getter for every downstream consumer.
 let cachedDataRoot: string | undefined
-let selectedDataRoot: string | undefined
+let configuredDataRoot: string | undefined
 
-// Return the selected path for legacy settings backfill; runtime consumers use resolveDataRoot().
-const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number): string => {
+const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number): void => {
   const unset =
     settingsDataRoot == null ||
     (typeof settingsDataRoot === 'string' && settingsDataRoot.trim() === '')
@@ -101,7 +100,7 @@ const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number)
     throw new DataLocationSelectionError(
       'The saved data location (dataRoot) is invalid. Restore its absolute path before restarting.'
     )
-  const configuredDataRoot = unset ? undefined : (settingsDataRoot as string)
+  configuredDataRoot = unset ? undefined : (settingsDataRoot as string)
   // 历史数据路径，属于品牌改名豁免项，禁止随展示品牌修改。
   const legacyDefault = (): string => {
     const configRoot = resolveConfigRoot()
@@ -143,18 +142,9 @@ const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number)
       )
     return populated[0] ?? (legacyUsedConfig ? configRoot : homeDefault)
   }
-  const selected =
+  cachedDataRoot =
     configuredDataRoot ??
     (onboardingCompletedAt !== undefined ? legacyDefault() : computeDefaultDataRoot())
-  // A user-selected root may be a directory alias. Bind that alias once, before repositories are
-  // constructed, instead of weakening their checks against links inside managed storage. Ordinary
-  // paths retain their spelling, including historical paths whose parents contain links.
-  const root = lstatSync(selected, { throwIfNoEntry: false })?.isSymbolicLink()
-    ? realpathSync(selected)
-    : selected
-  selectedDataRoot = selected
-  cachedDataRoot = root
-  return selected
 }
 
 // Before initDataRoot has run (early callers, tests), fall back to computeDefaultDataRoot()
