@@ -39,6 +39,17 @@ export async function showFileDialogInHelper(
   if (parent && activeParents.has(parent))
     throw new NativeFileDialogError('dialog-already-open', 'A native file dialog is already open.')
   const log = createLogger('native-file-dialog')
+  // Windows common-dialog edit controls can crash inside third-party IME callbacks.
+  // Keep text entry in Chromium while retaining the helper as a process-level safety net.
+  const presentation =
+    process.platform === 'win32' &&
+    (request.kind === 'save' ||
+      (request.kind === 'open' &&
+        request.options.properties?.includes('openDirectory') &&
+        !request.options.properties?.includes('openFile') &&
+        !request.options.properties?.includes('multiSelections')))
+      ? 'html'
+      : 'native'
   const operationId = randomUUID()
   const operation = startDiagnosticOperation(log, {
     operation: 'native-file-dialog',
@@ -47,6 +58,7 @@ export async function showFileDialogInHelper(
       kind: request.kind,
       platform: process.platform,
       isolated: true,
+      presentation,
       parented: false,
       parentPid: process.pid
     }
@@ -58,7 +70,7 @@ export async function showFileDialogInHelper(
   try {
     profile = mkdtempSync(join(app.getPath('temp'), 'open-science-file-dialog-'))
     // A BrowserWindow cannot cross processes. Disable only the invoking window for the lifetime
-    // of the helper and restore it on every terminal path; the helper owns the native dialog.
+    // of the helper and restore it on every terminal path; the helper owns the selection window.
     if (wasEnabled) parent?.setEnabled(false)
     const env: NodeJS.ProcessEnv = { ...process.env, [FILE_DIALOG_PROFILE_ENV]: profile }
     delete env.ELECTRON_RUN_AS_NODE
@@ -139,7 +151,7 @@ export async function showFileDialogInHelper(
       })
       child.on('message', (message: unknown) => {
         if (settled) return
-        const raw = message as { type?: string; result?: unknown } | null
+        const raw = message as { type?: string; result?: unknown; errorCode?: unknown } | null
         if (raw?.type === 'ready' && !ready) {
           ready = true
           clearTimeout(startupTimeout)
@@ -148,6 +160,7 @@ export async function showFileDialogInHelper(
             {
               ...request,
               type: 'show',
+              presentation,
               operationId,
               crashDumpsPath: app.getPath('crashDumps'),
               appVersion: app.getVersion()
@@ -162,6 +175,13 @@ export async function showFileDialogInHelper(
                 )
             }
           )
+        } else if (
+          raw?.type === 'selection-error' &&
+          ready &&
+          typeof raw.errorCode === 'string' &&
+          /^[A-Z_]{2,32}$|^selection-failed$/.test(raw.errorCode)
+        ) {
+          operation.phase('selection-rejected', { helperPid: child.pid, errorCode: raw.errorCode })
         } else if (raw?.type === 'result' && ready && !selection) {
           try {
             selection = parseFileDialogResult(request.kind, raw.result)

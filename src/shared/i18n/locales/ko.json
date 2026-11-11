@@ -44,7 +44,8 @@
     "Close window": "창 닫기",
     "Review potentially destructive code": "잠재적으로 파괴적인 코드 검토",
     "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "종료하면 완료되지 않은 작업이 중단됩니다. 저장된 대화와 파일은 유지됩니다."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "종료하면 완료되지 않은 작업이 중단됩니다. 저장된 대화와 파일은 유지됩니다.",
+    "Save file": "파일 저장"
   },
   "native": {
     "Local State is in use by another process.": "다른 프로세스에서 Local State를 사용 중입니다.",
@@ -98,7 +99,6 @@
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "어느 쪽을 선택해도 데이터는 안전하지만, 지금 종료하면 이동이 완료되지 않아 다시 시작해야 할 수 있습니다. 완료될 때까지 앱을 열어 두세요.",
     "The app window stopped responding repeatedly.": "앱 창이 반복해서 응답하지 않았습니다.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "자동 복구가 일시 중지되었습니다. 새로고침하면 이 창이 홈 화면으로 돌아갑니다. 백그라운드 작업은 계속 실행 중일 수 있습니다.",
-    "Save file": "파일 저장",
     "Save artifact": "아티팩트 저장",
     "Choose where to save artifacts": "아티팩트를 저장할 위치 선택",
     "Export notebook": "Notebook 내보내기",
@@ -7980,6 +7980,26 @@
     "Source URL": "소스 URL",
     "Branch or tag": "브랜치 또는 태그",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "스페셜리스트 마켓플레이스 카탈로그를 게시하는 공개 GitHub 저장소 또는 브랜치 URL을 사용하세요.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요.",
+    "Cannot open this folder. Check the path and permissions.": "이 폴더를 열 수 없습니다. 경로와 권한을 확인하세요.",
+    "Enter a valid Windows file name.": "올바른 Windows 파일 이름을 입력하세요.",
+    "Use an extension matching the selected file type.": "선택한 파일 형식에 맞는 확장자를 사용하세요.",
+    "Cannot use this destination. Choose another file or folder.": "이 저장 위치를 사용할 수 없습니다. 다른 파일이나 폴더를 선택하세요.",
+    "The destination changed. Review it and save again.": "저장 대상이 변경되었습니다. 확인 후 다시 저장하세요.",
+    "Select folder": "폴더 선택",
+    "Parent folder": "상위 폴더",
+    "Go": "이동",
+    "Downloads": "다운로드",
+    "Desktop": "바탕 화면",
+    "Folders": "폴더",
+    "No subfolders": "하위 폴더 없음",
+    "Some folders are not listed. Enter the folder path to open them.": "일부 폴더가 표시되지 않습니다. 폴더 경로를 입력하여 여세요.",
+    "File type": "파일 형식",
+    "Replace existing file?": "기존 파일을 바꾸시겠습니까?",
+    "“{{name}}” already exists. Replace it?": "“{{name}}”이(가) 이미 있습니다. 바꾸시겠습니까?",
+    "Keep existing file": "기존 파일 유지",
+    "Replace": "바꾸기",
+    "New folder": "새 폴더",
+    "Folder name": "폴더 이름"
   }
 }

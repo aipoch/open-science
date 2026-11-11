@@ -36,7 +36,8 @@
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/file-dialog-ui.ts"
   ],
   "interfacePaths": [
     "src/shared/agent-framework-id.ts",
@@ -67,7 +68,8 @@
     "src/shared/runtime-payload-client.ts",
     "src/shared/session-event-hydrator.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/file-dialog-ui.ts"
   ],
   "consumerModules": [
     "host_command_runtime",

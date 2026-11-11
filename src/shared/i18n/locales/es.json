@@ -44,7 +44,8 @@
     "Close window": "Cerrar ventana",
     "Review potentially destructive code": "Revisar código potencialmente destructivo",
     "Confirm Notebook kernel and environment": "Confirmar el kernel y el entorno de Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Al salir, se interrumpirán las tareas pendientes. Se conservarán las conversaciones y los archivos guardados."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Al salir, se interrumpirán las tareas pendientes. Se conservarán las conversaciones y los archivos guardados.",
+    "Save file": "Guardar archivo"
   },
   "native": {
     "Local State is in use by another process.": "Otro proceso está utilizando Local State.",
@@ -98,7 +99,6 @@
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Sus datos están seguros en cualquier caso, pero salir ahora dejará el traslado sin terminar; quizá tenga que iniciarlo de nuevo. Mantenga la aplicación abierta hasta que finalice.",
     "The app window stopped responding repeatedly.": "La ventana de la aplicación dejó de responder repetidamente.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "La recuperación automática está en pausa. Al volver a cargar, esta ventana regresará a la pantalla de inicio; es posible que aún haya trabajo en ejecución en segundo plano.",
-    "Save file": "Guardar archivo",
     "Save artifact": "Guardar artefacto",
     "Choose where to save artifacts": "Elija dónde guardar los artefactos",
     "Export notebook": "Exportar Notebook",
@@ -8322,6 +8322,26 @@
     "Source URL": "URL de la fuente",
     "Branch or tag": "Rama o etiqueta",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilice la URL de un repositorio público de GitHub o de una rama que publique un catálogo del mercado de especialistas.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca.",
+    "Cannot open this folder. Check the path and permissions.": "No se puede abrir esta carpeta. Compruebe la ruta y los permisos.",
+    "Enter a valid Windows file name.": "Introduzca un nombre de archivo de Windows válido.",
+    "Use an extension matching the selected file type.": "Use una extensión que coincida con el tipo de archivo seleccionado.",
+    "Cannot use this destination. Choose another file or folder.": "No se puede usar este destino. Elija otro archivo u otra carpeta.",
+    "The destination changed. Review it and save again.": "El destino ha cambiado. Revíselo y vuelva a guardar.",
+    "Select folder": "Seleccionar carpeta",
+    "Parent folder": "Carpeta superior",
+    "Go": "Ir",
+    "Downloads": "Descargas",
+    "Desktop": "Escritorio",
+    "Folders": "Carpetas",
+    "No subfolders": "No hay subcarpetas",
+    "Some folders are not listed. Enter the folder path to open them.": "Algunas carpetas no aparecen. Introduzca la ruta de la carpeta para abrirla.",
+    "File type": "Tipo de archivo",
+    "Replace existing file?": "¿Reemplazar el archivo existente?",
+    "“{{name}}” already exists. Replace it?": "«{{name}}» ya existe. ¿Desea reemplazarlo?",
+    "Keep existing file": "Conservar archivo existente",
+    "Replace": "Reemplazar",
+    "New folder": "Nueva carpeta",
+    "Folder name": "Nombre de la carpeta"
   }
 }

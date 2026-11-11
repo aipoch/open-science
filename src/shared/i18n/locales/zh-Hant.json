@@ -44,7 +44,8 @@
     "Close window": "關閉視窗",
     "Review potentially destructive code": "檢查可能具有破壞性的程式碼",
     "Confirm Notebook kernel and environment": "確認 Notebook 核心與環境",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "結束應用程式將中斷未完成的工作。已儲存的對話和檔案會保留。"
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "結束應用程式將中斷未完成的工作。已儲存的對話和檔案會保留。",
+    "Save file": "儲存檔案"
   },
   "native": {
     "Local State is in use by another process.": "Local State 正由其他處理程序使用。",
@@ -98,7 +99,6 @@
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "無論如何你的資料都是安全的，但現在結束會使移動未完成，你可能需要重新開始。請保持應用程式開啟，直到移動完成。",
     "The app window stopped responding repeatedly.": "應用程式視窗多次停止回應。",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "自動復原已暫停。重新載入會使此視窗返回首頁；背景工作可能仍在執行。",
-    "Save file": "儲存檔案",
     "Save artifact": "儲存產物",
     "Choose where to save artifacts": "選擇產物儲存位置",
     "Export notebook": "匯出 Notebook",
@@ -7982,6 +7982,26 @@
     "Source URL": "來源網址",
     "Branch or tag": "分支或標籤",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用發佈專家市集目錄的公開 GitHub 儲存庫或分支連結。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。",
+    "Cannot open this folder. Check the path and permissions.": "無法開啟此資料夾。請檢查路徑與權限。",
+    "Enter a valid Windows file name.": "請輸入有效的 Windows 檔案名稱。",
+    "Use an extension matching the selected file type.": "請使用與所選檔案類型相符的副檔名。",
+    "Cannot use this destination. Choose another file or folder.": "無法使用此目標位置。請選擇其他檔案或資料夾。",
+    "The destination changed. Review it and save again.": "目標檔案已變更。請檢查後重新儲存。",
+    "Select folder": "選擇資料夾",
+    "Parent folder": "上層資料夾",
+    "Go": "前往",
+    "Downloads": "下載",
+    "Desktop": "桌面",
+    "Folders": "資料夾",
+    "No subfolders": "沒有子資料夾",
+    "Some folders are not listed. Enter the folder path to open them.": "部分資料夾未列出。請輸入資料夾路徑以開啟。",
+    "File type": "檔案類型",
+    "Replace existing file?": "取代現有檔案？",
+    "“{{name}}” already exists. Replace it?": "「{{name}}」已存在。是否取代？",
+    "Keep existing file": "保留現有檔案",
+    "Replace": "取代",
+    "New folder": "新增資料夾",
+    "Folder name": "資料夾名稱"
   }
 }

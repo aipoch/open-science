@@ -16,6 +16,7 @@ export type FileDialogResult = OpenDialogReturnValue | SaveDialogReturnValue
 
 export type FileDialogHelperRequest = FileDialogRequest & {
   type: 'show'
+  presentation: 'native' | 'html'
   operationId: string
   crashDumpsPath: string
   appVersion: string
@@ -27,6 +28,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
 export const isFileDialogHelperRequest = (value: unknown): value is FileDialogHelperRequest =>
   record(value) &&
   value.type === 'show' &&
+  (value.presentation === 'native' || value.presentation === 'html') &&
   (value.kind === 'open' || value.kind === 'save') &&
   record(value.options) &&
   typeof value.operationId === 'string' &&

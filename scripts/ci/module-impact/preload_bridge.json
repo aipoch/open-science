@@ -8,7 +8,8 @@
     "src/preload/index.test.ts",
     "src/preload/index.ts",
     "src/preload/installation-assistant.ts",
-    "src/preload/renderer-api.d.ts"
+    "src/preload/renderer-api.d.ts",
+    "src/preload/file-dialog.ts"
   ],
   "interfacePaths": [
     "src/preload/electron-renderer-contract-adapter.ts",
@@ -32,5 +33,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "shared_contract"
+  "fallbackCapability": "shared_contract",
+  "fullTestReason": "The isolated Windows destination picker adds a restricted preload IPC surface and helper-owned browser window outside the reviewed preload boundary; require full validation until its runtime contracts are reviewed."
 }

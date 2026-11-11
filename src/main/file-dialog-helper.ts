@@ -1,6 +1,7 @@
 import { app, crashReporter, dialog } from 'electron'
 import { isAbsolute } from 'node:path'
 import { FILE_DIALOG_PROFILE_ENV, isFileDialogHelperRequest } from './file-dialog-protocol'
+import { showHtmlFileDialog } from './file-dialog-window'
 
 export async function runFileDialogHelper(): Promise<void> {
   const profile = process.env[FILE_DIALOG_PROFILE_ENV]
@@ -37,9 +38,11 @@ export async function runFileDialogHelper(): Promise<void> {
       })
       if (process.platform === 'darwin') app.focus({ steal: true })
       const result =
-        raw.kind === 'save'
-          ? await dialog.showSaveDialog(raw.options)
-          : await dialog.showOpenDialog(raw.options)
+        raw.presentation === 'html'
+          ? await showHtmlFileDialog(raw)
+          : raw.kind === 'save'
+            ? await dialog.showSaveDialog(raw.options)
+            : await dialog.showOpenDialog(raw.options)
       process.send?.({ type: 'result', result }, () => app.exit(0))
     } catch {
       // A native crash cannot reach this catch. The desktop observes its exit independently.

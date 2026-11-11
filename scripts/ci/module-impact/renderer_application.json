@@ -44,7 +44,9 @@
     "src/renderer/src/components/runtime-update-view.ts",
     "src/renderer/src/components/ApplicationStartup.tsx",
     "src/renderer/src/lib/literature-renderer-host.ts",
-    "src/renderer/src/lib/literature-renderer-host.test.ts"
+    "src/renderer/src/lib/literature-renderer-host.test.ts",
+    "src/renderer/file-dialog.html",
+    "src/renderer/src/file-dialog.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/app-shell-presentation-owner.ts",
@@ -496,5 +498,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The isolated Windows destination picker adds a standalone renderer entry and destination selection lifecycle outside the reviewed application boundary; require full validation until its runtime contracts are reviewed."
 }

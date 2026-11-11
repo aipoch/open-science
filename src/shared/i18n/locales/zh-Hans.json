@@ -44,7 +44,8 @@
     "Close window": "关闭窗口",
     "Review potentially destructive code": "检查可能具有破坏性的代码",
     "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "退出将中断未完成的任务。已保存的对话和文件会保留。"
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "退出将中断未完成的任务。已保存的对话和文件会保留。",
+    "Save file": "保存文件"
   },
   "native": {
     "Local State is in use by another process.": "Local State 正被其他进程占用。",
@@ -98,7 +99,6 @@
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "无论如何你的数据都是安全的，但现在退出会使迁移未完成，你可能需要重新开始。请保持应用打开，直到迁移完成。",
     "The app window stopped responding repeatedly.": "应用窗口多次停止响应。",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "自动恢复已暂停。重新加载会使此窗口返回主页；后台工作可能仍在运行。",
-    "Save file": "保存文件",
     "Save artifact": "保存产物",
     "Choose where to save artifacts": "选择产物保存位置",
     "Export notebook": "导出 Notebook",
@@ -7982,6 +7982,26 @@
     "Source URL": "来源地址",
     "Branch or tag": "分支或标签",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用发布专家市场目录的公开 GitHub 仓库或分支链接。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。",
+    "Cannot open this folder. Check the path and permissions.": "无法打开此文件夹。请检查路径和权限。",
+    "Enter a valid Windows file name.": "请输入有效的 Windows 文件名。",
+    "Use an extension matching the selected file type.": "请使用与所选文件类型匹配的扩展名。",
+    "Cannot use this destination. Choose another file or folder.": "无法使用此目标位置。请选择其他文件或文件夹。",
+    "The destination changed. Review it and save again.": "目标文件已发生变化。请检查后重新保存。",
+    "Select folder": "选择文件夹",
+    "Parent folder": "上级文件夹",
+    "Go": "前往",
+    "Downloads": "下载",
+    "Desktop": "桌面",
+    "Folders": "文件夹",
+    "No subfolders": "没有子文件夹",
+    "Some folders are not listed. Enter the folder path to open them.": "部分文件夹未列出。请输入文件夹路径以打开。",
+    "File type": "文件类型",
+    "Replace existing file?": "替换现有文件？",
+    "“{{name}}” already exists. Replace it?": "“{{name}}”已存在。是否替换？",
+    "Keep existing file": "保留现有文件",
+    "Replace": "替换",
+    "New folder": "新建文件夹",
+    "Folder name": "文件夹名称"
   }
 }

@@ -44,7 +44,8 @@
     "Close window": "Fermer la fenêtre",
     "Review potentially destructive code": "Examiner le code potentiellement destructeur",
     "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés.",
+    "Save file": "Enregistrer le fichier"
   },
   "native": {
     "Local State is in use by another process.": "Local State est utilisé par un autre processus.",
@@ -98,7 +99,6 @@
     "Your data is safe either way, but quitting now leaves the move unfinished — you may need to start it again. Keep the app open until it finishes.": "Vos données restent en sécurité, mais quitter maintenant laissera le déplacement inachevé et vous devrez peut-être le recommencer. Gardez l'application ouverte jusqu'à la fin.",
     "The app window stopped responding repeatedly.": "La fenêtre de l'application a cessé de répondre à plusieurs reprises.",
     "Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.": "La récupération automatique a été suspendue. Le rechargement ramène cette fenêtre à l'écran d'accueil ; des tâches peuvent encore s'exécuter en arrière-plan.",
-    "Save file": "Enregistrer le fichier",
     "Save artifact": "Enregistrer l'artefact",
     "Choose where to save artifacts": "Choisir où enregistrer les artefacts",
     "Export notebook": "Exporter le Notebook",
@@ -8322,6 +8322,26 @@
     "Source URL": "URL de la source",
     "Branch or tag": "Branche ou tag",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilisez l’URL d’un dépôt GitHub public ou d’une branche publiant un catalogue de la place de marché des spécialistes.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez.",
+    "Cannot open this folder. Check the path and permissions.": "Impossible d’ouvrir ce dossier. Vérifiez le chemin et les autorisations.",
+    "Enter a valid Windows file name.": "Saisissez un nom de fichier Windows valide.",
+    "Use an extension matching the selected file type.": "Utilisez une extension correspondant au type de fichier sélectionné.",
+    "Cannot use this destination. Choose another file or folder.": "Impossible d’utiliser cet emplacement. Choisissez un autre fichier ou dossier.",
+    "The destination changed. Review it and save again.": "La destination a changé. Vérifiez-la et enregistrez à nouveau.",
+    "Select folder": "Sélectionner un dossier",
+    "Parent folder": "Dossier parent",
+    "Go": "Aller",
+    "Downloads": "Téléchargements",
+    "Desktop": "Bureau",
+    "Folders": "Dossiers",
+    "No subfolders": "Aucun sous-dossier",
+    "Some folders are not listed. Enter the folder path to open them.": "Certains dossiers ne sont pas affichés. Saisissez leur chemin pour les ouvrir.",
+    "File type": "Type de fichier",
+    "Replace existing file?": "Remplacer le fichier existant ?",
+    "“{{name}}” already exists. Replace it?": "« {{name}} » existe déjà. Le remplacer ?",
+    "Keep existing file": "Conserver le fichier existant",
+    "Replace": "Remplacer",
+    "New folder": "Nouveau dossier",
+    "Folder name": "Nom du dossier"
   }
 }

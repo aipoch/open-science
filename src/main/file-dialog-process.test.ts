@@ -72,6 +72,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 const filePath = join(tmpdir(), 'private-selected-name.json')
 const saveRequest = { kind: 'save' as const, options: { defaultPath: filePath } }
@@ -85,6 +86,39 @@ const assertReleased = (): void => {
 }
 
 describe('isolated native file dialogs', () => {
+  it.each([
+    { kind: 'save' as const, options: {}, presentation: 'html' },
+    { kind: 'open' as const, options: { properties: ['openDirectory'] }, presentation: 'html' },
+    { kind: 'open' as const, options: { properties: ['openFile'] }, presentation: 'native' },
+    {
+      kind: 'open' as const,
+      options: { properties: ['openDirectory', 'multiSelections'] },
+      presentation: 'native'
+    }
+  ])(
+    'routes Windows $kind $options.properties to $presentation and retains IPC diagnostics',
+    async ({ kind, options, presentation }) => {
+      vi.stubGlobal('process', { ...process, platform: 'win32' })
+      const pending = showFileDialogInHelper(
+        { kind, options } as Parameters<typeof showFileDialogInHelper>[0],
+        window.asParent()
+      )
+      child.emit('message', { type: 'ready' })
+      expect(child.send).toHaveBeenCalledWith(
+        expect.objectContaining({ presentation }),
+        expect.any(Function)
+      )
+      child.emit('message', { type: 'selection-error', errorCode: 'EACCES' })
+      expect(mocks.log.info).toHaveBeenCalledWith(
+        'operation phase',
+        expect.objectContaining({ phase: 'selection-rejected', errorCode: 'EACCES', presentation })
+      )
+      child.emit('message', { type: 'result', result: { canceled: true } })
+      child.exit(0)
+      await pending
+      assertReleased()
+    }
+  )
   it('publishes only after clean helper exit and sends private options through inherited IPC', async () => {
     vi.stubEnv('NODE_OPTIONS', '--inspect')
     vi.stubEnv('ELECTRON_RUN_AS_NODE', '1')
