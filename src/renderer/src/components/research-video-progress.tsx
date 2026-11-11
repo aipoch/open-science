@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { ProgressBar } from './ui/progress-bar'
 import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
@@ -97,7 +98,12 @@ export function ResearchVideoProgressLine({
               {[1, 2, 3, 4, 5].map((step) => (
                 <span
                   key={step}
-                  className={`h-1 flex-1 rounded-full ${step < filmStep ? 'bg-primary' : step === filmStep ? 'bg-primary/50' : 'bg-muted'}`}
+                  className={cn(
+                    'h-1 flex-1 rounded-full bg-muted',
+                    (step < filmStep || progress.phase === 'completed') && 'bg-primary',
+                    step === filmStep && progress.phase !== 'completed' && 'bg-primary/60',
+                    step === filmStep && !terminal && 'motion-safe:animate-pulse'
+                  )}
                 />
               ))}
             </div>
@@ -105,8 +111,10 @@ export function ResearchVideoProgressLine({
         ) : (
           <p className="text-sm font-medium text-foreground">{labels[progress.phase]}</p>
         )}
+      </div>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 tabular-nums">
         {counted && (
-          <p className="tabular-nums">
+          <p>
             {progress.totalLines === undefined
               ? t('{{completed}} / {{total}} completed', {
                   completed: progress.completed,
@@ -120,6 +128,7 @@ export function ResearchVideoProgressLine({
                 })}
           </p>
         )}
+        <p>{elapsed}</p>
       </div>
       {!terminal && !filmStep && (
         <ProgressBar
@@ -131,7 +140,6 @@ export function ResearchVideoProgressLine({
           label={labels[progress.phase]}
         />
       )}
-      <p className="tabular-nums">{elapsed}</p>
     </div>
   )
 }

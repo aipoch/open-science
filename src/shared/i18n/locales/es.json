@@ -8139,7 +8139,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Instalar los recursos de narración ({{size}} MiB) para generar la explicación. Se reutilizarán en las próximas explicaciones.",
     "Install and generate": "Instalar y generar",
     "English narration": "Narración en inglés",
-    "You can close this window. Generation continues in the background.": "Puede cerrar esta ventana. La generación continúa en segundo plano.",
     "View generation progress": "Ver progreso de generación",
     "Generate again?": "¿Volver a generar?",
     "Start generation": "Iniciar generación",

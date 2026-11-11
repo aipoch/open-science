@@ -7803,7 +7803,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "安裝旁白資源（{{size}} MiB）後即可產生，後續講解將重複使用這些資源。",
     "Install and generate": "安裝並產生",
     "English narration": "英語旁白",
-    "You can close this window. Generation continues in the background.": "可以關閉此視窗，產生作業會在背景繼續。",
     "View generation progress": "查看產生進度",
     "Generate again?": "重新產生？",
     "Start generation": "開始產生",

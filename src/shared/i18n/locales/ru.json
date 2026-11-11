@@ -8284,7 +8284,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Установите ресурсы озвучивания ({{size}} МиБ) для создания объяснения. Они будут повторно использоваться в следующих объяснениях.",
     "Install and generate": "Установить и создать",
     "English narration": "Озвучка на английском",
-    "You can close this window. Generation continues in the background.": "Можно закрыть это окно. Создание продолжится в фоновом режиме.",
     "View generation progress": "Показать ход создания",
     "Generate again?": "Создать заново?",
     "Start generation": "Начать создание",

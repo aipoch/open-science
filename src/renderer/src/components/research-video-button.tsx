@@ -356,11 +356,16 @@ export function ResearchVideoButton({
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
-                    <p className="min-w-0 flex-1 self-center text-xs leading-relaxed text-muted-foreground">
-                      {t('You can close this window. Generation continues in the background.')}
-                    </p>
-                    <Button variant="ghost" disabled={pending} onClick={() => void cancel()}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => void cancel()}
+                    >
                       {t('Cancel')}
+                    </Button>
+                    <Button size="sm" onClick={() => setOpen(false)}>
+                      {t('Run in background')}
                     </Button>
                   </>
                 ) : confirmDeletion ? (

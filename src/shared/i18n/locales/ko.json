@@ -7801,7 +7801,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "생성하려면 내레이션 리소스({{size}} MiB)를 설치하세요. 이후 해설에서도 재사용됩니다.",
     "Install and generate": "설치 후 생성",
     "English narration": "영어 내레이션",
-    "You can close this window. Generation continues in the background.": "이 창을 닫아도 생성은 백그라운드에서 계속됩니다.",
     "View generation progress": "생성 진행 상황 보기",
     "Generate again?": "다시 생성할까요?",
     "Start generation": "생성 시작",
