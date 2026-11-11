@@ -423,7 +423,10 @@ describe('NotebookNetworkSandboxOwner', () => {
     '\\\\wsl$\\Ubuntu\\home\\alice\\data',
     '\\\\WSL.LOCALHOST\\UBUNTU\\home\\alice\\data',
     '\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home\\alice\\data'
-  ])('skips native ACL preflight for WSL UNC grant %s', async (path) => {
+  ])('admits WSL UNC grant %s without querying native protection', async (path) => {
+    backend.isWindowsProtectionConfigured.mockRejectedValue(
+      new Error('Windows protection helper is unavailable.')
+    )
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
       platform: 'win32',
@@ -434,11 +437,33 @@ describe('NotebookNetworkSandboxOwner', () => {
 
     await expect(owner.preflightGrantedRoot(path, 'rw')).resolves.toBeUndefined()
 
+    expect(backend.isWindowsProtectionConfigured).not.toHaveBeenCalled()
+    expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
+  it('preserves native protection status failures for local grants', async () => {
+    const failure = new Error('Windows protection helper is unavailable.')
+    backend.isWindowsProtectionConfigured.mockRejectedValue(failure)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+
+    await expect(owner.preflightGrantedRoot('C:\\data', 'rw')).rejects.toBe(failure)
+
+    expect(backend.isWindowsProtectionConfigured).toHaveBeenCalledOnce()
     expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
     await owner.dispose()
   })
 
   it('completes a stored WSL grant access change without native ACL', async () => {
+    backend.isWindowsProtectionConfigured.mockRejectedValue(
+      new Error('Windows protection helper is unavailable.')
+    )
     const roots: GrantedLocalRoot[] = [
       {
         id: 'wsl',
@@ -472,6 +497,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       await expect(service.setGrantedRootAccess({ id: 'wsl', access: 'rw' })).resolves.toEqual([
         expect.objectContaining({ id: 'wsl', access: 'rw' })
       ])
+      expect(backend.isWindowsProtectionConfigured).not.toHaveBeenCalled()
       expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
       expect(store.setAccess).toHaveBeenCalledExactlyOnceWith('wsl', 'rw')
       expect(shutdown).toHaveBeenCalledOnce()

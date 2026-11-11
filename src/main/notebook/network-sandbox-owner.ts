@@ -412,9 +412,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     requestedPath?: string
   ): Promise<void> {
     if (this.platform !== 'win32') return
-    if (!(await this.windowsProtectionConfigured())) return
-    // WSL2 grants are enforced by guest-side bubblewrap; native ACLs reject the UNC form.
+    // WSL2 grants use guest-side bubblewrap and must not depend on native helper readiness.
     if (wslUncDistro(path)) return
+    if (!(await this.windowsProtectionConfigured())) return
     const filesystem = {
       readOnlyRoots: [path],
       readWriteRoots: access === 'rw' ? [path] : [],
