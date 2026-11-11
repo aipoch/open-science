@@ -33,6 +33,35 @@ type PreparedLatexBundle = Readonly<{
 const sha256 = (value: string | Uint8Array): string =>
   createHash('sha256').update(value).digest('hex')
 
+const hasLatexCommand = (
+  content: string,
+  command: 'usepackage' | 'addbibresource',
+  argument: string
+): boolean => {
+  const prefix = `\\${command}`
+  const optionPrefix = new RegExp(String.raw`\\${command}[ \t\r\n\f]*\[`, 'u')
+  // Literal argument ranges do not overlap, even in malformed input with nested braces.
+  for (const match of content.matchAll(/\{([^{}]*)\}/gu)) {
+    const value = match[1]!
+    const matchesArgument =
+      command === 'usepackage'
+        ? value.split(',').some((name) => name.trim() === argument)
+        : value === argument
+    if (!matchesArgument) continue
+    let start = match.index!
+    while (start > 0 && /[ \t\r\n\f]/u.test(content[start - 1]!)) start--
+    if (content[start - 1] !== ']') {
+      if (content.endsWith(prefix, start)) return true
+      continue
+    }
+    // Each closing bracket can precede only one argument. Searching back to the previous
+    // closing bracket keeps option ranges disjoint, without caching parser positions.
+    const previous = content.lastIndexOf(']', start - 2)
+    if (optionPrefix.test(content.slice(previous + 1, start - 1))) return true
+  }
+  return false
+}
+
 class LiteratureLatexBundle {
   constructor(
     private readonly catalog: LatexBundleCatalog,
@@ -72,10 +101,10 @@ class LiteratureLatexBundle {
     if (new Set(keysByItemId.values()).size !== keysByItemId.size) {
       throw new Error('Selected Literature Items have duplicate citation keys.')
     }
-    if (!/\\usepackage(?:\[[^\]]*\])?\{biblatex\}/u.test(request.content)) {
+    if (!hasLatexCommand(request.content, 'usepackage', 'biblatex')) {
       throw new Error('LaTeX document must load the biblatex package.')
     }
-    if (!/\\addbibresource(?:\[[^\]]*\])?\{references\.bib\}/u.test(request.content)) {
+    if (!hasLatexCommand(request.content, 'addbibresource', 'references.bib')) {
       throw new Error('LaTeX document must add references.bib as its bibliography resource.')
     }
 
