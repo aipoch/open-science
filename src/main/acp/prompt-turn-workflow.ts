@@ -14,6 +14,7 @@ import type {
 } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import type { AgentFramework } from '../agent-framework/types'
+import type { RuntimeSessionContinuationAdmission } from '../session-persistence/runtime-session-owner'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
@@ -243,7 +244,8 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     planDeliveryCommandId?: string,
     delegatedMessageId?: string,
     applicationPrompt?: { text: string; attribution: MessageAttribution },
-    approvedHandoffContinuation?: boolean
+    approvedHandoffContinuation?: boolean,
+    continuationAdmission?: RuntimeSessionContinuationAdmission
   ) => Promise<void>
   assertRuntimeSessionAdmissionAvailable?: (sessionId: string) => Promise<void>
   waitForRuntimeSessionTerminalWrites?: (sessionId: string, signal: AbortSignal) => Promise<void>
@@ -454,14 +456,30 @@ class AcpPromptTurnWorkflow {
           mode.kind === 'application'
             ? { text: admittedRequest.text ?? '', attribution: mode.attribution }
             : undefined,
+          mode.kind === 'app-continuation',
           mode.kind === 'app-continuation'
+            ? {
+                signal: interaction.signal,
+                assertCurrent: () => {
+                  if (this.options.interactions.current(request.sessionId) !== interaction)
+                    throw new Error('ACP prompt interaction is no longer active')
+                }
+              }
+            : undefined
         )
       }
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
     } catch (error) {
-      skill.close(rejectedSkillOutcome)
-      this.options.interactions.release(interaction ?? reservation)
+      const scope = interaction ?? reservation
+      const cancelled = mode.kind === 'app-continuation' && scope.signal.aborted
+      skill.close(cancelled ? 'cancelled' : rejectedSkillOutcome)
+      try {
+        if (cancelled) await this.options.interactions.cancellationCheckpoint(scope)
+      } finally {
+        this.options.interactions.release(scope)
+      }
+      if (cancelled) return { stopReason: 'cancelled' }
       if (mode.kind === 'app-continuation' && mode.delegatedMessageId) {
         throw new DelegateMessagePreAcceptanceError(
           error instanceof Error ? error.message : String(error),
