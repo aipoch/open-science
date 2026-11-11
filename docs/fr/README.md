@@ -49,19 +49,18 @@
 
 Pour comprendre comment un résultat a été obtenu, consultez les données d’entrée, le code et l’historique d’exécution disponibles. Pour partager votre travail, choisissez les branches de conversation, les versions de fichiers, les enregistrements du Notebook et les éléments de vérification à inclure dans un paquet `.science`, puis exportez-le.
 
-### 💡 AIPOCH Open-Science v1.2.0 — Nouveautés
+### 💡 AIPOCH Open-Science v1.2.1 — Nouveautés
 
-_9 novembre 2026_
+_10 novembre 2026_
 
-- **Calcul distant**: Exécutez des tâches approuvées sur vos cibles Kubernetes, Hugging Face Jobs, Modal ou Ray, en plus de SSH et Slurm, avec approbation par tâche et reprise de la collecte des résultats après redémarrage.
-- **Agent intégré**: Open-Science Agent devient l’environnement autonome par défaut des nouvelles installations ; Claude Code, OpenCode, Codex, CodeBuddy et Pi restent disponibles.
-- **Mises à jour macOS plus rapides**: Téléchargez uniquement les blocs modifiés de l’image de l’application, avec repli automatique sur le téléchargement complet.
-- **Discussions par étape**: Les questions sur une recherche `.science` importée ou une étape de relecture ouvrent une conversation enfant liée à cette étape ; l’import reste en lecture seule.
-- **Aperçu des sources**: Le survol d’un lien affiche son domaine de destination et, pour les sources HTTPS approuvées, son titre et sa description.
-- **Espace de travail amélioré**: Barre latérale simplifiée, action « Fork to continue » mise en avant et position de lecture conservée lors d’un envoi depuis un tour antérieur.
-- **Fiabilité**: macOS vérifie l’application en cours avant une mise à jour ; Windows identifie les fichiers bloquants et garde la saisie au-dessus de la barre des tâches. La traduction PDF à mise en page fixe conserve les pages réussies si l’une échoue.
+- **Centre de ressources unifié**: Gérez les compétences, les connecteurs et les spécialistes — et leur place de marché — depuis un seul endroit, avec des cartes, des filtres et des vues de détail cohérents.
+- **Optimisation de l'invite**: Affinez l'invite scientifique du projet en cours directement depuis le composeur, avec révision, modification et annulation ; enregistrez des modèles personnalisés dans les paramètres du projet.
+- **Améliorations de l'Agent intégré**: Utilisez des comptes d'abonnement Codex, sélectionnez Claude Fable 5.2 et recevez des réponses plus longues qui respectent les limites de sortie de chaque fournisseur.
+- **Connexion au calcul cloud**: Modal et Hugging Face préparent un environnement d'exécution Python compatible avant l'autorisation dans le navigateur, et la vérification du compte respecte votre proxy réseau.
+- **Exports longs plus rapides**: Les historiques du Notebook et de Compute stockent les preuves une seule fois, pour que l'export de longues sessions de recherche ne se bloque plus ni n'explose en taille.
+- **Corrections de fiabilité**: Les mises à jour Windows se récupèrent plus proprement, les questions répondues ne se bloquent plus avant de se poursuivre, et les interpréteurs inactifs libèrent leur mémoire automatiquement.
 
-[Notes complètes v1.2.0](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
+[Notes complètes v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />

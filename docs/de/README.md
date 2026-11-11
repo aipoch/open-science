@@ -49,19 +49,18 @@
 
 Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
 
-### 💡 AIPOCH Open-Science v1.2.0 — Neuerungen
+### 💡 AIPOCH Open-Science v1.2.1 — Neuerungen
 
-_9. November 2026_
+_10. November 2026_
 
-- **Remote-Berechnungen**: Genehmigte Aufträge auf selbst angebundenen Kubernetes-, Hugging-Face-Jobs-, Modal- oder Ray-Zielen neben SSH und Slurm ausführen, mit Einzelfreigabe und fortsetzbarer Ergebnissammlung nach Neustarts.
-- **Integrierter Agent**: Der eigenständige Open-Science Agent ist bei neuen Einrichtungen voreingestellt; Claude Code, OpenCode, Codex, CodeBuddy und Pi bleiben verfügbar.
-- **Schnellere macOS-Updates**: Nur geänderte Blöcke des App-Abbilds herunterladen, bei Bedarf automatisch den vollständigen Download nutzen.
-- **Diskussionen zu Schritten**: Fragen zu importierter `.science`-Forschung oder einem Wiedergabeschritt öffnen eine verknüpfte untergeordnete Unterhaltung; der Import bleibt schreibgeschützt.
-- **Quellenvorschau**: Beim Überfahren eines Quellenlinks erscheint die Zieldomain, bei freigegebenen HTTPS-Quellen auch Titel und Beschreibung.
-- **Verbesserter Arbeitsbereich**: Einfachere Seitenleiste, hervorgehobenes „Fork to continue“ und eine stabile Leseposition beim Senden aus einem früheren Gesprächsschritt.
-- **Zuverlässigkeit**: macOS prüft vor Updates die laufende App; Windows nennt blockierende Dateien und hält die Eingabe oberhalb der Taskleiste. PDF-Übersetzungen mit festem Layout behalten erfolgreiche Seiten, wenn eine Seite fehlschlägt.
+- **Vereinheitlichte Ressourcenverwaltung**: Fähigkeiten, Verbindungen und Spezialisten — samt Marktplatz — an einem Ort verwalten, mit einheitlichen Karten, Filtern und Detailansichten.
+- **Prompt-Optimierung**: Den wissenschaftlichen Prompt des aktuellen Projekts direkt aus dem Eingabebereich verfeinern, mit Prüfen, Bearbeiten und Widerrufen; eigene Vorlagen in den Projekteinstellungen speichern.
+- **Verbesserter integrierter Agent**: Codex-Abonnementkonten nutzen, Claude Fable 5.2 auswählen und längere Antworten erhalten, die die Ausgabelimits jedes Anbieters beachten. Claude Code, OpenCode, CodeBuddy und Pi bleiben weiterhin verfügbar.
+- **Cloud-Compute-Anmeldung**: Modal und Hugging Face stellen eine kompatible Python-Laufzeit bereit, bevor die Browser-Anmeldung geöffnet wird, und die Kontenprüfung beachtet Ihren Netzwerkproxy.
+- **Schnellere lange Exporte**: Notebook- und Compute-Verläufe speichern Belege einmalig, sodass der Export langer Forschungssitzungen nicht mehr hängt oder anschwillt.
+- **Zuverlässigkeitskorrekturen**: Windows-Aktualisierungen erholen sich sauberer, beantwortete Fragen warten nicht mehr vor der Fortsetzung, und untätige Interpreter geben ihren Speicher automatisch frei.
 
-[Vollständige Versionshinweise v1.2.0](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
+[Vollständige Versionshinweise v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
