@@ -21,6 +21,7 @@ import {
 import { Trans, useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
+import { DiagnosticDetails } from './diagnostic-details'
 import { DownloadProgressLine } from './DownloadProgressLine'
 import { ResearchVideoProgressLine } from './research-video-progress'
 import { localModelDownloadProgress, type LocalModelSnapshot } from '../../../shared/local-models'
@@ -127,14 +128,17 @@ export function ResearchVideoButton({
       'Narration installation did not finish. Retry to continue.'
     )
   }
+  const failure = error || status.error
+  const preflight = status.preflightError
+  const knownPreflight = preflight && Object.hasOwn(preflightMessages, preflight)
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
-    : status.preflightError && (preflightMessages[status.preflightError] ?? status.preflightError)
+    : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
   const modelSettingsAvailable =
     !status.generationBlock &&
     status.preflightError &&
     status.preflightError !== missingRuntime &&
-    Object.hasOwn(preflightMessages, status.preflightError)
+    knownPreflight
   const triggerState: ResearchVideoTriggerState = {
     label: !statusLoaded
       ? t('Loading…')
@@ -509,16 +513,25 @@ export function ResearchVideoButton({
                       blocked
                     )
                   }
-                />
+                >
+                  {!status.generationBlock && !knownPreflight && (
+                    <DiagnosticDetails detail={preflight} copyable />
+                  )}
+                </ErrorNotice>
               )}
-              {!blocked && (error || status.error) && (
+              {!blocked && failure && (
                 <ErrorNotice
                   inline
                   tone="amber"
+                  role="alert"
                   description={
-                    error ?? (status.error && (filmErrors[status.error] ?? status.error))
+                    Object.hasOwn(filmErrors, failure)
+                      ? filmErrors[failure]
+                      : t('Research video failed')
                   }
-                />
+                >
+                  <DiagnosticDetails key={failure} detail={failure} copyable />
+                </ErrorNotice>
               )}
               {status.result && (
                 <section className="space-y-4" aria-label={t('Research film ready')}>

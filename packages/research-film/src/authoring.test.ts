@@ -7,6 +7,8 @@ import {
   createResearchFilmAuthor,
   generateResearchFilm
 } from './authoring.js'
+import type { VideoPanel } from './timeline.js'
+import { parseResearchVideoScreenplay } from './screenplay.js'
 import { ResearchFilmOutputLimitError } from './authoring-correction.js'
 
 const source = {
@@ -35,6 +37,34 @@ const spec = {
     }
   ]
 }
+it('uses the default comparison reveal for malformed timing while preserving content validation', () => {
+  const parse = (right: Record<string, unknown>): VideoPanel =>
+    parseResearchVideoScreenplay(
+      JSON.stringify({
+        ...spec,
+        scenes: [
+          ...spec.scenes,
+          {
+            ...spec.scenes[0],
+            id: 'result',
+            role: 'result',
+            panels: [{ type: 'compare', left: { title: 'Before' }, right, verdict: 'Uncertain' }]
+          }
+        ]
+      }),
+      1
+    ).scenes[1].panels[0]
+  const fallback = parse({ title: 'After', at: 'after the first line' })
+  expect(fallback).toMatchObject({
+    left: { title: 'Before' },
+    right: { title: 'After' },
+    verdict: 'Uncertain'
+  })
+  expect(fallback.right).not.toHaveProperty('at')
+  expect(parse({ title: 'After', at: '0' }).right?.at).toBe('0')
+  expect(() => parse({ at: 'after the first line' })).toThrow()
+})
+
 it.each([false, true])(
   'bounds screenplay correction before worker generation (valid correction: %s)',
   async (valid) => {

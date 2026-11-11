@@ -89,6 +89,33 @@ it('starts directly from the session button without a chat or fork API, and supp
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
 
+it('keeps raw generation errors in collapsed details and copies the full message', async () => {
+  const error = JSON.stringify(
+    [{ code: 'invalid_union', message: 'multiple errors'.repeat(300) }],
+    null,
+    2
+  )
+  status = {
+    canResume: true,
+    filmStep: 2,
+    progress: { phase: 'failed', startedAt: Date.now() },
+    error
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal(
+    'navigator',
+    Object.create(window.navigator, { clipboard: { value: { writeText } } })
+  )
+  await click('Generate research film')
+  const details = document.querySelector('dialog details, [role="dialog"] details')!
+  expect(details.hasAttribute('open')).toBe(false)
+  expect(document.querySelector('[role="alert"]')?.textContent).not.toContain(error)
+  await act(async () => details.querySelector('summary')!.click())
+  expect(details.querySelector('pre')?.textContent).toBe(error)
+  await click('Copy')
+  expect(writeText).toHaveBeenCalledWith(error)
+})
+
 it('keeps the trigger in a loading state until the initial presentation status is known', async () => {
   let resolveStatus!: (next: ResearchVideoPresentationStatus) => void
   const pendingStatus = new Promise<ResearchVideoPresentationStatus>((resolve) => {
