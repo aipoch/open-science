@@ -37,11 +37,11 @@ export const nativeMathSymbolText = (object, fontName) => {
     : object.text
 }
 
-// OMS/CMSY encodes A–Z as the calligraphic Latin alphabet. Keep the native
-// object, never repaint that alphabet using the translation font. Lowercase
+// CMSY's calligraphic and MSBM's blackboard capitals encode mathematical alphabets.
+// Keep the native object instead of repainting it using the translation font. Lowercase
 // and digit slots belong to unrelated symbols and are deliberately excluded.
 export const nativeMathAlphabet = (object, fontName) =>
-  /^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(fontName) &&
+  /^(?:[A-Z]{6}\+)?(?:CMSY|MSBM)(?:5|6|7|8|9|10|12)$/u.test(fontName) &&
   /^(?:[\p{Sm}]\s*)?[A-Z]$/u.test(object.text.trim()) &&
   object.bounds[2] > object.bounds[0] &&
   object.bounds[3] > object.bounds[1]

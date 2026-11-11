@@ -31,7 +31,7 @@ import {
 } from '../../src/reader/native-source-geometry.js'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
-import { createPdfTranslationSource } from '../../src/reader/source.js'
+import { createPdfTranslationSource, type PdfTranslationSource } from '../../src/reader/source.js'
 import {
   getPdfTranslationLayoutSnapshot,
   rememberPdfTranslationExtraction,
@@ -1888,4 +1888,170 @@ describe('complete terminal figure pages after a bibliography', () => {
       }
     }
   )
+})
+
+it('retains right-column bibliography above a left-column reference heading without recasting earlier body', () => {
+  const source = createPdfTranslationSource({
+    resourceRequestKey: 'column-flow',
+    fingerprint: 'column-flow',
+    pages: [{ width: 600, height: 800 }],
+    units: [
+      ['References', 0.1, 0.6, 0.12],
+      [
+        'An earlier ordinary left-column paragraph remains independently translatable with its complete context.',
+        0.1,
+        0.2,
+        0.35
+      ],
+      [
+        'Author, A. (2021). First independent publication containing a complete controlled study.',
+        0.1,
+        0.65,
+        0.35
+      ],
+      ['An indented left-column paragraph above the heading stays ordinary.', 0.25, 0.3, 0.15],
+      ['Coauthor, B. (2022). A continuation at the right column top.', 0.55, 0.1, 0.35],
+      ['The same publication continues across its printed source rows.', 0.57, 0.13, 0.33],
+      ['Author, C. (2023). A later right-column publication.', 0.55, 0.7, 0.35]
+    ].map(([text, x, y, width], index) => ({
+      id: `entry-${index}`,
+      source: String(text),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: Number(x), y: Number(y), width: Number(width), height: 0.02 },
+          items: [{ index, text: String(text) }]
+        }
+      ]
+    }))
+  })
+  const before = source.units.map(({ id, source, fragments }) => [id, source, fragments])
+  const policy = applyPdfContentFirstPolicy(source)
+  expect([...pdfReflowContentKinds(source).values()]).toEqual([
+    'reference',
+    'text',
+    'reference',
+    'text',
+    'reference',
+    'reference',
+    'reference'
+  ])
+  expect(policy.units.map((unit) => !!unit.sourceOnly)).toEqual([
+    true,
+    false,
+    true,
+    false,
+    true,
+    true,
+    true
+  ])
+  expect(policy.units.map(({ id, source, fragments }) => [id, source, fragments])).toEqual(before)
+  const unproved = createPdfTranslationSource({
+    ...source,
+    units: source.units.filter((unit) => !['entry-1', 'entry-2'].includes(unit.id))
+  })
+  expect(pdfReflowContentKinds(unproved).get('entry-4')).toBe('text')
+  expect(pdfReflowContentKinds(unproved).get('entry-3')).toBe('text')
+})
+
+it.each([
+  'complete',
+  'body-list',
+  'citation-only',
+  'foreign-native-item',
+  'different-sequence',
+  'missing-witness',
+  'wrong-column',
+  'off-center',
+  'missing-year'
+])('closes only the numbered native reference seam above a centered heading: %s', (fault) => {
+  const fragment = (
+      index: number,
+      x: number,
+      y: number,
+      width = 0.4
+    ): {
+      pageNumber: number
+      rect: { x: number; y: number; width: number; height: number }
+      items: { index: number; text: string }[]
+    } => ({
+      pageNumber: 2,
+      rect: { x, y, width, height: 0.03 },
+      items: [{ index, text: '' }]
+    }),
+    entry = (
+      n: number,
+      index: number,
+      x: number,
+      y: number,
+      protectedEntry = true
+    ): PdfTranslationSource['units'][number] => ({
+      id: `entry-${n}`,
+      source: `[${n}] A. Author. A complete independent publication describing a controlled scientific experiment (2020).`,
+      fragments: [fragment(index, x, y)],
+      ...(protectedEntry ? { sourceOnly: true as const, preserve: 'reference' as const } : {})
+    }),
+    prior = entry(2, 30, 0.1, 0.8),
+    current = entry(3, 40, 0.55, 0.06, false),
+    following = entry(4, 50, 0.55, 0.1),
+    units: PdfTranslationSource['units'] = [
+      {
+        id: 'conclusion',
+        source:
+          'The concluding paragraph remains ordinary prose across its original page boundary.',
+        fragments: [{ ...fragment(0, 0.55, 0.7), pageNumber: 1 }, fragment(0, 0.1, 0.05)]
+      },
+      { id: 'heading', source: 'References', fragments: [fragment(10, 0.25, 0.2, 0.1)] },
+      entry(1, 20, 0.1, 0.65),
+      prior,
+      current,
+      following,
+      {
+        id: 'ordinary-right-body',
+        source:
+          'An independent ordinary body paragraph above the heading retains its original role.',
+        fragments: [fragment(60, 0.55, 0.16)]
+      }
+    ]
+  if (fault === 'body-list')
+    for (const unit of units) {
+      delete unit.sourceOnly
+      delete unit.preserve
+    }
+  if (fault === 'citation-only') current.source = '[3] (2020)'
+  if (fault === 'foreign-native-item')
+    units.splice(4, 0, {
+      id: 'foreign',
+      source: 'Independent native text.',
+      fragments: [fragment(35, 0.55, 0.4)]
+    })
+  if (fault === 'different-sequence') following.source = following.source.replace('[4]', '[6]')
+  if (fault === 'missing-witness') units.splice(2, 1)
+  if (fault === 'wrong-column') current.fragments[0].rect.x = 0.42
+  if (fault === 'off-center') units.find((u) => u.id === 'heading')!.fragments[0].rect.x = 0.2
+  if (fault === 'missing-year') current.source = current.source.replace('(2020)', '(undated)')
+  for (const unit of units)
+    for (const f of unit.fragments) for (const i of f.items) i.text = unit.source
+  const source = createPdfTranslationSource({
+      resourceRequestKey: 'centered-reference',
+      fingerprint: 'centered-reference',
+      pages: [
+        { width: 600, height: 800 },
+        { width: 600, height: 800 }
+      ],
+      units
+    }),
+    before = JSON.stringify(source),
+    kinds = pdfReflowContentKinds(source),
+    policy = applyPdfContentFirstPolicy(source)
+  expect(kinds.get(current.id)).toBe(fault === 'complete' ? 'reference' : 'text')
+  expect(kinds.get('conclusion')).toBe('text')
+  expect(kinds.get('ordinary-right-body')).toBe('text')
+  expect(policy.units.find((u) => u.id === current.id)?.sourceOnly === true).toBe(
+    fault === 'complete'
+  )
+  expect(policy.units.map(({ id, source, fragments }) => ({ id, source, fragments }))).toEqual(
+    source.units.map(({ id, source, fragments }) => ({ id, source, fragments }))
+  )
+  expect(JSON.stringify(source)).toBe(before)
 })

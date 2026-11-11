@@ -12,7 +12,10 @@ import {
   nativeTextFreeClipInkRegions
 } from '../../src/reader/native-source-geometry.js'
 import { nativeInkPageIdentity } from '../../src/reader/auxiliary-native-ink.js'
-import { nativeScopedDisplayOwners } from '../../src/reader/native-display-packets.js'
+import {
+  nativeScopedDisplayOwners,
+  nativeClosedMathGrammar
+} from '../../src/reader/native-display-packets.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
 
 type Request = Parameters<typeof nativeAlgorithmInkRegions>
@@ -287,4 +290,45 @@ it('proves complete native owner partitions instead of relying on IDs or merging
   } finally {
     await document.destroy()
   }
+})
+
+it.each([
+  'attached',
+  'body-word',
+  'raised-word',
+  'far-index',
+  'unknown-function',
+  'prose-in',
+  'foreign-script',
+  'greek-prose'
+])('closes mathematical operators and native lowered word indices only: %s', (fault) => {
+  const atom = (
+      str: string,
+      x: number,
+      y: number,
+      height = 10,
+      width = 6
+    ): Parameters<typeof nativeClosedMathGrammar>[0][number] => ({
+      str,
+      width,
+      height,
+      transform: [height, 0, 0, height, x, y]
+    }),
+    packet = [
+      atom('L', 100, 300),
+      atom(
+        'phase',
+        fault === 'far-index' ? 140 : 106,
+        fault === 'raised-word' ? 302 : 298.5,
+        fault === 'body-word' ? 10 : 7,
+        15
+      ),
+      atom('=', 130, 300),
+      atom(fault === 'unknown-function' ? 'merge' : 'log', 142, 300, 10, 16),
+      atom('x', 162, 300)
+    ]
+  if (fault === 'prose-in') packet[3] = atom('in', 142, 300, 10, 10)
+  if (fault === 'foreign-script') packet[3] = atom('测量', 142, 300, 10, 10)
+  if (fault === 'greek-prose') packet[3] = atom('λόγος', 142, 300, 10, 10)
+  expect(nativeClosedMathGrammar(packet, 10)).toBe(fault === 'attached')
 })

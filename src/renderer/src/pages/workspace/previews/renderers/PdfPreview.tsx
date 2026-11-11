@@ -3101,6 +3101,8 @@ const PdfReaderContent = ({
   const setupTranslationStatus = switchingEdition ? verifiedTranslation!.status : translationStatus
   const restoringTranslation = Boolean(
     recoveryCheckpoint &&
+    // An empty recovered job has no rendition to verify; expose its explicit retry controls.
+    (preparation.state.status !== 'ready' || translationStatus === 'idle' || translation) &&
     !currentTranslation &&
     !recoveryError &&
     !recoveryMismatch &&

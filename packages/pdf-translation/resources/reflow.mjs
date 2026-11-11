@@ -7,6 +7,7 @@ import { PDFDocument, rgb } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
 import { readReflowCatalog, writeReflowCatalog } from './reflow-catalog.mjs'
 import { readBlankPageAnchors } from './reflow-page-anchors.mjs'
+import { readNativeReflowRetention } from './reflow-native-retention.mjs'
 import {
   readReflowLinks,
   retainLinkedPages,
@@ -128,7 +129,7 @@ function graphicRect([left, low, right, high], { left: originX, top, width, heig
   }
 }
 
-function readGraphics(native, page) {
+function readGraphics(native, page, includeText = false) {
   const { p } = native,
     objects = [],
     matrixBuffer = native.alloc(24)
@@ -146,7 +147,7 @@ function readGraphics(native, page) {
   const visit = (object, matrix, depth) => {
     if (++visited > 100000 || depth > 16) throw Error('PDF graphic nesting limit')
     const type = p.FPDFPageObj_GetType(object)
-    if (type === 1) return
+    if (type === 1 && !includeText) return
     if (type === 5 && p.FPDFPageObj_GetMatrix(object, matrixBuffer)) {
       const next = multiply(matrix, [
         ...native.m.HEAPF32.slice(matrixBuffer / 4, matrixBuffer / 4 + 6)
@@ -268,7 +269,8 @@ function planGraphics(objects, input, number, footerUnits, geometry, pw, ph) {
   return graphics.sort((a, b) => a.y - b.y || a.x - b.x)
 }
 
-export async function generateReflow(input, retainedLinkPages = new Set()) {
+export async function generateReflow(input, retainedLinkPages = new Set(), localLinkRetry = false) {
+  const originalInput = input
   const document = await PDFDocument.create({ updateMetadata: false }),
     bytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url)),
     face = fontkit.create(bytes)
@@ -451,19 +453,65 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
     if (p.FPDF_GetPageCount(source.doc) !== input.pages.length) throw Error('Source pages changed')
     originalDocument = await PDFDocument.load(input.data, { updateMetadata: false })
     const catalog = readReflowCatalog(originalDocument)
+    const directionObjects = new Map()
     const sourceLinks = catalog.wholeDocument
       ? {}
-      : readReflowLinks(native, source, input, originalDocument)
+      : readReflowLinks(
+          native,
+          source,
+          input,
+          originalDocument,
+          (page, number, glyph, geometry) => {
+            let objects = directionObjects.get(number)
+            if (!objects) {
+              objects = readGraphics(native, page, true)
+                .filter((object) => object.type === 1)
+                .map((object) => ({ rect: graphicRect(object.bounds, geometry) }))
+              directionObjects.set(number, objects)
+            }
+            const owners = objects.filter(({ rect }) => contains(glyph, rect))
+            if (owners.length !== 1) return
+            const rect = owners[0].rect,
+              dimensions = input.pages[number - 1],
+              scale = Math.min(2, 2400 / Math.max(dimensions.width, dimensions.height)),
+              pw = Math.ceil(dimensions.width * scale),
+              ph = Math.ceil(dimensions.height * scale),
+              pixels = cropPixels(rect, pw, ph),
+              visible = {
+                x: pixels.x / pw,
+                y: pixels.y / ph,
+                width: pixels.width / pw,
+                height: pixels.height / ph
+              }
+            // Crops discarded as small decoration by planGraphics cannot prove
+            // that unsupported text will actually be emitted.
+            if (rect.width < 0.005 || rect.height < 0.005) return
+            if (objects.some((object) => object !== owners[0] && touches(visible, object.rect, 0)))
+              return
+            // Preserve the complete original native object, including the pixels
+            // actually cropped. No translated paragraph may be captured with it.
+            if (
+              input.units.some(
+                (unit) =>
+                  unit.source !== unit.translation &&
+                  unit.fragments.some(
+                    (fragment) =>
+                      fragment.pageNumber === number && touches(visible, fragment.rect, 0)
+                  )
+              )
+            )
+              return
+            // Keep the native rectangle: feeding rounded normalized coordinates
+            // back through cropPixels can round outward by another pixel.
+            return rect
+          }
+        )
+    if (sourceLinks.originalTextRegions?.length)
+      input = {
+        ...input,
+        originalRegions: [...(input.originalRegions ?? []), ...sourceLinks.originalTextRegions]
+      }
     sourceLinks.catalogDestinations = catalog.destinations ?? []
-    if (!sourceLinks.wholeDocument)
-      sourceLinks.blankPageAnchors = readBlankPageAnchors(
-        native,
-        source,
-        input,
-        sourceLinks.catalogDestinations,
-        sourceLinks.geometry,
-        sourceLinks.unsafePages
-      )
     // Unsupported actions and unresolved destinations can depend on document-
     // level structures that copying individual pages cannot preserve safely.
     if (catalog.wholeDocument || sourceLinks.wholeDocument)
@@ -492,9 +540,45 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
           }))
         }
       }
-    retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
+    // The text renderer cannot reproduce native script/font identities. Keep
+    // accepted targets in the original request and report source retention;
+    // only this private planning view uses the existing original-visual path.
+    const nativeRetention = readNativeReflowRetention(native, source, input, sourceLinks.geometry)
+    if (nativeRetention.units.size) {
+      input = {
+        ...input,
+        units: input.units.map((unit, unitIndex) => {
+          if (!nativeRetention.units.has(unitIndex)) return unit
+          layoutFailures.push({
+            unitIndex,
+            code: 'unsupported-layout',
+            phase: 'planning',
+            pageNumbers: [...new Set(unit.fragments.map((f) => f.pageNumber))],
+            fragmentCount: unit.fragments.length
+          })
+          return { ...unit, kind: 'visual', translation: unit.source }
+        })
+      }
+      changedPages.clear()
+      for (const unit of input.units)
+        if (unit.source !== unit.translation)
+          for (const fragment of unit.fragments) changedPages.add(fragment.pageNumber)
+    }
+    sourceLinks.blankPageAnchors = readBlankPageAnchors(
+      native,
+      source,
+      input,
+      sourceLinks.catalogDestinations,
+      sourceLinks.geometry,
+      sourceLinks.unsafePages
+    )
+    // One local retry can copy a failed link endpoint while still mapping the
+    // other endpoint into translated content. Subsequent retries retain the
+    // existing connected component when that local repair is insufficient.
+    if (!localLinkRetry) retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
     const retainedPages = new Set(retainedLinkPages)
     for (const number of sourceLinks.unsafePages) retainedPages.add(number)
+    for (const number of nativeRetention.pages) retainedPages.add(number)
     // A page-sized raster may contain body text and figures absent from the OCR
     // layer. Dropping it loses content; inserting it duplicates the translated body.
     // Only an explicit, separate original region can establish that it is a figure.
@@ -546,9 +630,11 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       )
         layoutFailures.push({
           unitIndex,
-          code: unit.fragments.some((f) => retainedLinkPages.has(f.pageNumber))
-            ? 'annotations'
-            : 'unsupported-layout',
+          code: unit.fragments.some((f) => nativeRetention.pages.has(f.pageNumber))
+            ? 'unsupported-layout'
+            : unit.fragments.some((f) => retainedLinkPages.has(f.pageNumber))
+              ? 'annotations'
+              : 'unsupported-layout',
           phase: 'planning',
           pageNumbers: [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))],
           fragmentCount: unit.fragments.length
@@ -833,9 +919,10 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
     if (links.failed.size) {
       if ([...links.failed].every((number) => retainedLinkPages.has(number)))
         throw Error('Reflow link fallback failed')
+      const localRetry = retainedLinkPages.size === 0
       for (const number of links.failed) retainedLinkPages.add(number)
-      retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
-      return generateReflow(input, retainedLinkPages)
+      if (!localRetry) retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
+      return generateReflow(originalInput, retainedLinkPages, localRetry)
     }
     writeReflowLinks(document, links, originalPlacements)
     writeReflowCatalog(originalDocument, document, catalog, links, sourcePageNumbers, sourcePages)

@@ -91,6 +91,10 @@ it.each([
   '1.2×10−3',
   '2.5 × 10^−3',
   '6×10⁻³',
+  '4^(-3)',
+  '2.5^(+3)',
+  '4^−2',
+  '6×10^(-3)',
   'n = 48',
   'P < .001',
   'r ≥ −0.31',
@@ -109,6 +113,73 @@ it.each([
     stop = start + token.length
   expect(pdfTranslationLineEnds(text).filter((end) => end > start && end < stop)).toEqual([])
   expect(pdfTranslationLineEnds(text)).toContain(text.length)
+})
+
+it('keeps a complete explicit power on one translated PDF row', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([300, 300]),
+    lines = ['Power 4^(-3).', 'We observe stable', 'measurements.'],
+    translation = '结果变化比为4^(-3)，并继续观察后续结果。',
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'power-wrap', surface: 'electron' }),
+    writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+  lines.forEach((line, index) => page.drawText(line, { font, size: 8, x: 40, y: 250 - index * 12 }))
+  page.drawText('Neighbor 17', { font, size: 8, x: 180, y: 250 })
+  let task: ReturnType<typeof getDocument> | undefined
+  try {
+    const output = await writer.generate(
+      {
+        id: 'power-wrap',
+        data: await pdf.save(),
+        preserveUnsupported: true,
+        pages: [{ width: 300, height: 300 }],
+        units: [
+          {
+            source: lines.join(' '),
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 40 / 300, y: 40 / 300, width: 68 / 300, height: 50 / 300 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    task = getDocument({ data: output!, useSystemFonts: true })
+    const doc = await task.promise,
+      items = (await (await doc.getPage(1)).getTextContent()).items.filter((item) => 'str' in item),
+      moved = items.filter((item) => item.str.trim() && item.transform[4] < 120),
+      rows = Map.groupBy(moved, (item) => Math.round(item.transform[5] * 100))
+    expect(
+      moved
+        .map((item) => item.str)
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe(translation)
+    expect(rows.size).toBeGreaterThan(1)
+    expect(
+      [...rows.values()].some((row) =>
+        row
+          .map((item) => item.str)
+          .join('')
+          .includes('4^(-3)')
+      )
+    ).toBe(true)
+    expect(items.find((item) => item.str === 'Neighbor 17')?.transform.slice(4)).toEqual([180, 250])
+    for (const item of moved) {
+      expect(Math.hypot(item.transform[0], item.transform[1])).toBeGreaterThanOrEqual(7.99)
+      expect(item.transform[4]).toBeGreaterThanOrEqual(39.99)
+      expect(item.transform[4] + item.width).toBeLessThanOrEqual(108.01)
+    }
+  } finally {
+    await task?.destroy()
+    caller.release()
+    registry.dispose()
+  }
 })
 
 it.each(['结果显示改善[8–10]。', '结果显示改善（8–10）。', '结果显示改善[8, 10]。'])(
@@ -378,6 +449,199 @@ it.each([
       ])
     } finally {
       await task?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
+
+it.each(['Mhalo/a0', 'α / β', 'x/2', '5/y'])(
+  'keeps a complete literal ratio atomic among CJK prose: %s',
+  (ratio) => {
+    const text = `实际比例为${ratio}，随后继续。`,
+      start = text.indexOf(ratio)
+    expect(
+      pdfTranslationLineEnds(text).filter((i) => i > start && i < start + ratio.length)
+    ).toEqual([])
+    expect(pdfTranslationLineEnds(text)).toContain(text.length)
+  }
+)
+it('keeps a native numerator script and denominator together across anchor seams in an actual wrapped PDF', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([240, 240])
+  page.drawText('Measured ratio:', { font, size: 10, x: 40, y: 190 })
+  page.drawText('M', { font, size: 10, x: 40, y: 176 })
+  page.drawText('halo', { font, size: 7, x: 49, y: 174.5 })
+  page.drawText('/a', { font, size: 10, x: 62, y: 176 })
+  page.drawText('0', { font, size: 7, x: 71, y: 174.5 })
+  page.drawText('is measured.', { font, size: 10, x: 40, y: 162 })
+  page.drawText('Neighbor', { font, size: 10, x: 155, y: 190 })
+  const data = await pdf.save(),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'ratio-wrap', surface: 'electron' }),
+    writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+  let task: ReturnType<typeof getDocument> | undefined
+  try {
+    const translation = '测量值 Mhalo/a0，数值继续分析。'
+    const output = await writer.generate(
+      {
+        id: 'ratio-wrap',
+        data,
+        pages: [{ width: 240, height: 240 }],
+        units: [
+          {
+            source: 'Measured ratio: Mhalo/a0 is measured.',
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 240, y: 41 / 240, width: 64 / 240, height: 44 / 240 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    task = getDocument({ data: output!, useSystemFonts: true })
+    const doc = await task.promise,
+      items = (await (await doc.getPage(1)).getTextContent()).items.filter((i) => 'str' in i),
+      translated = items.filter((i) => i.str.trim() && i.transform[4] < 120),
+      text = translated
+        .map((i) => i.str)
+        .join('')
+        .replace(/\s/gu, '')
+    expect(text).toBe(translation.replace(/\s/gu, ''))
+    const numerator = translated.find((i) => i.str === 'halo')!,
+      denominator = translated.find((i) => i.str === '0')!
+    expect(numerator).toBeDefined()
+    expect(denominator).toBeDefined()
+    expect(numerator.transform[5]).toBeCloseTo(denominator.transform[5], 2)
+    expect(items.find((i) => i.str === 'Neighbor')?.transform.slice(4)).toEqual([155, 190])
+  } finally {
+    await task?.destroy()
+    caller.release()
+    registry.dispose()
+  }
+})
+
+it.each([0, 0.126])(
+  'keeps original advance and ink frames when a ragged paragraph returns with a %spt inset',
+  async (inset) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([300, 200]),
+      first = 'A short note explains the method and describes the measured results.',
+      last = 'Further details are available.',
+      translation = '1这条简短注释说明研究方法，并介绍测量结果。进一步的详细说明仍可供参考。',
+      fragments = [
+        {
+          pageNumber: 1,
+          rect: { x: 40 / 300, y: 43.5 / 200, width: 210 / 300, height: 9.2 / 200 }
+        },
+        {
+          pageNumber: 1,
+          rect: { x: (40 + inset) / 300, y: 52.8 / 200, width: 130 / 300, height: 8.2 / 200 }
+        }
+      ]
+    page.drawText('1', { font, size: 5, x: 40, y: 153 })
+    page.drawText(first, { font, size: 7.17, x: 42.2, y: 150 })
+    page.drawText(last, { font, size: 7.17, x: 40 + inset, y: 141.4 })
+    page.drawText('Neighbor 17', { font, size: 8, x: 40, y: 116 })
+    const data = await pdf.save(),
+      originalBytes = data.slice(),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'ragged-row-frames', surface: 'electron' }),
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+      unit = { source: '1' + first + ' ' + last, translation, fragments }
+    let before: ReturnType<typeof getDocument> | undefined,
+      after: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await writer.generate(
+        { id: 'ragged-row-frames', data, pages: [{ width: 300, height: 200 }], units: [unit] },
+        caller.lease
+      )
+      expect(data).toEqual(originalBytes)
+      before = getDocument({ data: data.slice(), useSystemFonts: true })
+      after = getDocument({ data: output!.slice(), useSystemFonts: true })
+      const original = await before.promise,
+        translated = await after.promise,
+        sourceItems = (await (await original.getPage(1)).getTextContent()).items.filter(
+          (i) => 'str' in i
+        ),
+        items = (await (await translated.getPage(1)).getTextContent()).items.filter(
+          (i) => 'str' in i
+        ),
+        target = items.filter((i) => /\p{Script=Han}/u.test(i.str)),
+        frames = fragments.map((f) => ({
+          left: f.rect.x * 300,
+          right: (f.rect.x + f.rect.width) * 300,
+          top: 200 - f.rect.y * 200,
+          bottom: 200 - (f.rect.y + f.rect.height) * 200
+        }))
+      expect(target).toHaveLength(2)
+      expect(
+        items
+          .filter((i) => i.str.trim() && i.transform[4] < 260 && i.transform[5] > 130)
+          .map((i) => i.str)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe(translation)
+      for (const item of target) {
+        expect(item.transform[0]).toBeCloseTo(8, 3)
+        const [x, y] = item.transform.slice(4)
+        expect(
+          frames.filter(
+            (f) =>
+              x >= f.left - 0.001 &&
+              x + item.width <= f.right + 0.001 &&
+              y >= f.bottom - 0.001 &&
+              y <= f.top + 0.001
+          )
+        ).toHaveLength(1)
+      }
+      expect(items.find((i) => i.str === 'Neighbor 17')?.transform).toEqual(
+        sourceItems.find((i) => i.str === 'Neighbor 17')?.transform
+      )
+      // The owned footnote marker can follow its translated row vertically;
+      // its original glyph size and horizontal origin remain intact.
+      expect(items.find((i) => i.str === '1')?.transform.slice(0, 5)).toEqual(
+        sourceItems.find((i) => i.str === '1')?.transform.slice(0, 5)
+      )
+      const { pathToFileURL } = await import('node:url'),
+        { engine } = await import(
+          /* @vite-ignore */ pathToFileURL(resolve('resources/pdfium.mjs')).href
+        ),
+        native = await engine(),
+        input = native.open(output!),
+        nativePage = native.p.FPDF_LoadPage(input.doc, 0)
+      try {
+        const ink = native
+          .objects(nativePage)
+          .filter(
+            (o: { type: number; text: string }) => o.type === 1 && /\p{Script=Han}/u.test(o.text)
+          )
+        expect(ink).toHaveLength(2)
+        for (const object of ink) {
+          const [left, bottom, right, top] = object.bounds
+          expect(
+            frames.filter(
+              (f) =>
+                left >= f.left - 0.001 &&
+                right <= f.right + 0.001 &&
+                bottom >= f.bottom - 0.001 &&
+                top <= f.top + 0.001
+            )
+          ).toHaveLength(1)
+        }
+      } finally {
+        native.p.FPDF_ClosePage(nativePage)
+        input.close()
+      }
+    } finally {
+      await before?.destroy()
+      await after?.destroy()
       caller.release()
       registry.dispose()
     }
