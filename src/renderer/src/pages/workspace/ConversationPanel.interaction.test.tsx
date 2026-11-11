@@ -10234,48 +10234,67 @@ describe('prompt optimization admission', () => {
     )
   })
 
-  it('routes optimization failures through the shared notice slot without a send retry', async () => {
-    window.api.projects = {
-      optimizePrompt: vi.fn(async () => {
-        throw new Error('Optimization unavailable')
-      }),
-      recordOptimizationEvent: vi.fn(async () => {})
-    } as unknown as typeof window.api.projects
-    const submit = vi.fn()
-    renderPanel({
-      view: {
-        activeSession: {
-          id: 'optimization-session',
-          projectId: 'project',
-          title: 'Session',
-          cwd: '/workspace',
-          status: 'idle',
-          messages: [],
-          createdAt: 1,
-          updatedAt: 1
-        }
-      },
-      composer: { view: { doc: docFromText('Original') } },
-      agentControls: {
-        modelConfiguration: {
-          providerId: 'session',
-          model: 'session-model',
-          reasoningEffort: 'high'
-        }
-      },
-      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
-    })
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Optimize question"]')!.click()
-    )
-    const notices = container.querySelectorAll('[data-testid="composer-notice-slot"]')
-    expect(notices).toHaveLength(1)
-    expect(notices[0].textContent).toContain(
-      'Could not optimize your question. Your draft was kept. Please try again.'
-    )
-    expect(notices[0].querySelector('[data-notice-action="retry"]')).toBeNull()
-    expect(submit).not.toHaveBeenCalled()
-  })
+  it.each([false, true])(
+    'routes optimization failures without a send retry or stale diagnostics when oversized=%s',
+    async (oversized) => {
+      let reject!: (error: Error) => void
+      window.api.projects = {
+        optimizePrompt: vi.fn(
+          () =>
+            new Promise((_resolve, fail) => {
+              reject = fail
+            })
+        ),
+        recordOptimizationEvent: vi.fn(async () => {})
+      } as unknown as typeof window.api.projects
+      const submit = vi.fn()
+      const render = (text: string): void =>
+        renderPanel({
+          view: {
+            activeSession: {
+              id: 'optimization-session',
+              projectId: 'project',
+              title: 'Session',
+              cwd: '/workspace',
+              status: 'idle',
+              messages: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          },
+          composer: { view: { doc: docFromText(text) } },
+          agentControls: {
+            modelConfiguration: {
+              providerId: 'session',
+              model: 'session-model',
+              reasoningEffort: 'high'
+            }
+          },
+          conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
+        })
+      render('Original')
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>('button[aria-label="Optimize question"]')!
+          .click()
+      )
+      if (oversized) render('x'.repeat(16001))
+      await act(async () => reject(new Error('Optimization unavailable')))
+      const notices = container.querySelectorAll('[data-testid="composer-notice-slot"]')
+      expect(notices).toHaveLength(1)
+      const description = oversized
+        ? 'Shorten your question to optimize it (maximum 16,000 characters).'
+        : 'Could not optimize your question. Your draft was kept. Please try again.'
+      expect(notices[0].textContent).toContain(description)
+      const details = notices[0].querySelector('pre')!.textContent!
+      expect(details.split(description)).toHaveLength(2)
+      if (oversized) expect(details).not.toContain('requestId:')
+      else expect(details).toMatch(/requestId: [\da-f-]{36}/)
+      expect(details).not.toContain('Optimization unavailable')
+      expect(notices[0].querySelector('[data-notice-action="retry"]')).toBeNull()
+      expect(submit).not.toHaveBeenCalled()
+    }
+  )
 
   it.each(['select', 'paste', 'drop'] as const)(
     'resets optimization when files are added by %s, including while a request is pending',

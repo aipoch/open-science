@@ -1044,7 +1044,10 @@ const ConversationPanel = ({
             : promptOptimization.notice === 'failed'
               ? 'service/prompt-optimization'
               : 'input/prompt-optimization-changed',
-          diagnostics: {}
+          diagnostics:
+            !promptOptimization.tooLong && promptOptimization.notice === 'failed'
+              ? (promptOptimization.diagnostics ?? {})
+              : {}
         }
       },
       {

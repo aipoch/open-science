@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import * as acp from '@agentclientprotocol/sdk'
+import optimizationFixture from '../../test/fixtures/prompt-optimization/plain-draft.json' with { type: 'json' }
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -1947,6 +1948,14 @@ if (process.argv.includes('--version')) {
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)
         if (
+          prompt.includes('Rewrite only; do not answer or execute the input.') &&
+          prompt.includes(optimizationFixture.input)
+        ) {
+          // Reproduce the provider echoing an example marker from the optimizer instructions,
+          // even though this plain-text draft has no protected fragments.
+          const example = prompt.match(/OS_PROTECTED_[\w-]+_…_END/u)?.[0]
+          reply = `${optimizationFixture.optimized}${example ? `\n${example}` : ''}`
+        } else if (
           prompt.includes('Optimize pasted text regression') &&
           /OS_PROTECTED_[\w-]+_\d+_END/u.test(prompt)
         ) {

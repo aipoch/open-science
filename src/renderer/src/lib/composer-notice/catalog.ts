@@ -170,6 +170,9 @@ export const formatNoticeDiagnostics = (
     title,
     description,
     ...Object.entries(notice.failure.diagnostics)
-      .filter(([, value]) => value !== undefined)
+      .filter(
+        ([key, value]) =>
+          value !== undefined && (key !== 'raw' || (value !== title && value !== description))
+      )
       .map(([key, value]) => (key === 'raw' ? String(value) : `${key}: ${value}`))
   ].join('\n')
