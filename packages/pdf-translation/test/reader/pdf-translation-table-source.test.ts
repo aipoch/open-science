@@ -8,7 +8,11 @@ import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import { applyCachedPdfTableSources } from '../../src/reader/table-source.js'
+import { applyCachedPdfStructureSources } from '../../src/reader/structure-source.js'
+import {
+  applyCachedPdfTableSources,
+  getPdfTableOriginalRetention
+} from '../../src/reader/table-source.js'
 import {
   applyCachedPdfFigureSources,
   preservePdfFigureSources
@@ -945,9 +949,10 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
       if (reverse) f.cached.elements.reverse()
       const before = structuredClone(f.cached)
       const result = await applyCachedPdfTableSources(f.context)
-      expect(result.source.units.find((u) => u.id === 'group')).toEqual(
-        f.extraction.source.units[0]
-      )
+      expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+        ...f.extraction.source.units[0],
+        sourceOnly: true
+      })
       expect(
         result.source.units.filter((u) => u.id.startsWith('table-source:')).map((u) => u.source)
       ).toEqual(['Prose'])
@@ -990,8 +995,14 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
       }
     })
     const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source.units.find((u) => u.id === 'group')).toEqual(f.extraction.source.units[0])
-    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual(['Prose'])
+    expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+      ...f.extraction.source.units[0],
+      sourceOnly: true
+    })
+    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual([
+      result.source.units.find((u) => u.id === 'group')!.source,
+      'Prose'
+    ])
   })
 
   it('rolls back a transitive unit-table component without leaving staged replacements', async () => {
@@ -1057,10 +1068,13 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
     }))
     const result = await applyCachedPdfTableSources(f.context)
     expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual([
+      ...f.context.extraction.source.units.slice(0, 2).map((u) => u.source),
       'Independent'
     ])
-    expect(result.source.units.filter((u) => !u.sourceOnly)).toEqual(
-      f.context.extraction.source.units.slice(0, 2)
+    expect(result.source.units.filter((u) => ['group', 'bridge'].includes(u.id))).toEqual(
+      f.context.extraction.source.units
+        .slice(0, 2)
+        .map((u) => ({ ...u, sourceOnly: true as const }))
     )
     expect(
       result.source.units
@@ -1119,10 +1133,14 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
       }
     })
     const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source.units.find((u) => u.id === 'group')).toEqual(
-      f.context.extraction.source.units[0]
-    )
-    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual(['Prose'])
+    expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+      ...f.context.extraction.source.units[0],
+      sourceOnly: true
+    })
+    expect(result.source.units.filter((u) => u.sourceOnly).map((u) => u.source)).toEqual([
+      result.source.units.find((u) => u.id === 'group')!.source,
+      'Prose'
+    ])
     expect(
       result.source.units
         .flatMap((u) => u.fragments.flatMap((fr) => fr.items))
@@ -1480,7 +1498,11 @@ describe('cached PDF table source ownership', () => {
     const rejected = setup()
     rejected.cached.elements[0].table!.cells.pop()
     const retained = await applyCachedPdfTableSources(rejected.context)
-    expect(retained.source).toEqual(rejected.extraction.source)
+    expect(retained.source.units).toEqual(
+      rejected.extraction.source.units.map((u) =>
+        u.id === 'group' ? { ...u, sourceOnly: true } : u
+      )
+    )
     expect(retained.coverage.warnings).toEqual([
       { unitId: 'group', reasons: ['table-layout', 'table-structure-unreliable'] }
     ])
@@ -2519,7 +2541,11 @@ describe('cached PDF table source ownership', () => {
     if (kind === 'read-error') f.readCached.mockRejectedValue(new Error('Cache unavailable'))
     const result = await applyCachedPdfTableSources(f.context)
     if (kind === 'mixed-unit') {
-      expect(result.source).toEqual(f.context.extraction.source)
+      expect(result.source.units).toEqual(
+        f.context.extraction.source.units.map((u) =>
+          u.id === 'group' ? { ...u, sourceOnly: true } : u
+        )
+      )
       expect(result.coverage.warnings).toEqual([
         { unitId: 'group', reasons: ['table-layout', 'table-structure-unreliable'] }
       ])
@@ -3047,7 +3073,11 @@ describe('complete original native text boundary witnesses', () => {
     f.glyphs[1].transform[4] = 20.08
     f.refreshRegions()
     const result = await applyCachedPdfTableSources(f.context)
-    expect(result.source).toEqual(f.context.extraction.source)
+    expect(result.source.units).toEqual(
+      f.context.extraction.source.units.map((u) =>
+        u.id === 'native-glyphs' ? { ...u, sourceOnly: true } : u
+      )
+    )
     expect(result.coverage.warnings).toEqual([
       { unitId: 'native-glyphs', reasons: ['table-structure-unreliable'] }
     ])
@@ -3681,7 +3711,11 @@ it.each([
         f.context.extraction.source.units[1]
       )
     } else {
-      expect(result.source.units).toEqual(f.context.extraction.source.units)
+      expect(result.source.units).toEqual(
+        f.context.extraction.source.units.map((u) =>
+          u.id === 'scientific' ? { ...u, sourceOnly: true } : u
+        )
+      )
       expect(result.source.units.some((u) => u.id.startsWith('table-source:'))).toBe(false)
       expect(
         result.coverage.warnings.some((w) => w.reasons.includes('table-structure-unreliable'))
@@ -3947,3 +3981,122 @@ it.each(['compound', 'shared', 'maximal-run', 'whole-scientific', 'no-canonical'
     }
   }
 )
+
+describe('original-only incomplete native owners', () => {
+  it.each([false, true])(
+    'protects the complete native owner without a crop, saved: %s',
+    async (saved) => {
+      const f = setup()
+      f.cached.elements[0].table!.cells.pop()
+      f.cached.elements[0].table!.columnCount = 1
+      const before = JSON.stringify(f.extraction)
+      const out = await applyCachedPdfStructureSources({
+        ...f.context,
+        preserveUnitIdentity: saved
+      })
+      expect(out.extraction.source.units.find((u) => u.id === 'group')).toEqual({
+        ...f.extraction.source.units[0],
+        sourceOnly: true
+      })
+      expect(out.extraction.source.units.find((u) => u.id === 'prose')).toEqual(
+        f.extraction.source.units[1]
+      )
+      expect(out.retainedUnitIds).toEqual(['group'])
+      expect(out.retainedSourcePageNumbers).toEqual([1])
+      expect(out.extraction.source.originalRegions ?? []).toEqual([])
+      expect(
+        out.extraction.source.units
+          .flatMap((u) => u.fragments.flatMap((f) => f.items.map((i) => i.index)))
+          .sort()
+      ).toEqual([0, 1, 2])
+      expect(JSON.stringify(f.extraction)).toBe(before)
+    }
+  )
+})
+
+it.each(['clone', 'native-text', 'method', 'fingerprint', 'abort'])(
+  'never transfers stale incomplete-owner retention: %s',
+  async (fault) => {
+    const f = setup()
+    f.cached.elements[0].table!.cells.pop()
+    const out = await applyCachedPdfTableSources(f.context)
+    expect(getPdfTableOriginalRetention(out)?.retainedUnitIds).toEqual(['group'])
+    if (fault === 'clone') {
+      expect(getPdfTableOriginalRetention({ ...out })).toBeUndefined()
+      return
+    }
+    if (fault === 'native-text') f.items[1].str = 'changed'
+    if (fault === 'method')
+      f.page.getTextContent = vi.fn(async () => ({ items: f.items, styles: {} }))
+    if (fault === 'fingerprint') f.document.fingerprints[0] = 'changed'
+    if (fault === 'abort') f.controller.abort()
+    expect(getPdfTableOriginalRetention(out)).toBeUndefined()
+  }
+)
+it('does not mint incomplete-owner retention when an omitted native item differs', async () => {
+  const f = setup()
+  f.cached.elements[0].table!.cells.pop()
+  f.items[1].str = 'changed'
+  const out = await applyCachedPdfTableSources(f.context)
+  expect(out).toBe(f.extraction)
+  expect(getPdfTableOriginalRetention(out)).toBeUndefined()
+})
+
+it('carries every page of a proved incomplete whole owner for reflow without inventing a crop', async () => {
+  const f = setup()
+  f.document.numPages = 2
+  f.cached.pageCount = 2
+  f.cached.elements[0].table!.cells.pop()
+  const [group, prose] = f.extraction.source.units
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      pages: [...f.extraction.source.pages, ...f.extraction.source.pages],
+      units: [
+        {
+          ...group,
+          fragments: [
+            { ...group.fragments[0], items: [group.fragments[0].items[0]] },
+            { ...group.fragments[0], pageNumber: 2, items: [group.fragments[0].items[1]] }
+          ]
+        },
+        prose
+      ]
+    })
+  }
+  f.readCached.mockImplementation(async ({ page }) => (page === 1 ? f.cached : undefined))
+  const stored = JSON.stringify(f.context.extraction.source)
+  const out = await applyCachedPdfStructureSources({ ...f.context, preserveUnitIdentity: true })
+  expect(out.retainedUnitIds).toEqual(['group'])
+  expect(out.retainedSourcePageNumbers).toEqual([1, 2])
+  expect(out.extraction.source.originalRegions ?? []).toEqual([])
+  expect(out.extraction.source.units[0]).toEqual({
+    ...f.context.extraction.source.units[0],
+    sourceOnly: true
+  })
+  expect(out.extraction.source.units[1]).toEqual(prose)
+  expect(JSON.stringify(f.context.extraction.source)).toBe(stored)
+})
+
+it('reproves negative table eligibility after serializing source, without changing saved target strings', async () => {
+  const f = setup()
+  f.cached.elements[0].table!.cells.pop()
+  const fresh = await applyCachedPdfStructureSources(f.context)
+  const stored = JSON.stringify({
+    source: fresh.extraction.source,
+    targets: [{ id: 'group', translation: 'Historical accepted text' }]
+  })
+  const restored = JSON.parse(stored)
+  const extraction = { ...f.extraction, source: createPdfTranslationSource(restored.source) }
+  expect(getPdfTableOriginalRetention(extraction)).toBeUndefined()
+  const saved = await applyCachedPdfStructureSources({
+    ...f.context,
+    extraction,
+    preserveUnitIdentity: true
+  })
+  expect(saved.retainedUnitIds).toEqual(['group'])
+  expect(saved.retainedSourcePageNumbers).toEqual([1])
+  expect(saved.extraction.source.units).toEqual(extraction.source.units)
+  expect(JSON.stringify(restored)).toBe(stored)
+})

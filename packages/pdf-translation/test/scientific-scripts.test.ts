@@ -876,6 +876,11 @@ it.each([
   ['σ', 17, 100, 10, false],
   [', σ', 17, 100, 10, false],
   ['; x', 17, 100, 10, false],
+  [', . . . , q', 17, 100, 10, false],
+  [', . . . , σ', 17, 100, 10, false],
+  [', . . , q', 17, 100, 10, true],
+  ['text q', 17, 100, 10, true],
+  [', . . . , q', 5, 100, 10, true],
   [', word', 17, 100, 10, true],
   [', σ', 5, 100, 10, true],
   [', σ', 17, 110, 10, true],
@@ -893,6 +898,46 @@ it.each([
     if (fraction) expect(fractions[0].indices).toEqual([2, 3])
   }
 )
+
+it('keeps native paired scripts after an ellipsis-prefixed variable out of division', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([160, 140]),
+    base = ', . . . , q',
+    right = 20 + font.widthOfTextAtSize(base, 10)
+  page.drawText(base, { x: 20, y: 100, size: 10, font })
+  page.drawText('U', { x: right, y: 103.6, size: 7, font })
+  page.drawText('k', { x: right, y: 97.5, size: 7, font })
+  const task = getDocument({ data: await pdf.save(), useSystemFonts: true })
+  try {
+    const content = await (await (await task.promise).getPage(1)).getTextContent(),
+      items: FractionItem[] = content.items.flatMap((item, i) =>
+        'str' in item && item.str.trim()
+          ? [
+              {
+                i,
+                text: item.str,
+                fontSize: item.height,
+                baseline: item.transform[5],
+                bounds: [
+                  item.transform[4],
+                  item.transform[5],
+                  item.transform[4] + item.width,
+                  item.transform[5] + item.height
+                ] as [number, number, number, number]
+              }
+            ]
+          : []
+      )
+    expect(items.map((item) => item.text)).toEqual([base, 'U', 'k'])
+    expect(resolveInlineFractions(items, 100, 10)).toEqual([])
+    expect(resolveInlineFractions(items.slice(1), 100, 10).map((value) => value.label)).toEqual([
+      'U/k'
+    ])
+  } finally {
+    await task.destroy()
+  }
+})
 
 it.each(
   readPdfTranslationCases<{

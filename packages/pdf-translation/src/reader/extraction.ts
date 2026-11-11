@@ -12,6 +12,7 @@ import {
   bindNativeTerminalCaptionLayout
 } from './appendix-overview-boundary.js'
 import { getPdfTranslationTextContent } from './text-content.js'
+import { rememberNativeCaptionTerminal } from './caption-terminal.js'
 import { nativeOwnedReferenceRolesCurrent } from './unheaded-reference-packets.js'
 import {
   readNativeReferenceEvidence,
@@ -177,6 +178,11 @@ export async function extractPdfTranslationSource({
       throw new Error('PDF source changed during occluded text verification')
   }
   const pages: PdfLayoutPage[] = []
+  const captionTerminals: (() => boolean)[] = []
+  const checkCaptionTerminals = (): void => {
+    if (captionTerminals.some((current) => !current()))
+      throw new Error('Native caption sources changed during extraction')
+  }
   const onlineContexts: Parameters<typeof readNativeOnlineAppendixRestart>[0][] = []
   const scopedDisplays: {
     page: PDFPageProxy
@@ -408,6 +414,14 @@ export async function extractPdfTranslationSource({
     await taggedReferences.observe({ ...restartInput, viewport })
     await algorithmCaptions.observe({ ...restartInput, viewport })
     terminalCaptions.observe({ ...restartInput, viewport })
+    const captionTerminal = await rememberNativeCaptionTerminal({
+      document,
+      page,
+      content,
+      rawPage: pages.at(-1)!,
+      signal
+    })
+    if (captionTerminal) captionTerminals.push(captionTerminal)
     onProgress?.(pageNumber)
     // Let the reader paint and deliver cancellation between page reads.
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -415,6 +429,7 @@ export async function extractPdfTranslationSource({
   }
   checkType3Navigation()
   checkOcclusions()
+  checkCaptionTerminals()
   await terminalCaptions.prepare(pages)
   signal.throwIfAborted()
   // ponytail: grouping is synchronous; move it to a worker if long-document profiling requires it.
@@ -681,6 +696,7 @@ export async function extractPdfTranslationSource({
   signal.throwIfAborted()
   checkType3Navigation()
   checkOcclusions()
+  checkCaptionTerminals()
   if (
     !nativeReferenceRolePagesCurrent(pages, unreliableItems) ||
     !nativeOwnedReferenceRolesCurrent(pages)

@@ -382,9 +382,27 @@ function partitionCellText(cellText: string, origins: readonly string[]): string
   return solutions.length === 1 ? solutions[0] : undefined
 }
 
-const tableRetention = new WeakMap<PdfTranslationExtraction, () => boolean>()
+type TableOriginalRetention = Readonly<{
+  retainedUnitIds: readonly string[]
+  retainedSourcePageNumbers: readonly number[]
+}>
+const tableRetention = new WeakMap<
+  PdfTranslationExtraction,
+  TableOriginalRetention & { current: () => boolean }
+>()
+export function getPdfTableOriginalRetention(
+  extraction: PdfTranslationExtraction
+): TableOriginalRetention | undefined {
+  const proof = tableRetention.get(extraction)
+  return proof?.current()
+    ? Object.freeze({
+        retainedUnitIds: proof.retainedUnitIds,
+        retainedSourcePageNumbers: proof.retainedSourcePageNumbers
+      })
+    : undefined
+}
 export function isCurrentPdfTableSources(extraction: PdfTranslationExtraction): boolean {
-  return tableRetention.get(extraction)?.() ?? true
+  return tableRetention.get(extraction)?.current() ?? true
 }
 
 /** Before publication only. Invalid provenance fails closed; known structural conflicts retain native units. */
@@ -567,7 +585,8 @@ export async function applyCachedPdfTableSources({
     ])
     const tableOrigins = new Map<string, Set<string>>()
     const blockedTables = new Set<string>(),
-      unreliableMathUnits = new Set<string>()
+      unreliableMathUnits = new Set<string>(),
+      incompleteOriginalUnits = new Set<string>()
     for (const result of results)
       for (const element of result.elements) {
         const tables =
@@ -1379,6 +1398,7 @@ export async function applyCachedPdfTableSources({
             if (!(await proveOrigin({ pageNumber: fragment.pageNumber, ...item })))
               return retainOriginal()
       current()
+      for (const unit of incompleteUnits) incompleteOriginalUnits.add(unit.id)
       const rejectedReplacements = new Set<number>()
       for (const [key, claim] of claims)
         if (incompleteTables.has(claim.tableKey)) {
@@ -1581,14 +1601,32 @@ export async function applyCachedPdfTableSources({
           ...source.units
             .filter((u) => !removed.has(u.id))
             .map((unit) =>
-              unreliableMathUnits.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+              unreliableMathUnits.has(unit.id) || incompleteOriginalUnits.has(unit.id)
+                ? { ...unit, sourceOnly: true as const }
+                : unit
             ),
           ...replacements.filter((_, index) => !retainedReplacements.has(index))
         ]
       })
     })
     if (!regionProof.current()) return retainOriginal()
-    tableRetention.set(result, regionProof.current)
+    // Negative eligibility only: no crop or authority to repaint these owners.
+    tableRetention.set(
+      result,
+      Object.freeze({
+        current: regionProof.current,
+        retainedUnitIds: Object.freeze([...incompleteOriginalUnits]),
+        retainedSourcePageNumbers: Object.freeze(
+          [
+            ...new Set(
+              source.units
+                .filter((unit) => incompleteOriginalUnits.has(unit.id))
+                .flatMap((unit) => unit.fragments.map((fragment) => fragment.pageNumber))
+            )
+          ].sort((a, b) => a - b)
+        )
+      })
+    )
     return result
   } catch {
     signal.throwIfAborted()

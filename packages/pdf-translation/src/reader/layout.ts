@@ -1,4 +1,5 @@
 import { nativeOrdinalReferencePackets } from './ordinal-reference-packets.js'
+import { isNativeCaptionTerminal } from './caption-terminal.js'
 import { nativeBoundedReferencePackets } from './bounded-reference-packets.js'
 import {
   nativeClosedUnheadedReferencePackets,
@@ -9742,7 +9743,19 @@ function extractPage(
               Math.abs(part.font - line.font) < line.font * 0.05
           ) &&
           continuousBodyWrap(last, line, all, b.x, b.right, styledTail)
+        const captionPanelTail =
+          line.items.length === 1 &&
+          isNativeCaptionTerminal(
+            page,
+            b.items.map((item) => item.index),
+            line.items[0].index
+          ) &&
+          uninterruptedNativeRow(last) &&
+          uninterruptedNativeRow(line) &&
+          line.items[0].nativeLine === last.items.at(-1)!.nativeLine + 1 &&
+          continuousBodyWrap(last, line, all, b.x, b.right, [], b.source)
         const shortTerminalTail =
+          captionPanelTail ||
           shortInlineTail ||
           legacyTerminalTail ||
           raggedCitedNounTail ||

@@ -429,6 +429,26 @@ it('rejects a translated standalone proper name', () => {
   )
 })
 
+it.each(
+  readPdfTranslationCases<{
+    name: string
+    source: string
+    translation: string
+    negativeTranslation?: string
+  }>('scientific-role-heading-labels.jsonl')
+)('$name', ({ source, translation, negativeTranslation }) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(false)
+  expect(
+    reconcilePdfTranslationCheckpoint(
+      { ...saved, sources: [source], translatedSourceIndices: [0], translations: [translation] },
+      'fp',
+      [source]
+    )?.translations
+  ).toEqual([translation])
+  if (negativeTranslation)
+    expect(pdfTranslationDropsStandaloneProperName(source, negativeTranslation)).toBe(true)
+})
+
 it.each([
   ['Denoising Diffusion Probabilistic Models', '去噪扩散概率模型', true],
   ['Denoising Diffusion Models', '去噪扩散模型', true],

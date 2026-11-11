@@ -182,6 +182,262 @@ function verifiedNativeFootnote(
   )
 }
 
+type NativeBar = { rect: number[]; width: number; segment?: boolean }
+async function nativeHorizontalBars(page: PDFPageProxy): Promise<NativeBar[]> {
+  const { fnArray, argsArray } = await page.getOperatorList(),
+    ops = pdfjsLib.OPS
+  let matrix = [1, 0, 0, 1, 0, 0],
+    width = 1
+  const stack: Array<{ matrix: number[]; width: number }> = [],
+    result: NativeBar[] = [],
+    ordinary = !fnArray.some((op) =>
+      [
+        ops.paintFormXObjectBegin,
+        ops.paintFormXObjectEnd,
+        ops.beginGroup,
+        ops.clip,
+        ops.eoClip
+      ].includes(op)
+    )
+  const transform = (m: number[], x: number, y: number): number[] => [
+    m[0] * x + m[2] * y + m[4],
+    m[1] * x + m[3] * y + m[5]
+  ]
+  for (let i = 0; i < fnArray.length; i++) {
+    const op = fnArray[i],
+      args = argsArray[i]
+    if (op === ops.save) stack.push({ matrix: [...matrix], width })
+    else if (op === ops.restore) {
+      const saved = stack.pop()
+      if (saved) ({ matrix, width } = saved)
+    } else if (op === ops.setLineWidth) width = args[0]
+    else if (op === ops.transform) {
+      const m = args.length === 1 ? args[0] : args
+      const origin = transform(matrix, m[4], m[5])
+      matrix = [
+        matrix[0] * m[0] + matrix[2] * m[1],
+        matrix[1] * m[0] + matrix[3] * m[1],
+        matrix[0] * m[2] + matrix[2] * m[3],
+        matrix[1] * m[2] + matrix[3] * m[3],
+        ...origin
+      ]
+    } else if (op === ops.paintSolidColorImageMask) {
+      // PDF.js represents a solid one-pixel stencil as a unit rectangle.
+      // Its complete transformed ink must survive with the fraction glyphs.
+      const a = transform(matrix, 0, 0),
+        b = transform(matrix, 1, 1),
+        rect = [
+          Math.min(a[0], b[0]),
+          Math.min(a[1], b[1]),
+          Math.max(a[0], b[0]),
+          Math.max(a[1], b[1])
+        ]
+      if (
+        Math.abs(matrix[1]) < 0.001 &&
+        Math.abs(matrix[2]) < 0.001 &&
+        rect[2] > rect[0] &&
+        rect[3] - rect[1] > 0 &&
+        rect[3] - rect[1] <= 1
+      )
+        result.push({ rect, width: rect[3] - rect[1] })
+    } else if (
+      op === ops.constructPath &&
+      [ops.stroke, ops.fill, ops.eoFill, ops.fillStroke].includes(args[0]) &&
+      args[2]?.length === 4
+    ) {
+      const [x1, y1, x2, y2] = args[2],
+        a = transform(matrix, x1, y1),
+        b = transform(matrix, x2, y2)
+      const rect = [
+        Math.min(a[0], b[0]),
+        Math.min(a[1], b[1]),
+        Math.max(a[0], b[0]),
+        Math.max(a[1], b[1])
+      ]
+      if (
+        Math.abs(matrix[1]) < 0.001 &&
+        Math.abs(matrix[2]) < 0.001 &&
+        rect[2] > rect[0] &&
+        rect[3] - rect[1] <= 1
+      )
+        result.push({
+          rect,
+          segment:
+            ordinary &&
+            args[0] === ops.stroke &&
+            args[1]?.length === 1 &&
+            ((args[1][0]?.length === 6 &&
+              args[1][0][0] === 0 &&
+              args[1][0][3] === 1 &&
+              args[1][0][2] === args[1][0][5]) ||
+              (args[1][0]?.length === 9 &&
+                args[1][0][0] === 0 &&
+                args[1][0][3] === 0 &&
+                args[1][0][6] === 1 &&
+                args[1][0][1] === args[1][0][4] &&
+                args[1][0][2] === args[1][0][5] &&
+                args[1][0][5] === args[1][0][8])),
+          width: args[0] === ops.stroke ? width * Math.abs(matrix[0]) : rect[3] - rect[1]
+        })
+    }
+  }
+  return result
+}
+
+// This is a negative preservation check, never a table grid or permission to repaint.
+async function nativeParameterBodyUnchanged(
+  originalPage: PDFPageProxy,
+  targetPage: PDFPageProxy,
+  original: TextContent,
+  target: TextContent
+): Promise<boolean> {
+  const headers = original.items.filter(
+    (item): item is TextItem => 'str' in item && item.str.trim() === 'Parameters'
+  )
+  if (!headers.length || headers.length > 8) return true
+  type Native = { item: TextItem; rect: number[] }
+  const native = (content: TextContent): Native[] | undefined => {
+    const result: Native[] = []
+    for (const item of content.items) {
+      if (!('str' in item) || !item.str.trim()) continue
+      const style = content.styles?.[item.fontName],
+        [a, b, c, d, x, y] = item.transform
+      if (
+        item.dir !== 'ltr' ||
+        style?.vertical !== false ||
+        ![a, b, c, d, x, y, item.width, item.height, style.ascent, style.descent].every(
+          Number.isFinite
+        ) ||
+        a <= 0 ||
+        d <= 0 ||
+        b !== 0 ||
+        c !== 0 ||
+        item.width <= 0 ||
+        Math.abs(item.height - d) > 0.001 ||
+        style.ascent <= style.descent
+      )
+        return
+      result.push({ item, rect: [x, y + style.descent * d, x + item.width, y + style.ascent * d] })
+    }
+    return result
+  }
+  const before = native(original)
+  if (!before || before.length > 8192) return true
+  const bars = (await nativeHorizontalBars(originalPage)).filter(
+    (bar) => bar.segment && bar.width > 0 && bar.width <= 1
+  )
+  if (bars.length > 256) return true
+  const overlaps = (a: number[], b: number[]): boolean =>
+    a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const inside = (a: number[], b: number[]): boolean =>
+    a[0] >= b[0] - 0.001 && a[2] <= b[2] + 0.001 && a[1] >= b[1] && a[3] <= b[3]
+  const same = (a: number, b: number): boolean => Math.abs(a - b) < 0.001
+  for (const header of headers) {
+    const h = before.find((entry) => entry.item === header)!,
+      em = header.height
+    const enclosing = bars.filter(
+      ({ rect }) => rect[0] < h.rect[0] && rect[2] > h.rect[2] && rect[2] - rect[0] > em * 12
+    )
+    const families = enclosing.filter(
+      (bar, index) =>
+        enclosing.findIndex(
+          (other) => same(other.rect[0], bar.rect[0]) && same(other.rect[2], bar.rect[2])
+        ) === index
+    )
+    for (const family of families) {
+      const fences = enclosing
+        .filter((bar) => same(bar.rect[0], family.rect[0]) && same(bar.rect[2], family.rect[2]))
+        .sort((a, b) => b.rect[1] - a.rect[1])
+      if (
+        fences.length < 4 ||
+        fences.length > 8 ||
+        fences.some((f, i) => i > 0 && fences[i - 1].rect[1] - f.rect[1] < em)
+      )
+        continue
+      const top = fences[0].rect[1],
+        divider = fences[1].rect[1],
+        bottom = fences.at(-1)!.rect[1],
+        frame = [family.rect[0], bottom, family.rect[2], top]
+      if (h.rect[3] >= top || h.rect[1] <= divider) continue
+      const captions = before.filter(
+        ({ item, rect }) =>
+          /^(?:TABLE|Table)\s+(?:[IVXLCDM]+|[1-9]\d{0,3})$/u.test(item.str.trim()) &&
+          rect[1] > top &&
+          rect[1] - top < em * 4 &&
+          Math.abs((rect[0] + rect[2] - frame[0] - frame[2]) / 2) < em
+      )
+      const selected = before.filter(({ rect }) => overlaps(rect, frame)),
+        headerBand = selected.filter(({ rect }) => rect[1] > divider)
+      if (
+        captions.length !== 1 ||
+        headerBand.length !== 1 ||
+        headerBand[0] !== h ||
+        selected.some(({ rect }) => !inside(rect, frame)) ||
+        fences
+          .slice(1, -1)
+          .some(({ rect }) =>
+            selected.some((entry) => entry.rect[1] < rect[1] && entry.rect[3] > rect[1])
+          )
+      )
+        continue
+      const body = selected.filter((entry) => entry !== h),
+        labels = body.filter(
+          ({ item }) =>
+            /^[A-Za-z][A-Za-z -]{3,}$/u.test(item.str.trim()) &&
+            Math.abs(item.height - em) < em * 0.03
+        ),
+        left = Math.min(...labels.map(({ rect }) => rect[0])),
+        rows = labels.filter(({ rect }) => Math.abs(rect[0] - left) < em * 0.1)
+      if (
+        new Set(rows.map(({ item }) => Math.round(item.transform[5] * 100) / 100)).size < 6 ||
+        rows.some(
+          ({ item, rect }) =>
+            !body.some(
+              (other) =>
+                other.rect[0] > rect[2] + em * 0.5 &&
+                Math.abs(other.item.transform[5] - item.transform[5]) < em * 0.3
+            )
+        ) ||
+        !body.some(({ item }) => /[=βλγω×−]/u.test(item.str)) ||
+        !body.some(({ item }) => /\b(?:W|V|Hz|GHz|km|nm|dB|GBd)\b/u.test(item.str))
+      )
+        continue
+      const after = native(target)
+      if (!after) return false
+      const targetBody = after.filter(({ rect }) => overlaps(rect, frame))
+      if (targetBody.length !== selected.length) return false
+      const used = new Set<Native>()
+      for (const source of selected) {
+        const matches = targetBody.filter(
+          (entry) =>
+            !used.has(entry) &&
+            entry.item.str === source.item.str &&
+            same(entry.item.width, source.item.width) &&
+            same(entry.item.height, source.item.height) &&
+            entry.item.transform.every((value, i) => same(value, source.item.transform[i])) &&
+            JSON.stringify(target.styles[entry.item.fontName]) ===
+              JSON.stringify(original.styles[source.item.fontName])
+        )
+        if (matches.length !== 1) return false
+        used.add(matches[0])
+      }
+      const targetBars = await nativeHorizontalBars(targetPage)
+      if (
+        !fences.every((bar) =>
+          targetBars.some(
+            (other) =>
+              other.segment &&
+              same(other.width, bar.width) &&
+              other.rect.every((v, i) => same(v, bar.rect[i]))
+          )
+        )
+      )
+        return false
+    }
+  }
+  return true
+}
+
 // A retained native fraction has two text tiers; concatenating PDF.js items loses
 // its dividing rule. Reconstruct its reading only after proving the original
 // glyph geometry and the rule survive together in the generated document.
@@ -233,84 +489,10 @@ async function verifiedFractionText(
   }
   const result = new Map<number, { label: string; indices: number[] }>()
   if (!fractions.length) return result
-  type Bar = { rect: number[]; width: number }
-  const bars = async (page: PDFPageProxy): Promise<Bar[]> => {
-    const { fnArray, argsArray } = await page.getOperatorList(),
-      ops = pdfjsLib.OPS
-    let matrix = [1, 0, 0, 1, 0, 0],
-      width = 1
-    const stack: Array<{ matrix: number[]; width: number }> = [],
-      result: Bar[] = []
-    const transform = (m: number[], x: number, y: number): number[] => [
-      m[0] * x + m[2] * y + m[4],
-      m[1] * x + m[3] * y + m[5]
-    ]
-    for (let i = 0; i < fnArray.length; i++) {
-      const op = fnArray[i],
-        args = argsArray[i]
-      if (op === ops.save) stack.push({ matrix: [...matrix], width })
-      else if (op === ops.restore) {
-        const saved = stack.pop()
-        if (saved) ({ matrix, width } = saved)
-      } else if (op === ops.setLineWidth) width = args[0]
-      else if (op === ops.transform) {
-        const m = args.length === 1 ? args[0] : args
-        const origin = transform(matrix, m[4], m[5])
-        matrix = [
-          matrix[0] * m[0] + matrix[2] * m[1],
-          matrix[1] * m[0] + matrix[3] * m[1],
-          matrix[0] * m[2] + matrix[2] * m[3],
-          matrix[1] * m[2] + matrix[3] * m[3],
-          ...origin
-        ]
-      } else if (op === ops.paintSolidColorImageMask) {
-        // PDF.js represents a solid one-pixel stencil as a unit rectangle.
-        // Its complete transformed ink must survive with the fraction glyphs.
-        const a = transform(matrix, 0, 0),
-          b = transform(matrix, 1, 1),
-          rect = [
-            Math.min(a[0], b[0]),
-            Math.min(a[1], b[1]),
-            Math.max(a[0], b[0]),
-            Math.max(a[1], b[1])
-          ]
-        if (
-          Math.abs(matrix[1]) < 0.001 &&
-          Math.abs(matrix[2]) < 0.001 &&
-          rect[2] > rect[0] &&
-          rect[3] - rect[1] > 0 &&
-          rect[3] - rect[1] <= 1
-        )
-          result.push({ rect, width: rect[3] - rect[1] })
-      } else if (
-        op === ops.constructPath &&
-        [ops.stroke, ops.fill, ops.eoFill, ops.fillStroke].includes(args[0]) &&
-        args[2]?.length === 4
-      ) {
-        const [x1, y1, x2, y2] = args[2],
-          a = transform(matrix, x1, y1),
-          b = transform(matrix, x2, y2)
-        const rect = [
-          Math.min(a[0], b[0]),
-          Math.min(a[1], b[1]),
-          Math.max(a[0], b[0]),
-          Math.max(a[1], b[1])
-        ]
-        if (
-          Math.abs(matrix[1]) < 0.001 &&
-          Math.abs(matrix[2]) < 0.001 &&
-          rect[2] > rect[0] &&
-          rect[3] - rect[1] <= 1
-        )
-          result.push({
-            rect,
-            width: args[0] === ops.stroke ? width * Math.abs(matrix[0]) : rect[3] - rect[1]
-          })
-      }
-    }
-    return result
-  }
-  const [originalBars, targetBars] = await Promise.all([bars(originalPage), bars(targetPage)])
+  const [originalBars, targetBars] = await Promise.all([
+    nativeHorizontalBars(originalPage),
+    nativeHorizontalBars(targetPage)
+  ])
   const same = (a: number, b: number): boolean => Math.abs(a - b) < 0.02
   const used = new Set<number>()
   for (const fraction of fractions) {
@@ -816,6 +998,16 @@ async function annotationKey(
             ...destinationCoordinates.map(() => null),
             ...dest.slice(2 + coordinateCount)
           ]
+        const borderStyle = annotation.borderStyle && { ...annotation.borderStyle }
+        // PDFium serializes border widths through float32; all other metadata stays exact.
+        for (const key of ['width', 'rawWidth'])
+          if (
+            borderStyle &&
+            typeof borderStyle[key] === 'number' &&
+            borderStyle[key] >= 0 &&
+            Number.isFinite(Math.fround(borderStyle[key]))
+          )
+            borderStyle[key] = Math.fround(borderStyle[key])
         return {
           type: annotation.annotationType,
           destinationCoordinates,
@@ -825,7 +1017,7 @@ async function annotationKey(
           key: JSON.stringify({
             type: annotation.annotationType,
             color: annotation.color,
-            borderStyle: annotation.borderStyle,
+            borderStyle,
             flags: annotation.annotationFlags,
             url: annotation.url,
             unsafeUrl: annotation.unsafeUrl,
@@ -1333,7 +1525,9 @@ export function usePdfTranslationDocument(
           ])
           annotations.push(targetAnnotations)
           const text: TextContent = await getPdfTranslationTextContent(translatedPage)
-          let originalText: TextContent | undefined
+          let originalText: TextContent | undefined = await getPdfTranslationTextContent(sourcePage)
+          if (!(await nativeParameterBodyUnchanged(sourcePage, translatedPage, originalText, text)))
+            throw validationError('Native mathematical parameter table changed')
           const unchanged = (index: number): boolean =>
             units[index].source === runSnapshot.units[index].translation
           // A moved link keeps its original label/action and stays within one source

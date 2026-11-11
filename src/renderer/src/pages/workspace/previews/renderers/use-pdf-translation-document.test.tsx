@@ -1460,6 +1460,261 @@ describe('translated PDF ownership', () => {
 
 describe('independent moved-link validation', () => {
   it.each([
+    'changed-body',
+    'moved-body',
+    'retained-body',
+    'fake-caption',
+    'missing-fences',
+    'disconnected-fences'
+  ])('protects a real native ruled mathematical parameter body: %s', async (change) => {
+    const { getDocument: load, OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    Object.assign(operators, OPS)
+    const make = async (target: boolean): Promise<Uint8Array> => {
+      const pdf = await PDFDocument.create(),
+        font = await pdf.embedFont(StandardFonts.Helvetica),
+        page = pdf.addPage([600, 800])
+      page.drawText(change === 'fake-caption' ? 'EXAMPLE II' : 'TABLE II', {
+        font,
+        x:
+          180 -
+          font.widthOfTextAtSize(change === 'fake-caption' ? 'EXAMPLE II' : 'TABLE II', 10) / 2,
+        y: 750,
+        size: 10
+      })
+      page.drawText('Parameters', { font, x: 60, y: 720, size: 10 })
+      for (let n = 0; n < 7; n++) {
+        page.drawText(
+          n === 0
+            ? target && !['retained-body', 'moved-body'].includes(change)
+              ? 'Input level'
+              : 'Input power'
+            : `Setting ${String.fromCharCode(65 + n)}`,
+          { font, x: target && change === 'moved-body' ? 70 : 60, y: 695 - n * 18, size: 10 }
+        )
+        page.drawText(`v = ${n + 1} W`, { font, x: 200, y: 695 - n * 18, size: 10 })
+      }
+      for (const y of change === 'missing-fences' ? [735, 570] : [735, 710, 650, 570]) {
+        if (change === 'disconnected-fences') {
+          const { moveTo, lineTo, stroke } = await import('pdf-lib')
+          page.pushOperators(moveTo(50, y), lineTo(80, y), moveTo(280, y), lineTo(310, y), stroke())
+        } else page.drawLine({ start: { x: 50, y }, end: { x: 310, y }, thickness: 0.5 })
+      }
+      page.drawText(target ? 'Translated prose.' : 'Original prose.', {
+        font,
+        x: 60,
+        y: 500,
+        size: 10
+      })
+      return pdf.save()
+    }
+    const sourceBytes = await make(false),
+      data = await make(true),
+      task = load({ data: sourceBytes.slice(), useSystemFonts: true }),
+      original = await task.promise
+    try {
+      const extracted = await extractPdfTranslationSource({
+          document: original,
+          resourceRequestKey: 'native-parameter-table',
+          signal: new AbortController().signal
+        }),
+        source = createPdfTranslationSource({
+          ...extracted.source,
+          units: extracted.source.units.map((u) => ({ ...u, sourceOnly: undefined }))
+        }),
+        results = {
+          source,
+          units: source.units.map((u) => ({
+            id: u.id,
+            translationSource: u.source,
+            translation: u.source
+              .replace('Original prose.', 'Translated prose.')
+              .replace(
+                'Input power',
+                ['retained-body', 'moved-body'].includes(change) ? 'Input power' : 'Input level'
+              )
+          }))
+        },
+        artifact = { results, data }
+      getDocument.mockImplementationOnce((options) => load({ ...options, useSystemFonts: true }))
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(original, results, artifact, 'native-parameter-table')
+      )
+      await waitFor(() =>
+        expect(hook.result.current.state.status).toBe(
+          ['changed-body', 'moved-body'].includes(change) ? 'error' : 'ready'
+        )
+      )
+      if (['changed-body', 'moved-body'].includes(change))
+        expect(hook.result.current.state).toMatchObject({
+          failure: { code: 'validation-failed' },
+          details: 'Native mathematical parameter table changed'
+        })
+      hook.unmount()
+    } finally {
+      await task.destroy()
+    }
+  })
+
+  it('keeps distinct finite border widths exact when float32 would overflow', async () => {
+    const f = fixture(),
+      annotation = {
+        annotationType: 2,
+        rect: [60, 699, 80, 711],
+        url: 'https://example.invalid/reference'
+      }
+    f.originalPage.getAnnotations.mockResolvedValue([
+      { ...annotation, borderStyle: { width: 3.5e38, rawWidth: 3.5e38 } }
+    ])
+    f.targetPage.getAnnotations.mockResolvedValue([
+      { ...annotation, borderStyle: { width: 3.6e38, rawWidth: 3.6e38 } }
+    ])
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(f.original, f.results, f.artifact, 'reader:0')
+    )
+    await waitFor(() => expect(hook.result.current.state.status).toBe('error'))
+    expect(hook.result.current.state).toMatchObject({
+      failure: { code: 'validation-failed' },
+      details: 'PDF annotations changed'
+    })
+  })
+
+  it('rejects a native repeated digit moved from a list marker to a figure reference', async () => {
+    const text = '(7) Compare Figure7.',
+      pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([600, 800]),
+      { PDFName, PDFDict } = await import('pdf-lib'),
+      width = font.widthOfTextAtSize('7', 10),
+      originalX = 60 + font.widthOfTextAtSize('(', 10),
+      targetX = 60 + font.widthOfTextAtSize('(7) Compare Figure', 10)
+    page.drawText(text, { font, x: 60, y: 700, size: 10 })
+    const link = pdf.context.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: [originalX - 1, 699, originalX + width + 1, 711],
+      A: { S: 'URI', URI: 'https://example.invalid/figure-seven' }
+    })
+    page.node.set(PDFName.of('Annots'), pdf.context.obj([pdf.context.register(link)]))
+    const bytes = await pdf.save(),
+      saved = await PDFDocument.load(bytes),
+      moved = saved.context.lookup(saved.getPage(0).node.Annots()!.get(0), PDFDict)
+    moved.set(PDFName.of('Rect'), saved.context.obj([targetX - 1, 699, targetX + width + 1, 711]))
+    const data = await saved.save(),
+      { getDocument: load } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      task = load({ data: bytes.slice(), useSystemFonts: true }),
+      original = await task.promise
+    try {
+      const { source } = await extractPdfTranslationSource({
+          document: original,
+          resourceRequestKey: 'native-digit-swap',
+          signal: new AbortController().signal
+        }),
+        results = {
+          source,
+          units: source.units.map((unit) => ({
+            id: unit.id,
+            translationSource: unit.source,
+            translation: unit.source
+          }))
+        },
+        artifact = { results, data }
+      expect(
+        (await (await original.getPage(1)).getTextContent()).items.filter(
+          (item) => 'str' in item && item.str.trim()
+        )
+      ).toHaveLength(1)
+      getDocument.mockImplementationOnce((options) => load({ ...options, useSystemFonts: true }))
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(original, results, artifact, 'native-digit-swap')
+      )
+      await waitFor(() => expect(hook.result.current.state.status).toBe('error'))
+      expect(hook.result.current.state).toMatchObject({
+        failure: { code: 'validation-failed' },
+        details: 'PDF link label changed'
+      })
+      hook.unmount()
+    } finally {
+      await task.destroy()
+    }
+  })
+
+  it.each([
+    { change: 'float-width', accepted: true },
+    { change: 'different-width', accepted: false },
+    { change: 'different-dash', accepted: false },
+    { change: 'different-action', accepted: false }
+  ])('checks real serialized PDF annotation metadata: $change', async ({ change, accepted }) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([600, 800]),
+      annotation = pdf.context.obj({
+        Type: 'Annot',
+        Subtype: 'Link',
+        Rect: [60, 699, 80, 711],
+        BS: { W: 0.1, S: 'D', D: [3] },
+        A: { S: 'URI', URI: 'https://example.invalid/reference' }
+      })
+    page.drawText('Cell', { font, x: 60, y: 700, size: 10 })
+    page.node.set(
+      (await import('pdf-lib')).PDFName.of('Annots'),
+      pdf.context.obj([pdf.context.register(annotation)])
+    )
+    const bytes = await pdf.save(),
+      saved = await PDFDocument.load(bytes),
+      { PDFName, PDFDict } = await import('pdf-lib'),
+      link = saved.context.lookup(saved.getPage(0).node.Annots()!.get(0), PDFDict)
+    link.set(
+      PDFName.of('BS'),
+      saved.context.obj({
+        W: change === 'different-width' ? 0.2 : 0.100000001,
+        S: 'D',
+        D: [change === 'different-dash' ? 4 : 3]
+      })
+    )
+    if (change === 'different-action')
+      link.set(
+        PDFName.of('A'),
+        saved.context.obj({
+          S: 'URI',
+          URI: 'https://example.invalid/changed'
+        })
+      )
+    const targetBytes = await saved.save()
+    const { getDocument: load } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      originalTask = load({ data: bytes.slice(), useSystemFonts: true }),
+      original = await originalTask.promise
+    try {
+      const { source } = await extractPdfTranslationSource({
+          document: original,
+          resourceRequestKey: 'native-annotation-width',
+          signal: new AbortController().signal
+        }),
+        results = {
+          source,
+          units: source.units.map((unit) => ({
+            id: unit.id,
+            translationSource: unit.source,
+            translation: unit.source
+          }))
+        }
+      expect((await (await original.getPage(1)).getAnnotations())[0].borderStyle.width).toBe(0.1)
+      getDocument.mockImplementationOnce((options) => load({ ...options, useSystemFonts: true }))
+      const artifact = { results, data: targetBytes }
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(original, results, artifact, 'native-annotation-width')
+      )
+      await waitFor(() =>
+        expect(hook.result.current.state.status).toBe(accepted ? 'ready' : 'error')
+      )
+      if (!accepted)
+        expect(hook.result.current.state).toMatchObject({ failure: { code: 'validation-failed' } })
+      hook.unmount()
+    } finally {
+      await originalTask.destroy()
+    }
+  })
+
+  it.each([
     { sourceLabel: 'Table 2', targetLabel: '表2', accepted: true },
     { sourceLabel: 'Alpha et al.', targetLabel: 'Alpha 等人', accepted: true },
     { sourceLabel: 'Alpha et al.', targetLabel: 'Gamma 等人', accepted: false },
