@@ -51,14 +51,15 @@ Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren
 
 ### 💡 AIPOCH Open-Science v1.2.1 — Neuerungen
 
-_10. November 2026_
+_11. November 2026_
 
-- **Vereinheitlichte Ressourcenverwaltung**: Fähigkeiten, Verbindungen und Spezialisten — samt Marktplatz — an einem Ort verwalten, mit einheitlichen Karten, Filtern und Detailansichten.
-- **Prompt-Optimierung**: Den wissenschaftlichen Prompt des aktuellen Projekts direkt aus dem Eingabebereich verfeinern, mit Prüfen, Bearbeiten und Widerrufen; eigene Vorlagen in den Projekteinstellungen speichern.
-- **Verbesserter integrierter Agent**: Codex-Abonnementkonten nutzen, Claude Fable 5.2 auswählen und längere Antworten erhalten, die die Ausgabelimits jedes Anbieters beachten. Claude Code, OpenCode, CodeBuddy und Pi bleiben weiterhin verfügbar.
-- **Cloud-Compute-Anmeldung**: Modal und Hugging Face stellen eine kompatible Python-Laufzeit bereit, bevor die Browser-Anmeldung geöffnet wird, und die Kontenprüfung beachtet Ihren Netzwerkproxy.
-- **Schnellere lange Exporte**: Notebook- und Compute-Verläufe speichern Belege einmalig, sodass der Export langer Forschungssitzungen nicht mehr hängt oder anschwillt.
-- **Zuverlässigkeitskorrekturen**: Windows-Aktualisierungen erholen sich sauberer, beantwortete Fragen warten nicht mehr vor der Fortsetzung, und untätige Interpreter geben ihren Speicher automatisch frei.
+- **Einheitliche Ressourcenverwaltung**: Fähigkeiten, Konnektoren, Spezialisten und Marktplatz-Installationen gemeinsam verwalten; die Installation funktioniert auch in der Web-Oberfläche.
+- **Manuelle Prompt-Optimierung**: Den eingerichteten Anbieter aus dem Eingabebereich aufrufen, das Ergebnis prüfen, bearbeiten oder rückgängig machen und eigene Vorlagen in den Projekteinstellungen speichern.
+- **Verbesserter integrierter Agent**: Codex-Abonnements für Hauptagent und Unteragenten nutzen, Claude Fable 5.2 mit 1 Mio. Token Kontext wählen und die unterstützten Ausgabelimits der Anbieter verwenden.
+- **Literatur als CSV**: Ausgewählte Publikationen oder ein ganzes Projekt bzw. eine Sammlung mit 16 festen englischen Spaltennamen exportieren.
+- **Kompakte Forschungsexporte**: Notebook- und Compute-Verläufe speichern gleiche Belege nur einmal; lange `.science`-Verläufe werden kleiner und schneller exportiert.
+- **Cloud-Compute-Anmeldung**: Modal und Hugging Face bereiten kompatibles Python vor der Browser-Autorisierung vor; die Kontoprüfung nutzt den Systemproxy.
+- **Zuverlässigkeit**: Verbesserte Windows-Update-Wiederherstellung, Fortsetzung nach beantworteten Fragen und Forschungsfilme beim Sitzungswechsel; Interpreter werden nach 15 Minuten ohne Sitzungsaktivität freigegeben.
 
 [Vollständige Versionshinweise v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
