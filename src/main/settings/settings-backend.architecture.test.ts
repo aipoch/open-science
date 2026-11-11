@@ -468,7 +468,8 @@ describe('Settings backend ownership architecture', () => {
       'resolveAdmittedTarget',
       'resolveExplicitDirectProvider',
       'resolveExplicitTarget',
-      'resolveSelection'
+      'resolveSelection',
+      'resolveValidationTarget'
     ])
     expect(
       publicOperationsOf(settingsPaths.providerTransportOwner, 'ProviderTransportOwner')

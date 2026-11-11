@@ -4,6 +4,18 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('./provider-acp-validation', () => ({
+  ProviderAcpValidator: class {
+    validate = vi.fn(async () => ({
+      ok: false,
+      category: 'unknown',
+      message: 'test runtime unavailable'
+    }))
+    dispose = vi.fn(async () => undefined)
+  }
+}))
+
 vi.mock('electron', () => ({
   net: { fetch: (input: string, init?: RequestInit) => globalThis.fetch(input, init) },
   safeStorage: {
