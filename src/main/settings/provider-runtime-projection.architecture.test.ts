@@ -120,8 +120,10 @@ describe('Provider runtime projection ownership', () => {
     ])
   })
 
-  it('keeps projection behind account and harness owners and in its impact set', () => {
+  it('keeps projection behind account, harness and isolated backend owners and in its impact set', () => {
+    // Draft validation resolves an in-memory candidate without entering account persistence.
     expect(productionSources().filter(importsOwner).map(portablePath)).toEqual([
+      'src/main/settings/backend-resolver.ts',
       'src/main/settings/harness-session-owner.ts',
       'src/main/settings/provider-accounts.ts'
     ])
