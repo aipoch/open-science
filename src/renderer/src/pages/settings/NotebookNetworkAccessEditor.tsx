@@ -35,15 +35,19 @@ function NetworkAddressDeleteButton({
   hostname,
   address,
   disabled,
-  onConfirm
+  onConfirm,
+  revoke = false
 }: {
   hostname: string
   address: string
   disabled: boolean
   onConfirm: () => void
+  revoke?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const title = revoke ? t('Revoke {{name}}', { name: hostname }) : t('Delete address?')
+  const action = revoke ? t('Revoke') : t('Delete')
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -51,13 +55,13 @@ function NetworkAddressDeleteButton({
           type="button"
           variant="destructive"
           disabled={disabled}
-          aria-label={t('Remove {{domain}}', { domain: hostname })}
+          aria-label={revoke ? title : t('Remove {{domain}}', { domain: hostname })}
         >
-          {t('Delete')}
+          {action}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 space-y-3 p-3" aria-label={t('Delete address?')}>
-        <p className="text-sm font-medium">{t('Delete address?')}</p>
+      <PopoverContent align="end" className="w-72 space-y-3 p-3" aria-label={title}>
+        <p className="text-sm font-medium">{title}</p>
         <code className="block break-all text-xs text-muted-foreground">{address}</code>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
@@ -72,7 +76,7 @@ function NetworkAddressDeleteButton({
               onConfirm()
             }}
           >
-            {t('Delete')}
+            {action}
           </Button>
         </div>
       </PopoverContent>
@@ -106,6 +110,7 @@ export function NotebookNetworkAccessEditor({
   const [switching, setSwitching] = useState(false)
   const modeOptions = useRef<HTMLDivElement>(null)
   const modeFocus = useRef<NotebookNetworkMode | undefined>(undefined)
+  const restoreAddressFocus = useRef(false)
   const saving = useRef(false)
   const mounted = useRef(true)
   const hostInput = useRef<HTMLInputElement>(null)
@@ -147,18 +152,20 @@ export function NotebookNetworkAccessEditor({
     if (editorOpen) hostInput.current?.focus()
   }, [editorOpen])
   useEffect(() => {
-    if (!busy && modeFocus.current) {
+    if (busy || editor) return
+    if (modeFocus.current) {
       modeOptions.current
         ?.querySelector<HTMLButtonElement>(`[data-mode="${modeFocus.current}"]`)
         ?.focus()
       modeFocus.current = undefined
-    }
-  }, [busy])
+    } else if (restoreAddressFocus.current) addButton.current?.focus()
+    restoreAddressFocus.current = false
+  }, [busy, editor])
   const close = (): void => {
     if (saving.current) return
+    restoreAddressFocus.current = true
     setEditor(undefined)
     setError('')
-    addButton.current?.focus()
   }
   const commit = useCallback(
     async (
@@ -193,7 +200,7 @@ export function NotebookNetworkAccessEditor({
           setSearch('')
           setError('')
           modeFocus.current = result.mode ?? 'relaxed'
-        } else addButton.current?.focus()
+        } else restoreAddressFocus.current = true
       } catch {
         if (mounted.current) {
           if (changingMode) setModeError(t('Could not switch network mode. Try again.'))
@@ -843,13 +850,13 @@ export function NotebookNetworkAccessEditor({
                           })}
                     </p>
                   </div>
-                  <Button
-                    variant="ghost"
+                  <NetworkAddressDeleteButton
+                    revoke
+                    hostname={grant.hostname}
+                    address={`${grant.protocol ?? 'https'}://${formatNetworkHostname(grant.hostname)}:${grant.port}`}
                     disabled={busy || !!editor}
-                    onClick={() => void commit(settings, settings, [grant.id])}
-                  >
-                    {t('Revoke')}
-                  </Button>
+                    onConfirm={() => void commit(settings, settings, [grant.id])}
+                  />
                 </div>
               ))}
           </>

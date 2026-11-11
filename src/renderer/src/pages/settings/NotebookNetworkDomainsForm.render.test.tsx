@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../../../shared/notebook-network'
+import type { NotebookNetworkSettings } from '../../../../shared/notebook-network-settings'
 import { useSettingsStore } from '@/stores/settings-store'
 import { NotebookNetworkDomainsForm } from './NotebookNetworkDomainsForm'
 
@@ -536,6 +537,103 @@ const deleteConfirmation = (): HTMLElement | null =>
   document.body.querySelector('[role="dialog"][aria-label="Delete address?"]')
 const confirmationButton = (label: string): HTMLButtonElement =>
   [...deleteConfirmation()!.querySelectorAll('button')].find((item) => item.textContent === label)!
+
+it.each(['project', 'global'] as const)(
+  'requires confirmation before revoking a %s agent grant',
+  async (scope) => {
+    const grant = {
+      id: 'agent-grant',
+      hostname: 'research.local',
+      protocol: 'http' as const,
+      port: 80,
+      approvedAddresses: [],
+      scope,
+      projectId: 'project-one',
+      sessionId: 'session-one',
+      recordId: 'record-one',
+      createdAt: 1
+    }
+    useSettingsStore.setState({
+      notebookNetwork: { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, destinationGrants: [grant] },
+      setNotebookNetwork: vi.fn(
+        async (next: NotebookNetworkSettings, _domains, _trusted, revoked) => {
+          const saved = {
+            ...next,
+            destinationGrants: (next.destinationGrants ?? []).map((item) =>
+              revoked?.includes(item.id) ? { ...item, revokedAt: 2 } : item
+            )
+          }
+          useSettingsStore.setState({ notebookNetwork: saved })
+          return saved
+        }
+      )
+    })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const trigger = button('Revoke')
+    await act(async () => trigger.click())
+    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+    const dialog = (): HTMLElement | null => document.body.querySelector('[role="dialog"]')
+    expect(dialog()?.textContent).toContain('http://research.local:80')
+    const action = (label: string): HTMLButtonElement =>
+      [...dialog()!.querySelectorAll('button')].find((item) => item.textContent === label)!
+    await act(async () => action('Cancel').click())
+    expect(dialog()).toBeNull()
+    expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+    await act(async () => trigger.click())
+    await act(async () => action('Revoke').click())
+    expect(dialog()).toBeNull()
+    expect(useSettingsStore.getState().notebookNetwork.destinationGrants?.[0].revokedAt).toBe(2)
+    expect(container.textContent).not.toContain('research.local')
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledOnce()
+  }
+)
+
+it.each(['relaxed', 'strict'] as const)(
+  'restores keyboard focus after cancelling and saving a %s address edit',
+  async (mode) => {
+    useSettingsStore.setState({
+      notebookNetwork: {
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        mode,
+        strictWhitelist: [
+          {
+            id: 'one',
+            hostnamePattern: 'research.local',
+            protocol: 'http',
+            port: 80,
+            origin: 'manual'
+          }
+        ],
+        trustedPrivateDestinations: [
+          {
+            id: 'one',
+            hostname: 'research.local',
+            protocol: 'http',
+            port: 80,
+            approvedAddresses: []
+          }
+        ]
+      }
+    })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    if (mode === 'strict') {
+      const group = container.querySelector('section details') as HTMLDetailsElement
+      group.open = true
+    }
+    await act(async () => button('Edit').click())
+    button('Cancel').focus()
+    await act(async () => button('Cancel').click())
+    const add = (): HTMLButtonElement => button(mode === 'strict' ? 'Add rule' : 'Add address')
+    expect(document.activeElement).toBe(add())
+    await act(async () => button('Edit').click())
+    await typeInput(hostInput(), 'changed.local')
+    button('Confirm').focus()
+    await act(async () => button('Confirm').click())
+    expect(container.querySelector('form')).toBeNull()
+    expect(document.activeElement).toBe(add())
+    expect(container.textContent).toContain('changed.local')
+  }
+)
 
 it.each(['relaxed', 'strict'] as const)(
   'requires confirmation before deleting a %s address',
