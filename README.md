@@ -49,14 +49,15 @@ When you want to see how a result was produced, inspect the available inputs, co
 
 ### 💡 AIPOCH Open-Science v1.2.1 updates
 
-_November 10, 2026_
+_November 11, 2026_
 
-- **Unified Resource Center**: Manage skills, connectors, and specialists — and their Marketplace — from one place, with consistent cards, filters, and detail views.
-- **Prompt optimization**: Refine the current project's scientific prompt right from the composer, with review, edit, and undo; save custom templates in Project settings.
-- **Built-in Agent upgrades**: Use Codex subscription accounts, select Claude Fable 5.2, and receive longer answers that respect each provider's output limits.
-- **Cloud compute sign-in**: Modal and Hugging Face prepare a compatible Python runtime before browser authorization, and account verification respects your network proxy.
-- **Faster long exports**: Notebook and Compute histories store evidence once, so exporting long research sessions no longer stalls or balloons.
-- **Reliability fixes**: Windows updates recover more cleanly, answered questions no longer stall before continuing, and idle interpreters free their memory automatically.
+- **Unified Resource Center**: Manage skills, connectors, specialists, and Marketplace installs together; installation also works in the Web UI.
+- **Manual prompt optimization**: Invoke your configured provider from the composer, review or edit the result, and undo it; save custom templates in Project settings.
+- **Built-in Agent upgrades**: Use Codex subscriptions for the main agent and subagents, select Claude Fable 5.2 with a 1M context window, and use provider-supported output limits.
+- **Bibliography CSV**: Export selected references or a whole project or collection with 16 stable English column names.
+- **Compact research exports**: Notebook and Compute histories store unique evidence once, reducing the size and export time of long `.science` histories.
+- **Cloud compute sign-in**: Modal and Hugging Face prepare compatible Python before browser authorization; account verification follows the system proxy.
+- **Reliability improvements**: Windows update recovery, answered questions, and research films across session switches improve; idle interpreters are reclaimed after 15 minutes without session activity.
 
 [View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 

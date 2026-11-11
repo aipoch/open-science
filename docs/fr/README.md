@@ -51,14 +51,15 @@ Pour comprendre comment un résultat a été obtenu, consultez les données d’
 
 ### 💡 AIPOCH Open-Science v1.2.1 — Nouveautés
 
-_10 novembre 2026_
+_11 novembre 2026_
 
-- **Centre de ressources unifié**: Gérez les compétences, les connecteurs et les spécialistes — et leur place de marché — depuis un seul endroit, avec des cartes, des filtres et des vues de détail cohérents.
-- **Optimisation de l'invite**: Affinez l'invite scientifique du projet en cours directement depuis le composeur, avec révision, modification et annulation ; enregistrez des modèles personnalisés dans les paramètres du projet.
-- **Améliorations de l'Agent intégré**: Utilisez des comptes d'abonnement Codex, sélectionnez Claude Fable 5.2 et recevez des réponses plus longues qui respectent les limites de sortie de chaque fournisseur.
-- **Connexion au calcul cloud**: Modal et Hugging Face préparent un environnement d'exécution Python compatible avant l'autorisation dans le navigateur, et la vérification du compte respecte votre proxy réseau.
-- **Exports longs plus rapides**: Les historiques du Notebook et de Compute stockent les preuves une seule fois, pour que l'export de longues sessions de recherche ne se bloque plus ni n'explose en taille.
-- **Corrections de fiabilité**: Les mises à jour Windows se récupèrent plus proprement, les questions répondues ne se bloquent plus avant de se poursuivre, et les interpréteurs inactifs libèrent leur mémoire automatiquement.
+- **Centre de ressources unifié**: Gérez compétences, connecteurs, spécialistes et installations depuis la place de marché au même endroit ; l’installation fonctionne aussi dans l’interface web.
+- **Optimisation manuelle des invites**: Sollicitez le fournisseur configuré depuis le composeur, vérifiez ou modifiez le résultat, puis annulez si nécessaire ; enregistrez vos modèles dans les paramètres du projet.
+- **Agent intégré amélioré**: Utilisez les abonnements Codex pour l’agent principal et les sous-agents, Claude Fable 5.2 avec un contexte d’un million de jetons et les limites de sortie prises en charge par les fournisseurs.
+- **Bibliographie en CSV**: Exportez les références sélectionnées, un projet entier ou une collection avec 16 noms de colonnes fixes en anglais.
+- **Exports de recherche compacts**: Notebook et Compute stockent une seule fois chaque contenu de preuve unique, réduisant la taille et le temps d’export des longs historiques `.science`.
+- **Connexion au calcul cloud**: Modal et Hugging Face préparent un environnement Python compatible avant l’autorisation dans le navigateur ; la vérification du compte utilise le proxy système.
+- **Fiabilité**: Amélioration de la récupération des mises à jour Windows, de la reprise après réponse aux questions et des films de recherche lors des changements de session ; les interpréteurs sont libérés après 15 minutes sans activité de la session.
 
 [Notes complètes v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
