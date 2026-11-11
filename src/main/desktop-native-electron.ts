@@ -66,12 +66,12 @@ export function createDesktopNativeHandler(
         result = null
         break
       case 'open-dialog': {
-        const selected = await showOpenDialog(parent, request.options)
+        const selected = await showOpenDialog(parent, request.options, signal)
         result = { canceled: selected.canceled, filePaths: selected.filePaths }
         break
       }
       case 'save-dialog': {
-        const selected = await showSaveDialog(parent, request.options)
+        const selected = await showSaveDialog(parent, request.options, signal)
         result = {
           canceled: selected.canceled,
           ...(selected.filePath ? { filePath: selected.filePath } : {})

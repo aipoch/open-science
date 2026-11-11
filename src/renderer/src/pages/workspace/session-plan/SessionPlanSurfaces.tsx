@@ -571,6 +571,9 @@ const PlanPreviewSurface = ({
   const { t } = useTranslation()
 
   const planDocument = validatedPreviewDocument(projection.document)
+  const downloadInFlightRef = useRef(false)
+  const [downloadBusy, setDownloadBusy] = useState(false)
+  const [downloadError, setDownloadError] = useState(false)
   const decisionInFlightRef = useRef(false)
   const [decisionBusy, setDecisionBusy] = useState(false)
   const projectionKey = `${projection.artifactVersionId}:${projection.revision}`
@@ -605,6 +608,23 @@ const PlanPreviewSurface = ({
       })
     })
 
+  const handleDownload = async (): Promise<void> => {
+    if (downloadInFlightRef.current) return
+    downloadInFlightRef.current = true
+    setDownloadBusy(true)
+    setDownloadError(false)
+    try {
+      await download()
+    } catch (error) {
+      // A failed native dialog must leave the preview usable for another download attempt.
+      console.error('[session-plan] download failed', error)
+      setDownloadError(true)
+    } finally {
+      downloadInFlightRef.current = false
+      setDownloadBusy(false)
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground" aria-busy={decisionBusy}>
       {/* Mirrors the artifact preview header: the real artifact filename as selectable text,
@@ -623,7 +643,8 @@ const PlanPreviewSurface = ({
             type="button"
             aria-label={t('Download Plan')}
             variant="ghost"
-            onClick={() => void download()}
+            disabled={downloadBusy}
+            onClick={() => void handleDownload()}
           >
             <Download className="size-4" aria-hidden="true" />
             {t('Download')}
@@ -677,6 +698,9 @@ const PlanPreviewSurface = ({
           ) : null}
         </div>
       </header>
+      {downloadError ? (
+        <ErrorNotice inline role="alert" description={t('Download failed. Try again')} />
+      ) : null}
       {stale ? (
         <PlanNoticeBanner>
           {t('⚠ This plan has been replaced by another plan and is no longer current.')}

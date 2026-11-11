@@ -12,6 +12,16 @@ const resolveConfig = config as (input: { command: 'build' | 'serve'; mode: stri
 const resolvedConfig = resolveConfig({ command: 'build', mode: 'production' })
 
 describe('electron-vite main process dependencies', () => {
+  it('keeps the helper bootstrap separate and lazy desktop chunks beside their assets', () => {
+    expect(resolvedConfig.main?.build?.rollupOptions).toMatchObject({
+      input: {
+        index: resolve('src/main/electron-entry.ts'),
+        desktop: resolve('src/main/index.ts')
+      },
+      output: { chunkFileNames: '[name]-[hash].js' }
+    })
+  })
+
   it('bundles the Notebook sandbox and portable film export entry', () => {
     expect(resolvedConfig).toMatchObject({
       main: {

@@ -8,6 +8,7 @@ import { createDesktopNativeHandler } from './desktop-native-electron'
 
 const mocks = vi.hoisted(() => ({
   metrics: vi.fn(),
+  isolated: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
   message: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => mocks.log
 }))
+vi.mock('./file-dialog-process', () => ({ showFileDialogInHelper: mocks.isolated }))
 vi.mock('electron', () => ({
   app: { getAppMetrics: mocks.metrics },
   shell: { openPath: mocks.openPath, showItemInFolder: mocks.reveal, openExternal: mocks.external },
@@ -32,7 +34,12 @@ vi.mock('electron', () => ({
 vi.mock('./session-persistence/conversation-pdf-electron', () => ({
   printConversationPdf: mocks.print
 }))
-beforeEach(() => vi.resetAllMocks())
+beforeEach(() => {
+  vi.resetAllMocks()
+  mocks.isolated.mockImplementation((request) =>
+    (request.kind === 'save' ? mocks.save : mocks.open)(request.options)
+  )
+})
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 
@@ -83,13 +90,22 @@ describe('native operations requested by the Node runtime', () => {
         platform === 'win32' ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
       ])
       expect(value.resolve).toHaveBeenCalledWith(value.clientId)
+      if (platform === 'win32') {
+        expect(mocks.isolated).toHaveBeenCalledWith(
+          { kind: save ? 'save' : 'open', options: { title: 'Export' } },
+          value.window,
+          value.signal.signal
+        )
+        return
+      }
+      expect(mocks.isolated).not.toHaveBeenCalled()
       expect(mocks.log.info).toHaveBeenCalledWith(
         'operation started',
         expect.objectContaining({
           operation: 'native-file-dialog',
           kind: save ? 'save' : 'open',
           platform,
-          parented: platform !== 'win32',
+          parented: true,
           operationId: expect.any(String)
         })
       )
@@ -161,8 +177,8 @@ describe('native operations requested by the Node runtime', () => {
     expect(native).toHaveBeenCalledWith({})
   })
 
-  it('records Windows dialog cancellation and rejection without swallowing the native error', async () => {
-    Object.defineProperty(process, 'platform', { value: 'win32' })
+  it('records local dialog cancellation and rejection without swallowing the native error', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     const value = setup()
     const request = {
       kind: 'native-request' as const,

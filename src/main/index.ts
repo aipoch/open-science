@@ -102,6 +102,7 @@ import {
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
+import { showSaveDialog } from './file-dialog-electron'
 import { createElectronSessionDiagnosticsFallback } from './session-diagnostics/electron-fallback'
 import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
@@ -776,7 +777,7 @@ async function startDesktop(): Promise<void> {
           configRoot,
           dataRoot: client?.runtimeInfo().startupOptions.dataRoot ?? resolveDataRoot(),
           chooseDestination: async (defaultName) => {
-            const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+            const result = await showSaveDialog({ defaultPath: defaultName })
             return result.canceled ? undefined : result.filePath
           }
         })

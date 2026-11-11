@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electron = vi.hoisted(() => ({
   fromWebContents: vi.fn(),
+  isolated: vi.fn(),
   showSaveDialog: vi.fn()
 }))
 
+vi.mock('../file-dialog-process', () => ({ showFileDialogInHelper: electron.isolated }))
 vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: electron.fromWebContents },
   dialog: { showSaveDialog: electron.showSaveDialog }
@@ -16,6 +18,7 @@ afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 
 describe('Settings Save As dialog', () => {
   beforeEach(() => {
+    electron.isolated.mockReset().mockResolvedValue({ canceled: true, filePath: '' })
     electron.fromWebContents.mockReset()
     electron.showSaveDialog.mockReset().mockResolvedValue({ canceled: true, filePath: '' })
   })
@@ -32,9 +35,14 @@ describe('Settings Save As dialog', () => {
       await showSettingsSaveDialog(sender as never, options)
 
       expect(electron.fromWebContents).toHaveBeenCalledWith(sender)
-      expect(electron.showSaveDialog.mock.calls).toEqual([
-        platform === 'win32' ? [options] : [parentWindow, options]
-      ])
+      if (platform === 'win32') {
+        expect(electron.isolated).toHaveBeenCalledWith(
+          { kind: 'save', options },
+          parentWindow,
+          undefined
+        )
+        expect(electron.showSaveDialog).not.toHaveBeenCalled()
+      } else expect(electron.showSaveDialog).toHaveBeenCalledWith(parentWindow, options)
     }
   )
 
@@ -45,6 +53,12 @@ describe('Settings Save As dialog', () => {
 
     await showSettingsSaveDialog(sender as never, options)
 
-    expect(electron.showSaveDialog).toHaveBeenCalledWith(options)
+    if (process.platform === 'win32')
+      expect(electron.isolated).toHaveBeenCalledWith(
+        { kind: 'save', options },
+        undefined,
+        undefined
+      )
+    else expect(electron.showSaveDialog).toHaveBeenCalledWith(options)
   })
 })

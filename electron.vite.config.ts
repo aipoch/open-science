@@ -36,6 +36,15 @@ export default defineConfig(({ command }) => ({
       ...wsl2BuildDefines(process.platform, command === 'serve', process.env)
     },
     build: {
+      // Preserve the original library build's flat JS layout: desktop modules resolve native
+      // locales, renderer pages and preloads relative to __dirname, including lazy chunks.
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/electron-entry.ts'),
+          desktop: resolve('src/main/index.ts')
+        },
+        output: { chunkFileNames: '[name]-[hash].js' }
+      },
       // This workspace package is TypeScript source, not a separately built runtime dependency.
       // Bundle it into the Electron main process so development and packaged builds never ask
       // Electron's CommonJS loader to resolve the package directly.

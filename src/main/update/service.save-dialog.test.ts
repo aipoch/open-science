@@ -7,6 +7,7 @@ const electron = vi.hoisted(() => ({
   getPath: vi.fn(() => '/Users/example/Downloads')
 }))
 
+vi.mock('../file-dialog-electron', () => ({ showSaveDialog: electron.showSaveDialog }))
 vi.mock('electron', () => ({
   app: {
     getPath: electron.getPath,

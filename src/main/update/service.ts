@@ -3,7 +3,8 @@ import { createReadStream, existsSync } from 'node:fs'
 import { lstat, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
+import * as dialog from '../file-dialog-electron'
 
 import { APP } from '../../shared/app-config'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'

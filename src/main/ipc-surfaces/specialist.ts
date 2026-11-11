@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
-import { app, dialog } from 'electron'
+import { app } from 'electron'
+import * as dialog from '../file-dialog-electron'
 import { publishUserFile } from '../user-file-publisher'
 import { registerSpecialistIpcHandlers } from '../specialist/ipc'
 import {
