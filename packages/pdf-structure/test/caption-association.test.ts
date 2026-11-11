@@ -54,10 +54,10 @@ const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> =>
   graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 50 / 800, 350 / 600, 235 / 800] }]
 })
 
-function leftCaptionStack(): ReturnType<typeof JSON.parse> {
+function leftCaptionStack(prefix = ''): ReturnType<typeof JSON.parse> {
   const captions = [80, 190, 300].map((y, n) => ({
     page: 1,
-    lines: [`Table ${n + 1}. Independent measurements.`],
+    lines: [`Table ${prefix}${n + 1}. Independent measurements.`],
     rect: [50, y, 200, y + 10]
   }))
   const tables = [100, 210, 320].map((y) => ({ rect: [50, y + 13, 450, y + 79] }))
@@ -106,6 +106,49 @@ it('reserves short flush-left titles for complete consecutive native table frame
     associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
   ).toEqual(f.captions)
   expect(f).toEqual(before)
+})
+
+it.each(['A', 'S', 'B', 'Z'])(
+  'preserves independent %s-series captions on complete consecutive native frames',
+  (prefix) => {
+    const f = leftCaptionStack(prefix),
+      before = structuredClone(f)
+    expect(
+      associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+    ).toEqual(f.captions)
+    expect(f).toEqual(before)
+  }
+)
+
+it.each(['mixed-series', 'nonconsecutive', 'missing-opening', 'foreign-corridor'])(
+  'requires the same independent native proof for appendix captions: %s',
+  (change) => {
+    const f = leftCaptionStack('A')
+    if (change === 'mixed-series') f.captions[1].lines[0] = 'Table S2. Independent measurements.'
+    if (change === 'nonconsecutive') f.captions[1].lines[0] = 'Table A9. Independent measurements.'
+    if (change === 'missing-opening')
+      f.rules = f.rules.filter((_: unknown, i: number) => i % 3 !== 0)
+    if (change === 'foreign-corridor')
+      f.page.lines.push({
+        text: 'Independent prose',
+        x: 60,
+        y: 92,
+        width: 100,
+        height: 5,
+        fontSize: 5
+      })
+    expect(
+      associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+    ).not.toEqual(f.captions)
+  }
+)
+
+it.each(['B', 'Z'])('keeps distinct %s-series caption stacks separate', (prefix) => {
+  const f = leftCaptionStack(prefix)
+  f.captions[1].lines[0] = 'Table A2. Independent measurements.'
+  expect(
+    associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+  ).not.toEqual(f.captions)
 })
 
 it.each([

@@ -44,6 +44,14 @@ import {
   recoverNativeTwoTierParentHeaderGrid
 } from './literature-pdf-native-header-ownership.mjs'
 import { recoverNativeMeasuredGutterTokens } from './literature-pdf-native-measured-gutters.mjs'
+import { recoverNativeCitedProseRecordGrid } from './literature-pdf-native-cited-prose-records.mjs'
+import { recoverNativeWrappedCycleRecords } from './literature-pdf-native-wrapped-cycle-records.mjs'
+import { recoverNativeFencedCohortGrid } from './literature-pdf-native-fenced-cohort-grid.mjs'
+import { recoverNativeSparseCitedHierarchyGrid } from './literature-pdf-native-sparse-cited-hierarchy.mjs'
+import { recoverNativeFourRuleRecordGrid } from './literature-pdf-native-four-rule-records.mjs'
+import { reconcileNativeWrappedProseTerminalSources } from './literature-pdf-native-wrapped-prose-header.mjs'
+import { recoverNativeTerminalMetricRecords } from './literature-pdf-native-terminal-metric-records.mjs'
+import { repairNativeMeasuredHeadingOwners } from './literature-pdf-native-measured-heading-owners.mjs'
 import {
   recoverNativePrintedLaneTokens,
   recoverNativePrintedLeafPlan,
@@ -102,8 +110,16 @@ import {
 } from './literature-pdf-native-text-record-grid.mjs'
 import { recoverNativeSegmentedStubRecords } from './literature-pdf-native-shared-stub-record-grid.mjs'
 import {
+  recoverNativeSparseComparisonGrid,
+  reconcileNativeCenteredBodySpans,
+  reconcileNativeRuledStubBands
+} from './literature-pdf-native-sparse-comparison-grid.mjs'
+import { recoverNativeRepeatedMetricSourceGrid } from './literature-pdf-native-repeated-metric-grid.mjs'
+import {
   recoverNativeMathFieldRecords,
-  recoverNativeWrappedMathRecords
+  recoverNativeWrappedMathRecords,
+  recoverNativeOverlayMathRecords,
+  nativeMathOverlaySerialization
 } from './literature-pdf-native-math-field-record-grid.mjs'
 import {
   recoverNativePairedTextRecordGrid,
@@ -2793,17 +2809,59 @@ export function refineTable(
     captions,
     sourceRules
   )
+  const fencedCohortGrid = recoverNativeFencedCohortGrid(
+    table,
+    originalPageItems,
+    captions,
+    sourceRules,
+    nativeRecordContext
+  )
+  const sparseCitedHierarchyGrid = recoverNativeSparseCitedHierarchyGrid(
+    table,
+    originalPageItems,
+    captions,
+    sourceRules,
+    nativeRecordContext
+  )
+  const fourRuleRecordGrid =
+    !fencedCohortGrid && !sparseCitedHierarchyGrid
+      ? recoverNativeFourRuleRecordGrid(
+          table,
+          originalPageItems,
+          captions,
+          sourceRules,
+          nativeRecordContext
+        )
+      : undefined
   const recordGrid =
+    fencedCohortGrid ??
+    sparseCitedHierarchyGrid ??
+    fourRuleRecordGrid ??
     recoverNativeOverlappingLiteralColumns(table, pageItems, sourceRules) ??
     recoverDashedNarrativeRecords(table, pageItems, sourceRules) ??
     nativeTwoTierParentHeader ??
     nativeClosedRecords ??
     indicatorRecordPlan?.grid ??
+    recoverNativeCitedProseRecordGrid(
+      table,
+      pageItems,
+      captions,
+      sourceRules,
+      nativeRecordContext
+    ) ??
     recoverNativeProseLaneRecords(table, pageItems, captions, sourceRules, nativeRecordContext) ??
     recoverNativeIndexedDirectoryGrid(table, pageItems, sourceRules) ??
     recoverNativeRuledPairedRecordGrid(table, pageItems, sourceRules) ??
     recoverCompleteNativeLeafRecords(table, pageItems, captions, sourceRules) ??
-    recoverNativeSegmentedStubRecords(table, pageItems, captions, sourceRules) ??
+    recoverNativeRepeatedMetricSourceGrid(table, pageItems, captions, sourceRules, observedRuns) ??
+    recoverNativeSparseComparisonGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeSegmentedStubRecords(
+      table,
+      pageItems,
+      captions,
+      sourceRules,
+      nativeRecordContext
+    ) ??
     recoverNativeWrappedMathRecords(table, pageItems, captions, sourceRules) ??
     recoverNativeMathFieldRecords(table, pageItems, captions, sourceRules) ??
     scalarRecordPlan?.grid ??
@@ -11920,6 +11978,16 @@ export function refineTable(
     issues,
     repairs
   })
+  reconcileNativeCenteredBodySpans({
+    cells,
+    rows,
+    items,
+    rules: sourceRules,
+    headerRows,
+    unassigned,
+    issues,
+    repairs
+  })
   recoverCenteredGroupedHeaderSpans({
     cells,
     rows,
@@ -13608,13 +13676,14 @@ export function refineTable(
   // every row and leaf lane independently of a merged detector prediction.
   // Rebuild only a complete proof: each selected source token has one owner.
   const nativeRecordPlan =
+    recoverNativeOverlayMathRecords(table, pageItems, captions, sourceRules) ??
     recoverNativeRuledGroupedStubColumns(table, pageItems, columns, sourceRules) ??
     closedSingleNativeRecord ??
     fencedPairedNativeRecords ??
     rowlessNativeRecords ??
     captionWidthNativeRecords ??
     observedLiteralNativeRecords ??
-    (!nativeTwoTierParentHeader
+    (!nativeTwoTierParentHeader && !fencedCohortGrid
       ? recoverNativePrintedLeafPlan(table, pageItems, captions, sourceRules, observedRuns)
       : undefined) ??
     recoverNativeLiteralKeyedPeers(table, pageItems, captions, sourceRules, outputCells) ??
@@ -13648,7 +13717,7 @@ export function refineTable(
     recoverNativeRuledFieldFaces(table, pageItems, captions, sourceRules) ??
     recoverNativeMeasuredFourLeafRecords(table, pageItems, captions, sourceRules, observedRuns) ??
     recoverNativeTinyConfigurationRecords(table, pageItems, sourceRules) ??
-    (!nativeTwoTierParentHeader
+    (!nativeTwoTierParentHeader && !fencedCohortGrid
       ? recoverNativeProvedHeaderRecords(table, pageItems, captions, sourceRules, observedRuns)
       : undefined) ??
     recoverNativeOperatorRecords(items, table.cropRect) ??
@@ -13769,9 +13838,14 @@ export function refineTable(
               ],
           text: nativeRecordText(lane, {
             baselineHeight: nativeRecordPlan.baselineHeight,
-            scriptParents: nativeRecordPlan.scriptParents
+            scriptParents: nativeRecordPlan.scriptParents,
+            combiningOperators: nativeRecordPlan.combiningOperators
           }),
-          sourceRects: lane.map((item) => item.rect),
+          // A proved zero-advance overlay keeps its whole original owner;
+          // its equality's existing positive region represents this field.
+          sourceRects: lane
+            .filter((item) => !nativeRecordPlan.combiningOperators?.has(item))
+            .map((item) => item.rect),
           sourceTokens: lane,
           ...(nativeWholeFontOrigins(lane)?.length
             ? { sourceItems: nativeWholeFontOrigins(lane) }
@@ -13878,6 +13952,7 @@ export function refineTable(
         const runs = nativeRecordRuns(cell.sourceTokens, {
           baselineHeight: nativeRecordPlan.baselineHeight,
           scriptParents: nativeRecordPlan.scriptParents,
+          combiningOperators: nativeRecordPlan.combiningOperators,
           sourceCell: cell,
           sourcePrograms:
             nativeRecordPlan.repair === 'native-closed-leaf-complete-records-recovered'
@@ -15353,9 +15428,12 @@ export function refineTable(
       terminalRecordSeed,
       rulePaintBounds
     ) ?? wrappedHeaderResult
-  const finalResult = reviewNativeTableSources(
+  const groupedStubs =
     recoverNativeRuledGroupedStubSpans(calibratedResult, table, pageItems, sourceRules) ??
-      calibratedResult,
+    recoverNativeRuledGroupedStubSpans(calibratedResult, table, pageItems, sourceRules, true) ??
+    calibratedResult
+  const finalResult = reviewNativeTableSources(
+    reconcileNativeRuledStubBands(groupedStubs, pageItems, sourceRules) ?? groupedStubs,
     originalPageItems
   )
   const nativeCellProof = proveNativeFinalWholeCellSources(finalResult, originalPageItems)
@@ -15488,8 +15566,8 @@ export function refineTable(
   return finishFooter(finalResult)
 
   function finishFooter(reviewed) {
-    const wrapped =
-      recoverNativeOwnedWrappedRow(
+    const cycle =
+      recoverNativeWrappedCycleRecords(
         reviewed,
         originalPageItems,
         captions,
@@ -15497,7 +15575,16 @@ export function refineTable(
         nativeRecordText,
         nativeRecordContext
       ) ?? reviewed
-    return (
+    const wrapped =
+      recoverNativeOwnedWrappedRow(
+        cycle,
+        originalPageItems,
+        captions,
+        sourceRules,
+        nativeRecordText,
+        nativeRecordContext
+      ) ?? cycle
+    const footed =
       recoverNativeFooterRecordRows(
         wrapped,
         originalPageItems,
@@ -15506,6 +15593,31 @@ export function refineTable(
         nativeRecordText,
         nativeRecordContext
       ) ?? wrapped
+    const headed =
+      repairNativeMeasuredHeadingOwners(
+        footed,
+        originalPageItems,
+        captions,
+        sourceRules,
+        nativeRecordContext
+      ) ?? footed
+    const prose =
+      reconcileNativeWrappedProseTerminalSources(
+        headed,
+        originalPageItems,
+        captions,
+        sourceRules,
+        nativeRecordContext
+      ) ?? headed
+    return (
+      recoverNativeTerminalMetricRecords(
+        prose,
+        originalPageItems,
+        captions,
+        sourceRules,
+        nativeRecordText,
+        nativeRecordContext
+      ) ?? prose
     )
   }
 }
@@ -16796,6 +16908,7 @@ export function recoverNativeIndependentPanelParts(
 }
 
 function nativeRecordText(items, options) {
+  items = nativeMathOverlaySerialization(items, options?.combiningOperators)
   const baselineHeight = options?.baselineHeight
   const ordered = items
     .slice()
@@ -16823,6 +16936,7 @@ function nativeRecordText(items, options) {
 }
 
 function nativeRecordRuns(items, options) {
+  items = nativeMathOverlaySerialization(items, options?.combiningOperators)
   const provedHeaderWordGap = nativeClosedLeafHeaderWordGap(items)
   const baselineHeight = options?.baselineHeight
   const ordered = items
@@ -21519,7 +21633,13 @@ function recoverNativeRuledPairedRecordGrid(table, pageItems, rules) {
   }
 }
 
-function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
+function recoverNativeRuledGroupedStubSpans(
+  result,
+  table,
+  pageItems,
+  rules,
+  meanDeviation = false
+) {
   const crop = result?.cropRect ?? table?.cropRect
   const reject = () => undefined
   if (
@@ -21590,11 +21710,50 @@ function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
   const sourceOf = (cell) => cell.sourceTokens ?? []
   const sameOwner = (a, b) =>
     a.pageNumber === b.pageNumber && a.index === b.index && a.text === b.text
+  // The separate mean/deviation mode only moves an already owned group stub.
+  // Every metric must retain its three complete original fonts and origins;
+  // the ordinary scalar proof below keeps its existing contract.
+  const measured = (cell) => {
+    if (
+      cell.rowSpan !== 1 ||
+      cell.colSpan !== 1 ||
+      !/^[+−-]?\d+(?:\.\d+)?\s+±\s+\d+(?:\.\d+)?$/u.test(cell.text) ||
+      sourceOf(cell).length !== 3 ||
+      cell.sourceRects?.length !== 3
+    )
+      return false
+    const fonts = sourceOf(cell).map((token) =>
+      text.filter(
+        (item) =>
+          item.text === token.text &&
+          item.height === token.height &&
+          item.baseline === token.baseline &&
+          item.rect.every((v, n) => v === token.rect[n])
+      )
+    )
+    return (
+      fonts.every((f) => f.length === 1 && f[0].sourceItem?.text === f[0].text) &&
+      nativeCellOriginsMatch(cell, fonts.flat()) &&
+      cell.sourceItems?.length === 3 &&
+      sourceOf(cell)[1].text === '±' &&
+      /^[+−-]?\d+(?:\.\d+)?$/u.test(sourceOf(cell)[0].text) &&
+      /^\d+(?:\.\d+)?$/u.test(sourceOf(cell)[2].text) &&
+      sourceOf(cell).every(
+        (t, n) =>
+          t.baseline === sourceOf(cell)[0].baseline &&
+          t.height === sourceOf(cell)[0].height &&
+          t.rect.every((v, k) => v === cell.sourceRects[n][k]) &&
+          (!n || t.rect[0] > sourceOf(cell)[n - 1].rect[2])
+      )
+    )
+  }
   const metricCount = result.grid[0].length - 2
   const numericRows = []
   for (const row of result.grid.keys()) {
     const cells = result.cells.filter((cell) => cell.row === row && cell.column >= 2)
-    const numeric = cells.filter((cell) => /^(?:[+−-]?\d+(?:\.\d+)?|[–—])$/u.test(cell.text.trim()))
+    const numeric = cells.filter((cell) =>
+      meanDeviation ? measured(cell) : /^(?:[+−-]?\d+(?:\.\d+)?|[–—])$/u.test(cell.text.trim())
+    )
     if (!numeric.length) continue
     if (
       numeric.length !== metricCount ||
@@ -21639,6 +21798,108 @@ function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
   )
     return reject()
 
+  if (meanDeviation) {
+    const size = bands[0].records.length
+    if (bands.length !== 3 || size < 2 || size > 6 || bands.some((b) => b.records.length !== size))
+      return reject()
+    for (const band of bands) {
+      const first = Math.min(...band.records.map((r) => r.row)),
+        last = first + size,
+        selected = result.cells.filter((c) => c.row >= first && c.row < last),
+        fonts = text.filter((i) => i.rect[1] > band.top && i.rect[3] < band.bottom),
+        used = new Set(),
+        labelCell = selected.find((c) => c.column === 0 && c.text.trim())
+      if (
+        !labelCell ||
+        !nativeCellOriginsMatch(labelCell, [band.label]) ||
+        Math.abs(band.label.baseline - band.records.reduce((s, r) => s + r.baseline, 0) / size) >
+          height * 0.2 ||
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > band.top &&
+            r[1] < band.bottom &&
+            r[0] < labelCell.rect[2] &&
+            r[2] > labelCell.rect[0]
+        )
+      )
+        return reject()
+      for (const cell of selected) {
+        if (cell.sourceSegments?.length) return reject()
+        if (cell.column === 0 && !cell.text.trim()) {
+          if (
+            Object.keys(cell).some(
+              (k) =>
+                ![
+                  'row',
+                  'column',
+                  'rowSpan',
+                  'colSpan',
+                  'rect',
+                  'origin',
+                  'text',
+                  'sourceTokens',
+                  'sourceRects',
+                  'sourceItems',
+                  'sourceSegments',
+                  'textRuns'
+                ].includes(k) ||
+                ((/^source/u.test(k) || k === 'textRuns') &&
+                  (!Array.isArray(cell[k]) || cell[k].length))
+            )
+          )
+            return reject()
+          continue
+        }
+        if (
+          cell.column === 1 &&
+          (cell.rowSpan !== 1 ||
+            cell.colSpan !== 1 ||
+            !/^\d+$/u.test(cell.text) ||
+            sourceOf(cell).length !== 1)
+        )
+          return reject()
+        const native = sourceOf(cell).map((token) =>
+          fonts.filter(
+            (i) =>
+              i.text === token.text &&
+              i.height === token.height &&
+              i.baseline === token.baseline &&
+              i.rect.every((v, n) => v === token.rect[n])
+          )
+        )
+        if (
+          !native.length ||
+          cell.sourceItems?.length !== native.length ||
+          native.some(
+            (a) => a.length !== 1 || used.has(a[0]) || a[0].sourceItem?.text !== a[0].text
+          ) ||
+          !nativeCellOriginsMatch(cell, native.flat())
+        )
+          return reject()
+        for (const [font] of native) used.add(font)
+      }
+      if (used.size !== fonts.length || fonts.some((f) => !used.has(f))) return reject()
+    }
+    // Model leaf rectangles may cut a complete deviation font. Independent
+    // native gutters establish the existing owners without changing a leaf.
+    const bodyRows = new Set(bands.flatMap((b) => b.records.map((r) => r.row))),
+      lanes = Array.from({ length: result.grid[0].length }, (_, column) =>
+        result.cells.filter((c) => bodyRows.has(c.row) && c.column === column).flatMap(sourceOf)
+      ),
+      projections = lanes.map((fonts) => [
+        Math.min(...fonts.map((f) => f.rect[0])),
+        Math.max(...fonts.map((f) => f.rect[2]))
+      ])
+    if (
+      lanes.some((fonts) => !fonts.length) ||
+      projections.some(
+        (p, n) => p[0] < crop[0] || p[1] > crop[2] || (n && p[0] <= projections[n - 1][1])
+      )
+    )
+      return reject()
+  }
+
   const plans = []
   for (const band of bands) {
     const records = band.records.sort((a, b) => a.row - b.row)
@@ -21656,8 +21917,8 @@ function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
     if (
       labelCells.length !== 1 ||
       !records.some((record) => record.row === labelCells[0].row) ||
-      band.label.rect[0] < labelCells[0].rect[0] ||
-      band.label.rect[2] > labelCells[0].rect[2] ||
+      (!meanDeviation && band.label.rect[0] < labelCells[0].rect[0]) ||
+      (!meanDeviation && band.label.rect[2] > labelCells[0].rect[2]) ||
       band.label.rect[1] < band.top ||
       band.label.rect[3] > band.bottom ||
       sourceOf(labelCells[0]).length !== 1 ||
@@ -21675,6 +21936,7 @@ function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
     const rowSpan = records.length
     const rect = [labelCells[0].rect[0], band.top, labelCells[0].rect[2], band.bottom]
     if (
+      (!meanDeviation || labelCells[0].row !== row || labelCells[0].rowSpan !== rowSpan) &&
       sourceOf(labelCells[0]).some((item) =>
         item.rect.some((value, index) => (index < 2 ? value < rect[index] : value > rect[index]))
       )
@@ -21689,17 +21951,24 @@ function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
   )
     return reject()
 
+  const changedPlans = meanDeviation
+    ? plans.filter((p) => p.cell.row !== p.row || p.cell.rowSpan !== p.rowSpan)
+    : plans
+  if (meanDeviation && (changedPlans.length !== 1 || plans.length - changedPlans.length !== 2))
+    return reject()
   const cells = result.cells
     .filter((cell) => {
       if (cell.column !== 0 || cell.text.trim()) return true
-      return !plans.some((plan) => cell.row >= plan.row && cell.row < plan.row + plan.rowSpan)
+      return !changedPlans.some(
+        (plan) => cell.row >= plan.row && cell.row < plan.row + plan.rowSpan
+      )
     })
     .map((cell) => {
-      const plan = plans.find((candidate) => candidate.cell === cell)
+      const plan = changedPlans.find((candidate) => candidate.cell === cell)
       return plan ? { ...cell, row: plan.row, rowSpan: plan.rowSpan, rect: plan.rect } : cell
     })
   const grid = result.grid.map((row) => [...row])
-  for (const plan of plans) {
+  for (const plan of changedPlans) {
     grid[plan.cell.row][0] = ''
     grid[plan.row][0] = plan.cell.text
   }
@@ -21721,7 +21990,14 @@ function recoverNativeRuledGroupedStubSpans(result, table, pageItems, rules) {
     ...result,
     cells,
     grid,
-    repairs: [...new Set([...result.repairs, 'native-ruled-grouped-stub-spans-recovered'])]
+    repairs: [
+      ...new Set([
+        ...result.repairs,
+        meanDeviation
+          ? 'native-ruled-mean-deviation-stub-span-recovered'
+          : 'native-ruled-grouped-stub-spans-recovered'
+      ])
+    ]
   }
 }
 
