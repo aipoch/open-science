@@ -12,6 +12,23 @@ import {
 import { nativeCompositingPaintSpan } from './literature-pdf-native-compositing-profile.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 
+const originalHeaderClipEvidence = new WeakSet()
+
+// Geometry for original raster-header retention only. The returned observation
+// is not a pixel-crop or native-paint certificate for any existing caller.
+export function collectOriginalRasterHeaderFrames(operators, viewport) {
+  const evidence = {
+    images: [],
+    paths: new Map(),
+    texts: new Map(),
+    frames: new Map(),
+    isolatedGroups: new Map()
+  }
+  originalHeaderClipEvidence.add(evidence)
+  collectClosedFigureFrames(operators, viewport, evidence)
+  return evidence
+}
+
 // Locate small tables missed by the detector. The structure model still owns
 // their cells: require a caption, enclosing rules and aligned numeric records.
 export function findCaptionedNumericTableRegions(items, rules, detectedRects = []) {
@@ -301,7 +318,8 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence, co
         Object.keys(group).sort().join(',') !== 'bbox,isolated,knockout,matrix,smask' ||
         group.matrix !== null ||
         group.smask !== null ||
-        group.isolated !== true ||
+        (group.isolated !== true &&
+          !(originalHeaderClipEvidence.has(paintEvidence) && group.isolated === false)) ||
         group.knockout !== false ||
         !Array.isArray(group.bbox) ||
         group.bbox.length !== 4 ||
@@ -776,7 +794,7 @@ function filledGridRules(rectangles) {
     .map((c) => ({ ...c, paint: c.paint }))
 }
 
-export function collectTableRules(operators, viewport, rulePaintBounds) {
+export function collectTableRules(operators, viewport, rulePaintBounds, rulePaintOperations) {
   const fillThickness =
     1.1 *
     Math.max(
@@ -824,6 +842,7 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
   }
   // The public rules retain their original center lines. This optional private
   // map records only paint proved by native state and an axis-aligned transform.
+  let ruleOperation
   const rememberPaint = (rule, bounds) => {
     if (!rulePaintBounds) return
     const key = rule.join(',')
@@ -846,6 +865,10 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       return
     }
     if (unknownPaint.has(key)) return
+    if (rulePaintOperations && ruleOperation !== undefined) {
+      if (!rulePaintOperations.has(ruleOperation)) rulePaintOperations.set(ruleOperation, new Set())
+      rulePaintOperations.get(ruleOperation).add(key)
+    }
     const previous = rulePaintBounds.get(key)
     rulePaintBounds.set(
       key,
@@ -888,6 +911,7 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
     ]
   }
   for (const [i, operation] of operators.fnArray.entries()) {
+    ruleOperation = i
     let op = operation,
       args = operators.argsArray[i]
     // PDF.js paints this operation with fillRect(0, 0, 1, 1). Reuse the
@@ -1226,6 +1250,7 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
       }
     }
   }
+  ruleOperation = undefined
   for (const { rule, paint } of filledGridRules(filledRectangles)) {
     if (rules.some((r) => r.every((v, n) => Math.abs(v - rule[n]) < 0.01))) continue
     rules.push(rule)

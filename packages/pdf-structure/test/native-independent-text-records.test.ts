@@ -2278,3 +2278,66 @@ it.each([
   if (mode === 'already clean') f.table.cropRect[1] = 24
   expect(refineNativeTableVisualCrop(f.table, f.items, [], f.context)).toBeUndefined()
 })
+
+it.each(['intact', 'missing-value', 'non-parameter-heading', 'crossing-divider'])(
+  'recovers complete parameter-by-scale native rows independently of model bands: %s',
+  async (kind) => {
+    const { recoverNativeTextRecordGrid } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-text-record-grid.mjs')).href
+    )
+    const token = (
+      text: string,
+      x: number,
+      y: number,
+      width: number
+    ): ReturnType<typeof JSON.parse> => ({
+      text,
+      rect: [x, y, x + width, y + 10],
+      height: 10,
+      baseline: y + 10,
+      horizontal: true
+    })
+    const items = [
+      token('Parameter \\ Scale', 10, 25, 75),
+      token('→', 87, 25, 8),
+      token('Tiny', 150, 25, 30),
+      token('Large', 230, 25, 35),
+      ...['Depth', 'Heads', 'Width', 'Enabled'].flatMap((s, n) => {
+        const y = n < 2 ? 50 + n * 20 : 110 + (n - 2) * 20
+        return [
+          token(s, 10, y, 70),
+          token(String(8 + n), 150, y, 20),
+          token(String(16 + n), 230, y, 20)
+        ]
+      })
+    ]
+    const candidate = {
+      cropRect: [0, 10, 300, 170],
+      structure: {
+        objects: [
+          ...[
+            [0, 130],
+            [130, 210],
+            [210, 300]
+          ].map(([l, r]) => ({ label: 'table column', rect: [l, 0, r, 160] })),
+          { label: 'table row', rect: [0, 0, 300, 160] }
+        ]
+      }
+    }
+    const rules = [20, 40, 100, 160].map((y) => [0, y, 300, y])
+    if (kind === 'missing-value') items.pop()
+    if (kind === 'non-parameter-heading') items[0].text = 'Comparison fields'
+    if (kind === 'crossing-divider') rules[2] = [0, 55, 300, 55]
+    const plan = recoverNativeTextRecordGrid(
+      candidate,
+      items,
+      [{ lines: ['Table 1. Configuration.'], rect: [0, 0, 300, 9] }],
+      rules
+    )
+    expect(!!plan).toBe(kind === 'intact')
+    if (plan) {
+      expect(plan.rows).toHaveLength(5)
+      expect(plan.ownedTokens.size).toBe(items.length)
+    }
+  }
+)

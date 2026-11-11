@@ -57,6 +57,7 @@ import {
 } from './literature-pdf-native-interior-fence-table.mjs'
 import {
   recoverNativeSegmentedNumericVisualFrame,
+  recoverCaptionedNativeOpenRuleFrames,
   proveNativeRuleFreeBodyCrop,
   validateNativeRuleFreeBodyCropPng,
   getNativeOwnedGlyphOverhangCropProof,
@@ -69,6 +70,7 @@ import {
 } from './literature-pdf-native-table-boundary-ink.mjs'
 import {
   proveNativeGraphicalTableCrop,
+  completeNativeUnstructuredTableCrop,
   validateNativeGraphicalTableCropPng
 } from './literature-pdf-native-graphical-table-crop.mjs'
 import {
@@ -2418,7 +2420,8 @@ try {
         // A fully framed native notation table can have an unreliable formula
         // grid. Keep its proved image using the existing graphical-table result
         // instead of publishing guessed mathematical cell assignments.
-        const nativeVisualOnlyTables = new WeakMap()
+        const nativeVisualOnlyTables = new WeakMap(),
+          nativeVisualOnlyPng = new WeakMap()
         const nativeNotationFrames = pageInference.tables.flatMap((raw, index) => {
           const matches = pageCaptions.flatMap((caption) => {
             const ordinaryFrame =
@@ -2640,6 +2643,80 @@ try {
             caption: { ...frame.caption, rect: frame.caption.rect.map((v) => v / 1.5) }
           })
         }
+        const nativeOpenFrames = recoverCaptionedNativeOpenRuleFrames(
+          pageGeometry,
+          nativeFigureTokens,
+          nativeFigureContext,
+          captions.filter((caption) => caption.page === pageNumber)
+        )
+        for (const proof of nativeOpenFrames) {
+          const { table: graphical, sourceIndices, paintBounds } = proof,
+            sourceSet = new Set(sourceIndices),
+            covered = (rect) =>
+              paintBounds.every((v, i) => (i < 2 ? v >= rect[i] - 1e-4 : v <= rect[i] + 1e-4)),
+            overlaps = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+          if (graphicalTables.some((t) => covered(t.rect))) continue
+          let complete = false,
+            conflict = false
+          const replace = []
+          for (const [i, t] of refined.entries()) {
+            if (!acceptedTables[i]) continue
+            const rect = t.cropRect.map((v) => v / 1.5)
+            if (!overlaps(rect, graphical.rect)) continue
+            const owners = t.cells.flatMap((c) => c.sourceTokens ?? []),
+              sourceOwners = owners.map((owner) => {
+                const rect = owner.rect.map((v) => v / 1.5)
+                const candidates = nativeFigureTokens.filter(
+                  (native) =>
+                    sourceSet.has(native.sourceItem?.index) &&
+                    rect.every((v, k) =>
+                      k < 2 ? v >= native.rect[k] - 1e-4 : v <= native.rect[k] + 1e-4
+                    ) &&
+                    native.text.replace(/\s/gu, '').includes(owner.text.replace(/\s/gu, ''))
+                )
+                return candidates.length === 1 ? candidates[0] : undefined
+              })
+            if (sourceOwners.some((o) => !o)) {
+              conflict = true
+              break
+            }
+            if (
+              covered(rect) &&
+              sourceIndices.every((n) =>
+                sourceOwners.some(
+                  (o, k) =>
+                    o.sourceItem.index === n &&
+                    owners[k].text === o.text &&
+                    owners[k].rect.every((v, j) => Math.abs(v / 1.5 - o.rect[j]) < 1e-4)
+                )
+              )
+            ) {
+              complete = true
+              break
+            }
+            replace.push(i)
+          }
+          if (complete || conflict || !proof.current()) continue
+          const png = await renderPdfCrop(page, graphical.rect, pageGeometry.renderRotation)
+          if (!png || !proof.pngSafe(png) || !proof.current()) continue
+          const sameCaption = (c) =>
+            c?.page === graphical.caption.page &&
+            c.lines?.join(' ') === graphical.caption.lines.join(' ') &&
+            c.rect?.every((v, k) => Math.abs(v - graphical.caption.rect[k]) < 1e-4)
+          for (let k = graphicalTables.length - 1; k >= 0; k--) {
+            const other = graphicalTables[k]
+            if (sameCaption(other.caption) && overlaps(other.rect, graphical.rect))
+              graphicalTables.splice(k, 1)
+          }
+          nativeVisualOnlyPng.set(graphical, Buffer.from(png))
+          for (const i of replace) acceptedTables[i] = false
+          graphicalTables.push(graphical)
+          nativeVisualOnlyTables.set(graphical, proof)
+        }
+        recognizedTableRects = refined
+          .filter((_, i) => acceptedTables[i])
+          .map((t) => t.cropRect.map((v) => v / 1.5))
+
         // A noisy caption can produce both a graphical-table fallback and a
         // detector fragment for the same source region. Keep the source-backed
         // candidate when their captions agree and their regions materially
@@ -2767,7 +2844,19 @@ try {
               (rect) => renderPdfCrop(page, rect, pageGeometry.renderRotation)
             ))
           if (nativeMathBodySeedIdentities.has(table) && !nativeBody) continue
-          const owned = nativeBody?.table ?? table
+          const completeCrop =
+            !nativeBody &&
+            !nativeVisual &&
+            !threeRulePixel &&
+            completeNativeUnstructuredTableCrop(table, {
+              page: pageGeometry,
+              context: nativeRecordContext,
+              competingRects: [
+                ...recognizedTableRects,
+                ...graphicalTables.filter((other) => other !== table).map((other) => other.rect)
+              ]
+            })
+          const owned = nativeBody?.table ?? completeCrop?.table ?? table
           let thumbnail
           if (nativeBody) {
             thumbnail = `thumbnails/${id}.png`
@@ -2826,8 +2915,50 @@ try {
                 JSON.stringify(published?.caption) === expectedCaption
               )
             })
+          } else if (nativeVisualOnlyPng.has(table)) {
+            thumbnail = `thumbnails/${id}.png`
+            await writeFile(join(output, thumbnail), nativeVisualOnlyPng.get(table), { flag: 'wx' })
+          } else if (completeCrop) {
+            const png = await renderPdfCrop(page, owned.rect, pageGeometry.renderRotation)
+            if (
+              !png ||
+              !completeCrop.current() ||
+              !validateNativeGraphicalTableCropPng(png, completeCrop)
+            )
+              continue
+            thumbnail = `thumbnails/${id}.png`
+            const file = join(output, thumbnail),
+              sealed = Buffer.from(png),
+              expectedRegion = JSON.stringify(
+                normalize(owned.rect, pageGeometry.width, pageGeometry.height)
+              ),
+              expectedCaption = JSON.stringify(captionValue(owned.caption))
+            await writeFile(file, sealed, { flag: 'wx' })
+            finalNativeBodyChecks.push(() => {
+              const published = tables.find((item) => item.id === id && item.page === pageNumber)
+              return (
+                completeCrop.current() &&
+                readFileSync(file).equals(sealed) &&
+                validateNativeGraphicalTableCropPng(sealed, completeCrop) &&
+                JSON.stringify(published?.region) === expectedRegion &&
+                !published?.nativeBody &&
+                !published?.sourceItems &&
+                !published?.parts &&
+                JSON.stringify(published?.caption) === expectedCaption &&
+                JSON.stringify(published?.issues) === JSON.stringify(['no-source-cell-grid']) &&
+                published?.cells?.length === 0 &&
+                published?.grid?.length === 0
+              )
+            })
           } else thumbnail = await crop(table.rect, id)
           if (nativeVisual && !thumbnail) continue
+          if (
+            nativeVisual?.pngSafe &&
+            !nativeVisual.pngSafe(readFileSync(join(output, thumbnail)))
+          ) {
+            unlinkSync(join(output, thumbnail))
+            continue
+          }
           recognizedTableRects.push(owned.rect)
           tables.push({
             id,
@@ -2862,6 +2993,7 @@ try {
               const published = tables.find((t) => t.id === id && t.page === pageNumber)
               return (
                 nativeVisual.current() &&
+                (!nativeVisual.pngSafe || nativeVisual.pngSafe(png)) &&
                 published &&
                 JSON.stringify(published.region) === expectedRegion &&
                 JSON.stringify(published.caption) === expectedCaption &&

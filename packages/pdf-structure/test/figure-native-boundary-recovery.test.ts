@@ -117,3 +117,37 @@ it('retains below-title recovery without a competing following caption', () => {
   f.page.lines = f.page.lines.slice(0, 1)
   expect(associateFigures(f.page, f.captions)[0].rect).toEqual([60, 150, 540, 280])
 })
+
+it('removes only the unresolved first-line prefix of an expanded caption at the same native origin', () => {
+  const short = {
+    page: 2,
+    rect: [50, 60, 450, 72],
+    text: 'Figure 7. The independent experimental observations were'
+  }
+  const owner = {
+    page: 1,
+    region: [0.1, 0.5, 0.9, 0.9],
+    caption: {
+      ...short,
+      rect: [50, 60, 470, 128],
+      text: short.text + ' collected across repeated native source measurements.'
+    }
+  }
+  const unresolved = { page: 2, caption: short }
+  expect(deduplicateFigureCaptions([owner, unresolved])).toEqual([owner])
+  for (const change of [
+    'disjoint-origin',
+    'different-title',
+    'unresolved-owner',
+    'longer-unresolved'
+  ]) {
+    const a = structuredClone(owner),
+      b = structuredClone(unresolved)
+    if (change === 'disjoint-origin') b.caption.rect = [50, 160, 450, 172]
+    if (change === 'different-title')
+      b.caption.text = 'Figure 8. The independent experimental observations were'
+    if (change === 'unresolved-owner') Object.assign(a, { region: undefined })
+    if (change === 'longer-unresolved') b.caption.text += ' separately reviewed.'
+    expect(deduplicateFigureCaptions([a, b])).toHaveLength(2)
+  }
+})

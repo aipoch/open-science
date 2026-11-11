@@ -288,6 +288,12 @@ export function captionKind(text) {
   // as a numbered title. This local alias never changes displayed source text.
   text = text.replace(/^((?:Fig\.?|Figure)\s+)[A-Z](?=[.:]\s+\p{L})/u, '$11')
   if (isCoordinatedFigureSubject(text ?? '')) return undefined
+  if (
+    /^(?:Figure|Fig\.)\s+[A-Z]?\d+\s+\((?:Appendix|Supplement(?:ary)?(?: material)?)\)\s+(?:shows?|illustrates?|depicts?|presents?|describes?)\b/iu.test(
+      text
+    )
+  )
+    return undefined
   // A printed supplementary ordinal may use several letters. Classify only
   // its punctuation-delimited title through the existing single-letter
   // grammar; the source label and all prose-reference guards remain intact.
@@ -8300,6 +8306,70 @@ export function nativeConditionalFigureReferenceStarts(page) {
   )
 }
 
+// A double-spaced caption can open a text-only page after its isolated plate.
+// Calibrate its leading from two native continuation rows and stop at the
+// separately spaced numbered heading; ordinary body paragraphs stay outside.
+function findFollowingRasterCaptionParagraph(start, runs, page, pages) {
+  const title = /^(?:Figure|Fig\.)\s+([A-Z]?\d+)\.\s+\p{Lu}/u.exec(start.text),
+    prior = pages.find((p) => p.pageNumber === page.pageNumber - 1),
+    em = start.fontSize,
+    image = prior?.graphicsBounds?.[0]
+  if (
+    !title ||
+    !(em > 0) ||
+    start.y >= page.height * 0.12 ||
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    page.graphicsBounds?.length !== 0 ||
+    prior?.rotation !== 0 ||
+    prior.invalidGraphicsBounds !== 0 ||
+    prior.graphicsBounds.length !== 1 ||
+    image.kind !== 'image' ||
+    !image.imageHash ||
+    !new RegExp(
+      `^(?:Figure|Fig\\.)\\s+${title[1]}\\s+(?:shows?|depicts?|illustrates?)\\s+`,
+      'iu'
+    ).test(prior.lines[0]?.text ?? '') ||
+    runs.some((r) => r !== start && r.y < start.y && r.text.trim())
+  )
+    return
+  const rows = runs.filter((r) => r.y > start.y).sort((a, b) => a.y - b.y),
+    tail = []
+  let leading
+  for (const r of rows.slice(0, 6)) {
+    const previous = tail.at(-1) ?? start,
+      gap = r.y - previous.y
+    if (
+      captionKind(r.text) ||
+      ![r.x, r.y, r.right, r.bottom, r.fontSize].every(Number.isFinite) ||
+      Math.abs(r.fontSize - em) > em * 0.02 ||
+      Math.abs(r.x - start.x) > em * 0.1 ||
+      r.right > page.width - start.x + em * 0.1 ||
+      r.right - r.x < em * 6 ||
+      gap < em * 2 ||
+      gap > em * 2.4 ||
+      (leading && Math.abs(gap - leading) > em * 0.1)
+    )
+      break
+    if (!tail.length && !/^\p{Ll}/u.test(r.text)) return
+    leading ??= gap
+    tail.push(r)
+    if (/[.!?]$/u.test(r.text.trim())) break
+  }
+  const heading = rows[tail.length],
+    last = tail.at(-1)
+  if (
+    tail.length < 2 ||
+    !/[.!?]$/u.test(last.text.trim()) ||
+    !heading ||
+    !/^\d+\.\d+\.?\s+\p{Lu}/u.test(heading.text) ||
+    heading.y - last.y < leading + em * 0.5 ||
+    heading.y - last.y > leading + em * 2
+  )
+    return
+  return tail
+}
+
 export function findCaptionCandidates(pages, rulesByPage = new Map()) {
   // Table borders are often painted one segment per column. Treat subpixel
   // joints as one separator without connecting unrelated rules across gutters.
@@ -8731,8 +8801,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A conjunction pointer or repeated finite pointer can be a tightly
       // led continuation of two complete native body rows. Require both
       // preceding rows and their preposition; the label alone proves nothing.
+      const continuedPointer =
+        /^(?:Figure|Fig\.)\s+[A-Z]?\d+\s+(?:or\b|\([a-z]\)\s*[-–]\s*\([a-z]\),\s+whereas\b)/i.test(
+          start.text
+        )
       if (
-        /^(?:(?:Figure|Fig\.)\s+[A-Z]?\d+\s+and\b|((?:Figure|Fig\.)\s+[A-Z]?\d+)\.\s+\1\s+(?:shows?|presents?|describes?|illustrates?)\b)/i.test(
+        /^(?:(?:Figure|Fig\.)\s+[A-Z]?\d+\s+(?:and|or)\b|(?:Figure|Fig\.)\s+[A-Z]?\d+\s+\([a-z]\)\s*[-–]\s*\([a-z]\),\s+whereas\b|((?:Figure|Fig\.)\s+[A-Z]?\d+)\.\s+\1\s+(?:shows?|presents?|describes?|illustrates?)\b)/i.test(
           start.text
         )
       ) {
@@ -8775,7 +8849,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
               right > start.x &&
               left < start.right &&
               top < start.bottom &&
-              bottom > earlier.y - em &&
+              bottom > earlier.y - (continuedPointer ? 0 : em) &&
               bottom - top > em * 0.5
             )
           })
@@ -8927,6 +9001,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         rulesByPage.get(page.pageNumber) ?? []
       )
       let nativeParagraph =
+        findFollowingRasterCaptionParagraph(start, runs, page, pages) ??
         findNativeCenteredRuledTitle(start, runs, page, separators.get(page.pageNumber) ?? []) ??
         findNativeUnpunctuatedRasterCaption(
           start,
@@ -9056,7 +9131,47 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         !internalReferenceParagraph
       ) {
         nativeParagraph = undefined
-        if (referenceRow && /\b(?:in|from)$/iu.test(start.text.trim())) continue
+        if (referenceRow && /\b(?:in|from)$/iu.test(start.text.trim())) {
+          // A short noun tail can close a printed raster caption before a
+          // distant body reference or independent neighboring caption.
+          const tails = runs.filter(
+            (r) =>
+              r.y > start.bottom &&
+              r.y - start.bottom < start.fontSize * 0.6 &&
+              Math.abs(r.x - start.x) < start.fontSize * 0.1 &&
+              Math.abs(r.fontSize - start.fontSize) < start.fontSize * 0.01 &&
+              /^[\p{Lu}][\p{L} -]{1,40}$/u.test(r.text.trim()) &&
+              r.right - r.x < (start.right - start.x) * 0.4
+          )
+          const tail = tails.length === 1 ? tails[0] : undefined
+          const attached =
+            tail &&
+            /^(?:Figure|Fig\.?)\s+\d+[.:]\s/u.test(start.text) &&
+            (page.graphicsBounds ?? []).some((g) => {
+              if (g.kind !== 'image' || !g.normalizedRect?.every(Number.isFinite)) return false
+              const [left, top, right, bottom] = g.normalizedRect.map(
+                (v, n) => v * (n % 2 ? page.height : page.width)
+              )
+              return (
+                bottom > top &&
+                right > left &&
+                Math.abs(start.y - bottom) < start.fontSize * 2 &&
+                Math.min(right, start.right) - Math.max(left, start.x) >
+                  (start.right - start.x) * 0.8
+              )
+            }) &&
+            !runs.some(
+              (r) =>
+                r !== start &&
+                r !== tail &&
+                r.y >= start.y &&
+                r.y < tail.bottom + start.fontSize * 1.5 &&
+                r.x < start.right &&
+                r.right > start.x
+            )
+          if (!attached) continue
+          nativeParagraph = [tail]
+        }
       }
       const lines = [boundedParagraph?.first ?? start, ...(nativeParagraph ?? [])]
       // Some table titles wrap a hyphenated word onto a short hanging line.

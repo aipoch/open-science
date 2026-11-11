@@ -3870,10 +3870,92 @@ export function recoverRuledCategoryGrid(table, items, captions, rules) {
   }
 }
 
+// Three complete native rules bound a short comparison grid. Body anchors and
+// left-aligned wrapped headings must agree on every gutter before replacing
+// the detector's row split; every native item keeps exactly one owner.
+export function recoverWrappedComparisonHeader(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines?.[0]) === 'table')) return
+  const source = tableSourceItems(items, table.cropRect)
+  if (!source.length || source.some((t) => !t.horizontal || !(t.height > 0))) return
+  const h = source.map((t) => t.height).sort((a, b) => a - b)[Math.floor(source.length / 2)]
+  const [left, top, right, bottom] = table.cropRect
+  const borders = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top &&
+        r[1] <= bottom &&
+        Math.abs(r[0] - left) < h &&
+        r[2] >= right - h &&
+        r[2] - right < h * 4
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (borders.length !== 3) return
+  const [opening, divider, closing] = borders.map((r) => r[1])
+  const header = source.filter((t) => t.rect[1] > opening && t.rect[3] < divider)
+  const body = source.filter((t) => t.rect[1] > divider && t.rect[3] < closing)
+  const bands = groupSourceRowsWithScripts(header, h, 0.2)
+  const groups = groupSourceRowsWithScripts(body, h, 0.2)
+  if (!bands || bands.length !== 2 || !groups || groups.length < 3 || groups.length > 12) return
+  const anchors = bands[0].slice().sort((a, b) => a.rect[0] - b.rect[0])
+  if (anchors.length < 2 || anchors.length > 6 || anchors.some((t) => !/\p{L}/u.test(t.text)))
+    return
+  const columns = anchors.map((t) => [t])
+  for (const t of bands[1]) {
+    const matches = anchors
+      .map((a, n) => (Math.abs(a.rect[0] - t.rect[0]) < h * 0.25 ? n : -1))
+      .filter((n) => n >= 0)
+    if (matches.length !== 1 || !/\p{L}/u.test(t.text)) return
+    columns[matches[0]].push(t)
+  }
+  for (const group of groups) {
+    const row = group.slice().sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      row.length !== anchors.length ||
+      !/\p{L}/u.test(row[0].text) ||
+      row.slice(1).some((t) => !/^[−+-]?\d+(?:\.\d+)?$/u.test(t.text))
+    )
+      return
+    for (const [n, t] of row.entries()) {
+      if (Math.abs(t.rect[0] - anchors[n].rect[0]) > h * 0.25) return
+      columns[n].push(t)
+    }
+  }
+  const cuts = [left]
+  for (let n = 1; n < columns.length; n++) {
+    const a = Math.max(...columns[n - 1].map((t) => t.rect[2]))
+    const b = Math.min(...columns[n].map((t) => t.rect[0]))
+    if (b - a < h * 0.5) return
+    cuts.push((a + b) / 2)
+  }
+  cuts.push(right)
+  if (
+    !hasUniqueRecordTokens(source, [header, ...groups]) ||
+    [header, ...groups].some((g) => !readSourceRow(g, cuts))
+  )
+    return
+  return {
+    rows: [
+      [left, opening, right, divider],
+      ...groups.map((g) => {
+        const r = union(g)
+        return [left, r[1], right, r[3]]
+      })
+    ],
+    columns: cuts.slice(1).map((x, n) => [cuts[n], opening, x, closing]),
+    spans: [],
+    completeSpans: true,
+    headerRows: [0],
+    ownedTokens: new Set(source),
+    repair: 'native-wrapped-comparison-header-recovered'
+  }
+}
+
 // Repeated short gaps in the top and bottom header rules identify columns.
 // Accept only single-line records with indented labels and explicitly empty
 // comparison cells. Wrapped labels and bare numeric continuation rows decline.
 export function recoverNativeHeaderGrid(table, items, captions, rules) {
+  const wrappedComparison = recoverWrappedComparisonHeader(table, items, captions, rules)
+  if (wrappedComparison) return wrappedComparison
   const pairedMetrics = recoverPairedMetricHeaderGrid(table, items, captions, rules)
   if (pairedMetrics) return pairedMetrics
   const comparisonLeaves = recoverSegmentedComparisonLeafGrid(table, items, captions, rules)

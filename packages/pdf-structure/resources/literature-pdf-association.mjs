@@ -107,6 +107,7 @@ import {
   nativeCaptionedVectorGrid,
   nativeCaptionedVectorTableGrid,
   nativeCaptionedVectorChartStrip,
+  nativeCaptionedIndexedVectorPanels,
   nativeCaptionedVectorBarChart,
   nativeUpperVectorAfterRasterConflict,
   nativeCaptionedVectorBarPanels,
@@ -199,8 +200,15 @@ export function deduplicateFigureCaptions(figures, auxiliaryOwners = []) {
             other.region &&
             other.caption?.page === figure.caption?.page &&
             other.caption?.text?.length >= 40 &&
-            figure.caption?.text?.startsWith(other.caption.text) &&
-            intersection(other.caption.rect, figure.caption.rect) / area(other.caption.rect) > 0.25
+            ((figure.caption?.text?.startsWith(other.caption.text) &&
+              intersection(other.caption.rect, figure.caption.rect) / area(other.caption.rect) >
+                0.25) ||
+              (figure.caption?.text?.length >= 40 &&
+                other.caption.text.startsWith(figure.caption.text + ' ') &&
+                other.caption.rect[0] === figure.caption.rect[0] &&
+                other.caption.rect[1] === figure.caption.rect[1] &&
+                other.caption.rect[2] >= figure.caption.rect[2] &&
+                other.caption.rect[3] > figure.caption.rect[3]))
         ))
   )
 }
@@ -7359,6 +7367,14 @@ function associateFigureFaces(
     if (framedVectorQuad) return framedVectorQuad
     const vectorTableGrid = nativeCaptionedVectorTableGrid(page, caption, pageCaptions, tableRects)
     if (vectorTableGrid) return vectorTableGrid
+    const indexedVectorPanels = nativeCaptionedIndexedVectorPanels(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      nativeTokens
+    )
+    if (indexedVectorPanels) return indexedVectorPanels
     const vectorChartStrip = nativeCaptionedVectorChartStrip(
       page,
       caption,
@@ -9521,8 +9537,48 @@ export function associatePreviousPageRasterFigure(
       : []
     if (previousOwners.length === 1) preceding = previousOwners[0]
   }
-  if (!preceding) return []
-  const previousLabel = label(preceding.caption)
+  // A local complete prose block can describe the one terminal plate even
+  // when the previous numbered figure is several pages away. Require the
+  // native line inventory to form one uninterrupted block, rather than
+  // borrowing a number from an arbitrary earlier reference.
+  const body = page.lines
+    .filter(
+      (l) => l.text.trim() && !(l.y >= page.height * 0.9 && /^[A-Z]?\d+$/i.test(l.text.trim()))
+    )
+    .sort((a, b) => a.y - b.y)
+  const reference =
+    /^(?:Figure|Fig\.)\s+([A-Z]?)(\d+)\s+(?:shows?|depicts?|illustrates?)\s+\p{L}/iu.exec(
+      body[0]?.text ?? ''
+    )
+  const em = body[0]?.fontSize,
+    leading = body[1]?.y - body[0]?.y
+  const localReference =
+    !preceding &&
+    !owned.length &&
+    !candidates.some((c) => c.page === page.pageNumber) &&
+    page.invalidGraphicsBounds === 0 &&
+    page.graphicsBounds?.length === 1 &&
+    page.graphicsBounds[0].kind === 'image' &&
+    reference &&
+    body.length >= 3 &&
+    body.length <= 24 &&
+    body[0].y < page.height * 0.15 &&
+    Number.isFinite(em) &&
+    em > 0 &&
+    leading >= em * 1.1 &&
+    leading <= em * 2.4 &&
+    /[.!?]$/u.test(body.at(-1).text.trim()) &&
+    body.every(
+      (l, i) =>
+        [l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) &&
+        l.width > em * 6 &&
+        l.height > 0 &&
+        Math.abs(l.fontSize - em) < em * 0.02 &&
+        Math.abs(l.x - body[0].x) < em * 0.25 &&
+        (!i || Math.abs(l.y - body[i - 1].y - leading) < em * 0.1)
+    )
+  if (!preceding && !localReference) return []
+  const previousLabel = preceding ? label(preceding.caption) : undefined
   const eligible = associateFigures(next, candidates).filter((f) => {
     const current = label(f.caption)
     return (
@@ -9530,8 +9586,11 @@ export function associatePreviousPageRasterFigure(
       f.reason === 'no-unambiguous-adjacent-graphics' &&
       f.caption.rect[1] < next.height * 0.12 &&
       current &&
-      current[1].toUpperCase() === previousLabel[1].toUpperCase() &&
-      Number(current[2]) === Number(previousLabel[2]) + 1
+      (localReference
+        ? current[1].toUpperCase() === reference[1].toUpperCase() &&
+          Number(current[2]) === Number(reference[2])
+        : current[1].toUpperCase() === previousLabel[1].toUpperCase() &&
+          Number(current[2]) === Number(previousLabel[2]) + 1)
     )
   })
   if (eligible.length !== 1) return []
@@ -9577,7 +9636,7 @@ export function associatePreviousPageRasterFigure(
     .filter(
       (g) =>
         g &&
-        g.rect[1] >= page.height * 0.5 &&
+        g.rect[1] >= page.height * 0.5 - (localReference ? em : 0) &&
         g.rect[3] <= page.height * 0.92 &&
         g.rect[2] - g.rect[0] >= font * 8 &&
         g.rect[3] - g.rect[1] >= font * 6 &&
@@ -9587,6 +9646,10 @@ export function associatePreviousPageRasterFigure(
     return []
   const rect = union(images.map((g) => g.rect))
   if (
+    (localReference &&
+      (images.length !== 1 ||
+        body.at(-1).y + body.at(-1).height > rect[1] ||
+        rect[1] - body.at(-1).y - body.at(-1).height > em * 4)) ||
     rect[3] < page.height * 0.72 ||
     area(rect) < page.width * page.height * 0.03 ||
     (Math.abs((rect[0] + rect[2]) / page.width - (caption.rect[0] + caption.rect[2]) / next.width) *

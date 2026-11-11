@@ -1961,7 +1961,12 @@
     "packages/pdf-structure/resources/literature-pdf-scan-ocr.mjs",
     "packages/pdf-structure/test/scanned-page.test.ts",
     "packages/pdf-structure/test/scan-ocr.test.ts",
-    "packages/pdf-structure/test/native-table-crop-witness.test.ts"
+    "packages/pdf-structure/test/native-table-crop-witness.test.ts",
+    "packages/pdf-structure/test/fixtures/native-scripted-function-header.mjs",
+    "packages/pdf-structure/test/native-open-rule-tables.test.ts",
+    "packages/pdf-structure/test/native-repeated-raster-headers.test.ts",
+    "packages/pdf-structure/test/native-scripted-function-header.test.ts",
+    "packages/pdf-structure/test/unstructured-table-crop.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2578,7 +2583,11 @@
       "packages/pdf-structure/test/native-compositing-scope.test.ts",
       "packages/pdf-structure/test/scanned-page.test.ts",
       "packages/pdf-structure/test/scan-ocr.test.ts",
-      "packages/pdf-structure/test/native-table-crop-witness.test.ts"
+      "packages/pdf-structure/test/native-table-crop-witness.test.ts",
+      "packages/pdf-structure/test/native-open-rule-tables.test.ts",
+      "packages/pdf-structure/test/native-repeated-raster-headers.test.ts",
+      "packages/pdf-structure/test/native-scripted-function-header.test.ts",
+      "packages/pdf-structure/test/unstructured-table-crop.test.ts"
     ],
     "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [

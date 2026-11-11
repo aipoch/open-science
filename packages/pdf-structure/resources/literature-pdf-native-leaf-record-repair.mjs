@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { isDeepStrictEqual as fencedGroupOpaqueEqual } from 'node:util'
 import { OPS as fencedGroupOPS, Util as fencedGroupUtil } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import {
+  nativePageTextPacketInventory,
+  nativeWholeCellInkPacket
+} from './literature-pdf-figure-native-plot-labels.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { classifyTableRuleEdge, joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { nativeMeasuredWordTokens } from './literature-pdf-native-scalar-record-grid.mjs'
@@ -1617,6 +1622,120 @@ export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop
     fencedGroupOpaqueEqual(generated, rules) &&
     fencedGroupOpaqueEqual(observed, supplied)
   )
+}
+
+// Reuse the rendered native page packet for clipped word-processor cells.
+// Every whole source font must still match the original page item and its
+// measured glyph program; cell clips are interpreted by the existing packet.
+export function proveNativeSegmentedRuleSourcePacket(items, rules, context, crop) {
+  try {
+    const n = context?.nativeGlyphContext,
+      page = context?.sourcePage,
+      scale = context?.viewport?.scale,
+      v = n?.viewport,
+      source = n?.content
+    if (
+      !n ||
+      !page ||
+      !(scale > 0) ||
+      v?.scale !== 1 ||
+      !Array.isArray(source?.items) ||
+      !fencedGroupValidRect(crop) ||
+      !Array.isArray(items) ||
+      !items.length ||
+      page.pageNumber !== n.pageNumber ||
+      context.viewport.width !== page.width * scale ||
+      context.viewport.height !== page.height * scale
+    )
+      return false
+    const all = source.items.filter((i) => i.str?.trim()).map((i) => tableTextToken(i, v, 0)),
+      packet =
+        nativePageTextPacketInventory(
+          page,
+          all,
+          n,
+          true,
+          new Set(items.map((i) => i.sourceItem?.index)),
+          true
+        ) ??
+        nativeWholeCellInkPacket(page, all, n, {
+          sourceItems: items.map((i) => i.sourceItem),
+          sourceRects: items.map((i) => i.rect.map((x) => x / scale)),
+          text: items.map((i) => i.text).join('')
+        })
+    if (!packet) return false
+    const seen = new Set(),
+      ink = new Map()
+    for (const i of items) {
+      const o = i.sourceItem,
+        raw = source.items[o?.index],
+        matches = packet.records.filter((r) => r.r === raw)
+      if (
+        i.sourceToken ||
+        i.sourceSegment ||
+        o?.pageNumber !== page.pageNumber ||
+        !Number.isSafeInteger(o.index) ||
+        o.index < 0 ||
+        seen.has(o.index) ||
+        raw?.str !== i.text ||
+        o.text !== i.text ||
+        matches.length !== 1 ||
+        Math.abs(i.height - raw.height * scale) > 1e-6 ||
+        Math.abs(i.baseline - matches[0].rect[3] * scale) > 1e-6 ||
+        i.rect.some((x, k) => Math.abs(x - matches[0].rect[k] * scale) > 1e-6)
+      )
+        return false
+      const bounds = box(
+        matches[0].part
+          .filter((z) => z.g.text.trim())
+          .map((z) => ({ rect: z.g.ink.map((x) => x * scale) }))
+      )
+      if (!fencedGroupValidRect(bounds) || !fencedGroupContains(bounds, crop)) return false
+      ink.set(i, bounds)
+      seen.add(o.index)
+    }
+    const expected = all.filter((i) =>
+      fencedGroupIntersects(
+        i.rect.map((x) => x * scale),
+        crop
+      )
+    )
+    if (
+      expected.length !== items.length ||
+      expected.some(
+        (i) =>
+          !items.some(
+            (j) =>
+              j.text === i.text && j.rect.every((x, k) => Math.abs(x - i.rect[k] * scale) < 1e-6)
+          )
+      )
+    )
+      return false
+    if (
+      packet.records.some(
+        (r) =>
+          !seen.has(r.index) &&
+          r.part.some((z) =>
+            fencedGroupIntersects(
+              z.g.ink.map((x) => x * scale),
+              crop
+            )
+          )
+      )
+    )
+      return false
+    const paint = new Map(),
+      generated = collectTableRules(n.operators, context.viewport, paint),
+      supplied =
+        context.rulePaintBounds instanceof Map
+          ? context.rulePaintBounds
+          : new Map(context.rulePaintBounds)
+    return fencedGroupOpaqueEqual(generated, rules) && fencedGroupOpaqueEqual(paint, supplied)
+      ? { ink }
+      : false
+  } catch {
+    return false
+  }
 }
 
 // Rule centers own cells; the existing measured paint bounds own the crop.
@@ -10019,6 +10138,131 @@ export function recoverNativeIsolatedPrintedHeader(table, items, rules, cells, r
 // A nested model band may discard the first printed record while retaining
 // a following blank-stub continuation. Insert only that wholly unowned record;
 // the remaining cells and scientific expressions keep their existing owners.
+function unownedContinuationRecord(
+  table,
+  items,
+  captions,
+  rules,
+  cells,
+  rows,
+  unassigned,
+  context
+) {
+  const crop = table.cropRect,
+    p = Number(/^page-(\d+)-/u.exec(table.id ?? '')?.[1]),
+    first = cells.filter((c) => c.row === 0).sort((a, b) => a.column - b.column)
+  if (
+    !context ||
+    unassigned.length !== 3 ||
+    first.length !== 4 ||
+    first[0].text.trim() ||
+    first.some((c, n) => c.column !== n || c.rowSpan !== 1 || c.colSpan !== 1) ||
+    first.slice(1).some((c) => c.sourceTokens?.length !== 1) ||
+    captions.some((c) => c.page === p && c.rect[1] < crop[3] && c.rect[3] > crop[1])
+  )
+    return
+  const cuts = [first[0].rect[0], ...first.map((c) => c.rect[2])],
+    source = items.filter((i) => i.text?.trim() && fencedGroupIntersects(i.rect, crop)),
+    h = first[1].sourceTokens[0].height,
+    lane = (i) => cuts.slice(1).findIndex((x, c) => i.rect[0] >= cuts[c] && i.rect[2] <= x)
+  if (
+    !(h > 0) ||
+    source.some(
+      (i) =>
+        !fencedGroupFiniteFont(i) ||
+        !i.horizontal ||
+        Math.abs(i.height - h) > h * 0.02 ||
+        lane(i) < 0
+    )
+  )
+    return
+  const same = (a, b) => a.text === b.text && sameRect(a.rect, b.rect),
+    owned = new Set()
+  for (const c of cells)
+    for (const token of c.sourceTokens ?? []) {
+      const matches = source.filter((i) => same(i, token))
+      if (matches.length !== 1 || owned.has(matches[0])) return
+      owned.add(matches[0])
+    }
+  const missing = source.filter((i) => !owned.has(i)).sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    missing.length !== 3 ||
+    JSON.stringify(missing.map((i) => i.text).sort()) !== JSON.stringify([...unassigned].sort()) ||
+    missing.some(
+      (i, n) => lane(i) !== n + 1 || Math.abs(i.baseline - missing[0].baseline) > h * 0.02
+    )
+  )
+    return
+  const peers = [0, 1, 2].map((r) =>
+    cells.filter((c) => c.row === r).sort((a, b) => a.column - b.column)
+  )
+  if (
+    peers.some(
+      (cs) =>
+        cs.length !== 4 ||
+        cs[0].text.trim() ||
+        cs.some((c, n) => c.column !== n || c.rowSpan !== 1 || c.colSpan !== 1) ||
+        cs
+          .slice(1)
+          .some(
+            (c, n) =>
+              c.sourceTokens?.length !== 1 ||
+              Math.abs(c.sourceTokens[0].rect[0] - missing[n].rect[0]) > h * 0.02 ||
+              Math.abs(c.sourceTokens[0].baseline - cs[1].sourceTokens[0].baseline) > h * 0.02
+          )
+    )
+  )
+    return
+  const pitch = peers[1][1].sourceTokens[0].baseline - peers[0][1].sourceTokens[0].baseline,
+    next = peers[0][1].sourceTokens[0],
+    boundary =
+      (Math.max(...missing.map((i) => i.rect[3])) +
+        Math.min(...peers[0].flatMap((c) => c.sourceTokens ?? []).map((i) => i.rect[1]))) /
+      2,
+    bands = [
+      ...Map.groupBy(
+        rules.filter((r) => r[1] === r[3] && r[1] > crop[1] && r[1] < crop[3]),
+        (r) => r[1]
+      ).values()
+    ]
+      .map((b) => b.sort((a, b) => a[0] - b[0]))
+      .sort((a, b) => a[0][1] - b[0][1]),
+    top = bands[0],
+    packet = proveNativeSegmentedRuleSourcePacket(source, rules, context, crop)
+  if (
+    pitch < h * 1.1 ||
+    pitch > h * 1.5 ||
+    Math.abs(next.baseline - missing[0].baseline - pitch) > h * 0.05 ||
+    Math.abs(peers[2][1].sourceTokens[0].baseline - next.baseline - pitch * 2) > h * 0.05 ||
+    bands.length < 3 ||
+    bands.some((b) => b.length !== 4) ||
+    top[0][1] - crop[1] > h ||
+    missing[0].baseline - top[0][1] < h * 0.85 ||
+    missing[0].baseline - top[0][1] > h * 1.1 ||
+    bands.some((b) =>
+      b.some(
+        (r, c) =>
+          Math.abs(r[0] - top[c][0]) > h * 0.08 ||
+          Math.abs(r[2] - top[c][2]) > h * 0.08 ||
+          (c && Math.abs(r[0] - b[c - 1][2]) > h * 0.08)
+      )
+    ) ||
+    source.some((i) => i.rect[1] < missing[0].rect[1] - 0.02) ||
+    !packet ||
+    missing.some(
+      (i) => !fencedGroupContains(packet.ink.get(i), [cuts[0], top[0][1], cuts[4], boundary])
+    )
+  )
+    return
+  return {
+    row: 0,
+    groups: [[], ...missing.map((i) => [i])],
+    rect: [cuts[0], crop[1], cuts[4], boundary],
+    boundary,
+    cuts
+  }
+}
+
 export function recoverNativeUnownedFirstRecord(
   table,
   items,
@@ -10026,8 +10270,20 @@ export function recoverNativeUnownedFirstRecord(
   rules,
   cells,
   rows,
-  unassigned
+  unassigned,
+  context
 ) {
+  const continuation = unownedContinuationRecord(
+    table,
+    items,
+    captions,
+    rules,
+    cells,
+    rows,
+    unassigned,
+    context
+  )
+  if (continuation) return continuation
   if (!unassigned.length || rows.length < 5 || rows.length > 50) return
   const firstCells = cells.filter((c) => c.row === 0).sort((a, b) => a.column - b.column)
   if (

@@ -2813,7 +2813,13 @@ export function refineTable(
     recoverNativeStackedRecordGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeSharedPairRecordGrid(table, pageItems, captions, sourceRules) ??
     recoverNativePairedTextRecordGrid(table, pageItems, captions, sourceRules, adjacent) ??
-    recoverNativeOrdinalWrappedRecordGrid(table, pageItems, captions, sourceRules) ??
+    recoverNativeOrdinalWrappedRecordGrid(
+      table,
+      pageItems,
+      captions,
+      sourceRules,
+      nativeRecordContext
+    ) ??
     recoverNativeSingleMathRecordGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeCitedMeasurementGrid(table, pageItems, captions, sourceRules) ??
     recoverNativeConfigurationGrid(table, pageItems, captions, sourceRules) ??
@@ -14310,7 +14316,8 @@ export function refineTable(
     sourceRules,
     outputCells,
     rows,
-    unassigned
+    unassigned,
+    nativeRecordContext
   )
   if (unownedFirst) {
     const { row, groups, rect, boundary, cuts } = unownedFirst
@@ -14474,6 +14481,18 @@ export function refineTable(
     grid[left.row][left.column] = left.text
     grid[right.row][right.column] = right.text
     repairs.push('native-measured-prose-scalar-cell-split')
+  }
+  const restoredFrame = recoverNativeAssignedFrameCrop(
+    { cropRect: outputCrop, grid, cells: outputCells, issues: [...issues], unassigned },
+    pageItems,
+    sourceRules,
+    outputClipped
+  )
+  if (restoredFrame) {
+    outputCrop = restoredFrame
+    outputClipped = []
+    issues.delete('text-crosses-crop-boundary')
+    repairs.push('native-assigned-closed-frame-restored')
   }
   const assignedFrame =
     !leadingDenseRecordRecovered &&
@@ -22173,6 +22192,67 @@ export function recoverNativeRuledMetricRecords(table, pageItems, rules) {
 // A complete source grid followed by ordinary narrative can share a padded
 // detector crop. Keep the closing ink while leaving that narrative in the
 // page text path; unmatched scalar or footnote fragments block this trim.
+// Restore a slightly truncated right rail only when every ordinary cell has
+// an exact native owner and the closed frame independently excludes the
+// following clipped paragraph. The source cells and paragraph remain literal.
+export function recoverNativeAssignedFrameCrop(table, pageItems, rules, clipped) {
+  const { cropRect: crop, grid, cells } = table,
+    words = (text) => text.trim().replace(/\s+/gu, ' ')
+  if (
+    !clipped?.length ||
+    table.unassigned?.length ||
+    !Array.isArray(table.issues) ||
+    table.issues.some((issue) => issue !== 'text-crosses-crop-boundary') ||
+    !Array.isArray(grid) ||
+    grid.length < 3 ||
+    !Array.isArray(grid[0]) ||
+    grid[0].length < 2 ||
+    grid.some((row) => !Array.isArray(row) || row.length !== grid[0].length) ||
+    !Array.isArray(cells) ||
+    cells.length !== grid.length * grid[0].length ||
+    new Set(cells.map((c) => c.row + ':' + c.column)).size !== cells.length ||
+    cells.some(
+      (c) =>
+        !Number.isSafeInteger(c.row) ||
+        !Number.isSafeInteger(c.column) ||
+        c.rowSpan !== 1 ||
+        c.colSpan !== 1 ||
+        !c.text?.trim() ||
+        grid[c.row]?.[c.column] !== c.text ||
+        c.sourceSegments?.length ||
+        !c.sourceTokens?.length ||
+        c.sourceTokens.length !== c.sourceRects?.length ||
+        words(c.sourceTokens.map((i) => i.text).join(' ')) !== words(c.text)
+    )
+  )
+    return
+  const proof = proveNativeAssignedClosedTableFrame(table, pageItems, rules, true)
+  if (!proof) return
+  const frame = proof.cropRect,
+    h = Math.min(...proof.sourceTokens.map((i) => i.height)),
+    next = [crop[0], crop[1], frame[2] + 0.5, frame[3] + 0.5]
+  if (
+    !(h > 0) ||
+    frame[2] <= crop[2] ||
+    next[2] - crop[2] > h ||
+    next[3] >= crop[3] ||
+    clipped.some(
+      (i) =>
+        !i.horizontal ||
+        !i.rect?.every(Number.isFinite) ||
+        i.rect[1] <= next[3] ||
+        i.rect[3] <= crop[3] ||
+        proof.sourceTokens.includes(i)
+    ) ||
+    pageItems.some(
+      (i) => i.text?.trim() && !proof.sourceTokens.includes(i) && intersect(i.rect, next) > 0
+    ) ||
+    proof.sourceTokens.some((i) => !inside(next, i))
+  )
+    return
+  return next
+}
+
 export function recoverNativeClosingRuleCrop(crop, cells, pageItems, rules, clipped) {
   if (
     !clipped.length ||
