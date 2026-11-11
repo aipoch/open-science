@@ -12,6 +12,7 @@ import type { WebContents } from 'electron'
 import { writeFile, rm } from 'node:fs/promises'
 import type { DesktopNativeHandler } from './desktop-native-contract'
 import { desktopNativeRequestSchema } from './desktop-native-contract'
+import { showOpenDialog, showSaveDialog } from './file-dialog-electron'
 import { printConversationPdf } from './session-persistence/conversation-pdf-electron'
 
 // Only the authenticated main-process connection reaches this handler. No renderer-facing native
@@ -65,12 +66,12 @@ export function createDesktopNativeHandler(
         result = null
         break
       case 'open-dialog': {
-        const selected = await dialog.showOpenDialog(parent, request.options)
+        const selected = await showOpenDialog(parent, request.options)
         result = { canceled: selected.canceled, filePaths: selected.filePaths }
         break
       }
       case 'save-dialog': {
-        const selected = await dialog.showSaveDialog(parent, request.options)
+        const selected = await showSaveDialog(parent, request.options)
         result = {
           canceled: selected.canceled,
           ...(selected.filePath ? { filePath: selected.filePath } : {})

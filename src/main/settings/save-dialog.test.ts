@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electron = vi.hoisted(() => ({
   fromWebContents: vi.fn(),
@@ -11,6 +11,8 @@ vi.mock('electron', () => ({
 }))
 
 const { showSettingsSaveDialog } = await import('./save-dialog')
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 
 describe('Settings Save As dialog', () => {
   beforeEach(() => {
@@ -18,17 +20,23 @@ describe('Settings Save As dialog', () => {
     electron.showSaveDialog.mockReset().mockResolvedValue({ canceled: true, filePath: '' })
   })
 
-  it('attaches the dialog to the IPC sender window', async () => {
-    const sender = { id: 42 }
-    const parentWindow = { id: 7 }
-    const options = { title: 'Export Skill', defaultPath: 'skill.zip' }
-    electron.fromWebContents.mockReturnValue(parentWindow)
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'uses the %s owner policy for Settings exports',
+    async (platform) => {
+      Object.defineProperty(process, 'platform', { value: platform })
+      const sender = { id: 42 }
+      const parentWindow = { id: 7 }
+      const options = { title: 'Export Skill', defaultPath: 'skill.zip' }
+      electron.fromWebContents.mockReturnValue(parentWindow)
 
-    await showSettingsSaveDialog(sender as never, options)
+      await showSettingsSaveDialog(sender as never, options)
 
-    expect(electron.fromWebContents).toHaveBeenCalledWith(sender)
-    expect(electron.showSaveDialog).toHaveBeenCalledWith(parentWindow, options)
-  })
+      expect(electron.fromWebContents).toHaveBeenCalledWith(sender)
+      expect(electron.showSaveDialog.mock.calls).toEqual([
+        platform === 'win32' ? [options] : [parentWindow, options]
+      ])
+    }
+  )
 
   it('falls back to an unparented dialog when the sender window no longer exists', async () => {
     const sender = { id: 42 }

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { createDesktopNativeHandler } from './desktop-native-electron'
 
@@ -16,7 +16,12 @@ const mocks = vi.hoisted(() => ({
   parent: vi.fn(),
   openPath: vi.fn(),
   reveal: vi.fn(),
-  external: vi.fn()
+  external: vi.fn(),
+  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
+}))
+vi.mock('@aipoch/diagnostics/node', async (original) => ({
+  ...(await original<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => mocks.log
 }))
 vi.mock('electron', () => ({
   app: { getAppMetrics: mocks.metrics },
@@ -28,6 +33,8 @@ vi.mock('./session-persistence/conversation-pdf-electron', () => ({
   printConversationPdf: mocks.print
 }))
 beforeEach(() => vi.resetAllMocks())
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function setup() {
@@ -42,24 +49,60 @@ function setup() {
 }
 
 describe('native operations requested by the Node runtime', () => {
-  it('parents native dialogs to the current document and strips Electron-only result fields', async () => {
-    const value = setup()
-    const path = join(tmpdir(), 'chosen.science')
-    mocks.save.mockResolvedValue({ canceled: false, filePath: path, bookmark: 'not-in-protocol' })
-    await expect(
-      value.handler(
-        {
-          kind: 'native-request',
-          id: 1,
-          clientId: value.clientId,
-          request: { operation: 'save-dialog', options: { title: 'Export' } }
-        },
-        value.signal.signal
+  it.each([
+    ['win32', 'save-dialog'],
+    ['win32', 'open-dialog'],
+    ['darwin', 'save-dialog'],
+    ['darwin', 'open-dialog'],
+    ['linux', 'save-dialog'],
+    ['linux', 'open-dialog']
+  ] as const)(
+    'uses the %s file dialog owner policy for %s with a validated document',
+    async (platform, operation) => {
+      Object.defineProperty(process, 'platform', { value: platform })
+      const value = setup()
+      const path = join(tmpdir(), 'chosen.science')
+      const save = operation === 'save-dialog'
+      const native = save ? mocks.save : mocks.open
+      const result = save
+        ? { canceled: false, filePath: path }
+        : { canceled: false, filePaths: [path] }
+      native.mockResolvedValue({ ...result, bookmark: 'not-in-protocol' })
+      await expect(
+        value.handler(
+          {
+            kind: 'native-request',
+            id: 1,
+            clientId: value.clientId,
+            request: { operation, options: { title: 'Export' } }
+          },
+          value.signal.signal
+        )
+      ).resolves.toEqual(result)
+      expect(native.mock.calls).toEqual([
+        platform === 'win32' ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
+      ])
+      expect(value.resolve).toHaveBeenCalledWith(value.clientId)
+      expect(mocks.log.info).toHaveBeenCalledWith(
+        'operation started',
+        expect.objectContaining({
+          operation: 'native-file-dialog',
+          kind: save ? 'save' : 'open',
+          platform,
+          parented: platform !== 'win32',
+          operationId: expect.any(String)
+        })
       )
-    ).resolves.toEqual({ canceled: false, filePath: path })
-    expect(mocks.save).toHaveBeenCalledWith(value.window, { title: 'Export' })
-    expect(value.resolve).toHaveBeenCalledWith(value.clientId)
-  })
+      expect(mocks.log.info).toHaveBeenCalledWith(
+        'operation completed',
+        expect.objectContaining({
+          outcome: 'completed',
+          durationMs: expect.any(Number)
+        })
+      )
+      expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain(path)
+    }
+  )
 
   it('does not fall back to another window for a released document', async () => {
     const value = setup()
@@ -78,33 +121,76 @@ describe('native operations requested by the Node runtime', () => {
     expect(mocks.open).not.toHaveBeenCalled()
   })
 
-  it.each(['release', 'disconnect'] as const)(
-    'discards a late native selection on %s',
-    async (reason) => {
-      const value = setup()
-      let finish!: (value: unknown) => void
-      mocks.open.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            finish = resolve
-          })
-      )
-      const pending = value.handler(
-        {
-          kind: 'native-request',
-          id: 1,
-          clientId: value.clientId,
-          request: { operation: 'open-dialog', options: {} }
-        },
-        value.signal.signal
-      )
-      if (reason === 'release') value.resolve.mockReturnValue(undefined)
-      else value.signal.abort()
-      const result = expect(pending).rejects.toThrow()
-      finish({ canceled: false, filePaths: [join(tmpdir(), 'chosen.science')] })
-      await result
+  it.each([
+    ['open-dialog', 'release'],
+    ['open-dialog', 'disconnect'],
+    ['open-dialog', 'destroy'],
+    ['save-dialog', 'release'],
+    ['save-dialog', 'disconnect'],
+    ['save-dialog', 'destroy']
+  ] as const)('discards a late Windows %s selection on %s', async (operation, reason) => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const value = setup()
+    let finish!: (value: unknown) => void
+    const native = operation === 'open-dialog' ? mocks.open : mocks.save
+    native.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = value.handler(
+      {
+        kind: 'native-request',
+        id: 1,
+        clientId: value.clientId,
+        request: { operation, options: {} }
+      },
+      value.signal.signal
+    )
+    if (reason === 'release') value.resolve.mockReturnValue(undefined)
+    else if (reason === 'destroy') Object.assign(value.window, { isDestroyed: () => true })
+    else value.signal.abort()
+    const result = expect(pending).rejects.toThrow()
+    finish({
+      canceled: false,
+      filePath: join(tmpdir(), 'chosen.science'),
+      filePaths: [join(tmpdir(), 'chosen.science')]
+    })
+    await result
+    expect(native).toHaveBeenCalledWith({})
+  })
+
+  it('records Windows dialog cancellation and rejection without swallowing the native error', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const value = setup()
+    const request = {
+      kind: 'native-request' as const,
+      id: 1,
+      clientId: value.clientId,
+      request: { operation: 'save-dialog' as const, options: { defaultPath: 'private-name.json' } }
     }
-  )
+    mocks.save.mockResolvedValueOnce({ canceled: true, filePath: '' })
+    await expect(value.handler(request, value.signal.signal)).resolves.toEqual({ canceled: true })
+    expect(mocks.log.warn).toHaveBeenCalledWith(
+      'operation cancelled',
+      expect.objectContaining({ outcome: 'cancelled' })
+    )
+    const error = new Error('Native dialog unavailable')
+    mocks.save.mockRejectedValueOnce(error)
+    await expect(value.handler(request, value.signal.signal)).rejects.toBe(error)
+    expect(mocks.log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({ outcome: 'failed' })
+    )
+    expect(
+      JSON.stringify([
+        ...mocks.log.info.mock.calls,
+        ...mocks.log.warn.mock.calls,
+        ...mocks.log.error.mock.calls
+      ])
+    ).not.toContain('private-name.json')
+  })
 
   it('passes cancellation to the native message dialog', async () => {
     const value = setup()

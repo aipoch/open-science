@@ -175,6 +175,7 @@
     "src/main/desktop-runtime-transport.integration.test.ts",
     "src/main/desktop-native-electron.ts",
     "src/main/desktop-native-electron.test.ts",
+    "src/main/file-dialog-electron.ts",
     "scripts/stage-node-runtime.mjs",
     "scripts/stage-node-runtime.test.ts",
     "build/node-runtime.json",
