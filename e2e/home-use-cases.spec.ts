@@ -166,7 +166,5 @@ test('refreshes the catalog once per launch and reuses the disk cache silently o
   const refreshed = await page.evaluate(() => window.api.sessions.useCaseCatalog('refreshed'))
   expect(refreshed).toHaveLength(7)
   expect(await requestCount()).toBe(2)
-  await expect(
-    page.getByRole('region', { name: 'Use Cases' }).getByRole('alert')
-  ).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Use Cases' }).getByRole('alert')).toHaveCount(0)
 })
