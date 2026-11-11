@@ -201,7 +201,12 @@ Call `dispose()` during lifecycle shutdown.
   declared roots, and contains the process tree in a kill-on-close Job Object. Writable roots with
   protected descendants are split into allow-only ACL segments: ordinary subtrees receive modify
   access, protected files and directories remain read-only, and their ancestor boundaries omit
-  delete-child access. A creation journal
+  delete-child access. Saved folder grants and incidental PATH roots are optional: an unavailable
+  directory does not prevent unrelated work from starting, and access to that directory can fail
+  during execution. Runtime, workspace and temporary roots remain required. A failed optional
+  ACL grant can be omitted only after its transaction rolls back completely; an incomplete rollback
+  stops launch and preserves recovery evidence. Internal runtime probes exclude saved folder grants
+  and managed Skill roots. A creation journal
   and ownership receipt under the original desktop user's
   `%LOCALAPPDATA%\Aipoch\Open-Science\notebook-sandbox\<installationId>\` make setup recoverable.
   Existing ownership records under `Aipoch\OpenScience` stay in place; conflicting old and new records block initialization and uninstall. Explicit `OPEN_SCIENCE_CONFIG_ROOT` keeps task ownership records under that isolated root.

@@ -29,7 +29,7 @@ mod wfp;
 #[cfg(windows)]
 mod directory_access;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LaunchSpec {
     executable: String,
@@ -40,6 +40,8 @@ struct LaunchSpec {
     read_only_roots: Vec<String>,
     #[serde(default)]
     optional_read_only_roots: Vec<String>,
+    #[serde(default)]
+    optional_read_write_roots: Vec<String>,
     read_write_roots: Vec<String>,
     denied_read_roots: Vec<String>,
     denied_write_roots: Vec<String>,
@@ -3106,14 +3108,15 @@ mod windows_host {
 
     fn apply_acl_grant(path: &str, capability_sid: &str, grant: AclGrant) -> Result<()> {
         update_command_acl_native(path, capability_sid, Some(grant), false)
-            .map_err(|error| anyhow::anyhow!("grant AppContainer access to {path}: {error:#}"))
+            .with_context(|| AclPathFailure(path.to_owned()))
     }
 
     fn apply_acl_lease_grants(record: &AclLeaseRecord) -> Result<()> {
         if record.grants.iter().any(|grant| grant.protected_boundary) {
             let mut protected = true;
             for grant in record.grants.iter().filter(|grant| grant.protected_boundary) {
-                update_command_acl_native(&grant.path, &record.capability_sid, None, protected)?;
+                update_command_acl_native(&grant.path, &record.capability_sid, None, protected)
+                    .with_context(|| AclPathFailure(grant.path.clone()))?;
                 protected = false;
             }
         }
@@ -3421,7 +3424,8 @@ mod windows_host {
                         .map(move |grant| (*lease, grant))
                 })
                 .collect::<Vec<_>>();
-            restore_acl_snapshot(&acl_snapshot_with_grants(snapshot, &grants)?)?;
+            restore_acl_snapshot(&acl_snapshot_with_grants(snapshot, &grants)?)
+                .with_context(|| AclPathFailure(snapshot.path.clone()))?;
         }
         Ok(())
     }
@@ -3514,8 +3518,101 @@ mod windows_host {
         Ok(())
     }
 
+    #[derive(Debug)]
+    struct AclPathFailure(String);
+
+    impl std::fmt::Display for AclPathFailure {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "grant AppContainer access to {}", self.0)
+        }
+    }
+
+    #[derive(Debug)]
+    struct AclRollbackIncomplete(String);
+
+    impl std::fmt::Display for AclRollbackIncomplete {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "rollback command filesystem ACLs also failed: {}",
+                self.0
+            )
+        }
+    }
+
+    fn omit_failed_optional_roots(spec: &mut LaunchSpec, error: &anyhow::Error) -> bool {
+        // An incomplete rollback must keep its recovery receipts and abort before child launch.
+        if error.downcast_ref::<AclRollbackIncomplete>().is_some() {
+            return false;
+        }
+        let Some(AclPathFailure(path)) = error.downcast_ref::<AclPathFailure>() else {
+            return false;
+        };
+        let mut removed = false;
+        for roots in [
+            &mut spec.optional_read_only_roots,
+            &mut spec.optional_read_write_roots,
+        ] {
+            roots.retain(|root| {
+                let affected =
+                    path_is_within(path, Path::new(root)) || path_is_within(root, Path::new(path));
+                removed |= affected;
+                !affected
+            });
+        }
+        removed
+    }
+
     impl AclLease {
         fn acquire(
+            installation_id: &str,
+            ownership_root: &Path,
+            lease_id: String,
+            capability: &CommandCapability,
+            spec: &LaunchSpec,
+        ) -> Result<Self> {
+            let mut admitted = spec.clone();
+            for roots in [
+                &mut admitted.optional_read_only_roots,
+                &mut admitted.optional_read_write_roots,
+            ] {
+                roots.retain(|path| {
+                    !spec.denied_read_roots.iter().any(|denied| {
+                        path_is_within(path, Path::new(denied))
+                            || path_is_within(denied, Path::new(path))
+                    }) && can_grant_optional_read_root(path)
+                });
+            }
+            admitted.optional_read_write_roots.retain(|path| {
+                let mut optional = spec.clone();
+                optional.read_only_roots.clear();
+                optional.read_write_roots = vec![path.clone()];
+                // A root whose protected descendants cannot be projected is unavailable too.
+                plan_writable_acl_grants(&optional).is_ok()
+            });
+            loop {
+                let mut required = spec.clone();
+                required
+                    .read_only_roots
+                    .extend(admitted.optional_read_only_roots.iter().cloned());
+                required
+                    .read_write_roots
+                    .extend(admitted.optional_read_write_roots.iter().cloned());
+                match Self::acquire_required(
+                    installation_id,
+                    ownership_root,
+                    lease_id.clone(),
+                    capability,
+                    &required,
+                ) {
+                    Ok(lease) => return Ok(lease),
+                    Err(error) if omit_failed_optional_roots(&mut admitted, &error) => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+
+        fn acquire_required(
             installation_id: &str,
             ownership_root: &Path,
             lease_id: String,
@@ -3526,22 +3623,6 @@ mod windows_host {
             let mut grants = BTreeMap::new();
             for path in &spec.read_only_roots {
                 if !appcontainer_reads_without_capability(path) {
-                    grants.insert(path.clone(), AclGrant::ReadOnlyTree);
-                }
-            }
-            for path in &spec.optional_read_only_roots {
-                // Required roots above retain their original failure behavior. Never turn an
-                // optional parent into a grant across an explicitly denied read boundary.
-                if grants.contains_key(path)
-                    || appcontainer_reads_without_capability(path)
-                    || spec.denied_read_roots.iter().any(|denied| {
-                        path_is_within(path, Path::new(denied))
-                            || path_is_within(denied, Path::new(path))
-                    })
-                {
-                    continue;
-                }
-                if can_grant_optional_read_root(path) {
                     grants.insert(path.clone(), AclGrant::ReadOnlyTree);
                 }
             }
@@ -3595,7 +3676,10 @@ mod windows_host {
                     .iter()
                     .any(|snapshot| paths_equal(&snapshot.path, Path::new(&grant.path)))
                 {
-                    state.snapshots.push(capture_acl_snapshot(&grant.path)?);
+                    state.snapshots.push(
+                        capture_acl_snapshot(&grant.path)
+                            .with_context(|| AclPathFailure(grant.path.clone()))?,
+                    );
                 }
             }
             let had_existing_leases = !state.leases.is_empty();
@@ -3610,13 +3694,16 @@ mod windows_host {
             if let Err(error) = write_acl_record(&path, &record).and_then(|()| {
                 if changes_permissions {
                     if had_existing_leases {
-                        rebuild_acl_state(&mut state, ownership_root)
+                        rebuild_acl_state(&mut state, ownership_root)?;
                     } else {
-                        apply_acl_lease_grants(&record)
+                        apply_acl_lease_grants(&record)?;
                     }
-                } else {
-                    Ok(())
                 }
+                #[cfg(test)]
+                if let Some(hook) = tests::AFTER_ACL_GRANT.with(|hook| hook.borrow_mut().take()) {
+                    hook(&record)?;
+                }
+                Ok(())
             }) {
                 state
                     .leases
@@ -3638,9 +3725,9 @@ mod windows_host {
                     });
                 return match rollback {
                     Ok(()) => Err(error),
-                    Err(rollback_error) => Err(error.context(format!(
-                        "rollback command filesystem ACLs also failed: {rollback_error:#}"
-                    ))),
+                    Err(rollback_error) => {
+                        Err(error.context(AclRollbackIncomplete(format!("{rollback_error:#}"))))
+                    }
                 };
             }
             Ok(Self {
@@ -4216,6 +4303,13 @@ mod windows_host {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        type AclGrantHook = Box<dyn FnOnce(&AclLeaseRecord) -> Result<()>>;
+        thread_local! {
+            // One-shot and thread-local so fault injection cannot affect other native tests.
+            pub(super) static AFTER_ACL_GRANT: std::cell::RefCell<Option<AclGrantHook>> =
+                std::cell::RefCell::new(None);
+        }
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
 
         #[test]
@@ -4923,6 +5017,196 @@ mod windows_host {
         }
 
         #[test]
+        fn optional_acl_failure_rolls_back_before_retry_and_stops_on_incomplete_rollback() {
+            use std::cell::{Cell, RefCell};
+            use std::os::windows::fs::OpenOptionsExt;
+            use std::rc::Rc;
+
+            for block_rollback in [false, true] {
+                let installation_id = "abab1212abab1212abab1231";
+                let parent = unique_test_root("optional-rollback");
+                let required = parent.join("required");
+                let optional = parent.join("optional");
+                fs::create_dir_all(&required).unwrap();
+                fs::create_dir_all(&optional).unwrap();
+                let before = capture_acl_snapshot(&optional.to_string_lossy()).unwrap();
+                let root = parent.join(installation_id);
+                let id = new_lease_id().unwrap();
+                let receipt = acl_directory(&root).join(format!("{id}.json"));
+                let capability =
+                    CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+                let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                    "executable": "unused", "arguments": [], "cwd": parent,
+                    "readOnlyRoots": [], "readWriteRoots": [required], "deniedReadRoots": [],
+                    "optionalReadWriteRoots": [optional], "deniedWriteRoots": []
+                }))
+                .unwrap();
+                let calls = Rc::new(Cell::new(0));
+                let locked_receipt = Rc::new(RefCell::new(None));
+                let (calls_hook, lock_hook, before_hook, optional_hook) = (
+                    calls.clone(),
+                    locked_receipt.clone(),
+                    before.clone(),
+                    optional.clone(),
+                );
+                AFTER_ACL_GRANT.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move |record| {
+                        calls_hook.set(calls_hook.get() + 1);
+                        assert!(receipt.exists());
+                        assert!(
+                            capture_acl_snapshot(&optional_hook.to_string_lossy())?
+                                .dacl_sddl
+                                .contains(&record.capability_sid)
+                        );
+                        if block_rollback {
+                            // Actual Windows sharing failure during rollback receipt removal.
+                            *lock_hook.borrow_mut() =
+                                Some(OpenOptions::new().read(true).share_mode(3).open(&receipt)?);
+                        }
+                        let failure_path = optional_hook.to_string_lossy().into_owned();
+                        AFTER_ACL_GRANT.with(|hook| {
+                            *hook.borrow_mut() = Some(Box::new(move |_| {
+                                calls_hook.set(calls_hook.get() + 1);
+                                assert_eq!(
+                                    capture_acl_snapshot(&optional_hook.to_string_lossy())?,
+                                    before_hook
+                                );
+                                Ok(())
+                            }))
+                        });
+                        Err(anyhow::anyhow!("injected late ACL failure")
+                            .context(AclPathFailure(failure_path)))
+                    }))
+                });
+                let result =
+                    AclLease::acquire(installation_id, &root, id.clone(), &capability, &spec);
+                AFTER_ACL_GRANT.with(|hook| hook.borrow_mut().take());
+                if block_rollback {
+                    let error = result.err().expect("incomplete rollback must abort");
+                    assert!(error.downcast_ref::<AclRollbackIncomplete>().is_some());
+                    assert_eq!(calls.get(), 1);
+                    assert!(acl_directory(&root).join(format!("{id}.json")).exists());
+                    locked_receipt.borrow_mut().take();
+                    recover_acl_leases(installation_id, &root, true).unwrap();
+                } else {
+                    let mut lease = result.unwrap();
+                    assert_eq!(calls.get(), 2);
+                    let state = read_acl_state(installation_id, &root).unwrap().unwrap();
+                    let receipts = read_acl_lease_receipts(installation_id, &root).unwrap();
+                    assert_eq!(receipts[&id].1, state.leases[0]);
+                    assert!(
+                        lease
+                            .record
+                            .grants
+                            .iter()
+                            .any(|grant| paths_equal(&grant.path, &required))
+                    );
+                    assert!(
+                        !lease
+                            .record
+                            .grants
+                            .iter()
+                            .any(|grant| paths_equal(&grant.path, &optional))
+                    );
+                    assert!(
+                        !state
+                            .snapshots
+                            .iter()
+                            .any(|snapshot| paths_equal(&snapshot.path, &optional))
+                    );
+                    lease.release().unwrap();
+                }
+                assert_eq!(
+                    capture_acl_snapshot(&optional.to_string_lossy()).unwrap(),
+                    before
+                );
+                assert!(
+                    read_acl_lease_receipts(installation_id, &root)
+                        .unwrap()
+                        .is_empty()
+                );
+                fs::remove_dir_all(&parent).unwrap();
+            }
+        }
+
+        #[test]
+        fn optional_writable_roots_preserve_usable_grants_and_required_failures() {
+            let installation_id = "abab1212abab1212abab1230";
+            let parent = unique_test_root("optional-writable-roots");
+            let writable = parent.join("writable");
+            let protected = writable.join(".git");
+            let readable = parent.join("readable");
+            let denied = parent.join("denied");
+            fs::create_dir_all(&protected).unwrap();
+            fs::create_dir_all(&readable).unwrap();
+            fs::create_dir_all(&denied).unwrap();
+            let root = parent.join(installation_id);
+            let missing = parent.join("missing");
+            let id = new_lease_id().unwrap();
+            let capability =
+                CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+            let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                "executable": "unused", "arguments": [], "cwd": parent,
+                "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [denied],
+                "optionalReadOnlyRoots": [readable, denied],
+                "optionalReadWriteRoots": [missing, writable, denied],
+                "deniedWriteRoots": [protected]
+            }))
+            .unwrap();
+            let before = capture_acl_snapshot(&writable.to_string_lossy()).unwrap();
+            let mut lease =
+                AclLease::acquire(installation_id, &root, id, &capability, &spec).unwrap();
+            let grants = lease.record.grants.clone();
+            lease.release().unwrap();
+            assert_eq!(
+                capture_acl_snapshot(&writable.to_string_lossy()).unwrap(),
+                before
+            );
+            let required: LaunchSpec = serde_json::from_value(serde_json::json!({
+                "executable": "unused", "arguments": [], "cwd": parent,
+                "readOnlyRoots": [], "readWriteRoots": [missing], "deniedReadRoots": [],
+                "deniedWriteRoots": [], "optionalReadWriteRoots": [missing]
+            }))
+            .unwrap();
+            assert!(
+                AclLease::acquire(
+                    installation_id,
+                    &root,
+                    new_lease_id().unwrap(),
+                    &capability,
+                    &required
+                )
+                .is_err()
+            );
+            fs::remove_dir_all(&parent).unwrap();
+            assert!(
+                grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &readable)
+                        && grant.access == AclGrant::ReadOnlyTree)
+            );
+            assert!(!grants.iter().any(|grant| paths_equal(&grant.path, &denied)));
+            assert!(
+                grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &writable)
+                        && grant.access == AclGrant::ModifyTree)
+            );
+            assert!(
+                grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &protected)
+                        && grant.access == AclGrant::ReadOnlyTree
+                        && grant.protected_boundary)
+            );
+            assert!(
+                !grants
+                    .iter()
+                    .any(|grant| paths_equal(&grant.path, &missing))
+            );
+        }
+
+        #[test]
         fn unavailable_optional_network_root_does_not_block_an_acl_lease() {
             let installation_id = "abab1212abab1212abab1214";
             let parent = unique_test_root("optional-network-root");
@@ -4938,6 +5222,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![],
                 optional_read_only_roots: vec![format!(r"\\127.0.0.1\os-missing-share-{id}")],
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5126,6 +5411,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![directory.to_string_lossy().into_owned()],
                 optional_read_only_roots: vec![],
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5196,6 +5482,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![directory.to_string_lossy().into_owned()],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5216,6 +5503,7 @@ mod windows_host {
             let empty = LaunchSpec {
                 read_only_roots: vec![],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 ..spec
             };
             let (id, empty_capability) = make_capability();
@@ -5368,6 +5656,7 @@ mod windows_host {
                     cwd: parent.to_string_lossy().into_owned(),
                     read_only_roots: vec![],
                     optional_read_only_roots: Vec::new(),
+                    optional_read_write_roots: vec![],
                     read_write_roots: vec![],
                     denied_read_roots: vec![],
                     denied_write_roots: vec![],
@@ -5439,6 +5728,7 @@ mod windows_host {
                 cwd: parent.to_string_lossy().into_owned(),
                 read_only_roots: vec![],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -5614,6 +5904,7 @@ mod windows_host {
                     cwd: "unused".into(),
                     read_only_roots: vec![],
                     optional_read_only_roots: Vec::new(),
+                    optional_read_write_roots: vec![],
                     read_write_roots: vec![],
                     denied_read_roots: vec![],
                     denied_write_roots: vec![],
@@ -5640,6 +5931,7 @@ mod windows_host {
                 cwd: root.to_string_lossy().into_owned(),
                 read_only_roots: vec![],
                 optional_read_only_roots: Vec::new(),
+                optional_read_write_roots: vec![],
                 read_write_roots: vec![],
                 denied_read_roots: vec![],
                 denied_write_roots: vec![],
@@ -6742,6 +7034,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             read_only_roots: vec![required_file.to_string_lossy().into_owned()],
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: vec![denied.to_string_lossy().into_owned()],
             denied_write_roots: Vec::new(),
@@ -6787,6 +7080,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             read_only_roots: vec![read_only.to_string_lossy().into_owned()],
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: vec![read_write.to_string_lossy().into_owned()],
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6823,6 +7117,7 @@ mod tests {
             cwd: root.to_string_lossy().into_owned(),
             read_only_roots: vec![required.to_string_lossy().into_owned()],
             optional_read_only_roots: vec![optional.to_string_lossy().into_owned()],
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6853,6 +7148,7 @@ mod tests {
             cwd: "C:\\workspace".into(),
             read_only_roots: Vec::new(),
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6881,6 +7177,7 @@ mod tests {
             cwd: "C:\\workspace".into(),
             read_only_roots: Vec::new(),
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: Vec::new(),
             denied_read_roots: Vec::new(),
             denied_write_roots: Vec::new(),
@@ -6981,6 +7278,7 @@ mod tests {
             cwd: workspace.to_string_lossy().into_owned(),
             read_only_roots: Vec::new(),
             optional_read_only_roots: Vec::new(),
+            optional_read_write_roots: vec![],
             read_write_roots: vec![workspace.to_string_lossy().into_owned()],
             denied_read_roots: Vec::new(),
             denied_write_roots: vec![git.to_string_lossy().into_owned()],

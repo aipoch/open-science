@@ -714,21 +714,28 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
-            ...grantedRoots.map((root) => root.path),
+            ...(nativeWindows ? [] : grantedRoots.map((root) => root.path)),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ],
-          ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
+          ...(nativeWindows
             ? {
                 optionalReadOnlyRoots: [
                   ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
+                  ...grantedRoots.map((root) => root.path),
                   ...environmentPathRoots(env, this.platform)
-                ]
+                ],
+                optionalReadWriteRoots: [
+                  ...(invocation.filesystem.optionalReadWriteRoots ?? []),
+                  ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+                ].filter((path) => !coversAuthority(path))
               }
             : {}),
           readWriteRoots: [
             ...invocation.filesystem.readWriteRoots,
             commandTempRoot,
-            ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+            ...(nativeWindows
+              ? []
+              : grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path))
           ].filter((path) => !coversAuthority(path)),
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
@@ -742,6 +749,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
+              ...(invocation.filesystem.optionalReadWriteRoots ?? []),
               ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
             ]),
             ...(this.trustBundle ? [this.trustBundle.path] : [])

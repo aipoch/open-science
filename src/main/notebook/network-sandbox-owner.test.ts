@@ -330,7 +330,10 @@ describe('NotebookNetworkSandboxOwner', () => {
         }
       })
       expect(getGrantedLocalRoots).toHaveBeenCalledTimes(1)
-      expect(backend.wrap.mock.lastCall![0].filesystem.readWriteRoots).toContain(unrelatedRoot)
+      expect(backend.wrap.mock.lastCall![0].filesystem.readWriteRoots).not.toContain(unrelatedRoot)
+      expect(backend.wrap.mock.lastCall![0].filesystem.optionalReadWriteRoots).toContain(
+        unrelatedRoot
+      )
       expect(backend.wrap.mock.lastCall![0].filesystem.readOnlyRoots).toContain(canonicalSkillRoot)
       await command.cleanup('spawn-failed', { processesTerminated: true })
     } finally {
