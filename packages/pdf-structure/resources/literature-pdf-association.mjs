@@ -67,6 +67,8 @@ import {
   nativeAxisTitlePacket,
   nativePageTextPacketInventory,
   nativeClosedProgramInkPacket,
+  createNativeFigurePaintCertificate,
+  nativeFigurePaintCertificateData,
   createNativeFooterCaptionMetadata,
   nativeFooterCaptionMetadataData
 } from './literature-pdf-figure-native-plot-labels.mjs'
@@ -3030,7 +3032,7 @@ function associateNativeFigures(
 export function associateFigures(...args) {
   const figures = associateNativeFigures(...args)
   if (!args[6]) return figures
-  return figures.map((figure, index) => {
+  const completed = figures.map((figure, index) => {
     const closedSave = nativeClosedSaveFigureCrop(
       args[0],
       figure,
@@ -3103,6 +3105,72 @@ export function associateFigures(...args) {
         ? { fallbackFigure: figure }
         : {})
     }
+  })
+  return recoverNativePeerFigureBarrier(args[0], args[1], completed, ...args.slice(2))
+}
+
+// A narrow caption is not its drawing's horizontal extent. A verified peer
+// excludes paths only; the ordinary association must still prove the remainder.
+export function recoverNativePeerFigureBarrier(
+  page,
+  captions,
+  completed,
+  tables = [],
+  rules = [],
+  frames = [],
+  tokens = [],
+  context,
+  previous
+) {
+  if (!completed.some((figure) => figure.reason === 'ambiguous-graphic-direction')) return completed
+  const handle = createNativeFigurePaintCertificate(page, tokens, context),
+    paint = nativeFigurePaintCertificateData(handle, page, tokens, context)
+  if (!paint) return completed
+  const contains = (outer, inner) =>
+    inner[0] >= outer[0] && inner[1] >= outer[1] && inner[2] <= outer[2] && inner[3] <= outer[3]
+  return completed.map((figure) => {
+    if (figure.rect || figure.reason !== 'ambiguous-graphic-direction') return figure
+    const peers = completed.filter((peer) => {
+      if (
+        peer === figure ||
+        !peer.rect ||
+        peer.reason ||
+        peer.fallbackFigure ||
+        peer.rect[2] >= figure.caption.rect[0] ||
+        peer.caption.rect[2] >= figure.caption.rect[0] ||
+        peer.caption.rect[1] <= figure.caption.rect[3] ||
+        peer.rect[3] >= peer.caption.rect[1] ||
+        tables.some((rect) => intersection(rect, peer.rect) > 0)
+      )
+        return false
+      const paths = paint.pieces.filter(
+        (piece) => piece.kind === 'path' && intersection(piece.fullInk, peer.rect) > 0
+      )
+      return (
+        paths.length >= 3 &&
+        paths.every((piece) => contains(peer.rect, piece.fullInk)) &&
+        !paint.pieces.some(
+          (piece) => piece.kind === 'image' && intersection(piece.rect, peer.rect) > 0
+        )
+      )
+    })
+    if (peers.length !== 1) return figure
+    const recovered = associateNativeFigures(
+      page,
+      captions,
+      [...tables, peers[0].rect],
+      rules,
+      frames,
+      tokens,
+      context,
+      previous
+    ).find((item) => item.caption === figure.caption)
+    return recovered?.rect &&
+      !recovered.reason &&
+      !recovered.fallbackFigure &&
+      completed.every((peer) => !peer.rect || intersection(peer.rect, recovered.rect) === 0)
+      ? recovered
+      : figure
   })
 }
 

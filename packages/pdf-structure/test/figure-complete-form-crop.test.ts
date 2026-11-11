@@ -692,7 +692,6 @@ it('recovers the complete pixel Form inside an exact isolated group without Sour
 it.each([
   'soft-mask',
   'knockout',
-  'nonisolated',
   'unbalanced',
   'bounded-form',
   'no-group',
@@ -724,3 +723,13 @@ it.each(['clone', 'stale', 'old-form'])(
     expect(nativeIsolatedGroupPixelCropCurrent(observed, f.page)).toBe(false)
   }
 )
+
+it('retains a non-isolated group only as complete original pixels', () => {
+  const f = isolatedRasterForm('nonisolated'),
+    plan = nativeCaptionedFormPixelCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  expect(plan?.rect).toEqual([28, 58, 372, 187])
+  expect(plan.sourceItems).toBeUndefined()
+  expect(
+    nativeCaptionedFormScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})

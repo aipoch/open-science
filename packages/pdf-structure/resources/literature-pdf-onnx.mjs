@@ -57,10 +57,11 @@ const models = {
 const sessions = {}
 const modelEvidence = {}
 const started = performance.now()
-const pdfBytes = await readFile(pdfPath)
+let pdfBytes = await readFile(pdfPath)
+const sourceSha256 = createHash('sha256').update(pdfBytes).digest('hex')
 const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
 const task = getDocument({
-  data: new Uint8Array(pdfBytes),
+  data: new Uint8Array(pdfBytes.buffer, pdfBytes.byteOffset, pdfBytes.byteLength),
   standardFontDataUrl: `${join(assetRoot, 'standard_fonts')}/`,
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
   wasmUrl: `${join(assetRoot, 'wasm')}/`,
@@ -70,6 +71,7 @@ const task = getDocument({
   useSystemFonts: false,
   verbosity: 0
 })
+pdfBytes = undefined
 
 async function infer(name, png, width, height) {
   const start = performance.now()
@@ -94,8 +96,9 @@ async function infer(name, png, width, height) {
       input[channel * area + i] = (pixels[3 * i + channel] / 255 - mean[channel]) / std[channel]
   const tensor = new ort.Tensor('float32', input, [1, 3, resizedHeight, resizedWidth])
   const preprocessMs = performance.now() - start
-  const output = await sessions[name].run({ pixel_values: tensor })
+  let output
   try {
+    output = await sessions[name].run({ pixel_values: tensor })
     const classes = model.labels.length + 1
     assert.equal(output.logits.dims[2], classes)
     assert.equal(output.pred_boxes.dims[2], 4)
@@ -125,7 +128,7 @@ async function infer(name, png, width, height) {
     }
   } finally {
     tensor.dispose()
-    for (const value of Object.values(output)) value.dispose()
+    for (const value of Object.values(output ?? {})) value.dispose()
   }
 }
 
@@ -156,12 +159,13 @@ try {
   for (const pageNumber of pages) {
     assert(pageNumber <= document.numPages)
     const page = await document.getPage(pageNumber)
+    let canvas
     try {
       const content = await repairPdfSymbolText(page, await page.getTextContent())
       const rotation = readingRotation(page, content)
       const viewport = page.getViewport({ scale: 1.5, rotation })
       assert(viewport.width * viewport.height <= 4_000_000)
-      const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+      canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
       const context = canvas.getContext('2d')
       await page.render({ canvas, canvasContext: context, viewport }).promise
       const png = await canvas.encode('png')
@@ -309,7 +313,9 @@ try {
           })
         )
     } finally {
+      if (canvas) canvas.width = canvas.height = 1
       page.cleanup()
+      await document.cleanup()
     }
   }
   const report = {
@@ -324,7 +330,7 @@ try {
       cpu: cpus()[0]?.model
     },
     modelEvidence,
-    sourceSha256: createHash('sha256').update(pdfBytes).digest('hex'),
+    sourceSha256,
     elapsedMs: Math.round(performance.now() - started),
     memory: process.memoryUsage(),
     maxRssKiB: process.resourceUsage().maxRSS,

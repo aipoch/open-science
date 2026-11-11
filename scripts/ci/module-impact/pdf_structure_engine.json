@@ -2090,7 +2090,10 @@
     "packages/pdf-structure/test/printed-caption-reference.test.ts",
     "packages/pdf-structure/test/single-parent-math-header.test.ts",
     "packages/pdf-structure/test/table-compact-caption-ownership.test.ts",
-    "packages/pdf-structure/test/wrapped-prose-header.test.ts"
+    "packages/pdf-structure/test/wrapped-prose-header.test.ts",
+    "packages/pdf-structure/test/fixtures/native-centered-stage-records.mjs",
+    "packages/pdf-structure/test/native-shaded-form-crop.test.ts",
+    "packages/pdf-structure/test/native-peer-figure-barrier.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2765,7 +2768,9 @@
       "packages/pdf-structure/test/printed-caption-reference.test.ts",
       "packages/pdf-structure/test/single-parent-math-header.test.ts",
       "packages/pdf-structure/test/table-compact-caption-ownership.test.ts",
-      "packages/pdf-structure/test/wrapped-prose-header.test.ts"
+      "packages/pdf-structure/test/wrapped-prose-header.test.ts",
+      "packages/pdf-structure/test/native-shaded-form-crop.test.ts",
+      "packages/pdf-structure/test/native-peer-figure-barrier.test.ts"
     ],
     "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [

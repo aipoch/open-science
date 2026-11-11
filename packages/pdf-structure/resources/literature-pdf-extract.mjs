@@ -87,6 +87,7 @@ import {
 import {
   reviewNativeTableSources,
   reviewFinalNativeTableSources,
+  retainNativeCenteredRecordGraphic,
   trimNativeTablePageCounterCrop
 } from './literature-pdf-table-source-integrity.mjs'
 import {
@@ -2565,7 +2566,7 @@ try {
             : []
         })
         const nativeNotationIndices = new Set(nativeNotationFrames.map((f) => f.index))
-        const acceptedTables = refined.map(
+        const eligibleTableSources = refined.map(
           (table, index) =>
             !nativeNotationIndices.has(index) &&
             !narrativeDuplicates.has(index) &&
@@ -2642,8 +2643,10 @@ try {
                   r[1] >= f.rect[1] - 12 &&
                   r[3] <= f.rect[3] + 12
                 )
-              })) &&
-            hasSourceTableEvidence(table, index)
+              }))
+        )
+        const acceptedTables = refined.map(
+          (table, index) => eligibleTableSources[index] && hasSourceTableEvidence(table, index)
         )
         let recognizedTableRects = refined
           .filter((_, index) => acceptedTables[index])
@@ -5045,6 +5048,13 @@ try {
                   .map((caption) => caption.rect)
               },
               () => readFile(join(output, currentTable.thumbnail))
+            )
+            tables[i] = retainNativeCenteredRecordGraphic(
+              tables[i],
+              wholeOwnerFonts,
+              rules,
+              measuredRuns,
+              reviewContext
             )
           }
         }

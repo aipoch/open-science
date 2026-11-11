@@ -8778,7 +8778,11 @@ export function nativeConditionalFigureReferenceStarts(page) {
           line.x + line.width <= r.right + 0.01 &&
           r.text.replace(/\s/gu, '').startsWith(line.text.replace(/\s/gu, ''))
       )
-      return matches.length === 1 && nativeConditionalFigureReference(matches[0], runs, page)
+      return (
+        matches.length === 1 &&
+        (nativeConditionalFigureReference(matches[0], runs, page) ||
+          nativePanelReferenceContinuation(matches[0], runs, page, [], captionKind))
+      )
     })
   )
 }
@@ -11381,8 +11385,12 @@ function proveNativeCreditReference(candidate, page, context, records, rules) {
 }
 
 function nativePanelReferenceContinuation(start, runs, page, rules, captionKind) {
+  const parenthesized = /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s*\([a-z]\),\s+\p{L}/u.test(
+    start.text
+  )
   if (
-    !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\.[a-z]\s+(?:and|or)\s+\p{Ll}/u.test(start.text) ||
+    (!parenthesized &&
+      !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\.[a-z]\s+(?:and|or)\s+\p{Ll}/u.test(start.text)) ||
     /[.!?:;]$/u.test(start.text.trim()) ||
     page.invalidGraphicsBounds !== 0 ||
     !Array.isArray(page.graphicsBounds) ||
@@ -11415,11 +11423,14 @@ function nativePanelReferenceContinuation(start, runs, page, rules, captionKind)
     !captionKind(r.text) &&
     Math.abs(r.fontSize - em) < em * 0.015 &&
     Math.abs(r.x - start.x) < em * 0.05 &&
-    Math.abs(r.right - start.right) < em * 0.05
+    // A justified continuation ending in a hyphen can slightly overhang its row.
+    Math.abs(r.right - start.right) < em * (parenthesized ? 0.25 : 0.05)
   const before = runs.filter(
     (r) =>
       aligned(r) &&
-      /\b(?:shown|displayed|given|plotted)\s+in$/u.test(r.text.trim()) &&
+      (parenthesized
+        ? /\b(?:shown|displayed|given|plotted|illustrated|depicted)\s+in$/u.test(r.text.trim())
+        : /\b(?:shown|displayed|given|plotted)\s+in$/u.test(r.text.trim())) &&
       r.bottom <= start.y &&
       start.y - r.y > em &&
       start.y - r.y < em * 2
