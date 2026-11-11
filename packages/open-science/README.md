@@ -167,8 +167,10 @@ do not expose executable paths.
 
 SDK requests have a 30-second default deadline that remains active while the response body is being
 consumed. Override the client default with `requestTimeoutMs`, or pass `{ signal, timeoutMs }` as the
-final options argument to an individual request method. `downloadArtifact` keeps the deadline active
-while its returned `Response` body is streaming. `waitForRun` applies its overall `timeoutMs` and
+final options argument to an individual request method. `downloadArtifact` applies the deadline
+to the response headers, then as an idle limit while its returned `Response` body is streaming:
+each received chunk restarts the timer, so large downloads can take longer than the deadline but a
+stalled body still fails with `timeout`. `waitForRun` applies its overall `timeoutMs` and
 caller signal to every in-flight polling request as well as the delay between polls. Each poll is
 bounded by the smaller of the client's `requestTimeoutMs` and the remaining total wait budget.
 A request timeout fails the wait immediately; it does not silently retry. Without a total
