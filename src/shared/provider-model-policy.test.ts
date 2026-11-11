@@ -24,7 +24,7 @@ it.each(['anthropic', 'deepseek', 'minimax'] as const)(
   }
 )
 it.each(['global', 'china'])('preserves minimax %s initial model', (region) => {
-  expect(defaultVendorModel('minimax', region)).toBe('MiniMax-M3')
+  expect(defaultVendorModel('minimax', region)).toBe('MiniMax-M3.1-Flash')
 })
 it('does not infer context limits from removed or unknown suffix aliases', () => {
   expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8[1m]')).toBe(200_000)
@@ -42,6 +42,8 @@ it('uses the configured size and falls back to 200k when the user leaves it blan
 })
 it.each([
   ['openai', undefined, 'gpt-6.1-sol'],
+  ['kimi', undefined, 'kimi-k3.1-pro'],
+  ['kimiforcode', undefined, 'k3.1-pro'],
   ['anthropic', undefined, 'claude-opus-5-5'],
   ['opencode-go', undefined, 'kimi-k2.7-code'],
   ['opencode', undefined, 'kimi-k2.7-code'],

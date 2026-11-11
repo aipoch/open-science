@@ -425,7 +425,6 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.kimi.com/console',
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: [
-      { id: 'kimi-k3', contextWindow: 1_000_000, maxOutputTokens: 1_048_576 },
       // https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
       {
         id: 'kimi-k3.1-pro',
@@ -433,6 +432,7 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 1_048_576,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
+      { id: 'kimi-k3', contextWindow: 1_000_000, maxOutputTokens: 1_048_576 },
       {
         id: 'kimi-k3.1-pro-highspeed',
         contextWindow: 1_048_576,
@@ -459,6 +459,9 @@ const definitions: readonly OfficialVendor[] = [
     chatCompletionsBaseUrl: 'https://api.kimi.com/coding/v1',
     apiKeyUrl: 'https://www.kimi.com/code/docs',
     models: [
+      // The coding subscription uses an unprefixed ID and grants up to 1M context by plan.
+      // https://www.kimi.com/code/docs/en/kimi-code/models.html
+      { id: 'k3.1-pro', contextWindow: 1_048_576 },
       {
         id: 'kimi-k3',
         contextWindow: 1_000_000,
@@ -467,8 +470,7 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'kimi-for-coding', contextWindow: 1_048_576, maxOutputTokens: 32_768 },
       { id: 'kimi-for-coding-highspeed', contextWindow: 256_000, maxOutputTokens: 32_768 }
     ],
-    // Only the k3 model in this plan is vision-capable; the coding-tuned ids are text-only.
-    multimodal: { multimodalModels: ['kimi-k3', 'kimi-for-coding'] }
+    multimodal: { multimodalModels: ['k3.1-pro', 'kimi-k3', 'kimi-for-coding'] }
   },
   {
     id: 'minimax',
@@ -496,20 +498,19 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     models: [
+      // M3.1 always thinks and supports five effort levels (default: max).
+      // https://platform.minimax.cn/docs/guides/text-generation
+      {
+        id: 'MiniMax-M3.1-Flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       // MiniMax documents M3 reasoning as a binary thinking switch: none disables thinking and high
       // enables Adaptive Thinking. Older M2 models remain conservative until documented otherwise.
       {
         id: 'MiniMax-M3',
         contextWindow: 1_000_000,
         reasoningEffort: { supported: true, values: ['none', 'high'] }
-      },
-      // M3.1 always thinks and supports five effort levels (default: max). Keep M3 as the
-      // default and retain the Preview id for existing selections.
-      // https://platform.minimax.cn/docs/guides/text-generation
-      {
-        id: 'MiniMax-M3.1-Flash',
-        contextWindow: 1_000_000,
-        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
       {
         id: 'MiniMax-M3.1-Flash-Preview',
