@@ -149,7 +149,8 @@ export const buildConfiguredModelCatalog = (
             ? apiEndpoints
             : frameworkCompatible
               ? input.frameworkEndpoints
-              : (['messages', 'chat-completions', 'responses'] as const)
+              : (['messages', 'chat-completions', 'responses'] as const),
+      input.frameworkId
     )
     if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)

@@ -240,7 +240,8 @@ const ProviderList = ({
                   ? (['messages', 'chat-completions', 'responses'] as const)
                   : requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
                     ? providerRoutes
-                    : frameworkEndpoints
+                    : frameworkEndpoints,
+              agentFrameworkId
             )
           }
           // A passing test shows a green check. Suppressed while a test is in flight.

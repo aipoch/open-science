@@ -44,6 +44,8 @@ export type ModelRequest = {
   messages: AgentMessage[]
   tools: ToolDefinition[]
   maxOutputTokens: number
+  /** The numeric budget reserves context space; optional wire limits are omitted. */
+  useProviderOutputDefault?: true
 }
 export type ModelEvent =
   | { type: 'text-delta' | 'reasoning-delta'; text: string }
@@ -200,6 +202,8 @@ export type AgentSessionOptions = AgentConfiguration & {
   /** Maximum number of host-approved parallel-safe tools in one batch. */
   maxParallelTools?: number
   maxOutputTokens: number
+  /** Let the provider choose the answer limit. Compaction has its own explicit limit. */
+  useProviderOutputDefault?: boolean
   /** Optional wall-clock limit includes tools/approval. Cleanup is awaited, not raced away. */
   timeoutMs?: number
   signal?: AbortSignal

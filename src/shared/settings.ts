@@ -261,23 +261,19 @@ export const isProviderUsableByFramework = (
   return isProviderCompatibleWith(endpoints, framework.supportedApiTypes)
 }
 
-// The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
-// /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
-// undefined when the pair is incompatible.
+export const HARNESS_ENDPOINT_PREFERENCE = ['responses', 'messages', 'chat-completions'] as const
+
 export const preferredEndpoint = <const FrameworkEndpoints extends readonly ModelProtocol[]>(
   endpoints: readonly ModelProtocol[],
-  frameworkEndpoints: FrameworkEndpoints
+  frameworkEndpoints: FrameworkEndpoints,
+  frameworkId?: AgentFrameworkId
 ): FrameworkEndpoints[number] | undefined => {
-  const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
-    endpoints.includes(endpoint)
-  )
-
-  if (shared.length === 0) return undefined
-
-  return (
-    shared.find((endpoint) => endpoint === 'responses') ??
-    shared.find((endpoint) => endpoint === 'chat-completions') ??
-    shared.find((endpoint) => endpoint === 'messages')
+  const preference: readonly ModelProtocol[] =
+    frameworkId === 'open-science-agent'
+      ? HARNESS_ENDPOINT_PREFERENCE
+      : ['responses', 'chat-completions', 'messages']
+  return preference.find(
+    (endpoint) => endpoints.includes(endpoint) && frameworkEndpoints.includes(endpoint)
   )
 }
 

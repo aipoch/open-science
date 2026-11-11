@@ -6,7 +6,7 @@ import {
   type HarnessModelObserver,
   type HarnessModelResult
 } from './harness-model-request'
-import { preferredEndpoint, providerValidationFailed } from '../../shared/settings'
+import { HARNESS_ENDPOINT_PREFERENCE, providerValidationFailed } from '../../shared/settings'
 import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import type { ProviderTransportOwner, HarnessProviderLease } from './provider-transport-owner'
 import type { SettingsRepository } from './repository'
@@ -67,7 +67,7 @@ const usable = (
     provider,
     model
   )
-  const endpoint = preferredEndpoint(endpoints, ['responses', 'chat-completions', 'messages'])
+  const endpoint = HARNESS_ENDPOINT_PREFERENCE.find((protocol) => endpoints.includes(protocol))
   return !!endpoint && !providerValidationFailed(provider, { model, endpoint })
 }
 

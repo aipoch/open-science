@@ -3,6 +3,8 @@ import {
   resolveMessagesReasoningTransport,
   resolveResponsesReasoningTransport
 } from '@aipoch/providers/protocol'
+import { getOfficialVendor } from '@aipoch/providers'
+import { HARNESS_ENDPOINT_PREFERENCE } from '../../shared/settings'
 import { spawn } from 'node:child_process'
 import { isAbsolute, join } from 'node:path'
 import { resolvePermissionProfileApplication } from '../acp/permission-profile-controller'
@@ -35,7 +37,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
   }),
   acceptsStdioMcp: false,
   supportsLiveEffortChange: false,
-  supportedApiTypes: ['chat-completions', 'responses', 'messages'],
+  supportedApiTypes: HARNESS_ENDPOINT_PREFERENCE,
   spawn(input) {
     if (
       !isAbsolute(input.executablePath) ||
@@ -62,7 +64,9 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
     if (!connection || !provider.model || !isAbsolute(context.storageRoot))
       throw new Error('Built-in Agent requires a host-owned model connection')
     const contextWindow = provider.contextWindow ?? 32_768
-    const protocol = provider.apiEndpoints?.[0] ?? 'chat-completions'
+    const protocol =
+      HARNESS_ENDPOINT_PREFERENCE.find((endpoint) => provider.apiEndpoints?.includes(endpoint)) ??
+      'responses'
     const reasoning = context.reasoningEffort
       ? resolveChatReasoningTransport(
           provider.vendorId,
@@ -100,7 +104,13 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
         ? { sessionHeader: 'x-opencode-session' }
         : {}),
       contextWindow,
-      maxOutputTokens: Math.min(provider.maxOutputTokens ?? 4096, Math.floor(contextWindow / 4)),
+      maxOutputTokens:
+        provider.maxOutputTokens ??
+        (protocol === 'messages' && provider.type === 'official' && provider.vendorId
+          ? getOfficialVendor(provider.vendorId)?.models.find(
+              (entry) => entry.id === provider.model
+            )?.maxOutputTokens
+          : undefined),
       parameters:
         protocol === 'responses'
           ? {

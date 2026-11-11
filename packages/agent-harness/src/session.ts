@@ -351,7 +351,8 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
       instructions: config.instructions,
       messages: projected,
       tools: config.tools.map(definition),
-      maxOutputTokens: options.maxOutputTokens
+      maxOutputTokens: options.maxOutputTokens,
+      ...(options.useProviderOutputDefault ? { useProviderOutputDefault: true as const } : {})
     })
   }
   const processTools = async (signal: AbortSignal): Promise<'waiting' | 'blocked' | undefined> => {

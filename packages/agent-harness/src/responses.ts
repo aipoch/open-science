@@ -159,7 +159,9 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
             ])
           ],
           stream: true,
-          max_output_tokens: request.maxOutputTokens,
+          ...(request.useProviderOutputDefault
+            ? {}
+            : { max_output_tokens: request.maxOutputTokens }),
           ...(request.tools.length
             ? {
                 tools: request.tools.map((tool) => ({

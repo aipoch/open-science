@@ -107,6 +107,13 @@ describe('provider endpoint compatibility', () => {
     )
     expectTypeOf(openCodeEndpoint).toEqualTypeOf<'messages' | 'chat-completions' | undefined>()
     expect(openCodeEndpoint).toBe('chat-completions')
+    expect(
+      preferredEndpoint(
+        ['chat-completions', 'messages'],
+        ['messages', 'chat-completions'],
+        'open-science-agent'
+      )
+    ).toBe('messages')
     // A both-provider on an anthropic-only framework falls back to the shared anthropic endpoint.
     expect(preferredEndpoint(['messages', 'chat-completions'], ['messages'])).toBe('messages')
     // Single-endpoint providers resolve to that endpoint when shared.

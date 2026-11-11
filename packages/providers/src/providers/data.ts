@@ -77,17 +77,18 @@ const definitions: readonly OfficialVendor[] = [
     modelsListUrl: 'https://api.anthropic.com/v1/models',
     models: [
       { id: 'claude-opus-5', contextWindow: 1_000_000 },
-      { id: 'claude-opus-5-5', contextWindow: 1_000_000 },
+      { id: 'claude-opus-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       // https://platform.claude.com/docs/en/models/fable-5-2/overview
-      { id: 'claude-fable-5-2', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5-2', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       { id: 'claude-fable-5-1', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },
-      { id: 'claude-sonnet-5-5', contextWindow: 1_000_000 },
+      { id: 'claude-sonnet-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       // https://platform.claude.com/docs/en/models/haiku-5-5/overview
-      { id: 'claude-haiku-5-5', contextWindow: 1_000_000 },
+      { id: 'claude-haiku-5-5', contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       {
         id: 'claude-haiku-4-5-20251001',
+        maxOutputTokens: 64_000,
         contextWindow: 200_000,
         reasoningEffort: { supported: false }
       }
@@ -160,11 +161,11 @@ const definitions: readonly OfficialVendor[] = [
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: [
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
       // DeepSeek V4.1 Flash uses the stable API id deepseek-flash.
-      { id: 'deepseek-flash', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
+      { id: 'deepseek-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'deepseek-v4-flash', contextWindow: 1_000_000, maxOutputTokens: 384_000 },
+      { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000, maxOutputTokens: 384_000 }
     ],
     // DeepSeek's native Responses API accepts the stable `deepseek-flash` id and V4 Pro. The
     // `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` aliases remain Chat Completions /

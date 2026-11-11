@@ -518,7 +518,8 @@ export class AgentRuntimeManager {
                   ? (['messages', 'chat-completions', 'responses'] as const)
                   : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
                     ? (activeEndpoints ?? [])
-                    : framework.supportedApiTypes
+                    : framework.supportedApiTypes,
+              framework.id
             )
           }
         : undefined

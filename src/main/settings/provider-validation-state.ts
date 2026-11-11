@@ -30,7 +30,8 @@ export const providerRuntimeValidationTarget = (
       ? ['responses']
       : framework.id === 'codex' || target.needsChatResponsesToChatCompletionsBridge
         ? target.apiEndpoints
-        : framework.supportedApiTypes
+        : framework.supportedApiTypes,
+    framework.id
   )
 })
 

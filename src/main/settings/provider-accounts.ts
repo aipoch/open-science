@@ -682,6 +682,14 @@ class ProviderAccountsModule {
   ): readonly ModelProtocol[] | undefined {
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const incompatibility = this.frameworkIncompatibilityMessage(provider, framework)
+    if (framework.id === 'open-science-agent' && !incompatibility) {
+      const selected = preferredEndpoint(
+        providerEndpoints(provider),
+        framework.supportedApiTypes,
+        framework.id
+      )
+      if (selected) return [selected]
+    }
     return isXaiSubscriptionProvider(provider.type)
       ? ['responses']
       : !incompatibility &&

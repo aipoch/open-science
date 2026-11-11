@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { isLoopbackProviderBaseUrl } from '@aipoch/providers/transport'
-import { isCodexSubscriptionProvider, preferredEndpoint } from '../../shared/settings'
+import { isCodexSubscriptionProvider, HARNESS_ENDPOINT_PREFERENCE } from '../../shared/settings'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
@@ -322,11 +322,9 @@ class ProviderTransportOwner {
     const model = snapshot.effectiveModel ?? provider.model
     const usesXaiOAuth = snapshot.providerType === 'xai-subscription'
     const usesCodexOAuth = isCodexSubscriptionProvider(snapshot.providerType)
-    const wire = preferredEndpoint(snapshot.apiEndpoints, [
-      'responses',
-      'chat-completions',
-      'messages'
-    ])
+    const wire = HARNESS_ENDPOINT_PREFERENCE.find((endpoint) =>
+      snapshot.apiEndpoints.includes(endpoint)
+    )
     if (
       !['custom', 'official', 'xai-subscription', 'codex-isolated', 'codex-shared'].includes(
         snapshot.providerType
