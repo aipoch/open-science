@@ -4438,8 +4438,8 @@ describe('SettingsService: official vendors', () => {
         permissions: { ask: ['WebFetch'] },
         availableModels: [
           'deepseek-v4-flash',
-          'deepseek-v4-pro',
           'deepseek-flash',
+          'deepseek-v4-pro',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
@@ -4456,8 +4456,8 @@ describe('SettingsService: official vendors', () => {
     ).resolves.toMatchObject({
       availableModels: [
         'deepseek-v4-flash',
-        'deepseek-v4-pro',
         'deepseek-flash',
+        'deepseek-v4-pro',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
@@ -4676,7 +4676,7 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek Pro through the native Responses route under Codex', async () => {
+  it('probes the default DeepSeek Flash model through the native Responses route under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
     const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
@@ -4689,7 +4689,7 @@ describe('SettingsService: official vendors', () => {
     expect(result).toMatchObject({ ok: true, category: 'ok' })
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
-      model: 'deepseek-v4-pro',
+      model: 'deepseek-flash',
       stream: true,
       tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
     })

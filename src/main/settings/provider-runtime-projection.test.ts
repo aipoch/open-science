@@ -762,7 +762,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         provider: { supportsImageInput: true, model }
       })
     }
-    expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
+    expect(owner.toProviderView(provider).supportsImageInput).toBe(true)
   })
 
   it.each([
