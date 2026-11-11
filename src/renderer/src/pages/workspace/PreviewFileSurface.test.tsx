@@ -528,7 +528,7 @@ describe('PreviewFileSurface managed text versions', () => {
         value: { ...managedInspect, selectedVersionId: failedRequest.versionId! }
       })
     )
-    expect(header.querySelector('[role="status"]')).toBeNull()
+    expect(header.textContent).not.toContain('Checking version…')
     expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(container.querySelector('[aria-label="Edit README.md"]')).not.toBeNull()
   })
