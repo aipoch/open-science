@@ -165,11 +165,15 @@ export const SharingMarketplacePage = ({
   )
   const returnLabel = hasActiveProject ? t('Back to Project') : t('Back to Home')
   const [collapsed, setCollapsed] = useState(false)
-  const [activeResource, setActiveResource] = useState<ResourceCenterResource>(
-    initialIntent?.resource ?? 'skills'
-  )
+  // Returning from the full case library restores the project panel that handed off its list.
+  const [activeResource, setActiveResource] = useState<ResourceCenterResource>(() => {
+    const list = useNavigationStore.getState().marketplaceListContext
+    return embedded && !skillDetailRequest && list && list.projectId === activeProjectId
+      ? 'marketplace'
+      : (initialIntent?.resource ?? 'skills')
+  })
   const [visitedResources, setVisitedResources] = useState<ReadonlySet<ResourceCenterResource>>(
-    () => new Set([initialIntent?.resource ?? 'skills'])
+    () => new Set([activeResource])
   )
   const [marketplaceRevision, setMarketplaceRevision] = useState(0)
   const [skillsView, setSkillsView] = useState<SkillsView>({ kind: 'list' })
@@ -226,6 +230,7 @@ export const SharingMarketplacePage = ({
   const [editorActionsContainer, setEditorActionsContainer] = useState<HTMLDivElement | null>(null)
   const [editorBusy, setEditorBusy] = useState(false)
   const [skillLeaveState, setSkillLeaveState] = useState<SkillEditorLeaveState | null>(null)
+  const leaveOpener = useRef<HTMLElement | null>(null)
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
   const skillHistory = useRef<SkillsView[]>([{ kind: 'list' }])
   const specialistHistory = useRef<SpecialistsView[]>([{ kind: 'list' }])
@@ -290,16 +295,21 @@ export const SharingMarketplacePage = ({
     })
   }
   const leaveState = activeResource === 'connectors' ? connectorLeaveState : skillLeaveState
+  const promptToLeave = useCallback((action: () => void): void => {
+    leaveOpener.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setPendingLeave(() => action)
+  }, [])
   const requestLeave = useCallback(
     (action: () => void): void => {
       if (editorBusy || leaveState?.busy) return
       if (leaveState?.dirty) {
-        setPendingLeave(() => action)
+        promptToLeave(action)
         return
       }
       action()
     },
-    [editorBusy, leaveState]
+    [editorBusy, leaveState, promptToLeave]
   )
   useEffect(() => {
     if (!previewScope) return
@@ -308,14 +318,14 @@ export const SharingMarketplacePage = ({
       (action) => {
         if (editorBusy || leaveState?.busy) return false
         if (leaveState?.dirty) {
-          setPendingLeave(() => () => previewLeaveGuards.runApproved(previewScope, action))
+          promptToLeave(() => previewLeaveGuards.runApproved(previewScope, action))
           return false
         }
         return true
       },
       () => Boolean(leaveState?.dirty)
     )
-  }, [previewScope, editorBusy, leaveState])
+  }, [previewScope, editorBusy, leaveState, promptToLeave])
 
   const appliedSkillRequest = useRef<typeof skillDetailRequest>(undefined)
   useEffect(() => {
@@ -376,6 +386,7 @@ export const SharingMarketplacePage = ({
   const confirmResourceLeave = (): void => {
     if (!pendingLeave || leaveState?.busy) return
     const action = pendingLeave
+    leaveOpener.current = null
     setPendingLeave(null)
     setSkillLeaveState(null)
     if (activeResource === 'connectors') {
@@ -704,7 +715,7 @@ export const SharingMarketplacePage = ({
     <ResourceNavigationProvider navigation={resourceNavigation}>
       <div
         className={cn(
-          'flex min-h-0 overflow-hidden bg-bg-10 text-text-000',
+          'isolate flex min-h-0 overflow-hidden bg-bg-10 text-text-000',
           embedded ? 'h-full' : 'h-svh'
         )}
       >
@@ -843,7 +854,10 @@ export const SharingMarketplacePage = ({
             </header>
           )}
           <div
-            className={cn('min-h-0 flex-1', activeResource !== 'marketplace' && 'hidden')}
+            className={cn(
+              'flex min-h-0 flex-1 flex-col',
+              activeResource !== 'marketplace' && 'hidden'
+            )}
             aria-hidden={activeResource !== 'marketplace'}
           >
             <UseCaseCarousel variant="marketplace" compact={embedded} />
@@ -1052,6 +1066,14 @@ export const SharingMarketplacePage = ({
         )}
         <ConfirmActionDialog
           open={pendingLeave !== null}
+          onCloseAutoFocus={(event) => {
+            const opener = leaveOpener.current
+            leaveOpener.current = null
+            if (opener?.isConnected) {
+              event.preventDefault()
+              opener.focus({ preventScroll: true })
+            }
+          }}
           title={t('Discard unsaved changes?')}
           description={
             activeResource === 'connectors'

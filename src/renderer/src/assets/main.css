@@ -1463,6 +1463,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     @apply relative flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground transition-colors hover:border-foreground/20 focus-within:border-foreground/20 motion-reduce:transition-none;
   }
 
+  /* Give the detail target the card's padding while keeping nested actions independent. */
+  .resource-installed-card > [data-slot='resource-row-content'] {
+    @apply -m-4 p-4;
+  }
+
   .resource-installed-card[data-selecting='true']
     [data-slot='resource-row-content']
     > :first-child {
