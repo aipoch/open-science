@@ -273,7 +273,8 @@ export const preferredEndpoint = <const FrameworkEndpoints extends readonly Mode
       ? HARNESS_ENDPOINT_PREFERENCE
       : ['responses', 'chat-completions', 'messages']
   return preference.find(
-    (endpoint) => endpoints.includes(endpoint) && frameworkEndpoints.includes(endpoint)
+    (endpoint): endpoint is FrameworkEndpoints[number] =>
+      endpoints.includes(endpoint) && frameworkEndpoints.includes(endpoint)
   )
 }
 

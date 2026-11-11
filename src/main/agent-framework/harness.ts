@@ -106,7 +106,7 @@ export const harnessFramework: AgentFramework<'open-science-agent'> = {
       contextWindow,
       maxOutputTokens:
         provider.maxOutputTokens ??
-        (protocol === 'messages' && provider.type === 'official' && provider.vendorId
+        (protocol === 'messages' && provider.vendorId
           ? getOfficialVendor(provider.vendorId)?.models.find(
               (entry) => entry.id === provider.model
             )?.maxOutputTokens
