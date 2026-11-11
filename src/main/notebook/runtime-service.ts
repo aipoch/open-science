@@ -902,6 +902,7 @@ class NotebookRuntimeService {
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
       isSessionBusy: options.isSessionBusy,
+      observeSession: (sessionId) => this.idleReclamation.observeSession(sessionId),
       onActivityChanged: (sessionId) =>
         sessionId
           ? this.idleReclamation?.activityChanged(sessionId)
@@ -2248,11 +2249,14 @@ class NotebookRuntimeService {
   }
 
   async runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]> {
-    return this.sessionLifecycle.runProjectOperation(request, () =>
-      this.repository.readSessionRunIndex(
-        resolveProjectId(request, resolveProjectId(this.options)),
-        request.sessionId
-      )
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      () =>
+        this.repository.readSessionRunIndex(
+          resolveProjectId(request, resolveProjectId(this.options)),
+          request.sessionId
+        ),
+      false
     )
   }
 

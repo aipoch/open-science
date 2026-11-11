@@ -46,6 +46,40 @@ function fixture(): {
 }
 
 describe('Notebook idle interpreter reclamation', () => {
+  it('discards a busy result observed before a read settled for every interpreter in the session', async () => {
+    const resources = (['data', 'repl', 'shell'] as const).map((group) => ({
+      identity: {},
+      projectId: 'p',
+      sessionId: 's',
+      group,
+      lastUsedAt: 0,
+      release: vi.fn(async () => true)
+    }))
+    const busy = vi.fn<() => boolean | Promise<boolean>>(() => false)
+    const pool = new NotebookIdleReclamation({
+      resources: () => resources,
+      isSessionBusy: busy,
+      onFailure: vi.fn()
+    })
+    await pool.check()
+    vi.setSystemTime(Date.now() + NOTEBOOK_SESSION_IDLE_MS)
+    let resolveBusy!: (value: boolean) => void
+    busy.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveBusy = resolve
+        })
+    )
+    const checking = pool.check()
+    const finishRead = pool.observeSession('s')
+    finishRead()
+    resolveBusy(true)
+    await checking
+    await pool.check()
+    for (const resource of resources) expect(resource.release).toHaveBeenCalledOnce()
+    await pool.dispose()
+  })
+
   it('expires all groups after 15 idle minutes even below the capacity limit', async () => {
     const { pool, resources, add } = fixture()
     for (const group of ['data', 'repl', 'shell'] as const) add(group, 'one-session')

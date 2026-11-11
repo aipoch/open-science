@@ -16,6 +16,7 @@ type Entry = { resource: IdleInterpreter; idleSince?: number; revision: number }
 /** Policy only: the existing kernel/Shell owners retain process-tree cleanup and failure fences. */
 export class NotebookIdleReclamation {
   private readonly entries = new Map<object, Entry>()
+  private readonly observations = new Map<string, number>()
   private timer?: ReturnType<typeof setTimeout>
   private running?: Promise<void>
   private dirty = false
@@ -36,6 +37,21 @@ export class NotebookIdleReclamation {
       entry.revision++
     }
     this.refresh()
+  }
+
+  observeSession(sessionId: string): () => void {
+    this.observations.set(sessionId, (this.observations.get(sessionId) ?? 0) + 1)
+    // Invalidate an in-flight eligibility check without renewing the idle deadline.
+    for (const entry of this.entries.values())
+      if (entry.resource.sessionId === sessionId) entry.revision++
+    return () => {
+      const remaining = (this.observations.get(sessionId) ?? 1) - 1
+      if (remaining) this.observations.set(sessionId, remaining)
+      else this.observations.delete(sessionId)
+      for (const entry of this.entries.values())
+        if (entry.resource.sessionId === sessionId) entry.revision++
+      this.refresh()
+    }
   }
 
   refresh(): void {
@@ -71,8 +87,8 @@ export class NotebookIdleReclamation {
           // Observe external background-work settlement even without a renderer/event subscriber.
           const next = Math.min(
             30_000,
-            ...Array.from(this.entries.values(), ({ idleSince }) =>
-              idleSince === undefined
+            ...Array.from(this.entries.values(), ({ idleSince, resource }) =>
+              idleSince === undefined || this.observations.has(resource.sessionId)
                 ? 30_000
                 : Math.max(1, idleSince + NOTEBOOK_SESSION_IDLE_MS - Date.now())
             )
@@ -98,20 +114,28 @@ export class NotebookIdleReclamation {
       else this.entries.set(resource.identity, { resource, revision: 0 })
     }
     const activity = new Map<string, Promise<boolean>>()
+    const revisions = new Map([...this.entries.values()].map((entry) => [entry, entry.revision]))
     for (const entry of this.entries.values()) {
       const { projectId, sessionId } = entry.resource
+      if (this.observations.has(sessionId)) continue
       const key = JSON.stringify([projectId, sessionId])
       if (!activity.has(key))
         activity.set(key, Promise.resolve(this.options.isSessionBusy(projectId, sessionId)))
-      const revision = entry.revision
+      const revision = revisions.get(entry)
       const busy = await activity.get(key)!
       if (this.disposed) return
-      if (busy || revision !== entry.revision) entry.idleSince = undefined
+      if (revision !== entry.revision || this.observations.has(sessionId)) continue
+      if (busy) entry.idleSince = undefined
       else entry.idleSince ??= Date.now()
     }
     for (const group of ['data', 'repl', 'shell'] as const) {
       const idle = [...this.entries.values()]
-        .filter((entry) => entry.resource.group === group && entry.idleSince !== undefined)
+        .filter(
+          (entry) =>
+            entry.resource.group === group &&
+            entry.idleSince !== undefined &&
+            !this.observations.has(entry.resource.sessionId)
+        )
         .sort((a, b) => a.resource.lastUsedAt - b.resource.lastUsedAt)
       let excess = idle.length - NOTEBOOK_MAX_IDLE_INTERPRETERS[group]
       for (const entry of idle) {
@@ -120,7 +144,10 @@ export class NotebookIdleReclamation {
         if (excess <= 0 && !expired) continue
         const revision = entry.revision
         const stillIdle = (): boolean =>
-          !this.disposed && entry.revision === revision && entry.idleSince !== undefined
+          !this.disposed &&
+          entry.revision === revision &&
+          entry.idleSince !== undefined &&
+          !this.observations.has(entry.resource.sessionId)
         try {
           const busy = await this.options.isSessionBusy(
             entry.resource.projectId,
@@ -138,7 +165,7 @@ export class NotebookIdleReclamation {
           if (await entry.resource.release(stillIdle)) {
             this.entries.delete(entry.resource.identity)
             excess--
-          } else entry.idleSince = undefined
+          } else if (entry.revision === revision) entry.idleSince = undefined
         } catch (error) {
           // Avoid a tight retry loop; cleanup ownership and admission fences remain with the owner.
           entry.idleSince = undefined
@@ -153,5 +180,6 @@ export class NotebookIdleReclamation {
     if (this.timer) clearTimeout(this.timer)
     await this.running
     this.entries.clear()
+    this.observations.clear()
   }
 }

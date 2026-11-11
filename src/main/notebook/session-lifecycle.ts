@@ -67,6 +67,7 @@ type NotebookKernelStatusPersistenceFailure = {
 
 type NotebookSessionLifecycleOptions = {
   onActivityChanged?: (sessionId?: string) => void
+  observeSession?: (sessionId: string) => () => void
   isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
   admitSessionWork?: (projectId: string, sessionId: string) => () => void
   storageRoot: string
@@ -383,6 +384,9 @@ class NotebookSessionLifecycleOwner {
     } catch (error) {
       return Promise.reject(error)
     }
+    const releaseObservation = trackActivity
+      ? undefined
+      : this.options.observeSession?.(request.sessionId)
     const controller = new AbortController()
     const controllers =
       this.operationAbortControllersByProject.get(projectId) ?? new Set<AbortController>()
@@ -441,6 +445,7 @@ class NotebookSessionLifecycleOwner {
           this.pendingOperationsBySession.delete(request.sessionId)
         }
         this.options.onActivityChanged?.(trackActivity ? request.sessionId : undefined)
+        releaseObservation?.()
       })
       .catch(() => undefined)
     return running

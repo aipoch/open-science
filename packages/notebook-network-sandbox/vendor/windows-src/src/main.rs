@@ -3290,6 +3290,119 @@ mod windows_host {
         serialize_dacl(target)
     }
 
+    fn acl_snapshot_with_grants(
+        baseline: &AclSnapshot,
+        grants: &[(&AclLeaseRecord, &AclLeaseGrant)],
+    ) -> Result<AclSnapshot> {
+        if grants.is_empty() {
+            return Ok(baseline.clone());
+        }
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(wide(&baseline.dacl_sddl).as_ptr()),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        }
+        .context("parse leased filesystem ACL")?;
+        let _descriptor = LocalAllocation(descriptor.0);
+        let mut present = BOOL::default();
+        let mut defaulted = BOOL::default();
+        let mut dacl = std::ptr::null_mut();
+        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }?;
+        let mut entries = acl_entries(dacl)?;
+        let mut desired = baseline.clone();
+        desired.dacl_protected |= grants.iter().any(|(_, grant)| {
+            grant.protected_boundary || grant.access == AclGrant::ReadOnlyDirectory
+        });
+        if desired.dacl_protected && !baseline.dacl_protected {
+            entries.extend(inherited_acl_entries(&baseline.path)?);
+        }
+        let mut sids = Vec::new();
+        for (lease, _) in grants {
+            let mut sid = PSID::default();
+            unsafe {
+                ConvertStringSidToSidW(PCWSTR(wide(&lease.capability_sid).as_ptr()), &mut sid)
+            }?;
+            sids.push(LocalAllocation(sid.0));
+        }
+        let size = size_of::<ACL>()
+            + entries.iter().map(Vec::len).sum::<usize>()
+            + sids
+                .iter()
+                .map(|sid| {
+                    size_of::<ACCESS_ALLOWED_ACE>() + unsafe { GetLengthSid(PSID(sid.0)) } as usize
+                })
+                .sum::<usize>();
+        let mut storage = vec![0usize; size.div_ceil(size_of::<usize>())];
+        let target = storage.as_mut_ptr().cast::<ACL>();
+        unsafe {
+            InitializeAcl(
+                target,
+                (storage.len() * size_of::<usize>()) as u32,
+                ACL_REVISION_DS,
+            )
+        }?;
+        // Compose the complete ACL in memory. Publishing the baseline first transiently revokes
+        // other live kernels' access while recursive Windows inheritance propagation runs.
+        for entry in entries
+            .iter()
+            .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 == 0)
+        {
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    entry.as_ptr().cast(),
+                    entry.len() as u32,
+                )
+            }?;
+        }
+        for ((_, grant), sid) in grants.iter().zip(&sids) {
+            let (mask, flags) = match grant.access {
+                AclGrant::ReadOnlyDirectory => (DIRECTORY_TRAVERSAL_ACCESS, 0),
+                AclGrant::ReadOnlyTree => (
+                    FILE_GENERIC_READ.0 | FILE_GENERIC_EXECUTE.0,
+                    if Path::new(&baseline.path).is_dir() {
+                        OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0
+                    } else {
+                        0
+                    },
+                ),
+                AclGrant::ModifyTree => (
+                    0x0013_01bf,
+                    if Path::new(&baseline.path).is_dir() {
+                        OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0
+                    } else {
+                        0
+                    },
+                ),
+            };
+            unsafe {
+                AddAccessAllowedAceEx(target, ACL_REVISION_DS, ACE_FLAGS(flags), mask, PSID(sid.0))
+            }?;
+        }
+        for entry in entries
+            .iter()
+            .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 != 0)
+        {
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    entry.as_ptr().cast(),
+                    entry.len() as u32,
+                )
+            }?;
+        }
+        desired.dacl_sddl = serialize_dacl(target)?;
+        Ok(desired)
+    }
+
     fn rebuild_acl_state(state: &mut AclState, ownership_root: &Path) -> Result<()> {
         refresh_runtime_acl_snapshots(state, ownership_root)?;
         let mut snapshots = state.snapshots.iter().collect::<Vec<_>>();
@@ -3298,7 +3411,6 @@ mod windows_host {
         leases.sort_by(|left, right| left.lease_id.cmp(&right.lease_id));
 
         for snapshot in snapshots {
-            restore_acl_snapshot(snapshot)?;
             let grants = leases
                 .iter()
                 .flat_map(|lease| {
@@ -3309,21 +3421,7 @@ mod windows_host {
                         .map(move |grant| (*lease, grant))
                 })
                 .collect::<Vec<_>>();
-            if grants.iter().any(|(_, grant)| grant.protected_boundary) {
-                let mut protected = true;
-                for (lease, _) in grants.iter().filter(|(_, grant)| grant.protected_boundary) {
-                    update_command_acl_native(
-                        &snapshot.path,
-                        &lease.capability_sid,
-                        None,
-                        protected,
-                    )?;
-                    protected = false;
-                }
-            }
-            for (lease, grant) in grants {
-                apply_acl_grant(&snapshot.path, &lease.capability_sid, grant.access)?;
-            }
+            restore_acl_snapshot(&acl_snapshot_with_grants(snapshot, &grants)?)?;
         }
         Ok(())
     }
@@ -5008,6 +5106,77 @@ mod windows_host {
         }
 
         #[test]
+        fn changing_another_lease_never_revokes_a_live_runtime_grant() {
+            use std::sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            };
+            let installation_id = "abab1212abab1212abab1220";
+            let parent = unique_test_root("continuous-runtime-access");
+            let root = parent.join(installation_id);
+            let directory = parent.join("runtime");
+            fs::create_dir_all(&directory).unwrap();
+            for index in 0..200 {
+                fs::write(directory.join(format!("module-{index}.py")), b"fixture").unwrap();
+            }
+            let spec = LaunchSpec {
+                executable: "unused".into(),
+                arguments: vec![],
+                verbatim_arguments: false,
+                cwd: parent.to_string_lossy().into_owned(),
+                read_only_roots: vec![directory.to_string_lossy().into_owned()],
+                optional_read_only_roots: vec![],
+                read_write_roots: vec![],
+                denied_read_roots: vec![],
+                denied_write_roots: vec![],
+                termination_proof_path: None,
+                termination_proof_token: None,
+                termination_request_path: None,
+                shell_control_pipe: None,
+            };
+            let first_id = new_lease_id().unwrap();
+            let first = CommandCapability::new(command_capability_name(installation_id, &first_id))
+                .unwrap();
+            let mut live =
+                AclLease::acquire(installation_id, &root, first_id, &first, &spec).unwrap();
+            let sid = live.record.capability_sid.clone();
+            let path = directory.to_string_lossy().into_owned();
+            assert!(
+                capture_acl_snapshot(&path)
+                    .unwrap()
+                    .dacl_sddl
+                    .contains(&sid)
+            );
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopping = stop.clone();
+            let reader = std::thread::spawn(move || {
+                let mut missing = false;
+                while !stopping.load(Ordering::Acquire) {
+                    missing |= !capture_acl_snapshot(&path)
+                        .unwrap()
+                        .dacl_sddl
+                        .contains(&sid);
+                }
+                missing
+            });
+            let second_id = new_lease_id().unwrap();
+            let second =
+                CommandCapability::new(command_capability_name(installation_id, &second_id))
+                    .unwrap();
+            let result = AclLease::acquire(installation_id, &root, second_id, &second, &spec)
+                .and_then(|mut lease| lease.release());
+            stop.store(true, Ordering::Release);
+            let missing = reader.join().unwrap();
+            live.release().unwrap();
+            fs::remove_dir_all(parent).unwrap();
+            result.unwrap();
+            assert!(
+                !missing,
+                "another lease temporarily revoked the live runtime capability"
+            );
+        }
+
+        #[test]
         fn empty_command_lease_does_not_rebuild_a_live_filesystem_lease() {
             let installation_id = "abab1212abab1212abab1213";
             let parent = unique_test_root("empty-command-lease");
@@ -5062,7 +5231,14 @@ mod windows_host {
             let mut second_probe =
                 AclLease::acquire(installation_id, &root, id, &second_capability, &empty).unwrap();
             let mut interrupted = read_acl_state(installation_id, &root).unwrap().unwrap();
-            let baseline = interrupted.snapshots[0].clone();
+            // Ancestor snapshots can name shared AppData directories changed by parallel tests.
+            // Simulate the interrupted grant only on this test's private runtime directory.
+            let baseline = interrupted
+                .snapshots
+                .iter()
+                .find(|snapshot| paths_equal(&snapshot.path, &directory))
+                .expect("private runtime ACL snapshot")
+                .clone();
             apply_acl_grant(
                 &baseline.path,
                 &live.record.capability_sid,
