@@ -158,7 +158,7 @@ Der bisherige Einstellungsreiter „Modell“ heißt jetzt **Lokale Funktionen**
 | Daten analysieren         | Python oder R im Notebook ausführen und Tabellen und Abbildungen neben den Ausgangsdateien prüfen.                                                                          |
 | Ergebnisse nachvollziehen | In der Provenienzansicht Eingaben, Code und Verlauf einer Dateiversion prüfen. Sind Rezept, Eingaben und Laufzeitumgebung vorhanden, lässt sich die Berechnung wiederholen. |
 | Ergebnisse weitergeben    | Mit einem [`.science`-Paket](#share-your-research) die Schritte und Dateiversionen hinter einem Ergebnis zugänglich machen.                                                 |
-| Abläufe erweitern         | Wissenschaftliche Datenkonnektoren aktivieren, integrierte Skills auswählen oder weitere Skills und Spezialisten aus den Marktplätzen installieren.                         |
+| Abläufe erweitern         | Wissenschaftliche Datenkonnektoren aktivieren, integrierte Fähigkeiten auswählen oder weitere Fähigkeiten und Spezialisten aus den Marktplätzen installieren.               |
 | Modell wählen             | Einen unterstützten Anbieter, ein eigenes Gateway oder ein unterstütztes Claude- oder Codex-Abonnement nutzen. Die verfügbaren Protokolle hängen vom Agenten-Backend ab.    |
 
 ## Benchmark-Ergebnisse

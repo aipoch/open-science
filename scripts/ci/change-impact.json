@@ -150,6 +150,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "german_readme_glossary",
+      "role": "overlay",
+      "paths": ["docs/de/README.md"],
+      "capabilities": ["i18n_catalog"]
+    },
+    {
       "id": "issue_template",
       "role": "owner",
       "paths": [".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml"],
