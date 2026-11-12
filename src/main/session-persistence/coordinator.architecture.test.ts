@@ -510,7 +510,13 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['assertMutable', 'notifyFilesChanged', 'notifySessionsDeleted', 'recordProblemKey'].sort()
+      [
+        'assertMutable',
+        'notifyFilesChanged',
+        'notifySessionsDeleted',
+        'recordProblemKey',
+        'withDeletionCleanup'
+      ].sort()
     )
     expect(publicNonMethodMembers(facade)).toEqual([])
 
@@ -577,6 +583,7 @@ describe('Session persistence coordinator architecture', () => {
         'delegatedStartupRecoveryComplete',
         'deletedProjects',
         'deletedSessions',
+        'pendingDeletionCleanups',
         'deletionOwner',
         'deletionWork',
         'destructiveStartupWindowOpen',
@@ -638,7 +645,6 @@ describe('Session persistence coordinator architecture', () => {
         'log',
         'notifyDiscussionDetached',
         'notifyFilesChanged',
-        'notifySessionsDeleted',
         'preparePackageDeletion',
         'provenance',
         'repository',
