@@ -230,10 +230,25 @@ export async function inspectInstallationProcessesAsync(
           const native = require(process.argv[1])
           let root = process.argv[2]
           try { root = fs.realpathSync(root) } catch { /* The installation may have moved. */ }
-          const files = fs.statSync(root).isDirectory()
-            ? fs.readdirSync(root, { recursive: true, withFileTypes: true })
-                .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name))
-            : [root]
+          const files = []
+          if (!fs.statSync(root).isDirectory()) files.push(root)
+          else {
+            // Node's recursive readdir stats every non-directory, including known regular files.
+            // Reuse Dirent types while retaining its directory-link traversal and file-link exclusion.
+            // Keep physical ASAR archives as resources; Electron recursive readdir expands virtual entries.
+            const directories = [root]
+            for (let index = 0; index < directories.length; index++) {
+              for (const entry of fs.readdirSync(directories[index], { withFileTypes: true })) {
+                const file = join(entry.parentPath, entry.name)
+                if (entry.isFile()) files.push(file)
+                else if (entry.isDirectory()) directories.push(file)
+                else {
+                  // Match recursive readdir's best-effort directory probe for other entry types.
+                  try { if (fs.statSync(file).isDirectory()) directories.push(file) } catch {}
+                }
+              }
+            }
+          }
           // Only this short-lived scanner is exempt; the parent and other occupants remain.
           const pids = native.listWindowsInstallationOccupants(files).filter(pid => pid !== process.pid)
           process.stdout.write(JSON.stringify({ root, pids }))

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   inspectOwnedCrashpadProcesses,
@@ -140,6 +141,90 @@ describe('cold Windows resource scans', () => {
       })
     }
   )
+
+  it('enumerates every file and directory link without restatting regular files', async () => {
+    const root = join(process.cwd(), 'installation ü')
+    const nested = join(root, 'nested')
+    const linked = join(root, 'directory-link')
+    const entry = (
+      parentPath: string,
+      name: string,
+      type: string
+    ): Pick<import('node:fs').Dirent, 'parentPath' | 'name' | 'isFile' | 'isDirectory'> => ({
+      parentPath,
+      name,
+      isFile: () => type === 'file',
+      isDirectory: () => type === 'directory'
+    })
+    const entries = new Map([
+      [
+        root,
+        [
+          entry(root, 'app.exe', 'file'),
+          entry(root, 'LICENSE', 'file'),
+          entry(root, 'nested', 'directory'),
+          entry(root, 'directory-link', 'link'),
+          entry(root, 'file-link', 'link'),
+          entry(root, 'broken-link', 'link')
+        ]
+      ],
+      [nested, [entry(nested, 'data.json', 'file')]],
+      [linked, [entry(linked, 'archive.asar', 'file')]]
+    ])
+    const stat = vi.fn((file: string) => {
+      if (file === root || file === linked) return { isDirectory: () => true }
+      if (file === join(root, 'file-link')) return { isDirectory: () => false }
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    })
+    const readdir = vi.fn((directory: string, options: unknown) => {
+      expect(options).toEqual({ withFileTypes: true })
+      return entries.get(directory)
+    })
+    const occupants = vi.fn(() => [123, 456])
+    mocks.run.mockImplementation(async (_command, args) => {
+      let stdout = ''
+      runInNewContext(args[1], {
+        require: (name: string) =>
+          name === 'node:fs'
+            ? { realpathSync: () => root, statSync: stat, readdirSync: readdir }
+            : name === 'node:path'
+              ? { join }
+              : { listWindowsInstallationOccupants: occupants },
+        process: {
+          argv: ['', args[2], root],
+          pid: 123,
+          stdout: {
+            write: (text: string) => {
+              stdout += text
+            }
+          }
+        }
+      })
+      return { stdout }
+    })
+    await expect(inspectInstallationProcessesAsync(root)).resolves.toEqual([456])
+    expect(occupants).toHaveBeenCalledWith([
+      join(root, 'app.exe'),
+      join(root, 'LICENSE'),
+      join(nested, 'data.json'),
+      join(linked, 'archive.asar')
+    ])
+    expect(stat.mock.calls.map(([file]) => file)).toEqual([
+      root,
+      linked,
+      join(root, 'file-link'),
+      join(root, 'broken-link')
+    ])
+    expect(readdir).toHaveBeenCalledTimes(3)
+    // Traversal errors must still reject the whole scan, never return a partial resource list.
+    readdir.mockImplementation(() => {
+      throw new Error('directory unavailable')
+    })
+    await expect(inspectInstallationProcessesAsync(root)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    expect(occupants).toHaveBeenCalledTimes(1)
+  })
 
   it('passes the unpacked binary and literal installation path to the scanner', async () => {
     const root = 'C:/Apps/Science "quoted" & space'
@@ -300,9 +385,14 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     mocks.realpath.mockImplementation((path: string) => path)
     mocks.stat.mockReturnValue({ isDirectory: () => true })
-    mocks.readdir.mockReturnValue([
+    mocks.readdir.mockReturnValue([]).mockReturnValueOnce([
       { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'node.exe' },
-      { isFile: () => false, parentPath: 'c:\\apps\\science', name: 'resources' }
+      {
+        isFile: () => false,
+        isDirectory: () => true,
+        parentPath: 'c:\\apps\\science',
+        name: 'resources'
+      }
     ])
     mocks.windows.listWindowsInstallationOccupants.mockReturnValue(resourcePids)
     // Execute the child script against fixture dependencies; integration tests cover its process.
