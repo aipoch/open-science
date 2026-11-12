@@ -108,24 +108,43 @@ it('opens a notified film without starting generation and releases dialog visibi
   expect(onClosed).toHaveBeenCalled()
 })
 
-it('offers an explicit retry after a notification opens a failed narration installation', async () => {
-  status = { preflightError: 'Narration installation did not finish. Retry to continue.' }
-  await act(async () =>
-    root.render(
-      <ResearchVideoButton
-        key="failed-notification"
-        {...request}
-        initiallyOpen
-        renderTrigger={() => null}
-      />
+it.each(['ready', 'notInstalled'] as const)(
+  'recovers a notified installation failure when narration is %s',
+  async (availability) => {
+    snapshot = {
+      ...snapshot,
+      availability,
+      ...(availability === 'notInstalled'
+        ? { installedRevision: undefined, error: 'download' as const }
+        : {})
+    }
+    status = { preflightError: 'Narration installation did not finish. Retry to continue.' }
+    await act(async () =>
+      root.render(
+        <ResearchVideoButton
+          key="failed-notification"
+          {...request}
+          initiallyOpen
+          renderTrigger={() => null}
+        />
+      )
     )
-  )
-  expect(api.researchVideo.start).not.toHaveBeenCalled()
-  api.researchVideo.status.mockImplementationOnce(async () => (status = {}))
-  await click('Try again')
-  expect(api.researchVideo.status).toHaveBeenCalledWith({ ...request, checkReadiness: true })
-  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
-})
+    expect(api.researchVideo.start).not.toHaveBeenCalled()
+    api.researchVideo.status.mockImplementationOnce(async () => (status = {}))
+    await click('Try again')
+    expect(api.researchVideo.status).toHaveBeenCalledWith({ ...request, checkReadiness: true })
+    if (availability === 'notInstalled') {
+      expect(api.researchVideo.start).not.toHaveBeenCalled()
+      await click('Install and generate')
+      expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+        ...request,
+        installNarration: true
+      })
+    } else {
+      expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
+    }
+  }
+)
 
 it('keeps raw generation errors in collapsed details and copies the full message', async () => {
   const error = JSON.stringify(
