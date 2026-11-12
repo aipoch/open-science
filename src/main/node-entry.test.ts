@@ -340,9 +340,13 @@ it('exports early startup errors captured by the backend without dropping their 
   const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
   vi.spyOn(console, 'error').mockImplementation(terminal.error)
-  f.initLogs.mockImplementation((options) =>
-    logger.initLogger({ ...options, logDir: join(configRoot, 'logs'), mirrorToConsole: true })
-  )
+  vi.spyOn(console, 'info').mockImplementation(terminal.info)
+  vi.stubEnv('OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT', '1')
+  f.initLogs.mockImplementation((options) => {
+    logger.initLogger({ ...options, logDir: join(configRoot, 'logs') })
+    logger.createLogger('node-runtime').error('ordinary diagnostic')
+    logger.createLogger('main').info('database runtime verified: sqlite_version=3.46.0')
+  })
   f.log.error.mockImplementation(logger.createLogger('node-runtime').error)
   f.startupFailure = true
   try {
@@ -350,6 +354,11 @@ it('exports early startup errors captured by the backend without dropping their 
     await import('./node-entry')
     await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
     await logger.flushLogs()
+    expect(stderr).not.toContain('ordinary diagnostic')
+    expect(stderr).toContain('database runtime verified: sqlite_version=3.46.0')
+    expect(await readFile(join(configRoot, 'logs/main.log'), 'utf8')).toContain(
+      'ordinary diagnostic'
+    )
     await writeFile(join(configRoot, 'logs', name), stderr)
     const result = await runSessionDiagnosticWorker({
       action: 'export',
@@ -366,6 +375,7 @@ it('exports early startup errors captured by the backend without dropping their 
       'isolated startup failure'
     )
   } finally {
+    vi.unstubAllEnvs()
     f.initLogs.mockReset()
     f.log.error.mockReset()
     if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor)
@@ -534,6 +544,23 @@ const waitForReady = async (
     ).toBe(true)
   )
 }
+
+it('mirrors a fatal service report and keeps recoverable background errors in the canonical log', async () => {
+  vi.stubEnv('OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT', '1')
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const mirror = f.initLogs.mock.lastCall![0].mirrorToConsole
+  const error = new Error('diagnostic fixture')
+  f.createLifetime.mock.lastCall![0].report(error)
+  expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(false)
+  f.startDesktop.mock.lastCall![0].onNotificationError!(error)
+  expect(mirror('notifications', f.log.warn.mock.lastCall![0])).toBe(false)
+  const { installNodeFatalErrors } = await import('./node-fatal-errors')
+  vi.mocked(installNodeFatalErrors).mock.lastCall![0].report(error, 'uncaughtException')
+  expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(true)
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
 
 it('creates diagnostics only after consent and stops them when the controlling desktop disconnects', async () => {
   const send = await startHealthyRuntime()
