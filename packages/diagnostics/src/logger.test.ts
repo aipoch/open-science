@@ -6,18 +6,26 @@ import { Writable } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { renameFile, appendLogFile, openLogFile } = vi.hoisted(() => ({
+const { renameFile, appendLogFile, openLogFile, mkdirLogDir } = vi.hoisted(() => ({
   renameFile: vi.fn(),
   appendLogFile: vi.fn(),
+  mkdirLogDir: vi.fn(),
   openLogFile: vi.fn()
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
+  mkdirLogDir.mockImplementation(original.mkdir)
   renameFile.mockImplementation(original.rename)
   appendLogFile.mockImplementation(original.appendFile)
   openLogFile.mockImplementation(original.open)
-  return { ...original, rename: renameFile, appendFile: appendLogFile, open: openLogFile }
+  return {
+    ...original,
+    mkdir: mkdirLogDir,
+    rename: renameFile,
+    appendFile: appendLogFile,
+    open: openLogFile
+  }
 })
 
 import {
@@ -1806,6 +1814,24 @@ describe('logger: loss and recovery contracts', () => {
     expect(
       records.find((record) => record.msg === 'log records dropped')?.data.droppedRecords
     ).toBeGreaterThan(0)
+  })
+
+  it('prepares the directory once and restores it if removed between appends', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-directory-'))
+    const directory = join(logDir, 'logs')
+    initLogger({ logDir: directory, mirrorToConsole: false })
+    mkdirLogDir.mockClear()
+    const logger = createLogger('io')
+    for (let i = 0; i < 100; i++) logger.info('before removal')
+    await expect(flushLogs()).resolves.toEqual({ failed: false })
+    expect(mkdirLogDir).toHaveBeenCalledTimes(1)
+    await rm(directory, { recursive: true })
+    logger.info('after removal')
+    await expect(flushLogs()).resolves.toEqual({ failed: false })
+    expect(mkdirLogDir).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(await readFile(join(directory, 'main.log'), 'utf8')).msg).toBe(
+      'after removal'
+    )
   })
 
   it('reports directory and inspection failures without rejecting ordinary log calls', async () => {
