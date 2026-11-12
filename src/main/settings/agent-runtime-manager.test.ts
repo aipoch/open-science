@@ -319,6 +319,31 @@ describe('AgentRuntimeManager', () => {
   let managedCodexPath: string
   let manager: InstanceType<typeof AgentRuntimeManager>
 
+  it('reuses a recent OpenCode launch probe until the executable changes or the window expires', async () => {
+    const executable = join(storageRoot, 'opencode')
+    await writeFile(executable, 'first')
+    const probe = vi.fn(async () => '1.2.3')
+    const runtime = createManager({
+      opencodeDetectDeps: { ...createOpencodeDeps(inventory), probeVersion: probe }
+    })
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    try {
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      await writeFile(executable, 'replacement')
+      probe.mockRejectedValueOnce(new Error('launch failed')).mockResolvedValue('2.0.1')
+      await expect(runtime.probeOpencodeVersion(executable)).rejects.toThrow('launch failed')
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
+      clock.mockReturnValue(2200)
+      expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
+      expect(probe).toHaveBeenCalledTimes(4)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   it('preserves a failed configured OpenCode version probe for diagnostics', async () => {
     const failure = Object.assign(new Error('version process failed'), { code: 23 })
     const probeManager = createManager({

@@ -4,8 +4,8 @@ import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { execFile } from 'node:child_process'
 import { constants, existsSync } from 'node:fs'
-import { access, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { access, mkdir, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
@@ -371,6 +371,7 @@ export class AgentRuntimeManager {
   private readonly activeDetections = new Set<Promise<unknown>>()
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
+  private lastOpencodeLaunchProbe?: { executableKey: string; version: string; expiresAt: number }
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -1274,7 +1275,32 @@ export class AgentRuntimeManager {
 
   async probeOpencodeVersion(executablePath: string): Promise<string | undefined> {
     const probe = this.opencodeDetectDeps.probeVersion ?? this.opencodeDetectDeps.getVersion
-    return probe(executablePath)
+    if (!isAbsolute(executablePath)) return probe(executablePath)
+    const file = await stat(executablePath, { bigint: true }).catch(() => undefined)
+    if (!file?.isFile()) return probe(executablePath)
+
+    // The first turn and its metadata job each resolve a backend. Reuse only a completed probe.
+    const executableKey = [
+      executablePath,
+      file.dev,
+      file.ino,
+      file.size,
+      file.mtimeNs,
+      file.ctimeNs
+    ].join(':')
+    const cached = this.lastOpencodeLaunchProbe
+    const now = performance.now()
+    if (cached?.executableKey === executableKey && now < cached.expiresAt) return cached.version
+
+    const version = await probe(executablePath)
+    if (version) {
+      this.lastOpencodeLaunchProbe = {
+        executableKey,
+        version,
+        expiresAt: now + RUNTIME_PROBE_REUSE_WINDOW_MS
+      }
+    }
+    return version
   }
 
   async resolveCodeBuddyExecutable(storedPath: string | undefined): Promise<string> {
