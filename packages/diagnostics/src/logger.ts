@@ -747,14 +747,15 @@ const repairLogTail = async (path: string): Promise<{ size: number; discarded: n
 const writeLine = async (
   line: string,
   activeConfig: LoggerConfig,
-  state: LogSinkState
+  state: LogSinkState,
+  retryMissingDirectory = true
 ): Promise<boolean> => {
   const { logDir, fileName, maxBytes, maxFiles } = activeConfig
   let failureCategory: LogWriteFailureCategory = 'directory'
   try {
-    await mkdir(logDir, { recursive: true })
     const filePath = join(logDir, fileName)
     if (state.currentBytes === undefined) {
+      await mkdir(logDir, { recursive: true })
       failureCategory = 'inspect'
       const repaired = await repairLogTail(filePath)
       state.currentBytes = repaired.size
@@ -781,8 +782,18 @@ const writeLine = async (
     state.lastWriteSucceeded = true
     state.lastFailureCategory = null
     return true
-  } catch {
+  } catch (error) {
     state.currentBytes = undefined
+    // Opening the file failed before any bytes were appended. Reinitialize and retry this
+    // record once if the directory disappeared while the sink was active.
+    if (
+      retryMissingDirectory &&
+      failureCategory === 'append' &&
+      isMissingFileError(error) &&
+      (error as NodeJS.ErrnoException).syscall === 'open'
+    ) {
+      return writeLine(line, activeConfig, state, false)
+    }
     state.lastWriteSucceeded = false
     state.lastFailureCategory = failureCategory
     state.lostRecords = true
