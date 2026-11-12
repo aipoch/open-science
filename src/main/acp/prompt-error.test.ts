@@ -370,6 +370,19 @@ describe('classified failure facts across agent execution paths', () => {
       expect(classifyFailure(facts).category).toBe(category)
     }
   )
+  it('recognizes a typed provider resource-not-found response without an HTTP status', () => {
+    const message = 'Example deployment unavailable'
+    const error = RequestError.internalError(
+      { errorName: 'APIError' },
+      JSON.stringify({ error: { type: 'resource_not_found_error', message } })
+    )
+    expect(classifyFailure(collectPromptFailureFacts(error))).toEqual({
+      category: 'configuration',
+      reason: 'configuration/model-unavailable',
+      responseMessage: message,
+      diagnostics: { code: 'resource_not_found_error', raw: error.message }
+    })
+  })
   it.each([
     ['Upstream is busy', 'Upstream is busy'],
     ['{"message":"Busy","code":"example_busy"}', 'Busy'],
