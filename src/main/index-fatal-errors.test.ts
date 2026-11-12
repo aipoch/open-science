@@ -28,7 +28,6 @@ vi.mock('./storage/initialize-location', () => ({
   }),
   initializeDataLocation: vi.fn()
 }))
-import { spawn } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -137,43 +136,6 @@ vi.mock('./renderer-diagnostics', () => ({
 
 type ProcessFailureListener = (reason: unknown, origin?: string) => void
 
-type ChildResult = {
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-  stderr: string
-  stdout: string
-}
-
-const runFatalChild = (
-  eventName: 'uncaughtException' | 'unhandledRejection'
-): Promise<ChildResult> =>
-  new Promise((resolve, reject) => {
-    const script = `
-      process.on('uncaughtExceptionMonitor', (error, origin) => {
-        process.stderr.write('MONITORED:' + origin + ':' + error.message + '\\n')
-      })
-      setTimeout(() => process.stdout.write('POST_FATAL_SENTINEL\\n'), 100)
-      if (${JSON.stringify(eventName)} === 'uncaughtException') {
-        setImmediate(() => { throw new Error('fatal uncaughtException') })
-      } else {
-        void Promise.reject(new Error('fatal unhandledRejection'))
-      }
-    `
-    const child = spawn(process.execPath, ['-e', script], {
-      env: { ...process.env, NODE_OPTIONS: '' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
-    })
-    let stderr = ''
-    let stdout = ''
-    child.stderr.setEncoding('utf8')
-    child.stdout.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => (stderr += chunk))
-    child.stdout.on('data', (chunk: string) => (stdout += chunk))
-    child.once('error', reject)
-    child.once('close', (exitCode, signal) => resolve({ exitCode, signal, stderr, stdout }))
-  })
-
 const bootUntilFailureHandlersAreInstalled = async (): Promise<
   Map<NodeJS.Signals | string, ProcessFailureListener>
 > => {
@@ -227,41 +189,24 @@ describe('main-process fatal errors', () => {
     }
   })
 
-  it('observes both fatal origins without installing a consuming listener', async () => {
-    const listeners = await bootUntilFailureHandlersAreInstalled()
-    const monitor = listeners.get('uncaughtExceptionMonitor')
-
-    await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledExactlyOnceWith(1))
-    mocks.app.exit.mockClear()
-
-    expect(monitor).toBeTypeOf('function')
-    expect(listeners.has('uncaughtException')).toBe(false)
-    expect(listeners.has('unhandledRejection')).toBe(false)
-
-    for (const eventName of ['uncaughtException', 'unhandledRejection'] as const) {
-      const error = new Error(`fatal ${eventName}`)
-      monitor?.(error, eventName)
-      expect(mocks.writeFatalLogSync).toHaveBeenCalledWith(
-        'main',
-        eventName,
-        expect.objectContaining({ error })
-      )
-    }
-
-    expect(mocks.log.error).not.toHaveBeenCalled()
-    expect(mocks.app.quit).not.toHaveBeenCalled()
-    expect(mocks.app.exit).not.toHaveBeenCalled()
-  })
-
   it.each(['uncaughtException', 'unhandledRejection'] as const)(
-    'preserves Node fail-fast termination for %s',
-    async (eventName) => {
-      const result = await runFatalChild(eventName)
+    'writes only the first fatal record and exits Electron for %s',
+    async (origin) => {
+      const listeners = await bootUntilFailureHandlersAreInstalled()
+      await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledExactlyOnceWith(1))
+      mocks.app.exit.mockClear()
+      mocks.writeFatalLogSync.mockClear()
 
-      expect(result.signal).toBeNull()
-      expect(result.exitCode).toBe(1)
-      expect(result.stderr).toContain(`MONITORED:${eventName}:fatal ${eventName}`)
-      expect(result.stdout).not.toContain('POST_FATAL_SENTINEL')
+      const fail = listeners.get('uncaughtException')!
+      const first = new Error('first failure')
+      mocks.writeFatalLogSync.mockImplementationOnce(() => fail(new Error('reentrant'), origin))
+      fail(first, origin)
+      fail(new Error('later failure'), origin)
+
+      expect(mocks.writeFatalLogSync).toHaveBeenCalledExactlyOnceWith('main', origin, {
+        error: first
+      })
+      expect(mocks.app.exit).toHaveBeenCalledExactlyOnceWith(1)
     }
   )
 })
