@@ -523,12 +523,27 @@ it(
       const interrupt = join(project, 'interrupt-settlement.cjs')
       await writeFile(
         interrupt,
-        `const fs=require('node:fs'); const rename=fs.renameSync;
-fs.renameSync=(from,to)=>{rename(from,to);if(from==='activity-settling' && to.startsWith('deleting-'))process.exit(83)}`
+        `const fs = require('node:fs');
+const { basename } = require('node:path');
+const { openSync, renameSync } = fs;
+let scans = 0;
+fs.openSync = (file, flags, ...rest) => {
+  const fd = openSync(file, flags, ...rest);
+  if (basename(file) === 'log.jsonl' && !(flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR))) scans++;
+  return fd;
+};
+fs.renameSync = (from, to) => {
+  renameSync(from, to);
+  if (from === 'activity-settling' && to.startsWith('deleting-')) {
+    fs.writeFileSync('settlement-scans', String(scans));
+    process.exit(83);
+  }
+};`
       )
       await expect(call(a, 'settling', 'complete', published, interrupt)).rejects.toThrow(
         'worker exited 83'
       )
+      expect(await readFile(join(a, 'settlement-scans'), 'utf8')).toBe('1')
       const committed = await readFile(shadowLog(a))
       await call(a, 'settling', 'complete', published)
       expect(await readFile(shadowLog(a))).toEqual(committed)

@@ -107,6 +107,31 @@ const scanLog = (path, io, visit) => {
   }
   return { length: bytes.length, complete: start }
 }
+const logIdentity = (stat) =>
+  stat && [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
+
+const observeLog = (path) =>
+  logIdentity(fs.lstatSync(path, { bigint: true, throwIfNoEntry: false }))
+
+const scanForAppend = (log, activityId, io) => {
+  const identity = observeLog(log)
+  let previous
+  let match
+  let duplicate = false
+  const committedViews = new Set()
+  const offsets = scanLog(log, io, (record) => {
+    committedViews.add(record.pre)
+    committedViews.add(record.post)
+    previous = record.post
+    if (record.activityId === activityId) {
+      duplicate = Boolean(match)
+      match = record
+    }
+  })
+  if (observeLog(log) !== identity) throw new Error('Shadow log changed during publication.')
+  return { ...offsets, identity, previous, match, duplicate, committedViews }
+}
+
 const append = (lane, capture, sidecar, serialized, io) => {
   const marker = join(io.projectRoot, projectMarker)
   if (!io.verifyOnly && !metadata(marker)) {
@@ -120,15 +145,11 @@ const append = (lane, capture, sidecar, serialized, io) => {
   if (!io.verifyOnly) ensureDirectory(views, io.syncDirectory)
   else if (metadata(views)) requireDirectory(views)
   const log = join(root, 'log.jsonl')
-  let previous
-  const committedViews = new Set()
-  let existing
-  const { length, complete } = scanLog(log, io, (record) => {
-    committedViews.add(record.pre)
-    committedViews.add(record.post)
-    previous = record.post
-    if (record.activityId === sidecar.activityId) existing = record.checksum
-  })
+  const { length, complete, previous, committedViews, match, identity } =
+    io.appendState ?? scanForAppend(log, sidecar.activityId, io)
+  if (io.appendState && observeLog(log) !== identity)
+    throw new Error('Shadow log changed during publication.')
+  const existing = match?.checksum
   // v1 only encodes a delta against this record's pre-view or the previous
   // committed post-view. Every committed base is itself named in the verified log.
   // Clean only our unpublished files, under the same worker queue that writes them.
@@ -207,12 +228,19 @@ const append = (lane, capture, sidecar, serialized, io) => {
   for (const view of planned) publishView(views, view, io)
   const fd = fs.openSync(
     log,
-    fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW,
+    (identity === undefined ? fs.constants.O_CREAT | fs.constants.O_EXCL : 0) |
+      fs.constants.O_RDWR |
+      fs.constants.O_NOFOLLOW,
     0o600
   )
   try {
-    const stat = fs.fstatSync(fd)
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size !== length)
+    const stat = fs.fstatSync(fd, { bigint: true })
+    if (
+      !stat.isFile() ||
+      stat.nlink !== 1n ||
+      stat.size !== BigInt(length) ||
+      (identity !== undefined && logIdentity(stat) !== identity)
+    )
       throw new Error('Shadow log changed during publication.')
     if (complete !== length) fs.ftruncateSync(fd, complete)
     if (!existing) {
@@ -242,23 +270,24 @@ const projectSidecar = (record, views, activityPrefix) => {
   return bytes
 }
 
-const committedRecord = (lane, id, prefix, io) => {
+// Settlement owns this scan synchronously; preflight and retries obtain a fresh one.
+const inspectNativePublication = (lane, id, prefix, io) => {
   const root = join(lane, directoryName)
-  if (!metadata(root)) return
-  requireDirectory(root)
-  let bytes
-  scanLog(join(root, 'log.jsonl'), io, (record) => {
-    if (record.activityId !== id) return
-    if (!record.poolAddressed || bytes) throw new Error('Conflicting native evidence record.')
-    const views = join(root, 'views')
-    requireDirectory(views)
-    bytes = projectSidecar(
+  if (metadata(root)) requireDirectory(root)
+  const appendState = scanForAppend(join(root, 'log.jsonl'), id, io)
+  const record = appendState.match
+  if (!record) return { appendState }
+  if (!record.poolAddressed || appendState.duplicate)
+    throw new Error('Conflicting native evidence record.')
+  const views = join(root, 'views')
+  requireDirectory(views)
+  return {
+    committed: projectSidecar(
       record,
       [record.pre, record.post].map((hash) => readView(views, hash, io.readFile).rows),
       prefix
     )
-  })
-  return bytes
+  }
 }
 const visitLanes = (project, visit) => {
   for (const entry of fs.readdirSync(project, { withFileTypes: true })) {
@@ -328,7 +357,7 @@ const protectedBlobs = (pool, io) => {
 }
 module.exports = {
   append,
-  committedRecord,
+  inspectNativePublication,
   directoryName,
   graceMs,
   protectedBlobs,
