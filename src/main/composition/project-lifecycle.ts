@@ -329,7 +329,7 @@ export function composeProjectLifecycle({
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
-      await Promise.all([
+      const results = await Promise.allSettled([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),
@@ -337,6 +337,9 @@ export function composeProjectLifecycle({
         researchFilmLifecycle.deleteSessions(sessionIds),
         harnessStorageCleanup.commit(sessionIds)
       ])
+      // The coordinator must retain deleted identities until every cleanup has settled.
+      const failed = results.find((result) => result.status === 'rejected')
+      if (failed) throw failed.reason
     },
     onSessionsReconciled: async (sessionIds) => {
       await Promise.all([
