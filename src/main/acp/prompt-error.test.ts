@@ -374,22 +374,50 @@ describe('classified failure facts across agent execution paths', () => {
     ['Upstream is busy', 'Upstream is busy'],
     ['{"message":"Busy","code":"example_busy"}', 'Busy'],
     ['{"detail":["busy"]}', '{"detail":["busy"]}']
-  ])('preserves the ACP response body and extracts available message text: %s', (body, message) => {
-    const failure = classifyFailure(
-      collectPromptFailureFacts(RequestError.internalError(undefined, body), {
-        providerName: 'Example Provider',
-        model: 'example-model'
+  ])(
+    'preserves the tagged provider response body and extracts available message text: %s',
+    (body, message) => {
+      const failure = classifyFailure(
+        collectPromptFailureFacts(RequestError.internalError({ service: 'provider' }, body), {
+          providerName: 'Example Provider',
+          model: 'example-model'
+        })
+      )
+      expect(failure).toEqual({
+        category: 'service',
+        responseMessage: message,
+        diagnostics: {
+          provider: 'Example Provider',
+          model: 'example-model',
+          raw: 'Internal error: ' + body
+        }
       })
-    )
-    expect(failure).toEqual({
-      category: 'service',
-      responseMessage: message,
-      diagnostics: {
-        provider: 'Example Provider',
-        model: 'example-model',
-        raw: 'Internal error: ' + body
-      }
-    })
+    }
+  )
+  it.each([
+    [undefined, 'internal', '-32603'],
+    [{ errorKind: 'unknown', status: 503 }, 'internal', '-32603'],
+    [{ codexErrorInfo: 'internalServerError' }, 'internal', 'internalServerError'],
+    [{ service: 'session', errorName: 'UnknownError' }, 'session', '-32603']
+  ] as const)(
+    'keeps the original recovery path without provider ownership: %j',
+    (data, category, code) => {
+      const error = RequestError.internalError(data, '{"message":"Busy","code":"example_busy"}')
+      const failure = classifyFailure(
+        collectPromptFailureFacts(error, {
+          providerName: 'Example Provider',
+          model: 'example-model'
+        })
+      )
+      expect(failure).toMatchObject({ category, diagnostics: { code, raw: error.message } })
+      expect(failure.responseMessage).toBeUndefined()
+    }
+  )
+  it('keeps ACP sign-in recovery when the authentication error carries JSON', () => {
+    const error = RequestError.authRequired(undefined, '{"message":"Sign in again"}')
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.reason).toBe('configuration/auth-failed')
+    expect(failure.responseMessage).toBeUndefined()
   })
   it('keeps an opaque protocol error internal even when its prose mentions a status', () => {
     expect(

@@ -20,12 +20,12 @@ export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
     if (recognized) break
   }
   recognized ??= recognizeSession(facts)
-  const category =
-    recognized?.category ??
-    (facts.origin === 'provider' || facts.responseMessage ? 'service' : 'internal')
+  const category = recognized?.category ?? (facts.origin === 'provider' ? 'service' : 'internal')
   return {
     category,
-    ...(facts.responseMessage && (category === 'service' || category === 'configuration')
+    ...(facts.origin === 'provider' &&
+    facts.responseMessage &&
+    (category === 'service' || category === 'configuration')
       ? { responseMessage: facts.responseMessage }
       : {}),
     ...(recognized?.reason ? { reason: recognized.reason } : {}),

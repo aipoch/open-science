@@ -284,23 +284,6 @@ export const withAgentAuthenticationRecovery = async <T>(
   }
 }
 
-// Collect upstream ownership from framework wire markers.
-const hasProviderOrigin = (error: unknown): boolean => {
-  if (isAgentAuthenticationFailure(error)) return true
-  if (isApiError(error)) return true
-  if (isProviderErrorKind(error)) return true
-  if (isClaudeProviderApiError(error)) return true
-
-  // Codex's native error data already identifies capacity failures. Keep unknown/internal Codex
-  // failures reportable, and never infer provider ownership from the human-readable message.
-  const data = (error as { data?: { codexErrorInfo?: unknown } } | null)?.data
-  if (errorCode(error) === -32603 && data?.codexErrorInfo === 'serverOverloaded') return true
-
-  const raw = rawErrorMessage(error)
-
-  return isProviderNotFound(error, raw, extractUpstreamDetail(raw))
-}
-
 // OpenCode reports a provider-side Session that no longer exists as a generic JSON-RPC Internal
 // error with a machine-readable service marker. This is distinct from provider/MCP failures and can
 // be recovered by replacing the lost provider Session while keeping the app Session and transcript.
@@ -373,9 +356,27 @@ export const collectPromptFailureFacts = (
       'responseTooManyFailedAttempts',
       'contextWindowExceeded'
     ].includes(codexKind ?? '')
+  const providerService = top.code === -32603 && data.service === 'provider'
+  const taggedProvider =
+    providerService || isApiError(error) || isProviderErrorKind(error) || codexProvider
+  // Only consult known adapter wrappers when the wire metadata leaves ownership unspecified.
+  const untaggedRequest =
+    error instanceof Error &&
+    error.name === 'RequestError' &&
+    top.code === -32603 &&
+    !data.service &&
+    !data.errorName &&
+    !codexKind &&
+    (!data.errorKind || data.errorKind === 'unknown')
+  const providerWrapper =
+    untaggedRequest &&
+    (apiWrapper ||
+      isClaudeProviderApiError(error) ||
+      (upstream?.type && NOT_FOUND_PATTERN.test(upstream.type)))
+  const authenticationFailure = isAgentAuthenticationFailure(error)
   const origin = isOpenCodeSessionServiceFailure(error)
     ? 'session'
-    : hasProviderOrigin(error) || apiWrapper || codexProvider
+    : taggedProvider || providerWrapper || authenticationFailure
       ? 'provider'
       : 'agent-runtime'
   // Our compatibility bridge deliberately transports deterministic upstream failures as HTTP 400.
@@ -384,31 +385,16 @@ export const collectPromptFailureFacts = (
     origin === 'provider' && transportStatus === 400 && upstream?.status !== undefined
       ? upstream.status
       : transportStatus
-  // An untagged ACP wrapper may carry plain text or any provider-specific body.
-  // Surface that detail without inventing a provider identity or business code.
-  const wrappedResponse =
-    origin === 'agent-runtime' &&
-    error instanceof Error &&
-    error.name === 'RequestError' &&
-    top.code === -32603 &&
-    !data.codexErrorInfo &&
-    !data.errorName &&
-    (!data.service || data.service === 'provider') &&
-    (!data.errorKind || data.errorKind === 'unknown') &&
-    /^\s*internal error:\s*\S/i.test(text)
   const providerResponse =
     origin === 'provider' &&
+    (taggedProvider || providerWrapper) &&
     (upstream !== undefined ||
-      (!isAgentAuthenticationFailure(error) &&
-        (isApiError(error) ||
-          isProviderErrorKind(error) ||
-          codexProvider ||
-          transportStatus !== undefined)))
+      (!authenticationFailure && (taggedProvider || transportStatus !== undefined)))
   const responseText =
     upstream?.text ??
     ((typeof data.message === 'string' && data.message.trim()) || stripWrapperPrefixes(text))
   const responseMessage =
-    (wrappedResponse || providerResponse) && !/^internal error[.:]?$/i.test(responseText.trim())
+    providerResponse && !/^internal error[.:]?$/i.test(responseText.trim())
       ? safeProviderErrorDetail(responseText)
       : undefined
   const code =
@@ -416,7 +402,7 @@ export const collectPromptFailureFacts = (
       ? top.code
       : isOpenCodeContextOverflow(error) || codexKind === 'contextWindowExceeded'
         ? 'ContextOverflowError'
-        : isAgentAuthenticationFailure(error)
+        : authenticationFailure
           ? 'authentication_error'
           : codexKind === 'usageLimitExceeded'
             ? 'quota_exceeded'
@@ -427,7 +413,7 @@ export const collectPromptFailureFacts = (
                   ? data.errorKind
                   : undefined) ??
                 codexKind ??
-                (origin === 'provider' || wrappedResponse ? undefined : top.code))
+                (origin === 'provider' ? undefined : top.code))
   const provider =
     (responseMessage && context.providerName) ||
     (typeof data.provider === 'string' ? data.provider : undefined)
