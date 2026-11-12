@@ -106,9 +106,9 @@ for (const size of [
     await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport({
       ratio: 1
     })
-    await dialog.getByText('Error details', { exact: true }).click()
-    await expect(dialog.locator('pre')).toContainText('Notebook cleanup is incomplete')
-    await expect(dialog.locator('pre')).toBeVisible()
+    const error = dialog.getByRole('alert')
+    await expect(error).toContainText('Folder access could not be updated.')
+    await expect(error.getByText(/Notebook cleanup is incomplete/)).toBeVisible()
     await expect(grant).toBeInViewport({ ratio: 1 })
     await page.screenshot({ path: testInfo.outputPath('folder-access-error.png') })
     await grant.click()

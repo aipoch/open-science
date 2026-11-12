@@ -350,6 +350,11 @@ describe('desktop-only dependency contents', () => {
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
       await put('out/backend/dependencies.json', '[]')
+      if (process.platform === 'win32')
+        await put(
+          'packages/notebook-network-sandbox/vendor/windows/build.mjs',
+          '// Native compilation is covered separately; this fixture stages synthetic helper assets.\n'
+        )
       const stage = (): Promise<unknown> =>
         promisify(execFile)(
           process.execPath,
