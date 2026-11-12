@@ -89,7 +89,13 @@ it('starts directly from the session button without a chat or fork API, and supp
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
 
-it('opens a notified film without starting generation and releases dialog visibility on close', async () => {
+it('opens a notification after transient failure state is lost without starting generation', async () => {
+  snapshot = {
+    ...snapshot,
+    availability: 'notInstalled',
+    installedRevision: undefined,
+    error: 'download'
+  }
   const onClosed = vi.fn()
   await act(async () =>
     root.render(
@@ -104,6 +110,18 @@ it('opens a notified film without starting generation and releases dialog visibi
   )
   expect(document.querySelector('[role="dialog"]')).not.toBeNull()
   expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await click('Generate research film')
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  expect(
+    [...document.querySelectorAll('button')].some(
+      (button) => button.textContent === 'Generate research film'
+    )
+  ).toBe(false)
+  await click('Install and generate')
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith({
+    ...request,
+    installNarration: true
+  })
   await click('Close')
   expect(onClosed).toHaveBeenCalled()
 })

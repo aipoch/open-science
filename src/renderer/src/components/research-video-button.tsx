@@ -203,13 +203,13 @@ export function ResearchVideoButton({
     status.preflightError &&
     status.preflightError !== missingRuntime &&
     knownPreflight
-  const canRetryPreparation =
+  const canPrepareGeneration =
     initiallyOpen &&
     statusLoaded &&
+    (!model || Boolean(failure || preflight)) &&
     !status.canResume &&
     !status.result &&
-    !status.generationBlock &&
-    Boolean(failure || preflight)
+    !status.generationBlock
   const triggerState: ResearchVideoTriggerState = {
     label: !statusLoaded
       ? t('Loading…')
@@ -435,7 +435,7 @@ export function ResearchVideoButton({
               status.canResume ||
               status.result ||
               model?.availability === 'ready' ||
-              canRetryPreparation) && (
+              canPrepareGeneration) && (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
@@ -451,7 +451,7 @@ export function ResearchVideoButton({
                       {t('Run in background')}
                     </Button>
                   </>
-                ) : canRetryPreparation ? (
+                ) : canPrepareGeneration ? (
                   <Button
                     className="ml-auto"
                     size="sm"
@@ -459,7 +459,7 @@ export function ResearchVideoButton({
                     onClick={() => void generate()}
                   >
                     {pending && <Loader2 className="animate-spin" aria-hidden="true" />}
-                    {t('Try again')}
+                    {failure || preflight ? t('Try again') : t('Generate research film')}
                   </Button>
                 ) : confirmDeletion ? (
                   <div
