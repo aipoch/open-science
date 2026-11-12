@@ -1276,6 +1276,72 @@ describe('task CLI', () => {
     )
   })
 
+  describe.each([
+    { label: '255-byte ASCII', filename: 'a'.repeat(252) + '.md', bytes: 255 },
+    { label: '254-byte Unicode', filename: '文'.repeat(8) + 'a'.repeat(227) + '.md', bytes: 254 }
+  ])('artifact downloads with $label filenames', ({ filename, bytes }) => {
+    it.each([false, true])('downloads successfully (existing=%s)', async (existing) => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+      const output = join(directory, filename)
+      try {
+        expect(Buffer.byteLength(filename, 'utf8')).toBe(bytes)
+        if (existing) await writeFile(output, 'existing report')
+        const client = {
+          downloadArtifact: vi.fn().mockResolvedValue(new Response('downloaded report'))
+        }
+
+        await runTaskCommand(
+          parseCliArgs(['artifacts', 'download', 'artifact-1', '--output', output, '--json']),
+          { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+        )
+
+        expect(await readFile(output, 'utf8')).toBe('downloaded report')
+        expect(await readdir(directory)).toEqual([filename])
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
+    it.each([false, true])(
+      'preserves the destination and removes partial files on stream failure (existing=%s)',
+      async (existing) => {
+        const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
+        const output = join(directory, filename)
+        try {
+          if (existing) await writeFile(output, 'existing report')
+          const failure = new Error('download interrupted')
+          let pullCount = 0
+          const response = new Response(
+            new ReadableStream({
+              async pull(controller) {
+                if (pullCount++ === 0) {
+                  controller.enqueue(new TextEncoder().encode('partial replacement'))
+                } else {
+                  await new Promise((resolveDelay) => setTimeout(resolveDelay, 20))
+                  controller.error(failure)
+                }
+              }
+            })
+          )
+          const client = { downloadArtifact: vi.fn().mockResolvedValue(response) }
+
+          await expect(
+            runTaskCommand(
+              parseCliArgs(['artifacts', 'download', 'artifact-1', '--output', output, '--json']),
+              { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+            )
+          ).rejects.toBe(failure)
+
+          if (existing) expect(await readFile(output, 'utf8')).toBe('existing report')
+          else await expect(stat(output)).rejects.toMatchObject({ code: 'ENOENT' })
+          expect(await readdir(directory)).toEqual(existing ? [filename] : [])
+        } finally {
+          await rm(directory, { recursive: true, force: true })
+        }
+      }
+    )
+  })
+
   it('preserves an existing artifact output when the download stream fails', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
     const output = join(directory, 'report.md')

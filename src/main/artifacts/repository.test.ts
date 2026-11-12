@@ -53,6 +53,184 @@ afterEach(async () => {
 })
 
 describe('artifact repository', () => {
+  it.each([250, 251])(
+    'keeps metadata names bounded for a %i-character filename',
+    async (length) => {
+      const root = await createStorageRoot()
+      const repository = new ArtifactRepository(root)
+      const filename = 'a'.repeat(length - 4) + '.txt'
+      const artifact = await repository.writePendingFile({
+        projectId: 'p',
+        sessionId: 's',
+        runId: 'r',
+        filename,
+        mimeType: 'text/plain',
+        source: createInlineSource('boundary')
+      })
+      const entries = await readdir(join(dirname(artifact.path), '.metadata'))
+      expect(entries).toEqual([
+        length === 250 ? filename + '.json' : `%sha256-${sha256(filename)}.json`
+      ])
+    }
+  )
+
+  it('reads pre-existing long encoded sidecars without migration', async () => {
+    const root = await createStorageRoot()
+    const filename = '非小细胞肺癌免疫治疗耐药与肿瘤相关巨噬细胞_综述.md'
+    const directory = join(root, 'artifacts', 'p', 's', 'm')
+    await mkdir(join(directory, '.metadata'), { recursive: true })
+    await writeFile(join(directory, filename), 'legacy')
+    await writeFile(
+      join(directory, '.metadata', `${encodeURIComponent(filename)}.json`),
+      JSON.stringify({
+        mimeType: 'text/markdown',
+        artifactId: 'a',
+        versionId: 'v',
+        versionNumber: 1
+      })
+    )
+    await expect(
+      new ArtifactRepository(root).listMessageFiles({
+        projectId: 'p',
+        sessionId: 's',
+        messageId: 'm'
+      })
+    ).resolves.toMatchObject([
+      { name: filename, artifactId: 'a', versionId: 'v', mimeType: 'text/markdown' }
+    ])
+  })
+
+  it('keeps distinct long names and literal hash-looking names independent', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const first = '研'.repeat(70) + '.md'
+    const names = [first, '研'.repeat(69) + '究.md', `%sha256-${sha256(first)}`]
+    for (const [index, filename] of names.entries()) {
+      await repository.writePendingFile({
+        projectId: 'p',
+        sessionId: 's',
+        runId: 'r',
+        filename,
+        mimeType: 'text/plain',
+        source: createInlineSource(String(index))
+      })
+    }
+    const files = await repository.listPendingRunFiles({
+      projectId: 'p',
+      sessionId: 's',
+      runId: 'r'
+    })
+    expect(files).toHaveLength(3)
+    for (const file of files)
+      expect(await readFile(file.path, 'utf8')).toBe(String(names.indexOf(file.name)))
+    expect(await readdir(join(dirname(files[0].path), '.metadata'))).toHaveLength(3)
+  })
+
+  it.each([false, true])(
+    'restores long filenames when routing bytes (replace: %s)',
+    async (replace) => {
+      const root = await createStorageRoot()
+      const repository = new ArtifactRepository(root)
+      const filename = 'a'.repeat(252) + '.md'
+      const sourcePath = join(root, 'source.md')
+      await writeFile(sourcePath, 'verified bytes')
+      const directory = join(root, 'artifacts', 'p', 's', '.pending', 'r')
+      await mkdir(directory, { recursive: true })
+      if (replace) await writeFile(join(directory, filename), 'unrouted bytes')
+      const request = {
+        projectId: 'p',
+        sessionId: 's',
+        runId: 'r',
+        filename,
+        sourcePath,
+        replaceUnroutedBytes: replace,
+        routing: {
+          artifactId: 'a',
+          versionId: 'v',
+          versionNumber: 1,
+          artifactRunId: 'r',
+          checksum: sha256('verified bytes'),
+          mimeType: 'text/markdown'
+        }
+      }
+      await expect(
+        repository.ensurePendingVersionRouting({
+          ...request,
+          routing: { ...request.routing, checksum: sha256('wrong bytes') }
+        })
+      ).rejects.toThrow('checksum mismatch')
+      if (replace)
+        await expect(readFile(join(directory, filename), 'utf8')).resolves.toBe('unrouted bytes')
+      else await expect(stat(join(directory, filename))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect((await readdir(directory)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      await repository.ensurePendingVersionRouting(request)
+      await expect(readFile(join(directory, filename), 'utf8')).resolves.toBe('verified bytes')
+      await expect(
+        new ArtifactRepository(root).findPendingVersionRouting({
+          projectId: 'p',
+          artifactId: 'a',
+          versionId: 'v'
+        })
+      ).resolves.toMatchObject({ filename, checksum: request.routing.checksum })
+    }
+  )
+
+  it.each([
+    '非小细胞肺癌免疫治疗耐药与肿瘤相关巨噬细胞_综述.md',
+    '研'.repeat(70) + '.md',
+    'a'.repeat(252) + '.md'
+  ])(
+    'publishes, replaces and rolls back a filesystem-valid long filename: %s',
+    async (filename) => {
+      const root = await createStorageRoot()
+      const repository = new ArtifactRepository(root)
+      const request = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename,
+        mimeType: 'text/markdown'
+      }
+      const first = await repository.writePendingFile({
+        ...request,
+        source: createInlineSource('original')
+      })
+      await repository.writePendingFile({ ...request, source: createInlineSource('replacement') })
+      await expect(
+        repository.withPendingFileTransaction(
+          { ...request, mimeType: 'text/plain', source: createInlineSource('rejected') },
+          {},
+          async () => {
+            throw new Error('reject publication')
+          }
+        )
+      ).rejects.toThrow('reject publication')
+      await expect(readFile(first.path, 'utf8')).resolves.toBe('replacement')
+      await expect(repository.listPendingRunFiles(request)).resolves.toMatchObject([
+        { name: filename, mimeType: 'text/markdown' }
+      ])
+      const [finalized] = await repository.finalizeRunArtifacts({
+        projectId: request.projectId,
+        sourceSessionId: request.sessionId,
+        sessionId: request.sessionId,
+        runId: request.runId,
+        messageId: 'message-1'
+      })
+      expect(finalized.name).toBe(filename)
+      await expect(readFile(finalized.path, 'utf8')).resolves.toBe('replacement')
+      await expect(
+        new ArtifactRepository(root).listMessageFiles({
+          projectId: request.projectId,
+          sessionId: request.sessionId,
+          messageId: 'message-1'
+        })
+      ).resolves.toMatchObject([{ name: filename, mimeType: 'text/markdown' }])
+      const metadata = await readdir(join(dirname(finalized.path), '.metadata'))
+      expect(metadata).toHaveLength(1)
+      expect(Buffer.byteLength(metadata[0])).toBeLessThanOrEqual(255)
+    }
+  )
+
   it('persists trusted Plan kind metadata beside pending immutable-Version bytes', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
