@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { RUNTIME_LOCK_FILE } from '../../src/main/runtime-ownership'
 import { test as baseTest } from '../fixtures/electron-app'
-import { createProject, openRecentSession, sendPrompt } from './helpers'
+import { createProject, openRecentSession, sendPrompt, sendReviewedPrompt } from './helpers'
 
 const captureLifecycleEvidence = async (
   page: Parameters<typeof sendPrompt>[0],
@@ -49,32 +49,6 @@ const test = baseTest.extend<{ controlledSandbox: void }>({
 test.beforeEach(() => {
   if (controlledWindowsFixtureAvailable) test.setTimeout(180_000)
 })
-
-const sendReviewedPrompt = async (
-  page: Parameters<typeof sendPrompt>[0],
-  prompt: string,
-  reply: string,
-  commands: string[],
-  timeout: number
-): Promise<void> => {
-  await Promise.all([
-    sendPrompt(page, prompt, reply, timeout),
-    (async () => {
-      const review = page.getByRole('group', {
-        name: 'Permission request: Review potentially destructive code',
-        exact: true
-      })
-      let previousCode: string | undefined
-      for (const command of commands) {
-        await expect(review).toContainText(command)
-        const code = review.getByTestId('tool-code-block')
-        if (previousCode) await expect(code).not.toHaveText(previousCode)
-        previousCode = await code.innerText()
-        await review.getByRole('button', { name: 'Allow', exact: true }).click()
-      }
-    })()
-  ])
-}
 
 test('executes Windows REPL cells and recovers Shell after an interpreter exit', async ({
   app

@@ -82,4 +82,30 @@ const openProjectSession = async (
   await session.click()
 }
 
-export { createProject, openProjectSession, openRecentSession, sendPrompt }
+const sendReviewedPrompt = async (
+  page: Parameters<typeof sendPrompt>[0],
+  prompt: string,
+  reply: string,
+  commands: string[],
+  timeout: number
+): Promise<void> => {
+  await Promise.all([
+    sendPrompt(page, prompt, reply, timeout),
+    (async () => {
+      const review = page.getByRole('group', {
+        name: 'Permission request: Review potentially destructive code',
+        exact: true
+      })
+      let previousCode: string | undefined
+      for (const command of commands) {
+        await expect(review).toContainText(command)
+        const code = review.getByTestId('tool-code-block')
+        if (previousCode) await expect(code).not.toHaveText(previousCode)
+        previousCode = await code.innerText()
+        await review.getByRole('button', { name: 'Allow', exact: true }).click()
+      }
+    })()
+  ])
+}
+
+export { createProject, openProjectSession, openRecentSession, sendPrompt, sendReviewedPrompt }
