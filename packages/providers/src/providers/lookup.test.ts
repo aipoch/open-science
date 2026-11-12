@@ -126,6 +126,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
     expect(isOfficialVendorId('nvidia')).toBe(true)
     expect(isOfficialVendorId('requesty')).toBe(true)
+    expect(isOfficialVendorId('atlascloud')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -794,6 +795,25 @@ describe('provider registry', () => {
       values: ['none', 'low', 'medium', 'high', 'xhigh']
     })
     expect(getVendorModelReasoningCapability('requesty', 'anthropic/claude-haiku-4-5')).toEqual({
+      supported: false
+    })
+  })
+
+  it('routes Atlas Cloud through both APIs after Requesty with a curated catalog', () => {
+    const requestyIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'requesty')
+
+    expect(OFFICIAL_VENDORS[requestyIndex + 1]?.id).toBe('atlascloud')
+    expect(resolveVendorApiEndpoints('atlascloud')).toEqual(['messages', 'chat-completions'])
+    expect(resolveVendorBaseUrl('atlascloud')).toBe('https://api.atlascloud.ai')
+    expect(resolveVendorChatCompletionsBaseUrl('atlascloud')).toBe('https://api.atlascloud.ai/v1')
+    expect(resolveVendorApiKeyUrl('atlascloud')).toBe('https://console.atlascloud.ai/api-keys')
+    expect(resolveVendorModelsUrl('atlascloud')).toBeUndefined()
+    expect(usesVendorMessagesApiKeyHeader('atlascloud')).toBe(false)
+
+    expect(getVendorModelContextWindow('atlascloud', 'zai-org/glm-5.3')).toBe(1_048_576)
+    expect(isVendorModelMultimodal('atlascloud', 'qwen/qwen3.8-max')).toBe(true)
+    expect(isVendorModelMultimodal('atlascloud', 'zai-org/glm-5.3')).toBe(false)
+    expect(getVendorModelReasoningCapability('atlascloud', 'zai-org/glm-5.3')).toEqual({
       supported: false
     })
   })

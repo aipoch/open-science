@@ -1907,6 +1907,71 @@ const definitions: readonly OfficialVendor[] = [
         'xai/grok-4.6'
       ]
     }
+  },
+  // Atlas Cloud is another multi-vendor gateway, so it follows Requesty at the end of the picker.
+  {
+    id: 'atlascloud',
+    label: 'Atlas Cloud',
+    // Only effort values every routed model accepts are safe, and the gateway does not publish a
+    // per-model effort matrix, so reasoning effort stays off until it can be declared exactly.
+    reasoningEffort: { supported: false },
+    // Anthropic /v1/messages at the API root and the OpenAI-compatible /v1/chat/completions under
+    // `/v1`. The live catalog mixes chat, image, OCR, and routing variants, so ship a short curated
+    // set (no modelsListUrl) instead of a refresh that would flood the picker.
+    apiEndpoints: ['messages', 'chat-completions'],
+    baseUrl: 'https://api.atlascloud.ai',
+    chatCompletionsBaseUrl: 'https://api.atlascloud.ai/v1',
+    apiKeyUrl: 'https://console.atlascloud.ai/api-keys',
+    // Ids, context windows, output limits, and vision from https://api.atlascloud.ai/v1/models
+    // (2026-11-12).
+    models: [
+      {
+        id: 'deepseek-ai/deepseek-v4.1-flash',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: false }
+      },
+      {
+        id: 'moonshotai/kimi-k3.1-pro',
+        contextWindow: 1_048_576,
+        reasoningEffort: { supported: false }
+      },
+      {
+        id: 'zai-org/glm-5.3',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        reasoningEffort: { supported: false }
+      },
+      {
+        id: 'qwen/qwen3.8-max',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 131_072,
+        reasoningEffort: { supported: false }
+      },
+      {
+        id: 'minimaxai/minimax-m3.1-flash',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 524_288,
+        reasoningEffort: { supported: false }
+      },
+      {
+        id: 'anthropic/claude-sonnet-5',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
+        reasoningEffort: { supported: false }
+      }
+    ],
+    // Curated like OpenRouter, so vision support is an explicit id list; unlisted ids stay text-only
+    // (glm-5.3 is text-only in the live catalog).
+    multimodal: {
+      multimodalModels: [
+        'deepseek-ai/deepseek-v4.1-flash',
+        'moonshotai/kimi-k3.1-pro',
+        'qwen/qwen3.8-max',
+        'minimaxai/minimax-m3.1-flash',
+        'anthropic/claude-sonnet-5'
+      ]
+    }
   }
 ]
 
