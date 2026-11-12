@@ -204,6 +204,27 @@ describe('Session background activity ledger', () => {
     expect(jobsCancel).toHaveBeenCalledTimes(2)
   })
 
+  it('leaves an unconfirmed SSH cancellation openable without a live timer or cancel action', async () => {
+    const container = await renderLedger(
+      baseProps({
+        jobs: [
+          job({
+            execution_mode: 'direct_ssh',
+            status: 'submitted',
+            started_at: undefined,
+            cancellation_status: 'failed',
+            cancellation_error: { code: 'cancel_confirmation_failed', message: 'No handle' }
+          })
+        ]
+      })
+    )
+    expect(container.textContent).toContain('Unable to confirm cancellation')
+    expect(container.textContent).toContain('—')
+    expect(container.querySelector('.animate-spin')).toBeNull()
+    expect(buttonByText(container, 'Cancel')).toBeUndefined()
+    expect(buttonByText(container, 'Open')).toBeDefined()
+  })
+
   it('keeps a terminal Compute Job openable without an extra status group', async () => {
     const openComputeJob = vi.fn()
     const terminalJob = job({ status: 'success', finished_at: Date.now() })

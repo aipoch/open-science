@@ -1719,6 +1719,121 @@ describe('JobPoller', () => {
     expect(harvestFn).toHaveBeenCalledOnce()
   })
 
+  it.each(['before-probe', 'during-probe'] as const)(
+    'does not resume timeout handling when cancellation fails %s',
+    async (failureTiming) => {
+      const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
+      let current = job
+      const stopTracking = (): void => {
+        current = {
+          ...job,
+          cancellation_status: 'failed',
+          cancellation_error: { code: 'cancel_confirmation_failed', message: 'Unconfirmed' }
+        }
+      }
+      let probeStarted!: () => void
+      const probing = new Promise<void>((resolve) => {
+        probeStarted = resolve
+      })
+      let releaseProbe!: () => void
+      const pendingProbe = new Promise<void>((resolve) => {
+        releaseProbe = resolve
+      })
+      const updateIfStatus = vi.fn()
+      const run = vi.fn(async (_target, command: string) => {
+        if (command.includes(`${NONCE}JOB_START:`)) {
+          if (failureTiming === 'before-probe') stopTracking()
+          return {
+            exitCode: 0,
+            stdout: withNonce([
+              'JOB_START:job-1',
+              'alive:1',
+              '',
+              '',
+              'STDOUT_END:job-1',
+              '',
+              'STDERR_END:job-1'
+            ]),
+            stderr: '',
+            truncated: false,
+            timedOut: false
+          }
+        }
+        probeStarted()
+        await pendingProbe
+        return { exitCode: 0, stdout: 'owned', stderr: '', truncated: false, timedOut: false }
+      })
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner({ run }),
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {
+          findNonTerminal: async () => [job],
+          get: async () => current,
+          updateIfStatus
+        } as unknown as ComputeJobRepository,
+        makeNonce: () => NONCE
+      })
+      const tick = poller.tick()
+      if (failureTiming === 'during-probe') {
+        await probing
+        stopTracking()
+        releaseProbe()
+      }
+      await tick
+
+      expect(run).toHaveBeenCalledTimes(failureTiming === 'during-probe' ? 2 : 1)
+      expect(run.mock.calls.some(([, command]) => command.includes('kill_job_pid 1234'))).toBe(
+        false
+      )
+      expect(updateIfStatus).not.toHaveBeenCalled()
+      expect(current.status).toBe('running')
+      expect(current.cancellation_status).toBe('failed')
+    }
+  )
+
+  it.each(['cancellation-failed', 'receipt-changed'] as const)(
+    'does not clean a legacy workdir when %s during receipt recovery',
+    async (change) => {
+      const job = makeJob({
+        status: 'submitted',
+        remote_handle: undefined,
+        remote_workdir: undefined
+      })
+      let current = job
+      const updateIfStatus = vi.fn()
+      const run = vi.fn(async () => {
+        current =
+          change === 'cancellation-failed'
+            ? {
+                ...job,
+                cancellation_status: 'failed',
+                cancellation_error: { code: 'cancel_confirmation_failed', message: 'Unconfirmed' }
+              }
+            : {
+                ...job,
+                remote_handle: makeJob().remote_handle,
+                remote_workdir: makeJob().remote_workdir
+              }
+        return { exitCode: 2, stdout: '', stderr: '', truncated: false, timedOut: false }
+      })
+      await new JobPoller({
+        connectionBroker: brokerFromRunner({ run }),
+        hostRepository: {
+          get: async () => ({ ...sampleHost(), scratchRoot: '/scratch/legacy' }),
+          updateConcurrencyLimit: async () => undefined
+        } satisfies ComputeHostRepository,
+        jobRepository: {
+          findNonTerminal: async () => [job],
+          get: async () => current,
+          updateIfStatus
+        } as unknown as ComputeJobRepository
+      }).tick()
+
+      expect(run).toHaveBeenCalledOnce()
+      expect(updateIfStatus).not.toHaveBeenCalled()
+    }
+  )
+
   it('does not kill when a fresh state check sees an already-terminal row', async () => {
     const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
     const updateIfStatus = vi.fn()

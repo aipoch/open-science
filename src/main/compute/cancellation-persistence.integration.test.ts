@@ -1,4 +1,5 @@
 import {
+  ComputeConnectionError,
   createComputeExecution,
   createJobCancellation,
   createJobLifecycle,
@@ -285,6 +286,293 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
       }
     }
   )
+
+  it('ends an exhausted direct SSH cancellation after restart and gives a manual retry a fresh budget', async () => {
+    const { client, jobs, operations, createJob } = await setup()
+    await createJob('submitted')
+    const cancellation = createJobCancellation(operations, jobs)
+    await cancellation.request('job-1', scope)
+    await client.computeJobOperation.update({
+      where: { jobId_kind: { jobId: 'job-1', kind: 'cancel' } },
+      data: { attemptCount: 10804 }
+    })
+    const run = vi
+      .fn<ComputeConnectionLease['run']>()
+      .mockResolvedValue(
+        success('OPEN_SCIENCE_DISPATCH_RECOVERY_V1\nworkdir:1\nexit_code:\npid:\ncwd_match:0')
+      )
+    const onFailed = vi.fn()
+    const reaper = createComputeExecution().createCancellationReaper(
+      operations,
+      jobs,
+      { acquire: async () => ({ run }) as unknown as ComputeConnectionLease },
+      { onFailed, retryDelayMs: () => 0 }
+    )
+    await reaper.runOnce()
+    await expect(cancellation.status('job-1', scope)).resolves.toMatchObject({
+      status: 'submitted',
+      result_final: false,
+      cancellation: { status: 'failed', error: { code: 'cancel_confirmation_failed' } }
+    })
+    expect(onFailed).toHaveBeenCalledOnce()
+    const restartedJobs = new ComputeJobRepository(() => Promise.resolve(client))
+    expect(await restartedJobs.findNonTerminal()).toEqual([])
+    expect(await restartedJobs.findNonTerminalByProvider(scope.providerId)).toEqual([])
+    expect((await restartedJobs.findBySession(scope.sessionId)).map((job) => job.job_id)).toEqual([
+      'job-1'
+    ])
+    expect(await reaper.runOnce()).toBe(false)
+    expect(await client.backgroundResultDelivery.count()).toBe(1)
+    expect((await jobs.get('job-1'))?.remote_cleanup_disposition).toBe('pending')
+
+    await cancellation.request('job-1', scope)
+    await reaper.runOnce()
+    await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
+      phase: 'active',
+      attemptCount: 1
+    })
+    run.mockResolvedValue(
+      success('OPEN_SCIENCE_DISPATCH_RECOVERY_V1\nworkdir:1\nexit_code:0\npid:\ncwd_match:0')
+    )
+    await reaper.runOnce()
+    await expect(cancellation.status('job-1', scope)).resolves.toMatchObject({
+      status: 'cancelled'
+    })
+  })
+
+  it.each([
+    'acquire',
+    'missing handle',
+    'recovery probe',
+    'ownership probe',
+    'termination',
+    'unknown ownership',
+    'termination ownership'
+  ] as const)('stops after three direct SSH attempts across restarts: %s', async (stage) => {
+    const { jobs, operations, createJob, client } = await setup()
+    await createJob(
+      stage === 'ownership probe' ||
+        stage === 'termination' ||
+        stage === 'unknown ownership' ||
+        stage === 'termination ownership'
+        ? 'running'
+        : 'submitted'
+    )
+    const cancellation = createJobCancellation(operations, jobs)
+    await cancellation.request('job-1', scope)
+    const run = vi.fn<ComputeConnectionLease['run']>(async (command) => {
+      if (stage === 'missing handle')
+        return success(
+          'OPEN_SCIENCE_DISPATCH_RECOVERY_V1\nworkdir:1\nexit_code:\npid:\ncwd_match:0'
+        )
+      if (
+        (stage === 'termination' || stage === 'termination ownership') &&
+        !command.includes('kill_job_pid')
+      )
+        return success('owned')
+      if (stage === 'unknown ownership') return success('unknown')
+      if (stage === 'termination ownership') return { ...success('ownership-unknown'), exitCode: 2 }
+      if (stage === 'ownership probe') throw new ComputeConnectionError('host_unreachable')
+      return { ...success(''), timedOut: true }
+    })
+    const acquire = vi.fn(async () => {
+      if (stage === 'acquire') throw new ComputeConnectionError('host_unreachable')
+      return { run } as unknown as ComputeConnectionLease
+    })
+    let clock = Date.now()
+    const tickAfterRestart = (): Promise<boolean> =>
+      createComputeExecution()
+        .createCancellationReaper(operations, jobs, { acquire }, { now: () => new Date(clock) })
+        .runOnce()
+    for (const [attempt, delay] of [
+      [1, 2000],
+      [2, 4000]
+    ] as const) {
+      expect(await tickAfterRestart()).toBe(true)
+      expect(await operations.get('job-1', 'cancel')).toMatchObject({
+        phase: 'active',
+        attemptCount: attempt,
+        eligibleAt: new Date(clock + delay)
+      })
+      expect(await tickAfterRestart()).toBe(false)
+      clock += delay
+    }
+    expect(await tickAfterRestart()).toBe(true)
+    expect(await operations.get('job-1', 'cancel')).toMatchObject({
+      phase: 'settled',
+      outcome: 'failed',
+      attemptCount: 3,
+      errorCode: 'cancel_confirmation_failed'
+    })
+    expect(await tickAfterRestart()).toBe(false)
+    expect(acquire).toHaveBeenCalledTimes(3)
+    expect(await jobs.findNonTerminal()).toEqual([])
+    expect(await client.backgroundResultDelivery.count()).toBe(1)
+  })
+
+  it('keeps retrying an owned workload whose termination is unconfirmed without a transport failure', async () => {
+    const { jobs, operations, createJob, client } = await setup()
+    await createJob('running')
+    await createJobCancellation(operations, jobs).request('job-1', scope)
+    const run = vi.fn<ComputeConnectionLease['run']>(async (command) =>
+      command.includes('kill_job_pid') ? { ...success(''), exitCode: 2 } : success('owned')
+    )
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await createComputeExecution()
+        .createCancellationReaper(
+          operations,
+          jobs,
+          { acquire: async () => ({ run }) as unknown as ComputeConnectionLease },
+          { retryDelayMs: () => 0 }
+        )
+        .runOnce()
+      expect(await operations.get('job-1', 'cancel')).toMatchObject({
+        phase: 'active',
+        outcome: null,
+        attemptCount: attempt
+      })
+    }
+    expect(run).toHaveBeenCalledTimes(8)
+    expect(await client.backgroundResultDelivery.count()).toBe(0)
+  })
+
+  it('waits for local dispatch without spending the direct SSH remote-attempt budget', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('submitted')
+    await createJobCancellation(operations, jobs).request('job-1', scope)
+    let clock = Date.now()
+    const acquire = vi.fn(async () => {
+      throw new ComputeConnectionError('host_unreachable')
+    })
+    const execution = createComputeExecution()
+    const releaseDispatch = execution.holdDispatch('job-1')
+    const reaper = execution.createCancellationReaper(
+      operations,
+      jobs,
+      { acquire },
+      { now: () => new Date(clock) }
+    )
+    for (let wait = 0; wait < 4; wait++) {
+      expect(await reaper.runOnce()).toBe(true)
+      expect(await operations.get('job-1', 'cancel')).toMatchObject({
+        phase: 'active',
+        attemptCount: 0,
+        eligibleAt: new Date(clock + 2000)
+      })
+      expect(await reaper.runOnce()).toBe(false)
+      clock += 2000
+    }
+    expect(acquire).not.toHaveBeenCalled()
+    releaseDispatch()
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      expect(await reaper.runOnce()).toBe(true)
+      expect(await operations.get('job-1', 'cancel')).toMatchObject({
+        phase: attempt === 3 ? 'settled' : 'active',
+        attemptCount: attempt
+      })
+      clock += attempt * 2000
+    }
+    expect(acquire).toHaveBeenCalledTimes(3)
+    expect(await reaper.runOnce()).toBe(false)
+  })
+
+  it('recovers a deferred claim after a crash and fences attempts with the lease revision', async () => {
+    const { client, jobs, operations, createJob } = await setup()
+    await createJob('running')
+    await createJobCancellation(operations, jobs).request('job-1', scope)
+    const start = new Date('2026-01-01T00:00:00.000Z')
+    const claim = await operations.claimNext('cancel', start, 1000, 'crashed-local-wait', {
+      deferDirectSshAttempt: true
+    })
+    expect(claim?.operation.attemptCount).toBe(0)
+    expect(await operations.beginAttempt(claim!, new Date(start.getTime() + 1000))).toBeNull()
+    // Use the same persisted database with a new repository to model process restart.
+    const restarted = new ComputeJobOperationRepository(async () => client)
+    const resumedAt = new Date(start.getTime() + 2000)
+    const current = await restarted.claimNext('cancel', resumedAt, 1000, 'restarted-owner', {
+      deferDirectSshAttempt: true
+    })
+    expect(current?.operation.attemptCount).toBe(0)
+    expect(await operations.beginAttempt(claim!, resumedAt)).toBeNull()
+    const firstAttempt = await restarted.beginAttempt(current!, resumedAt)
+    expect(firstAttempt?.operation.attemptCount).toBe(1)
+    expect(await restarted.beginAttempt(current!, resumedAt)).toBeNull()
+    expect(await operations.retry(claim!, resumedAt, resumedAt)).toBe(false)
+    // A crash after remote work was admitted conservatively retains its spent attempt.
+    const nextAt = new Date(start.getTime() + 4000)
+    const reclaimed = await restarted.claimNext('cancel', nextAt, 1000, 'second-restart', {
+      deferDirectSshAttempt: true
+    })
+    expect(reclaimed?.operation.attemptCount).toBe(1)
+    expect(await restarted.beginAttempt(firstAttempt!, nextAt)).toBeNull()
+    expect((await restarted.beginAttempt(reclaimed!, nextAt))?.operation.attemptCount).toBe(2)
+  })
+
+  it('serves a newer host cancellation despite several old dispatch waits becoming due again', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('submitted')
+    const start = Date.now()
+    await operations.request('job-1', 'cancel', scope, new Date(start))
+    for (let index = 2; index <= 4; index++) {
+      const id = `job-${index}`
+      const providerId = `ssh:${id}`
+      await jobs.create({
+        id,
+        providerId,
+        shape: 'direct_ssh',
+        sessionId: scope.sessionId,
+        projectId: scope.projectId,
+        intent: 'cancel on another host',
+        command: 'sleep 100',
+        commandHash: 'hash',
+        executionMode: 'direct_ssh',
+        remoteWorkdir: `~/.openscience/jobs/${id}`,
+        initialStatus: index === 4 ? 'running' : 'submitted',
+        allowUnencryptedPersistence: true
+      })
+      if (index === 4) await jobs.update(id, { remoteHandle: remoteHandle.replaceAll('job-1', id) })
+      await operations.request(id, 'cancel', { ...scope, providerId }, new Date(start + index))
+    }
+    const execution = createComputeExecution()
+    const release = [1, 2, 3].map((index) => execution.holdDispatch(`job-${index}`))
+    let clock = start + 10_000
+    const acquire = vi.fn(
+      async () =>
+        ({
+          run: async () => success('absent')
+        }) as unknown as ComputeConnectionLease
+    )
+    const reaper = execution.createCancellationReaper(
+      operations,
+      jobs,
+      { acquire },
+      {
+        now: () => new Date(clock)
+      }
+    )
+    try {
+      // By tick four the first two waits are eligible again. They must rotate behind the
+      // untouched fourth operation instead of winning again solely because they were created first.
+      for (let tick = 0; tick < 4; tick++) {
+        expect(await reaper.runOnce()).toBe(true)
+        clock += 1000
+      }
+      expect(acquire).toHaveBeenCalledExactlyOnceWith('ssh:job-4', { intent: 'job_cleanup' })
+      expect(await operations.get('job-4', 'cancel')).toMatchObject({
+        phase: 'settled',
+        outcome: 'fulfilled',
+        attemptCount: 1
+      })
+      for (let index = 1; index <= 3; index++) {
+        expect(await operations.get(`job-${index}`, 'cancel')).toMatchObject({
+          phase: 'active',
+          attemptCount: 0
+        })
+      }
+    } finally {
+      release.forEach((finish) => finish())
+    }
+  })
 
   it('still confirms a missing workdir without an uncertain-launch witness', async () => {
     const { jobs, operations, createJob } = await setup()

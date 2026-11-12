@@ -7646,6 +7646,7 @@
     "Not scheduled": "未安排",
     "Unable to confirm cancellation": "无法确认取消结果",
     "Cancellation failed": "取消失败",
+    "The remote job may still be running.": "远程任务可能仍在运行。",
     "The cancellation attempt ended. The job is still being tracked.": "本次取消操作已结束。系统仍在跟踪任务。",
     "Unable to get job status": "无法获取任务状态",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "调度器没有此任务的可用结果。远程进程可能仍在运行。请先检查调度器和远程文件，再决定下一步操作。",
