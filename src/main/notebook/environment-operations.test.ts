@@ -505,3 +505,29 @@ describe('NotebookEnvironmentOperations', () => {
     expect(owner.snapshot().diagnostic?.fields.installerLog).toMatchObject({ text: 'installed' })
   })
 })
+
+it('cancels a queued shared SDK inspection without entering its callback', async () => {
+  const { owner } = await createOwner()
+  let release!: () => void
+  let entered!: () => void
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const writer = owner.runMutation('default-python', async () => {
+    entered()
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await ready
+  const controller = new AbortController()
+  const inspect = vi.fn(async () => true)
+  const reader = owner.runShared('inspection', 'default-python', inspect, controller.signal)
+  const rejected = expect(reader).rejects.toBeDefined()
+  controller.abort()
+  await rejected
+  expect(inspect).not.toHaveBeenCalled()
+  release()
+  await writer
+  expect(await owner.runShared('inspection', 'default-python', inspect)).toBe(true)
+})

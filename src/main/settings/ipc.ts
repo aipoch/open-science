@@ -1,4 +1,4 @@
-import { readSourceLinkMetadata } from './source-link-metadata'
+import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
 import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
@@ -60,6 +60,7 @@ import {
   type SetShowNotificationContentRequest,
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
+  type SetPromptOptimizationModelRequest,
   type SetReviewerModelRequest,
   type SetSessionDetailsModelRequest,
   type SetSubagentModelRequest,
@@ -235,6 +236,13 @@ const registerSettingsIpcHandlers = ({
     return snapshotCommits.currentSnapshotAfter(service.setReviewerModel(configuration))
   })
   ipcMainHandle(
+    'settings:set-prompt-optimization-model',
+    async (_event, request: SetPromptOptimizationModelRequest) =>
+      snapshotCommits.currentSnapshotAfter(
+        service.setPromptOptimizationModel(readSubagentModel(request))
+      )
+  )
+  ipcMainHandle(
     'settings:set-session-details-model',
     async (_event, request: SetSessionDetailsModelRequest) => {
       const configuration = readSessionDetailsModel(request)
@@ -368,9 +376,10 @@ const registerSettingsIpcHandlers = ({
     (_event, request: PrivateDestinationRequest) =>
       service.reviewNotebookPrivateDestination(request)
   )
-  ipcMainHandle('settings:get-source-link-metadata', async (_event, url: string) =>
-    readSourceLinkMetadata(url, await service.getNotebookNetwork())
+  ipcMainHandle('settings:get-source-link-metadata', (_event, url: string) =>
+    readSourceLinkMetadata(url)
   )
+  ipcMainHandle('settings:get-source-link-image', (_event, url: string) => readSourceLinkImage(url))
   ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
   ipcMainHandle('settings:get-wsl2-bash-preview-status', () => service.getWsl2BashPreviewStatus())
   ipcMainHandle('settings:get-wsl-setup-status', () => service.getWslSetupStatus())

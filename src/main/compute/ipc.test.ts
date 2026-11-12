@@ -2832,6 +2832,8 @@ describe('installComputeIpcHandlers', () => {
       'compute:create-password',
       'compute:reset-password',
       'compute:change-authentication',
+      'compute:python-runtime:get',
+      'compute:python-runtime:select',
       'compute:password-capability',
       'compute:delete',
       'compute:deletion-status',

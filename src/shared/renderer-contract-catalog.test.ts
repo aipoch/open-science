@@ -306,12 +306,17 @@ describe('renderer contract catalog', () => {
     ).toEqual([
       'specialist.abortPackageUpload',
       'specialist.beginPackageUpload',
+      'specialist.cancelMarketplaceCandidate',
       'specialist.cancelPackage',
+      'specialist.delete',
       'specialist.getMarketplaceRelease',
+      'specialist.installMarketplace',
       'specialist.installPackage',
       'specialist.list',
       'specialist.listMarketplace',
       'specialist.onCatalogChanged',
+      'specialist.prepareMarketplaceInstall',
+      'specialist.previewDelete',
       'specialist.previewPackageUpload',
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',
@@ -340,7 +345,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(58)
+    expect(compute).toHaveLength(60)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -357,12 +362,14 @@ describe('renderer contract catalog', () => {
       'compute.createRayTarget',
       'compute.disconnectAccount',
       'compute.download',
+      'compute.getComputePythonRuntime',
       'compute.jobsSetRemoteCleanup',
       'compute.listRayTokens',
       'compute.passwordCapability',
       'compute.removeRayToken',
       'compute.resetPassword',
       'compute.revealInFolder',
+      'compute.selectComputePythonRuntime',
       'compute.setRayToken',
       'compute.updateTarget',
       'compute.useLocalAccount',
@@ -579,11 +586,14 @@ describe('renderer contract catalog', () => {
       'pdfStructure.parse',
       'pdfStructure.readCached',
       'pdfStructure.readThumbnail',
+      'projects.cancelPromptOptimization',
       'projects.create',
       'projects.delete',
       'projects.get',
       'projects.list',
       'projects.listDeletionCleanup',
+      'projects.optimizePrompt',
+      'projects.recordOptimizationEvent',
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
@@ -683,11 +693,14 @@ describe('renderer contract catalog', () => {
       'pdf-structure:parse',
       'pdf-structure:read-cached',
       'pdf-structure:read-thumbnail',
+      'projects:cancel-prompt-optimization',
       'projects:create',
       'projects:delete',
       'projects:get',
       'projects:list',
       'projects:list-deletion-cleanup',
+      'projects:optimize-prompt',
+      'projects:record-optimization-event',
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',

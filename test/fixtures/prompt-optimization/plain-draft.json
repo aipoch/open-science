@@ -1,0 +1,4 @@
+{
+  "input": "Create a two-step plan for a sample classroom experiment.\n\n1. List the materials and observations.\n2. Compare the observations and summarize the results.\n\nInclude an output and a completion check for each step. Wait for review before starting.",
+  "optimized": "Create a two-step plan for a sample classroom experiment, covering materials, observations, outputs, completion checks, and review before execution."
+}

@@ -3965,6 +3965,89 @@ function nativeCompleteStructureSourceConflict(table, inventory, rules, context)
   }
 }
 
+// Late native header/crop repairs can leave clipping diagnostics from an
+// earlier detector box. Retire only a complete, uniquely owned native font,
+// or a separate printed caption beyond the final native closing rule.
+function reconcileFinalNativeClipping(table, inventory, rules) {
+  if (!table.clipped?.length || !rect(table.cropRect) || !table.cells?.length) return table
+  const inside = (a, b) => b.every((v, n) => (n < 2 ? v >= a[n] - 0.02 : v <= a[n] + 0.02))
+  const same = (a, b) => a.every((v, n) => Math.abs(v - b[n]) < 0.02)
+  const overlap = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const references = table.cells.flatMap((c) => [
+    ...(c.sourceItems ?? []),
+    ...(c.sourceSegments ?? [])
+  ])
+  const remaining = table.clipped.filter((item) => {
+    if (!rect(item.rect)) return true
+    const fonts = inventory.filter(
+      (f) => f.text === item.text && rect(f.rect) && same(f.rect, item.rect)
+    )
+    if (fonts.length !== 1) return true
+    const f = fonts[0],
+      o = f.sourceItem
+    if (
+      !o ||
+      f.sourceSegment ||
+      !f.horizontal ||
+      !Number.isFinite(f.height) ||
+      f.height <= 0 ||
+      !Number.isSafeInteger(o.pageNumber) ||
+      o.pageNumber < 1 ||
+      !Number.isSafeInteger(o.index) ||
+      o.index < 0 ||
+      o.text !== f.text ||
+      inventory
+        .flatMap((other) => [other.sourceItem, other.sourceSegment])
+        .filter((origin) => origin && key(origin) === key(o)).length !== 1
+    )
+      return true
+    const claimed = references.filter((other) => key(other) === key(o))
+    if (
+      inside(table.cropRect, f.rect) &&
+      claimed.length === 1 &&
+      claimed[0].text === f.text &&
+      table.cells.some(
+        (c) => c.sourceItems?.includes(claimed[0]) && c.sourceRects?.some((r) => same(r, f.rect))
+      )
+    )
+      return false
+    if (
+      overlap(table.cropRect, f.rect) ||
+      claimed.length ||
+      !/^(?:Figure|Fig\.?|Table)\s+\d+[.:]\s/u.test(f.text) ||
+      f.rect[1] <= table.cropRect[3]
+    )
+      return true
+    const sources = table.cells.flatMap((c) => c.sourceRects ?? [])
+    if (!sources.length || sources.some((r) => !rect(r) || !inside(table.cropRect, r))) return true
+    const bottom = Math.max(...sources.map((r) => r[3]))
+    return (
+      !Array.isArray(rules) ||
+      !rules.some(
+        (r) =>
+          rect(r) &&
+          r[1] === r[3] &&
+          r[1] >= bottom &&
+          r[1] <= table.cropRect[3] + 0.02 &&
+          f.rect[1] > r[1] &&
+          Math.abs(r[0] - table.cropRect[0]) < f.height &&
+          Math.abs(r[2] - table.cropRect[2]) < f.height
+      )
+    )
+  })
+  if (remaining.length === table.clipped.length) return table
+  const issues = remaining.length
+    ? [...new Set([...(table.issues ?? []), 'text-crosses-crop-boundary'])]
+    : (table.issues ?? []).filter((i) => i !== 'text-crosses-crop-boundary')
+  return {
+    ...table,
+    clipped: remaining,
+    issues,
+    reviewCandidate: issues.length === 0,
+    repairs: [...(table.repairs ?? []), 'native-final-clipping-reconciled']
+  }
+}
+
 export function reviewFinalNativeTableSources(table, inventory, rules, measuredRuns, context) {
   if (table.parts)
     return {
@@ -3980,16 +4063,22 @@ export function reviewFinalNativeTableSources(table, inventory, rules, measuredR
         if (
           checked.issues === part.issues &&
           checked.cells === part.cells &&
+          checked.clipped === part.clipped &&
+          checked.repairs === part.repairs &&
+          checked.reviewCandidate === part.reviewCandidate &&
           checked.unreliableMathSourceItems === part.unreliableMathSourceItems
         )
           return part
         const next = { ...part, issues: checked.issues, cells: checked.cells }
+        for (const property of ['clipped', 'repairs', 'reviewCandidate'])
+          if (checked[property] !== part[property]) next[property] = checked[property]
         if (checked.unreliableMathSourceItems)
           next.unreliableMathSourceItems = checked.unreliableMathSourceItems
         else delete next.unreliableMathSourceItems
         return next
       })
     }
+  table = reconcileFinalNativeClipping(table, inventory, rules)
   const projectionConflicts = nativeFormattedProjectionConflicts(table, inventory, context),
     fractionWarnings = proveNativeFractionWarning(table, inventory, rules, context)
   const ambiguous =
@@ -4013,7 +4102,9 @@ export function reviewFinalNativeTableSources(table, inventory, rules, measuredR
       nativeHeaderFirstSourceConflict(table, inventory, rules, context) ||
       nativeCompleteStructureSourceConflict(table, inventory, rules, context))
   const mathSources = [
-    ...(ambiguous ? nativeTableUnreliableMathSourceItems(table, inventory, rules, context) : []),
+    ...(ambiguous || table.issues?.includes('native-table-structure-ambiguous')
+      ? nativeTableUnreliableMathSourceItems(table, inventory, rules, context)
+      : []),
     ...projectionConflicts.flatMap((conflict) => conflict.sources),
     ...fractionWarnings.flatMap((conflict) => conflict.sources)
   ]

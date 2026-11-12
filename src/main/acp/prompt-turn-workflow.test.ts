@@ -30,7 +30,7 @@ type Harness = {
     promptMessageIdFor: Mock<AcpPromptTurnWorkflowOptions['artifacts']['promptMessageIdFor']>
     publish: Mock<AcpPromptTurnWorkflowOptions['artifacts']['publish']>
     dispose: Mock<AcpPromptTurnWorkflowOptions['artifacts']['dispose']>
-    publicationCount: Mock<AcpPromptTurnWorkflowOptions['artifacts']['publicationCount']>
+    sealForPublication: Mock<AcpPromptTurnWorkflowOptions['artifacts']['sealForPublication']>
   }
   authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
   context: ContextWindowTurnHandle
@@ -269,7 +269,7 @@ const createHarness = (
     if (input.execute) return input.execute(request)
     request.onAccepted()
     const response: PromptResponse = { stopReason: 'end_turn' }
-    request.captureStop()
+    request.captureStop({ stopReason: 'end_turn' })
     return { kind: 'stopped' as const, response, facts: {} }
   })
   const finalizer: Harness['finalizer'] = vi.fn(async (handles, outcome) => {
@@ -293,7 +293,7 @@ const createHarness = (
     dispose: vi.fn(async () => {
       journal.push('artifact:dispose')
     }),
-    publicationCount: vi.fn(() => 1)
+    sealForPublication: vi.fn(async () => 'ready' as const)
   }
   const permission = { clearCorrelationsForSession: vi.fn() }
   const contextUsage = { reconcileUsed: vi.fn(() => true) }
@@ -489,7 +489,7 @@ describe('Provider suspension for Session Plan review', () => {
             }
           })
         }
-        expect(input.captureStop()).toBe(true)
+        expect(input.captureStop({ stopReason: 'end_turn' })).toBe(true)
         return {
           kind: 'stopped',
           response: { stopReason: calls === 1 ? 'cancelled' : 'end_turn' },
@@ -554,7 +554,7 @@ describe('AcpPromptTurnWorkflow', () => {
         expect(await input.beforeDispatch()).toBe('active')
         await input.session.prompt(input.content)
         await input.onAccepted()
-        input.captureStop()
+        input.captureStop({ stopReason: 'end_turn' })
         return {
           kind: 'stopped',
           response: { stopReason: 'end_turn' },
@@ -810,7 +810,7 @@ describe('AcpPromptTurnWorkflow', () => {
         await expect(input.beforeDispatch()).resolves.toBe('active')
         const response: PromptResponse = { stopReason: 'end_turn' }
         input.onAccepted()
-        input.captureStop()
+        input.captureStop({ stopReason: 'end_turn' })
         return { kind: 'stopped', response, facts: {} }
       }
     })
@@ -847,7 +847,7 @@ describe('AcpPromptTurnWorkflow', () => {
         if (dispatchIndex === 1) await firstDispatch.promise
         const response: PromptResponse = { stopReason: 'end_turn' }
         input.onAccepted()
-        input.captureStop()
+        input.captureStop({ stopReason: 'end_turn' })
         return { kind: 'stopped', response, facts: {} }
       }
     })
@@ -903,7 +903,8 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       undefined,
       { text: request().text, attribution },
-      false
+      false,
+      undefined
     )
     expect(begin.mock.invocationCallOrder[0]).toBeLessThan(
       harness.executor.mock.invocationCallOrder[0]
@@ -928,7 +929,8 @@ describe('AcpPromptTurnWorkflow', () => {
       undefined,
       'message-1',
       undefined,
-      true
+      true,
+      { signal: expect.any(AbortSignal), assertCurrent: expect.any(Function) }
     )
     expect(harness.executor).not.toHaveBeenCalled()
     expect(harness.owner.current('s1')).toBeUndefined()
@@ -974,7 +976,7 @@ describe('AcpPromptTurnWorkflow', () => {
           }
         })
         const response: PromptResponse = { stopReason: 'end_turn' }
-        input.captureStop()
+        input.captureStop({ stopReason: 'end_turn' })
         return { kind: 'stopped', response, facts: {} }
       }
     })
@@ -1571,7 +1573,7 @@ describe('authorization change notices at user prompt admission', () => {
         if (failure) throw new Error('send failed')
         if (changeDuringSend) revision = 'd'
         await input.onAccepted()
-        input.captureStop()
+        input.captureStop({ stopReason: 'end_turn' })
         return { kind: 'stopped', response: { stopReason: 'end_turn' }, facts: {} }
       }
     })

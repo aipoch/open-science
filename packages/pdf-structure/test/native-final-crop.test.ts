@@ -2,9 +2,11 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 
-const { recoverNativeClosingRuleCrop, recoverNativeRightFrameCrop } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
-)
+const {
+  recoverNativeClosingRuleCrop,
+  recoverNativeRightFrameCrop,
+  recoverNativeAssignedFrameCrop
+} = await import(pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href)
 
 const item = (
   text: string,
@@ -156,4 +158,77 @@ it('does not classify a table footnote as following narrative', () => {
       input.clipped
     )
   ).toBeUndefined()
+})
+
+const assignedFrame = (): ReturnType<typeof JSON.parse> => {
+  const grid = [
+    ['Group', 'Value'],
+    ['Alpha', '12'],
+    ['Beta', '34']
+  ]
+  const cells = grid.flatMap((row, r) =>
+    row.map((text, c) => {
+      const token = item(text, [10 + c * 100, 10 + r * 20, c ? 192 : 45, 18 + r * 20])
+      return {
+        row: r,
+        column: c,
+        rowSpan: 1,
+        colSpan: 1,
+        text,
+        sourceRects: [token.rect],
+        sourceTokens: [token]
+      }
+    })
+  )
+  const prose = item(
+    'The following source paragraph remains outside the closed table.',
+    [5, 65, 198, 73]
+  )
+  return {
+    table: {
+      cropRect: [0, 0, 193, 68],
+      grid,
+      cells,
+      issues: ['text-crosses-crop-boundary'],
+      unassigned: [] as string[]
+    },
+    items: [...cells.flatMap((c) => c.sourceTokens), prose],
+    rules: [
+      [3, 5, 200, 5],
+      [3, 24, 200, 24],
+      [3, 62, 200, 62]
+    ],
+    clipped: [prose]
+  }
+}
+
+it('restores an independently closed assigned frame and excludes the separate following paragraph', () => {
+  const f = assignedFrame(),
+    before = structuredClone(f)
+  expect(recoverNativeAssignedFrameCrop(f.table, f.items, f.rules, f.clipped)).toEqual([
+    0, 0, 200.5, 62.5
+  ])
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'competing-frame',
+  'foreign-interior',
+  'large-overhang',
+  'no-closing',
+  'incomplete-source',
+  'mixed-issue',
+  'overlapping-prose',
+  'unassigned'
+])('requires complete native assigned-frame evidence before restoring a crop: %s', (change) => {
+  const f = assignedFrame()
+  if (change === 'competing-frame') f.rules.push([3, 4, 200, 4], [3, 63, 200, 63])
+  if (change === 'foreign-interior') f.items.push(item('Foreign label', [60, 30, 90, 38]))
+  if (change === 'large-overhang') f.table.cropRect[2] = 190
+  if (change === 'no-closing') f.rules.pop()
+  if (change === 'incomplete-source') f.table.cells[0].sourceTokens = []
+  if (change === 'mixed-issue') f.table.issues.push('native-table-structure-ambiguous')
+  if (change === 'overlapping-prose') f.clipped[0].rect[1] = 62
+  if (change === 'unassigned') f.table.unassigned.push('Unresolved label')
+  expect(recoverNativeAssignedFrameCrop(f.table, f.items, f.rules, f.clipped)).toBeUndefined()
 })

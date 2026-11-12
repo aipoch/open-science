@@ -243,6 +243,7 @@ for (const { count, contextLines } of [
     // The isolated macOS 1,000-run long-approval profile takes about 289 seconds.
     // Allow profiling/teardown headroom without relaxing ordinary interaction assertions.
     test.setTimeout(count === 1000 && contextLines > 0 ? 600_000 : 300_000)
+    const viewTimeout = count === 1000 && contextLines > 0 ? 120_000 : 60_000
     let page = await app.completeOnboarding()
     const cwd = await app.createTestDirectory('notebook-review-capacity')
     const projectName = `Notebook capacity ${count}`
@@ -398,7 +399,7 @@ for (const { count, contextLines } of [
         // Keep this profiling wait separate from ordinary interaction budgets and record the time.
         await expect(
           page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-        ).toBeVisible({ timeout: count === 1000 && contextLines > 0 ? 120_000 : 60_000 })
+        ).toBeVisible({ timeout: viewTimeout })
         metrics.firstViewMs = performance.now() - openedAt
         metrics.mountedMessages = await page.locator('[data-message-id]').count()
         expect(metrics.mountedMessages).toBeLessThanOrEqual(160)
@@ -495,7 +496,7 @@ for (const { count, contextLines } of [
         await openProjectSession(page, projectName, session.title)
         await expect(
           page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-        ).toBeVisible()
+        ).toBeVisible({ timeout: viewTimeout })
         metrics.restoredViewMs = performance.now() - restoredAt
         const integrity = await page.evaluate(
           async ({ projectId, id, expectedCode }) => {

@@ -1,3 +1,10 @@
+import { ResourceGroupHeader, ResourceCatalogPending } from '../marketplace/ResourceCenterModeTabs'
+import {
+  ResourceCardBody,
+  ResourceCardFooter,
+  ResourceMarketplaceIdentity
+} from '../marketplace/ResourceMarketplaceIdentity'
+import { ScrollText } from 'lucide-react'
 import type { SkillsView } from '../../lib/settings-navigation'
 import type { TFunction } from 'i18next'
 import { useResourceSelection, useStickyResourceFilters } from './use-resource-selection'
@@ -6,18 +13,16 @@ import {
   ChevronDown,
   Download,
   Info,
-  ChevronRight,
+  Ellipsis,
   MessagesSquare,
   Pencil,
   Plus,
-  Trash2,
-  Store
+  Trash2
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { SkillSource } from '@aipoch/skills/document'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -49,6 +54,12 @@ import {
 } from './specialist-resource-scope'
 import { SkillUsageAgents } from './SkillUsageAgents'
 import { ResourceAssignmentControls } from './ResourceAssignmentControls'
+import {
+  ResourceCatalogHeader,
+  ResourceCatalogFilter,
+  ResourceCatalogToolbar,
+  ResourceCenterModeTabs
+} from '../marketplace/ResourceCenterModeTabs'
 import {
   ResourceCategorySelection,
   ResourceSelectionBar,
@@ -144,22 +155,21 @@ const FILTER_LABEL_KEYS = {
 const SOURCE_GROUPS = [
   {
     source: 'featured',
-    labelKey: 'Featured',
-    subtitleKey: 'Research skills bundled with the app.'
+    labelKey: 'Featured'
   },
   {
     source: 'imported',
-    labelKey: 'Imported',
-    subtitleKey: 'Skills you imported into Open-Science.'
+    labelKey: 'Imported'
   },
   {
     source: 'personal',
-    labelKey: 'Personal',
-    subtitleKey: 'Your custom skills.'
+    labelKey: 'Personal'
   }
-] as const satisfies ReadonlyArray<{ source: SkillSource; labelKey: string; subtitleKey: string }>
+] as const satisfies ReadonlyArray<{ source: SkillSource; labelKey: string }>
 
 type SkillsPanelProps = {
+  marketplaceRevision?: number
+  onMarketplaceChanged?: () => void
   onEditorLeaveStateChange?: (state: SkillEditorLeaveState | null) => void
   onSaved?: () => void
   view: SkillsView
@@ -171,6 +181,8 @@ type SkillsPanelProps = {
 }
 
 const SkillsPanel = ({
+  marketplaceRevision = 0,
+  onMarketplaceChanged,
   view,
   onNavigate,
   onEditorLeaveStateChange,
@@ -292,7 +304,7 @@ const SkillsPanel = ({
     return () => {
       loadRequestRef.current += 1
     }
-  }, [loadSkills])
+  }, [loadSkills, marketplaceRevision])
 
   useEffect(() => {
     void loadSpecialists()
@@ -349,6 +361,51 @@ const SkillsPanel = ({
       return [{ skill, usages, owners }]
     })
   }, [filter, query, skills, specialistFilter, specialistItems, tagAssignments, tagFilter, t])
+  const addAction = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="min-w-36 shrink-0 whitespace-nowrap"
+          data-settings-anchor="skills.add"
+        >
+          <Plus data-icon="inline-start" aria-hidden="true" />
+          {t('Add skill')}
+          <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          className="gap-2.5"
+          disabled={!chatProjectId}
+          onSelect={startChatWithAgent}
+        >
+          <MessagesSquare className="size-4 shrink-0" aria-hidden="true" />
+          <span className="flex flex-col">
+            <span>{t('Chat with agent')}</span>
+            <span className="text-xs text-muted-foreground">
+              {t('Describe it in a new session')}
+            </span>
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
+          <Pencil className="size-4 shrink-0" aria-hidden="true" />
+          <span className="flex flex-col">
+            <span>{t('Write from scratch')}</span>
+            <span className="text-xs text-muted-foreground">{t('Open the skill creator')}</span>
+          </span>
+        </DropdownMenuItem>
+        <SkillImportMenuItems
+          onUploadSkills={() => onNavigate({ kind: 'upload' })}
+          onImportFromGitHub={() => onNavigate({ kind: 'import' })}
+          onImportInstalledSkills={
+            canImportInstalledSkills ? () => onNavigate({ kind: 'import-agent-home' }) : undefined
+          }
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
   if (
     view.kind === 'marketplace' ||
     view.kind === 'marketplace-detail' ||
@@ -356,33 +413,27 @@ const SkillsPanel = ({
   ) {
     return (
       <SkillMarketplace
+        localRevisionKey={marketplaceRevision}
+        onInstallationChanged={onMarketplaceChanged}
         view={view}
+        addAction={addAction}
         onNavigate={onNavigate}
         onImportFromGitHub={() => onNavigate({ kind: 'import' })}
         onManageLocal={(id) => {
           if (id) onNavigate({ kind: 'detail', id })
-          else {
-            setFilter('all')
-            setSpecialistFilter('all')
-            setTagFilter('all')
-            setQuery('')
-            setCollapsed({})
-            onNavigate({ kind: 'list' })
-          }
+          else onNavigate({ kind: 'list' })
         }}
       />
     )
   }
   if (view.kind === 'detail') {
     return (
-      <div>
-        <ResourceTagSummary
-          reference={{ resourceType: 'catalog.skill', resourceId: view.id }}
-          className="px-5 pt-5"
-          onOpenTag={onOpenTag}
-        />
-        <SkillDetailView key={view.id} skillId={view.id} onOpenSpecialist={onOpenSpecialist} />
-      </div>
+      <SkillDetailView
+        key={view.id}
+        skillId={view.id}
+        onOpenSpecialist={onOpenSpecialist}
+        onOpenTag={onOpenTag}
+      />
     )
   }
   if (view.kind === 'create') {
@@ -448,124 +499,103 @@ const SkillsPanel = ({
 
   if (skills.length === 0 && catalogState !== 'ready') {
     return (
-      <div className="p-5">
+      <ResourceCatalogPending title={t('Skills')} icon={ScrollText}>
         <SettingsLoadNotice
           state={catalogState === 'error' ? 'error' : 'loading'}
           loadingLabel={t('Loading Skills…')}
           errorMessage={t('Open-Science could not load Skills.')}
           onRetry={retryCatalog}
         />
-      </div>
+      </ResourceCatalogPending>
     )
   }
 
   return (
     <div ref={panelRef} className="p-5">
-      <div
-        className="mb-4 flex flex-wrap items-center justify-between gap-3"
-        data-slot="skills-header"
-      >
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
-          {t('Installed')}
-          <Badge variant="outline" className="tabular-nums">
-            {skills.filter((skill) => skill.available !== false).length}
-          </Badge>
-        </h3>
-        <div data-slot="skills-action-bar" className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => onNavigate({ kind: 'marketplace' })}>
-            <Store data-icon="inline-start" aria-hidden="true" />
-            {t('Browse Marketplace')}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="shrink-0" data-settings-anchor="skills.add">
-                <Plus data-icon="inline-start" aria-hidden="true" />
-                {t('Add skill')}
-                <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                className="gap-2.5"
-                disabled={!chatProjectId}
-                onSelect={startChatWithAgent}
-              >
-                <MessagesSquare className="size-4 shrink-0" aria-hidden="true" />
-                <span className="flex flex-col">
-                  <span>{t('Chat with agent')}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t('Describe it in a new session')}
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
-                <Pencil className="size-4 shrink-0" aria-hidden="true" />
-                <span className="flex flex-col">
-                  <span>{t('Write from scratch')}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t('Open the skill creator')}
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              <SkillImportMenuItems
-                onUploadSkills={() => onNavigate({ kind: 'upload' })}
-                onImportFromGitHub={() => onNavigate({ kind: 'import' })}
-                onImportInstalledSkills={
-                  canImportInstalledSkills
-                    ? () => onNavigate({ kind: 'import-agent-home' })
-                    : undefined
-                }
+      <ResourceCatalogHeader
+        icon={ScrollText}
+        title={t('Skills')}
+        actions={addAction}
+        toolbar={
+          <ResourceCatalogToolbar
+            onResetFilters={() => {
+              setFilter('all')
+              setSpecialistFilter('all')
+              setTagFilter('all')
+            }}
+            activeFilterCount={
+              Number(filter !== 'all') +
+              Number(specialistFilter !== 'all') +
+              Number(tagFilter !== 'all')
+            }
+            data-slot="skills-filter-bar"
+            search={
+              <SettingsSearchInput
+                aria-label={t('Search skills')}
+                placeholder={t('Search skills…')}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
               />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-      <div
-        ref={filterRef}
-        className="sticky top-0 z-20 -mx-5 mb-2 space-y-2 border-b border-border/60 bg-card px-5 py-3"
-      >
-        <div data-slot="skills-filter-bar" className="flex flex-wrap items-center gap-2">
-          <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
-            <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
-              <span>{t(FILTER_LABEL_KEYS[filter])}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('All')}</SelectItem>
-              <SelectItem value="featured">{t('Featured')}</SelectItem>
-              <SelectItem value="imported">{t('Imported')}</SelectItem>
-              <SelectItem value="personal">{t('Personal')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
-            <SelectTrigger aria-label={t('Filter Skills by agent')} className="w-48">
-              <span>
-                {specialistFilter === 'all'
-                  ? t('All Agents/Specialists')
-                  : specialistFilter === MAIN_AGENT_FILTER
-                    ? t('Main Agent')
-                    : specialistOptions.find((item) => item.id === specialistFilter)?.name}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('All Agents/Specialists')}</SelectItem>
-              <SelectItem value={MAIN_AGENT_FILTER}>{t('Main Agent')}</SelectItem>
-              {specialistOptions.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
-          <SettingsSearchInput
-            containerClassName="basis-full min-w-0"
-            aria-label={t('Search skills')}
-            placeholder={t('Search skills…')}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            }
+          >
+            <ResourceCatalogFilter label={t('Resource source')}>
+              <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
+                <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
+                  <span>{t(FILTER_LABEL_KEYS[filter])}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('All')}</SelectItem>
+                  <SelectItem value="featured">{t('Featured')}</SelectItem>
+                  <SelectItem value="imported">{t('Imported')}</SelectItem>
+                  <SelectItem value="personal">{t('Personal')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </ResourceCatalogFilter>
+            <ResourceCatalogFilter label={t('Used by')}>
+              <Select value={specialistFilter} onValueChange={setSpecialistFilter}>
+                <SelectTrigger aria-label={t('Filter Skills by agent')} className="w-48">
+                  <span>
+                    {specialistFilter === 'all'
+                      ? t('All Agents/Specialists')
+                      : specialistFilter === MAIN_AGENT_FILTER
+                        ? t('Main Agent')
+                        : specialistOptions.find((item) => item.id === specialistFilter)?.name}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('All Agents/Specialists')}</SelectItem>
+                  <SelectItem value={MAIN_AGENT_FILTER}>{t('Main Agent')}</SelectItem>
+                  {specialistOptions.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </ResourceCatalogFilter>
+            <ResourceCatalogFilter label={t('Tags')}>
+              <TagFilter resourceType="catalog.skill" value={tagFilter} onChange={setTagFilter} />
+            </ResourceCatalogFilter>
+          </ResourceCatalogToolbar>
+        }
+        selectionBar={
+          <ResourceSelectionBar
+            selection={selection}
+            visibleIds={visible
+              .filter(({ skill }) => groups.some((group) => group.source === skill.source))
+              .map(({ skill }) => skill.id)}
           />
-        </div>
-      </div>
+        }
+        ref={filterRef}
+      >
+        <ResourceCenterModeTabs
+          value="installed"
+          count={skills.filter((skill) => skill.available !== false).length}
+          onChange={(value) => {
+            if (value === 'marketplace') onNavigate({ kind: 'marketplace' })
+          }}
+        />
+      </ResourceCatalogHeader>
 
       {accessError ? (
         <ErrorNotice
@@ -595,34 +625,27 @@ const SkillsPanel = ({
         data-settings-anchor="skills.manage"
         role="region"
         aria-label={t('Manage skills')}
-        className="flex flex-col gap-4"
+        className="flex flex-col gap-6"
       >
         {groups.map((group) => {
           const rows = visible.filter(({ skill }) => skill.source === group.source)
           const expanded = !collapsed[group.source]
 
           return (
-            <div key={group.source} data-slot="skills-source-group" data-source={group.source}>
-              <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  onClick={() =>
-                    setCollapsed((prev) => ({ ...prev, [group.source]: !prev[group.source] }))
-                  }
-                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-                    {t(group.labelKey)}
-                    <ChevronDown
-                      className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
-                        expanded ? '' : '-rotate-90'
-                      }`}
-                      aria-hidden="true"
-                    />
-                  </span>
-                  <span className="text-xs text-muted-foreground">{t(group.subtitleKey)}</span>
-                </button>
+            <div
+              key={group.source}
+              data-slot="skills-source-group"
+              data-source={group.source}
+              className="space-y-3"
+            >
+              <ResourceGroupHeader
+                label={t(group.labelKey)}
+                count={rows.length}
+                expanded={expanded}
+                onToggle={() =>
+                  setCollapsed((prev) => ({ ...prev, [group.source]: !prev[group.source] }))
+                }
+              >
                 <ResourceCategorySelection
                   selection={selection}
                   group={group.source}
@@ -642,13 +665,14 @@ const SkillsPanel = ({
                     }
                   />
                 ) : null}
-              </div>
+              </ResourceGroupHeader>
 
               {expanded ? (
                 rows.length > 0 ? (
-                  <ul className="mt-2 flex flex-col">
+                  <ul className="resource-installed-grid">
                     {rows.map(({ skill, usages, owners }) => {
                       const available = skill.available !== false
+                      const selecting = available && selection.groups.has(skill.source)
                       const deleteBlockedReason =
                         owners.length === 1
                           ? t(
@@ -674,8 +698,10 @@ const SkillsPanel = ({
                       return (
                         <li
                           key={skill.catalogEntryKey ?? skill.id}
+                          data-selected={selection.ids.has(skill.id) || undefined}
+                          data-selecting={selecting || undefined}
                           data-slot="settings-list-row"
-                          className="-mx-2 flex items-center gap-2"
+                          className="resource-installed-card"
                         >
                           {available ? (
                             <ResourceSelectionCheckbox
@@ -690,6 +716,7 @@ const SkillsPanel = ({
                             />
                           ) : null}
                           <div
+                            inert={selecting}
                             data-slot="resource-row-content"
                             onClick={(event) => {
                               // Keep nested controls and portal events out of row navigation.
@@ -707,44 +734,25 @@ const SkillsPanel = ({
                                 return
                               onNavigate({ kind: 'detail', id: skill.id })
                             }}
-                            className={`group/row [&_button:disabled]:pointer-events-auto flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 hover:bg-muted/50 focus-within:bg-muted/50 ${available ? 'cursor-pointer' : ''}`}
+                            className={`group/row [&_button:disabled]:pointer-events-auto flex min-w-0 flex-1 flex-col gap-3 ${available ? 'cursor-pointer' : ''}`}
                           >
                             <div className="min-w-0 flex-1">
-                              <button
-                                type="button"
+                              <ResourceCardBody
+                                identity={
+                                  <ResourceMarketplaceIdentity
+                                    id={skill.id}
+                                    displayName={skill.displayName}
+                                  />
+                                }
+                                name={skill.displayName}
+                                summary={skillDescription(skill, t)}
                                 disabled={!available}
-                                onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                                className="block w-full min-w-0 text-left disabled:cursor-default"
-                              >
-                                <span className="block truncate text-sm text-foreground">
-                                  {skill.displayName}
-                                </span>
-                                <span
-                                  className="block truncate text-xs leading-5 text-muted-foreground"
-                                  title={skillDescription(skill, t)}
-                                >
-                                  {skillDescription(skill, t)}
-                                </span>
-                              </button>
-                              <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                                onOpen={() => onNavigate({ kind: 'detail', id: skill.id })}
+                              />
+                              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 empty:hidden">
                                 {!available ? (
                                   <span className="shrink-0 text-xs text-destructive">
                                     {t('Identity conflict')}
-                                  </span>
-                                ) : null}
-                                {available && (skill.enabled || usages.length > 0) ? (
-                                  <span className="inline-flex shrink-0 items-center gap-1">
-                                    <span
-                                      data-slot="skill-usage-agents-label"
-                                      className="text-xs text-muted-foreground"
-                                    >
-                                      {t('Used by')}
-                                    </span>
-                                    <SkillUsageAgents
-                                      mainEnabled={skill.enabled}
-                                      usages={usages}
-                                      onOpenSpecialist={onOpenSpecialist}
-                                    />
                                   </span>
                                 ) : null}
                                 {available ? (
@@ -766,7 +774,47 @@ const SkillsPanel = ({
                                 {exportStatus.message}
                               </span>
                             ) : null}
-                            <div className="flex shrink-0 items-center gap-2">
+                            <ResourceCardFooter
+                              selectionMode={selecting}
+                              leading={
+                                <>
+                                  {available && (skill.enabled || usages.length > 0) ? (
+                                    <span className="inline-flex shrink-0 items-center gap-1">
+                                      <span
+                                        data-slot="skill-usage-agents-label"
+                                        className="text-xs text-muted-foreground"
+                                      >
+                                        {t('Used by')}
+                                      </span>
+                                      <SkillUsageAgents
+                                        mainEnabled={skill.enabled}
+                                        usages={usages}
+                                        onOpenSpecialist={onOpenSpecialist}
+                                      />
+                                    </span>
+                                  ) : null}
+                                </>
+                              }
+                              onOpen={() => onNavigate({ kind: 'detail', id: skill.id })}
+                              openLabel={t('View details for {{name}}', {
+                                name: skill.displayName
+                              })}
+                              disabled={!available}
+                            >
+                              <ResourceAssignmentControls
+                                onOpenSpecialist={onOpenSpecialist}
+                                resource={{
+                                  id: skill.id,
+                                  name: skill.displayName,
+                                  kind: 'skill',
+                                  group: skill.source,
+                                  mainEnabled: skill.enabled,
+                                  mainRequired: skill.activationPolicy === 'always-on'
+                                }}
+                                disabled={!available || selection.locked}
+                                onErrorChange={setAccessError}
+                                onSetMain={(enabled) => setSkillEnabled(skill.id, enabled)}
+                              />
                               {available ? (
                                 <ResourceTagMenu
                                   reference={{
@@ -781,13 +829,13 @@ const SkillsPanel = ({
                                     <Button
                                       type="button"
                                       variant="ghost"
-                                      size="icon"
+                                      size="icon-sm"
                                       disabled={exportingId !== undefined}
                                       aria-label={t('Actions for {{name}}', {
                                         name: skill.displayName
                                       })}
                                     >
-                                      <ChevronDown aria-hidden="true" />
+                                      <Ellipsis aria-hidden="true" />
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
@@ -866,32 +914,7 @@ const SkillsPanel = ({
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               ) : null}
-                              <ResourceAssignmentControls
-                                onOpenSpecialist={onOpenSpecialist}
-                                resource={{
-                                  id: skill.id,
-                                  name: skill.displayName,
-                                  kind: 'skill',
-                                  group: skill.source,
-                                  mainEnabled: skill.enabled,
-                                  mainRequired: skill.activationPolicy === 'always-on'
-                                }}
-                                disabled={!available || selection.locked}
-                                onErrorChange={setAccessError}
-                                onSetMain={(enabled) => setSkillEnabled(skill.id, enabled)}
-                              />
-                              <button
-                                type="button"
-                                aria-label={t('View details for {{name}}', {
-                                  name: skill.displayName
-                                })}
-                                disabled={!available}
-                                onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
-                              >
-                                <ChevronRight className="size-4" aria-hidden="true" />
-                              </button>
-                            </div>
+                            </ResourceCardFooter>
                             {deleteError?.id === skill.id ? (
                               <ErrorNotice
                                 inline
@@ -907,7 +930,7 @@ const SkillsPanel = ({
                     })}
                   </ul>
                 ) : (
-                  <p className="mt-2 py-2 text-xs text-muted-foreground">
+                  <p className="py-3 text-sm text-muted-foreground">
                     {group.source === 'personal'
                       ? t('Create a skill to teach the Agent a workflow you use.')
                       : group.source === 'imported'
@@ -925,8 +948,8 @@ const SkillsPanel = ({
         title={t('Conversation imports')}
         description={t('Choose what conversations can import into Open-Science.')}
         aria-label={t('Conversation imports')}
-        className="mt-8 border-t border-border pt-4"
-        contentClassName="mt-1"
+        className="mt-6 border-t border-border pt-4"
+        contentClassName="mt-2"
       >
         <SettingsRow
           label={t('Skill packages')}
@@ -950,12 +973,6 @@ const SkillsPanel = ({
           </div>
         </SettingsRow>
       </SettingsSection>
-      <ResourceSelectionBar
-        selection={selection}
-        visibleIds={visible
-          .filter(({ skill }) => groups.some((group) => group.source === skill.source))
-          .map(({ skill }) => skill.id)}
-      />
     </div>
   )
 }

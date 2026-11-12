@@ -1,0 +1,217 @@
+{
+  "view": [0, 0, 595.276, 841.89],
+  "styles": {
+    "NativeFace0": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.694,
+      "descent": -0.194,
+      "vertical": false
+    },
+    "NativeFace1": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.694,
+      "descent": -0.194,
+      "vertical": false
+    },
+    "NativeFace2": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.464,
+      "descent": 0,
+      "vertical": false
+    },
+    "NativeFace3": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.694,
+      "descent": -0.194,
+      "vertical": false
+    },
+    "NativeFace4": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.694,
+      "descent": -0.194,
+      "vertical": false
+    }
+  },
+  "items": [
+    {
+      "str": "An earlier paragraph provides generic background while preserving its independent physical order before the example begins.",
+      "dir": "ltr",
+      "width": 452.6594881253998,
+      "height": 9.9626,
+      "transform": [9.912787, 0, 0, 9.9626, 72, 736.017],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "A second background line closes before the anonymous heading begins.",
+      "dir": "ltr",
+      "width": 366.06178936,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 72, 724.062],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "Synopsis.",
+      "dir": "ltr",
+      "width": 51.2553653028,
+      "height": 9.9626,
+      "transform": [10.161852, 0, 0, 9.9626, 72, 698.166],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 9.763347999999992,
+      "height": 0,
+      "transform": [10.161852, 0, 0, 9.9626, 123.2553653028, 698.166],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": "The first line introduces this anonymous example and establishes its original reading order.",
+      "dir": "ltr",
+      "width": 390.0596404643998,
+      "height": 9.9626,
+      "transform": [10.161852, 0, 0, 9.9626, 133.2139802628, 698.166],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "The next line continues the same original paragraph before any later material is introduced.",
+      "dir": "ltr",
+      "width": 451.27158835679967,
+      "height": 9.9626,
+      "transform": [10.161852, 0, 0, 9.9626, 72, 686.211],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "A",
+      "dir": "ltr",
+      "width": 8.66148444,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 98.01832616, 674.255],
+      "fontName": "NativeFace1",
+      "hasEOL": false
+    },
+    {
+      "str": "A",
+      "dir": "ltr",
+      "width": 7.194989720000001,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 118.87104421999999, 674.255],
+      "fontName": "NativeFace2",
+      "hasEOL": false
+    },
+    {
+      "str": "a",
+      "dir": "ltr",
+      "width": 4.92489756,
+      "height": 6.9738,
+      "transform": [6.9738, 0, 0, 6.9738, 126.063, 677.871],
+      "fontName": "NativeFace3",
+      "hasEOL": false
+    },
+    {
+      "str": "example data",
+      "dir": "ltr",
+      "width": 50.75476457799999,
+      "height": 9.9626,
+      "transform": [9.763348, 0, 0, 9.9626, 72, 650.345],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "A",
+      "dir": "ltr",
+      "width": 8.254014100000001,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 125.715, 650.345],
+      "fontName": "NativeFace4",
+      "hasEOL": false
+    },
+    {
+      "str": "experiment procedure we",
+      "dir": "ltr",
+      "width": 95.260986436,
+      "height": 9.9626,
+      "transform": [9.763348, 0, 0, 9.9626, 137.715, 650.345],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "A",
+      "dir": "ltr",
+      "width": 6.088144860000001,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 127.413, 616.472],
+      "fontName": "NativeFace2",
+      "hasEOL": false
+    },
+    {
+      "str": "A",
+      "dir": "ltr",
+      "width": 8.254014100000001,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 137.37560000000002, 616.472],
+      "fontName": "NativeFace4",
+      "hasEOL": false
+    },
+    {
+      "str": "(a)",
+      "dir": "ltr",
+      "width": 12.73021028,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 79.195, 228.56],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "We describe a complete generic example with enough independent detail to preserve its original physical record",
+      "dir": "ltr",
+      "width": 426.8773811889598,
+      "height": 9.9626,
+      "transform": [10.1020764, 0, 0, 9.9626, 96.399, 228.56],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "(a)",
+      "dir": "ltr",
+      "width": 13.28413084,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 78.642, 184.724],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "We compare another generic example and preserve all of its original values without creating additional content",
+      "dir": "ltr",
+      "width": 426.87196551960005,
+      "height": 9.9626,
+      "transform": [10.161852, 0, 0, 9.9626, 96.399, 184.724],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    },
+    {
+      "str": "(a)",
+      "dir": "ltr",
+      "width": 12.17628972,
+      "height": 9.9626,
+      "transform": [9.9626, 0, 0, 9.9626, 79.749, 152.844],
+      "fontName": "NativeFace0",
+      "hasEOL": false
+    },
+    {
+      "str": "We summarize the final generic example while retaining the same independent description and complete original record",
+      "dir": "ltr",
+      "width": 426.8750539255998,
+      "height": 9.9626,
+      "transform": [9.763348, 0, 0, 9.9626, 96.399, 152.844],
+      "fontName": "NativeFace0",
+      "hasEOL": true
+    }
+  ]
+}

@@ -44,6 +44,7 @@ import {
 } from './provenance-version-writer'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import { canonicalJson, sha256 } from './provenance-canonical'
+import { readNativeEvidence } from './execution-evidence-log'
 import { computeEvidenceOwnsSource } from './compute-output-evidence'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
 import {
@@ -495,10 +496,12 @@ class ArtifactProvenanceRepository {
                     })
                   : undefined
                 if (!hasImmutableExecutionFileEvidenceReference(summary)) continue
-                const evidenceBytes = await readFile(
-                  join(options.storageRoot, ...summary.storageKey.split('/'))
+                const evidenceBytes = await readNativeEvidence(
+                  options.storageRoot,
+                  summary.storageKey,
+                  summary.checksum,
+                  16 * 1024 * 1024
                 )
-                if (sha256(evidenceBytes) !== summary.checksum) continue
                 const evidence = JSON.parse(evidenceBytes.toString('utf8')) as unknown
                 if (
                   computeEvidenceOwnsSource(evidence, {

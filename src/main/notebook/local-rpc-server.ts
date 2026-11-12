@@ -105,6 +105,9 @@ import { isRecord } from '../value-guards'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-contract'
 import type {
+  HostViewImageBackend,
+  HostViewImageBackendCaptureOptions,
+  HostViewImageCaller,
   HostViewImageContext,
   HostViewImageResult,
   TransientViewImage
@@ -357,13 +360,16 @@ type NotebookLocalRpcServerOptions = {
     ): Promise<HostLlmResult | readonly HostLlmBatchItem[]>
   }
   hostViewImage?: {
-    isAvailable(context: { sessionId: string }): Promise<boolean>
+    isAvailable(context: HostViewImageCaller): Promise<boolean>
     stage(
       source: unknown,
       options: unknown,
       context: HostViewImageContext
     ): Promise<HostViewImageResult>
-    complete(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+    complete(
+      controlInvocationId: string,
+      signal?: AbortSignal
+    ): Promise<readonly TransientViewImage[]>
     discard(controlInvocationId: string): void
     discardSession(sessionId: string): void
     shutdown(): void
@@ -407,6 +413,7 @@ type NotebookRpcSessionBinding = {
   executionCwd?: string
   isControl?: true
   delegatedNotebook?: {
+    viewImageBackend?: HostViewImageBackend
     permissionPrompts?: 'none'
     attemptId: string
     workspaceCwd: string
@@ -433,6 +440,7 @@ type ActiveArtifactTurnBinding = Readonly<{
 }>
 
 type DelegatedNotebookConnectionRequest = Readonly<{
+  viewImageBackend?: HostViewImageBackend
   permissionPrompts?: 'none'
   projectId: string
   sessionId: string
@@ -1487,6 +1495,9 @@ class NotebookLocalRpcServer {
     const connection = await this.ensureStarted()
     const token = randomUUID()
     const delegatedNotebook: NonNullable<NotebookRpcSessionBinding['delegatedNotebook']> = {
+      viewImageBackend: scope.viewImageBackend
+        ? Object.freeze({ ...scope.viewImageBackend, generationToken: {} })
+        : undefined,
       permissionPrompts: scope.permissionPrompts,
       attemptId: scope.attemptId,
       workspaceCwd: scope.workspaceCwd,
@@ -1611,6 +1622,51 @@ class NotebookLocalRpcServer {
     }
   }
 
+  private findDelegatedViewImageBinding(
+    caller: HostViewImageCaller
+  ): NotebookRpcSessionBinding | undefined {
+    if (
+      caller.role !== 'delegate' ||
+      !caller.projectId ||
+      !caller.agentFrameId ||
+      !caller.attemptId
+    )
+      return undefined
+    for (const binding of this.sessionRpcCapabilities.values()) {
+      const delegated = binding.delegatedNotebook
+      if (
+        !delegated ||
+        delegated.revoked ||
+        binding.projectId !== caller.projectId ||
+        binding.sessionId !== caller.sessionId ||
+        binding.agentFrameId !== caller.agentFrameId ||
+        delegated.attemptId !== caller.attemptId
+      )
+        continue
+      return binding
+    }
+    return undefined
+  }
+
+  // The image service requests durable Attempt authority only at admission and publication.
+  // Its repeated current-identity checks use the in-memory projection instead.
+  // Revocation and capability replacement take effect immediately without rereading the Session.
+  async captureDelegatedViewImageBackend(
+    caller: HostViewImageCaller,
+    options?: HostViewImageBackendCaptureOptions
+  ): Promise<HostViewImageBackend | undefined> {
+    const binding = this.findDelegatedViewImageBinding(caller)
+    const delegated = binding?.delegatedNotebook
+    if (!delegated) return undefined
+    if (
+      options?.requireWritableAttempt &&
+      (!(await delegated.isAttemptWritable()) ||
+        this.findDelegatedViewImageBinding(caller) !== binding)
+    )
+      return undefined
+    return delegated.viewImageBackend
+  }
+
   // Issues a dedicated capability for the persistent control-plane REPL. Unlike the Agent-facing
   // session connection, this does not rotate `sessionRpcTokens`: both callers remain valid, and the
   // narrower capability cannot invoke Notebook lifecycle or execution RPC methods.
@@ -1626,7 +1682,10 @@ class NotebookLocalRpcServer {
   ): Promise<
     NotebookRpcConnection & {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
-      completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+      completeControlInvocation(
+        controlInvocationId: string,
+        signal?: AbortSignal
+      ): Promise<readonly TransientViewImage[]>
       discardControlInvocation(controlInvocationId: string): void
       revoke: () => void
       release: () => void
@@ -1674,10 +1733,10 @@ class NotebookLocalRpcServer {
           }
         }
       },
-      completeControlInvocation: async (controlInvocationId) => {
+      completeControlInvocation: async (controlInvocationId, signal) => {
         if (!ownedControlInvocationIds.has(controlInvocationId)) return []
         const images = this.hostViewImage
-          ? await this.hostViewImage.complete(controlInvocationId)
+          ? await this.hostViewImage.complete(controlInvocationId, signal)
           : []
         ownedControlInvocationIds.delete(controlInvocationId)
         return images
@@ -1937,7 +1996,6 @@ class NotebookLocalRpcServer {
         callerRole,
         isControl: Boolean(sessionBinding.isControl),
         hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
-        hasWorkspace: Boolean(sessionBinding.executionCwd),
         allowsMethod,
         delegatedWorkReady,
         delegationAllowed,
@@ -1959,7 +2017,13 @@ class NotebookLocalRpcServer {
           listModels: Boolean(this.hostModel) && (await this.hostModel!.isListModelsAvailable()),
           viewImage:
             Boolean(this.hostViewImage) &&
-            (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId })),
+            (await this.hostViewImage!.isAvailable({
+              projectId: sessionBinding.projectId,
+              sessionId: sessionBinding.sessionId,
+              agentFrameId: sessionBinding.agentFrameId,
+              attemptId: sessionBinding.delegatedWorkAttemptId,
+              role: callerRole
+            })),
           delegate: Boolean(this.delegatedWorkService?.delegate),
           children: Boolean(this.delegatedWorkService?.children),
           collect: Boolean(this.delegatedWorkService?.collect),
@@ -2227,7 +2291,8 @@ class NotebookLocalRpcServer {
                 'host.viewImage requires an active trusted control invocation.'
               )
             }
-            if (!sessionBinding.executionCwd) {
+            const source = isRecord(params.source) ? params.source : undefined
+            if (Object.hasOwn(source ?? {}, 'path') && !sessionBinding.executionCwd) {
               throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
             }
             if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
@@ -2316,7 +2381,10 @@ class NotebookLocalRpcServer {
             ...(method === 'viewImageCall'
               ? {
                   executionCwd: sessionBinding.executionCwd,
-                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
+                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId,
+                  agentFrameId: sessionBinding.agentFrameId,
+                  attemptId: sessionBinding.delegatedWorkAttemptId,
+                  role: sessionBinding.delegatedWorkRole ?? 'main'
                 }
               : {}),
             ...(method === 'computeCall'
@@ -2934,15 +3002,21 @@ class NotebookLocalRpcServer {
       if (!this.hostViewImage) throw new Error('host.viewImage is not configured.')
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
-      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : ''
+      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : undefined
       const controlInvocationId =
         typeof params.controlInvocationId === 'string' ? params.controlInvocationId : ''
-      if (!projectId || !sessionId || !executionCwd || !controlInvocationId) {
+      if (!projectId || !sessionId || !controlInvocationId) {
         throw new RpcHttpError(403, 'host.viewImage trusted capability identity is incomplete.')
+      }
+      if (isRecord(params.source) && Object.hasOwn(params.source, 'path') && !executionCwd) {
+        throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
       }
       return this.hostViewImage.stage(params.source, params.options, {
         projectId,
         sessionId,
+        agentFrameId: typeof params.agentFrameId === 'string' ? params.agentFrameId : undefined,
+        attemptId: typeof params.attemptId === 'string' ? params.attemptId : undefined,
+        role: params.role === 'delegate' ? 'delegate' : 'main',
         executionCwd,
         controlInvocationId,
         signal

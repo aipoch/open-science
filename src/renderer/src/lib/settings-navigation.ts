@@ -117,6 +117,8 @@ export type SpecialistMarketplaceView =
       version: string
       installedVersion?: string
       updateAvailable?: boolean
+      /** One-shot card action; ordinary details navigation never starts installation. */
+      installRequested?: boolean
     }
 
 export type ClassificationView =

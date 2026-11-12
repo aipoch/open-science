@@ -33,6 +33,71 @@ const options = {
   glossary: [{ source: 'a', target: '甲' }]
 }
 const targets = [{ id: 'selected', label: 'Chosen model', mode: 'agent' as const }]
+it.each([false, true])(
+  'restores accepted Unicode targets into the saved application mode: %s',
+  (contentFirst) => {
+    const sources = ['The scale is 10⁻².', 'A. B. Author, Journal 8, 24 (2020)'],
+      translations = ['尺度为10⁻²。', 'A. B. Author，Journal 8，24 (2020)'],
+      units = sources.map((source, index) => ({
+        id: `unit-${index}`,
+        source,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.1, y: 0.1 + index * 0.2, width: 0.8, height: 0.1 },
+            items: [{ index, text: source }]
+          }
+        ]
+      })),
+      source = createPdfTranslationSource({
+        resourceRequestKey: 'saved-mode',
+        fingerprint: 'fp',
+        pages: [{ width: 100, height: 100 }],
+        units
+      }),
+      checkpoint = {
+        version: 1 as const,
+        key: '11111111-1111-4111-8111-111111111111',
+        revision: 4,
+        attachmentVersionId: 'v',
+        checksum: 'a'.repeat(64),
+        fingerprint: source.fingerprint,
+        language: 'Chinese',
+        glossary: [],
+        targetKey: 'b'.repeat(64),
+        model: { frameworkId: 'direct-api', mode: 'api' as const },
+        contentFirst,
+        sources,
+        translations,
+        translatedSourceIndices: [0, 1],
+        layoutSnapshot: {
+          version: 1 as const,
+          parserVersion: 'pdfjs-paragraph-layout-6',
+          fingerprint: source.fingerprint,
+          pages: [...source.pages],
+          units,
+          coverage: {
+            pageCount: 1,
+            textItemCount: 2,
+            includedItemCount: 2,
+            excludedItemCount: 0,
+            pagesWithoutText: [],
+            exclusions: [],
+            warnings: []
+          }
+        }
+      },
+      before = structuredClone(checkpoint),
+      expected = contentFirst ? translations : ['尺度为10^(-2)。', sources[1]],
+      job = restorePdfTranslationJob(source, checkpoint)
+    expect(job).toMatchObject({ status: 'completed', done: 2, total: 2, options: { contentFirst } })
+    expect(job?.results?.units.map((unit) => unit.translation)).toEqual(expected)
+    expect(job?.results?.source).toBe(source)
+    expect(checkpoint).toEqual(before)
+    expect(source.units).toEqual(units)
+  }
+)
+
 it.each([0, 1])(
   'restores a pinned Agent model with %i saved paragraphs and requests unfinished sources',
   async (savedCount) => {

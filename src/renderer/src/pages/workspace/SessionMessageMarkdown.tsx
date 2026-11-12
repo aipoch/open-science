@@ -13,8 +13,10 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
 
 import { ArtifactPreview } from './artifact-preview'
+import { SessionDataFileLink } from './SessionDataFileLink'
 import {
   getArtifactName,
   getArtifactPreviewFormat,
@@ -27,6 +29,11 @@ import { useNearViewport } from './previews/useNearViewport'
 import {
   createSessionArtifactReferenceNormalizer,
   resolveMessageArtifactReference,
+  externalFilePath,
+  resolveRelativeReplyPath,
+  isNotebookDataPath,
+  unresolvedFileReference,
+  resolveSessionDataFileReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
 
@@ -34,6 +41,8 @@ type SessionMessageMarkdownProps = {
   content: string
   isAnimating?: boolean
   artifacts: MessageArtifact[]
+  workspaceCwd?: string
+  notebookReference?: NotebookSessionReference
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal: (artifact: MessageArtifact) => void
 }
@@ -42,7 +51,11 @@ type SessionMessageMarkdownProps = {
 // changing Artifact metadata and preview handlers through that boundary without reparsing the text.
 const SessionArtifactContext = createContext<Pick<
   SessionMessageMarkdownProps,
-  'artifacts' | 'onPreviewArtifact' | 'onPreviewArtifactModal'
+  | 'artifacts'
+  | 'workspaceCwd'
+  | 'notebookReference'
+  | 'onPreviewArtifact'
+  | 'onPreviewArtifactModal'
 > | null>(null)
 
 type SessionArtifactImageProps = {
@@ -263,14 +276,16 @@ const SessionMessageMarkdown = memo(
     content,
     isAnimating = false,
     artifacts,
+    workspaceCwd,
+    notebookReference,
     onPreviewArtifact,
     onPreviewArtifactModal
   }: SessionMessageMarkdownProps): React.JSX.Element => {
     // Append-only streaming reprocesses just the trailing block instead of the full message.
     const [normalizeArtifactReferences] = useState(() => createSessionArtifactReferenceNormalizer())
     const normalizedContent = useMemo(
-      () => normalizeArtifactReferences(content, artifacts),
-      [normalizeArtifactReferences, artifacts, content]
+      () => normalizeArtifactReferences(content, artifacts, notebookReference?.dataRoot),
+      [normalizeArtifactReferences, artifacts, content, notebookReference?.dataRoot]
     )
     const components = useMemo<Components>(
       () => ({
@@ -283,9 +298,41 @@ const SessionMessageMarkdown = memo(
         }: SessionMessageLinkComponentProps) {
           const context = useContext(SessionArtifactContext)
           if (!context) return null
-          const { artifacts, onPreviewArtifact } = context
+          const { artifacts, notebookReference, onPreviewArtifact } = context
           const artifact = resolveMessageArtifactReference(href, artifacts)
           if (!artifact || artifact.kind !== 'managed-file') {
+            const dataFile = resolveSessionDataFileReference(href, notebookReference?.dataRoot)
+            const unresolved = unresolvedFileReference(href)
+            const path =
+              dataFile ??
+              externalFilePath(href) ??
+              resolveRelativeReplyPath(
+                unresolved,
+                context.workspaceCwd ?? notebookReference?.workspaceCwd,
+                notebookReference?.dataRoot
+              )
+
+            if (path)
+              return (
+                <SessionDataFileLink
+                  key={path}
+                  path={path}
+                  notebookSessionId={
+                    isNotebookDataPath(path, notebookReference?.dataRoot)
+                      ? notebookReference?.sessionId
+                      : undefined
+                  }
+                  className={className}
+                >
+                  {children}
+                </SessionDataFileLink>
+              )
+            if (unresolved !== undefined)
+              return (
+                <span>
+                  {children} (<code>{unresolved}</code>)
+                </span>
+              )
             return (
               <SessionMessageLink
                 href={href}
@@ -349,8 +396,14 @@ const SessionMessageMarkdown = memo(
       []
     )
     const artifactContext = useMemo(
-      () => ({ artifacts, onPreviewArtifact, onPreviewArtifactModal }),
-      [artifacts, onPreviewArtifact, onPreviewArtifactModal]
+      () => ({
+        artifacts,
+        workspaceCwd,
+        notebookReference,
+        onPreviewArtifact,
+        onPreviewArtifactModal
+      }),
+      [artifacts, workspaceCwd, notebookReference, onPreviewArtifact, onPreviewArtifactModal]
     )
 
     return (

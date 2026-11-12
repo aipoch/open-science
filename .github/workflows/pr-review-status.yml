@@ -1,0 +1,139 @@
+name: PR Review Status
+
+on:
+  workflow_run:
+    workflows: [PR Review Signal]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  resolve:
+    name: Resolve reviewed PR
+    if: >-
+      (github.event.workflow_run.event == 'pull_request_review' ||
+       github.event.workflow_run.event == 'pull_request_target') &&
+      github.event.workflow_run.path == '.github/workflows/pr-review-signal.yml' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      number: ${{ steps.resolve.outputs.number }}
+    steps:
+      - id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
+            });
+            if (!data.jobs.some(job => job.name === 'Signal review status change' &&
+                job.conclusion === 'success')) return;
+
+            const base = context.payload.repository;
+            const linked = run.pull_requests.filter(pr => pr.base.repo.id === base.id &&
+              pr.base.ref === base.default_branch);
+            if (linked.length === 1) {
+              core.setOutput('number', linked[0].number);
+              return;
+            }
+            if (linked.length || !run.head_repository?.owner?.login || !run.head_branch) return;
+
+            // GitHub can omit the PR association for fork runs. Match repository ID as well as ref.
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              ...context.repo, state: 'open', base: base.default_branch, per_page: 100,
+              head: `${run.head_repository.owner.login}:${run.head_branch}`,
+            });
+            const matching = pulls.filter(pr => pr.head.repo?.id === run.head_repository.id &&
+              pr.head.ref === run.head_branch && pr.created_at <= run.created_at);
+            if (matching.length === 1) core.setOutput('number', matching[0].number);
+
+  sync:
+    name: Sync review handoff labels
+    needs: resolve
+    if: needs.resolve.outputs.number != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-review-status-${{ needs.resolve.outputs.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      # Run trusted default-branch code with GitHub API data only; no contributor checkout or artifacts.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+        with:
+          script: |
+            const number = Number(process.env.PR_NUMBER);
+            const authorLabel = 'needs-author-action';
+            const reviewLabel = 'needs-review';
+            let cursor = null;
+            let head;
+            let changesOnHead = false;
+            let earlierChanges = false;
+            let headApproved = false;
+            do {
+              const { repository: { pullRequest: pr } } = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      state
+                      baseRefName
+                      headRefOid
+                      latestOpinionatedReviews(first: 100, after: $cursor, writersOnly: true) {
+                        nodes { state commit { oid } }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }
+              `, { ...context.repo, number, cursor });
+              if (!pr || pr.state !== 'OPEN' ||
+                  pr.baseRefName !== context.payload.repository.default_branch ||
+                  (head && pr.headRefOid !== head)) return;
+              head = pr.headRefOid;
+              const { nodes, pageInfo } = pr.latestOpinionatedReviews;
+              for (const review of nodes) {
+                const onHead = review.commit?.oid === head;
+                if (review.state === 'CHANGES_REQUESTED') {
+                  if (onHead) changesOnHead = true;
+                  else earlierChanges = true;
+                }
+                if (review.state === 'APPROVED' && onHead) headApproved = true;
+              }
+              cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
+            } while (cursor && !changesOnHead);
+
+            // Read current labels and refuse to use review data from a head that has since changed.
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (pr.state !== 'open' || pr.head.sha !== head ||
+                pr.base.ref !== context.payload.repository.default_branch) return;
+            const labels = new Set(pr.labels.map(label => label.name));
+            const pushed = context.payload.workflow_run.event === 'pull_request_target';
+
+            let desired;
+            if (changesOnHead) desired = authorLabel;
+            else if (earlierChanges) desired = reviewLabel;
+            else if (headApproved) desired = null;
+            else if (pushed && labels.has(authorLabel)) desired = reviewLabel;
+            else return;
+
+            const target = { ...context.repo, issue_number: number };
+            if (desired && !labels.has(desired)) {
+              await github.rest.issues.addLabels({ ...target, labels: [desired] });
+            }
+            for (const name of [authorLabel, reviewLabel]) {
+              if (name === desired || !labels.has(name)) continue;
+              try {
+                await github.rest.issues.removeLabel({ ...target, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }

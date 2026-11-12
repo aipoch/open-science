@@ -1,9 +1,36 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
-const { deduplicateTableRegions, narrativeDuplicateTableIndices } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-table-regions.mjs')).href
-)
+const { deduplicateTableRegions, ensureGraphicalTableIssue, narrativeDuplicateTableIndices } =
+  await import(pathToFileURL(resolve('resources/literature-pdf-table-regions.mjs')).href)
+
+it('marks a thumbnail-only empty table as an explicit graphical fallback', () => {
+  const table = { grid: [], cells: [], thumbnail: 'thumbnails/p2-graphical-table-1.png' }
+  expect(ensureGraphicalTableIssue(table)).toEqual({
+    ...table,
+    issues: ['no-source-cell-grid']
+  })
+})
+
+it('preserves existing issues and structured tables', () => {
+  const issue = {
+    grid: [],
+    cells: [],
+    thumbnail: 'thumbnails/p2-graphical-table-1.png',
+    issues: ['native-table-structure-ambiguous']
+  }
+  expect(ensureGraphicalTableIssue(issue).issues).toEqual([
+    'native-table-structure-ambiguous',
+    'no-source-cell-grid'
+  ])
+  expect(
+    ensureGraphicalTableIssue({ grid: [['x']], cells: [], thumbnail: issue.thumbnail })
+  ).toEqual({
+    grid: [['x']],
+    cells: [],
+    thumbnail: issue.thumbnail
+  })
+})
 const { constrainCaptionLaneCrop } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 )

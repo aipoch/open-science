@@ -7,7 +7,11 @@ export {
   type ResearchVideoAnimationWriter
 } from './animation-authoring.js'
 export * from './authoring.js'
-export { ResearchFilmOutputLimitError } from './authoring-correction.js'
+export {
+  ResearchFilmOutputLimitError,
+  ResearchFilmIncompleteError,
+  type FilmAuthoringCheckpoint
+} from './authoring-correction.js'
 export * from './resources.js'
 export * from './model-catalog.js'
 export * from './ffmpeg-catalog.js'

@@ -4,6 +4,7 @@ import {
   researchFilmTokenCounter
 } from '../research-video/input-context'
 import type { LocalModelSnapshot } from '../../shared/local-models'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -14,6 +15,7 @@ import {
   createVideoExportTools,
   researchFilmResources,
   ResearchFilmOutputLimitError,
+  ResearchFilmIncompleteError,
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
   RESEARCH_VIDEO_SCREENPLAY_PROMPT,
@@ -28,7 +30,10 @@ import {
 import type { ApplicationModuleBuilder } from '../application-runtime'
 import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
-import { createResearchVideoPresentationOwner } from '../research-video/presentation'
+import {
+  createResearchVideoPresentationOwner,
+  currentFilmAttempt
+} from '../research-video/presentation'
 import { runtimeMetadata } from '../runtime-metadata'
 import type { SessionPackageService } from '../session-package/service'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
@@ -116,6 +121,7 @@ export async function composeResearchFilm({
       })
     }
   }
+  const filmLog = createLogger('research-video')
   const targets = new WeakMap<ResearchVideoSessionSource, ReturnType<typeof capture>>()
   const inferResearchVideo = async (
     source: ResearchVideoSessionSource,
@@ -127,6 +133,21 @@ export async function composeResearchFilm({
     if (!targets.has(source)) targets.set(source, capture())
     const { target, budget, count } = await targets.get(source)!
     signal.throwIfAborted()
+    const requestId = randomUUID()
+    const started = performance.now()
+    const fields = {
+      ...currentFilmAttempt(),
+      requestId,
+      sessionId: source.provenance.sessionId,
+      phase: systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT ? 'screenplay' : 'animation',
+      purpose:
+        payload && typeof payload === 'object' && 'correction' in payload && payload.correction
+          ? 'correction'
+          : undefined,
+      frameworkId: target.frameworkId,
+      providerId: target.providerId
+    }
+    filmLog.info('film model request', fields)
     const response = await researchVideoInference
       .run({
         target,
@@ -139,11 +160,17 @@ export async function composeResearchFilm({
       })
       .catch(async (error: unknown) => {
         const usage = extractRestrictedInferenceUsage(error)
+        filmLog.info('film model failure', {
+          ...fields,
+          durationMs: Math.round(performance.now() - started),
+          errorCategory: error instanceof RestrictedInferenceError ? error.code : 'inference',
+          outputTokens: usage?.outputTokens
+        })
         if (usage)
           await recordAuxiliaryUsage({
             projectId: source.provenance.projectId,
             sessionId: source.provenance.sessionId,
-            eventId: randomUUID(),
+            eventId: requestId,
             source: 'host-llm',
             frameworkId: target.frameworkId,
             providerId: target.providerId,
@@ -156,11 +183,20 @@ export async function composeResearchFilm({
           throw new ResearchFilmOutputLimitError(error.message)
         throw error
       })
+    filmLog.info('film model response', {
+      ...fields,
+      model: response.model,
+      reason: response.stopReason,
+      outputBytes: Buffer.byteLength(response.text),
+      outputTokens: response.usage?.outputTokens,
+      inputTokens: response.usage?.inputTokens,
+      durationMs: Math.round(performance.now() - started)
+    })
     if (response.usage)
       await recordAuxiliaryUsage({
         projectId: source.provenance.projectId,
         sessionId: source.provenance.sessionId,
-        eventId: randomUUID(),
+        eventId: requestId,
         source: 'host-llm',
         frameworkId: response.frameworkId,
         providerId: target.providerId,
@@ -173,12 +209,16 @@ export async function composeResearchFilm({
       throw new ResearchFilmOutputLimitError(
         'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
       )
+    if (response.stopReason === 'max_turn_requests')
+      throw new ResearchFilmIncompleteError(
+        'Research film generation stopped before completing (max_turn_requests). Try again or select another model.'
+      )
     if (response.stopReason !== 'end_turn')
       throw new Error(
         `Research film generation stopped before completing (${response.stopReason}). Try again or select another model.`
       )
     if (!response.text.trim())
-      throw new Error(
+      throw new ResearchFilmIncompleteError(
         'The model returned no research film content. Try again or select another model.'
       )
     return response.text

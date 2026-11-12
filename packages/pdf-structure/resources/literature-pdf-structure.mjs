@@ -22,7 +22,8 @@ import {
   attachNativeCaptionLaneRaster,
   attachNativeDualApiEvidence,
   nativeLigatureDualApiCaptureRequired,
-  attachNativeCompositingResources
+  attachNativeCompositingResources,
+  sealNativeMesh4RenderContext
 } from './literature-pdf-render-bounds.mjs'
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
@@ -194,6 +195,7 @@ try {
             }
             evidence = attachNativeCompositingResources(evidence, rendering, encodedCaptionBytes)
             nativeFigureRenderContexts.set(pageNumber, evidence)
+            sealNativeMesh4RenderContext(evidence, rendering)
           }
         }
         if (mode !== 'production') {

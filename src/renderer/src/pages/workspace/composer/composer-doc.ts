@@ -593,8 +593,8 @@ export const createSkillChip = (node: { id: string; name: string }): HTMLSpanEle
   span.setAttribute('contenteditable', 'false')
   span.setAttribute('data-mention-type', SKILL_MENTION_TYPE)
   span.setAttribute('data-skill-id', node.id)
-  // Blue mention pill using the dedicated skill-chip token.
-  span.className = `${CHIP_BASE_CLASS} bg-skill-chip text-skill-chip-foreground`
+  // Clicking opens Skill details without selecting the token or changing the draft.
+  span.className = `${ARTIFACT_CHIP_BASE_CLASS} cursor-pointer bg-skill-chip text-skill-chip-foreground`
   span.textContent = `/${node.name}`
   return span
 }

@@ -304,7 +304,7 @@ export const sandboxedPackageSpawn =
       superviseProcessTree: platform === 'win32',
       filesystem: {
         readOnlyRoots: [
-          ...grantedRoots.map((root) => root.path),
+          ...(platform === 'win32' ? [] : grantedRoots.map((root) => root.path)),
           ...(externalR ? [runtimeRoot] : []),
           ...absolutePath(dirname(command)),
           ...absolutePath(request.workspaceCwd),
@@ -316,7 +316,9 @@ export const sandboxedPackageSpawn =
             : [])
         ],
         readWriteRoots: [
-          ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path),
+          ...(platform === 'win32'
+            ? []
+            : grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)),
           ...(externalR ? [] : [runtimeRoot]),
           ...absolutePath(
             options.interpreter?.library ??
@@ -325,6 +327,16 @@ export const sandboxedPackageSpawn =
           ),
           ...cacheWriteRoots
         ],
+        ...(platform === 'win32'
+          ? {
+              optionalReadOnlyRoots: grantedRoots
+                .filter((root) => root.access === 'ro')
+                .map((root) => root.path),
+              optionalReadWriteRoots: grantedRoots
+                .filter((root) => root.access === 'rw')
+                .map((root) => root.path)
+            }
+          : {}),
         deniedReadRoots: [],
         deniedWriteRoots: []
       }

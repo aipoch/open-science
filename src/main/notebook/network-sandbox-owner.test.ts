@@ -101,11 +101,13 @@ vi.mock('@aipoch/notebook-network-sandbox', async (importOriginal) => ({
 import {
   NotebookNetworkSandboxOwner,
   commandLine,
+  runRAccessProbe,
   type NotebookNetworkDecision
 } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import {
   WindowsRuntimeComponentStore,
+  type WindowsRuntimeComponentDependencies,
   type WindowsRuntimeComponentSelection
 } from './windows-runtime-components'
 import { NotebookRuntimeService } from './runtime-service'
@@ -584,26 +586,19 @@ describe('NotebookNetworkSandboxOwner', () => {
         })
 
         expect(backend.wrap.mock.calls.at(-1)![0].windowsProtectionRequired).toBe(effectiveMode)
-        expect(backend.preflightGrantedRoot).toHaveBeenCalledTimes(effectiveMode ? 1 : 0)
-        if (effectiveMode) {
-          expect(backend.preflightGrantedRoot).toHaveBeenCalledWith(
-            'D:\\data',
-            'rw',
-            'D:\\data',
-            expect.objectContaining({
-              filesystem: expect.objectContaining({ readWriteRoots: ['D:\\data'] })
-            })
-          )
-        }
+        // Historical grants are admitted by the native sandbox, never re-preflighted per command.
+        expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
         const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
-        expect(filesystem.readOnlyRoots).toContain('D:\\data')
-        expect(filesystem.readWriteRoots).toContain('D:\\data')
+        expect(filesystem.readOnlyRoots).not.toContain('D:\\data')
+        expect(filesystem.readWriteRoots).not.toContain('D:\\data')
+        expect(filesystem.optionalReadOnlyRoots).toContain('D:\\data')
+        expect(filesystem.optionalReadWriteRoots).toContain('D:\\data')
         if (effectiveMode) {
-          expect(filesystem.readOnlyRoots).not.toContain(wslRoot)
-          expect(filesystem.readWriteRoots).not.toContain(wslRoot)
+          expect(filesystem.optionalReadOnlyRoots).not.toContain(wslRoot)
+          expect(filesystem.optionalReadWriteRoots).not.toContain(wslRoot)
         } else {
-          expect(filesystem.readOnlyRoots).toContain(wslRoot)
-          expect(filesystem.readWriteRoots).toContain(wslRoot)
+          expect(filesystem.optionalReadOnlyRoots).toContain(wslRoot)
+          expect(filesystem.optionalReadWriteRoots).toContain(wslRoot)
         }
       } finally {
         await wrapped?.cleanup('exit', { processesTerminated: true })
@@ -616,13 +611,6 @@ describe('NotebookNetworkSandboxOwner', () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-native-explicit-wsl-'))
     fixtureDirectories.push(fixtureRoot)
     const explicitWsl = '\\\\wsl.localhost\\Ubuntu\\home\\alice\\explicit'
-    const failure = new Error(
-      'WINDOWS_ACL_PREFLIGHT_FAILED: code=WINDOWS_ACL_NETWORK_PATH_UNSUPPORTED path=' + explicitWsl
-    )
-    backend.preflightGrantedRoot.mockImplementation(async (_path, _access, _requested, options) => {
-      expect(options.filesystem.readWriteRoots).toContain(explicitWsl)
-      throw failure
-    })
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: fixtureRoot,
       temporaryRoot: join(fixtureRoot, 'commands'),
@@ -634,30 +622,33 @@ describe('NotebookNetworkSandboxOwner', () => {
       persistAlwaysAllow: vi.fn(),
       requestDecision: vi.fn()
     })
+    let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
 
     try {
-      await expect(
-        owner.wrap({
-          executable: 'python.exe',
-          args: ['-c', 'print(1)'],
-          env: {},
-          cwd: fixtureRoot,
-          commandText: 'print(1)',
-          sessionId: 'session',
-          projectId: 'project',
-          runtime: 'repl',
-          windowsProtectionRequired: true,
-          filesystem: {
-            readOnlyRoots: [],
-            readWriteRoots: [explicitWsl],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
-      ).rejects.toThrow('WINDOWS_ACL_NETWORK_PATH_UNSUPPORTED')
-      expect(backend.preflightGrantedRoot).toHaveBeenCalledOnce()
-      expect(backend.wrap).not.toHaveBeenCalled()
+      wrapped = await owner.wrap({
+        executable: 'python.exe',
+        args: ['-c', 'print(1)'],
+        env: {},
+        cwd: fixtureRoot,
+        commandText: 'print(1)',
+        sessionId: 'session',
+        projectId: 'project',
+        runtime: 'repl',
+        windowsProtectionRequired: true,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [explicitWsl],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      // Explicit invocation roots stay required; only stored historical grants become optional.
+      expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
+      const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+      expect(filesystem.readWriteRoots).toContain(explicitWsl)
+      expect(filesystem.optionalReadWriteRoots).not.toContain(explicitWsl)
     } finally {
+      await wrapped?.cleanup('exit', { processesTerminated: true })
       await owner.dispose()
     }
   })
@@ -796,8 +787,12 @@ describe('NotebookNetworkSandboxOwner', () => {
 
       expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
       const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
-      expect(filesystem.readOnlyRoots).toContain(wslRoot)
-      expect(filesystem.readWriteRoots).toContain(wslRoot)
+      // Standard mode keeps WSL grants visible, but native targets still project stored grants
+      // through the independent optional admission path.
+      expect(filesystem.optionalReadOnlyRoots).toContain(wslRoot)
+      expect(filesystem.optionalReadWriteRoots).toContain(wslRoot)
+      expect(filesystem.readOnlyRoots).not.toContain(wslRoot)
+      expect(filesystem.readWriteRoots).not.toContain(wslRoot)
     } finally {
       await wrapped?.cleanup('exit', { processesTerminated: true })
       await owner.dispose()
@@ -822,12 +817,10 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
-  it('rechecks protected-mode grants before creating a command root or wrapping the kernel', async () => {
+  it('keeps protected-mode grants optional so an unavailable grant does not block command creation', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-grant-preflight-'))
     fixtureDirectories.push(fixtureRoot)
     const managedRoot = join(fixtureRoot, 'commands')
-    const failure = new Error('Win32 error: 5 (ERROR_ACCESS_DENIED)')
-    backend.preflightGrantedRoot.mockRejectedValueOnce(failure)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: fixtureRoot,
       temporaryRoot: managedRoot,
@@ -839,9 +832,10 @@ describe('NotebookNetworkSandboxOwner', () => {
       persistAlwaysAllow: vi.fn(),
       requestDecision: vi.fn()
     })
+    let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
 
-    await expect(
-      owner.wrap({
+    try {
+      wrapped = await owner.wrap({
         executable: 'python.exe',
         args: ['-c', 'print(1)'],
         env: {},
@@ -858,37 +852,30 @@ describe('NotebookNetworkSandboxOwner', () => {
           deniedWriteRoots: []
         }
       })
-    ).rejects.toThrow(failure.message)
 
-    expect(backend.preflightGrantedRoot).toHaveBeenCalledExactlyOnceWith(
-      'D:\\spss',
-      'rw',
-      'D:\\spss',
-      expect.objectContaining({
-        filesystem: expect.objectContaining({ readWriteRoots: ['D:\\spss'] }),
-        // Execution re-checks the stored grant without re-walking its tree.
-        scope: 'target'
-      })
-    )
-    expect(backend.wrap).not.toHaveBeenCalled()
-    expect(existsSync(managedRoot)).toBe(false)
-    await owner.dispose()
+      // An unavailable stored grant is admitted independently by the native sandbox; the owner
+      // neither re-preflights it nor blocks command preparation on it.
+      expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
+      expect(backend.wrap).toHaveBeenCalledOnce()
+      expect(existsSync(managedRoot)).toBe(true)
+      const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+      expect(filesystem.optionalReadWriteRoots).toContain('D:\\spss')
+      expect(filesystem.readWriteRoots).not.toContain('D:\\spss')
+    } finally {
+      await wrapped?.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
   })
 
-  it('passes execution boundaries to preflight and stops checking directories after cancellation', async () => {
+  it('forwards cancellation to the sandbox without an execution-time grant preflight', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-cancel-grant-preflight-'))
     fixtureDirectories.push(fixtureRoot)
     const controller = new AbortController()
     const reason = new Error('user cancelled')
-    backend.preflightGrantedRoot.mockImplementationOnce(
-      async (_path, _access, _requested, options) => {
-        expect(options.signal).toBe(controller.signal)
-        expect(options.scope).toBe('target')
-        expect(options.filesystem.deniedReadRoots).toEqual([join(fixtureRoot, 'protected')])
-        expect(options.filesystem.deniedWriteRoots).toContain(join(fixtureRoot, 'readonly'))
-        controller.abort(reason)
-      }
-    )
+    backend.wrap.mockImplementationOnce(async (command: { signal?: AbortSignal }) => {
+      expect(command.signal).toBe(controller.signal)
+      throw reason
+    })
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: fixtureRoot,
       temporaryRoot: join(fixtureRoot, 'commands'),
@@ -922,9 +909,9 @@ describe('NotebookNetworkSandboxOwner', () => {
           }
         })
       ).rejects.toBe(reason)
-      expect(backend.preflightGrantedRoot).toHaveBeenCalledTimes(1)
-      expect(backend.wrap).not.toHaveBeenCalled()
-      expect(existsSync(join(fixtureRoot, 'commands'))).toBe(false)
+      expect(backend.preflightGrantedRoot).not.toHaveBeenCalled()
+      expect(backend.wrap).toHaveBeenCalledOnce()
+      expect(backend.wrap.mock.calls.at(-1)![0].signal).toBe(controller.signal)
     } finally {
       await owner.dispose()
     }
@@ -969,6 +956,109 @@ describe('NotebookNetworkSandboxOwner', () => {
       expect(backend.wrap).toHaveBeenCalledOnce()
     } finally {
       await wrapped?.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  })
+
+  it('prepares Windows runtimes without granting unrelated user or skill folders to compatibility probes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-runtime-probe-grants-'))
+    fixtureDirectories.push(root)
+    const unrelatedRoot = join(root, 'restricted-software')
+    const configRoot = join(root, 'config')
+    const skillRoot = join(configRoot, 'codex-subscription', 'skills')
+    await mkdir(skillRoot, { recursive: true })
+    const canonicalSkillRoot = await realpath(skillRoot)
+    const getGrantedLocalRoots = vi.fn(async () => [
+      { id: 'software', name: 'Software', path: unrelatedRoot, access: 'rw' as const }
+    ])
+    // Replace component acquisition only; exercise the owner's real compatibility callback,
+    // runtime probe and filesystem projection before the native launcher boundary.
+    const select = vi
+      .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
+      .mockImplementation(async function (this: WindowsRuntimeComponentStore, releases, request) {
+        const selection = {
+          release: releases.find(
+            (release) => release.component === request.component && release.source === 'patched'
+          )!,
+          root: join(root, request.component),
+          executable: process.execPath
+        }
+        await (this as unknown as { deps: WindowsRuntimeComponentDependencies }).deps.probe(
+          selection,
+          request.signal
+        )
+        return selection
+      })
+    backend.wrap.mockImplementation(async (request) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        request.filesystem.readWriteRoots.includes(unrelatedRoot) ||
+        request.filesystem.readOnlyRoots.includes(canonicalSkillRoot)
+          ? 'process.stderr.write("WINDOWS_ACL_ACCESS_DENIED: write command ACL"); process.exit(1)'
+          : 'process.stdout.write("RUNTIME_PROBE_OK")'
+      ],
+      env: process.env,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: async (
+        _reason: NotebookSandboxCleanupReason,
+        outcome: NotebookSandboxProcessOutcome
+      ) => backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      configRoot,
+      windowsRuntimeRoot: join(root, 'runtimes'),
+      temporaryRoot: join(root, 'commands'),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getGrantedLocalRoots,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(owner.installWindows()).resolves.toEqual({ cancelled: false })
+      await expect(owner.status()).resolves.toMatchObject({ kind: 'ready' })
+      expect(backend.wrap).toHaveBeenCalledTimes(2)
+      expect(getGrantedLocalRoots).not.toHaveBeenCalled()
+      for (const [request] of backend.wrap.mock.calls) {
+        expect(request.windowsProtectionRequired).toBe(true)
+        expect(request.filesystem.readOnlyRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readOnlyRoots).not.toContain(canonicalSkillRoot)
+        expect(request.filesystem.readWriteRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readWriteRoots).toContain(request.cwd)
+        expect(request.filesystem.deniedReadRoots).toEqual([expect.stringContaining('private.txt')])
+      }
+      // Ordinary execution still receives the saved grant, even with the probe's session label.
+      const command = await owner.wrap({
+        executable: process.execPath,
+        args: ['-e', '0'],
+        env: {},
+        cwd: root,
+        commandText: '0',
+        runtime: 'repl',
+        sessionId: 'runtime-preparation',
+        projectId: 'runtime-preparation',
+        windowsProtectionRequired: true,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      expect(getGrantedLocalRoots).toHaveBeenCalledTimes(1)
+      expect(backend.wrap.mock.lastCall![0].filesystem.readWriteRoots).not.toContain(unrelatedRoot)
+      expect(backend.wrap.mock.lastCall![0].filesystem.optionalReadWriteRoots).toContain(
+        unrelatedRoot
+      )
+      expect(backend.wrap.mock.lastCall![0].filesystem.readOnlyRoots).toContain(canonicalSkillRoot)
+      await command.cleanup('spawn-failed', { processesTerminated: true })
+    } finally {
+      select.mockRestore()
       await owner.dispose()
     }
   })
@@ -3736,6 +3826,118 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
 })
 
 describe('R startup authorization admission', () => {
+  it.each(['preflight', 'authorization'] as const)(
+    'isolates R %s probes from unrelated user and skill folders',
+    async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-r-probe-grants-'))
+      fixtureDirectories.push(root)
+      const unrelatedRoot = join(root, 'restricted-software')
+      const configRoot = join(root, 'config')
+      const skillRoot = join(configRoot, 'codex-subscription', 'skills')
+      await mkdir(skillRoot, { recursive: true })
+      const canonicalSkillRoot = await realpath(skillRoot)
+      const getGrantedLocalRoots = vi.fn(async () => [
+        { id: 'software', name: 'Software', path: unrelatedRoot, access: 'rw' as const }
+      ])
+      backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+      backend.wrap.mockImplementation(async (command) => {
+        if (
+          command.filesystem.readWriteRoots.includes(unrelatedRoot) ||
+          command.filesystem.readOnlyRoots.includes(canonicalSkillRoot)
+        )
+          throw new Error('WINDOWS_ACL_ACCESS_DENIED: write command ACL')
+        return {
+          argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
+          env: process.env,
+          annotateStderr: (value: string) => value,
+          resetNetworkConnections: backend.resetNetworkConnections,
+          setExecutionActive: backend.setExecutionActive,
+          confirmProcessTreeTermination: async () => true,
+          cleanup: (
+            _reason: NotebookSandboxCleanupReason,
+            outcome: NotebookSandboxProcessOutcome
+          ) => backend.cleanup(outcome)
+        }
+      })
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        configRoot,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getGrantedLocalRoots,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        if (mode === 'authorization') {
+          await expect(owner.setWindowsRuntimeAccess(process.execPath, true)).resolves.toEqual({
+            cancelled: false
+          })
+          expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce()
+        } else {
+          await expect(
+            owner.ensureRuntimeAccess({
+              runtime: 'r',
+              executable: process.execPath,
+              sessionId: 'r'
+            })
+          ).resolves.toEqual({
+            windowsProtectionRequired: true,
+            windowsRuntimeAccessRequired: false
+          })
+          expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+        }
+        expect(getGrantedLocalRoots).not.toHaveBeenCalled()
+        expect(backend.wrap).toHaveBeenCalledOnce()
+        const request = backend.wrap.mock.lastCall![0]
+        expect(request.windowsProtectionRequired).toBe(true)
+        expect(request.filesystem.readOnlyRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readOnlyRoots).not.toContain(canonicalSkillRoot)
+        expect(request.filesystem.readWriteRoots).toContain(request.cwd)
+        expect(backend.cleanup).toHaveBeenCalledOnce()
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('lets a timed-out R probe owner publish cleanup proof before exiting', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-probe-timeout-'))
+    fixtureDirectories.push(root)
+    const request = join(root, 'terminate')
+    const proof = join(root, 'reaped')
+    const requestTermination = vi.fn(async () => {
+      await writeFile(request, '')
+      await vi.waitFor(() => expect(existsSync(proof)).toBe(true), { timeout: 5_000 })
+      return true
+    })
+    await expect(
+      runRAccessProbe(
+        {
+          executable: process.execPath,
+          args: [
+            '-e',
+            `const fs = require('node:fs'); setInterval(() => {
+            if (fs.existsSync(${JSON.stringify(request)})) {
+              fs.writeFileSync(${JSON.stringify(proof)}, 'reaped'); process.exit(1)
+            }
+          }, 10)`
+          ],
+          env: process.env,
+          requestProcessTreeTermination: requestTermination,
+          confirmProcessTreeTermination: async () => existsSync(proof),
+          annotateStderr: (value) => value,
+          cleanup: backend.cleanup
+        },
+        root,
+        500
+      )
+    ).rejects.toMatchObject({ code: 'PACKAGE_OPERATION_TIMEOUT' })
+    expect(requestTermination).toHaveBeenCalledOnce()
+    expect(existsSync(proof)).toBe(true)
+  })
+
   it('keeps the original verification failure and cleanup when diagnostic logging throws', async () => {
     backend.wrap.mockResolvedValueOnce({
       argv: [process.execPath, '-e', 'process.exit(77)'],
@@ -4023,7 +4225,7 @@ describe('R startup authorization admission', () => {
       const cwd = backend.wrap.mock.calls[0]![0].cwd as string
       fixtureDirectories.push(cwd)
       expect(existsSync(cwd)).toBe(true)
-      expect(confirm).toHaveBeenCalledOnce()
+      expect(confirm).toHaveBeenCalled()
       expect(backend.cleanup).toHaveBeenCalledWith({
         processesTerminated: false,
         confirmTermination: confirm

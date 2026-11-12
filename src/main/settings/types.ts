@@ -27,6 +27,7 @@ import type {
   CodexSubscriptionTransport,
   ProjectFilesFilterPreference,
   ProviderType,
+  PromptOptimizationModelConfiguration,
   ProviderValidationFailure,
   ProviderValidationTarget,
   ReviewerModelConfiguration,
@@ -224,6 +225,8 @@ export type StoredCodexInfo = CodexInfo & {
 
 // The whole settings.json document.
 export type StoredSettings = {
+  modalRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection
+  huggingFaceRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection
   version: typeof SETTINGS_FILE_VERSION
   classification?: StoredClassificationSettings
   claude?: ClaudeInfo
@@ -235,6 +238,8 @@ export type StoredSettings = {
   subagentModel?: SubagentModelConfiguration
   // Global Reviewer model routing. Absence in older documents means follow the Active model.
   reviewerModel?: ReviewerModelConfiguration
+  // Dedicated prompt optimizer routing; absence means inherit the active composer target.
+  promptOptimizationModel?: PromptOptimizationModelConfiguration
   // Automatic Session title/description generation. Absence means inherit + Low effort.
   sessionDetailsModel?: SessionDetailsModelConfiguration
   // Optional visual relay target. Absence in older documents and new installs means disabled.

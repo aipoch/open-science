@@ -399,6 +399,7 @@ type ElectronApp = {
   trustSourcePreviewCertificate: (certificate: string) => Promise<void>
   setDefaultSessionCookie: (url: string) => Promise<void>
   readClipboardText: () => Promise<string>
+  observeNativeFileReveal: () => Promise<JSHandle<{ revealed: string[]; opened: string[] }>>
   markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   readFakeAgentPrompts: () => Promise<
@@ -1553,6 +1554,17 @@ class ElectronAppHarness implements ElectronApp {
 
   async readClipboardText(): Promise<string> {
     return this.runningApplication.evaluate(({ clipboard }) => clipboard.readText())
+  }
+
+  // The source preload installs this probe before any production code binds shell methods.
+  async observeNativeFileReveal(): Promise<JSHandle<{ revealed: string[]; opened: string[] }>> {
+    return this.runningApplication.evaluateHandle(() => {
+      const probe = (
+        globalThis as unknown as Record<symbol, { revealed: string[]; opened: string[] }>
+      )[Symbol.for('open-science.e2e.native-file-reveal')]
+      if (!probe) throw new Error('Native file reveal probe was not installed before startup.')
+      return probe
+    })
   }
 
   async emitUpdateStatus(status: UpdateStatus): Promise<void> {

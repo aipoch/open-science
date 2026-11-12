@@ -10,6 +10,7 @@ import {
   NOTEBOOK_SYSTEM_PROMPT_APPEND
 } from '../notebook/mcp-server'
 import type { AgentFrameworkId } from '../agent-framework/types'
+import { AGENT_FRAMEWORK_ID_VALUES } from '../../shared/agent-framework-id'
 import { contextUsageMcpSections } from './context-usage-static-context'
 
 describe('contextUsageMcpSections', () => {
@@ -55,10 +56,8 @@ describe('contextUsageMcpSections', () => {
         frameworkId: AgentFrameworkId
         codexBridgeAliases?: boolean
       }> = [
-        { frameworkId: 'codex' },
-        { frameworkId: 'codex', codexBridgeAliases: true },
-        { frameworkId: 'claude-code' },
-        { frameworkId: 'opencode' }
+        ...AGENT_FRAMEWORK_ID_VALUES.map((frameworkId) => ({ frameworkId })),
+        { frameworkId: 'codex', codexBridgeAliases: true }
       ]
 
       // Baseline before deduplication was about 5.2k cl100k tokens (3.6k schema + 1.6k prompt).

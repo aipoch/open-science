@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled Node worker. */
 import { PDFArray, PDFDict, PDFName } from 'pdf-lib'
+const blankPageCertificates = new WeakMap()
 
 // A complete native name family establishes page identity without coordinate matching.
 function completeNativePageAnchorFamily(entries, count) {
@@ -29,6 +30,7 @@ function completeNativePageAnchorFamily(entries, count) {
 export function readBlankPageAnchors(native, source, input, entries, geometry, unsafePages) {
   const family = completeNativePageAnchorFamily(entries, input.pages.length),
     result = new Map(),
+    privateEntries = new Map(),
     { p, m } = native,
     at = native.alloc(16)
   const changed = new Set(
@@ -109,31 +111,101 @@ export function readBlankPageAnchors(native, source, input, entries, geometry, u
         )
         if (
           band.some((o) => o.type !== 1 || !o.text?.trim()) ||
-          firstOwners.some((owners) => owners.length !== 1) ||
-          new Set(firstOwners.flat()).size !== 1
+          firstOwners.some((owners) => owners.length !== 1)
         )
           continue
-        const firstOwner = firstOwners[0][0],
-          unit = input.units[firstOwner]
-        if (unit.fragments.length !== 1 || unit.fragments[0].pageNumber !== number) continue
-        const ownerRect = unit.fragments[0].rect
+        const ownerIndices = [...new Set(firstOwners.flat())],
+          ownerRects = [],
+          ownerSnapshots = []
+        let completeOwners = true
+        for (const ownerIndex of ownerIndices) {
+          const unit = input.units[ownerIndex]
+          if (unit.fragments.length !== 1 || unit.fragments[0].pageNumber !== number) {
+            completeOwners = false
+            break
+          }
+          const ownerRect = unit.fragments[0].rect,
+            ownerObjects = objects.filter((o) => {
+              const a = objectRect(o)
+              return (
+                a.x < ownerRect.x + ownerRect.width &&
+                a.x + a.width > ownerRect.x &&
+                a.y < ownerRect.y + ownerRect.height &&
+                a.y + a.height > ownerRect.y
+              )
+            }),
+            items = unit.fragments[0].items
+          if (
+            ownerObjects.some((o) => o.type !== 1 || !contains(objectRect(o), ownerRect)) ||
+            ownerObjects
+              .map((o) => o.text)
+              .join('')
+              .replace(/\s/gu, '') !== unit.source.replace(/\s/gu, '') ||
+            (ownerIndices.length > 1 &&
+              (!items?.length ||
+                items.some(
+                  (item, i) =>
+                    !Number.isSafeInteger(item.index) ||
+                    item.index < 0 ||
+                    typeof item.text !== 'string' ||
+                    (i && item.index <= items[i - 1].index)
+                ) ||
+                items
+                  .map((i) => i.text)
+                  .join('')
+                  .replace(/\s/gu, '') !== unit.source.replace(/\s/gu, '') ||
+                items.some(
+                  (item) =>
+                    input.units.flatMap((u) =>
+                      u.fragments.flatMap((f) =>
+                        f.pageNumber === number
+                          ? (f.items ?? []).filter((peer) => peer.index === item.index)
+                          : []
+                      )
+                    ).length !== 1
+                ) ||
+                ownerObjects.some((o) =>
+                  input.units
+                    .flatMap((u, i) =>
+                      u.fragments.flatMap((f, j) =>
+                        f.pageNumber === number && anchorIntersects(objectRect(o), f.rect)
+                          ? [{ i, j }]
+                          : []
+                      )
+                    )
+                    .some(
+                      ({ i, j }, k, owners) => owners.length !== 1 || i !== ownerIndex || j !== 0
+                    )
+                ) ||
+                ownerObjects.some(
+                  (o) =>
+                    p.FPDFClipPath_CountPaths(p.FPDFPageObj_GetClipPath(o.obj)) !== -1 ||
+                    p.FPDFTextObj_GetTextRenderMode(o.obj) !== 0
+                )))
+          ) {
+            completeOwners = false
+            break
+          }
+          ownerRects.push(ownerRect)
+          ownerSnapshots.push({ index: ownerIndex, unit, key: anchorUnitKey(unit) })
+        }
+        if (!completeOwners || !ownerRects.length) continue
+        const ownerRect = {
+          x: Math.min(...ownerRects.map((r) => r.x)),
+          y: Math.min(...ownerRects.map((r) => r.y)),
+          width:
+            Math.max(...ownerRects.map((r) => r.x + r.width)) -
+            Math.min(...ownerRects.map((r) => r.x)),
+          height:
+            Math.max(...ownerRects.map((r) => r.y + r.height)) -
+            Math.min(...ownerRects.map((r) => r.y))
+        }
         if (
           input.units.some(
             (other, index) =>
-              index !== firstOwner &&
+              !ownerIndices.includes(index) &&
               other.fragments.some((f) => f.pageNumber === number && f.rect.y < ownerRect.y)
           )
-        )
-          continue
-        const intersects = (a, b) =>
-          a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
-        const ownerObjects = objects.filter((o) => intersects(objectRect(o), ownerRect))
-        if (
-          ownerObjects.some((o) => o.type !== 1 || !contains(objectRect(o), ownerRect)) ||
-          ownerObjects
-            .map((o) => o.text)
-            .join('')
-            .replace(/\s/gu, '') !== unit.source.replace(/\s/gu, '')
         )
           continue
         let safe = true
@@ -195,16 +267,30 @@ export function readBlankPageAnchors(native, source, input, entries, geometry, u
               continue
             firstInk = true
             if (
-              row / ph < ownerRect.y ||
-              (row + 1) / ph > ownerRect.y + ownerRect.height ||
-              column / pw < ownerRect.x ||
-              (column + 1) / pw > ownerRect.x + ownerRect.width
+              !ownerRects.some(
+                (r) =>
+                  row / ph >= r.y &&
+                  (row + 1) / ph <= r.y + r.height &&
+                  column / pw >= r.x &&
+                  (column + 1) / pw <= r.x + r.width
+              )
             )
               safe = false
           }
           if (firstInk) break ink
         }
-        if (safe && firstInk) result.set(entry, firstOwner)
+        if (safe && firstInk) {
+          const value =
+            ownerIndices.length === 1 ? ownerIndices[0] : Object.freeze([...ownerIndices])
+          result.set(entry, value)
+          privateEntries.set(entry, {
+            value,
+            entryKey: anchorEntryKey(entry),
+            units: input.units,
+            unitsLength: input.units.length,
+            ownerSnapshots
+          })
+        }
       } catch {
         // Missing native evidence retains the existing annotation fallback.
         continue
@@ -216,6 +302,7 @@ export function readBlankPageAnchors(native, source, input, entries, geometry, u
   } finally {
     native.free(at)
   }
+  blankPageCertificates.set(result, privateEntries)
   return result
 }
 
@@ -228,14 +315,27 @@ export function mapBlankPageAnchor(
   lines,
   units
 ) {
-  if (!certificates.has(entry)) return undefined
-  const owner = certificates.get(entry),
-    first = firstContent?.get(entry.destination.pageNumber),
+  const certificate = blankPageCertificates.get(certificates)?.get(entry)
+  if (
+    !certificate ||
+    certificate.units !== units ||
+    certificate.unitsLength !== units.length ||
+    certificate.value !== certificates.get(entry) ||
+    certificate.entryKey !== anchorEntryKey(entry) ||
+    certificate.ownerSnapshots.some(
+      (s) => units[s.index] !== s.unit || anchorUnitKey(s.unit) !== s.key
+    )
+  )
+    return undefined
+  const first = firstContent?.get(entry.destination.pageNumber),
+    owners = Array.isArray(certificate.value) ? certificate.value : [certificate.value],
+    owner = first?.unitIndex,
     r = first?.rect,
     output = placements.get(owner),
     unit = units[owner]
   if (
     !first ||
+    !owners.includes(owner) ||
     !Number.isSafeInteger(first.pageNumber) ||
     !sourcePages[first.pageNumber - 1]?.includes(entry.destination.pageNumber) ||
     !r ||
@@ -265,3 +365,19 @@ export function mapBlankPageAnchor(
     return undefined
   return { pageNumber: first.pageNumber, mode: 1, params: [r.x * 595.28, (1 - r.y) * 841.89, null] }
 }
+
+const anchorIntersects = (a, b) =>
+  a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+const anchorEntryKey = (entry) =>
+  JSON.stringify({
+    name: entry.raw?.decodeText?.(),
+    value: entry.value?.toString?.(),
+    destination: entry.destination
+  })
+const anchorUnitKey = (unit) =>
+  JSON.stringify({
+    source: unit.source,
+    translation: unit.translation,
+    kind: unit.kind,
+    fragments: unit.fragments
+  })

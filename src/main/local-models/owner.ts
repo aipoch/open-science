@@ -29,7 +29,11 @@ const bytes = (revision: LocalModelRevision): number =>
   revision.assets.reduce((total, asset) => total + asset.size, 0)
 
 // One owner per application process. No renderer-provided paths, URLs or revisions are accepted.
-export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalModelOwner => {
+export const createLocalModelOwner = (
+  dependencies: Dependencies = {}
+): LocalModelOwner & {
+  installForUse(signal: AbortSignal): Promise<LocalModelSnapshot>
+} => {
   const namespace = dependencies.namespace ?? 'pdf-tables'
   const revisions = dependencies.revisions ?? PDF_TABLE_MODEL_REVISIONS
   const recommended = revisions[0]
@@ -436,7 +440,24 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
     // owner can release its use after verified termination; a timeout must not revoke it.
     await usesDrained
   }
-  return { getSnapshot, install, cancel, remove, acquireUse, close }
+  const installForUse = async (signal: AbortSignal): Promise<LocalModelSnapshot> => {
+    signal.throwIfAborted()
+    await install()
+    const download = operation
+    if (download?.kind === 'install') {
+      const abort = (): void => download.controller.abort()
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+      try {
+        await download.done
+      } finally {
+        signal.removeEventListener('abort', abort)
+      }
+    }
+    signal.throwIfAborted()
+    return currentSnapshot()
+  }
+  return { getSnapshot, install, installForUse, cancel, remove, acquireUse, close }
 }
 
 export type LocalModelUse = Readonly<{

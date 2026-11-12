@@ -54,20 +54,21 @@ export class PackageLiteratureReader {
     )
     if (receipt.projectId !== projectId || receipt.sessionId !== sessionId)
       throw new Error('Literature package owner mismatch.')
-    await assertPackageSourcePath(root, 'source/manifest.json')
-    if ((await fileChecksum(join(root, 'source/manifest.json'))) !== receipt.manifestChecksum)
+    const metadata = receipt.nativeLogOrigin ? 'origin-metadata' : 'source'
+    await assertPackageSourcePath(root, `${metadata}/manifest.json`)
+    if ((await fileChecksum(join(root, `${metadata}/manifest.json`))) !== receipt.manifestChecksum)
       throw new Error('Literature package manifest changed.')
     const manifest = sessionPackageManifestSchema.parse(
-      await readPackageJson(join(root, 'source/manifest.json'))
+      await readPackageJson(join(root, `${metadata}/manifest.json`))
     )
     const recordEntry = manifest.inventory.find((entry) => entry.path === 'records.json')
-    await assertPackageSourcePath(root, 'source/records.json')
+    await assertPackageSourcePath(root, `${metadata}/records.json`)
     if (
       !recordEntry ||
-      (await fileChecksum(join(root, 'source/records.json'))) !== recordEntry.checksum
+      (await fileChecksum(join(root, `${metadata}/records.json`))) !== recordEntry.checksum
     )
       throw new Error('Literature package metadata changed.')
-    const records = (await readPackageJson(join(root, 'source/records.json'))) as {
+    const records = (await readPackageJson(join(root, `${metadata}/records.json`))) as {
       literature?: unknown
     }
     if (!records.literature) return undefined

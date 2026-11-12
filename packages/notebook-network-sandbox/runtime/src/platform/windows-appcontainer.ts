@@ -42,7 +42,7 @@ type WindowsAclPreflightRequest = Readonly<{
   /**
    * How much of the selected tree to validate. `tree` (default) walks descendants so a folder
    * grant can report protected descendants before it is persisted; `target` validates only the
-   * selected path and its ancestors and is used for the per-command re-check.
+   * selected path and its ancestors.
    */
   scope?: 'target' | 'tree'
   filesystem?: FilesystemLayoutInput
@@ -948,6 +948,7 @@ const windowsLaunch = (
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
       optionalReadOnlyRoots: layout.optionalReadOnlyRoots ?? [],
+      optionalReadWriteRoots: layout.optionalReadWriteRoots ?? [],
       readWriteRoots: layout.readWriteRoots,
       deniedReadRoots: layout.deniedReadRoots,
       deniedWriteRoots: layout.deniedWriteRoots,

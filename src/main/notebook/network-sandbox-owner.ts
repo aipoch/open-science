@@ -23,7 +23,8 @@ import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
-import { assertProcessTreeSupport } from '../process-tree'
+import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
+import { defaultSpawn } from './environment-process'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { managedSkillReadRoots } from './managed-skill-read-roots'
 import {
@@ -120,6 +121,43 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+export const runRAccessProbe = async (
+  invocation: NotebookSandboxedSpawn,
+  cwd: string,
+  timeoutMs = 60_000
+): Promise<{ stdout: string; stderr: string }> => {
+  const result = await defaultSpawn(
+    invocation.executable,
+    [...invocation.args],
+    invocation.env,
+    undefined,
+    undefined,
+    false,
+    cwd,
+    { timeoutMs },
+    async (child) => {
+      if (await invocation.confirmProcessTreeTermination?.().catch(() => false))
+        return { reaped: true }
+      // The native owner must reap its Job and restore temporary ACLs before exiting.
+      // execFile's timeout kills that owner before it can publish cleanup evidence.
+      if (await invocation.requestProcessTreeTermination?.().catch(() => false))
+        return { reaped: true }
+      const outcome = await terminateProcessTree(child)
+      return invocation.confirmProcessTreeTermination ? { reaped: false } : outcome
+    },
+    process.platform,
+    invocation.confirmProcessTreeTermination
+  )
+  if (result.code !== 0)
+    throw Object.assign(
+      new Error(
+        `R runtime verification exited with code ${result.code}.\n${result.stderr.slice(-4096)}`
+      ),
+      { code: result.code, stdout: result.stdout, stderr: result.stderr }
+    )
+  return result
+}
 
 const annotateRTemporaryDirectoryError = (text: string): string =>
   text.includes("Fatal error: 'R_TempDir' contains space")
@@ -288,7 +326,7 @@ const protectedWriteRoots = (readWriteRoots: readonly string[]): string[] =>
   ].filter(existsSync)
 
 // Application authority that must never be writable from a broad or nested grant. Grant-time and
-// execution-time planning must agree, or a saved grant poisons every later command.
+// execution-time planning must keep these write boundaries consistent.
 const authorityWriteDenyRoots = (configRoot: string | undefined): string[] =>
   configRoot ? [join(configRoot, 'settings.json'), join(configRoot, 'sessions')] : []
 
@@ -383,9 +421,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         (selection, signal) =>
           probeWindowsRuntimeComponent(
             selection,
-            // Runtime readiness must not inherit user folder grants: one denied ACL must not
-            // prevent every protected runtime from starting.
-            (request) => this.prepare(request, []),
+            // Compatibility checks need their fixture and runtime, not user or Skill folders.
+            (request) => this.prepare(request, false),
             signal,
             (message) => this.log.warn(message)
           )
@@ -514,6 +551,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    return this.wrapInvocation(invocation, true)
+  }
+
+  private async wrapInvocation(
+    invocation: NotebookSandboxInvocation,
+    includeExecutionRoots: boolean
+  ): Promise<NotebookSandboxedSpawn> {
     if (
       this.platform === 'win32' &&
       invocation.target?.kind !== 'wsl2' &&
@@ -541,7 +585,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       }
     }
     try {
-      return await this.prepare(invocation)
+      return await this.prepare(invocation, includeExecutionRoots)
     } catch (error) {
       if (
         error instanceof Error &&
@@ -573,7 +617,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   private async prepare(
     invocation: NotebookSandboxInvocation,
-    grantedRootsOverride?: readonly GrantedLocalRoot[]
+    includeExecutionRoots: boolean
   ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
@@ -599,7 +643,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = grantedRootsOverride ?? (await this.options.getGrantedLocalRoots?.()) ?? []
+    const grantedRoots = includeExecutionRoots
+      ? ((await this.options.getGrantedLocalRoots?.()) ?? [])
+      : []
     // Directories under \\wsl.localhost (or \\wsl$) belong to one guest. Native protected
     // execution cannot use them, and another distro must not map them to its own guest paths.
     const applicableGrantedRoots = grantedRoots.filter((root) => {
@@ -628,60 +674,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       )
     }
 
-    const skillReadRoots = this.options.configRoot
-      ? await managedSkillReadRoots(this.options.configRoot)
-      : []
-    const filesystem = {
-      restrictFolders,
-      privateRoot: homedir(),
-      readOnlyRoots: [
-        ...invocation.filesystem.readOnlyRoots,
-        ...(authorityRoot && restrictFolders !== true ? [authorityRoot] : []),
-        ...skillReadRoots,
-        ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
-          ? []
-          : environmentPathRoots(invocation.env, this.platform)),
-        ...applicableGrantedRoots.map((root) => root.path),
-        ...(this.trustBundle ? [this.trustBundle.path] : [])
-      ],
-      ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
-        ? {
-            optionalReadOnlyRoots: [
-              ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
-              ...environmentPathRoots(invocation.env, this.platform)
-            ]
-          }
-        : {}),
-      readWriteRoots: [
-        ...invocation.filesystem.readWriteRoots,
-        ...applicableGrantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
-      ].filter((path) => !coversAuthority(path)),
-      deniedReadRoots: invocation.filesystem.deniedReadRoots,
-      deniedWriteRoots: [
-        ...invocation.filesystem.deniedWriteRoots,
-        ...authorityWriteDenyRoots(this.options.configRoot),
-        ...skillReadRoots,
-        ...protectedWriteRoots([
-          ...invocation.filesystem.readWriteRoots,
-          ...applicableGrantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
-        ]),
-        ...(this.trustBundle ? [this.trustBundle.path] : [])
-      ]
-    }
-    if (nativeWindows && windowsProtectionRequired === true) {
-      for (const root of applicableGrantedRoots) {
-        invocation.signal?.throwIfAborted()
-        // Re-check the stored grants without re-walking their trees: each command would otherwise
-        // enumerate every granted folder. The grant-time preflight already walked them, and a
-        // protected descendant only narrows what the command can reach.
-        await this.getOrCreateSandbox().preflightGrantedRoot(root.path, root.access, root.path, {
-          filesystem,
-          signal: invocation.signal,
-          scope: 'target'
-        })
-        invocation.signal?.throwIfAborted()
-      }
-    }
+    const skillReadRoots =
+      includeExecutionRoots && this.options.configRoot
+        ? await managedSkillReadRoots(this.options.configRoot)
+        : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(
       target,
       invocation.runtime
@@ -751,10 +747,56 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { windowsShellControlPipe: invocation.windowsShellControlPipe }
           : {}),
         filesystem: {
-          ...filesystem,
-          readWriteRoots: [...filesystem.readWriteRoots, commandTempRoot].filter(
-            (path) => !coversAuthority(path)
-          )
+          restrictFolders,
+          privateRoot: homedir(),
+          readOnlyRoots: [
+            ...invocation.filesystem.readOnlyRoots,
+            ...(authorityRoot && restrictFolders !== true ? [authorityRoot] : []),
+            ...skillReadRoots,
+            ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
+              ? []
+              : environmentPathRoots(env, this.platform)),
+            ...(nativeWindows ? [] : applicableGrantedRoots.map((root) => root.path)),
+            ...(this.trustBundle ? [this.trustBundle.path] : [])
+          ],
+          ...(nativeWindows
+            ? {
+                optionalReadOnlyRoots: [
+                  ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
+                  ...applicableGrantedRoots.map((root) => root.path),
+                  ...environmentPathRoots(env, this.platform)
+                ],
+                optionalReadWriteRoots: [
+                  ...(invocation.filesystem.optionalReadWriteRoots ?? []),
+                  ...applicableGrantedRoots
+                    .filter((root) => root.access === 'rw')
+                    .map((root) => root.path)
+                ].filter((path) => !coversAuthority(path))
+              }
+            : {}),
+          readWriteRoots: [
+            ...invocation.filesystem.readWriteRoots,
+            commandTempRoot,
+            ...(nativeWindows
+              ? []
+              : applicableGrantedRoots
+                  .filter((root) => root.access === 'rw')
+                  .map((root) => root.path))
+          ].filter((path) => !coversAuthority(path)),
+          deniedReadRoots: invocation.filesystem.deniedReadRoots,
+          deniedWriteRoots: [
+            ...invocation.filesystem.deniedWriteRoots,
+            ...authorityWriteDenyRoots(this.options.configRoot),
+            ...skillReadRoots,
+            ...protectedWriteRoots([
+              ...invocation.filesystem.readWriteRoots,
+              ...(invocation.filesystem.optionalReadWriteRoots ?? []),
+              ...applicableGrantedRoots
+                .filter((root) => root.access === 'rw')
+                .map((root) => root.path)
+            ]),
+            ...(this.trustBundle ? [this.trustBundle.path] : [])
+          ]
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
@@ -1794,33 +1836,36 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       try {
         phase = 'sandbox-prepare'
         diagnostic.phase(phase, { condaPrefixDetected: Boolean(prefix) })
-        invocation = await this.wrap({
-          executable,
-          args: [
-            '--vanilla',
-            '-e',
-            pathsOnly
-              ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
-              : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
-          ],
-          cwd,
-          // Only the contained path probe suppresses startup packages. Host readiness and full
-          // post-authorization verification must exercise ordinary R startup and dependencies.
-          env: {
-            ...env,
-            ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+        invocation = await this.wrapInvocation(
+          {
+            executable,
+            args: [
+              '--vanilla',
+              '-e',
+              pathsOnly
+                ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
+                : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
+            ],
+            cwd,
+            // Only the contained path probe suppresses startup packages. Host readiness and full
+            // post-authorization verification must exercise ordinary R startup and dependencies.
+            env: {
+              ...env,
+              ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+            },
+            commandText: 'Verify selected R runtime',
+            runtime: 'r',
+            sessionId: 'runtime-access-check',
+            projectId: 'runtime-access-check',
+            filesystem: {
+              readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
+              readWriteRoots: [cwd],
+              deniedReadRoots: [],
+              deniedWriteRoots: []
+            }
           },
-          commandText: 'Verify selected R runtime',
-          runtime: 'r',
-          sessionId: 'runtime-access-check',
-          projectId: 'runtime-access-check',
-          filesystem: {
-            readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
-            readWriteRoots: [cwd],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
+          false
+        )
         endExecution = invocation.beginExecution?.()
         phase = authorization ? 'authorize' : 'path-probe'
         diagnostic.phase(phase)
@@ -1839,19 +1884,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           }
         } else {
           probeMayHaveStarted = true
-          const { stdout } = await promisify(execFile)(
-            invocation.executable,
-            [...invocation.args],
-            {
-              cwd,
-              env: invocation.env,
-              // This bounds the native host, including ACL preparation and rollback, rather
-              // than only R execution. Live kernels can make directory propagation exceed 20s.
-              timeout: 60_000,
-              windowsHide: true,
-              maxBuffer: 1024 * 1024
-            }
-          )
+          const { stdout } = await runRAccessProbe(invocation, cwd)
           if (!stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
             throw new Error('R runtime verification did not complete.')
         }

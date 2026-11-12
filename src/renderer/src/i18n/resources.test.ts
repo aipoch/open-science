@@ -145,6 +145,7 @@ const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']
 const CONTEXT_SUFFIXES = new Set([
   'readingStatus',
   'ago',
+  'audit',
   'duration',
   'files',
   'inUse',
@@ -946,7 +947,6 @@ describe('mandatory product glossary', () => {
       deny: de.renderer['Deny'],
       detachConnector: de.renderer['Detach connector'],
       dropReferences: de.renderer['Drop reference files'],
-      editSpecialist: de.renderer['Edit specialist'],
       installSpecialist: de.renderer['Install Specialist'],
       open: de.renderer.Open,
       openPlan: de.renderer['Open plan, step {{completed}} of {{steps}}'],
@@ -986,7 +986,6 @@ describe('mandatory product glossary', () => {
       deny: 'Ablehnen',
       detachConnector: 'Konnektorzuordnung aufheben',
       dropReferences: 'Referenzdateien hier ablegen',
-      editSpecialist: 'Spezialist bearbeiten',
       installSpecialist: 'Spezialist installieren',
       open: 'Öffnen',
       openPlan: 'Plan öffnen, Schritt {{completed}} von {{steps}}',
@@ -1104,7 +1103,6 @@ describe('mandatory product glossary', () => {
       openXaiVerification: de.renderer['Open xAI verification'],
       revokeAllPermissions: de.renderer['Revoke all {{scope}}{{family}} permissions'],
       uploadSkillFile: de.renderer['Upload a SKILL.md or text file'],
-      browseMarketplace: de.renderer['Browse Marketplace'],
       continueInstallation: de.renderer['Continue installation'],
       resume: de.renderer.Resume,
       validate: de.renderer.Validate,
@@ -1131,7 +1129,6 @@ describe('mandatory product glossary', () => {
       openXaiVerification: 'xAI-Verifizierung öffnen',
       revokeAllPermissions: 'Alle {{scope}}{{family}}-Berechtigungen widerrufen',
       uploadSkillFile: 'SKILL.md- oder Textdatei hochladen',
-      browseMarketplace: 'Marktplatz durchsuchen',
       continueInstallation: 'Installation fortsetzen',
       resume: 'Fortsetzen',
       validate: 'Prüfen',
@@ -1698,7 +1695,7 @@ describe('mandatory product glossary', () => {
 
     expect(malformedTableRows).toEqual([])
     expect(readme).not.toMatch(/Fertigkeit|Anschl(?:uss|üsse)/u)
-    expect(readme).not.toMatch(/\b(?:Skill|Connector|Subagent|Shell)\b|Active-Agent-Framework/u)
+    expect(readme).not.toMatch(/\b(?:Skills?|Connector|Subagent|Shell)\b|Active-Agent-Framework/u)
     expect(readme).not.toMatch(/\bAnrufe\b|Turnusbezogene/u)
     expect(readme).not.toMatch(/Ã|Â|â€|�/u)
     // The README is an onboarding overview; detailed provider catalogs and old feature
@@ -1706,7 +1703,7 @@ describe('mandatory product glossary', () => {
     for (const heading of [
       '🚀 Schnellstart',
       'Benchmark-Ergebnisse',
-      'Kernkompetenzen',
+      'Warum AIPOCH Open-Science verwenden?',
       'Modellanbieter',
       'Daten, Berechtigungen und Vertrauen',
       'Entwicklung & Verpackung',
@@ -1714,14 +1711,7 @@ describe('mandatory product glossary', () => {
     ]) {
       expect(readme).toContain(`## ${heading}`)
     }
-    for (const term of [
-      'Fähigkeiten',
-      'Konnektoren',
-      'Befehlszeile',
-      'CodeBuddy',
-      'SSH',
-      'Slurm'
-    ]) {
+    for (const term of ['Fähigkeiten', 'Konnektoren', 'Befehlszeile', 'SSH', 'Slurm']) {
       expect(readme).toContain(term)
     }
     const rootPackage = JSON.parse(
@@ -2056,7 +2046,6 @@ describe('mandatory product glossary', () => {
       Image: 'Image',
       'Copy command': 'Copier la commande',
       'Data location': 'Emplacement des données',
-      'Edit specialist': 'Modifier le spécialiste',
       'Recent files': 'Fichiers récents',
       'Search messages, projects, files and Library…':
         'Rechercher des messages, projets, fichiers et dans la bibliothèque…',

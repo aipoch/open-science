@@ -14,6 +14,7 @@ import {
   isCodexSubscriptionProvider,
   isXaiSubscriptionProvider,
   preferredEndpoint,
+  providerValidationRoute,
   shareProviderTransportFamily,
   usesAppProviderTransport
 } from '../../shared/settings'
@@ -115,18 +116,15 @@ const modelRouteFor = (
   frameworkId: AgentFrameworkId,
   target: ProviderRuntimeTarget
 ): AgentModelRoute => {
-  if (frameworkId === 'claude-code') return 'claude-anthropic'
-  if (frameworkId === 'opencode') {
-    return target.apiEndpoints.includes('chat-completions')
-      ? 'opencode-openai'
-      : 'opencode-anthropic'
-  }
-  if (frameworkId === 'codebuddy') return 'codebuddy-openai'
-  if (frameworkId === 'pi') return 'pi'
-  if (frameworkId === 'open-science-agent') return 'open-science-agent'
-  if (target.needsChatResponsesToChatCompletionsBridge) return 'codex-bridge'
-  if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
-  return 'codex-responses'
+  return providerValidationRoute(
+    {
+      ...target.provider,
+      apiEndpoints: target.apiEndpoints,
+      needsChatResponsesToChatCompletionsBridge: target.needsChatResponsesToChatCompletionsBridge,
+      needsNativeResponsesCompatibility: target.needsNativeResponsesCompatibility
+    },
+    frameworkId
+  ).route!
 }
 // Pi speaks every API-key protocol natively, so each target keeps its preferred wire. xAI
 // subscriptions use the shared OAuth bridge; other subscription logins stay with their own harness.

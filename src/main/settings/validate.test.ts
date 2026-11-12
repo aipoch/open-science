@@ -199,7 +199,7 @@ describe('validate: request construction', () => {
       'https://gateway.example.com/v1/messages'
     )
     // A framework that speaks OpenAI probes chat/completions for the same provider.
-    expect(buildValidationRequest(provider, false, ['messages', 'chat-completions']).url).toBe(
+    expect(buildValidationRequest(provider, false, ['chat-completions', 'messages']).url).toBe(
       'https://gateway.example.com/v1/chat/completions'
     )
   })

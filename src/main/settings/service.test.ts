@@ -36,6 +36,7 @@ import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
+import { harnessConfigSchema } from '../harness-acp/config'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import { SkillMarketplaceService } from '../skill-marketplace/service'
 import { ProviderTransportOwner } from './provider-transport-owner'
@@ -43,6 +44,18 @@ import { SkillCatalogModule } from '../skills/catalog'
 import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
+// Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('./provider-acp-validation', () => ({
+  ProviderAcpValidator: class {
+    validate = vi.fn(async () => ({
+      ok: false,
+      category: 'unknown',
+      message: 'test runtime unavailable'
+    }))
+    dispose = vi.fn(async () => undefined)
+  }
+}))
+
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -349,6 +362,210 @@ afterEach(async () => {
 })
 
 describe('SettingsService: harness session ownership', () => {
+  it.each(['imported', 'isolated'] as const)(
+    'uses the %s Codex sign-in for a built-in Agent and fences the old connection after reauthentication',
+    async (mode) => {
+      const userCodexDir = join(storageRoot, 'no-user-codex')
+      const ownedHome = codexSubscriptionStorageDir(storageRoot)
+      let account = 'account-one'
+      const storeLogin = async (directory: string): Promise<void> => {
+        const payload = Buffer.from(
+          JSON.stringify({
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            'https://api.openai.com/auth': { chatgpt_account_id: account }
+          })
+        ).toString('base64url')
+        const jwt = `header.${payload}.signature`
+        await mkdir(directory, { recursive: true })
+        await writeFile(
+          join(directory, 'auth.json'),
+          JSON.stringify({
+            auth_mode: 'chatgpt',
+            tokens: {
+              access_token: jwt,
+              id_token: jwt,
+              account_id: account,
+              refresh_token: 'refresh'
+            },
+            last_refresh: new Date().toISOString()
+          })
+        )
+      }
+      const service = createService(undefined, {
+        userCodexDir,
+        codexAuth: {
+          getStatus: vi.fn(),
+          loginIsolated: async () => {
+            await storeLogin(ownedHome)
+            return { mode: 'isolated', supported: true, authenticated: true }
+          },
+          cancelLogin: vi.fn(),
+          logoutIsolated: vi.fn()
+        }
+      })
+      const upstream = vi.spyOn(mockedNet, 'fetch').mockImplementation(async (_url, init) => {
+        const headers = new Headers(init.headers)
+        expect(headers.get('ChatGPT-Account-Id')).toBe(account)
+        expect(headers.get('authorization')).toMatch(/^Bearer header\./)
+        expect(JSON.parse(init.body)).not.toHaveProperty('max_output_tokens')
+        return new Response('data: {"type":"response.completed","response":{}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' }
+        })
+      })
+      const backends: Awaited<ReturnType<typeof resolveActiveBackend>>[] = []
+      const open = async () => {
+        const backend = await resolveActiveBackend(service, {
+          includeSkillAndConnectorContext: false
+        })
+        backends.push(backend)
+        const config = harnessConfigSchema.parse(
+          backend.authentication?._meta?.['open-science-agent']
+        )
+        return () =>
+          fetch(config.endpoint, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${config.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: config.model,
+              stream: true,
+              store: false,
+              input: [],
+              max_output_tokens: 128
+            })
+          })
+      }
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        const type = mode === 'imported' ? 'codex-shared' : 'codex-isolated'
+        if (mode === 'imported') await storeLogin(userCodexDir)
+        await service.upsertProvider({ type })
+        if (mode === 'isolated') expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        else {
+          // A fresh imported live token needs no ACP adapter or native runtime for validation.
+          expect(
+            (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+          ).toBe(true)
+          expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(true)
+        }
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        const first = await open()
+        expect(await (await first()).text()).toContain('response.completed')
+        if (mode === 'imported') {
+          await rm(join(userCodexDir, 'auth.json'))
+          await expect(
+            service.upsertProvider({ type, reimportCodexAuthentication: true })
+          ).rejects.toThrow('file-backed Codex credential')
+          expect(await (await first()).text()).toContain('response.completed')
+          expect(upstream).toHaveBeenCalledTimes(2)
+          upstream.mockClear()
+          // Keep the successful-switch assertions identical for both authentication flows.
+          await first()
+        }
+        account = 'account-two'
+        if (mode === 'imported') {
+          await storeLogin(userCodexDir)
+          await service.upsertProvider({ type, reimportCodexAuthentication: true })
+        } else {
+          expect((await service.logoutIsolatedCodex()).ok).toBe(true)
+          expect((await service.loginIsolatedCodex()).ok).toBe(true)
+        }
+        const stale = await first()
+        expect(stale.ok).toBe(false)
+        await stale.body?.cancel()
+        expect(upstream).toHaveBeenCalledTimes(1)
+        const second = await open()
+        expect(await (await second()).text()).toContain('response.completed')
+        expect(upstream).toHaveBeenCalledTimes(2)
+      } finally {
+        await Promise.all(backends.map((backend) => backend.providerTransportLease?.release()))
+        upstream.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it.each(['api-key', 'gateway', 'websocket'] as const)(
+    'keeps %s profiles available to native Codex but unavailable to the built-in Agent',
+    async (kind) => {
+      const status = vi.fn(async () => ({
+        mode: 'isolated' as const,
+        supported: true,
+        authenticated: true
+      }))
+      const service = createService(undefined, {
+        codexAuth: {
+          getStatus: status,
+          loginIsolated: status,
+          logoutIsolated: status,
+          cancelLogin: vi.fn()
+        }
+      })
+      try {
+        await repository.setAgentFramework('open-science-agent')
+        await service.upsertProvider({
+          type: 'codex-isolated',
+          codexTransport: kind === 'websocket' ? 'websocket' : 'auto'
+        })
+        const home = codexSubscriptionStorageDir(storageRoot)
+        const token = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify(
+            kind === 'api-key'
+              ? { auth_mode: 'apikey', OPENAI_API_KEY: 'private-key' }
+              : {
+                  auth_mode: 'chatgpt',
+                  last_refresh: new Date().toISOString(),
+                  tokens: {
+                    access_token: token,
+                    id_token: token,
+                    refresh_token: 'refresh',
+                    account_id: 'account-one'
+                  }
+                }
+          )
+        )
+        if (kind === 'gateway')
+          await writeFile(
+            join(home, 'config.toml'),
+            'model_provider = "gateway"\n[model_providers.gateway]\nbase_url = "https://gateway.example/v1"\nwire_api = "responses"\n'
+          )
+        await service.setActiveProvider(CODEX_SUBSCRIPTION_PROVIDER_ID, 'gpt-6.1-sol')
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        const validatedAt = (await repository.getSettings()).providers[0].lastValidatedAt
+        status.mockClear()
+        await repository.setAgentFramework('open-science-agent')
+        expect(
+          await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })
+        ).toMatchObject({
+          ok: false,
+          frameworkIncompatible: true
+        })
+        expect((await repository.getSettings()).providers[0].lastValidatedAt).toBe(validatedAt)
+        expect((await repository.getSettings()).providers[0].lastValidationFailure).toBeUndefined()
+        expect((await service.getSettingsView()).providers[0].codexHarnessAvailable).toBe(false)
+        expect((await service.getPreflight()).activeProviderReady).toBe(false)
+        await expect(
+          resolveActiveBackend(service, { includeSkillAndConnectorContext: false })
+        ).rejects.toThrow()
+        expect(status).not.toHaveBeenCalled()
+        await repository.setAgentFramework('codex')
+        expect(
+          (await service.validateProvider({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID })).ok
+        ).toBe(true)
+        expect(status).toHaveBeenCalledOnce()
+      } finally {
+        await service.dispose()
+      }
+    }
+  )
+
   it('binds account edits and service shutdown to live harness sessions', async () => {
     const releases: ReturnType<typeof vi.fn>[] = []
     type TransportWithXai = {
@@ -3594,15 +3811,15 @@ describe('SettingsService: preflight & spawn config', () => {
     const backend = await resolveActiveBackend(service)
 
     // End-to-end guard for the whole capability chain: resolveProvider must carry supportsImageInput
-    // for the multimodal default (kimi-k3) and prepareModelConfig must surface it, so OpenCode receives
+    // for the multimodal default (kimi-k3.1-pro) and prepareModelConfig must surface it, so OpenCode receives
     // the model as image-capable instead of a bare entry whose image parts it would strip. Deleting the
     // wiring in resolveProvider or buildModelCapabilities makes this fail.
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    const agentProviderId = opencodeTransportProviderId(provider.id, 'kimi-k3')
-    expect(content.provider[agentProviderId].models['kimi-k3']).toEqual({
+    const agentProviderId = opencodeTransportProviderId(provider.id, 'kimi-k3.1-pro')
+    expect(content.provider[agentProviderId].models['kimi-k3.1-pro']).toEqual({
       attachment: true,
       modalities: { input: ['text', 'image'] },
-      limit: { context: 1_000_000, output: 32_000 }
+      limit: { context: 1_048_576, output: 32_000 }
     })
     expect(backend.args).toEqual(['--port', '42424', '--hostname', '127.0.0.1'])
     expect(backend.opencodeUsageApi).toEqual({
@@ -4022,7 +4239,7 @@ describe('SettingsService: preflight & spawn config', () => {
       headers: { authorization: expect.stringMatching(/^Bearer [a-f0-9]+$/) }
     })
     // This is not the Chat Completions bridge: preserve the provider model and native catalog.
-    expect(backend.sessionModel).toBe('MiniMax-M3')
+    expect(backend.sessionModel).toBe('MiniMax-M3.1-Flash')
     const codexConfig = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
     expect(codexConfig.model_catalog_json).toMatch(
       new RegExp(
@@ -4178,7 +4395,7 @@ describe('SettingsService: official vendors', () => {
     ).providers[0]
 
     const catalogDefault = defaultVendorModel('zhipu')
-    expect(catalogDefault).toBe('glm-5.3')
+    expect(catalogDefault).toBe('glm-5.3-flash')
 
     // A model in the catalog is honored.
     let snapshot = await service.setActiveProvider(created.id, 'glm-5.2')
@@ -4221,8 +4438,8 @@ describe('SettingsService: official vendors', () => {
         permissions: { ask: ['WebFetch'] },
         availableModels: [
           'deepseek-v4-flash',
-          'deepseek-v4-pro',
           'deepseek-flash',
+          'deepseek-v4-pro',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
@@ -4239,8 +4456,8 @@ describe('SettingsService: official vendors', () => {
     ).resolves.toMatchObject({
       availableModels: [
         'deepseek-v4-flash',
-        'deepseek-v4-pro',
         'deepseek-flash',
+        'deepseek-v4-pro',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
@@ -4459,7 +4676,7 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek Pro through the native Responses route under Codex', async () => {
+  it('probes the default DeepSeek Flash model through the native Responses route under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
     const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
@@ -4472,7 +4689,7 @@ describe('SettingsService: official vendors', () => {
     expect(result).toMatchObject({ ok: true, category: 'ok' })
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
-      model: 'deepseek-v4-pro',
+      model: 'deepseek-flash',
       stream: true,
       tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
     })
@@ -4571,7 +4788,7 @@ describe('SettingsService: image-input capability', () => {
     const claude = claudeSnapshot.providers.find((p) => p.vendorId === 'anthropic')
     expect(claude?.supportsImageInput).toBe(true)
 
-    // MiniMax defaults to the natively multimodal M3 model.
+    // MiniMax's bundled default supports images.
     const minimaxSnapshot = await service.upsertProvider({
       type: 'official',
       name: 'MiniMax',
@@ -4581,7 +4798,7 @@ describe('SettingsService: image-input capability', () => {
     const minimax = minimaxSnapshot.providers.find((p) => p.vendorId === 'minimax')
     expect(minimax?.supportsImageInput).toBe(true)
 
-    // DeepSeek's default model is text-only.
+    // The stable DeepSeek Flash default supports images.
     const deepseekSnapshot = await service.upsertProvider({
       type: 'official',
       name: 'DeepSeek',
@@ -4589,7 +4806,7 @@ describe('SettingsService: image-input capability', () => {
       key: 'k'
     })
     const deepseek = deepseekSnapshot.providers.find((p) => p.vendorId === 'deepseek')
-    expect(deepseek?.supportsImageInput).toBe(false)
+    expect(deepseek?.supportsImageInput).toBe(true)
   })
 
   it('tracks the active model for a vendor with mixed vision support (DeepSeek)', async () => {
@@ -4668,7 +4885,7 @@ describe('SettingsService: image-input capability', () => {
 
   it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
     const service = createService()
-    // A refresh reorders Kimi's catalog so a text-only id leads, while the spawned default stays kimi-k3.
+    // A refresh reorders Kimi's catalog so a text-only id leads, while the default remains multimodal.
     vi.stubGlobal(
       'fetch',
       vi
@@ -4683,7 +4900,7 @@ describe('SettingsService: image-input capability', () => {
     await service.refreshProviderModels({ providerId: created.id })
 
     // With no active model, the capability must match the model resolveProvider actually spawns — the
-    // vendor default kimi-k3 (multimodal) — not the refreshed list head kimi-k2.7-code (text-only), or
+    // bundled multimodal default — not the refreshed list head kimi-k2.7-code (text-only), or
     // OpenCode would keep stripping images from a default that supports them.
     const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
     expect(view?.models[0]).toBe('kimi-k2.7-code')

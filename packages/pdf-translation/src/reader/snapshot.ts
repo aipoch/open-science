@@ -9,7 +9,7 @@ export function rememberPdfTranslationExtraction(extraction: PdfTranslationExtra
   const { fingerprint, pages, units, originalRegions } = extraction.source
   snapshots.set(extraction.source, {
     version: 1,
-    parserVersion: 'pdfjs-paragraph-layout-1',
+    parserVersion: 'pdfjs-paragraph-layout-6',
     fingerprint,
     pages,
     units,

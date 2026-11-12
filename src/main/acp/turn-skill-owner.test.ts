@@ -26,6 +26,18 @@ const reloadTestScope = {
 }
 
 describe('AcpTurnSkillOwner', () => {
+  it('leaves a tool-less CodeBuddy prompt free of Skill routing instructions', async () => {
+    const owner = new AcpTurnSkillOwner({ requestSkillsReload: vi.fn() })
+    const turn = await owner.authorize({ role: 'restricted-inference' })
+    expect(
+      await turn.prepareProvider({
+        frameworkId: 'codebuddy',
+        selectionText: 'Cell',
+        promptText: 'Cell'
+      })
+    ).toEqual({ text: 'Cell', codexSkillInputs: [] })
+  })
+
   it.each(['completed', 'failed', 'cancelled', 'reload-restored'] as const)(
     'clears bound-only force loading on %s without turning bindings into explicit inputs',
     async (outcome) => {

@@ -10,12 +10,20 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
-import { createHarnessAcpAgent, measureHarnessRequest } from './agent'
-import { HARNESS_AUTH_METHOD, HARNESS_INSTRUCTIONS, HARNESS_OWNER } from './config'
+import { createHarnessAcpAgent } from './agent'
+import {
+  HARNESS_AUTH_METHOD,
+  HARNESS_INSTRUCTIONS,
+  HARNESS_OWNER,
+  HARNESS_TOOL_LESS
+} from './config'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
 import { HARNESS_INVOCATION, HARNESS_RECEIPT_METHOD, receiptResponseSchema } from './tool-receipts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { collectPromptFailureFacts } from '../acp/prompt-error'
+import { classifyFailure } from '../../shared/failure/classify'
+import { ProtocolForwardingBridge } from '../settings/protocol-forwarding-bridge'
 import { harnessTurnAdapter } from '../acp/harness-turn-adapter'
 import { toAcpRuntimeEvent } from '../acp/runtime-events'
 
@@ -46,7 +54,8 @@ it.each(['completed', 'failed', 'cancelled'] as const)(
         'end_turn'
       )
     await seed.connection.agent.request(acp.methods.agent.session.close, { sessionId })
-    const f = await fixture(model.endpoint, seed.directory, true, 65536)
+    // About 59 KB of history and prompt is ~15k estimated tokens; this window compacts it.
+    const f = await fixture(model.endpoint, seed.directory, true, 16384)
     await f.connection.agent.request(acp.methods.agent.session.resume, {
       sessionId,
       cwd: seed.directory,
@@ -203,7 +212,8 @@ async function fixture(
   existing?: string,
   allow = true,
   contextWindow = 32768,
-  inputCapabilities?: { images?: boolean; files?: boolean; audio?: boolean; video?: boolean }
+  inputCapabilities?: { images?: boolean; files?: boolean; audio?: boolean; video?: boolean },
+  token = 'local-test-token'
 ): Promise<{
   directory: string
   owner: ReturnType<typeof createHarnessAcpAgent>
@@ -259,12 +269,11 @@ async function fixture(
             ? 'responses'
             : 'chat-completions',
         sessionHeader: 'x-opencode-session',
-        token: 'local-test-token',
+        token,
         model: 'test',
         modelIdentity: 'provider:test',
         contextWindow,
-        inputCapabilities,
-        maxOutputTokens: 1024
+        inputCapabilities
       }
     }
   })
@@ -388,6 +397,22 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   )
   expect(thoughts).toHaveLength(2)
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
+})
+
+it('sends task-only instructions without a tool catalog on the provider wire', async () => {
+  const model = await modelServer()
+  const a = await fixture(model.endpoint)
+  const created = await a.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: a.directory,
+    mcpServers: [],
+    _meta: { [HARNESS_INSTRUCTIONS]: 'Translate faithfully.', [HARNESS_TOOL_LESS]: true }
+  })
+  await prompt(a.connection, created.sessionId, 'Cell')
+  expect(model.requests).toHaveLength(1)
+  expect(model.requests[0]).not.toHaveProperty('max_tokens')
+  expect(model.requests[0].tools ?? []).toEqual([])
+  expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])
+  expect(JSON.stringify(model.requests[0].messages)).toContain('Translate faithfully.')
 })
 
 it('uses the package across turns and resumes durable history without replay duplication', async () => {
@@ -661,15 +686,124 @@ it('rejects duplicate authentication, unsupported MCP and changed resume workspa
   expect(model.requests).toHaveLength(0)
 })
 
-it('counts full request bytes including schemas and non-ASCII content', () => {
-  const request = {
-    requestId: 'r',
-    instructions: '中文',
-    messages: [],
-    tools: [],
-    maxOutputTokens: 12
+it.each([false, true])(
+  'compacts and continues after overflow through the subscription bridge (%s)',
+  async (subscription) => {
+    type Request = WireRequest & { input?: unknown[] }
+    const bodies: Request[] = []
+    const messages = (body: Request): unknown[] => body.input ?? body.messages
+    let rejected = false
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as Request
+      bodies.push(body)
+      const text = JSON.stringify(messages(body).at(-1))
+      if (text.includes('OVERFLOW_TURN') && !rejected) {
+        rejected = true
+        response.writeHead(400, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            error: subscription
+              ? { code: 'context_length_exceeded', message: 'private account detail' }
+              : { message: "This model's maximum context length is 32768 tokens" }
+          })
+        )
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      const answer = text.includes('Create a compact continuation checkpoint')
+        ? '## Goal\nContinue.\n## Progress\nSeeded.\n## Evidence\nNone.\n## Next\nAnswer.'
+        : 'answer'
+      if (subscription)
+        response.end(
+          [
+            { type: 'response.output_text.delta', delta: answer },
+            {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 100, output_tokens: 10 } }
+            }
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join('')
+        )
+      else finish(response, answer)
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    cleanup.push(async () => {
+      server.closeAllConnections()
+      await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())))
+    })
+    const upstream = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/${subscription ? 'responses' : 'chat/completions'}`
+    let endpoint = upstream
+    let token = 'local-test-token'
+    if (subscription) {
+      const bridge = new ProtocolForwardingBridge(
+        [
+          {
+            id: 'subscription',
+            wire: 'responses',
+            endpoint: upstream,
+            model: 'test',
+            resolveConnection: async () => ({ endpoint: upstream, key: 'subscription-secret' })
+          }
+        ],
+        'subscription'
+      )
+      const connection = await bridge.start()
+      cleanup.push(() => bridge.close())
+      endpoint = `${connection.baseUrl}/v1/responses`
+      token = connection.token
+    }
+    const f = await fixture(endpoint, undefined, true, 32768, undefined, token)
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: []
+    })
+    // The summarized history must fit one summary request; the large latest message stays verbatim.
+    for (const seed of ['a', 'b']) await prompt(f.connection, sessionId, seed.repeat(12000))
+    const turn = `OVERFLOW_TURN ${'c'.repeat(60000)}`
+
+    expect((await prompt(f.connection, sessionId, turn)).stopReason).toBe('end_turn')
+    const summaries = bodies.filter((body) =>
+      JSON.stringify(messages(body).at(-1)).includes('Create a compact continuation checkpoint')
+    )
+    expect(summaries).toHaveLength(1)
+    expect(JSON.stringify(messages(bodies.at(-1)!).at(-1))).toContain('OVERFLOW_TURN')
+    const state = await createJournalAgentStore({
+      directory: join(f.directory, 'checkpoints')
+    }).load(sessionId)
+    expect(state!.compactions).toHaveLength(1)
+    // The rejected turn is stored once; continuing does not append the prompt again.
+    expect(
+      state!.messages.filter((message) => JSON.stringify(message.content).includes('OVERFLOW_TURN'))
+    ).toHaveLength(1)
   }
-  expect(measureHarnessRequest(request)).toBe(Buffer.byteLength(JSON.stringify(request)) + 1024)
+)
+
+it('classifies a rejected response from a bounded prefix without waiting for its end', async () => {
+  const server = createServer(async (request, response) => {
+    request.resume()
+    await once(request, 'end')
+    response.writeHead(400, { 'content-type': 'application/json' })
+    // More than the classification limit, and the body never ends.
+    response.write(JSON.stringify({ error: { message: 'x'.repeat(40_000) } }))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((r, j) => server.close((e) => (e ? j(e) : r())))
+  })
+  const f = await fixture(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
+  )
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  await expect(prompt(f.connection, sessionId)).rejects.toThrow()
 })
 
 it('does not retry an MCP side effect after its response connection is lost', async () => {
@@ -1040,6 +1174,8 @@ it.each(['messages', 'responses'] as const)(
     expect(f.approvals).toHaveLength(1)
     expect(headers).toEqual([sessionId, sessionId])
     expect(received).toHaveLength(2)
+    if (protocol === 'messages') expect(received[0].max_tokens).toBe(16_384)
+    else expect(received[0]).not.toHaveProperty('max_output_tokens')
     const image =
       protocol === 'messages'
         ? { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } }
@@ -1107,4 +1243,83 @@ it('rejects model-disabled media before provider I/O and allows a subsequent tex
   expect(model.requests).toHaveLength(0)
   await prompt(f.connection, sessionId)
   expect(model.requests).toHaveLength(1)
+})
+
+it.each([
+  ['response.failed', 'usage_limit_reached', 'configuration/billing'],
+  ['error', 'subscription_sharing_usage_limit_exceeded', 'configuration/billing'],
+  ['error', 'rate_limit_exceeded', 'service/rate-limited'],
+  ['response.failed', 'model_unavailable', 'configuration/model-unavailable'],
+  ['error', 'authentication_error', 'configuration/auth-failed']
+] as const)(
+  'classifies Responses %s/%s without leaking prose or executing partial tools',
+  async (type, code, reason) => {
+    const managed = await mcpServer()
+    const model = await modelServer((body, response) => {
+      const tool = (body.tools as unknown as { name: string }[])[0].name
+      const error = { code, message: 'private account and token must not escape' }
+      response.end(
+        [
+          {
+            type: 'response.output_item.done',
+            item: {
+              type: 'function_call',
+              call_id: 'partial',
+              name: tool,
+              arguments: '{"value":1}'
+            }
+          },
+          type === 'response.failed' ? { type, response: { error } } : { type, ...error }
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join('')
+      )
+    })
+    const f = await fixture(model.endpoint.replace('/chat/completions', '/responses'))
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [managed.config]
+    })
+    const failure = await prompt(f.connection, sessionId).then(
+      () => {
+        throw new Error('expected model failure')
+      },
+      (error: unknown) => error
+    )
+    expect(failure).toMatchObject({ data: { errorName: 'APIError' } })
+    expect(classifyFailure(collectPromptFailureFacts(failure)).reason).toBe(reason)
+    expect(JSON.stringify(failure)).not.toContain('private account')
+    expect((failure as Error).message).not.toContain('private account')
+    expect(managed.calls).toEqual([])
+    expect(f.approvals).toEqual([])
+  }
+)
+
+it('preserves the baseline generic HTTP failure instead of newly labeling quota as temporary throttling', async () => {
+  const server = createServer(async (request, response) => {
+    request.resume()
+    await once(request, 'end')
+    response.writeHead(429, { 'content-type': 'application/json' })
+    response.end(
+      JSON.stringify({ error: { code: 'insufficient_quota', message: 'private account' } })
+    )
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  cleanup.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+  const f = await fixture(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/responses`)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+  expect(failure).toBeInstanceOf(Error)
+  expect(failure).not.toHaveProperty('data.errorName', 'APIError')
+  expect(classifyFailure(collectPromptFailureFacts(failure)).reason).not.toBe(
+    'service/rate-limited'
+  )
+  expect(JSON.stringify(failure)).not.toContain('private account')
 })

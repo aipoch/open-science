@@ -5,11 +5,14 @@ export const computeAccountProviders = ['hugging-face', 'modal'] as const
 export type ComputeAccountProvider = (typeof computeAccountProviders)[number]
 export type ComputeAccountStatus = {
   provider: ComputeAccountProvider
+  runtimeRevision?: number
+  runtimeError?: import('./compute-python-runtime').ComputePythonFailure
   state: 'disconnected' | 'pending' | 'connected' | 'expired' | 'unavailable'
   source?: 'local' | 'managed'
   identity?: string
   localAvailable?: boolean
   userCode?: string
   expiresAt?: number
-  reason?: 'network' | 'dependency' | 'storage' | 'authorization' | 'timeout' | 'cancelled'
+  reason?:
+    'missing' | 'network' | 'dependency' | 'storage' | 'authorization' | 'timeout' | 'cancelled'
 }

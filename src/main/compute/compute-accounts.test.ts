@@ -102,7 +102,7 @@ it('restores protected credentials, rotates them once and disconnects without fa
     state: 'connected',
     source: 'managed',
     identity: 'managed-user',
-    reason: 'authorization'
+    reason: 'missing'
   })
   expect(await restarted.hfToken()).toBe('rotated')
   expect(await restarted.disconnect(provider)).toMatchObject({ state: 'disconnected' })
@@ -178,5 +178,191 @@ it.each(['new', 'managed'] as const)(
     } else {
       await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' })
     }
+  }
+)
+
+it('binds authorize and post-authorization probe to one runtime, rejecting an old queued connection after source commit', async () => {
+  const f = await fixture()
+  const controller = new AbortController()
+  let current = true
+  const fingerprint: string[] = []
+  let finish!: (material: AccountMaterial) => void
+  const bound: ComputeAccountAdapter = {
+    authorize: async () => {
+      fingerprint.push('python-a:authorize')
+      return new Promise((resolve) => {
+        finish = resolve
+      })
+    },
+    probe: async () => {
+      fingerprint.push('python-a:probe')
+      return 'runtime-a'
+    }
+  }
+  const context = {
+    adapter: bound,
+    signal: controller.signal,
+    operationId: 'a',
+    revision: 0,
+    assertCurrent: () => {
+      if (!current) throw new Error('stale runtime')
+    }
+  }
+  expect(await f.owner.connect('modal', context)).toMatchObject({
+    state: 'pending',
+    runtimeRevision: 0
+  })
+  finish({ tokenId: 'id', tokenSecret: 'secret' })
+  await vi.waitFor(async () =>
+    expect(await f.owner.status('modal')).toMatchObject({
+      state: 'connected',
+      identity: 'runtime-a',
+      runtimeRevision: 0
+    })
+  )
+  expect(fingerprint).toEqual(['python-a:authorize', 'python-a:probe'])
+  await f.owner.commitRuntimeSelection('modal', async () => {
+    current = false
+  })
+  await expect(f.owner.connect('modal', context)).rejects.toThrow('stale runtime')
+  expect(fingerprint).toHaveLength(2)
+})
+it('invalidates old authorization and cache under the source commit queue without probing or deleting credentials', async () => {
+  const f = await fixture()
+  let finish!: (material: AccountMaterial) => void
+  const probe = vi.fn(async () => 'old')
+  const context = {
+    adapter: {
+      authorize: async () =>
+        new Promise<AccountMaterial>((resolve) => {
+          finish = resolve
+        }),
+      probe
+    },
+    signal: new AbortController().signal,
+    operationId: 'old',
+    revision: 0,
+    assertCurrent: () => {}
+  }
+  await f.owner.connect('modal', context)
+  await f.owner.commitRuntimeSelection('modal', async () => {})
+  finish({ tokenId: 'old-id', tokenSecret: 'old-secret' })
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(probe).not.toHaveBeenCalled()
+  expect(f.adapter.probe).not.toHaveBeenCalled()
+  expect(await f.owner.modalIdentity()).toBeUndefined()
+  expect(await f.owner.cancelOperation('modal', 'old')).toEqual({
+    provider: 'modal',
+    state: 'disconnected'
+  })
+  expect(f.adapter.probe).not.toHaveBeenCalled()
+})
+
+it('does not start a fallback account probe when a runtime operation is cancelled before source commit', async () => {
+  const f = await fixture()
+  const controller = new AbortController()
+  let finish!: (material: AccountMaterial) => void
+  await f.owner.connect('modal', {
+    signal: controller.signal,
+    operationId: 'cancel-before-commit',
+    revision: 0,
+    assertCurrent: () => {},
+    adapter: {
+      authorize: async () =>
+        new Promise<AccountMaterial>((resolve) => {
+          finish = resolve
+        }),
+      probe: vi.fn()
+    }
+  })
+  controller.abort()
+  finish({ tokenId: 'id', tokenSecret: 'secret' })
+  await vi.waitFor(async () =>
+    expect(await f.owner.status('modal')).toMatchObject({
+      state: 'disconnected',
+      reason: 'cancelled'
+    })
+  )
+  expect(f.adapter.probe).not.toHaveBeenCalled()
+})
+
+it.each(['modal', 'hugging-face'] as const)(
+  'reports a missing %s local identity without claiming browser authorization was rejected',
+  async (provider) => {
+    const f = await fixture()
+    vi.mocked(f.adapter.probe).mockRejectedValue(new AccountAuthError('missing'))
+    expect(await f.owner.useLocal(provider)).toMatchObject({
+      provider,
+      state: 'disconnected',
+      localAvailable: false,
+      reason: 'missing'
+    })
+    expect(f.options.openExternal).not.toHaveBeenCalled()
+    expect(await f.owner.modalIdentity()).toBeUndefined()
+  }
+)
+
+it.each([
+  ['modal', 'managed'],
+  ['modal', 'local'],
+  ['hugging-face', 'managed'],
+  ['hugging-face', 'local']
+] as const)(
+  'preserves a completed %s %s connection when its dialog cleanup cancels the old operation',
+  async (provider, source) => {
+    const f = await fixture()
+    const controller = new AbortController()
+    const probe = vi.fn(async () => 'connected-workspace')
+    const context = {
+      adapter: {
+        probe,
+        authorize: async (): Promise<AccountMaterial> =>
+          provider === 'modal'
+            ? { tokenId: 'id', tokenSecret: 'secret' }
+            : { accessToken: 'hf_token' }
+      },
+      signal: controller.signal,
+      operationId: 'completed',
+      revision: 3,
+      assertCurrent: () => {}
+    }
+    if (source === 'local') await f.owner.useLocal(provider, context)
+    else {
+      await f.owner.connect(provider, context)
+      await vi.waitFor(async () =>
+        expect(await f.owner.status(provider)).toMatchObject({ state: 'connected' })
+      )
+    }
+    const connected = await f.owner.status(provider)
+    const record = await readFile(join(f.root, `compute-${provider}-account.json`), 'utf8')
+    probe.mockClear()
+    controller.abort()
+    expect(await f.owner.cancelOperation(provider, context.operationId)).toEqual(connected)
+    expect(await f.owner.status(provider)).toEqual(connected)
+    expect(probe).not.toHaveBeenCalled()
+    expect(f.adapter.probe).not.toHaveBeenCalled()
+    expect(await readFile(join(f.root, `compute-${provider}-account.json`), 'utf8')).toBe(record)
+  }
+)
+
+it.each(['modal', 'hugging-face'] as const)(
+  'preserves a newer %s flow when cancellation names an older operation',
+  async (provider) => {
+    const f = await fixture()
+    await f.owner.connect(provider, {
+      adapter: {
+        authorize: async () => new Promise<AccountMaterial>(() => {}),
+        probe: vi.fn()
+      },
+      signal: new AbortController().signal,
+      operationId: 'newer',
+      revision: 1,
+      assertCurrent: () => {}
+    })
+    const pending = await f.owner.status(provider)
+    expect(await f.owner.cancelOperation(provider, 'older')).toEqual(pending)
+    expect(await f.owner.status(provider)).toEqual(pending)
+    await f.owner.cancelOperation(provider, 'newer')
   }
 )

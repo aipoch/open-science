@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Script } from 'node:vm'
 import type { VideoSpec } from './timeline.js'
-import { writeWithResearchFilmCorrection } from './authoring-correction.js'
+import {
+  writeWithResearchFilmCorrection,
+  type FilmAuthoringCheckpoint
+} from './authoring-correction.js'
 
 export type ResearchVideoAnimationInput = {
   path: string
@@ -43,9 +47,14 @@ export async function writeResearchVideoAnimations(
   spec: VideoSpec,
   directory: string,
   writer: ResearchVideoAnimationWriter | undefined,
-  parentSignal: AbortSignal
+  parentSignal: AbortSignal,
+  checkpoint?: FilmAuthoringCheckpoint,
+  progress?: (completed: number, total: number) => void
 ): Promise<void> {
   const { panels, shared, scripts } = researchVideoAnimationPlan(spec)
+  const total = shared.length + scripts.length
+  let completed = 0
+  progress?.(completed, total)
   if (!panels.length) return
   if (!writer) throw new Error('Animation authoring is unavailable.')
   const controller = new AbortController()
@@ -75,11 +84,14 @@ export async function writeResearchVideoAnimations(
     const code = await writeWithResearchFilmCorrection(
       (correction) => writer(input, signal, correction),
       validate,
-      signal
+      signal,
+      checkpoint,
+      createHash('sha256').update(JSON.stringify(input)).digest('hex')
     )
     signal.throwIfAborted()
     await writeFile(join(directory, name), code, { flag: 'wx', mode: 0o600, signal })
     files[name] = code
+    progress?.(++completed, total)
   }
   // Helpers can depend on earlier helpers; scene writers only receive the frozen helper set.
   for (const name of shared) await write(name)

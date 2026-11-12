@@ -122,7 +122,7 @@ jobs:
           const selected = mode === 'full' ? groups : [mode]
           const include = selected.flatMap(group => group === 'regressions'
             ? (mode === 'regressions' && shard !== 'all' ? [Number(shard)] : [1, 2, 3, 4, 5, 6]).map(shard => ({ group, shard }))
-            : [{ group, shard: 1 }])
+            : (group === 'workspace' ? [1, 2] : [1]).map(shard => ({ group, shard })))
           appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -158,8 +158,8 @@ jobs:
     needs: [macos_setup]
     if: ${{ !cancelled() && needs.macos_setup.result == 'success' }}
     runs-on: macos-15
-    # Presentation has up to 35 minutes of suite budgets; reserve restore/upload time.
-    timeout-minutes: 45
+    # Presentation has up to 45 minutes of suite budgets; reserve restore/upload time.
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.macos_setup.outputs.matrix) }}
@@ -216,7 +216,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
-        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=1500000
+        run: npm run test:e2e:workspace -- --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests --global-timeout=1500000
       - name: Test workspace message images
         id: workspace_images
         if: ${{ matrix.group == 'workspace-images' }}
@@ -229,10 +229,9 @@ jobs:
         if: ${{ matrix.group == 'presentation' }}
         continue-on-error: true
         run: |
-          # All 462 browser tests passed before the 10-minute budget expired in
-          # teardown. Keep visual's separate budget and collect both outcomes.
+          # The 739-test browser suite exceeded 15 minutes on a hosted Mac.
           browser_status=0
-          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/browser PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser.json npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=900000 || browser_status=$?
+          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/browser PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser.json npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=1500000 || browser_status=$?
           PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/visual PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/visual.json npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=600000 --output=test-results/visual
           exit "$browser_status"
       - name: Test concurrent screening flights

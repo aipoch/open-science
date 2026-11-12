@@ -1,0 +1,22 @@
+{
+  "ownerPaths": [
+    "src/main/settings/provider-acp-validation.ts",
+    "src/main/settings/provider-acp-validation.test.ts"
+  ],
+  "interfacePaths": ["src/main/settings/provider-acp-validation.ts"],
+  "consumerModules": ["settings_service_facade"],
+  "testFiles": {
+    "owner": ["src/main/settings/provider-acp-validation.test.ts"],
+    "contract": [
+      "src/main/acp/restricted-inference-runner.test.ts",
+      "src/main/settings/backend-resolver.test.ts"
+    ],
+    "consumer": [
+      "src/main/settings/provider-accounts.test.ts",
+      "src/main/settings/service.providers.test.ts",
+      "src/main/settings/service.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime"
+}

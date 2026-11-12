@@ -10,7 +10,8 @@ import {
   extractPdfTranslationSource,
   rememberPdfTranslationExtraction,
   preservePdfFigureSources,
-  applyPdfContentFirstPolicy
+  applyPdfContentFirstPolicy,
+  type PdfTranslationFragment
 } from '@aipoch/pdf-translation/reader'
 import { usePdfTranslationDocument } from './use-pdf-translation-document'
 import * as structurePreparation from './pdf-translation-structure'
@@ -148,6 +149,134 @@ it.each([false, true])(
             { sourceIndex: 1, source: 'Age, %', translation: '散排的表内标签。' }
           ]
         })
+      )
+      expect(JSON.stringify(results)).toBe(saved)
+    } finally {
+      hook.unmount()
+      await originalTask.destroy()
+    }
+  },
+  20000
+)
+
+it.each([false, true])(
+  'retains proved unsupported table pages and their joined paragraphs (corrupted=%s)',
+  async (corrupted) => {
+    vi.stubGlobal('Uint8Array', Object.getPrototypeOf(Buffer.prototype).constructor)
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    const labels = [
+      'Table value 7',
+      'Joined body starts.',
+      'The same body continues.',
+      'Healthy body.'
+    ]
+    const first = pdf.addPage([400, 500])
+    first.drawText(labels[0], { font, x: 40, y: 440, size: 12 })
+    first.drawText(labels[1], { font, x: 40, y: 400, size: 12 })
+    pdf.addPage([400, 500]).drawText(labels[2], { font, x: 40, y: 440, size: 12 })
+    pdf.addPage([400, 500]).drawText(labels[3], { font, x: 40, y: 440, size: 12 })
+    const originalTask = getDocument({ data: await pdf.save() }),
+      original = await originalTask.promise,
+      fragment = (pageNumber: number, y = 0.08): PdfTranslationFragment => ({
+        pageNumber,
+        rect: { x: 0.1, y, width: 0.8, height: 0.04 },
+        items: []
+      }),
+      source = createPdfTranslationSource({
+        resourceRequestKey: 'unsupported-table-reflow',
+        fingerprint: original.fingerprints[0]!,
+        pages: pdf.getPages().map(() => ({ width: 400, height: 500 })),
+        units: [
+          { id: 'table', source: labels[0], fragments: [fragment(1)] },
+          {
+            id: 'joined',
+            source: labels.slice(1, 3).join(' '),
+            fragments: [fragment(1, 0.16), fragment(2)]
+          },
+          { id: 'healthy', source: labels[3], fragments: [fragment(3)] }
+        ]
+      }),
+      results = {
+        source,
+        units: source.units.map((unit, i) => ({
+          id: unit.id,
+          translationSource: unit.source,
+          translation: ['不可散排的表格译文。', '必须整段保留的译文。', '独立页面的正常译文。'][i]
+        }))
+      },
+      saved = JSON.stringify(results)
+    let retainTable = true
+    vi.spyOn(structurePreparation, 'preparePdfTranslationStructure').mockImplementation(
+      async ({ extraction }) => ({
+        extraction,
+        retainedUnitIds: [],
+        retainedSourcePageNumbers: retainTable ? [1] : []
+      })
+    )
+    const writer = new PdfTranslationWriter(() =>
+        resolve('packages/pdf-translation/resources/worker.mjs')
+      ),
+      generatePdf = vi.fn(
+        async (request: Parameters<PdfTranslationWriter['generateDetailed']>[0]) => {
+          const output = await writer.generateDetailed(
+            { ...request, data: new Uint8Array(request.data) },
+            {
+              leaseId: 'unsupported-table-reflow',
+              generation: 1,
+              signal: new AbortController().signal,
+              isCurrent: () => true
+            }
+          )
+          if (!corrupted || !output) return output
+          const changed = await PDFDocument.load(output.data),
+            extra = await changed.embedFont(StandardFonts.Helvetica)
+          changed.getPage(0).drawText('CORRUPTED', { font: extra, size: 10, x: 40, y: 460 })
+          return { ...output, data: await changed.save() }
+        }
+      )
+    vi.stubGlobal('api', { pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) } })
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(
+        original,
+        results,
+        undefined,
+        'unsupported-table-reflow',
+        undefined,
+        'reflow'
+      )
+    )
+    try {
+      await waitFor(() => expect(['ready', 'error']).toContain(hook.result.current.state.status), {
+        timeout: 15000
+      })
+      const request = generatePdf.mock.calls[0][0]
+      expect(request.units.map((unit) => unit.translation)).toEqual([
+        source.units[0].source,
+        source.units[1].source,
+        results.units[2].translation
+      ])
+      expect(request.originalRegions ?? []).toEqual([])
+      if (corrupted) {
+        expect(hook.result.current.state.status).toBe('error')
+        expect(hook.result.current.ready).toBeUndefined()
+        return
+      }
+      expect(hook.result.current.ready?.originalPageNumbers).toEqual([1, 2])
+      for (const id of ['table', 'joined'])
+        expect(hook.result.current.layoutFailures[id]).toMatchObject({
+          code: 'unsupported-layout',
+          phase: 'planning'
+        })
+      expect(hook.result.current.ready?.unitFragments?.healthy.length).toBeGreaterThan(0)
+      retainTable = false
+      act(() => hook.result.current.refresh())
+      await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(2), { timeout: 15000 })
+      await waitFor(() => expect(hook.result.current.ready?.originalPageNumbers).toEqual([]), {
+        timeout: 15000
+      })
+      expect(generatePdf.mock.calls[1][0].units.map((unit) => unit.translation)).toEqual(
+        results.units.map((unit) => unit.translation)
       )
       expect(JSON.stringify(results)).toBe(saved)
     } finally {
@@ -520,7 +649,9 @@ it.each(['rotated-page', 'tilted-text', 'historical-source'])(
       page.drawText('IMPORTANT EXCLUDED EVIDENCE', {
         font,
         x: 50,
-        y: 180,
+        // This ink intersects the accepted body fragment. An isolated tilted
+        // label can now remain in a safe original crop instead of retaining the page.
+        y: 360,
         size: 12,
         rotate: degrees(30)
       })

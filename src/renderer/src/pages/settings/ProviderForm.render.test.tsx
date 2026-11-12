@@ -207,7 +207,7 @@ describe('ProviderForm field switching', () => {
       framework: {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['messages', 'chat-completions'],
+        supportedApiTypes: ['chat-completions', 'messages'],
         supportsSkills: true
       }
     })

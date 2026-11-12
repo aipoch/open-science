@@ -1,3 +1,4 @@
+import { ProviderAcpValidator } from './provider-acp-validation'
 import { SkillSourceRepository } from '../skills/source-repository'
 import type {
   SavedSkillSource,
@@ -116,6 +117,7 @@ import type {
   ResolveSkillDocumentRequest,
   ResolvedSkillDocument,
   ReviewerModelConfiguration,
+  PromptOptimizationModelConfiguration,
   SaveValidatedProviderResult,
   ScanRepoRequest,
   ScanRepoResult,
@@ -146,6 +148,7 @@ import type {
   ValidateProviderResult,
   VisionModelConfiguration as VisionModel
 } from '../../shared/settings'
+import { isCodexSubscriptionProvider } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
   InstallMissingWslDependenciesRequest,
@@ -472,6 +475,7 @@ class SettingsService {
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
   private readonly installCoordinator: SettingsInstallCoordinator
+  private readonly providerAcpValidator: ProviderAcpValidator
   private readonly backendResolver: AgentBackendResolver
   private readonly harnessSessions: HarnessSessionOwner
   private readonly scenarioModels: ScenarioModelOwner
@@ -523,6 +527,7 @@ class SettingsService {
   async dispose(): Promise<void> {
     const outcomes = await Promise.allSettled([
       this.skillMarketplaceQueue.dispose(),
+      this.providerAcpValidator.dispose(),
       this.providers.dispose(),
       this.classification.flushUsage(false),
       this.runtimeManager.dispose(),
@@ -634,9 +639,17 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
       allocateSettingsIdSequence,
-      resolveCodexExecutable: (adapterPath, nativePath) =>
-        this.runtimeManager.resolveCodexExecutable(adapterPath, nativePath),
+      resolveCodexExecutable: async (adapterPath, nativePath, prepareForHarness) => {
+        if (
+          prepareForHarness ||
+          (await this.repository.getSettings()).agentFrameworkId === 'open-science-agent'
+        )
+          return this.runtimeManager.prepareCodexAuthenticationRuntime()
+        return this.runtimeManager.resolveCodexExecutable(adapterPath, nativePath)
+      },
       resolveCodexProxyEnvironment: () => this.runtimeManager.resolveCodexProxyEnvironment(),
+      runAcpValidation: (provider, settings) =>
+        this.providerAcpValidator.validate(provider, settings),
       runClaudeSubscriptionProbe: (provider, settings) =>
         this.runtimeManager.runClaudeSubscriptionProbe(provider, settings),
       codexAuth: options.codexAuth,
@@ -664,8 +677,14 @@ class SettingsService {
       storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
+      bindCodexHarnessConnection: (target) => this.providers.bindCodexHarnessConnection(target),
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
+    this.providerAcpValidator = new ProviderAcpValidator(
+      this.configRoot,
+      (provider, settings, storageRoot) =>
+        this.backendResolver.resolveValidationTarget(provider, settings, storageRoot)
+    )
     this.detachSkillDiagnostics = attachSkillDiagnostics()
     this.scenarioModels = createScenarioModels(
       this.repository,
@@ -693,6 +712,16 @@ class SettingsService {
         ...buildSettingsSnapshot(settings, this.runtimeManager, this.providers),
         credentialStore: getCredentialStore()
       }
+      await Promise.all(
+        snapshot.providers.map(async (view) => {
+          if (!isCodexSubscriptionProvider(view.type)) return
+          const provider = settings.providers.find(({ id }) => id === view.id)!
+          view.codexHarnessAvailable = await this.providers.isProviderKeyUsable(
+            provider,
+            'open-science-agent'
+          )
+        })
+      )
       operation.complete({ providerCount: settings.providers.length })
       return snapshot
     } catch (error) {
@@ -741,6 +770,20 @@ class SettingsService {
 
   async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean> {
     return this.notebookRuntimeSettings.setAgentEnvironmentCreationEnabled(enabled)
+  }
+
+  async getComputePythonRuntime(
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider
+  ): Promise<import('../../shared/compute-python-runtime').ComputePythonSelection | undefined> {
+    const settings = await this.repository.getSettings()
+    return provider === 'modal' ? settings.modalRuntime : settings.huggingFaceRuntime
+  }
+
+  setComputePythonRuntime(
+    provider: import('../../shared/compute-accounts').ComputeAccountProvider,
+    selection: import('../../shared/compute-python-runtime').ComputePythonSelection
+  ): Promise<void> {
+    return this.repository.setComputePythonRuntime(provider, selection)
   }
 
   async getManualInterpreters(language: NotebookLanguage): Promise<string[]> {
@@ -1044,6 +1087,13 @@ class SettingsService {
 
   async setReviewerModel(configuration: ReviewerModelConfiguration): Promise<SettingsSnapshot> {
     await this.scenarioModels.reviewer.set(configuration)
+    return this.getSettingsView()
+  }
+
+  async setPromptOptimizationModel(
+    configuration: PromptOptimizationModelConfiguration
+  ): Promise<SettingsSnapshot> {
+    await this.repository.setPromptOptimizationModel(configuration)
     return this.getSettingsView()
   }
 

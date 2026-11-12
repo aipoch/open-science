@@ -1,3 +1,4 @@
+import { providerValidationRoute } from './settings'
 import {
   type ModelProtocol,
   type OfficialVendorId,
@@ -11,6 +12,7 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
+  DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
@@ -133,7 +135,7 @@ export const buildConfiguredModelCatalog = (
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
     const frameworkCompatible = isProviderUsableByFramework(
-      { apiEndpoints, type: provider.type },
+      { apiEndpoints, type: provider.type, codexHarnessAvailable: provider.codexHarnessAvailable },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
     // The probe records its target against the provider's own best route when the framework cannot
@@ -143,15 +145,18 @@ export const buildConfiguredModelCatalog = (
       apiEndpoints,
       provider.type === 'xai-subscription'
         ? (['responses'] as const)
-        : input.frameworkId === 'codex'
-          ? (['messages', 'chat-completions', 'responses'] as const)
-          : usesCompatibilityTransport
-            ? apiEndpoints
-            : frameworkCompatible
-              ? input.frameworkEndpoints
-              : (['messages', 'chat-completions', 'responses'] as const)
+        : input.frameworkId === 'codex' || usesCompatibilityTransport || !frameworkCompatible
+          ? DEFAULT_ENDPOINT_ORDER
+          : input.frameworkEndpoints
     )
-    if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
+    if (
+      providerValidationFailed(provider, {
+        model,
+        endpoint: validationEndpoint,
+        ...providerValidationRoute({ ...provider, apiEndpoints }, input.frameworkId)
+      })
+    )
+      return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
     return [
       Object.freeze({

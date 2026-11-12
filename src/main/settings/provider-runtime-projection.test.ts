@@ -17,6 +17,50 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each([
+    { type: 'codex-shared', codexAuthMode: undefined },
+    { type: 'codex-isolated', codexAuthMode: 'imported' },
+    { type: 'codex-isolated', codexAuthMode: 'isolated' }
+  ] as const)('projects $type/$codexAuthMode through the built-in subscription route', (auth) => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-codex-subscription',
+      name: 'Codex subscription',
+      ...auth
+    }
+    const framework = getAgentFramework('open-science-agent')
+    const target = owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
+    expect(target.frameworkCompatible).toBe(true)
+    expect(target.effectiveModel).toBeTruthy()
+    expect(target.apiEndpoints).toEqual(['responses'])
+    expect(target.provider).toMatchObject({
+      model: target.effectiveModel,
+      apiEndpoints: ['responses']
+    })
+    expect(
+      owner.resolveRuntimeTarget(provider, { kind: 'configured' }, getAgentFramework('codex'))
+        .effectiveModel
+    ).toBeUndefined()
+    const catalog = owner.resolveRuntimeModelCatalog(provider, framework)
+    expect(catalog.length).toBeGreaterThan(0)
+    expect(
+      catalog.every((entry) => entry.frameworkCompatible && entry.apiEndpoints[0] === 'responses')
+    ).toBe(true)
+    const fixed = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: target.effectiveModel! },
+      framework
+    )
+    expect(fixed.effectiveModel).toBe(target.effectiveModel)
+    expect(() =>
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'unavailable-model' },
+        framework
+      )
+    ).toThrow(/not available/)
+  })
+
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'offers only the base DeepSeek model and rejects removed selections for %s',
     (frameworkId) => {
@@ -196,7 +240,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
   })
 
   it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
-    'offers GPT-6.1 Sol only as an explicit selection for %s',
+    'resolves the default and explicit GPT models for %s',
     (type) => {
       const owner = new ProviderRuntimeProjectionOwner()
       const provider: StoredProvider = {
@@ -209,10 +253,8 @@ describe('ProviderRuntimeProjectionOwner', () => {
       const model = 'gpt-6.1-sol'
 
       expect(owner.toProviderView(provider).models).toContain(model)
-      expect(owner.resolveActiveModel(provider)).toBe(
-        type === 'official' ? 'gpt-5.6-sol' : undefined
-      )
-      expect(owner.resolveActiveModel(provider, 'gpt-6-sol')).toBe('gpt-6-sol')
+      expect(owner.resolveActiveModel(provider)).toBe(type === 'official' ? model : undefined)
+      expect(owner.resolveActiveModel(provider, 'gpt-5.6-sol')).toBe('gpt-5.6-sol')
 
       for (const frameworkId of ['codex', 'opencode', 'claude-code'] as const) {
         const target = owner.resolveRuntimeTarget(
@@ -720,7 +762,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         provider: { supportsImageInput: true, model }
       })
     }
-    expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
+    expect(owner.toProviderView(provider).supportsImageInput).toBe(true)
   })
 
   it.each([

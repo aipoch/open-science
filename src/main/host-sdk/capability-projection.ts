@@ -38,7 +38,6 @@ type HostCapabilityProjectionContext = Readonly<{
   callerRole: 'main' | 'delegate'
   isControl: boolean
   hasActiveControlInvocation: boolean
-  hasWorkspace: boolean
   allowsMethod(method: string): boolean
   delegatedWorkReady: boolean
   delegationAllowed: boolean
@@ -97,7 +96,6 @@ const projectHostCapabilities = (
     viewImage:
       context.isControl &&
       context.hasActiveControlInvocation &&
-      context.hasWorkspace &&
       allows('viewImageCall') &&
       context.services.viewImage,
     delegate:

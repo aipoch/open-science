@@ -131,6 +131,149 @@ const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runS
 describe.runIf(process.platform === 'win32')(
   'Windows standard execution without protection setup',
   () => {
+    it.each(['5.1', '7.6'] as const)(
+      'captures unmodified native output while retaining error handling in PowerShell %s',
+      async (version) => {
+        const root = await mkdtemp(join(tmpdir(), 'shell-stderr-'))
+        const adapter = new NotebookShellProcessAdapter('win32')
+        const execute = (command: string): ReturnType<typeof adapter.execute> =>
+          adapter.execute({
+            ...shellRequest(root),
+            runtimeRoot: join(root, 'runtime'),
+            runtimeBinding: { kind: 'powershell', version },
+            command
+          })
+        try {
+          await writeFile(
+            join(root, 'fixture.cmd'),
+            '@echo off\r\necho %~1 %~2\r\necho advisory 1>&2\r\nexit /b 0\r\n'
+          )
+          const batch = await execute(
+            `Set-StrictMode -Version Latest
+$env:Path = (Get-Location).ProviderPath + ';' + $env:Path
+$raw = fixture.cmd upgrade --check 2>$null
+[Console]::Write("$?|$LASTEXITCODE|$raw")`
+          )
+          expect(batch).toMatchObject({ exitCode: 0, stdout: 'True|0|upgrade --check', stderr: '' })
+          const direct = await execute("cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 0'")
+          expect(direct.exitCode).toBe(0)
+          expect(direct.stdout.trim()).toBe('sample')
+          expect(direct.stderr.trim()).toBe('advisory')
+          const nested = await execute(
+            `function Get-Sample {
+  [CmdletBinding()]param()
+  $value = & cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 0' 2>$null
+  [Console]::Write("reached|$LASTEXITCODE|$value")
+}
+Get-Sample`
+          )
+          expect(nested).toMatchObject({ exitCode: 0, stdout: 'reached|0|sample', stderr: '' })
+          const classMethod = await execute(
+            `class CaptureSample {
+  static [string] Read() {
+    $value = cmd.exe /d /c 'echo class& echo advisory 1>&2' 2>$null
+    return $value
+  }
+}
+[Console]::Write([CaptureSample]::Read())`
+          )
+          expect(classMethod).toMatchObject({ exitCode: 0, stdout: 'class', stderr: '' })
+          const alias = await execute(
+            `Set-Alias Invoke-SampleNative cmd.exe
+$value = Invoke-SampleNative /d /c 'echo alias& echo advisory 1>&2' 2>$null
+[Console]::Write($value)`
+          )
+          expect(alias).toMatchObject({ exitCode: 0, stdout: 'alias', stderr: '' })
+          const variable = await execute(
+            `function Invoke-Sample {
+  $payload = $args[0]
+  $tool = "cmd.exe"
+  $value = & $tool /d /c "$payload" 2>$null
+  [Console]::Write($value)
+}
+Invoke-Sample 'echo variable& echo advisory 1>&2& exit /b 0'`
+          )
+          expect(variable).toMatchObject({ exitCode: 0, stdout: 'variable', stderr: '' })
+          const preference = await execute(
+            `& { $ErrorActionPreference = 'SilentlyContinue'; Get-Item ./missing-file; [Console]::Write('continued') }`
+          )
+          expect(preference).toMatchObject({ exitCode: 0, stdout: 'continued', stderr: '' })
+          const discarded = await execute(
+            `$raw = & cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 0' 2>$null
+[Console]::Write("reached|$LASTEXITCODE|$raw")`
+          )
+          expect(discarded).toMatchObject({ exitCode: 0, stdout: 'reached|0|sample', stderr: '' })
+          const merged = await execute(
+            `$merged = & cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 7' 2>&1 | Out-String
+[Console]::Write($merged)`
+          )
+          expect(merged).toMatchObject({ exitCode: 7, stderr: '' })
+          expect(merged.stdout).toContain('sample')
+          expect(merged.stdout).toContain('advisory')
+          const status = await execute(
+            `$before = $Error.Count
+$result = cmd.exe /d /c 'exit /b 7' 2>$null
+[Console]::Write("$?|$LASTEXITCODE|$($Error.Count - $before)")`
+          )
+          expect(status).toMatchObject({ exitCode: 7, stdout: 'False|7|0', stderr: '' })
+          const shadowed = await execute(
+            `function shadow.cmd { Get-Item ./missing-file; 'continued' }
+$raw = shadow.cmd 2>$null
+[Console]::Write('continued')`
+          )
+          expect(shadowed).toMatchObject({ exitCode: 1, stdout: '' })
+          expect(shadowed.stderr).toContain('missing-file')
+          const localExit = await execute(
+            `& {
+  $local:LASTEXITCODE = 71
+  $value = cmd.exe /d /c 'echo sample' 2>$null
+  [Console]::Write("$?|$LASTEXITCODE|$value;")
+  $local:LASTEXITCODE = 0
+  $value = cmd.exe /d /c 'exit /b 7' 2>$null
+  [Console]::Write("$?|$LASTEXITCODE|$global:LASTEXITCODE")
+}`
+          )
+          expect(localExit).toMatchObject({
+            exitCode: 7,
+            stdout: 'True|71|sample;False|0|7',
+            stderr: ''
+          })
+          const readOnly = await execute(
+            `& {
+  Set-Variable ErrorActionPreference Stop -Option ReadOnly
+  $value = cmd.exe /d /c 'echo sample' 2>$null
+  [Console]::Write($value)
+}`
+          )
+          expect(readOnly).toMatchObject({ exitCode: 0, stdout: 'sample', stderr: '' })
+          const failed = await execute('Get-Item ./missing-file; [Console]::Write("continued")')
+          expect(failed).toMatchObject({ exitCode: 1, stdout: '' })
+          expect(failed.stderr).toContain('missing-file')
+          const handled = await execute(
+            'Get-Item ./missing-file -ErrorAction SilentlyContinue; [Console]::Write($raw)'
+          )
+          expect(handled).toMatchObject({ exitCode: 0, stdout: 'sample', stderr: '' })
+        } finally {
+          await adapter.shutdown()
+          await rm(root, { recursive: true, force: true })
+        }
+      },
+      POWERSHELL_TEST_TIMEOUT_MS
+    )
+
+    it(
+      'honors native stderr redirection in a one-shot Windows PowerShell command',
+      async () => {
+        const result = await runPowerShell(
+          `#${'x'.repeat(6500)}
+$raw = & cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 7' 2>$null
+[Console]::Write("reached|$LASTEXITCODE|$raw")`
+        )
+        expect(result).toMatchObject({ exitCode: 7, stdout: 'reached|7|sample', stderr: '' })
+      },
+      POWERSHELL_TEST_TIMEOUT_MS
+    )
+
     it('runs and retains a real PowerShell session through the supervised standard launcher', async () => {
       const root = await mkdtemp(join(tmpdir(), 'shell-standard-admission-'))
       const denied = join(root, 'declared-denied')
@@ -147,6 +290,11 @@ describe.runIf(process.platform === 'win32')(
         requestDecision: async () => 'deny'
       })
       const adapter = new NotebookShellProcessAdapter('win32', owner)
+      const request = {
+        ...shellRequest(root),
+        runtimeRoot: join(root, 'runtime'),
+        protectedDirs: [denied]
+      }
       const wrap = owner.wrap.bind(owner)
       const launches: string[] = []
       const wrapping = vi.spyOn(owner, 'wrap').mockImplementation(async (invocation) => {
@@ -157,28 +305,32 @@ describe.runIf(process.platform === 'win32')(
       try {
         expect(await owner.windowsProtectionConfigured()).toBe(false)
         const first = await adapter.execute({
-          ...shellRequest(root),
-          protectedDirs: [denied],
+          ...request,
           command: '$standardValue = 42; [Console]::Write($standardValue)'
         })
         expect(first, JSON.stringify(first)).toMatchObject({ exitCode: 0, stdout: '42' })
         const second = await adapter.execute({
-          ...shellRequest(root),
-          protectedDirs: [denied],
+          ...request,
           command: '[Console]::Write($standardValue + 1)'
         })
         expect(second, JSON.stringify(second)).toMatchObject({ exitCode: 0, stdout: '43' })
+        const capture = await adapter.execute({
+          ...request,
+          command: `$raw = cmd.exe /d /c 'echo sample& echo advisory 1>&2& exit /b 0' 2>$null
+[Console]::Write($raw)`
+        })
+        expect(capture).toMatchObject({ exitCode: 0, stdout: 'sample', stderr: '' })
+
         // Standard supervision is not filesystem isolation, even when callers declare deny roots.
         // Exercise only synthetic fixtures; protected-mode denial is covered separately below.
         const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`
         const access = await adapter.execute({
-          ...shellRequest(root),
-          protectedDirs: [denied],
+          ...request,
           command: `[Console]::Write([IO.File]::ReadAllText(${quote(join(denied, 'sentinel.txt'))}))`
         })
         expect(access, JSON.stringify(access)).toMatchObject({ exitCode: 0, stdout: 'HOST_ACCESS' })
         expect(wrapping.mock.calls[0][0].filesystem.deniedReadRoots).toContain(denied)
-        expect(wrapping.mock.calls[0][0].filesystem.readOnlyRoots).toContain(root)
+        expect(wrapping.mock.calls[0][0].filesystem.readOnlyRoots).toContain(request.runtimeRoot)
         expect(launches).toEqual(['supervise'])
         expect(await owner.windowsProtectionConfigured()).toBe(false)
       } finally {

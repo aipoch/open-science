@@ -394,6 +394,22 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.scope === 'research-video') {
+    if (
+      typeof data.totalUnits === 'number' &&
+      Number.isInteger(data.totalUnits) &&
+      data.totalUnits >= 0 &&
+      data.totalUnits <= 16
+    )
+      diagnostic.totalUnits = data.totalUnits
+    if (identifier(data.model)) diagnostic.model = diagnosticText(data.model, options, 200)
+    if (
+      typeof data.outputBytes === 'number' &&
+      Number.isSafeInteger(data.outputBytes) &&
+      data.outputBytes >= 0
+    )
+      diagnostic.outputBytes = data.outputBytes
+  }
   if (source.scope === 'notebook:runtime' || source.scope === 'notebook:network-sandbox') {
     for (const [key, allowed] of Object.entries(notebookLogStates))
       if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]

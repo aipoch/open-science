@@ -101,6 +101,16 @@
     "description": "New issue awaiting initial maintainer assessment"
   },
   {
+    "name": "needs-author-action",
+    "color": "fbca04",
+    "description": "Waiting for the pull request author to make changes or respond."
+  },
+  {
+    "name": "needs-review",
+    "color": "1d76db",
+    "description": "Waiting for a reviewer to review the updated pull request."
+  },
+  {
     "name": "reproducibility",
     "color": "d4c5f9",
     "description": "A contributed reproducibility case for a scientific analysis"

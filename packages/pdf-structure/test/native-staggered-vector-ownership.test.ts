@@ -5,6 +5,9 @@ import { resolve } from './paths'
 const { nativeCaptionedRasterVectorStrip } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
 )
+const { nativeCaptionedVectorTableGrid } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
+)
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
@@ -67,6 +70,30 @@ it.each([1, 1.5])(
     expect(f).toEqual(before)
   }
 )
+
+it('keeps a tall vector packet separate when its caption uses several native words', () => {
+  const f = fixture()
+  f.page.graphicsBounds[1].normalizedRect[1] = 20 / 800
+  const original = f.tokens.pop()
+  f.tokens.push(
+    {
+      ...original,
+      text: 'Fig. 2:',
+      sourceItem: { pageNumber: 1, index: 1, text: 'Fig. 2:' },
+      rect: [310, 380, 350, 390]
+    },
+    {
+      ...original,
+      text: 'Three response panels.',
+      sourceItem: { pageNumber: 1, index: 2, text: 'Three response panels.' },
+      rect: [355, 380, 550, 390]
+    }
+  )
+  expect(strip(f)).toBeUndefined()
+  expect(associateFigures(f.page, f.captions, [], [], [], f.tokens)[0].rect).toEqual([
+    70, 60, 270, 195
+  ])
+})
 
 it('uses the two source columns even when both lie beyond the page midpoint', () => {
   const f = fixture()
@@ -169,4 +196,125 @@ it.each([
 it('keeps existing calls without native source tokens compatible', () => {
   const f = fixture()
   expect(nativeCaptionedRasterVectorStrip(f.page, f.captions[0], f.captions, [])?.rect[2]).toBe(550)
+})
+
+it('keeps a neighboring vector packet with separate raised plot labels outside the raster', () => {
+  const f = fixture()
+  f.page.graphicsBounds.push(
+    ...[0, 1].map((n) => ({
+      kind: 'path',
+      operationIndex: 1 + n,
+      normalizedRect: [(350 + n * 60) / 600, 35 / 800, (360 + n * 60) / 600, 45 / 800]
+    }))
+  )
+  expect(strip(f)).toBeUndefined()
+})
+
+function pairedRasterNeighbor(): ReturnType<typeof JSON.parse> {
+  const f = fixture()
+  f.captions = [
+    { page: 1, lines: ['Figure 1: Native panel summary.'], rect: [88, 197, 260, 207] },
+    { page: 1, lines: ['Figure 2: Native vector summary.'], rect: [335, 174, 540, 184] }
+  ]
+  f.page.graphicsBounds = [
+    ...[
+      [53, 84, 179, 167],
+      [182, 84, 296, 167]
+    ].map((r, n) => ({
+      kind: 'image',
+      operationIndex: 10 + n * 20,
+      normalizedRect: r.map((v, i) => v / (i % 2 ? 800 : 600))
+    })),
+    {
+      kind: 'path',
+      operationIndex: 100,
+      normalizedRect: [318 / 600, 84 / 800, 562 / 600, 179 / 800]
+    },
+    ...Array.from({ length: 12 }, (_, n) => ({
+      kind: 'path',
+      operationIndex: 110 + n,
+      normalizedRect: [340 / 600, (90 + n * 5) / 800, 550 / 600, (94 + n * 5) / 800]
+    }))
+  ]
+  const raw = [
+    ['(a)', 54, 167, 10],
+    ['Measured values remain', 65, 167, 110],
+    ['independently described.', 54, 180, 120],
+    ['(b)', 183, 167, 10],
+    ['A separate native panel', 194, 167, 100],
+    ['is independently described.', 183, 180, 110],
+    ['Figure 1: Native panel', 88, 197, 100],
+    ['summary.', 190, 197, 70],
+    ['Figure 2: Native vector summary.', 335, 174, 205]
+  ]
+  f.tokens = raw.map(([text, x, y, width], index) => ({
+    text,
+    rect: [x, y, Number(x) + Number(width), Number(y) + 10],
+    height: 10,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text }
+  }))
+  f.page.lines = f.tokens.map((t: ReturnType<typeof JSON.parse>) => ({
+    text: t.text,
+    x: t.rect[0],
+    y: t.rect[1],
+    width: t.rect[2] - t.rect[0],
+    height: 10,
+    fontSize: 10
+  }))
+  return f
+}
+
+it('does not lend a natively captioned raster pair to a staggered vector neighbor', () => {
+  const f = pairedRasterNeighbor(),
+    before = structuredClone(f)
+  expect(
+    nativeCaptionedRasterVectorStrip(f.page, f.captions[1], f.captions, [], [], f.tokens)
+  ).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it.each(['missing-marker', 'aliased-source', 'shared-paint', 'missing-native-caption'])(
+  'retains the mixed fallback when the raster pair has incomplete ownership: %s',
+  (kind) => {
+    const f = pairedRasterNeighbor()
+    if (kind === 'missing-marker') f.tokens.splice(3, 1)
+    if (kind === 'aliased-source') f.tokens.push({ ...f.tokens[0] })
+    if (kind === 'missing-native-caption') f.tokens.splice(7, 1)
+    if (kind === 'shared-paint')
+      f.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: 130,
+        normalizedRect: [53 / 600, 90 / 800, 550 / 600, 150 / 800]
+      })
+    expect(
+      nativeCaptionedRasterVectorStrip(f.page, f.captions[1], f.captions, [], [], f.tokens)
+    ).toBeDefined()
+  }
+)
+
+it('does not mistake repeated baseline bars for table rules connecting every row', () => {
+  const caption = { page: 1, lines: ['Figure 1: Native measurements.'], rect: [50, 220, 550, 230] }
+  const rects = [
+    ...[110, 140, 170, 200].map((y) => [100, y, 500, y + 4]),
+    ...[150, 220, 290, 360, 430].flatMap((x, n) => [
+      [x, 145 + n * 3, x + 4, 204],
+      [x + 6, 165 - n * 3, x + 10, 204]
+    ])
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: caption.lines[0], x: 50, y: 220, width: 500, height: 10, fontSize: 10 },
+      { text: 'Measured values', x: 110, y: 150, width: 100, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: rects.map((r) => ({
+      kind: 'path',
+      normalizedRect: r.map((v, n) => v / (n % 2 ? 800 : 600))
+    }))
+  }
+  expect(nativeCaptionedVectorTableGrid(page, caption, [caption], [])).toBeUndefined()
 })

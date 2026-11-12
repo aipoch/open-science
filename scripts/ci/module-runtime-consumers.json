@@ -19,7 +19,8 @@
     "src/main/windows-process-query.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
-    "packages/safe-file-publisher-native/index.cjs"
+    "packages/safe-file-publisher-native/index.cjs",
+    "resources/notebook/file_evidence_worker.js"
   ],
   "packages/safe-file-publisher-native/index.cjs": [
     "src/main/uploads/atomic-no-replace-publisher.ts",
@@ -123,6 +124,11 @@
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"
   ],
+  "resources/notebook/file_evidence_codec.mjs": [
+    "resources/notebook/file_evidence_shadow.js",
+    "src/main/artifacts/execution-evidence-log.ts"
+  ],
+  "resources/notebook/file_evidence_shadow.js": ["resources/notebook/file_evidence_worker.js"],
   "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
   "resources/find-overlay/index.html": [
     "resources/find-overlay/findOverlay.js",
@@ -282,5 +288,7 @@
   ],
   "resources/compute-modal.py": ["src/main/compute/modal-sdk.ts"],
   "resources/compute-hf-auth.py": ["src/main/compute/compute-account-hf.ts"],
-  "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"]
+  "resources/compute-modal-auth.py": ["src/main/compute/modal-account-auth.ts"],
+  "resources/compute-hf-check.py": ["src/main/compute/compute-python-runtime.ts"],
+  "resources/compute-modal-check.py": ["src/main/compute/compute-python-runtime.ts"]
 }

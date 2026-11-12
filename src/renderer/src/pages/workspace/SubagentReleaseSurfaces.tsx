@@ -1,5 +1,15 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { AlertCircle, Bot, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react'
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  CircleMinus,
+  Loader2,
+  X
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -47,12 +57,22 @@ const SUBAGENT_STATUS_LABELS = {
   error: 'error'
 } as const satisfies Record<SubagentRawStatus, string>
 
-const statusDotClassName: Record<SubagentRawStatus, string> = {
-  running: 'bg-primary',
-  awaiting_user: 'bg-status-warning-surface dark:bg-status-warning-dark-surface',
-  completed: 'bg-success-000',
-  cancelled: 'bg-status-warning-surface dark:bg-status-warning-dark-surface',
-  error: 'bg-danger-000'
+const statusClassName: Record<SubagentRawStatus, string> = {
+  running: 'bg-session-running/10 text-session-running',
+  awaiting_user:
+    'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
+  completed: 'text-text-100',
+  cancelled: 'text-text-300',
+  error:
+    'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
+}
+
+const statusIcon = {
+  running: Loader2,
+  awaiting_user: CircleHelp,
+  completed: CheckCircle2,
+  cancelled: CircleMinus,
+  error: AlertCircle
 }
 
 const SubagentStatus = ({
@@ -63,19 +83,28 @@ const SubagentStatus = ({
   awaitingPermission?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const Icon = awaitingPermission ? CircleHelp : statusIcon[status]
 
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-text-300">
-      <span
-        className={cn('size-1.5 rounded-full', statusDotClassName[status])}
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium leading-4',
+        statusClassName[awaitingPermission ? 'awaiting_user' : status]
+      )}
+    >
+      <Icon
+        className={cn(
+          'size-3.5 shrink-0',
+          !awaitingPermission && status === 'running' && 'animate-spin motion-reduce:animate-none',
+          !awaitingPermission &&
+            status === 'completed' &&
+            'text-status-success-foreground dark:text-status-success-dark-foreground'
+        )}
         aria-hidden="true"
       />
       <span className="capitalize" data-subagent-status={status}>
-        {t(SUBAGENT_STATUS_LABELS[status])}
+        {awaitingPermission ? t('Waiting for permission') : t(SUBAGENT_STATUS_LABELS[status])}
       </span>
-      {awaitingPermission ? (
-        <span className="text-[9px] font-normal text-primary">{t('Waiting for permission')}</span>
-      ) : null}
     </span>
   )
 }
@@ -118,7 +147,12 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
       }
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setExpanded(false)
+      if (event.key !== 'Escape') return
+      setExpanded(false)
+      if (containerRef.current?.contains(document.activeElement)) {
+        event.stopPropagation()
+        summaryTriggerRef.current?.focus()
+      }
     }
     document.addEventListener('click', onOutsideClick)
     document.addEventListener('keydown', onKeyDown)
@@ -133,6 +167,9 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
   }
 
   const single = summary.children.length === 1 ? summary.children[0] : undefined
+  const showAgentLabels = summary.children.some(
+    (child) => child.agentLabel !== summary.children[0].agentLabel
+  )
   const label =
     single?.title ??
     t('{{count}} subagents', {
@@ -162,7 +199,9 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
   }
 
   return (
-    <div ref={containerRef} className="relative min-w-0" data-testid="subagents-bar">
+    // The composer strip owns positioning so the list stays inside the conversation pane,
+    // including when a Plan chip precedes this trigger or the preview pane is resized.
+    <div ref={containerRef} className="min-w-0" data-testid="subagents-bar">
       <button
         ref={summaryTriggerRef}
         type="button"
@@ -188,7 +227,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
             aria-label={t('Running')}
           />
         ) : !single && summary.runningCount > 0 ? (
-          <span className="shrink-0">
+          <span className="shrink-0 font-medium text-primary">
             ·{' '}
             {t('{{count}} running', {
               defaultValue_one: '{{count}} running',
@@ -208,7 +247,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
         <div
           id={`subagents-bar-list-${session.id}`}
           aria-label={t('Subagents')}
-          className="absolute bottom-full left-0 z-40 mb-1 max-h-72 w-[min(32rem,calc(100vw-4rem))] overflow-y-auto rounded-xl border border-border-300/20 bg-bg-000 shadow-card"
+          className="absolute bottom-full left-2 right-2 z-40 mb-1 max-h-72 max-w-lg overflow-y-auto rounded-xl border border-border-200 bg-bg-000 p-1 shadow-card"
         >
           {summary.children.map((child) => (
             <button
@@ -230,7 +269,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                       status: t(SUBAGENT_STATUS_LABELS[child.status])
                     })
               }
-              className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-300/15 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-bg-100/60 focus-visible:keyboard-focus focus-visible:-outline-offset-2"
+              className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 rounded-lg px-2.5 py-2 text-left hover:bg-bg-100 active:bg-bg-200 focus-visible:keyboard-focus focus-visible:-outline-offset-2"
               onClick={() => selectChild(child)}
             >
               <span className="min-w-0">
@@ -240,23 +279,30 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                 >
                   {child.title}
                 </span>
-                <span className="mt-0.5 block truncate text-[10px] leading-4 text-text-300">
-                  {child.agentLabel}
-                  {child.originUnavailable ? (
-                    <>
-                      {' · '}
-                      <span
-                        id={`subagent-origin-warning-${session.id}-${child.frameId}`}
-                        className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                      >
-                        {t('Imported history may be incomplete')}
-                      </span>
-                    </>
-                  ) : null}
-                </span>
+                {showAgentLabels || child.originUnavailable ? (
+                  <span className="mt-0.5 block truncate text-[10px] leading-4 text-text-300">
+                    {showAgentLabels ? child.agentLabel : null}
+                    {child.originUnavailable ? (
+                      <>
+                        {showAgentLabels ? ' · ' : null}
+                        <span
+                          id={`subagent-origin-warning-${session.id}-${child.frameId}`}
+                          className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                        >
+                          {t('Imported history may be incomplete')}
+                        </span>
+                      </>
+                    ) : null}
+                  </span>
+                ) : null}
               </span>
-              <SubagentStatus status={child.status} awaitingPermission={child.awaitingPermission} />
-              <ChevronRight className="size-3.5 text-text-300" aria-hidden="true" />
+              <span className="flex items-center gap-1.5">
+                <SubagentStatus
+                  status={child.status}
+                  awaitingPermission={child.awaitingPermission}
+                />
+                <ChevronRight className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+              </span>
             </button>
           ))}
         </div>
@@ -485,6 +531,10 @@ const SubagentPreview = ({
   const isLoading =
     !displayedSession &&
     (isRetrying || (needsHydration && Boolean(projectId) && !automaticReadFinished))
+  const hasSavedResult = Boolean(
+    detail?.attempt?.terminalMessageId &&
+    detail.messages.some((message) => message.id === detail.attempt?.terminalMessageId)
+  )
 
   return (
     <section className="flex size-full min-h-0 flex-col bg-bg-000" aria-label={t('Subagents')}>
@@ -496,19 +546,40 @@ const SubagentPreview = ({
           <SelectTrigger
             id={`subagent-frame-${item.sessionId}`}
             aria-label={t('Subagent Frame')}
-            className="min-w-0 flex-1 text-xs"
+            className="h-9 min-w-0 flex-1 text-xs [&>span]:min-w-0 [&>span]:flex-1"
           >
-            <SelectValue />
+            <SelectValue>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-left" title={detail?.title}>
+                  {detail?.title}
+                </span>
+                {detail ? <SubagentStatus status={detail.status} /> : null}
+              </span>
+            </SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="w-[var(--radix-select-trigger-width)] [&_[data-radix-select-viewport]]:min-w-0">
             {summary.children.map((child) => (
-              <SelectItem key={child.frameId} value={child.frameId}>
-                {child.title}
+              <SelectItem
+                key={child.frameId}
+                value={child.frameId}
+                textValue={child.title}
+                aria-labelledby={undefined}
+                aria-label={t('{{name}}, {{status}}', {
+                  name: child.title,
+                  status: t(SUBAGENT_STATUS_LABELS[child.status])
+                })}
+                className="min-h-10 [&>span:first-child]:min-w-0 [&>span:first-child]:flex-1"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate" title={child.title}>
+                    {child.title}
+                  </span>
+                  <SubagentStatus status={child.status} />
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        {detail ? <SubagentStatus status={detail.status} /> : null}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -556,7 +627,7 @@ const SubagentPreview = ({
               }}
             />
           ) : null}
-          <div className="shrink-0 border-b border-border-100 px-4 py-2 text-[11px] text-text-300">
+          <div className="shrink-0 border-b border-border-200 px-4 py-2 text-[11px] leading-5 text-text-200">
             <span className="font-medium text-text-100">{detail.agentLabel}</span>
             {detail.originUnavailable ? (
               <span className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
@@ -567,12 +638,13 @@ const SubagentPreview = ({
             {detail.status === 'completed' ? (
               <p className="pt-1">
                 {t(
-                  'Execution completed. Check the Main Agent conversation to confirm it received the result.'
+                  hasSavedResult
+                    ? 'Result saved below; check the Main Agent conversation for receipt.'
+                    : 'Execution completed; check the Main Agent conversation for receipt.'
                 )}
               </p>
             ) : null}
-            {detail.attempt?.terminalMessageId &&
-            detail.messages.some((message) => message.id === detail.attempt?.terminalMessageId) ? (
+            {hasSavedResult && detail.status !== 'completed' ? (
               <p className="pt-1">{t('Saved result available below.')}</p>
             ) : null}
             {detail.attempt?.cancellationReason ? (

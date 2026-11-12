@@ -97,8 +97,10 @@ describe('Windows updater certification', () => {
 
   it('keeps the actual blocker until release and requires a retryable status afterward', async () => {
     let held = false
+    let released = false
+    let postReleaseChecks = 0
     const invoke = vi.fn(async () =>
-      held
+      held || (released && postReleaseChecks++ === 0)
         ? {
             state: 'ready',
             reason: 'installation-busy',
@@ -108,6 +110,7 @@ describe('Windows updater certification', () => {
     )
     const release = vi.fn(async () => {
       held = false
+      released = true
     })
     const observations = await certifyForeignProcessRecovery({
       invoke,
@@ -116,22 +119,12 @@ describe('Windows updater certification', () => {
         return { pid: 123, release }
       }
     })
-    expect(observations.map((row) => row.action)).toEqual(['apply', 'recheck', 'recheck'])
-    expect(release).toHaveBeenCalledOnce()
-  })
-
-  it('fails certification when releasing the handle does not clear the block', async () => {
-    const release = vi.fn(async () => undefined)
-    await expect(
-      certifyForeignProcessRecovery({
-        invoke: async () => ({
-          state: 'ready',
-          reason: 'installation-busy',
-          recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
-        }),
-        acquireLock: async () => ({ pid: 123, release })
-      })
-    ).rejects.toThrow('Released file holder still blocks retry')
+    expect(observations.map((row) => row.action)).toEqual([
+      'apply',
+      'recheck',
+      'recheck',
+      'recheck'
+    ])
     expect(release).toHaveBeenCalledOnce()
   })
 

@@ -8,7 +8,8 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
@@ -16,6 +17,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 // Opt in on a Windows desktop at medium integrity. Portable CI does not certify native dialogs.
 const fixture = process.env.OPEN_SCIENCE_UPDATE_NOTICE_FIXTURE
 const makensis = process.env.OPEN_SCIENCE_MAKENSIS
+const builderRoot = dirname(createRequire(import.meta.url).resolve('app-builder-lib/package.json'))
 
 // These small native programs execute the production NSIS instructions without registering or
 // replacing an application. Keep failures on disk for diagnosis; no UI automation is involved.
@@ -41,6 +43,7 @@ describe.skipIf(process.platform !== 'win32' || !makensis)(
           'SilentInstall silent',
           `OutFile "${executable}"`,
           '!include LogicLib.nsh',
+          `!addincludedir "${join(builderRoot, 'templates/nsis/include')}"`,
           '!define isUpdated \'"0" == "1"\'',
           '!define isForceRun \'"0" == "1"\'',
           '!define UNINSTALL_FILENAME "fixture-uninstaller.exe"',
@@ -74,25 +77,18 @@ describe.skipIf(process.platform !== 'win32' || !makensis)(
       return root
     }
 
-    it('preserves uninstall arguments while selecting and restoring the retry temp directory', () => {
-      const preparation = hook.match(
-        / {4}StrCpy \$R5 ""\r?\n {4}ClearErrors[\s\S]*?(?= {4}ExecWait '"\$PLUGINSDIR\\old-uninstaller.exe)/
-      )?.[0]
-      const restoration = hook.match(
-        / {4}ExecWait '"\$PLUGINSDIR\\old-uninstaller.exe[^\n]*\n([\s\S]*?)(?= {4}!insertmacro restoreRetryDataRoot)/
-      )?.[1]
-      expect(preparation).toBeDefined()
-      expect(restoration).toBeDefined()
+    it('preserves uninstall arguments and the caller environment across fresh retry reports', () => {
       const root = nativeProbe(
         'retry-arguments',
         [
-          'StrCpy $0 "/currentuser --keep-shortcuts --updated"',
+          'InitPluginsDir',
+          'StrCpy $cleanupUninstallArguments "/currentuser --keep-shortcuts --updated"',
           'ReadEnvStr $7 "TEMP"',
           'ReadEnvStr $8 "TMP"',
-          preparation!.replaceAll('${DIR}', '$INSTDIR'),
+          '!insertmacro beginCleanupAttempt',
           'FileOpen $9 "$EXEDIR\\arguments.txt" w',
-          'FileWrite $9 "$0$\\r$\\n$R6$\\r$\\n"',
-          restoration,
+          'FileWrite $9 "$0$\\r$\\n"',
+          '!insertmacro beginCleanupAttempt',
           'ReadEnvStr $R2 "TEMP"',
           'ReadEnvStr $R3 "TMP"',
           '${if} $7 != $R2',
@@ -105,8 +101,13 @@ describe.skipIf(process.platform !== 'win32' || !makensis)(
           'FileClose $9'
         ].join('\n')
       )
-      expect(readFileSync(join(root, 'arguments.txt'), 'utf8')).toBe(
-        '/currentuser --keep-shortcuts --updated\r\n1\r\n/currentuser --keep-shortcuts --updated\r\n'
+      const args = readFileSync(join(root, 'arguments.txt'), 'utf8').trim().split('\r\n')
+      expect(args).toHaveLength(2)
+      expect(args[0]).toMatch(
+        /^\/currentuser --keep-shortcuts --updated --cleanup-report=".*\\cleanup-attempt-1\.json"$/
+      )
+      expect(args[1]).toMatch(
+        /^\/currentuser --keep-shortcuts --updated --cleanup-report=".*\\cleanup-attempt-2\.json"$/
       )
     })
 

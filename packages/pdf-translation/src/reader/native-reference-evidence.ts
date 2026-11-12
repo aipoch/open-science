@@ -449,6 +449,26 @@ export async function readNativeReferenceEvidence(
   }
 }
 
+/** Canonical printed equation numbers only; this grants no ownership. */
+export function nativeDisplayNumber(text: string): { value: number; roman: boolean } | undefined {
+  if (/^\([1-9]\d{0,3}\)$/u.test(text)) return { value: Number(text.slice(1, -1)), roman: false }
+  const inner = text.slice(1, -1)
+  if (
+    !/^\([ivxlcdm]+\)$/u.test(text) ||
+    !/^m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})$/u.test(inner)
+  )
+    return
+  const values: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 }
+  return {
+    value: [...inner].reduce(
+      (sum, char, n) =>
+        sum + (values[char] < (values[inner[n + 1]] ?? 0) ? -values[char] : values[char]),
+      0
+    ),
+    roman: true
+  }
+}
+
 /** A separate numbered display gate reuses the same strict font/paint proof.
  * The existing reference entry point retains its original admission rule.
  */
@@ -458,7 +478,26 @@ export async function readNativeDisplayEquationEvidence(
   reference: NativeReferenceEvidence
 ): Promise<NativeReferenceEvidence> {
   try {
-    if (!content.items.some((i) => 'str' in i && /^\([1-9]\d{0,3}\)$/u.test(i.str)))
+    const items = content.items.flatMap((i) => ('str' in i && i.str.trim() ? [i] : []))
+    // This marker only requests the unchanged native font/paint proof. The
+    // reader separately closes the indexed numerator, denominator and rule.
+    const indexedFraction = items.some(
+      (item, at) =>
+        /^[A-Za-z]$/u.test(item.str) &&
+        /^[a-z]{2}$/u.test(items[at + 1]?.str ?? '') &&
+        items[at + 2]?.str === '−' &&
+        items[at + 3]?.str === '¯' &&
+        items[at + 4]?.str === item.str &&
+        items[at + 5]?.str === items[at + 1].str.slice(-1)
+    )
+    const roman = items.flatMap((i) => {
+      const number = nativeDisplayNumber(i.str)
+      return number?.roman ? [number.value] : []
+    })
+    const numbered =
+      items.some((i) => /^\([1-9]\d{0,3}\)$/u.test(i.str)) ||
+      roman.some((n) => roman.includes(n + 1))
+    if (!indexedFraction && !numbered)
       return { complete: false, reason: 'no-display-equation-number' }
     if (reference.complete || reference.reason !== 'no-numbered-reference-items') return reference
     return readNativeLinearRuleEvidence(page, content)

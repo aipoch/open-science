@@ -1,3 +1,5 @@
+import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
+import type { StoredProvider } from './types'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
@@ -71,6 +73,7 @@ export type AgentBackendResolutionContext = {
   grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
+  isolateConfiguration?: boolean
 }
 
 const userSkillDirectorySystemPromptAppend = (storageRoot: string): string =>
@@ -142,7 +145,7 @@ export class AgentBackendResolver {
     transport: CodexSubscriptionTransport
   ) => Promise<void>
 
-  constructor(options: AgentBackendResolverOptions) {
+  constructor(private readonly options: AgentBackendResolverOptions) {
     this.readSettings = options.readSettings
     this.providers = options.providers
     this.runtime = options.runtime
@@ -238,6 +241,66 @@ export class AgentBackendResolver {
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
     return this.resolveBackendSelection(await this.selection.resolveExplicitTarget(target), context)
+  }
+
+  // Resolve a draft in disposable storage without publishing it or observing live account health.
+  async resolveValidationTarget(
+    provider: ResolvedProvider,
+    settings: StoredSettings,
+    storageRoot: string
+  ): Promise<ResolvedAgentBackend> {
+    if (provider.type !== 'custom' && provider.type !== 'official')
+      throw new Error('ACP provider validation requires an API-key provider.')
+    const configuration = { ...provider }
+    delete configuration.key
+    const candidate: StoredProvider = {
+      ...configuration,
+      id: 'validation',
+      name: 'Validation',
+      apiEndpoints: [...(provider.apiEndpoints ?? ['messages'])]
+    }
+    const projection = new ProviderRuntimeProjectionOwner()
+    const providers: AgentBackendProviderPort = {
+      resolveRuntimeTarget: (stored, selection, framework) => {
+        const target = projection.resolveRuntimeTarget(stored, selection, framework)
+        return { ...target, provider: { ...target.provider, ...provider } }
+      },
+      resolveRuntimeModelCatalog: (stored, framework) => [
+        providers.resolveRuntimeTarget(stored, { kind: 'provider-default' }, framework)
+      ],
+      resolveRuntimeReasoningEffortProfile: (stored, model) =>
+        projection.resolveRuntimeReasoningEffortProfile(stored, model)
+    }
+    const snapshot: StoredSettings = {
+      ...settings,
+      providers: [candidate],
+      activeProviderId: candidate.id,
+      activeModel: provider.model
+    }
+    const resolver = new AgentBackendResolver({
+      ...this.options,
+      storageRoot,
+      providers,
+      onProviderFailure: undefined,
+      readSettings: async () => snapshot
+    })
+    const backend = await resolver.resolveExplicitTarget(
+      {
+        frameworkId: settings.agentFrameworkId ?? 'open-science-agent',
+        providerId: candidate.id,
+        model: provider.model
+          ? { kind: 'required', id: provider.model }
+          : { kind: 'provider-default' },
+        reasoningEffort: DEFAULT_REASONING_EFFORT
+      },
+      {
+        includeSkillAndConnectorContext: false,
+        isolateConfiguration: true,
+        skillWhitelist: [],
+        systemPromptAppends: []
+      }
+    )
+    return { ...backend, ...(backend.sessionModel ? { sessionModelRequired: true } : {}) }
   }
 
   // Direct, tool-less features need the same admitted provider/model as an Agent session, but do
@@ -501,7 +564,8 @@ export class AgentBackendResolver {
         executablePath,
         plan.claudeModelConfig,
         includeSkillAndConnectorContext,
-        context.skillWhitelist
+        context.skillWhitelist,
+        context.isolateConfiguration
       )
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
@@ -715,7 +779,8 @@ export class AgentBackendResolver {
     resolvedExecutablePath?: string,
     modelConfig?: ClaudeRuntimeModelConfig,
     includeSkillAndConnectorContext = true,
-    allowedNames?: readonly string[]
+    allowedNames?: readonly string[],
+    isolateConfiguration = false
   ): Promise<AgentSpawnConfig> {
     const executablePath =
       resolvedExecutablePath ??
@@ -724,6 +789,18 @@ export class AgentBackendResolver {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
     const provider = target.provider
+    if (isolateConfiguration && usesAppProviderTransport(provider.type)) {
+      return {
+        executablePath,
+        envOverrides: buildProviderEnv(provider, {
+          storageRoot: this.storageRoot,
+          claudeExecutablePath: executablePath,
+          userClaudeConfigDir: this.userClaudeDir
+        }),
+        sessionOptions: { settings: { ...(modelConfig ?? {}) }, settingSources: [] },
+        contextWindow: provider.contextWindow
+      }
+    }
     const runtimeConfig = await this.runtime.provisionClaudeRuntimeConfig(
       settings,
       forcedSkillIds,

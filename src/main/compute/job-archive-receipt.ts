@@ -1,3 +1,4 @@
+import { readLoggedEvidence } from '../artifacts/execution-evidence-log'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open, realpath } from 'node:fs/promises'
@@ -34,26 +35,14 @@ export async function readJobArchiveReceipt(
     return undefined
   const path = join(root, ...key.split('/'))
   const invalid = (): Error => new Error('Compute output archive receipt is unavailable.')
-  if ((await realpath(path)) !== path) throw invalid()
-  const fd = await open(
-    path,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
-  )
-  let bytes: Buffer
-  try {
-    const snapshot = await fd.stat()
-    // Bound an untrusted local file before allocating a JSON document in the main process.
-    if (!snapshot.isFile() || snapshot.size > 16 * 1024 * 1024) throw invalid()
-    bytes = Buffer.alloc(snapshot.size)
-    for (let offset = 0; offset < bytes.length;) {
-      const { bytesRead } = await fd.read(bytes, offset, bytes.length - offset, offset)
-      if (!bytesRead) throw invalid()
-      offset += bytesRead
-    }
-  } finally {
-    await fd.close()
-  }
-  if (createHash('sha256').update(bytes).digest('hex') !== evidence.checksum) throw invalid()
+  const physical = await realpath(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return undefined
+  })
+  if (physical && physical !== path) throw invalid()
+  const bytes = physical
+    ? await readSidecar(path, evidence.checksum)
+    : await readLoggedEvidence(root, key, evidence.checksum, 16 * 1024 * 1024)
   const doc = JSON.parse(bytes.toString('utf8'))
   if (
     doc.schemaVersion !== 1 ||
@@ -91,4 +80,28 @@ export async function readJobArchiveReceipt(
     files.set(path, file ? { checksum: file.checksum, sizeBytes: file.sizeBytes } : {})
   }
   return files
+}
+
+async function readSidecar(path: string, checksum: string): Promise<Buffer> {
+  const invalid = (): Error => new Error('Compute output archive receipt is unavailable.')
+  const fd = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+  )
+  let bytes: Buffer
+  try {
+    const snapshot = await fd.stat()
+    // Bound an untrusted local file before allocating a JSON document in the main process.
+    if (!snapshot.isFile() || snapshot.size > 16 * 1024 * 1024) throw invalid()
+    bytes = Buffer.alloc(snapshot.size)
+    for (let offset = 0; offset < bytes.length;) {
+      const { bytesRead } = await fd.read(bytes, offset, bytes.length - offset, offset)
+      if (!bytesRead) throw invalid()
+      offset += bytesRead
+    }
+  } finally {
+    await fd.close()
+  }
+  if (createHash('sha256').update(bytes).digest('hex') !== checksum) throw invalid()
+  return bytes
 }

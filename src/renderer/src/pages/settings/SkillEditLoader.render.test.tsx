@@ -132,7 +132,7 @@ it('submits the loaded etag and retains the draft on a stale-save rejection', as
     body.dispatchEvent(new Event('input', { bubbles: true }))
   })
   const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-    (button) => button.textContent?.trim() === 'Save'
+    (button) => button.textContent?.trim() === 'Save changes'
   )!
   expect(save).toBeDefined()
   await act(async () => {
@@ -191,7 +191,7 @@ const mountConflict = async (): Promise<{
     root.render(<SkillEditLoader skillId={detail.id} onDone={onDone} />)
   })
   await editBody('My draft')
-  await clickButton('Save')
+  await clickButton('Save changes')
   return { getSkillDetail, updateSkill, onDone }
 }
 
@@ -226,7 +226,7 @@ it('loads the reviewed latest version only on explicit choice', async () => {
     'Newer body'
   )
   expect(container.textContent).toContain('new.csv')
-  await clickButton('Save')
+  await clickButton('Save changes')
   expect(updateSkill).toHaveBeenLastCalledWith(
     expect.objectContaining({
       etag: 'latest-version',
@@ -262,12 +262,12 @@ it('retains the draft when loading the latest version fails and permits another 
     root.render(<SkillEditLoader skillId={detail.id} onDone={vi.fn()} />)
   })
   await editBody('My draft')
-  await clickButton('Save')
+  await clickButton('Save changes')
   expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Skill body"]')!.value).toBe(
     'My draft'
   )
   expect(container.querySelector('[role=alert]')?.textContent).toContain('read failed')
-  await clickButton('Save')
+  await clickButton('Save changes')
   expect(document.querySelector('[role=dialog]')?.textContent).toContain('Newer body')
 })
 

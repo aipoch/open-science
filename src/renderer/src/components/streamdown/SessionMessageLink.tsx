@@ -30,7 +30,7 @@ type SessionMessageLinkProps = ComponentProps<'a'> & {
 
 type FaviconState = 'local' | 'loading' | 'success' | 'error'
 
-const SOURCE_PREVIEW_OPEN_DELAY_MS = 350
+const SOURCE_PREVIEW_OPEN_DELAY_MS = 100
 const SOURCE_PREVIEW_CLOSE_DELAY_MS = 150
 const TOUCH_ACTIVATION_RESET_MS = 1000
 
@@ -298,7 +298,7 @@ const SessionMessageLink = ({
         </PopoverTrigger>
         <PopoverContent
           ref={sourcePreviewContentRef}
-          side="top"
+          side="bottom"
           align="start"
           sideOffset={8}
           collisionPadding={8}
@@ -381,7 +381,7 @@ const SessionMessageLink = ({
             <SourceLinkSummary
               key={sourceItem.url}
               url={sourceItem.url}
-              allowed={isRemoteDomainAllowed}
+              allowed
               hostname={hostname}
             />
           )}

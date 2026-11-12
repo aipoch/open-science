@@ -1,5 +1,6 @@
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../shared/pdf-annotations'
 import { create } from 'zustand'
+import type { ConnectorsView } from '@/lib/settings-navigation'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import type { CustomizeGoal } from '@/lib/customize-chat'
@@ -26,6 +27,12 @@ import {
 
 export type NavigationView = 'home' | 'library' | 'marketplace' | 'workspace'
 export type NavigationOrigin = 'user' | 'notification' | 'automatic'
+export type ResourceCenterResource = 'marketplace' | 'skills' | 'specialists' | 'connectors'
+export type ResourceCenterIntent =
+  | { resource: 'marketplace' }
+  | { resource: 'connectors'; view?: ConnectorsView }
+  | { resource: 'skills'; skillId?: string }
+  | { resource: 'specialists'; specialistId?: string; specialistKind?: 'builtin' | 'edit' }
 
 // A compact list expands around its visible case, even when the grid changes column count.
 export type MarketplaceListSnapshot = {
@@ -72,6 +79,7 @@ type NavigationStore = {
   view: NavigationView
   activeProjectId: string | undefined
   marketplaceListContext: { projectId: string; list: MarketplaceListSnapshot } | undefined
+  resourceCenterIntent: ResourceCenterIntent | undefined
   // Advances only for explicit user navigation. Deferred startup intents observe this instead of
   // treating lifecycle/deep-link redirects as user choices.
   userNavigationRevision: number
@@ -112,6 +120,12 @@ type NavigationStore = {
   returnFromLibrary: (origin: NavigationOrigin) => void
   returnToProject: (origin: NavigationOrigin) => void
   openMarketplace: (origin: NavigationOrigin, list?: MarketplaceListSnapshot) => void
+  openResourceCenter: (
+    origin: NavigationOrigin,
+    intent?: ResourceCenterIntent,
+    afterNavigate?: () => void
+  ) => void
+  clearResourceCenterIntent: () => void
   updateMarketplaceList: (projectId: string, list: MarketplaceListSnapshot) => void
   openLibrary: (origin: NavigationOrigin, options?: { section?: 'library' }) => void
   openLiteratureItem: (
@@ -265,6 +279,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   view: 'home',
   activeProjectId: undefined,
   marketplaceListContext: undefined,
+  resourceCenterIntent: undefined,
   userNavigationRevision: 0,
   explicitNavigationRevision: 0,
   pendingCustomizePrefill: undefined,
@@ -321,12 +336,25 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     requestPreviewLeaveForNavigation({ view: 'marketplace' }, () =>
       set((state) => ({
         ...navigationState(state, origin, { view: 'marketplace' }),
+        resourceCenterIntent: { resource: 'marketplace' },
         marketplaceListContext:
           list && state.view === 'workspace' && state.activeProjectId
             ? { projectId: state.activeProjectId, list }
             : undefined
       }))
     ),
+
+  openResourceCenter: (origin, intent = { resource: 'skills' }, afterNavigate) =>
+    requestPreviewLeaveForNavigation({ view: 'marketplace' }, () => {
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'marketplace' }),
+        resourceCenterIntent: intent,
+        marketplaceListContext: undefined
+      }))
+      afterNavigate?.()
+    }),
+
+  clearResourceCenterIntent: () => set({ resourceCenterIntent: undefined }),
 
   // Only an existing Project handoff accepts updates; stale events cannot seed another Project.
   updateMarketplaceList: (projectId, list) =>

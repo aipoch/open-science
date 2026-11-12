@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "scripts/inspect-session-fork-snapshots.mjs",
+    "scripts/inspect-session-fork-snapshots.test.ts",
     "src/main/session-package/archive.test.ts",
     "src/main/session-package/archive.ts",
     "src/main/session-package/capacity.ts",
@@ -95,6 +97,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "scripts/inspect-session-fork-snapshots.test.ts",
       "src/main/session-package/archive.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/desktop.test.ts",

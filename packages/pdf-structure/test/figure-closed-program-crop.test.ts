@@ -146,6 +146,63 @@ function anonymousPixelProgram(mode = 'normal'): ReturnType<typeof anonymousClos
   return fixture
 }
 
+function missingNativeForm(): ReturnType<typeof anonymousClosedSaveFigure> {
+  const f = anonymousPixelProgram(),
+    a = f.args,
+    o = a[5].operators,
+    start = o.fnArray.indexOf(OPS.save),
+    end = o.fnArray.indexOf(OPS.restore)
+  o.fnArray[start] = OPS.paintFormXObjectBegin
+  o.argsArray[start] = [
+    [1, 0, 0, 1, 0, 0],
+    [40, 100, 300, 250]
+  ]
+  o.fnArray[end] = OPS.paintFormXObjectEnd
+  o.argsArray[end] = []
+  delete a[1].rect
+  a[1].reason = 'ambiguous-graphic-direction'
+  return f
+}
+
+it('recovers a missing independently captioned transformed Form through a pixel-only proof', () => {
+  const f = missingNativeForm(),
+    a = f.args,
+    before = JSON.stringify(f),
+    plan = nativeClosedPaintPixelCrop(...a)
+  expect(plan?.rect[0]).toBeLessThan(50)
+  expect(plan?.rect[3]).toBeGreaterThan(185)
+  expect(plan?.sourceItems).toBeUndefined()
+  expect(JSON.stringify(f)).toBe(before)
+  const canvas = createCanvas(
+    Math.ceil((plan.rect[2] - plan.rect[0]) * 3),
+    Math.ceil((plan.rect[3] - plan.rect[1]) * 3)
+  )
+  try {
+    expect(nativeClosedPaintPixelPngSafe(plan, canvas.toBuffer('image/png'), plan.rect, a[0])).toBe(
+      true
+    )
+  } finally {
+    canvas.width = canvas.height = 1
+  }
+})
+
+it.each(['shear', 'reflection', 'missing-bbox', 'foreign-caption', 'not-missing'])(
+  'retains the original missing-figure fallback without a bounded native Form: %s',
+  (kind) => {
+    const f = missingNativeForm(),
+      a = f.args,
+      o = a[5].operators,
+      start = o.fnArray.indexOf(OPS.paintFormXObjectBegin)
+    if (kind === 'shear') o.argsArray[start][0][1] = 0.1
+    if (kind === 'reflection') o.argsArray[start][0][0] = -1
+    if (kind === 'missing-bbox') o.argsArray[start][1] = null
+    if (kind === 'foreign-caption')
+      a[2].push({ page: 1, lines: ['Figure 2. Other.'], rect: [80, 170, 250, 195] })
+    if (kind === 'not-missing') a[1].reason = 'other-fallback'
+    expect(nativeClosedPaintPixelCrop(...a)).toBeUndefined()
+  }
+)
+
 it.each(['missing', 'incomplete'])(
   'recovers a whole saved drawing image without text claims: %s',
   (mode) => {

@@ -1,0 +1,179 @@
+{
+  "page": {
+    "view": [0, 0, 612, 792],
+    "rotate": 0
+  },
+  "items": [
+    {
+      "str": "New panels in 2–3M, one CPU view.",
+      "dir": "ltr",
+      "width": 202.41473413335012,
+      "height": 10.9091,
+      "transform": [10.876372700000001, 0, 0, 10.9091, 91.197, 709.041],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": " ",
+      "dir": "ltr",
+      "width": 4.8654586,
+      "height": 0,
+      "transform": [10.876372700000001, 0, 0, 10.9091, 293.61173413334996, 709.041],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": "The approximately illustrated data-grid alignment of",
+      "dir": "ltr",
+      "width": 241.55879948065004,
+      "height": 10.9091,
+      "transform": [10.876372700000001, 0, 0, 10.9091, 298.46259635754996, 709.041],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "•",
+      "dir": "ltr",
+      "width": 8.48509798,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 77.697, 634.8190000000001],
+      "fontName": "anonymous-font-2",
+      "hasEOL": false
+    },
+    {
+      "str": "Grouped templates here.",
+      "dir": "ltr",
+      "width": 134.86935057284998,
+      "height": 10.9091,
+      "transform": [11.029100099999999, 0, 0, 10.9091, 91.636, 634.819],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": "headlines (",
+      "dir": "ltr",
+      "width": 48.618018696800014,
+      "height": 10.9091,
+      "transform": [10.690918, 0, 0, 10.9091, 91.636, 607.721],
+      "fontName": "anonymous-font-1",
+      "hasEOL": false
+    },
+    {
+      "str": "83%",
+      "dir": "ltr",
+      "width": 19.599659969400005,
+      "height": 10.9091,
+      "transform": [10.690918, 0, 0, 10.9091, 325.4011187116001, 607.721],
+      "fontName": "anonymous-font-3",
+      "hasEOL": false
+    },
+    {
+      "str": "Row grouping adjusts what the panel uses.",
+      "dir": "ltr",
+      "width": 228.80702703600014,
+      "height": 10.9091,
+      "transform": [10.690918, 0, 0, 10.9091, 91.636, 439.253],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": "Positioning maintains order and new geometry",
+      "dir": "ltr",
+      "width": 214.8564481378,
+      "height": 10.9091,
+      "transform": [10.690918, 0, 0, 10.9091, 325.16841279199997, 439.253],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "•",
+      "dir": "ltr",
+      "width": 8.48509798,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 77.697, 392.129],
+      "fontName": "anonymous-font-2",
+      "hasEOL": false
+    },
+    {
+      "str": "Formatting evaluated in synthetic checks.",
+      "dir": "ltr",
+      "width": 227.4889841194501,
+      "height": 10.9091,
+      "transform": [10.7454635, 0, 0, 10.9091, 91.636, 392.129],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": "In the 200M examples the selected set fits the",
+      "dir": "ltr",
+      "width": 216.0536618627499,
+      "height": 10.9091,
+      "transform": [10.7454635, 0, 0, 10.9091, 323.9711881579499, 392.129],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    },
+    {
+      "str": "•",
+      "dir": "ltr",
+      "width": 8.48509798,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 77.697, 345.00600000000003],
+      "fontName": "anonymous-font-2",
+      "hasEOL": false
+    },
+    {
+      "str": "Summary.",
+      "dir": "ltr",
+      "width": 46.818039015000004,
+      "height": 10.9091,
+      "transform": [11.127282000000001, 0, 0, 10.9091, 91.636, 345.006],
+      "fontName": "anonymous-font-0",
+      "hasEOL": false
+    },
+    {
+      "str": "= 20",
+      "dir": "ltr",
+      "width": 22.426927780000003,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 102.09346326, 108.792],
+      "fontName": "anonymous-font-3",
+      "hasEOL": false
+    },
+    {
+      "str": "M units spread across locations) are displayed as examples.",
+      "dir": "ltr",
+      "width": 279.79877861999984,
+      "height": 10.9091,
+      "transform": [10.9091, 0, 0, 10.9091, 124.52039103999999, 108.792],
+      "fontName": "anonymous-font-1",
+      "hasEOL": true
+    }
+  ],
+  "styles": {
+    "anonymous-font-0": {
+      "fontFamily": "sans-serif",
+      "ascent": 0.686,
+      "descent": -0.194,
+      "vertical": false
+    },
+    "anonymous-font-1": {
+      "fontFamily": "sans-serif",
+      "ascent": 0,
+      "descent": 0,
+      "vertical": false
+    },
+    "anonymous-font-2": {
+      "fontFamily": "monospace",
+      "ascent": 0,
+      "descent": 0,
+      "vertical": false
+    },
+    "anonymous-font-3": {
+      "fontFamily": "sans-serif",
+      "ascent": 0,
+      "descent": 0,
+      "vertical": false
+    }
+  },
+  "expectedText": "New panels in 2–3M, one CPU view. The approximately illustrated data-grid alignment of\n• Grouped templates here.headlines ( 83%Row grouping adjusts what the panel uses. Positioning maintains order and new geometry\n• Formatting evaluated in synthetic checks. In the 200M examples the selected set fits the\n• Summary.= 20M units spread across locations) are displayed as examples."
+}

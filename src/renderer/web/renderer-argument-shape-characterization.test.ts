@@ -277,6 +277,41 @@ describe('renderer argument-shape characterization', () => {
     )
   })
 
+  it.each([
+    [
+      'specialist.prepareMarketplaceInstall',
+      'specialist:marketplace-install-prepare',
+      {
+        sourceId: 'official',
+        specialistId: 'research',
+        version: '1.0.1',
+        selectedSkillIds: [],
+        selectedConnectorIds: []
+      }
+    ],
+    [
+      'specialist.installMarketplace',
+      'specialist:marketplace-install',
+      { candidateToken: 'candidate', confirmOverwrite: true }
+    ],
+    [
+      'specialist.cancelMarketplaceCandidate',
+      'specialist:marketplace-candidate-cancel',
+      { candidateToken: 'candidate' }
+    ],
+    ['specialist.previewDelete', 'specialist:delete-preview', { id: 'research' }],
+    [
+      'specialist.delete',
+      'specialist:delete',
+      { id: 'research', expectedRevision: 2, deleteSkillIds: [] }
+    ]
+  ])('preserves %s arguments across Electron and Web', async (path, channel, request) => {
+    const args = [request]
+    const expected = { channel, args }
+    expect(await invokeElectron(electronApi, String(path), args)).toEqual(expected)
+    expect(await invokeWeb(webApi, String(path), args)).toEqual(expected)
+  })
+
   it('loads the complete local Web callable surface from the real bootstrap', () => {
     const expectedPaths = [
       ...Object.entries(WEB_INVOKE_CHANNELS)

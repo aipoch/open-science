@@ -378,7 +378,8 @@ function continuedSymbolNotes(table, page, nextPage, cells) {
 // title. Symbol blocks before the next table retain the original source page.
 export function associateContinuedTableNotes(table, page, nextPage) {
   if (!nextPage || nextPage.pageNumber !== page.pageNumber + 1) return []
-  const cells = (table.parts ?? [table]).flatMap((part) => part.cells ?? [])
+  const parts = Array.isArray(table.parts) ? table.parts : [table]
+  const cells = parts.flatMap((part) => (Array.isArray(part.cells) ? part.cells : []))
   const symbols = continuedSymbolNotes(table, page, nextPage, cells)
   if (symbols.length) return symbols
   const glossary = continuedGlossaryNotes(table, page, nextPage, cells)

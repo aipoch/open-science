@@ -134,6 +134,7 @@ const ProvidersPanel = ({
   const subagentModel = useSettingsStore((state) => state.subagentModel)
   const reviewerModel = useSettingsStore((state) => state.reviewerModel)
   const sessionDetailsModel = useSettingsStore((state) => state.sessionDetailsModel)
+  const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
   const visionModel = useSettingsStore((state) => state.visionModel)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const saveProvider = useSettingsStore((state) => state.saveProvider)
@@ -223,12 +224,12 @@ const ProvidersPanel = ({
     }
   }, [cancelXaiOAuthLogin])
 
-  // Codex + Claude subscription pseudo-providers only make sense while their matching framework is the
-  // active one. Hide claude-isolated and claude-shared from non-claude-code frameworks (same rule as codex).
+  // Subscription accounts stay visible for the frameworks that own their authentication transport.
   const visibleProviders = providers.filter((provider) => {
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
-    if (isCodexSubscriptionProvider(provider.type)) return agentFrameworkId === 'codex'
+    if (isCodexSubscriptionProvider(provider.type))
+      return agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
 
     return true
   })
@@ -461,12 +462,24 @@ const ProvidersPanel = ({
           removedProviderIds.has(sessionDetailsModel.providerId)
             ? [{ id: 'session-details' as const, label: t('Session details') }]
             : []),
+          ...(promptOptimizationModel.mode === 'fixed' &&
+          removedProviderIds.has(promptOptimizationModel.providerId)
+            ? [{ id: 'prompt-optimization' as const, label: t('Prompt optimization') }]
+            : []),
           ...(visionModel && removedProviderIds.has(visionModel.providerId)
             ? [{ id: 'vision' as const, label: t('Vision') }]
             : [])
         ]
       : []
-  }, [providerPendingDeletion, subagentModel, reviewerModel, sessionDetailsModel, visionModel, t])
+  }, [
+    providerPendingDeletion,
+    subagentModel,
+    reviewerModel,
+    sessionDetailsModel,
+    promptOptimizationModel,
+    visionModel,
+    t
+  ])
   const dialogAffectedScenarios =
     useRetainedDialogValue(providerPendingDeletion ? affectedScenarios : undefined) ?? []
 

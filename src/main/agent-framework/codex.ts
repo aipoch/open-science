@@ -1,3 +1,4 @@
+import { isOfficialOpenAiResponsesBase } from '../../shared/provider-url-policy'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import {
   spawn,
@@ -208,15 +209,6 @@ const resolveResponsesBaseUrl = (provider: {
     // explicitly projected OpenAI base is already versioned. A native Responses base is exact.
     appendVersionPath: !exactBase && !chatCompletionsBase
   })
-}
-
-const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
-  if (!value) return false
-  try {
-    return new URL(value).hostname.toLowerCase() === 'api.openai.com'
-  } catch {
-    return false
-  }
 }
 
 // Model settings shared by API and subscription sessions, with no provider plumbing.

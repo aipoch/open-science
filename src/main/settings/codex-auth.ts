@@ -253,6 +253,32 @@ const extractCodexProviderRoute = (configToml: string): ImportedCodexProviderRou
   }
 }
 
+// The built-in Agent uses HTTP Responses. Only the same sanitized loopback route accepted by
+// credential import may replace the fixed ChatGPT origin; an explicit WebSocket preference cannot
+// silently become HTTPS. Imported routes retain precedence over that preference, as in native Codex.
+export const resolveCodexHarnessEndpoint = (
+  configToml: string,
+  transport: CodexSubscriptionTransport = 'auto'
+): string => {
+  const imported = extractCodexProviderRoute(configToml)
+  if (imported) return `${imported.baseUrl.replace(/\/+$/, '')}/responses`
+
+  let activeProvider: string | undefined
+  for (const line of configToml.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break
+    const assignment = parseTomlScalarAssignment(line)
+    if (assignment?.key === 'model_provider' && typeof assignment.value === 'string') {
+      activeProvider = assignment.value
+      break
+    }
+  }
+  if (activeProvider && !CODEX_TRANSPORT_PROVIDER_IDS.some((id) => id === activeProvider))
+    throw new Error('The Codex profile route is not supported by the built-in Agent.')
+  if (transport === 'websocket')
+    throw new Error('The built-in Agent requires the Codex Auto or HTTPS transport.')
+  return 'https://chatgpt.com/backend-api/codex/responses'
+}
+
 const serializeLegacyCodexProviderRoute = (route: ImportedCodexProviderRoute): string =>
   [
     `model_provider = ${JSON.stringify(route.id)}`,
@@ -664,18 +690,20 @@ const isJwt = (value: unknown): value is string => {
   }
 }
 
+export const resolveCodexStoredAuthMode = (auth: Record<string, unknown>): unknown =>
+  auth.auth_mode ??
+  (typeof auth.personal_access_token === 'string'
+    ? 'personalAccessToken'
+    : isJsonObject(auth.bedrock_api_key)
+      ? 'bedrockApiKey'
+      : typeof auth.OPENAI_API_KEY === 'string'
+        ? 'apikey'
+        : 'chatgpt')
+
 const hasCodexCredentialMaterial = (value: unknown): boolean => {
   if (!isJsonObject(value)) return false
   const auth = value
-  const inferredMode =
-    typeof auth.personal_access_token === 'string'
-      ? 'personalAccessToken'
-      : isJsonObject(auth.bedrock_api_key)
-        ? 'bedrockApiKey'
-        : typeof auth.OPENAI_API_KEY === 'string'
-          ? 'apikey'
-          : 'chatgpt'
-  const mode = auth.auth_mode ?? inferredMode
+  const mode = resolveCodexStoredAuthMode(auth)
 
   if (mode === 'apikey') return isNonEmptyString(auth.OPENAI_API_KEY)
   if (mode === 'personalAccessToken') return isNonEmptyString(auth.personal_access_token)

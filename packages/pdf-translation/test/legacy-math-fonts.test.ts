@@ -4,6 +4,153 @@ import { PDFDocument, PDFDict, PDFName, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfTranslationWriter } from '../src/writer.js'
 import { TestCallerRegistry } from './support/callers.js'
+import { engine } from '../resources/pdfium.mjs'
+
+it.each([
+  ['MSBM10', '点属于R3与R3；尺度属于R。', true],
+  ['ABCDEF+MSBM9', '点属于R3与R3；尺度属于R。', true],
+  ['CMSY10', '点属于R3与R3；尺度属于R。', true],
+  ['MSBM10', '点属于N3与R3；尺度属于R。', false],
+  ['MSBM10', '点属于3与R3；尺度属于R。', false],
+  ['MSBM10', '点属于R3与R3；尺度属于R和R。', false]
+] as const)(
+  'keeps repeated legacy mathematical capitals and their native powers: %s / %s',
+  async (name, translation, placed) => {
+    const pdf = await PDFDocument.create(),
+      prose = await pdf.embedFont(StandardFonts.TimesRoman),
+      alphabet = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+      page = pdf.addPage([330, 220]),
+      source = 'Points use R3 and R3; the scale uses R.',
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'native-math-alphabet', surface: 'electron' }),
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+    page.drawText('Points use ', { font: prose, size: 10, x: 40, y: 150 })
+    page.drawText('R', { font: alphabet, size: 10, x: 90, y: 150 })
+    page.drawText('3', { font: prose, size: 7, x: 97, y: 154 })
+    page.drawText(' and ', { font: prose, size: 10, x: 105, y: 150 })
+    page.drawText('R', { font: alphabet, size: 10, x: 130, y: 150 })
+    page.drawText('3', { font: prose, size: 7, x: 137, y: 154 })
+    page.drawText('; the scale uses ', { font: prose, size: 10, x: 145, y: 150 })
+    page.drawText('R', { font: alphabet, size: 10, x: 215, y: 150 })
+    page.drawText('.', { font: prose, size: 10, x: 223, y: 150 })
+    page.drawText('Neighbor', { font: prose, size: 10, x: 40, y: 110 })
+    await pdf.flush()
+    pdf.context.lookup(alphabet.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of(name))
+    const data = await pdf.save(),
+      native = await engine(),
+      at = native.alloc(24)
+    const inspect = (
+      bytes: Uint8Array
+    ): Array<{
+      text: string
+      font: string
+      size: number
+      matrix: number[]
+      bounds: number[]
+    }> => {
+      const document = native.open(bytes),
+        original = native.p.FPDF_LoadPage(document.doc, 0)
+      try {
+        return native
+          .objects(original)
+          .filter((o) => o.type === 1)
+          .map((o) => {
+            expect(native.p.FPDFPageObj_GetMatrix(o.obj, at)).toBeTruthy()
+            const matrix = [...native.m.HEAPF32.slice(at / 4, at / 4 + 6)]
+            expect(native.p.FPDFTextObj_GetFontSize(o.obj, at)).toBeTruthy()
+            const size = native.m.HEAPF32[at / 4],
+              font = native.p.FPDFTextObj_GetFont(o.obj),
+              length = native.p.FPDFFont_GetBaseFontName(font, 0, 0),
+              buffer = native.alloc(length)
+            try {
+              native.p.FPDFFont_GetBaseFontName(font, buffer, length)
+              return {
+                text: o.text.trim(),
+                font: Buffer.from(native.m.HEAPU8.slice(buffer, buffer + length - 1)).toString(),
+                size,
+                matrix,
+                bounds: o.bounds
+              }
+            } finally {
+              native.free(buffer)
+            }
+          })
+      } finally {
+        native.p.FPDF_ClosePage(original)
+        document.close()
+      }
+    }
+    let rendered: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await writer.generate(
+        {
+          id: 'native-math-alphabet',
+          data,
+          pages: [{ width: 330, height: 220 }],
+          preserveUnsupported: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 39 / 330, y: 61 / 220, width: 190 / 330, height: 17 / 220 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      const original = inspect(data),
+        actual = inspect(output!),
+        before = original.filter((o) => o.text === 'R'),
+        after = actual.filter((o) => o.text === 'R' && o.font === name)
+      expect(before).toHaveLength(3)
+      expect(after).toHaveLength(3)
+      before.forEach((o, index) => {
+        expect(after[index].font).toBe(o.font)
+        expect(after[index].size).toBeCloseTo(o.size, 4)
+        o.matrix
+          .slice(0, 4)
+          .forEach((v, axis) => expect(after[index].matrix[axis]).toBeCloseTo(v, 4))
+        expect(after[index].bounds[2] - after[index].bounds[0]).toBeCloseTo(
+          o.bounds[2] - o.bounds[0],
+          3
+        )
+        if (!placed) expect(after[index]).toEqual(o)
+      })
+      for (const power of actual.filter((o) => o.text === '3'))
+        expect(
+          after.some(
+            (base) =>
+              power.size < base.size * 0.85 &&
+              power.matrix[5] - base.matrix[5] > base.size * 0.2 &&
+              power.matrix[5] - base.matrix[5] < base.size * 0.7 &&
+              power.bounds[0] >= base.bounds[2] - 1 &&
+              power.bounds[0] <= base.bounds[2] + 5
+          )
+        ).toBe(true)
+      expect(actual.filter((o) => o.text === '3')).toHaveLength(2)
+      expect(actual.find((o) => o.text === 'Neighbor')).toEqual(
+        original.find((o) => o.text === 'Neighbor')
+      )
+      rendered = getDocument({ data: output!.slice(), useSystemFonts: true })
+      const text = (await (await (await rendered.promise).getPage(1)).getTextContent()).items
+        .filter((o) => 'str' in o)
+        .map((o) => o.str)
+        .join('')
+        .replace(/\s/gu, '')
+      expect(text).toBe((placed ? translation : source).replace(/\s/gu, '') + 'Neighbor')
+    } finally {
+      await rendered?.destroy()
+      native.free(at)
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
 
 it.each([
   ['TeX-matha10', 'p q P r', true],
@@ -308,6 +455,102 @@ it.each([
     } finally {
       await original.destroy()
       await target?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
+
+it.each([
+  ['CMSY10', '\u0338∼', '\u0338∼', true],
+  ['ABCDEF+CMSY9', '\u0338∈', '\u0338∈', true],
+  ['Helvetica', '\u0338∼', '\u0338∼', false],
+  ['CMSY10', '\u0338∼', '∼', false],
+  ['CMSY10', '\u0338∼', '∼\u0338', false],
+  ['CMSY10', '\u0338∼', '\u0338∈', false],
+  ['CMSY10', '\u0338∼', '\u0338∼\u0338∼', false]
+] as const)(
+  'preserves a complete owned native negated relation without guessing its target: %s / %s / %s',
+  async (name, relation, translatedRelation, replaced) => {
+    const pdf = await PDFDocument.create(),
+      prose = await pdf.embedFont(StandardFonts.TimesRoman),
+      symbol = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([300, 200]),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'native-negated-relation' }),
+      prefix = 'The relation u ',
+      suffix = ' v is unchanged.',
+      x = 40 + prose.widthOfTextAtSize(prefix, 10)
+    page.drawText(prefix, { font: prose, size: 10, x: 40, y: 150 })
+    // A complete two-code glyph object supplies the original paint. Its
+    // ToUnicode text describes the slash followed by the native relation.
+    page.drawText('/~', { font: symbol, size: 10, x, y: 150 })
+    page.drawText(suffix, {
+      font: prose,
+      size: 10,
+      x: x + symbol.widthOfTextAtSize('/~', 10),
+      y: 150
+    })
+    page.drawText('Independent neighbor.', { font: prose, size: 10, x: 40, y: 110 })
+    await pdf.flush()
+    const dictionary = pdf.context.lookup(symbol.ref, PDFDict)
+    dictionary.set(PDFName.of('BaseFont'), PDFName.of(name))
+    dictionary.set(
+      PDFName.of('ToUnicode'),
+      pdf.context.register(
+        pdf.context.stream(
+          '/CIDInit /ProcSet findresource begin 12 dict begin begincmap ' +
+            '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def ' +
+            '/CMapName /NativeRelation def /CMapType 2 def ' +
+            '1 begincodespacerange <00> <FF> endcodespacerange ' +
+            '2 beginbfchar <2F> <0338> <7E> <' +
+            (relation.endsWith('∈') ? '2208' : '223C') +
+            '> endbfchar ' +
+            'endcmap CMapName currentdict /CMap defineresource pop end end'
+        )
+      )
+    )
+    const source = prefix + relation + suffix,
+      translation = `关系 u ${translatedRelation} v 保持不变。`
+    try {
+      const output = await new PdfTranslationWriter(() =>
+        resolve('resources/worker.mjs')
+      ).generateDetailed(
+        {
+          id: 'native-negated-relation',
+          data: await pdf.save(),
+          pages: [{ width: 300, height: 200 }],
+          preserveUnsupported: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 39 / 300, y: 37 / 200, width: 230 / 300, height: 20 / 200 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output!.layoutFailures).toHaveLength(replaced ? 0 : 1)
+      const task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      try {
+        const document = await task.promise,
+          text = (await (await document.getPage(1)).getTextContent()).items
+            .map((item) => ('str' in item ? item.str : ''))
+            .join('')
+            .replace(/\s/gu, '')
+        expect(text).toContain('Independentneighbor.')
+        expect(text).toContain((replaced ? translation : source).replace(/\s/gu, ''))
+        if (!replaced) expect(text).not.toContain('关系')
+      } finally {
+        await task.destroy()
+      }
+    } finally {
       caller.release()
       registry.dispose()
     }

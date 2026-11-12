@@ -8,6 +8,8 @@ export type PrepareImageInputCompatibilityInput = Readonly<{
   sessionId?: string
   imageSources?: ReadonlyArray<VisionEvidenceSource | undefined>
   historyImageCount?: number
+  /** Chat attachments retain their default reading guidance; Notebook results continue a task. */
+  evidenceContext?: 'attachment' | 'notebook-tool-result'
   signal?: AbortSignal
 }>
 

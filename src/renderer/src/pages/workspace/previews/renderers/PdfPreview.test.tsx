@@ -507,7 +507,7 @@ describe('PdfPreviewContent', () => {
     }
   }
 
-  it.each(['select', 'new', 'cancel', 'navigate'] as const)(
+  it.each(['select', 'new', 'cancel', 'navigate', 'empty'] as const)(
     'handles the %s edition action with its own layout and lifetime',
     async (action) => {
       useSettingsStore.setState({
@@ -603,6 +603,10 @@ describe('PdfPreviewContent', () => {
         }
       })
       const first = saved('11111111-1111-4111-8111-111111111111', 'first-model', '上一份译文')
+      if (action === 'empty') {
+        first.translations = []
+        first.translatedSourceIndices = []
+      }
       const second = saved('22222222-2222-4222-8222-222222222222', 'second-model', '新译本内容')
       let resolveSelection!: (value: PdfTranslationCheckpoint) => void
       let finishVerification!: () => void
@@ -653,6 +657,22 @@ describe('PdfPreviewContent', () => {
         root.render(<PdfPreviewContent {...props} translationExecutor={executor} />)
         await flush()
       })
+      if (action === 'empty') {
+        const originalCheckpoint = JSON.stringify(first)
+        await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+        const resume = await screen.findByRole('button', { name: 'Continue translation' })
+        expect((resume as HTMLButtonElement).disabled).toBe(false)
+        expect(screen.getByRole('combobox', { name: 'Saved translations' })).toBeTruthy()
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'New translation' }))
+        )
+        expect(screen.getByRole('dialog', { name: 'New translation' })).toBeTruthy()
+        expect(executor.begin).not.toHaveBeenCalled()
+        expect(executor.translate).not.toHaveBeenCalled()
+        expect(window.api.pdfTranslation?.generatePdf).not.toHaveBeenCalled()
+        expect(JSON.stringify(first)).toBe(originalCheckpoint)
+        return
+      }
       await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
       const selector = await screen.findByRole<HTMLButtonElement>('combobox', {
         name: 'Saved translations'

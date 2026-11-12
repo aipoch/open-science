@@ -45,6 +45,7 @@ import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
+import * as windowsOwnedProcess from '../process-tree-windows'
 import { shellNpmPaths } from './shell-npm-environment'
 import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 
@@ -591,6 +592,7 @@ it.each([false, true])(
     await lifecycle.ensureReady()
     const spawn = vi.mocked(childProcess.spawn)
     spawn.mockClear()
+    const ownedSpawn = vi.spyOn(windowsOwnedProcess, 'spawnWindowsOwnedProcess')
     const executor = new NotebookKernelExecutor({
       replLoopPath: REPL_LOOP,
       platform: 'win32',
@@ -619,13 +621,19 @@ it.each([false, true])(
       })
       expect(result.status, result.stderr || result.traceback).toBe('completed')
       expect(result.stdout).toContain('CONSOLE_TEST_READY')
-      expect(spawn).toHaveBeenCalledWith(
+      const expectedArgs = [
         process.execPath,
         expect.arrayContaining([
           expect.stringContaining(owned ? 'kernel_process_host.js' : 'repl_loop.js')
         ]),
         expect.objectContaining({ windowsHide: true, detached: false })
-      )
+      ]
+      if (owned && process.platform === 'win32') {
+        expect(ownedSpawn).toHaveBeenCalledWith(
+          expect.stringMatching(/^Local\\OpenScience\.Notebook\./),
+          ...expectedArgs
+        )
+      } else expect(spawn).toHaveBeenCalledWith(...expectedArgs)
     } finally {
       await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
     }

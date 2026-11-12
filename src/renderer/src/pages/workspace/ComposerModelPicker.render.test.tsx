@@ -199,7 +199,7 @@ describe('ComposerModelPicker', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ],
@@ -411,7 +411,7 @@ describe('ComposerModelPicker', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ],

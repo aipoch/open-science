@@ -1505,6 +1505,8 @@ describe('notebook local RPC server', () => {
           sessionId: 'session-1',
           executionCwd: '/trusted/workspace',
           controlInvocationId: 'run-1',
+          agentFrameId: 'root-frame-session-1',
+          role: 'main',
           signal: {}
         }
       })

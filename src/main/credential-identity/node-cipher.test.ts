@@ -39,7 +39,7 @@ const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: strin
 describe('Node OSCrypt-compatible cipher', () => {
   it.each([
     { delay: 0, scale: 1 },
-    { delay: 31_000, scale: 1 },
+    { delay: 31_000, scale: 10 },
     { delay: 240_000, scale: 100 }
   ])(
     'decrypts legacy ciphertext after $delay ms authorization (time scale $scale)',
@@ -183,6 +183,35 @@ describe('Node OSCrypt-compatible cipher', () => {
         ['protect'],
         expect.objectContaining({ windowsHide: true })
       )
+    } finally {
+      vi.mocked(createRequire).mockRestore()
+      vi.mocked(spawnSync).mockRestore()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  it('retries one empty DPAPI response and never retries a reported DPAPI error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'node-cipher-retry-'))
+    vi.mocked(createRequire).mockReturnValue((() => ({
+      secretExecutablePath: process.execPath
+    })) as unknown as NodeJS.Require)
+    const reply = (status: number, stdout: string): ReturnType<typeof spawnSync> =>
+      ({ status, signal: null, stdout: Buffer.from(stdout) }) as ReturnType<typeof spawnSync>
+    try {
+      vi.mocked(spawnSync)
+        .mockReturnValueOnce(reply(4, ''))
+        .mockReturnValueOnce(reply(0, 'wrapped'))
+      initializeNodeWindowsProfileKey(directory)
+      expect(spawnSync).toHaveBeenCalledTimes(2)
+
+      vi.mocked(spawnSync).mockClear()
+      await rm(join(directory, 'Local State'))
+      vi.mocked(spawnSync).mockReturnValue(reply(3, '5'))
+      expect(() => initializeNodeWindowsProfileKey(directory)).toThrow(
+        expect.objectContaining({
+          diagnostic: { code: 'secret-dpapi-failed', osStatus: 5, exitCode: 3 }
+        })
+      )
+      expect(spawnSync).toHaveBeenCalledTimes(1)
     } finally {
       vi.mocked(createRequire).mockRestore()
       vi.mocked(spawnSync).mockRestore()

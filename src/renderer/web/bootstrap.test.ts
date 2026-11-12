@@ -390,6 +390,25 @@ describe('Web bootstrap event connection', () => {
     await bootstrapImport
   })
 
+  it('names the rejected bootstrap fields when the host speaks a newer contract', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          ...bootstrapPayload,
+          rpcChannels: ['future:a', 'future:b', 'future:c', 'future:d', 'future:e']
+        })
+      )
+    )
+
+    await import('./bootstrap')
+    await vi.waitFor(() =>
+      expect(document.getElementById('open-science-connection-message')?.textContent).toContain(
+        'rpcChannels: Unknown Web RPC channel: future:a; rpcChannels: Unknown Web RPC channel: future:b; rpcChannels: Unknown Web RPC channel: future:c (+2 more)'
+      )
+    )
+  })
+
   it('localizes bootstrap failure and retry controls with the initialized locale', async () => {
     localStorage.setItem('open-science-language', 'zh-Hans')
     vi.stubGlobal(

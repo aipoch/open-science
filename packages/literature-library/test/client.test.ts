@@ -5,6 +5,7 @@ import {
   createLiteratureEntries,
   createLiteratureMetadata,
   createReferenceExporter,
+  type ReferenceExportFile,
   type LibraryClientApi,
   type LibraryPage
 } from '../src/client/index.js'
@@ -13,6 +14,8 @@ import {
   type LiteratureItemView,
   type LiteratureMetadataCompletionResult
 } from '../src/contracts.js'
+import { LITERATURE_OVERSIZED_REFERENCE } from '../src/export.js'
+import { referenceCsv } from '../src/client/reference-csv.js'
 import { expect, it, vi } from 'vitest'
 const item = (id = 'paper', revision = 1): LiteratureItemView => ({
   id,
@@ -87,6 +90,43 @@ it('assembles Unicode export chunks and rejects mixed record versions', async ()
     .mockResolvedValueOnce({ chunk: 'a', digest: 'a', nextOffset: 1 })
     .mockResolvedValueOnce({ chunk: 'b', digest: 'b' })
   await expect(client.readLiteratureRecord('paper')).rejects.toThrow('changed during export')
+})
+it.each([{ mergedIntoItemId: 'survivor' }, { deletedAt: 0 }])(
+  'rejects a retained record in oversized active selection recovery: %j',
+  async (retained) => {
+    const transport = api()
+    vi.mocked(transport.search)
+      .mockRejectedValueOnce(new Error(LITERATURE_OVERSIZED_REFERENCE + 'paper'))
+      .mockResolvedValueOnce({ entries: [], totalCount: 1 })
+    vi.mocked(transport.exportRecord).mockResolvedValue({
+      chunk: JSON.stringify({ ...item(), ...retained }),
+      digest: 'a'.repeat(64)
+    })
+    await expect(
+      createLiteratureClient(transport).readLiteratureSelectionPage({
+        scope: 'library',
+        lifecycle: 'active',
+        itemIds: ['paper']
+      })
+    ).rejects.toThrow('Reference changed')
+  }
+)
+it('recovers a retained oversized record for a Trash selection', async () => {
+  const transport = api()
+  const retained = { ...item(), deletedAt: 0, mergedIntoItemId: 'survivor' }
+  vi.mocked(transport.search)
+    .mockRejectedValueOnce(new Error(LITERATURE_OVERSIZED_REFERENCE + 'paper'))
+    .mockResolvedValueOnce({ entries: [], totalCount: 1 })
+  vi.mocked(transport.exportRecord).mockResolvedValue({
+    chunk: JSON.stringify(retained),
+    digest: 'a'.repeat(64)
+  })
+  const page = await createLiteratureClient(transport).readLiteratureSelectionPage({
+    scope: 'library',
+    lifecycle: 'deleted',
+    itemIds: ['paper']
+  })
+  expect(page.entries).toEqual([retained])
 })
 it('does not return an older relationship snapshot after a newer detail read', async () => {
   const old = deferred<LiteratureItemView>(),
@@ -333,5 +373,197 @@ it('holds export admission until save settles and never saves partial batches', 
   await expect(
     exporter({ ...request, itemIds: Array.from({ length: 201 }, (_, i) => String(i)) })
   ).rejects.toThrow('duplicate citation keys')
+  expect(save).not.toHaveBeenCalled()
+})
+
+it.each([
+  [undefined, '2024-05-16', '2024'],
+  [2023, '2024-05-16', '2023'],
+  [undefined, 'in press', '']
+] as const)(
+  'exports year %s with publication date %s as %s',
+  (issuedYear, issuedText, expected) => {
+    const record = item()
+    Object.assign(record.item, { issuedYear, issuedText })
+    expect(referenceCsv([record], false).split(',')[3]).toBe(`"${expected}"`)
+  }
+)
+
+it('exports bibliographic CSV as UTF-8 spreadsheet data without loading a citation style', async () => {
+  const record = item('record-1')
+  record.item = literatureItemInputSchema.parse({
+    itemType: 'journalArticle',
+    title: '中文, "quoted" title',
+    abstract: 'First line\nSecond line',
+    issuedYear: 2024,
+    containerTitle: 'Journal',
+    language: 'zh',
+    url: 'https://example.org/paper',
+    creators: [
+      { nameMode: 'person', givenName: 'Ada', familyName: 'Lovelace', creatorType: 'Author' },
+      { nameMode: 'organization', literalName: 'Research Group', creatorType: 'AUTHOR' },
+      { nameMode: 'person', familyName: 'Editor', creatorType: 'editor' }
+    ],
+    identifiers: [
+      { scheme: 'doi', value: '10.1234/example' },
+      { scheme: 'pmid', value: '123456' },
+      { scheme: 'pmcid', value: 'PMC123456' },
+      { scheme: 'arxiv', value: '1706.03762' }
+    ],
+    typeFields: { volume: '2', issue: '3', pages: '10–20' }
+  })
+  const readItems = vi.fn(async () => [record]),
+    format = vi.fn().mockRejectedValue(new Error('CSL unavailable')),
+    save = vi
+      .fn<(file: ReferenceExportFile) => Promise<{ saved: boolean }>>()
+      .mockResolvedValue({ saved: true })
+  const exporter = createReferenceExporter({ readItems, format, save })
+  expect(
+    await exporter({
+      itemIds: ['record-1'],
+      format: 'csv',
+      filenameStem: 'A/B',
+      styleId: 'unavailable',
+      locale: 'en-US'
+    })
+  ).toBe(true)
+  const file = save.mock.calls[0]![0]
+  expect(file.suggestedName).toBe('A-B.csv')
+  expect(file.mimeType).toBe('text/csv;charset=utf-8')
+  expect([...new Uint8Array(file.data).slice(0, 3)]).toEqual([239, 187, 191])
+  const csv = new TextDecoder().decode(file.data)
+  expect(csv).toBe(
+    '"item_id","title","authors","year","item_type","publication","volume","issue","pages","doi","pmid","pmcid","arxiv_id","url","abstract","language"\r\n' +
+      '"record-1","中文, ""quoted"" title","Ada Lovelace; Research Group","2024","journalArticle","Journal","2","3","10–20","10.1234/example","123456","PMC123456","1706.03762","https://example.org/paper","First line\r\nSecond line","zh"\r\n'
+  )
+  expect(format).not.toHaveBeenCalled()
+})
+
+it.each([
+  '=HYPERLINK("bad")',
+  ' +SUM(1,2)',
+  '\t@SUM(1)',
+  '-2+3',
+  '\rplain',
+  '＝1+2',
+  '＋1+2',
+  '＠SUM(1)',
+  '－1+2'
+])(
+  'neutralizes spreadsheet formulas/control prefixes in any bibliographic field: %j',
+  async (value) => {
+    const record = item('safe')
+    record.item.extra = value // Not an exported field.
+    record.item.abstract = value
+    const save = vi
+      .fn<(file: ReferenceExportFile) => Promise<{ saved: boolean }>>()
+      .mockResolvedValue({ saved: true })
+    await createReferenceExporter({
+      readItems: async () => [record],
+      format: api().formatReferences,
+      save
+    })({
+      itemIds: ['safe'],
+      format: 'csv',
+      filenameStem: 'refs',
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    const csv = new TextDecoder().decode(save.mock.calls[0]![0].data)
+    const protectedValue = `'${value}`.replace(/\r\n|\r|\n/g, '\r\n').replaceAll('"', '""')
+    expect(csv).toContain(`"${protectedValue}"`)
+  }
+)
+
+it('exports all CSV batches in selection order with one header and blank missing fields', async () => {
+  const ids = Array.from({ length: 205 }, (_, i) => `paper-${i}`)
+  const readItems = vi.fn(async (batch: readonly string[]) =>
+    [...batch].reverse().map((id) => item(id))
+  )
+  const save = vi
+    .fn<(file: ReferenceExportFile) => Promise<{ saved: boolean }>>()
+    .mockResolvedValue({ saved: true })
+  await createReferenceExporter({ readItems, format: api().formatReferences, save })({
+    itemIds: ids,
+    format: 'csv',
+    filenameStem: 'refs',
+    styleId: 'apa',
+    locale: 'en-US'
+  })
+  expect(readItems.mock.calls.map(([batch]) => batch.length)).toEqual([100, 100, 5])
+  const lines = new TextDecoder().decode(save.mock.calls[0]![0].data).trimEnd().split('\r\n')
+  expect(lines).toHaveLength(206)
+  expect(lines.slice(1).map((line) => line.split(',')[0])).toEqual(ids.map((id) => `"${id}"`))
+  expect(lines[1]).toBe(
+    '"paper-0","paper-0","","","journalArticle","","","","","","","","","","",""'
+  )
+})
+
+it.each([
+  ['missing', ['first']],
+  ['duplicate', ['first', 'first']],
+  ['unexpected', ['first', 'other']]
+] as const)('does not save a CSV with %s metadata records', async (_name, ids) => {
+  const save = vi.fn(async () => ({ saved: true }))
+  const exporter = createReferenceExporter({
+    readItems: async () => ids.map((id) => item(id)),
+    format: api().formatReferences,
+    save
+  })
+  await expect(
+    exporter({
+      itemIds: ['first', 'second'],
+      format: 'csv',
+      filenameStem: 'refs',
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+  ).rejects.toThrow('complete selection')
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('never saves partial CSV batches, releases failed admission and owns saving through cancellation', async () => {
+  const ids = Array.from({ length: 101 }, (_, i) => `paper-${i}`)
+  const readItems = vi.fn(async (batch: readonly string[]) => batch.map((id) => item(id)))
+  readItems.mockRejectedValueOnce(new Error('Read failed'))
+  const saved = deferred<{ saved: boolean }>()
+  const save = vi.fn(() => saved.promise)
+  const exporter = createReferenceExporter({ readItems, format: api().formatReferences, save })
+  const request = {
+    itemIds: ids,
+    format: 'csv' as const,
+    filenameStem: 'refs',
+    styleId: 'apa',
+    locale: 'en-US' as const
+  }
+  await expect(exporter(request)).rejects.toThrow('Read failed')
+  expect(save).not.toHaveBeenCalled()
+  readItems
+    .mockImplementationOnce(async (batch) => batch.map((id) => item(id)))
+    .mockRejectedValueOnce(new Error('Second batch failed'))
+  await expect(exporter(request)).rejects.toThrow('Second batch failed')
+  expect(save).not.toHaveBeenCalled()
+  const operation = exporter(request)
+  await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+  expect(await exporter({ ...request, format: 'ris' })).toBe(false)
+  saved.resolve({ saved: false })
+  expect(await operation).toBe(false)
+  expect(await exporter({ ...request, itemIds: [] })).toBe(false)
+})
+
+it('rejects duplicate requested CSV ids before reading or saving', async () => {
+  const readItems = vi.fn(async (ids: readonly string[]) => ids.map((id) => item(id)))
+  const save = vi.fn(async () => ({ saved: true }))
+  const exporter = createReferenceExporter({ readItems, format: api().formatReferences, save })
+  await expect(
+    exporter({
+      itemIds: ['first', 'first'],
+      format: 'csv',
+      filenameStem: 'refs',
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+  ).rejects.toThrow()
+  expect(readItems).not.toHaveBeenCalled()
   expect(save).not.toHaveBeenCalled()
 })

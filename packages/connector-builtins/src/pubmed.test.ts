@@ -28,6 +28,24 @@ describe('pubmed connector', () => {
     )
   })
 
+  it.each([
+    { query: 'crispr', limit: 40 },
+    { query: 'crispr', start_date: '2025/01/01' },
+    { query: 'crispr', sort: 'newest' },
+    { pmid: '35486828' }
+  ])('rejects incorrect parameters without sending a request: %j', async (args) => {
+    const descriptor = tool('query' in args ? 'search_articles' : 'get_article_metadata')
+    const fetchImpl = vi.fn()
+    const registry = createConnectorRegistry(PUBMED_TOOLS)
+    await expect(
+      (async () => {
+        registry.validateToolArguments(descriptor, args)
+        return new ParserEngine({ fetchImpl }).call(descriptor, args, {})
+      })()
+    ).rejects.toThrow('invalid_arguments')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('search_articles: esearch page + total_count/has_more, threads email', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(
       jsonRes({
@@ -38,16 +56,24 @@ describe('pubmed connector', () => {
         }
       })
     )
-    const out = (await new ParserEngine({ fetchImpl }).call(
-      tool('search_articles'),
-      { query: 'crispr', max_results: 3, date_from: '2020', sort: 'pub_date' },
-      { ncbiEmail: 'x@y.org', ncbiApiKey: 'KEY' }
-    )) as Record<string, unknown>
+    const args = {
+      query: 'crispr',
+      max_results: 3,
+      date_from: '2020',
+      date_to: '2026',
+      sort: 'pub_date'
+    }
+    createConnectorRegistry(PUBMED_TOOLS).validateToolArguments(tool('search_articles'), args)
+    const out = (await new ParserEngine({ fetchImpl }).call(tool('search_articles'), args, {
+      ncbiEmail: 'x@y.org',
+      ncbiApiKey: 'KEY'
+    })) as Record<string, unknown>
     const url = String(fetchImpl.mock.calls[0][0])
     expect(url).toContain('esearch.fcgi')
     expect(url).toContain('term=crispr')
     expect(url).toContain('retmax=3')
     expect(url).toContain('mindate=2020')
+    expect(url).toContain('maxdate=2026')
     expect(url).toContain('datetype=pdat')
     expect(url).toContain('sort=pub_date')
     expect(url).toContain('email=x%40y.org')

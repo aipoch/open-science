@@ -1,4 +1,5 @@
 !include "${BUILD_RESOURCES_DIR}\windows-program-cleanup.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-diagnostics.nsh"
 
 !macro customInstallMode
   # Notebook AppContainer profiles are per-user durable resources. A machine-wide installation
@@ -48,6 +49,8 @@
   File "/oname=$PLUGINSDIR\old-uninstaller.exe" "${UNINSTALLER_OUT_FILE}"
   # The upstream launch fallback must never execute the destructive installed old binary.
   StrCpy $uninstallerFileName "$PLUGINSDIR\old-uninstaller.exe"
+  StrCpy $cleanupUninstallArguments $0
+  !insertmacro beginCleanupAttempt
 !macroend
 
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
@@ -59,6 +62,7 @@
 # receipt at each explicit failure exit so the detached presentation can become dismissible.
 !macro quitFailedUpdate
   Call cleanupInstallPublication
+  Call showInstallPublicationFailure
   Push "failed"
   Call writeUpdateReceipt
   SetErrorLevel 2
@@ -274,6 +278,9 @@ FunctionEnd
 
 !macro customInit
   Call initializeUpdateReceipts
+  # Keep the explicit override empty so diagnostics.ps1 uses its ordinary-user LocalAppData fallback.
+  # Initializing the NSIS variable also keeps makensis warning-as-error builds clean.
+  StrCpy $installDiagnosticDirectory ""
   # Cache both registered locations before either uninstall pass deletes their registry data.
   # Discover interrupted backups from older installers without moving current data. The bundled
   # selective uninstaller replaces the unsafe old implementation on every attempt.
@@ -475,9 +482,10 @@ FunctionEnd
   # The bundled current uninstaller excludes data on every attempt. Never move a data root
   # around retry and never fall back to the old installed uninstaller.
 
+  !insertmacro beginCleanupAttempt
   ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
   ${if} $R0 != 0
-    MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+    Call showCleanupFailure
     DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
     !insertmacro restoreAllNestedDataRoots
     !insertmacro quitFailedUpdate
@@ -487,6 +495,9 @@ FunctionEnd
 !macro customUnInstallCheck
   # SHELL_CONTEXT resolves from the FINAL install-mode page selection, not the mode seen by
   # customInit. Finish cleanup/retry before restoring any historical interrupted-update backup.
+  ${if} ${Errors}
+    StrCpy $R0 "launch-failed"
+  ${endif}
   ${if} $R0 != 0
     # SHELL_CONTEXT pass: the old installation sits at $INSTDIR (an update installs over it).
     !insertmacro uninstallFailureRecoveryAt $INSTDIR
@@ -509,6 +520,9 @@ FunctionEnd
 !macroend
 
 !macro customUnInstallCheckCurrentUser
+  ${if} ${Errors}
+    StrCpy $R0 "launch-failed"
+  ${endif}
   ${if} $R0 != 0
     # installMode==all pass: it removes a stray PER-USER install, which may live anywhere —
     # $INSTDIR/$appExe describe the new (machine-wide) target, not it. Use the location cached in
@@ -517,7 +531,7 @@ FunctionEnd
     # exit code. Empty cache means no per-user install was registered at install start; keep
     # electron-builder's default fatal handling rather than retry against an unknown directory.
     ${if} $perUserInstallDirCache == ""
-      MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+      Call showCleanupFailure
       DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
       !insertmacro restoreAllNestedDataRoots
       !insertmacro quitFailedUpdate

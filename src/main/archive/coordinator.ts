@@ -34,6 +34,12 @@ type SessionRuntimeActivity = {
 // archive/restore decision and the final runtime admission observe one consistent active state.
 // Prompt execution stays outside it; Task resume holds it only until the Session is durably running.
 class ArchiveCoordinator {
+  async isSessionBusy(projectId: string, sessionId: string): Promise<boolean> {
+    if (this.pendingDispatches.has(sessionId)) return true
+    const busy = await this.runtime.isSessionBusy(projectId, sessionId)
+    return busy || this.pendingDispatches.has(sessionId)
+  }
+
   private readonly projectQueues = new Map<string, Promise<void>>()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
   private readonly deletingProjectIds = new Set<string>()

@@ -9,6 +9,27 @@ import {
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 describe('settings record codec', () => {
+  it('retains native validation scope and never widens invalid scoped evidence', () => {
+    const base = { id: 'p', type: 'custom', name: 'Gateway', lastValidatedAt: 10 }
+    const target = {
+      model: 'm',
+      endpoint: 'messages',
+      frameworkId: 'claude-code',
+      route: 'claude-anthropic'
+    }
+    expect(sanitizeProvider({ ...base, lastValidatedTarget: target })?.lastValidatedTarget).toEqual(
+      target
+    )
+    expect(
+      sanitizeProvider({ ...base, lastValidatedTarget: { ...target, route: 'future-route' } })
+        ?.lastValidatedAt
+    ).toBeUndefined()
+    expect(
+      sanitizeProvider({ ...base, lastValidatedTarget: { model: 'm', endpoint: 'messages' } })
+        ?.lastValidatedAt
+    ).toBe(10)
+  })
+
   it('keeps the private owner interface explicit', async () => {
     expect(Object.keys(await import('./record-codec')).sort()).toEqual([
       'encodeProviderProtocolsForStorage',

@@ -1,4 +1,4 @@
-import type { TransientViewImage } from './execution-model-contract'
+import type { NativeTransientViewImage, TransientViewImage } from './execution-model-contract'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path'
 
@@ -25,13 +25,26 @@ export type HostViewImageBackend = Readonly<{
   generationToken?: object
 }>
 
-export type HostViewImageContext = Readonly<{
-  projectId: string
-  sessionId: string
-  executionCwd: string
-  controlInvocationId: string
-  signal: AbortSignal
+export type HostViewImageBackendCaptureOptions = Readonly<{
+  /** Refresh durable Attempt authority at admission and publication boundaries. */
+  requireWritableAttempt?: boolean
 }>
+
+export type HostViewImageCaller = Readonly<{
+  projectId?: string
+  sessionId: string
+  agentFrameId?: string
+  attemptId?: string
+  role?: 'main' | 'delegate'
+}>
+
+export type HostViewImageContext = HostViewImageCaller &
+  Readonly<{
+    projectId: string
+    executionCwd?: string
+    controlInvocationId: string
+    signal: AbortSignal
+  }>
 
 export type HostViewImageResult = Readonly<{
   attached: true
@@ -65,7 +78,19 @@ type HostViewImageManagedFileReader = Readonly<{
 type HostViewImageServiceOptions = Readonly<{
   catalog: HostViewImageCatalog
   managedFileVersions: HostViewImageManagedFileReader
-  captureBackend(sessionId: string): HostViewImageBackend | undefined
+  captureBackend(
+    caller: HostViewImageCaller,
+    options?: HostViewImageBackendCaptureOptions
+  ): HostViewImageBackend | undefined | Promise<HostViewImageBackend | undefined>
+  /** Optional app-owned Vision relay capability for text-only active models. */
+  captureVisionRelay?: () => boolean | Promise<boolean>
+  /** Converts one invocation's staged images into text evidence for a text-only active model. */
+  prepareVisionEvidence?: (input: {
+    images: readonly NativeTransientViewImage[]
+    projectId: string
+    sessionId: string
+    signal: AbortSignal
+  }) => Promise<string | undefined>
   prepareImage?: (
     filePath: string,
     options: { crop?: ImageCrop; maxSize?: number },
@@ -75,19 +100,22 @@ type HostViewImageServiceOptions = Readonly<{
 }>
 
 type StagedInvocation = {
+  caller: HostViewImageCaller
   projectId: string
   sessionId: string
-  backendIdentity: string
+  backendIdentity?: string
   nextOrdinal: number
   reserved: Set<number>
-  images: Map<number, TransientViewImage>
+  images: Map<number, NativeTransientViewImage>
   encodedImageBytes: number
+  abortController: AbortController
+  completing: boolean
 }
 
 type NormalizedSource = { versionId: string } | { path: string }
 type NormalizedOptions = { crop?: ImageCrop; maxSize?: number }
 
-class HostViewImageError extends Error {
+export class HostViewImageError extends Error {
   constructor(message: string, cause?: unknown) {
     super(`host.viewImage ${message}`, cause === undefined ? undefined : { cause })
     this.name = 'HostViewImageError'
@@ -254,18 +282,20 @@ const backendIdentity = (backend: HostViewImageBackend): string =>
     backendGenerationId(backend)
   ])
 
+export const isHostViewImageRouteCertified = (backend: HostViewImageBackend): boolean =>
+  (backend.frameworkId === 'claude-code' && backend.modelRoute === 'claude-anthropic') ||
+  (backend.frameworkId === 'opencode' &&
+    (backend.modelRoute === 'opencode-openai' || backend.modelRoute === 'opencode-anthropic')) ||
+  (backend.frameworkId === 'codex' &&
+    (backend.modelRoute === 'codex-responses' ||
+      backend.modelRoute === 'codex-responses-compatibility' ||
+      backend.modelRoute === 'codex-bridge')) ||
+  (backend.frameworkId === 'codebuddy' && backend.modelRoute === 'codebuddy-openai') ||
+  (backend.frameworkId === 'pi' && backend.modelRoute === 'pi') ||
+  (backend.frameworkId === 'open-science-agent' && backend.modelRoute === 'open-science-agent')
+
 export const isHostViewImageBackendCertified = (backend: HostViewImageBackend): boolean =>
-  backend.supportsImageInput === true &&
-  ((backend.frameworkId === 'claude-code' && backend.modelRoute === 'claude-anthropic') ||
-    (backend.frameworkId === 'opencode' &&
-      (backend.modelRoute === 'opencode-openai' || backend.modelRoute === 'opencode-anthropic')) ||
-    (backend.frameworkId === 'codex' &&
-      (backend.modelRoute === 'codex-responses' ||
-        backend.modelRoute === 'codex-responses-compatibility' ||
-        backend.modelRoute === 'codex-bridge')) ||
-    (backend.frameworkId === 'codebuddy' && backend.modelRoute === 'codebuddy-openai') ||
-    (backend.frameworkId === 'pi' && backend.modelRoute === 'pi') ||
-    (backend.frameworkId === 'open-science-agent' && backend.modelRoute === 'open-science-agent'))
+  backend.supportsImageInput === true && isHostViewImageRouteCertified(backend)
 
 const frozenResult = (
   sourceKind: HostViewImageResult['sourceKind'],
@@ -289,10 +319,28 @@ export class HostViewImageService {
     this.prepareImage = options.prepareImage ?? prepareImageContentData
   }
 
-  async isAvailable(context: { sessionId: string }): Promise<boolean> {
+  async isAvailable(context: HostViewImageCaller): Promise<boolean> {
     if (this.stopped) return false
-    const backend = this.options.captureBackend(context.sessionId)
-    return backend !== undefined && isHostViewImageBackendCertified(backend)
+    const backend = await this.options.captureBackend(context)
+    if (!backend) return false
+    const available = isHostViewImageBackendCertified(backend) || (await this.canRelay(backend))
+    const currentBackend = await this.options.captureBackend(context, {
+      requireWritableAttempt: true
+    })
+    return (
+      available &&
+      !this.stopped &&
+      currentBackend !== undefined &&
+      backendIdentity(currentBackend) === backendIdentity(backend)
+    )
+  }
+
+  private async canRelay(backend: HostViewImageBackend): Promise<boolean> {
+    return (
+      isHostViewImageRouteCertified(backend) &&
+      this.options.prepareVisionEvidence !== undefined &&
+      (await this.options.captureVisionRelay?.()) === true
+    )
   }
 
   async stage(
@@ -302,32 +350,36 @@ export class HostViewImageService {
   ): Promise<HostViewImageResult> {
     if (this.stopped) throw new HostViewImageError('service is shut down.')
     context.signal.throwIfAborted()
-    const backend = this.options.captureBackend(context.sessionId)
-    if (!backend || !isHostViewImageBackendCertified(backend)) {
-      throw new HostViewImageError(
-        'is unavailable for the current route; select a visual model on a certified provider path.'
-      )
-    }
-    const identity = backendIdentity(backend)
     const source = normalizeSource(sourceValue)
     const options = normalizeOptions(optionsValue)
     let invocation = this.invocations.get(context.controlInvocationId)
     if (!invocation) {
       invocation = {
+        caller: {
+          projectId: context.projectId,
+          sessionId: context.sessionId,
+          agentFrameId: context.agentFrameId,
+          attemptId: context.attemptId,
+          role: context.role
+        },
         projectId: context.projectId,
         sessionId: context.sessionId,
-        backendIdentity: identity,
         nextOrdinal: 0,
         reserved: new Set(),
         images: new Map(),
-        encodedImageBytes: 0
+        encodedImageBytes: 0,
+        abortController: new AbortController(),
+        completing: false
       }
       this.invocations.set(context.controlInvocationId, invocation)
     }
     if (
       invocation.projectId !== context.projectId ||
       invocation.sessionId !== context.sessionId ||
-      invocation.backendIdentity !== identity
+      invocation.caller.agentFrameId !== context.agentFrameId ||
+      invocation.caller.attemptId !== context.attemptId ||
+      invocation.caller.role !== context.role ||
+      invocation.completing
     ) {
       this.discard(context.controlInvocationId)
       throw new HostViewImageError('trusted invocation or model identity changed during staging.')
@@ -340,14 +392,59 @@ export class HostViewImageService {
     const ordinal = invocation.nextOrdinal
     invocation.nextOrdinal += 1
     invocation.reserved.add(ordinal)
+    // A disconnected RPC cancels only this reservation. Stop and owner teardown cancel the batch.
+    const signal = AbortSignal.any([context.signal, invocation.abortController.signal])
+    const releaseReservation = (): void => {
+      invocation.reserved.delete(ordinal)
+      if (
+        invocation.reserved.size === 0 &&
+        this.invocations.get(context.controlInvocationId) === invocation
+      ) {
+        this.discard(context.controlInvocationId)
+      }
+    }
+    // Completion can race a disconnected RPC whose image preparation has not settled yet.
+    context.signal.addEventListener('abort', releaseReservation, { once: true })
 
     try {
+      const backend = await this.options.captureBackend(invocation.caller, {
+        requireWritableAttempt: true
+      })
+      signal.throwIfAborted()
+      if (!backend || !isHostViewImageRouteCertified(backend)) {
+        throw new HostViewImageError(
+          'is unavailable for the current route; select a visual model on a certified provider path.'
+        )
+      }
+      const identity = backendIdentity(backend)
+      if (invocation.backendIdentity !== undefined && invocation.backendIdentity !== identity) {
+        this.discard(context.controlInvocationId)
+        throw new HostViewImageError('trusted invocation or model identity changed during staging.')
+      }
+      invocation.backendIdentity = identity
+      if (!isHostViewImageBackendCertified(backend) && !(await this.canRelay(backend))) {
+        throw new HostViewImageError(
+          'requires a Vision model for this text-only model. Configure Vision in Settings > Model and retry.'
+        )
+      }
+      signal.throwIfAborted()
+      if (!(await this.isCurrentInvocation(context.controlInvocationId, invocation))) {
+        if (this.invocations.get(context.controlInvocationId) === invocation) {
+          this.discard(context.controlInvocationId)
+        }
+        throw new HostViewImageError('trusted invocation or model identity changed during staging.')
+      }
       let filePath: string
       let sourceKind: HostViewImageResult['sourceKind']
       let expectedCanonicalPath: string | undefined
       let managedLease:
         Awaited<ReturnType<HostViewImageManagedFileReader['openVersion']>> | undefined
       if ('path' in source) {
+        if (!context.executionCwd) {
+          throw new HostViewImageError(
+            'source.path requires a trusted execution workspace for the current invocation.'
+          )
+        }
         filePath = await resolveWorkspaceSource(context.executionCwd, source.path)
         expectedCanonicalPath = filePath
         sourceKind = 'workspacePath'
@@ -384,18 +481,26 @@ export class HostViewImageService {
 
       let image: PreparedImageContentData
       try {
-        image = await this.prepareImage(filePath, options, context.signal, expectedCanonicalPath)
+        image = await this.prepareImage(filePath, options, signal, expectedCanonicalPath)
       } finally {
         const lease = managedLease
         managedLease = undefined
         if (lease) await lease.close()
       }
-      context.signal.throwIfAborted()
-      const currentBackend = this.options.captureBackend(context.sessionId)
-      if (!currentBackend || backendIdentity(currentBackend) !== identity) {
-        this.discard(context.controlInvocationId)
+      signal.throwIfAborted()
+      const currentBackend = await this.options.captureBackend(context)
+      if (
+        !currentBackend ||
+        (!isHostViewImageBackendCertified(currentBackend) &&
+          !(await this.canRelay(currentBackend))) ||
+        !(await this.isCurrentInvocation(context.controlInvocationId, invocation))
+      ) {
+        if (this.invocations.get(context.controlInvocationId) === invocation) {
+          this.discard(context.controlInvocationId)
+        }
         throw new HostViewImageError('model changed before the image could be attached.')
       }
+      signal.throwIfAborted()
       const current = this.invocations.get(context.controlInvocationId)
       if (current !== invocation) {
         throw new HostViewImageError('invocation ended before the image could be attached.')
@@ -419,55 +524,130 @@ export class HostViewImageService {
         ordinal,
         Object.freeze({
           data: image.data,
-          mimeType: image.mimeType as TransientViewImage['mimeType']
+          mimeType: image.mimeType as NativeTransientViewImage['mimeType']
         })
       )
       return frozenResult(sourceKind, image)
     } catch (error) {
-      invocation.reserved.delete(ordinal)
+      releaseReservation()
       if (error instanceof HostViewImageError) throw error
       if (error instanceof ImageContentError) {
         throw new HostViewImageError(error.message, error)
       }
       if (error instanceof DOMException && error.name === 'AbortError') throw error
       throw new HostViewImageError('could not prepare the authorized image source.', error)
+    } finally {
+      context.signal.removeEventListener('abort', releaseReservation)
     }
   }
 
-  async complete(controlInvocationId: string): Promise<readonly TransientViewImage[]> {
+  async complete(
+    controlInvocationId: string,
+    completionSignal?: AbortSignal
+  ): Promise<readonly TransientViewImage[]> {
     const invocation = this.invocations.get(controlInvocationId)
-    if (!invocation) return []
-    this.invocations.delete(controlInvocationId)
-    const backend = this.options.captureBackend(invocation.sessionId)
-    if (
-      this.stopped ||
-      !backend ||
-      !isHostViewImageBackendCertified(backend) ||
-      backendIdentity(backend) !== invocation.backendIdentity ||
-      invocation.images.size !== invocation.reserved.size
-    ) {
-      return []
+    if (!invocation || invocation.completing) return []
+    invocation.completing = true
+    const signal = invocation.abortController.signal
+    const isCurrent = async (options?: HostViewImageBackendCaptureOptions): Promise<boolean> => {
+      const current = await this.isCurrentInvocation(controlInvocationId, invocation, options)
+      signal.throwIfAborted()
+      return current
     }
-    return Object.freeze(
-      [...invocation.images.entries()]
-        .sort(([left], [right]) => left - right)
-        .map(([, image]) => image)
-    )
+    const discard = (): void => {
+      if (this.invocations.get(controlInvocationId) === invocation)
+        this.discard(controlInvocationId)
+    }
+    try {
+      completionSignal?.throwIfAborted()
+      completionSignal?.addEventListener('abort', discard, { once: true })
+      signal.throwIfAborted()
+      if (!(await isCurrent()) || invocation.images.size !== invocation.reserved.size) return []
+      const images = Object.freeze(
+        [...invocation.images.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, image]) => image)
+      )
+      if (images.length === 0) return []
+      const backend = await this.options.captureBackend(invocation.caller)
+      signal.throwIfAborted()
+      if (!backend || backendIdentity(backend) !== invocation.backendIdentity) return []
+      if (isHostViewImageBackendCertified(backend)) {
+        return (await isCurrent({ requireWritableAttempt: true })) ? images : []
+      }
+      if (!(await this.canRelay(backend)) || !this.options.prepareVisionEvidence) {
+        throw new HostViewImageError('Vision evidence relay is unavailable for the current model.')
+      }
+      signal.throwIfAborted()
+      if (!(await isCurrent({ requireWritableAttempt: true }))) return []
+      const evidence = await this.options.prepareVisionEvidence({
+        images,
+        projectId: invocation.projectId,
+        sessionId: invocation.sessionId,
+        signal
+      })
+      signal.throwIfAborted()
+      if (!(await isCurrent({ requireWritableAttempt: true }))) return []
+      if (typeof evidence !== 'string' || evidence.trim().length === 0) {
+        throw new HostViewImageError('Vision evidence relay returned no image evidence.')
+      }
+      return Object.freeze([Object.freeze({ evidence })])
+    } catch (error) {
+      completionSignal?.throwIfAborted()
+      if (signal.aborted) {
+        throw new DOMException('host.viewImage image inspection was aborted.', 'AbortError')
+      }
+      if (error instanceof HostViewImageError) throw error
+      throw new HostViewImageError(
+        'could not prepare Vision evidence for the current model.',
+        error
+      )
+    } finally {
+      completionSignal?.removeEventListener('abort', discard)
+      invocation.abortController.abort()
+      if (this.invocations.get(controlInvocationId) === invocation) {
+        this.invocations.delete(controlInvocationId)
+      }
+      this.releaseInvocation(invocation)
+    }
   }
 
   discard(controlInvocationId: string): void {
+    const invocation = this.invocations.get(controlInvocationId)
     this.invocations.delete(controlInvocationId)
+    if (invocation) {
+      invocation.abortController.abort()
+      this.releaseInvocation(invocation)
+    }
   }
 
   discardSession(sessionId: string): void {
     for (const [invocationId, invocation] of this.invocations) {
-      if (invocation.sessionId === sessionId) this.invocations.delete(invocationId)
+      if (invocation.sessionId === sessionId) this.discard(invocationId)
     }
   }
 
   shutdown(): void {
     this.stopped = true
-    this.invocations.clear()
+    for (const invocationId of this.invocations.keys()) this.discard(invocationId)
+  }
+
+  private releaseInvocation(invocation: StagedInvocation): void {
+    invocation.images.clear()
+  }
+
+  private async isCurrentInvocation(
+    controlInvocationId: string,
+    invocation: StagedInvocation,
+    options?: HostViewImageBackendCaptureOptions
+  ): Promise<boolean> {
+    const backend = await this.options.captureBackend(invocation.caller, options)
+    return (
+      !this.stopped &&
+      this.invocations.get(controlInvocationId) === invocation &&
+      backend !== undefined &&
+      backendIdentity(backend) === invocation.backendIdentity
+    )
   }
 }
 
