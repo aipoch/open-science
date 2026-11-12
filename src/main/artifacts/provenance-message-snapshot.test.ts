@@ -794,7 +794,27 @@ describe('Provenance Message snapshots', () => {
     ).resolves.toBeNull()
 
     failDurability = false
-    await snapshots.reconcileSessionDeletions([])
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'other-session' }
+    })
+    await createStagingSnapshot('snapshot-unrelated', true)
+    await client.artifactMessageSnapshot.update({
+      where: { id: 'snapshot-unrelated' },
+      data: { sessionId: 'other-session' }
+    })
+    await snapshots.reconcileSessionMessageSnapshots({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: '',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    expect(
+      await client.artifactMessageSnapshot.findUnique({ where: { id: 'snapshot-unrelated' } })
+    ).toMatchObject({ state: 'staging' })
 
     await expect(
       client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
@@ -954,6 +974,55 @@ describe('Provenance Message snapshots', () => {
     await expect(
       readFile(join(storageRoot, ...scopeSnapshot.storageKey.split('/')), 'utf8')
     ).resolves.toBe(scopeSnapshot.snapshotJson)
+  })
+
+  it('plans retained Review repair without opening mirrors until its native Session scope runs', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-retained-review-recovery-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const reviews = new ReviewRepository(() => Promise.resolve(client), {
+      snapshotStorageRoot: storageRoot
+    })
+    const review = await reviews.createReview({
+      projectId: 'project-1',
+      sessionId: 'retained',
+      turnMessageId: 'prompt',
+      scope: { turnMessageId: 'prompt', blocks: [], artifactVersionIds: [] },
+      scopeSnapshot: []
+    })
+    const snapshot = await client.reviewScopeSnapshot.findUniqueOrThrow({
+      where: { reviewId: review.id }
+    })
+    await client.fileOriginSession.create({
+      data: {
+        projectId: 'project-1',
+        sessionId: 'retained',
+        state: 'deleted',
+        deletedAt: new Date()
+      }
+    })
+    await rm(join(storageRoot, snapshot.storageKey))
+    await client.reviewScopeSnapshot.update({
+      where: { id: snapshot.id },
+      data: { state: 'staging' }
+    })
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: async () => client
+    })
+    const actions = await snapshots.planSessionCleanup([])
+    expect(actions).toHaveLength(1)
+    await expect(readFile(join(storageRoot, snapshot.storageKey))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await actions[0].apply()
+    await expect(
+      client.reviewScopeSnapshot.findUniqueOrThrow({ where: { id: snapshot.id } })
+    ).resolves.toMatchObject({ state: 'ready' })
+    expect(await readFile(join(storageRoot, snapshot.storageKey), 'utf8')).toBe(
+      snapshot.snapshotJson
+    )
   })
 
   it('recovers a deleting origin from authoritative Session JSON presence', async () => {

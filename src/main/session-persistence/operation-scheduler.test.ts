@@ -360,3 +360,162 @@ describe('SessionPersistenceOperationScheduler', () => {
     expect(order).toEqual(['manifest-1:start', 'project', 'manifest-1:end', 'manifest-2'])
   })
 })
+
+it('isolates recovery from unrelated same-Project saves while fencing deletion and same-Session writes', async () => {
+  const scheduler = new SessionPersistenceOperationScheduler()
+  const entered = createDeferred()
+  const release = createDeferred()
+  const order: string[] = []
+  const recovery = scheduler.runSessionRecovery('p', 'history', async () => {
+    entered.resolve()
+    await release.promise
+    order.push('recovered')
+  })
+  await entered.promise
+  await scheduler.runSession('p', 'active', async () => {
+    order.push('foreground')
+  })
+  const sameSession = scheduler.runSession('p', 'history', async () => {
+    order.push('same-session')
+  })
+  const deletion = scheduler.runProject('p', async () => {
+    order.push('deleted')
+  })
+  const afterDeletion = scheduler.runSessionRecovery('p', 'other', async () => {
+    order.push('after-deletion')
+  })
+  await flushMicrotasks()
+  expect(order).toEqual(['foreground'])
+  release.resolve()
+  await Promise.all([recovery, sameSession, deletion, afterDeletion])
+  expect(order).toEqual(['foreground', 'recovered', 'same-session', 'deleted', 'after-deletion'])
+})
+
+it('admits waiting global requests in order without turning recovery into a foreground barrier', async () => {
+  const scheduler = new SessionPersistenceOperationScheduler()
+  const entered = createDeferred()
+  const release = createDeferred()
+  const order: string[] = []
+  const recovery = scheduler.runSessionRecovery('p', 'history', async () => {
+    entered.resolve()
+    await release.promise
+  })
+  await entered.promise
+  const firstGlobal = scheduler.runGlobal(async () => {
+    order.push('global-one')
+    throw new Error('isolated')
+  })
+  const firstFailure = expect(firstGlobal).rejects.toThrow('isolated')
+  const secondGlobal = scheduler.runGlobal(async () => {
+    order.push('global-two')
+  })
+  const laterRecovery = scheduler.runSessionRecovery('p', 'later', async () => {
+    order.push('later-recovery')
+  })
+  await scheduler.runSession('p', 'active', async () => {
+    order.push('foreground')
+  })
+  expect(order).toEqual(['foreground'])
+  release.resolve()
+  await Promise.all([recovery, firstFailure, secondGlobal, laterRecovery])
+  expect(order).toEqual(['foreground', 'global-one', 'global-two', 'later-recovery'])
+  await scheduler.runSessionRecovery('p', 'after-failure', async () => undefined)
+})
+
+it('keeps package publication and Project deletion exclusive with recovery', async () => {
+  const scheduler = new SessionPersistenceOperationScheduler()
+  const entered = createDeferred()
+  const release = createDeferred()
+  const order: string[] = []
+  const recovery = scheduler.runSessionRecovery('p', 'history', async () => {
+    entered.resolve()
+    await release.promise
+    order.push('recovery')
+  })
+  await entered.promise
+  const publication = scheduler.runSessionProjectExclusive('p', 'imported', async () => {
+    order.push('publication')
+  })
+  const deletion = scheduler.runProject('p', async () => {
+    order.push('deletion')
+  })
+  await scheduler.runSession('p', 'active', async () => {
+    order.push('foreground')
+  })
+  expect(order).toEqual(['foreground'])
+  release.resolve()
+  await Promise.all([recovery, publication, deletion])
+  expect(order).toEqual(['foreground', 'recovery', 'publication', 'deletion'])
+})
+
+it.each(['session', 'project'] as const)(
+  'does not reserve the foreground Project behind a waiting %s request',
+  async (request) => {
+    const scheduler = new SessionPersistenceOperationScheduler()
+    const entered = createDeferred()
+    const release = createDeferred()
+    const order: string[] = []
+    const recovery = scheduler.runSessionRecovery('p', 'history', async () => {
+      entered.resolve()
+      await release.promise
+      order.push('recovery')
+    })
+    await entered.promise
+    const waiting =
+      request === 'session'
+        ? scheduler.runSession('p', 'history', async () => {
+            order.push('waiting')
+          })
+        : scheduler.runProject('p', async () => {
+            order.push('waiting')
+          })
+    let foregroundDone = false
+    const foreground = scheduler.runSession('p', 'active', async () => {
+      foregroundDone = true
+      order.push('foreground')
+    })
+    try {
+      await expect.poll(() => foregroundDone, { timeout: 100 }).toBe(true)
+    } finally {
+      release.resolve()
+      await Promise.all([recovery, waiting, foreground])
+    }
+    expect(order).toEqual(['foreground', 'recovery', 'waiting'])
+  }
+)
+
+it('preserves deferred Session, Project and global order after a rejected same-Session request', async () => {
+  const scheduler = new SessionPersistenceOperationScheduler()
+  const entered = createDeferred()
+  const release = createDeferred()
+  const order: string[] = []
+  const recovery = scheduler.runSessionRecovery('p', 'history', async () => {
+    entered.resolve()
+    await release.promise
+  })
+  await entered.promise
+  const first = scheduler.runSession('p', 'history', async () => {
+    order.push('first')
+    throw new Error('expected')
+  })
+  const failure = expect(first).rejects.toThrow('expected')
+  const second = scheduler.runSession('p', 'history', async () => {
+    order.push('second')
+  })
+  const project = scheduler.runProject('p', async () => {
+    order.push('project')
+  })
+  const global = scheduler.runGlobal(async () => {
+    order.push('global')
+  })
+  const later = scheduler.runSessionRecovery('p', 'history', async () => {
+    order.push('later')
+  })
+  await scheduler.runSession('p', 'active', async () => {
+    order.push('foreground')
+  })
+  expect(order).toEqual(['foreground'])
+  release.resolve()
+  await Promise.all([recovery, failure, second, project, global, later])
+  expect(order).toEqual(['foreground', 'first', 'second', 'project', 'global', 'later'])
+})

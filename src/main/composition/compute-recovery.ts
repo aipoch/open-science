@@ -16,13 +16,12 @@ import {
   recoverPublishedComputeJobFileEvidence,
   settleComputeJobFileEvidence
 } from '../notebook/working-file-observer'
-import { selectSessionDetailsStartupCandidates } from '../session-details/startup-catalog'
 import { resolveDataRoot } from '../storage-root'
 
 export async function composeComputeRecovery({
   markComputeResultAuthorityReady,
   computeJobResultDelivery,
-  loadAllSessions,
+  loadStartupSessions,
   startupSessionDetails,
   computeIpcModule,
   computeService,
@@ -37,7 +36,7 @@ export async function composeComputeRecovery({
 }: {
   markComputeResultAuthorityReady: () => void
   computeJobResultDelivery: ComputeJobResultDeliveryAdapter
-  loadAllSessions: () => Promise<LoadAllSessionsResult>
+  loadStartupSessions: () => Promise<LoadAllSessionsResult['sessions']>
   startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined }
   computeIpcModule: ReturnType<typeof createComputeIpcModule>
   computeService: ReturnType<typeof createComputeIpcModule>['computeService']
@@ -158,16 +157,17 @@ export async function composeComputeRecovery({
           } finally {
             markComputeResultAuthorityReady()
           }
-          // Catalog hydration also restores non-Compute projections and enabled Host selections.
-          // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          // Restore current and pending Session work from summaries. Idle history stays on disk;
+          // dispatch does not depend on catalog completeness.
           composition.phase('session-catalog')
           await Promise.all([
             jobPoller.start(),
-            loadAllSessions()
-              .then((catalog) => {
-                startupSessionDetails.current = selectSessionDetailsStartupCandidates(catalog)
+            loadStartupSessions()
+              .then((sessions) => {
+                startupSessionDetails.current = sessions
               })
               .catch((error) => {
+                startupSessionDetails.current = []
                 createLogger('session-persistence').warn(
                   'Startup Session hydration failed',
                   errorLogFields(error)

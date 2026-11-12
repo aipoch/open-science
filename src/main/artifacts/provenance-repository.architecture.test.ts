@@ -232,6 +232,7 @@ describe('Artifact Provenance repository architecture', () => {
         'getVersionReview',
         'listRunVersions',
         'prepareProjectReconciliation',
+        'planOrphanStagingCleanup',
         'readCodeReconstructionCache',
         'reconcileSession',
         'recordLiteratureAbstractRead',

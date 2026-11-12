@@ -659,13 +659,26 @@ describe('Project-owned data catalog architecture', () => {
         ).node.getText()
       )
     ).toBe("'deleted-sessions'")
-    expectCallsInOrder(
-      classMethod(
-        'src/main/session-persistence/repository.ts',
-        'SessionRepository',
-        'deleteProjectSessions'
-      ),
-      ['writeFile', 'rename']
+    const deleteProjectSessions = classMethod(
+      'src/main/session-persistence/repository.ts',
+      'SessionRepository',
+      'deleteProjectSessions'
+    )
+    expectCallsInOrder(deleteProjectSessions, [
+      'this.mutateCatalog',
+      'writeFile',
+      'this.dependencies.renameFile'
+    ])
+    const markerWrite = expectCall(deleteProjectSessions, 'writeFile')
+    expect(normalized(markerWrite.call.arguments[0].getText(deleteProjectSessions.file))).toBe(
+      'join(liveProjectDir,PROJECT_DELETION_COMMIT_MARKER)'
+    )
+    const deletionSource = normalized(
+      deleteProjectSessions.node.getText(deleteProjectSessions.file)
+    )
+    expect(deletionSource).toContain('awaitthis.mutateCatalog(()=>writeFile(')
+    expect(deletionSource).toContain(
+      'awaitthis.dependencies.renameFile(liveProjectDir,deletedProjectDir)'
     )
     expectCall(
       classMethod(

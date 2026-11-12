@@ -19,8 +19,12 @@ import {
 } from './runtime-session-owner'
 
 const roots: string[] = []
+const physicalMutations: Promise<unknown>[] = []
 
 afterEach(async () => {
+  // Admission timeout and terminal acknowledgement may settle before the physical mutation.
+  // Drain those real coordinator operations before removing the authority they still own.
+  while (physicalMutations.length) await Promise.allSettled(physicalMutations.splice(0))
   vi.useRealTimers()
   vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -93,8 +97,11 @@ const harness = async () => {
   const owner = new RuntimeSessionOwner({
     loadSession: (identity) =>
       coordinator.loadSessionForContinuation(identity.projectId, identity.sessionId),
-    mutateSession: (identity, mutate, onJsonCommitted) =>
-      coordinator.mutateRuntimeSession(identity, mutate, onJsonCommitted),
+    mutateSession: (identity, mutate, onJsonCommitted) => {
+      const pending = coordinator.mutateRuntimeSession(identity, mutate, onJsonCommitted)
+      physicalMutations.push(pending)
+      return pending
+    },
     finalizeArtifacts: async () => [],
     onTerminalCommitExhausted: (_scope, event, retry, waitForWriteRelease) =>
       coordinator.recordRuntimeTerminalFailure(event, retry, waitForWriteRelease),

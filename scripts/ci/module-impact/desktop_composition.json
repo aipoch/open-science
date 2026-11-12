@@ -12,6 +12,7 @@
     "src/main/composition/artifact-surfaces.ts",
     "src/main/composition/backend-lifecycle.ts",
     "src/main/composition/background-results.ts",
+    "src/main/composition/background-results.integration.test.ts",
     "src/main/composition/command-dependencies.ts",
     "src/main/composition/command-dependencies.test.ts",
     "src/main/composition/compute-recovery.ts",
@@ -447,7 +448,8 @@
       "src/main/service-process-recovery.test.ts",
       "src/main/service-process-recovery.integration.test.ts",
       "src/main/local-service-stop-intent.integration.test.ts",
-      "src/main/composition/research-film.test.ts"
+      "src/main/composition/research-film.test.ts",
+      "src/main/composition/background-results.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

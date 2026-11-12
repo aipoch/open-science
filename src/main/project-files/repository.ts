@@ -78,7 +78,9 @@ class ManagedFileIndexRepository {
     return this.mutationOwner.restoreProject(projectId, token)
   }
 
-  reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void> {
+  reconcileActiveSessions(
+    sessions: readonly Pick<PersistedChatSession, 'projectId' | 'id'>[]
+  ): Promise<void> {
     return this.mutationOwner.reconcileActiveSessions(sessions)
   }
 

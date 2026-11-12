@@ -995,6 +995,40 @@ class ArtifactProvenanceRepository {
     return this.finalizationRecovery.prepareProjectReconciliation(projectId)
   }
 
+  async planOrphanStagingCleanup(
+    projectIdInput: string,
+    appSessionIdInput: string,
+    startupCutoff: number
+  ): Promise<
+    Array<
+      (
+        commit: (apply: () => Promise<void>) => Promise<boolean>
+      ) => Promise<'complete' | 'stale' | 'busy'>
+    >
+  > {
+    const projectId = assertSafeSegment(projectIdInput, 'project id')
+    const appSessionId = assertSafeSegment(appSessionIdInput, 'session id')
+    const actions = await this.stagingRecovery.planOrphanStagingCleanup(
+      projectId,
+      appSessionId,
+      startupCutoff
+    )
+    return actions.map((apply) => async (commit) => {
+      let removeDetached: (() => Promise<void>) | undefined
+      const reservation = await this.versionWriter.tryWithSessionWrite(
+        { projectId, appSessionId },
+        () =>
+          commit(async () => {
+            removeDetached = await apply()
+          })
+      )
+      if (!reservation.acquired) return 'busy'
+      if (!reservation.result) return 'stale'
+      await removeDetached?.()
+      return 'complete'
+    })
+  }
+
   async reconcileSession(
     projectIdInput: string,
     appSessionIdInput: string,

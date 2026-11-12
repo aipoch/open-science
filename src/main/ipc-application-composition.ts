@@ -865,6 +865,19 @@ export const createApplicationModules = async (
     dispose: () => owner.dispose(),
     disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
   }))
+  // Recovery starts only after foreground commands and selected-session startup are ready.
+  await modules.add(sessionProjection, (projection) => {
+    const recovery = projection.createDeferredRecovery((session) =>
+      sessionSurfaces.sessionDetailsOwner.recoverSession(session)
+    )
+    return {
+      name: 'deferred-session-recovery',
+      capability: recovery,
+      start: () => recovery.start(),
+      dispose: () => recovery.dispose(),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   composition.phase('commands')
   const quitPreparation = createQuitPreparation({
     quiesceAuthentication: () => settingsBootstrap.settingsService.quiesceAuthentication(),

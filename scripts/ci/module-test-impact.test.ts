@@ -1204,7 +1204,14 @@ describe('module test impact commands', () => {
   })
 
   it('keeps delegated-work behavior in the Session persistence Module plan', () => {
-    expect(createModuleTestPlan('session_persistence').testFiles).toContain(
+    const manifest = loadModuleImpactManifest()
+    const plan = createModuleTestPlan('session_persistence')
+    expect(plan.mode).toBe('full')
+    expect(plan.testFiles).toEqual([])
+    expect(plan.reasonChains).toContain(
+      `session_persistence -> ${manifest.modules.session_persistence.fullTestReason} -> full`
+    )
+    expect(manifest.modules.session_persistence.testFiles.owner).toContain(
       'src/main/session-persistence/delegated-work-records.test.ts'
     )
   })
@@ -1678,10 +1685,18 @@ it('keeps tag event consumers covered by the explicit full fallback', () => {
 })
 
 it('preserves the explicit command or event consumer for src/main/session-persistence/coordinator.ts', () => {
+  const manifest = loadModuleImpactManifest()
   const plan = createAffectedTestPlan(
     [{ path: 'src/main/session-persistence/coordinator.ts', status: 'modified' }],
-    { status: 'not-used', testFiles: [] }
+    { status: 'not-used', testFiles: [] },
+    manifest
   )
-  expect(plan.mode).toBe('selective')
-  expect(plan.testFiles).toContain('src/renderer/src/hooks/useLifecycleSync.test.tsx')
+  expect(plan.mode).toBe('full')
+  expect(plan.testFiles).toEqual([])
+  expect(plan.reasonChains).toContain(
+    `session_persistence -> ${manifest.modules.session_persistence.fullTestReason} -> full`
+  )
+  expect(manifest.modules.session_persistence.testFiles.consumer).toContain(
+    'src/renderer/src/hooks/useLifecycleSync.test.tsx'
+  )
 })

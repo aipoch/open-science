@@ -1,4 +1,5 @@
-import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -6,6 +7,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { resolveDataRoot } from '../storage-root'
 import {
   DurableJsonRecoveryBarrierError,
+  defaultFileDurability,
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
@@ -372,26 +374,55 @@ const markManagedProjectWorkspacesRetained = async (
   }
 }
 
-const reconcileProvisionalManagedWorkspaces = async (
+// Enumerate receipts outside the persistence commit barrier. Each action re-reads its receipt;
+// the caller must validate the complete Session-reference snapshot before admitting that action.
+const planProvisionalManagedWorkspaceReconciliation = async (
   sessions: readonly Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'updatedAt'>[],
   createdBefore: number,
   dataRoot = resolveDataRoot()
-): Promise<void> => {
+): Promise<Array<() => Promise<(() => Promise<void>) | undefined>>> => {
   const sessionsByDirectory = new Map<string, typeof sessions>()
   for (const session of sessions) {
     const directory = resolve(session.cwd)
     sessionsByDirectory.set(directory, [...(sessionsByDirectory.get(directory) ?? []), session])
   }
-
-  let firstFailure: unknown
-  for (const location of await listManagedWorkspaceOwnershipLocations(dataRoot)) {
-    try {
+  const locations = await listManagedWorkspaceOwnershipLocations(dataRoot)
+  const retiredRoot = join(
+    dataRoot,
+    'workspaces',
+    MANAGED_WORKSPACE_OWNERSHIP_DIR,
+    '.retired-workspaces'
+  )
+  const retiredRootInfo = await lstat(retiredRoot).catch((error: unknown) => {
+    if (isFileSystemError(error, 'ENOENT')) return undefined
+    throw error
+  })
+  if (retiredRootInfo && (!retiredRootInfo.isDirectory() || retiredRootInfo.isSymbolicLink()))
+    throw new Error('Retired workspace path is unsafe.')
+  const retired = await readdir(retiredRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isFileSystemError(error, 'ENOENT')) return []
+    throw error
+  })
+  if (locations.length || retired.length) {
+    await mkdir(retiredRoot, { recursive: true })
+    const info = await lstat(retiredRoot)
+    if (!info.isDirectory() || info.isSymbolicLink())
+      throw new Error('Retired workspace path is unsafe.')
+  }
+  const retries = retired
+    .filter((entry) => entry.isDirectory() && /^[0-9a-f-]{36}$/.test(entry.name))
+    .map((entry) => async () => async () => {
+      await rm(join(retiredRoot, entry.name), { recursive: true, force: true })
+    })
+  return [
+    ...retries,
+    ...locations.map((location) => async () => {
       const ownership = await readOwnershipForUpdate(location)
-      if (!ownership || ownership.retainedAfterDelete) continue
+      if (!ownership || ownership.retainedAfterDelete) return
 
       const matchingSessions = sessionsByDirectory.get(location.directory) ?? []
       if (ownership.sessionId) {
-        if (matchingSessions.length > 0 || ownership.lastUsedAt >= createdBefore) continue
+        if (matchingSessions.length > 0 || ownership.lastUsedAt >= createdBefore) return
       } else if (matchingSessions.length > 0) {
         if (
           matchingSessions.length === 1 &&
@@ -404,12 +435,40 @@ const reconcileProvisionalManagedWorkspaces = async (
             dataRoot
           )
         }
-        continue
-      } else if (ownership.createdAt >= createdBefore) continue
+        return
+      } else if (ownership.createdAt >= createdBefore) return
 
       const workspace = await assertManagedWorkspaceDirectory(location.directory, dataRoot)
-      if (workspace) await rm(workspace.directory, { recursive: true, force: true })
+      const retiredPath = join(retiredRoot, randomUUID())
+      if (workspace) {
+        await rename(workspace.directory, retiredPath)
+        await defaultFileDurability.syncDirectory(workspace.workspacesRoot)
+        await defaultFileDurability.syncDirectory(retiredRoot)
+      }
       await removeManagedWorkspaceOwnership(location.directory, dataRoot)
+      return workspace
+        ? async () => {
+            await rm(retiredPath, { recursive: true, force: true })
+          }
+        : undefined
+    })
+  ]
+}
+
+const reconcileProvisionalManagedWorkspaces = async (
+  sessions: readonly Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'updatedAt'>[],
+  createdBefore: number,
+  dataRoot = resolveDataRoot()
+): Promise<void> => {
+  let firstFailure: unknown
+  for (const apply of await planProvisionalManagedWorkspaceReconciliation(
+    sessions,
+    createdBefore,
+    dataRoot
+  )) {
+    try {
+      const removeDetached = await apply()
+      await removeDetached?.()
     } catch (error) {
       firstFailure ??= error
     }
@@ -443,6 +502,7 @@ const removeManagedWorkspaceOwnership = async (cwd: string, dataRoot?: string): 
 }
 
 export {
+  planProvisionalManagedWorkspaceReconciliation,
   MANAGED_WORKSPACE_OWNERSHIP_DIR,
   assertManagedWorkspacesRoot,
   finalizeManagedWorkspaceOwnership,
