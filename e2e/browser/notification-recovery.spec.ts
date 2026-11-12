@@ -108,7 +108,8 @@ test('exposes notification errors and named recovery controls to the accessibili
   await page.getByRole('button', { name: 'Messages, 1 unread' }).click()
   const results = await page.evaluate(async () => {
     const axe = (window as unknown as { axe: typeof import('axe-core') }).axe
-    await Promise.all(document.getAnimations().map((animation) => animation.finished))
+    // A replaced transition can cancel its animation; either outcome settles the visual change.
+    await Promise.allSettled(document.getAnimations().map((animation) => animation.finished))
     return axe.run(document.querySelector('[role="dialog"]')!, {
       runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] }
     })
@@ -123,7 +124,10 @@ test('finds a background film, reopens its branch window, and opens its failure 
 }) => {
   await page.setViewportSize({ width: 700, height: 500 })
   await page.goto('/notification-recovery.html?film')
-  const bell = page.getByRole('button', { name: 'Messages, no unread messages' })
+  const bell = page.getByRole('button', {
+    name: 'Messages, no unread messages. Research film in progress',
+    exact: true
+  })
   await bell.click()
   const center = page.getByRole('dialog', { name: 'Message center' })
   await expect(center.getByText('In progress', { exact: true })).toBeVisible()

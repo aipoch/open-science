@@ -537,11 +537,14 @@ const NotificationBellContent = ({
             data-notification-bell-trigger="true"
             data-notification-bell-id={panelId}
             type="button"
-            aria-label={
+            aria-label={[
               unreadCount > 0
                 ? t('Messages, {{count}} unread', { count: unreadCount })
-                : t('Messages, no unread messages')
-            }
+                : t('Messages, no unread messages'),
+              activeFilm ? t('Research film in progress') : undefined
+            ]
+              .filter(Boolean)
+              .join('. ')}
             aria-expanded={open}
             aria-controls={panelId}
             onClick={() => {
@@ -578,7 +581,7 @@ const NotificationBellContent = ({
             ) : activeFilm ? (
               <span
                 className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary ring-2 ring-bg-000"
-                aria-label={t('Research film in progress')}
+                aria-hidden="true"
               />
             ) : null}
           </button>

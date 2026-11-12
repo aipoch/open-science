@@ -68,6 +68,9 @@ it('shows an active film independently of unread history', async () => {
   await act(async () =>
     container.querySelector<HTMLButtonElement>('[data-notification-bell-trigger]')!.click()
   )
+  expect(
+    container.querySelector('[data-notification-bell-trigger]')?.getAttribute('aria-label')
+  ).toBe('Messages, no unread messages. Research film in progress')
   expect(document.body.textContent).toContain('Rainfall film')
   expect(document.body.textContent).not.toContain('No messages yet.')
   expect(
