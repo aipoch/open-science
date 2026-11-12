@@ -79,6 +79,7 @@ export type NotebookSandboxInvocation = Readonly<{
   filesystem: Readonly<{
     readOnlyRoots: readonly string[]
     optionalReadOnlyRoots?: readonly string[]
+    optionalReadWriteRoots?: readonly string[]
     readWriteRoots: readonly string[]
     deniedReadRoots: readonly string[]
     deniedWriteRoots: readonly string[]

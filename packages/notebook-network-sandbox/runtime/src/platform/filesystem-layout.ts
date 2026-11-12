@@ -6,6 +6,7 @@ type FilesystemLayoutInput = Readonly<{
   privateRoot?: string
   readOnlyRoots: readonly string[]
   optionalReadOnlyRoots?: readonly string[]
+  optionalReadWriteRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]
@@ -16,6 +17,7 @@ type FilesystemLayout = Readonly<{
   privateRoot?: string
   readOnlyRoots: readonly string[]
   optionalReadOnlyRoots?: readonly string[]
+  optionalReadWriteRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]
@@ -75,14 +77,32 @@ const normalizeFilesystemLayout = (input: FilesystemLayoutInput): FilesystemLayo
     ...(input.optionalReadOnlyRoots
       ? {
           // A parent may fail its optional grant while a child remains independently usable.
-          optionalReadOnlyRoots: [...new Set(input.optionalReadOnlyRoots.map(absolutePhysicalPath))]
+          optionalReadOnlyRoots: normalizeOptionalRoots(input.optionalReadOnlyRoots)
         }
+      : {}),
+    ...(input.optionalReadWriteRoots
+      ? { optionalReadWriteRoots: normalizeOptionalRoots(input.optionalReadWriteRoots) }
       : {}),
     readWriteRoots,
     deniedReadRoots,
     deniedWriteRoots
   }
 }
+
+const normalizeOptionalRoots = (roots: readonly string[]): string[] => [
+  ...new Set(
+    roots.flatMap((root) => {
+      try {
+        return [absolutePhysicalPath(root)]
+      } catch (error) {
+        // Optional grants can be inaccessible before the native host even probes their ACLs.
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'EACCES' || code === 'EPERM') return []
+        throw error
+      }
+    })
+  )
+]
 
 const pathIsDirectory = (path: string): boolean => {
   try {
@@ -108,9 +128,12 @@ const hiddenByFilesystemLayout = (layout: FilesystemLayout, value: string): bool
     !contains(layout.privateRoot, candidate)
   )
     return false
-  return [...layout.readOnlyRoots, ...layout.readWriteRoots].every(
-    (root) => !contains(root, candidate)
-  )
+  return [
+    ...layout.readOnlyRoots,
+    ...layout.readWriteRoots,
+    ...(layout.optionalReadOnlyRoots ?? []),
+    ...(layout.optionalReadWriteRoots ?? [])
+  ].every((root) => !contains(root, candidate))
 }
 
 export {

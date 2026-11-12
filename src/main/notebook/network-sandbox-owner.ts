@@ -415,7 +415,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         (selection, signal) =>
           probeWindowsRuntimeComponent(
             selection,
-            (request) => this.prepare(request),
+            // Compatibility checks need their fixture and runtime, not user or Skill folders.
+            (request) => this.prepare(request, false),
             signal,
             (message) => this.log.warn(message)
           )
@@ -516,6 +517,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    return this.wrapInvocation(invocation, true)
+  }
+
+  private async wrapInvocation(
+    invocation: NotebookSandboxInvocation,
+    includeExecutionRoots: boolean
+  ): Promise<NotebookSandboxedSpawn> {
     if (
       this.platform === 'win32' &&
       invocation.target?.kind !== 'wsl2' &&
@@ -543,7 +551,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       }
     }
     try {
-      return await this.prepare(invocation)
+      return await this.prepare(invocation, includeExecutionRoots)
     } catch (error) {
       if (
         error instanceof Error &&
@@ -573,7 +581,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+  private async prepare(
+    invocation: NotebookSandboxInvocation,
+    includeExecutionRoots: boolean
+  ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
     const windowsProtectionRequired = nativeWindows
@@ -598,7 +609,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    const grantedRoots = includeExecutionRoots
+      ? ((await this.options.getGrantedLocalRoots?.()) ?? [])
+      : []
     // Broad writable ancestors must never make application authority or its future staging
     // files writable. Keep explicit descendant workspaces and caches usable.
     const physicalPath = (path: string): string => {
@@ -619,9 +632,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       )
     }
 
-    const skillReadRoots = this.options.configRoot
-      ? await managedSkillReadRoots(this.options.configRoot)
-      : []
+    const skillReadRoots =
+      includeExecutionRoots && this.options.configRoot
+        ? await managedSkillReadRoots(this.options.configRoot)
+        : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(
       target,
       invocation.runtime
@@ -700,21 +714,28 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
-            ...grantedRoots.map((root) => root.path),
+            ...(nativeWindows ? [] : grantedRoots.map((root) => root.path)),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ],
-          ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
+          ...(nativeWindows
             ? {
                 optionalReadOnlyRoots: [
                   ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
+                  ...grantedRoots.map((root) => root.path),
                   ...environmentPathRoots(env, this.platform)
-                ]
+                ],
+                optionalReadWriteRoots: [
+                  ...(invocation.filesystem.optionalReadWriteRoots ?? []),
+                  ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+                ].filter((path) => !coversAuthority(path))
               }
             : {}),
           readWriteRoots: [
             ...invocation.filesystem.readWriteRoots,
             commandTempRoot,
-            ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+            ...(nativeWindows
+              ? []
+              : grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path))
           ].filter((path) => !coversAuthority(path)),
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
@@ -728,6 +749,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
+              ...(invocation.filesystem.optionalReadWriteRoots ?? []),
               ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
             ]),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
@@ -1771,33 +1793,36 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       try {
         phase = 'sandbox-prepare'
         diagnostic.phase(phase, { condaPrefixDetected: Boolean(prefix) })
-        invocation = await this.wrap({
-          executable,
-          args: [
-            '--vanilla',
-            '-e',
-            pathsOnly
-              ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
-              : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
-          ],
-          cwd,
-          // Only the contained path probe suppresses startup packages. Host readiness and full
-          // post-authorization verification must exercise ordinary R startup and dependencies.
-          env: {
-            ...env,
-            ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+        invocation = await this.wrapInvocation(
+          {
+            executable,
+            args: [
+              '--vanilla',
+              '-e',
+              pathsOnly
+                ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
+                : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
+            ],
+            cwd,
+            // Only the contained path probe suppresses startup packages. Host readiness and full
+            // post-authorization verification must exercise ordinary R startup and dependencies.
+            env: {
+              ...env,
+              ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+            },
+            commandText: 'Verify selected R runtime',
+            runtime: 'r',
+            sessionId: 'runtime-access-check',
+            projectId: 'runtime-access-check',
+            filesystem: {
+              readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
+              readWriteRoots: [cwd],
+              deniedReadRoots: [],
+              deniedWriteRoots: []
+            }
           },
-          commandText: 'Verify selected R runtime',
-          runtime: 'r',
-          sessionId: 'runtime-access-check',
-          projectId: 'runtime-access-check',
-          filesystem: {
-            readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
-            readWriteRoots: [cwd],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
+          false
+        )
         endExecution = invocation.beginExecution?.()
         phase = authorization ? 'authorize' : 'path-probe'
         diagnostic.phase(phase)
