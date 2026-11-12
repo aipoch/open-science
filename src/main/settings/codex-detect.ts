@@ -93,25 +93,30 @@ const collectCandidateDirs = async (
   )
 }
 
-const detectCodex = async (
-  deps: CodexDetectDeps = createDefaultDetectDeps(),
+// A managed adapter is the only eligible candidate. Native CLI fallback discovery is independent.
+const adapterCandidates = async (
+  deps: CodexDetectDeps,
   signal?: AbortSignal
-): Promise<CodexDetectResult | undefined> => {
+): Promise<string[]> => {
+  if (deps.managedAdapterPath) return [deps.managedAdapterPath]
   const p = pathFor(deps.platform)
-  signal?.throwIfAborted()
   const dirs = await collectCandidateDirs(deps, signal)
   const names =
     deps.platform === 'win32'
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
       : ['codex-acp']
-  const discoveredCandidates = dirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
-  // Open-Science supplies managedAdapterPath in production. Once present, that path is the only
-  // adapter eligible to run; PATH/npm adapters are discovery noise and must never bypass the pinned
-  // app extension layer. The generic scan remains available to the standalone detector tests and
-  // diagnostics that do not declare an app-owned adapter.
-  const candidates = deps.managedAdapterPath ? [deps.managedAdapterPath] : discoveredCandidates
+  return Array.from(new Set(dirs.flatMap((dir) => names.map((name) => p.join(dir, name)))))
+}
 
-  for (const adapterPath of Array.from(new Set(candidates))) {
+const detectCodex = async (
+  deps: CodexDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
+): Promise<CodexDetectResult | undefined> => {
+  signal?.throwIfAborted()
+  const candidates = await adapterCandidates(deps, signal)
+  signal?.throwIfAborted()
+
+  for (const adapterPath of candidates) {
     const runnable = await deps.isRunnable(adapterPath)
     signal?.throwIfAborted()
     if (!runnable) continue
@@ -171,20 +176,8 @@ const detectCodexComponents = async (
   adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
 }> => {
   signal?.throwIfAborted()
-  const p = pathFor(deps.platform)
-
-  // Check for adapter first
-  const dirs = await collectCandidateDirs(deps, signal)
-  const adapterNames =
-    deps.platform === 'win32'
-      ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
-      : ['codex-acp']
-  const discoveredAdapterCandidates = dirs.flatMap((dir) =>
-    adapterNames.map((name) => p.join(dir, name))
-  )
-  const adapterCandidates = deps.managedAdapterPath
-    ? [deps.managedAdapterPath]
-    : discoveredAdapterCandidates
+  const candidates = await adapterCandidates(deps, signal)
+  signal?.throwIfAborted()
 
   const managedNativeOutput = deps.managedCodexPath
     ? await deps.getCodexVersion(deps.managedCodexPath, signal)
@@ -201,7 +194,7 @@ const detectCodexComponents = async (
   let adapterFailureReason:
     'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed' | undefined
 
-  for (const candidate of Array.from(new Set(adapterCandidates))) {
+  for (const candidate of candidates) {
     signal?.throwIfAborted()
     if (!(await deps.isRunnable(candidate))) continue
 

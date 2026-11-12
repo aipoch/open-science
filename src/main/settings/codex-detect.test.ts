@@ -140,7 +140,7 @@ describe('codex-detect', () => {
       controller.signal
     )
 
-    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
     expect(getAdapterVersion).toHaveBeenCalledWith(adapterPath, controller.signal)
     expect(getCodexVersion).toHaveBeenCalledWith(codexPath, controller.signal)
     expect(smokeInitialize).toHaveBeenCalledWith(adapterPath, { codexPath }, controller.signal)
