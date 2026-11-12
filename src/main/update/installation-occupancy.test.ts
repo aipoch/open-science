@@ -34,7 +34,10 @@ const mocks = vi.hoisted(() => ({
   }
 }))
 vi.mock('../windows-process-query', () => mocks.windows)
-vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ warn: mocks.warn }) }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({ warn: mocks.warn })
+}))
 vi.mock('node:module', () => ({
   createRequire: () =>
     Object.assign(() => ({ getDarwinProcessArguments: mocks.arguments }), {
@@ -131,6 +134,22 @@ describe('cold Windows resource scans', () => {
       reason: 'installation-busy',
       cause: failure
     })
+  })
+
+  it('logs bounded, redacted scanner stderr while retaining unknown occupancy', async () => {
+    const failure = Object.assign(new Error('Installation verification failed'), {
+      stderr: 'EACCES 安装目录 api_key=secret\n' + 'detail\n'.repeat(3000)
+    })
+    mocks.run.mockRejectedValue(failure)
+    await expect(inspectInstallationProcessesAsync('C:/Apps/Science')).rejects.toMatchObject({
+      reason: 'installation-busy',
+      cause: failure
+    })
+    const fields = mocks.warn.mock.calls[0][1]
+    expect(fields.stderr).toMatchObject({ truncated: true })
+    expect(fields.stderr.text).toContain('EACCES 安装目录')
+    expect(fields.stderr.text).not.toContain('secret')
+    expect(fields.stderr.text.length).toBeLessThan(7800)
   })
 
   it.each(['', '[]', '{"root":42,"pids":[]}', '{"root":"C:/Apps/Science","pids":null}'])(

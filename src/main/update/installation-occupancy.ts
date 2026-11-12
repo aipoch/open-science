@@ -3,7 +3,7 @@ import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
   listWindowsProcesses,
   splitWindowsCommandLine,
@@ -279,6 +279,7 @@ export async function inspectInstallationProcessesAsync(
     } catch (cause) {
       if (signal?.aborted) throw cause
       createLogger('update').warn('Windows installation occupancy inspection failed', {
+        ...runtimeChildProcessErrorFields(cause),
         durationMs: Date.now() - started,
         message: cause instanceof Error ? cause.message : 'Unknown inspection error'
       })
