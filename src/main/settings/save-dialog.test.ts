@@ -35,7 +35,7 @@ describe('Settings Save As dialog', () => {
       await showSettingsSaveDialog(sender as never, options)
 
       expect(electron.fromWebContents).toHaveBeenCalledWith(sender)
-      if (platform === 'win32') {
+      if (platform === 'win32' || platform === 'darwin') {
         expect(electron.isolated).toHaveBeenCalledWith(
           { kind: 'save', options },
           parentWindow,
@@ -46,19 +46,23 @@ describe('Settings Save As dialog', () => {
     }
   )
 
-  it('falls back to an unparented dialog when the sender window no longer exists', async () => {
-    const sender = { id: 42 }
-    const options = { title: 'Export Connector', defaultPath: 'connector.json' }
-    electron.fromWebContents.mockReturnValue(null)
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'falls back to an unparented %s dialog when the sender window no longer exists',
+    async (platform) => {
+      Object.defineProperty(process, 'platform', { value: platform })
+      const sender = { id: 42 }
+      const options = { title: 'Export Connector', defaultPath: 'connector.json' }
+      electron.fromWebContents.mockReturnValue(null)
 
-    await showSettingsSaveDialog(sender as never, options)
+      await showSettingsSaveDialog(sender as never, options)
 
-    if (process.platform === 'win32')
-      expect(electron.isolated).toHaveBeenCalledWith(
-        { kind: 'save', options },
-        undefined,
-        undefined
-      )
-    else expect(electron.showSaveDialog).toHaveBeenCalledWith(options)
-  })
+      if (process.platform === 'win32' || process.platform === 'darwin')
+        expect(electron.isolated).toHaveBeenCalledWith(
+          { kind: 'save', options },
+          undefined,
+          undefined
+        )
+      else expect(electron.showSaveDialog).toHaveBeenCalledWith(options)
+    }
+  )
 })

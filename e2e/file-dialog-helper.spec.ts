@@ -14,6 +14,63 @@ let publishUserFile: typeof import('../src/main/user-file-publisher').publishUse
 
 const runtimeRequire = createRequire(__filename)
 type WindowBounds = { x: number; y: number; width: number; height: number }
+type WindowGeometry = {
+  content: WindowBounds
+  referenceContent: WindowBounds
+  viewport: { width: number; height: number }
+  reference: { width: number; height: number }
+  scaleFactor: number
+  zoomFactor: number
+}
+
+async function inspectMain<T>(endpoint: string, expression: string): Promise<T> {
+  return new Promise((resolveResult, reject) => {
+    const socket = new WebSocket(endpoint)
+    const timer = setTimeout(() => {
+      socket.terminate()
+      reject(new Error('Main inspector timed out'))
+    }, 10000)
+    socket.once('open', () =>
+      socket.send(
+        JSON.stringify({
+          id: 1,
+          method: 'Runtime.evaluate',
+          params: { expression, returnByValue: true, awaitPromise: true }
+        })
+      )
+    )
+    socket.on('message', (data) => {
+      const reply = JSON.parse(data.toString())
+      if (reply.id !== 1) return
+      clearTimeout(timer)
+      socket.close()
+      if (reply.error || reply.result?.exceptionDetails) reject(new Error(JSON.stringify(reply)))
+      else resolveResult(reply.result.result.value)
+    })
+    socket.once('error', (error) => {
+      clearTimeout(timer)
+      socket.terminate()
+      reject(error)
+    })
+  })
+}
+
+// Calibrate against an independent, undecorated HTML page in a native Electron window on the
+// same display. This separates OS non-client/DPI conversion from application layout, without
+// weakening geometry to an arbitrary +/- pixel threshold.
+async function assertCompactGeometry(
+  helper: Awaited<ReturnType<typeof launchHelper>>
+): Promise<WindowGeometry> {
+  await expect.poll(() => helper.page.evaluate(() => innerHeight)).toBeLessThan(400)
+  const geometry = await helper.measureWindow(340)
+  expect(geometry.zoomFactor).toBe(1)
+  expect(geometry.viewport).toEqual(geometry.reference)
+  expect([geometry.content.width, geometry.content.height]).toEqual([
+    geometry.referenceContent.width,
+    geometry.referenceContent.height
+  ])
+  return geometry
+}
 
 test.beforeAll(async () => {
   const info = test.info()
@@ -39,6 +96,7 @@ async function launchHelper(
   page: Page
   result: Promise<FileDialogResult>
   child: ChildProcess
+  measureWindow: (height: number) => Promise<WindowGeometry>
   probeWindow: (action?: 'minimum' | 'bottom') => Promise<WindowBounds>
   close: () => Promise<void>
 }> {
@@ -151,6 +209,24 @@ async function launchHelper(
       page,
       result,
       child,
+      measureWindow: async (height) => {
+        await expect.poll(() => inspectorEndpoint).toBeTruthy()
+        return inspectMain<WindowGeometry>(
+          inspectorEndpoint!,
+          `(async () => {
+          const {BrowserWindow, screen} = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json')('electron');
+          const window = BrowserWindow.getAllWindows()[0];
+          const bounds = window.getBounds();
+          const reference = new BrowserWindow({x:bounds.x,y:bounds.y,width:600,height:${height},minWidth:480,minHeight:340,useContentSize:true,show:false,autoHideMenuBar:true});
+          reference.setMenu(null);
+          try {
+            await reference.loadURL('data:text/html,<html></html>');
+            const expression = '({width:innerWidth,height:innerHeight})';
+            return { content:window.getContentBounds(), referenceContent:reference.getContentBounds(), viewport:await window.webContents.executeJavaScript(expression), reference:await reference.webContents.executeJavaScript(expression), scaleFactor:screen.getDisplayMatching(bounds).scaleFactor, zoomFactor:window.webContents.getZoomFactor() };
+          } finally { reference.destroy(); }
+        })()`
+        )
+      },
       probeWindow: async (action) => {
         await expect.poll(() => inspectorEndpoint).toBeTruthy()
         // Electron omits Chrome's Browser.setWindowBounds CDP domain. Resize the actual native
@@ -329,7 +405,7 @@ for (const theme of ['light', 'dark'] as const) {
     for (let index = 0; index < 5; index++) {
       const helper = await launchHelper(root, 'save', theme)
       try {
-        if (index === 0) await expect.poll(() => helper.page.evaluate(() => innerHeight)).toBe(340)
+        if (index === 0) await assertCompactGeometry(helper)
         if (index === 0)
           await helper.page.screenshot({ path: test.info().outputPath(`picker-${theme}.png`) })
         if (index === 0) {
@@ -343,7 +419,7 @@ for (const theme of ['light', 'dark'] as const) {
             path: test.info().outputPath(`picker-${theme}-expanded.png`)
           })
           await helper.page.getByRole('button', { name: 'Hide folders' }).click()
-          await expect.poll(() => helper.page.evaluate(() => innerHeight)).toBe(340)
+          await assertCompactGeometry(helper)
         }
         await helper.page.getByRole('button', { name: 'Cancel', exact: true }).click()
         expect(await helper.result).toEqual({ canceled: true, filePath: '' })
@@ -509,7 +585,8 @@ for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 
       try {
         const page = helper.page
         // Observe the real default width; resizing here would hide locale-dependent regressions.
-        await expect.poll(() => page.evaluate(() => innerWidth)).toBe(600)
+        const baseline = await assertCompactGeometry(helper)
+        measurements.push({ locale, theme, state: 'native-calibration', ...baseline })
         const inspect = async (state: string): Promise<void> => {
           const measurement = await page.evaluate(() => {
             const issues: string[] = []
@@ -575,7 +652,7 @@ for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 
           })
           measurements.push({ locale, theme, state, ...measurement })
           await page.screenshot({ path: info.outputPath(`${locale}-${theme}-${state}.png`) })
-          expect(measurement.width, `${locale} ${theme} ${state}`).toBe(600)
+          expect(measurement.width, `${locale} ${theme} ${state}`).toBe(baseline.reference.width)
           expect(measurement.issues, `${locale} ${theme} ${state}`).toEqual([])
         }
         const path = page.locator('#save-path')
@@ -591,6 +668,14 @@ for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 
         await expect(parent).toHaveText(copy('Parent folder'))
         await expect(page.getByRole('button', { name: childName, exact: true })).toBeVisible()
         await expect.poll(() => page.evaluate(() => innerHeight)).toBeGreaterThan(500)
+        const expandedGeometry = await helper.measureWindow(536)
+        expect(expandedGeometry.viewport).toEqual(expandedGeometry.reference)
+        measurements.push({
+          locale,
+          theme,
+          state: 'expanded-native-calibration',
+          ...expandedGeometry
+        })
         await inspect('expanded')
         await parent.click()
         await expect(path).toHaveValue(dirname(root))
@@ -614,7 +699,7 @@ for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 
           .getByRole('button', { name: copy('Cancel'), exact: true })
           .click()
         await page.getByRole('button', { name: copy('Hide folders'), exact: true }).click()
-        await expect.poll(() => page.evaluate(() => innerHeight)).toBe(340)
+        await assertCompactGeometry(helper)
         const collapsedBounds = await helper.probeWindow('bottom')
         const footerBounds = await page.locator('main > footer').boundingBox()
         await name.fill(enteredName)
