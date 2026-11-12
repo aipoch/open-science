@@ -1288,22 +1288,29 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl(planId, 'global')).toBe(
       'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview'
     )
-    expect(getVendorModelIds(planId, 'global')).toContain('qwen4-max-preview')
-    expect(getVendorModelIds(planId, 'global')).not.toContain('qwen3.8-max-preview')
-    expect(
-      getOfficialVendor(planId)?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
-    ).toEqual([
-      { id: 'qwen3.8-max', contextWindow: 983_616 },
-      { id: 'qwen4-max-preview', contextWindow: 1_000_000 },
-      { id: 'qwen3.8-max-preview', contextWindow: 983_616 },
-      { id: 'qwen3.7-max', contextWindow: 1_000_000 },
-      { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
-      { id: 'qwen3.6-flash', contextWindow: 1_000_000 },
-      { id: 'glm-5.2', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-flash-0731', contextWindow: 1_000_000 }
+    expect(getVendorModelIds(planId, 'global')).toEqual(getVendorModelIds(planId, 'china'))
+    expect(getVendorModelIds(planId)).toEqual([
+      'qwen3.8-max',
+      'qwen4-max-preview',
+      'auto',
+      'qwen3.8-flash',
+      'qwen3.7-max',
+      'qwen3.7-plus',
+      'qwen3.6-flash',
+      'glm-5.3',
+      'glm-5.2',
+      'deepseek-v4.1-flash',
+      'deepseek-v4.1-flash-1017',
+      'deepseek-v4-pro',
+      'deepseek-v4-pro-0813',
+      'deepseek-v4-flash-0731'
     ])
-
+    expect(
+      getOfficialVendor(planId)?.models.find(({ id }) => id === 'qwen4-max-preview')
+    ).toMatchObject({
+      contextWindow: 1_000_000,
+      maxOutputTokens: 393_216
+    })
     expect(resolveVendorModelsUrl(planId)).toBeUndefined()
 
     expect(resolveVendorModelApiEndpoints(planId, 'qwen4-max-preview')).toEqual([
@@ -1312,7 +1319,6 @@ describe('provider registry', () => {
       'responses'
     ])
     expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max')).toBe(false)
-    expect(isVendorModelResponsesSupported(planId, 'qwen3.8-max-preview')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'qwen3.7-max')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'qwen3.7-plus')).toBe(false)
     expect(isVendorModelResponsesSupported(planId, 'qwen3.6-flash')).toBe(false)
@@ -1332,7 +1338,7 @@ describe('provider registry', () => {
       expectedProfile
     )
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-max')).toEqual(expectedProfile)
-    expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-max-preview')).toEqual(
+    expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-flash')).toEqual(
       expectedProfile
     )
   })
@@ -1365,7 +1371,6 @@ describe('provider registry', () => {
   it('uses the qwen3.8 context window published for Codex integrations', () => {
     expect(getVendorModelContextWindow('bailian', 'qwen3.8-max')).toBe(983_616)
     expect(getVendorModelContextWindow('bailianplan', 'qwen3.8-max')).toBe(983_616)
-    expect(getVendorModelContextWindow('bailianplan', 'qwen3.8-max-preview')).toBe(983_616)
   })
 
   it('routes Step Plan over Anthropic and OpenAI in China and globally, no live model list', () => {
@@ -1461,7 +1466,7 @@ describe('provider registry', () => {
 
       expect(isVendorModelMultimodal(planId, 'qwen3.8-max')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen4-max-preview')).toBe(true)
-      expect(isVendorModelMultimodal(planId, 'qwen3.8-max-preview')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'deepseek-v4.1-flash-1017')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.7-plus')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.6-flash')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.7-max')).toBe(false)

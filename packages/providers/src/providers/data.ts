@@ -280,20 +280,11 @@ const definitions: readonly OfficialVendor[] = [
         chatCompletionsBaseUrl:
           'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
         apiKeyUrl:
-          'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview',
-        modelIds: [
-          'qwen3.8-max',
-          'qwen4-max-preview',
-          'qwen3.7-max',
-          'qwen3.7-plus',
-          'qwen3.6-flash',
-          'glm-5.2',
-          'deepseek-v4-pro',
-          'deepseek-v4-flash-0731'
-        ]
+          'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview'
       }
     ],
     responsesModels: ['qwen4-max-preview'],
+    // General-purpose chat models listed by both the Beijing and Singapore Token Plans.
     models: [
       {
         id: 'qwen3.8-max',
@@ -307,9 +298,10 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 393_216,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
+      { id: 'auto', contextWindow: 1_000_000, maxOutputTokens: 393_216 },
       {
-        id: 'qwen3.8-max-preview',
-        contextWindow: 983_616,
+        id: 'qwen3.8-flash',
+        contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
@@ -317,16 +309,39 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'qwen3.7-plus', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
       { id: 'qwen3.6-flash', contextWindow: 1_000_000, maxOutputTokens: 65_536 },
       {
+        id: 'glm-5.3',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
+      },
+      {
         id: 'glm-5.2',
         contextWindow: 1_000_000,
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
       },
       {
+        id: 'deepseek-v4.1-flash',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
+      },
+      {
+        id: 'deepseek-v4.1-flash-1017',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216
+      },
+      {
         id: 'deepseek-v4-pro',
         contextWindow: 1_000_000,
         maxOutputTokens: 384_000,
         reasoningEffort: { supported: true, values: ['high', 'max'] }
+      },
+      {
+        id: 'deepseek-v4-pro-0813',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
       {
         id: 'deepseek-v4-flash-0731',
@@ -339,7 +354,9 @@ const definitions: readonly OfficialVendor[] = [
       multimodalModels: [
         'qwen3.8-max',
         'qwen4-max-preview',
-        'qwen3.8-max-preview',
+        'qwen3.8-flash',
+        'deepseek-v4.1-flash',
+        'deepseek-v4.1-flash-1017',
         'qwen3.7-plus',
         'qwen3.6-flash'
       ]
