@@ -60,7 +60,7 @@ describe('desktop recovery notice', () => {
     } as unknown as Window['api']
   })
   afterEach(cleanup)
-  it('keeps draft focus across repeated disconnects without a modal or duplicate notice', async () => {
+  it('keeps focus in one recovery dialog across repeated disconnects', async () => {
     render(
       <>
         <textarea aria-label="draft" />
@@ -71,12 +71,11 @@ describe('desktop recovery notice', () => {
     draft.focus()
     for (let epoch = 1; epoch <= 3; epoch++) {
       await act(async () => publish({ phase: 'disconnected', epoch, closing: false }))
-      expect(document.activeElement).toBe(draft)
-      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(document.activeElement).toBe(screen.getByRole('dialog'))
       expect(screen.getAllByRole('status')).toHaveLength(1)
       await act(async () => publish({ phase: 'reconnecting', epoch, closing: false }))
       expect(screen.getByRole('button', { name: 'Quit' })).toBeTruthy()
-      expect(document.activeElement).toBe(draft)
+      expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true)
       await act(async () => publish({ phase: 'connected', epoch, closing: false }))
       expect(screen.queryByRole('status')).toBeNull()
     }
@@ -113,7 +112,7 @@ describe('desktop recovery notice', () => {
     try {
       draft.focus()
       await act(async () => publish({ phase: 'disconnected', epoch: 1, closing: false }))
-      expect(document.activeElement).toBe(document.body)
+      expect(document.activeElement).toBe(screen.getByRole('dialog'))
       await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
       await act(async () => publish({ phase: 'connected', epoch: 1, closing: false }))
       await waitFor(() => expect(document.activeElement).toBe(draft))
@@ -141,7 +140,7 @@ describe('desktop recovery notice', () => {
     const draft = screen.getByLabelText('draft')
     draft.focus()
     await act(async () => publish({ phase: 'disconnected', epoch: 1, closing: false }))
-    expect(document.activeElement).toBe(document.body)
+    expect(document.activeElement).toBe(screen.getByRole('dialog'))
     await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
     await act(async () => publish({ phase: 'connected', epoch: 1, closing: false }))
     await waitFor(() => expect(document.activeElement).toBe(draft))
@@ -162,7 +161,7 @@ describe('desktop recovery notice', () => {
     act(() => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
     act(() => publish({ phase: 'connected', epoch: 1, closing: false }))
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getByLabelText('draft')).toBe(draft)
     expect((draft as HTMLTextAreaElement).value).toBe('unsent work')
   })
@@ -214,7 +213,7 @@ describe('desktop recovery notice', () => {
         diagnostics: 'safe lifecycle summary'
       })
     )
-    expect(screen.getByText('Local service keeps stopping')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Local service keeps stopping' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Save diagnostics', hidden: true }))
     expect(sessionMocks.save).toHaveBeenCalledWith('safe lifecycle summary')
     await act(async () => publish({ phase: 'connected', epoch: 1, closing: false }))
@@ -226,7 +225,7 @@ describe('desktop recovery notice', () => {
     await act(async () =>
       publish({ phase: 'unavailable', epoch: 1, closing: false, reason: 'service-stopped' })
     )
-    expect(screen.getByText('Local service stopped')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Local service stopped' })).toBeTruthy()
     expect(screen.queryByText('Local service stopped from the command line')).toBeNull()
   })
 

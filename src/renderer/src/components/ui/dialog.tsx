@@ -5,10 +5,13 @@ import { useChildLayerDismissalGuard } from './use-child-layer-dismissal-guard'
 
 import { OverlayLayerProvider, useOverlayLayer } from './overlay-layer'
 
-function Root(props: React.ComponentProps<typeof DialogPrimitive.Root>): React.JSX.Element {
+function Root({
+  layer,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Root> & { layer?: number }): React.JSX.Element {
   const parentLayer = useOverlayLayer()
   return (
-    <OverlayLayerProvider value={parentLayer + 20}>
+    <OverlayLayerProvider value={layer ?? parentLayer + 20}>
       <DialogPrimitive.Root {...props} />
     </OverlayLayerProvider>
   )
