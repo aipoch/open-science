@@ -378,6 +378,29 @@ test('large archived history and results keep rendered nodes and material pages 
   })
 })
 
+test('keeps the first imported replay input readable when the host theme changes', async ({
+  page
+}) => {
+  await page.goto(`${url}?panel=1`)
+  const panel = page.getByTestId('replay-panel')
+  await panel.getByRole('button', { name: 'Next step', exact: true }).click()
+  const bubble = panel.locator('[data-slot="user-message-bubble"]')
+  await expect(bubble).toHaveText(
+    'Compare the recorded observations and show the analysis with its archived figure.'
+  )
+  await expect(bubble).toHaveCSS('color', 'rgb(31, 31, 31)')
+  const background = await bubble.evaluate((element) => getComputedStyle(element).backgroundColor)
+
+  for (const dark of [true, false]) {
+    await page.evaluate(
+      (enabled) => document.documentElement.classList.toggle('dark', enabled),
+      dark
+    )
+    await expect(bubble).toHaveCSS('background-color', background)
+    await expect(bubble).toHaveCSS('color', 'rgb(31, 31, 31)')
+  }
+})
+
 for (const locale of ['en', 'de']) {
   test(`right-hand panel remains operable at narrow width and expands with keyboard focus (${locale})`, async ({
     page

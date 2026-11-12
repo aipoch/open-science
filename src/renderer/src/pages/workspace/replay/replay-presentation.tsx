@@ -59,6 +59,7 @@ export const replayPresentationStyle = (config: ReplayPresentationConfig): CSSPr
     '--bg-400': 'hsl(45 10% 88%)',
     '--border-ink-channel': '60 2% 12%',
     '--text-000': 'hsl(0 0% 7%)',
+    '--message-user-text': 'hsl(0 0% 12%)',
     '--text-100': 'hsl(60 2% 20%)',
     '--text-200': 'hsl(43 3% 42%)',
     '--text-300': 'hsl(43 3% 47%)'
