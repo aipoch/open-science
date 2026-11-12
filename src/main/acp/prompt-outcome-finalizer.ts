@@ -40,6 +40,7 @@ export type AcpPromptFinalizationHandles = Readonly<{
   context?: ContextWindowTurnHandle
   skill: Pick<TurnSkillHandle, 'close' | 'reloadDecision'>
   model?: string
+  providerName?: string
   emitUserMessage: () => void
   emitArtifact: (onPublished: () => void) => Promise<void>
   disposeArtifact: () => Promise<void>
@@ -251,7 +252,7 @@ export class AcpPromptOutcomeFinalizer {
           ? {}
           : {
               artifactFailure: true,
-              failure: classifyFailure(collectPromptFailureFacts(failure, { model: handles.model }))
+              failure: classifyFailure(collectPromptFailureFacts(failure, handles))
             })
       } as RuntimeEventInput
       if (handles.commitTerminal) await handles.commitTerminal(event)
@@ -345,8 +346,8 @@ export class AcpPromptOutcomeFinalizer {
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
-      const text = describePromptError(error, { model: handles.model })
-      const failure = classifyFailure(collectPromptFailureFacts(error, { model: handles.model }))
+      const failure = classifyFailure(collectPromptFailureFacts(error, handles))
+      const text = failure.responseMessage ?? describePromptError(error, { model: handles.model })
       const recoverable =
         failure.category === 'session'
           ? 'session-lost'

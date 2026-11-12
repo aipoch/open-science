@@ -1952,6 +1952,7 @@
     "Model is required.": "모델이 필요합니다.",
     "Model not supported over the Codex bridge": "모델은 Codex 브리지에서는 지원되지 않습니다.",
     "Model provider": "모델 제공업체",
+    "Model provider error": "모델 제공업체 오류",
     "Model provider: {{name}}": "모델 제공업체: {{name}}",
     "Model provider: {{name}}; model: {{model}}": "모델 제공업체: {{name}}; 모델: {{model}}",
     "Model settings": "모델 설정",

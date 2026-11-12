@@ -2016,6 +2016,7 @@
     "Model is required.": "Требуется модель.",
     "Model not supported over the Codex bridge": "Модель не поддерживается мостом Codex",
     "Model provider": "Поставщик моделей",
+    "Model provider error": "Ошибка поставщика моделей",
     "Model provider: {{name}}": "Поставщик моделей: {{name}}",
     "Model provider: {{name}}; model: {{model}}": "Поставщик моделей: {{name}}; модель: {{model}}",
     "Model settings": "Настройки модели",

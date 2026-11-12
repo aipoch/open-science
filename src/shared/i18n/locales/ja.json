@@ -1937,6 +1937,7 @@
     "Model is required.": "モデルは必須です。",
     "Model not supported over the Codex bridge": "Codex ブリッジではサポートされていないモデル",
     "Model provider": "モデルプロバイダー",
+    "Model provider error": "モデルプロバイダーのエラー",
     "Model provider: {{name}}": "モデルプロバイダー：{{name}}",
     "Model provider: {{name}}; model: {{model}}": "モデルプロバイダー：{{name}}、モデル：{{model}}",
     "Model settings": "モデル設定",

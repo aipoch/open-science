@@ -2029,6 +2029,7 @@
     "Model is required.": "必須填寫模型。",
     "Model not supported over the Codex bridge": "該模型不支援透過 Codex 橋接使用",
     "Model provider": "模型供應方",
+    "Model provider error": "模型供應商錯誤",
     "Model provider: {{name}}": "模型供應商：{{name}}",
     "Model provider: {{name}}; model: {{model}}": "模型供應商：{{name}}；模型：{{model}}",
     "Model settings": "模型設定",

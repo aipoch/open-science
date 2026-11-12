@@ -370,6 +370,68 @@ describe('classified failure facts across agent execution paths', () => {
       expect(classifyFailure(facts).category).toBe(category)
     }
   )
+  it('recognizes a typed provider resource-not-found response without an HTTP status', () => {
+    const message = 'Example deployment unavailable'
+    const error = RequestError.internalError(
+      { errorName: 'APIError' },
+      JSON.stringify({ error: { type: 'resource_not_found_error', message } })
+    )
+    expect(classifyFailure(collectPromptFailureFacts(error))).toEqual({
+      category: 'configuration',
+      reason: 'configuration/model-unavailable',
+      responseMessage: message,
+      diagnostics: { code: 'resource_not_found_error', raw: error.message }
+    })
+  })
+  it.each([
+    ['Upstream is busy', 'Upstream is busy'],
+    ['{"message":"Busy","code":"example_busy"}', 'Busy'],
+    ['{"detail":["busy"]}', '{"detail":["busy"]}']
+  ])(
+    'preserves the tagged provider response body and extracts available message text: %s',
+    (body, message) => {
+      const failure = classifyFailure(
+        collectPromptFailureFacts(RequestError.internalError({ service: 'provider' }, body), {
+          providerName: 'Example Provider',
+          model: 'example-model'
+        })
+      )
+      expect(failure).toEqual({
+        category: 'service',
+        responseMessage: message,
+        diagnostics: {
+          provider: 'Example Provider',
+          model: 'example-model',
+          raw: 'Internal error: ' + body
+        }
+      })
+    }
+  )
+  it.each([
+    [undefined, 'internal', '-32603'],
+    [{ errorKind: 'unknown', status: 503 }, 'internal', '-32603'],
+    [{ codexErrorInfo: 'internalServerError' }, 'internal', 'internalServerError'],
+    [{ service: 'session', errorName: 'UnknownError' }, 'session', '-32603']
+  ] as const)(
+    'keeps the original recovery path without provider ownership: %j',
+    (data, category, code) => {
+      const error = RequestError.internalError(data, '{"message":"Busy","code":"example_busy"}')
+      const failure = classifyFailure(
+        collectPromptFailureFacts(error, {
+          providerName: 'Example Provider',
+          model: 'example-model'
+        })
+      )
+      expect(failure).toMatchObject({ category, diagnostics: { code, raw: error.message } })
+      expect(failure.responseMessage).toBeUndefined()
+    }
+  )
+  it('keeps ACP sign-in recovery when the authentication error carries JSON', () => {
+    const error = RequestError.authRequired(undefined, '{"message":"Sign in again"}')
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.reason).toBe('configuration/auth-failed')
+    expect(failure.responseMessage).toBeUndefined()
+  })
   it('keeps an opaque protocol error internal even when its prose mentions a status', () => {
     expect(
       classifyFailure(collectPromptFailureFacts(agentError('Record 503 could not be decoded', {})))

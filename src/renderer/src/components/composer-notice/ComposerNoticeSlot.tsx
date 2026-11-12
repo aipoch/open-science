@@ -94,11 +94,22 @@ const ComposerFailureNoticeSlot = ({
       : undefined) ?? notices[0]
   if (!current) return null
   const presentation = noticePresentation(current.failure)
-  const title = t(presentation.titleKey)
-  const description = t(presentation.descriptionKey)
+  const title = current.failure.responseMessage
+    ? t('Model provider error')
+    : t(presentation.titleKey)
+  const description = current.failure.responseMessage
+    ? current.failure.responseMessage.startsWith('{') ||
+      current.failure.responseMessage.startsWith('[')
+      ? ''
+      : current.failure.responseMessage
+    : t(presentation.descriptionKey)
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
-    ([key, value]) => key !== 'raw' && value !== undefined
+    ([key, value]) =>
+      value !== undefined &&
+      (current.failure.responseMessage
+        ? ['status', 'provider', 'model'].includes(key)
+        : key !== 'raw')
   )
   const labels: Record<NoticeActionId, string> = {
     'export-diagnostics': t('Export diagnostics…'),
@@ -123,10 +134,7 @@ const ComposerFailureNoticeSlot = ({
     setCopiedId(undefined)
     try {
       if (action === 'copy-error') {
-        const copy = noticePresentation(notice.failure)
-        await navigator.clipboard.writeText(
-          formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey))
-        )
+        await navigator.clipboard.writeText(diagnosticText)
         setCopiedId(notice.id)
       } else await handlers[action]?.run(notice)
     } catch (error) {
@@ -279,7 +287,13 @@ const ComposerFailureNoticeSlot = ({
                         setExpanded(false)
                       }}
                     >
-                      <TruncatedText text={t(item.titleKey)} />
+                      <TruncatedText
+                        text={
+                          notice.failure.responseMessage
+                            ? t('Model provider error')
+                            : t(item.titleKey)
+                        }
+                      />
                     </button>
                     {item.primaryAction ? actionButton(item.primaryAction, notice) : null}
                   </li>
@@ -347,11 +361,13 @@ const ComposerFailureNoticeSlot = ({
               <h2 className="min-w-0 text-sm font-semibold leading-5 text-foreground">
                 <TruncatedText text={title} />
               </h2>
-              <TruncatedText
-                text={description}
-                lines={2}
-                className="text-sm font-normal leading-5 text-muted-foreground"
-              />
+              {description ? (
+                <TruncatedText
+                  text={description}
+                  lines={2}
+                  className="text-sm font-normal leading-5 text-muted-foreground"
+                />
+              ) : null}
             </div>
             <NoticeDiagnostics
               key={current.id}

@@ -441,6 +441,7 @@ export class AgentBackendResolver {
         return {
           framework,
           providerId: target.providerId,
+          providerName: target.providerName,
           backendId: `open-science-agent:${target.providerId}`,
           modelRoute: 'open-science-agent',
           executablePath,
@@ -571,6 +572,7 @@ export class AgentBackendResolver {
       return {
         framework,
         providerId: target.providerId,
+        providerName: target.providerName,
         backendId: `${framework.id}:${target.providerId}`,
         modelRoute,
         executablePath: claudeExecutablePath,
@@ -679,6 +681,7 @@ export class AgentBackendResolver {
       return {
         framework,
         providerId: target.providerId,
+        providerName: target.providerName,
         ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,

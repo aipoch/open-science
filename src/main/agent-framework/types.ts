@@ -109,6 +109,7 @@ export type SkillSelectorUsageObservation = Readonly<{
 export type AgentModelChangeTarget = Readonly<{
   frameworkId: AgentFrameworkId
   providerId?: string
+  providerName?: string
   backendId: string
   route: AgentModelRoute
   model: string
@@ -323,6 +324,7 @@ export type ResolvedAgentBackend = {
   // Stable app provider/account identity used for usage attribution. This remains separate from
   // backendId because a framework may normalize provider selections onto one session store.
   providerId?: string
+  providerName?: string
   // Effective transport for an app-owned Codex subscription profile. Settings resolves Auto and
   // its learned HTTPS fallback once; disposable child/restricted homes project this exact choice
   // instead of re-reading or guessing it from a sanitized config snapshot.

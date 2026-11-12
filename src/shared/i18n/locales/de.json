@@ -1823,6 +1823,7 @@
     "Model is required.": "Modell ist erforderlich.",
     "Model not supported over the Codex bridge": "Modell wird über die Codex-Brücke nicht unterstützt",
     "Model provider": "Modellanbieter",
+    "Model provider error": "Fehler beim Modellanbieter",
     "Model provider: {{name}}": "Modellanbieter: {{name}}",
     "Model provider: {{name}}; model: {{model}}": "Modellanbieter: {{name}}; Modell: {{model}}",
     "Model settings": "Modelleinstellungen",
