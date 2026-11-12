@@ -13,7 +13,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -490,14 +490,24 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     }
   )
 
-  it.each(['artifact', 'upload'] as const)(
-    'reads valid %s content through a configured root alias and rejects retargeting',
-    async (source) => {
+  it.each([
+    { source: 'artifact' as const, ancestor: false },
+    { source: 'upload' as const, ancestor: false },
+    { source: 'artifact' as const, ancestor: true },
+    { source: 'upload' as const, ancestor: true }
+  ])(
+    'reads valid $source content through a configured root alias (ancestor: $ancestor) and rejects retargeting',
+    async ({ source, ancestor }) => {
       const fixture = await createFixture(source)
       outsideRoot = await mkdtemp(join(tmpdir(), 'managed-version-root-alias-'))
       const alias = join(outsideRoot, 'selected')
-      await symlink(storageRoot, alias, process.platform === 'win32' ? 'junction' : 'dir')
-      const options = { storageRoot: alias, getClient: () => Promise.resolve(client) }
+      const suffix = ancestor ? basename(storageRoot) : ''
+      await symlink(
+        ancestor ? dirname(storageRoot) : storageRoot,
+        alias,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      const options = { storageRoot: join(alias, suffix), getClient: () => Promise.resolve(client) }
       const service = new ManagedFileVersionService(options)
       const identity = { source, projectId: 'project-1', fileId: fixture.fileId }
       const lease = await service.openLatest(identity)
@@ -507,14 +517,14 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       } finally {
         await lease.close()
       }
-      expect(options.storageRoot).toBe(alias)
+      expect(options.storageRoot).toBe(join(alias, suffix))
 
       const other = join(outsideRoot, 'other')
-      await mkdir(other)
+      await mkdir(join(other, suffix), { recursive: true })
       await rm(alias, { recursive: true })
       await symlink(other, alias, process.platform === 'win32' ? 'junction' : 'dir')
       await expect(service.openLatest(identity)).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
-      expect(await readdir(other)).toEqual([])
+      expect(await readdir(join(other, suffix))).toEqual([])
     }
   )
 

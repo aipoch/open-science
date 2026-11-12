@@ -4,10 +4,11 @@ import {
   cp,
   link,
   mkdir,
-  mkdtemp,
+  mkdtemp as createTemporaryDirectory,
   open as openFile,
   readdir,
   readFile,
+  realpath,
   rename as renameFile,
   rm,
   rmdir,
@@ -22,6 +23,10 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 let cleanupRoot: string | undefined
+
+// Keep ordinary fixtures physical on hosts where the OS temp directory has linked ancestors.
+const mkdtemp = async (prefix: string): Promise<string> =>
+  realpath(await createTemporaryDirectory(prefix))
 
 // NTFS refuses to rename a directory while a descendant file handle is still open, so parent-swap
 // cases that depend on that TOCTOU stay POSIX-only. Windows still fail-closes at the OS rename.
@@ -1242,12 +1247,12 @@ describe('NodeVersionFileOperator', () => {
       checksum: createHash('sha256').update(content).digest('hex')
     }
     await expect(operator.openImmutable('content.txt', integrity)).rejects.toMatchObject({
-      code: 'INTEGRITY_FAILED'
+      code: 'STORAGE_UNAVAILABLE'
     })
     await mkdir(physical)
     await writeFile(join(physical, 'content.txt'), content)
     await expect(operator.openImmutable('content.txt', integrity)).rejects.toMatchObject({
-      code: 'INTEGRITY_FAILED'
+      code: 'STORAGE_UNAVAILABLE'
     })
     const reconnected = new NodeVersionFileOperator({ storageRoot: alias })
     const lease = await reconnected.openImmutable('content.txt', integrity)

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { constants, lstatSync, realpathSync, type BigIntStats, type Dirent } from 'node:fs'
+import { constants, type BigIntStats, type Dirent } from 'node:fs'
 import {
   link,
   lstat,
@@ -19,6 +19,11 @@ import {
   isSafeManagedFileBasename,
   type ManagedFileSource
 } from '../../shared/managed-file-versions'
+import {
+  bindStorageRoot,
+  StorageRootChangedError,
+  type StorageRootBinding
+} from '../storage/root-binding'
 
 type VersionFileScope = {
   source: ManagedFileSource
@@ -337,32 +342,14 @@ const errorChainHasCode = (error: unknown, expectedCode: string): boolean => {
 
 class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecovery {
   private readonly fileSystem: VersionFileSystem
-  private readonly rootAlias?: {
-    path: string
-    identity: Pick<BigIntStats, 'dev' | 'ino' | 'birthtimeNs'>
-  }
+  private readonly rootBinding: StorageRootBinding
 
   constructor(private readonly options: NodeVersionFileOperatorOptions) {
     if (!options.storageRoot) throw new Error('Version file storage root is required.')
-    // The configured root is the trust boundary, not a child storage reference. Bind an existing
-    // directory alias once; later retargeting must not redirect immutable reads or publications.
-    // Keep the caller's logical path untouched (settings and migration receipts retain it).
-    try {
-      if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
-        // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
-        const storageRoot = realpathSync.native(options.storageRoot)
-        this.rootAlias = {
-          path: options.storageRoot,
-          identity: lstatSync(storageRoot, { bigint: true })
-        }
-        this.options = { ...options, storageRoot }
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
-      // A root can disappear after startup validation. Keep composition available, but leave
-      // the alias untrusted: operation-time checks reject it until this owner is reconstructed.
-    }
+    this.rootBinding = bindStorageRoot(options.storageRoot)
+    // The physical path is fixed before any operation computes paths or serialization keys.
+    // Keep caller options untouched: settings and migration receipts retain their logical path.
+    this.options = { ...options, storageRoot: this.rootBinding.path }
     this.fileSystem = {
       link: options.fileSystem?.link ?? link,
       lstat: options.fileSystem?.lstat ?? lstat,
@@ -1335,9 +1322,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   private async prepareStorageParent(storageRef: string): Promise<StorageParentSnapshot> {
-    if (!this.rootAlias) {
-      await this.fileSystem.mkdir(this.options.storageRoot, { recursive: true })
-    }
+    await this.verifyStorageRoot(true)
     await this.verifyStorageRoot()
     const parentSegments = storageRef.split('/').slice(0, -1)
     let currentPath = resolve(this.options.storageRoot)
@@ -1442,27 +1427,19 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     await this.assertRealParentInsideStorageRoot(dirname(this.resolveStorageRef(storageRef)))
   }
 
-  private async verifyStorageRoot(): Promise<void> {
-    const rootStats = await this.fileSystem.lstat(this.options.storageRoot, { bigint: true })
-    if (
-      this.rootAlias &&
-      ((await this.fileSystem.realpath(this.rootAlias.path)) !== this.options.storageRoot ||
-        rootStats.dev !== this.rootAlias.identity.dev ||
-        rootStats.ino !== this.rootAlias.identity.ino ||
-        rootStats.birthtimeNs !== this.rootAlias.identity.birthtimeNs)
-    ) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version storage root alias changed after initialization.'
-      )
+  private async verifyStorageRoot(prepare = false): Promise<void> {
+    try {
+      if (prepare) {
+        await this.rootBinding.prepare((path) => this.fileSystem.mkdir(path))
+      } else {
+        await this.rootBinding.verify()
+      }
+    } catch (error) {
+      if (!(error instanceof StorageRootChangedError)) throw error
+      throw new VersionFileOperatorError('INTEGRITY_FAILED', error.message, undefined, {
+        cause: error
+      })
     }
-    if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
-      throw new VersionFileOperatorError(
-        'INTEGRITY_FAILED',
-        'Immutable version storage root is not a trusted directory.'
-      )
-    }
-    await this.fileSystem.realpath(this.options.storageRoot)
   }
 
   private async assertRealParentInsideStorageRoot(parentPath: string): Promise<string> {

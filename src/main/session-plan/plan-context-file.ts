@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { constants, lstatSync, realpathSync, type BigIntStats } from 'node:fs'
-import { chmod, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { chmod, lstat, mkdir, open, rename, rm } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
 import type { ActivePlanProjection, PlanLifecycle } from '../../shared/session-plan/contract'
 import { getNotebookInputRoot } from '../notebook/input-staging'
+import { bindStorageRoot, type StorageRootBinding } from '../storage/root-binding'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { planContextFilePlatformStrategy } from './plan-context-file-windows-strategy'
@@ -112,30 +113,11 @@ const tombstone: PlanContextFile = { schemaVersion: 1, active: false }
 
 export class PlanContextFileStore {
   private readonly lanes = new Map<string, Promise<void>>()
-  private readonly rootAlias?: {
-    path: string
-    identity: Pick<BigIntStats, 'dev' | 'ino' | 'birthtimeNs'>
-  }
+  private readonly rootBinding: StorageRootBinding
 
   constructor(private readonly options: PlanContextFileStoreOptions) {
-    // Match immutable file storage: accept the configured directory alias at construction,
-    // then keep all descendant and replacement checks anchored to its original physical root.
-    try {
-      if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
-        // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
-        const storageRoot = realpathSync.native(options.storageRoot)
-        this.rootAlias = {
-          path: options.storageRoot,
-          identity: lstatSync(storageRoot, { bigint: true })
-        }
-        this.options = { ...options, storageRoot }
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
-      // A root can disappear after startup validation. Keep composition available, but leave
-      // the alias untrusted: operation-time checks reject it until this owner is reconstructed.
-    }
+    this.rootBinding = bindStorageRoot(options.storageRoot)
+    this.options = { ...options, storageRoot: this.rootBinding.path }
   }
 
   async refresh(
@@ -217,19 +199,8 @@ export class PlanContextFileStore {
   }
 
   private async ensureContextDirectory(projectId: string, sessionId: string): Promise<string> {
-    if (this.rootAlias) {
-      const rootStats = await lstat(this.options.storageRoot, { bigint: true })
-      if (
-        (await realpath(this.rootAlias.path)) !== this.options.storageRoot ||
-        rootStats.dev !== this.rootAlias.identity.dev ||
-        rootStats.ino !== this.rootAlias.identity.ino ||
-        rootStats.birthtimeNs !== this.rootAlias.identity.birthtimeNs
-      ) {
-        throw new Error('Session Plan storage root alias changed after initialization.')
-      }
-    }
+    await this.rootBinding.verify()
     const storageRoot = resolve(this.options.storageRoot)
-    await assertDirectory(storageRoot, 'Storage root')
 
     const inputRoot = resolve(getNotebookInputRoot(storageRoot, projectId, sessionId))
     const relativeInputRoot = relative(storageRoot, inputRoot)
