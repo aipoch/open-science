@@ -184,7 +184,8 @@ it.skipIf(process.platform !== 'win32').each([
       }
       const shutdown = await executor.shutdown()
       expect(shutdown).toEqual({ reaped: true })
-      await rm(root, { recursive: true, force: true })
+      // Keep the reaping assertion above; Windows can transiently hold the fixture directory busy.
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }
 )
