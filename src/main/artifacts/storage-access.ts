@@ -16,7 +16,6 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { ArtifactFile } from '../../shared/artifacts'
-import { normalizeArtifactFilename } from './filename-identity'
 import type { FileDurability } from '@aipoch/durable-files'
 import type {
   ArtifactMetadata,
@@ -25,6 +24,7 @@ import type {
 } from './publication-types'
 import {
   ARTIFACTS_DIR,
+  normalizeArtifactFilename,
   CURRENT_RUN_FILE,
   METADATA_DIR,
   PENDING_DIR,

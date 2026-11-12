@@ -10,9 +10,14 @@ import type {
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { runPendingFileTransaction } from './pending-file-transaction'
-import { normalizeArtifactFilename } from './filename-identity'
 import { parseArtifactRunFinalizationMarker } from './run-marker-codec'
-import { METADATA_DIR, PENDING_DIR, RUNS_DIR, SAFE_SEGMENT_PATTERN } from './storage-layout'
+import {
+  METADATA_DIR,
+  PENDING_DIR,
+  RUNS_DIR,
+  SAFE_SEGMENT_PATTERN,
+  normalizeArtifactFilename
+} from './storage-layout'
 import type {
   ArtifactPublicationStorage,
   ArtifactRunFinalizationMarker,

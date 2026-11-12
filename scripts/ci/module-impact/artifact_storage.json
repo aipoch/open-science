@@ -1,6 +1,5 @@
 {
   "ownerPaths": [
-    "src/main/artifacts/filename-identity.ts",
     "src/main/artifacts/repository.filename-alias.test.ts",
     "src/main/artifacts/storage-access.filename.test.ts",
     "src/main/artifacts/compatibility-owner.ts",

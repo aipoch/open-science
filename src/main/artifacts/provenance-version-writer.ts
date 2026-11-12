@@ -11,7 +11,7 @@ import type {
 } from '../../shared/artifact-provenance'
 import type { FileDurability } from '@aipoch/durable-files'
 import { artifactFailureDiagnostic } from './pending-file-transaction'
-import { normalizeArtifactFilename } from './filename-identity'
+import { normalizeArtifactFilename } from './storage-layout'
 import type {
   ArtifactVersionProducerCapture,
   PreparedArtifactVersionPersistence

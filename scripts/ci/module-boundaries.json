@@ -184,7 +184,6 @@
     },
     "artifact_storage": {
       "sources": [
-        "src/main/artifacts/filename-identity.ts",
         "src/main/artifacts/compatibility-owner.ts",
         "src/main/artifacts/pending-file-transaction.ts",
         "src/main/artifacts/publication-owner.ts",
@@ -197,7 +196,6 @@
       ],
       "layer": "repository",
       "sourceLayers": {
-        "src/main/artifacts/filename-identity.ts": "policy",
         "src/main/artifacts/publication-types.ts": "record-contract",
         "src/main/artifacts/run-marker-codec.ts": "record-codec",
         "src/main/artifacts/storage-layout.ts": "record-contract",
@@ -205,8 +203,6 @@
       },
       "consumerModules": ["artifact_provenance"],
       "requiredTests": [
-        "src/main/artifacts/repository.filename-alias.test.ts",
-        "src/main/artifacts/storage-access.filename.test.ts",
         "src/main/artifacts/repository.test.ts",
         "src/main/artifacts/repository.rollback.test.ts",
         "src/main/artifacts/ipc.test.ts",
