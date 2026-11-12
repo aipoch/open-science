@@ -18,6 +18,7 @@ export type PromptErrorContext = {
   // The active model id, when the framework selects it over the protocol (opencode). Named in the hint
   // so the user knows exactly which value to fix.
   model?: string
+  providerName?: string
 }
 
 // The innermost provider detail pulled from a wrapped error message.
@@ -427,12 +428,15 @@ export const collectPromptFailureFacts = (
                   : undefined) ??
                 codexKind ??
                 (origin === 'provider' || wrappedResponse ? undefined : top.code))
+  const provider =
+    (responseMessage && context.providerName) ||
+    (typeof data.provider === 'string' ? data.provider : undefined)
   return {
     origin,
     ...(responseMessage ? { responseMessage } : {}),
     ...(status === undefined ? {} : { status }),
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
-    ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
+    ...(provider ? { provider } : {}),
     ...(context.model ? { model: context.model } : {}),
     ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
     text: responseMessage ? redactSensitiveText(text) : text

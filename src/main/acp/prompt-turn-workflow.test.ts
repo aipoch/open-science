@@ -99,9 +99,10 @@ const skillHandle = (kind: 'continue' | 'reload' = 'continue'): TurnSkillHandle 
 
 const backend: AcpBackendGenerationView = {
   framework: opencodeFramework,
-  session: { model: 'test-model', modelRequired: false },
+  providerName: 'Example Provider',
+  session: { model: 'transport/test-model', modelRequired: false },
   prompt: { systemPromptAppends: [] },
-  context: { supportsImageInput: false },
+  context: { model: 'test-model', supportsImageInput: false },
   adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
 }
 
@@ -665,7 +666,8 @@ describe('AcpPromptTurnWorkflow', () => {
       context: harness.context,
       prepared: harness.prepared,
       skill: harness.skill,
-      model: 'test-model'
+      model: 'test-model',
+      providerName: 'Example Provider'
     })
     expect(outcome).toMatchObject({
       kind: 'stopped',

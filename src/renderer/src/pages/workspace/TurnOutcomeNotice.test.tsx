@@ -78,7 +78,7 @@ describe('turn outcome notice action ownership', () => {
       failure: {
         category: 'service',
         responseMessage: 'Example service is unavailable',
-        diagnostics: { status: 503 }
+        diagnostics: { status: 503, provider: 'Example Provider', model: 'example-model' }
       }
     })
     expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
@@ -86,6 +86,8 @@ describe('turn outcome notice action ownership', () => {
       'Example service is unavailable'
     )
     expect(container.textContent).toContain('status: 503')
+    expect(container.textContent).toContain('provider: Example Provider')
+    expect(container.textContent).toContain('model: example-model')
     expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
     expect(container.textContent).not.toContain('Report this error')
   })

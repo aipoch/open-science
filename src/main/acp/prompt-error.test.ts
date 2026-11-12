@@ -376,12 +376,19 @@ describe('classified failure facts across agent execution paths', () => {
     ['{"detail":["busy"]}', '{"detail":["busy"]}']
   ])('preserves the ACP response body and extracts available message text: %s', (body, message) => {
     const failure = classifyFailure(
-      collectPromptFailureFacts(RequestError.internalError(undefined, body))
+      collectPromptFailureFacts(RequestError.internalError(undefined, body), {
+        providerName: 'Example Provider',
+        model: 'example-model'
+      })
     )
     expect(failure).toEqual({
       category: 'service',
       responseMessage: message,
-      diagnostics: { raw: 'Internal error: ' + body }
+      diagnostics: {
+        provider: 'Example Provider',
+        model: 'example-model',
+        raw: 'Internal error: ' + body
+      }
     })
   })
   it('keeps an opaque protocol error internal even when its prose mentions a status', () => {

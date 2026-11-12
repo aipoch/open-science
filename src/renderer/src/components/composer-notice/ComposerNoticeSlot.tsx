@@ -106,7 +106,10 @@ const ComposerFailureNoticeSlot = ({
   const diagnosticText = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
-      value !== undefined && (current.failure.responseMessage ? key === 'status' : key !== 'raw')
+      value !== undefined &&
+      (current.failure.responseMessage
+        ? ['status', 'provider', 'model'].includes(key)
+        : key !== 'raw')
   )
   const labels: Record<NoticeActionId, string> = {
     'export-diagnostics': t('Export diagnostics…'),
