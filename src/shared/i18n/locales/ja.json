@@ -192,6 +192,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "The model returned no film content.": "モデルから短編動画の内容が返されませんでした。",
+    "The model reached a generation limit before completing this step.": "このステップの完了前にモデルの生成上限に達しました。",
     "Connect {{provider}}": "{{provider}} に接続",
     "Connect the account before adding this configuration.": "この設定を追加する前に、アカウントを接続してください。",
     "Details and possible scenarios": "詳細と考えられる利用状況",
@@ -7801,7 +7803,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "生成するにはナレーション用リソース（{{size}} MiB）をインストールしてください。今後の解説でも再利用されます。",
     "Install and generate": "インストールして生成",
     "English narration": "英語ナレーション",
-    "You can close this window. Generation continues in the background.": "このウィンドウを閉じても、生成はバックグラウンドで続行されます。",
     "View generation progress": "生成の進捗を表示",
     "Generate again?": "再生成しますか？",
     "Start generation": "生成を開始",
@@ -7812,6 +7813,8 @@
     "Generate research film": "研究ショート動画を生成",
     "View research film": "研究ショート動画を表示",
     "Play research film": "研究ショート動画を再生",
+    "Continue generation": "生成を続ける",
+    "Generating animations…": "アニメーションを生成中…",
     "Writing research film…": "研究ショート動画を構成中…",
     "Create a short film from this conversation.": "既存の会話から研究ショート動画を作成します。",
     "Generating a new film may take several minutes. Continue?": "新しい動画の生成には数分かかる場合があります。続行しますか？",

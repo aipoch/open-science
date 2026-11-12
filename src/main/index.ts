@@ -456,9 +456,18 @@ async function startDesktop(): Promise<void> {
     (listener) => app.on('child-process-gone', listener),
     diagnostics.log
   )
-  process.on('uncaughtExceptionMonitor', (error, origin) =>
-    writeFatalLogSync('main', origin, diagnosticErrorFields(error))
-  )
+  // Electron's default uncaughtException handler keeps the app alive. Claim the first failure
+  // before logging so a second exception during exit cannot append another fatal record.
+  let exitingAfterFatalError = false
+  process.on('uncaughtException', (error, origin) => {
+    if (exitingAfterFatalError) return
+    exitingAfterFatalError = true
+    try {
+      writeFatalLogSync('main', origin ?? 'uncaughtException', diagnosticErrorFields(error))
+    } finally {
+      app.exit(1)
+    }
+  })
   registerRendererDiagnosticsIpc(
     ipcMain,
     createRendererFailureReporter({ log: createLogger('renderer') })

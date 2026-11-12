@@ -684,6 +684,18 @@ export function trimTableCaptionCrop({
   const footerFrame =
     frame ??
     proveCaptionedTableRuleFrame(table, caption, rules, pageItems, scale, true, rulePaintBounds)
+  const closingFrame =
+    footerFrame ??
+    proveCaptionedTableRuleFrame(
+      table,
+      caption,
+      rules,
+      pageItems,
+      scale,
+      true,
+      rulePaintBounds,
+      true
+    )
   const original = [...cropRect]
   // A padded detector crop may start inside an above-table caption. A thick
   // opening's center can also overlap the header's em box; use its measured
@@ -915,23 +927,80 @@ export function trimTableCaptionCrop({
         openingPaint?.[1] ?? Infinity
       )
   }
-  if (footerFrame) {
+  const measuredRecordOpening = (() => {
+    if (footerFrame || !closingFrame) return
+    const paint = nativeFrameRulePaint(
+      closingFrame.opening,
+      closingFrame,
+      pageItems,
+      rulePaintBounds,
+      original
+    )
+    if (
+      !paint ||
+      original[1] <= paint[1] ||
+      Math.abs(original[1] - closingFrame.opening[1]) >= closingFrame.height * 0.25
+    )
+      return
+    // The record fallback may borrow an existing complete painted opening,
+    // never a center-line margin or side evidence. Caption owners are exempt
+    // from the older rule check, so independently exclude every unowned whole
+    // font from the newly included top strip and its existing AA protection.
+    const stripTop = paint[1] - 0.5,
+      stripBottom = Math.max(original[1], cropRect[1]) + 0.5
+    for (const item of pageItems) {
+      if (!item.text.trim() || closingFrame.source.has(item)) continue
+      const matches = pageFontItems.filter(
+        (font) =>
+          font.text === item.text &&
+          font.rect?.length === 4 &&
+          font.rect.every((v, n) => v === item.rect[n]) &&
+          font.baseline === item.baseline &&
+          font.height === item.height
+      )
+      if (matches.length !== 1) return
+      const font = matches[0]
+      if (
+        !font.horizontal ||
+        !font.rect.every(Number.isFinite) ||
+        !Number.isFinite(font.baseline) ||
+        !Number.isFinite(font.height) ||
+        font.height <= 0 ||
+        font.baseline !== font.rect[3] ||
+        Math.abs(font.rect[3] - font.rect[1] - font.height) > 1e-7 ||
+        !Number.isFinite(font.fontAscent) ||
+        font.fontAscent <= 0 ||
+        !Number.isFinite(font.fontDescent) ||
+        font.fontDescent < -1 ||
+        font.fontDescent > 0
+      )
+        return
+      const top = Math.min(font.rect[1], font.baseline - font.fontAscent * font.height),
+        bottom = Math.max(font.rect[3], font.baseline - font.fontDescent * font.height)
+      if (top < stripBottom && bottom > stripTop) return
+    }
+    return paint[1]
+  })()
+  if (measuredRecordOpening !== undefined)
+    cropRect[1] = Math.min(cropRect[1], measuredRecordOpening)
+  if (closingFrame) {
     const closingPaint = nativeFrameRulePaint(
-      footerFrame.closing,
-      footerFrame,
+      closingFrame.closing,
+      closingFrame,
       pageItems,
       rulePaintBounds,
       cropRect
     )
-    if (original[3] >= footerFrame.closing[1] - footerFrame.height * 0.25)
+    if (original[3] >= closingFrame.closing[1] - closingFrame.height * 0.25)
       cropRect[3] = Math.max(
         cropRect[3],
-        footerFrame.closing[1] + 0.5,
+        closingFrame.closing[1] + 0.5,
         closingPaint?.[3] ?? -Infinity
       )
     // Both exact painted rules must witness the same physical side endpoints.
     // Check the whole added strip, including crop padding outside the frame.
     if (
+      footerFrame &&
       openingPaint &&
       closingPaint &&
       Math.abs(footerFrame.opening[0] - footerFrame.closing[0]) <= 0.01 &&
@@ -1360,7 +1429,8 @@ function proveCaptionedTableRuleFrame(
   items,
   scale,
   strictCompleteRecords = false,
-  rulePaintBounds
+  rulePaintBounds,
+  aboveClosingOnly = false
 ) {
   if (
     !items.length ||
@@ -1439,7 +1509,8 @@ function proveCaptionedTableRuleFrame(
   const grid = table.grid,
     width = grid?.[0]?.length ?? 0,
     scalar = (s) => /^[<>≤≥−–+-]?\d[\d.,%]*$/.test(s.replace(/\s/g, ''))
-  let leafHeader = 0
+  let leafHeader = 0,
+    allCompleteRecords = false
   if (strictCompleteRecords) {
     leafHeader = grid?.findIndex((r) => r.length === width && r.every(Boolean))
     const letters = (s) => [...s.replace(/\s/gu, '')].sort().join('')
@@ -1542,6 +1613,9 @@ function proveCaptionedTableRuleFrame(
         ).length < 2
     )
       return
+    allCompleteRecords =
+      aboveClosingOnly &&
+      grid.every((row, n) => row.length === width && row.every(Boolean) && completeRecord(n))
   } else {
     if (
       width < 3 ||
@@ -1633,7 +1707,43 @@ function proveCaptionedTableRuleFrame(
       captionRect[1] - closing[1] < height * 4 &&
       parts.every((i) => Number.isFinite(i.baseline) && i.baseline > closing[1] + height * 0.5)
   if (!above && !below) return
-  if (strictCompleteRecords && !below && !doubleOpening) return
+  if (strictCompleteRecords && !below && !doubleOpening) {
+    // A corrected above caption must not remove the existing closing-rule
+    // protection from a complete descriptive table. This separate proof is
+    // closing-only: it never lends opening or side recovery. Exact original
+    // segments, rather than nearby joined lines, must close all three rails.
+    const edges = [opening, dividers[0], closing]
+    if (
+      !aboveClosingOnly ||
+      !above ||
+      leafHeader !== 0 ||
+      !allCompleteRecords ||
+      cells.length !== width * grid.length ||
+      table.clipped?.length ||
+      horizontal.filter((r) => r[1] >= opening[1] && r[1] <= closing[1]).length !== 3 ||
+      edges.some((r) => r[0] !== opening[0] || r[2] !== opening[2]) ||
+      rules.some(
+        (r) =>
+          r[0] < opening[2] &&
+          r[2] > opening[0] &&
+          r[1] <= closing[1] &&
+          r[3] >= opening[1] &&
+          (r[0] === r[2] || !edges.some((edge) => r[1] === edge[1] && r[3] === edge[3]))
+      ) ||
+      !edges.every((edge) => {
+        const segments = rules
+          .filter((r) => r[1] === edge[1] && r[3] === edge[3] && r[0] < edge[2] && r[2] > edge[0])
+          .sort((a, b) => a[0] - b[0])
+        return (
+          segments.length > 0 &&
+          segments[0][0] === edge[0] &&
+          segments.at(-1)[2] === edge[2] &&
+          segments.every((r, n) => r[2] > r[0] && (!n || r[0] === segments[n - 1][2]))
+        )
+      })
+    )
+      return
+  }
   const unique = new Set(source),
     captionSource = new Set(parts)
   const frame = [opening[0], opening[1], opening[2], closing[1]]

@@ -192,6 +192,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。"
   },
   "renderer": {
+    "The model returned no film content.": "模型未返回短片内容。",
+    "The model reached a generation limit before completing this step.": "模型在完成这一步之前达到了生成上限。",
     "Connect {{provider}}": "连接 {{provider}}",
     "Connect the account before adding this configuration.": "添加此配置前，请先连接账号。",
     "Details and possible scenarios": "详情与可能场景",
@@ -7801,7 +7803,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "安装旁白资源（{{size}} MiB）后即可生成，后续讲解将重复使用这些资源。",
     "Install and generate": "安装并生成",
     "English narration": "英语旁白",
-    "You can close this window. Generation continues in the background.": "可以关闭此窗口，生成将在后台继续。",
     "View generation progress": "查看生成进度",
     "Generate again?": "重新生成？",
     "Start generation": "开始生成",
@@ -7812,6 +7813,8 @@
     "Generate research film": "生成研究短片",
     "View research film": "查看研究短片",
     "Play research film": "播放研究短片",
+    "Continue generation": "继续生成",
+    "Generating animations…": "生成动画…",
     "Writing research film…": "正在编写研究短片…",
     "Create a short film from this conversation.": "根据已有会话生成研究短片。",
     "Generating a new film may take several minutes. Continue?": "生成新短片可能需要几分钟，是否继续？",

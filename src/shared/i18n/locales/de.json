@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten."
   },
   "renderer": {
+    "The model returned no film content.": "Das Modell hat keinen Filminhalt zurückgegeben.",
+    "The model reached a generation limit before completing this step.": "Das Modell hat vor Abschluss dieses Schritts sein Generierungslimit erreicht.",
     "Connect {{provider}}": "{{provider}} verbinden",
     "Connect the account before adding this configuration.": "Verbinden Sie Ihr Konto, bevor Sie diese Konfiguration hinzufügen.",
     "Details and possible scenarios": "Details und mögliche Nutzungsszenarien",
@@ -7965,7 +7967,6 @@
     "Install narration resources ({{size}} MiB) to generate. They will be reused for future explanations.": "Installieren Sie die Sprachressourcen ({{size}} MiB) zum Erstellen. Sie werden für weitere Erklärungen wiederverwendet.",
     "Install and generate": "Installieren und erstellen",
     "English narration": "Englische Vertonung",
-    "You can close this window. Generation continues in the background.": "Sie können dieses Fenster schließen. Die Erstellung läuft im Hintergrund weiter.",
     "View generation progress": "Erstellungsfortschritt anzeigen",
     "Generate again?": "Erneut erstellen?",
     "Start generation": "Erstellung starten",
@@ -7976,6 +7977,8 @@
     "Generate research film": "Forschungsfilm erstellen",
     "View research film": "Forschungsfilm ansehen",
     "Play research film": "Forschungsfilm abspielen",
+    "Continue generation": "Generierung fortsetzen",
+    "Generating animations…": "Animationen werden generiert…",
     "Writing research film…": "Forschungsfilm wird konzipiert…",
     "Create a short film from this conversation.": "Einen Kurzfilm aus dieser Konversation erstellen.",
     "Generating a new film may take several minutes. Continue?": "Die Erstellung eines neuen Films kann einige Minuten dauern. Fortfahren?",

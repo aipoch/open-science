@@ -14,6 +14,7 @@ const { tableTextToken } = await import(
 )
 const {
   recoverPriorCohortContinuation,
+  recoverPrintedTableContinuation,
   recoverNativeCountContinuationCaption,
   isNativeAuthorAffiliationRegion,
   recoverAdjacentStatisticalSections,
@@ -65,6 +66,248 @@ it('recovers a source-proved intermediate cohort continuation without swallowing
   expect(result.grid.every((r: string[]) => r.length === 4)).toBe(true)
   expect(result.unassigned).toEqual([])
   expect(hasTableEvidence(result, undefined, f.tokens)).toBe(true)
+})
+
+const printedContinuation = (): ReturnType<typeof JSON.parse> => {
+  const caption = {
+      page: 1,
+      lines: ['Table 1: Native records'],
+      rect: [60, 140, 280, 152]
+    },
+    previousPage = {
+      pageNumber: 1,
+      width: 400,
+      height: 600,
+      lines: [{ text: 'Continued on next page', x: 320, y: 430, width: 150, height: 10 }]
+    },
+    previousTable = {
+      page: 1,
+      caption: { text: caption.lines[0] },
+      region: { page: 1, x: 0.1, y: 0.25, width: 0.8, height: 0.3 },
+      grid: [
+        ['Term', 'Meaning', 'Example'],
+        ['[12]', 'Value', 'Usage'],
+        ['[14]', 'Value', 'Usage']
+      ],
+      cells: [
+        { row: 0, column: 0, regions: [{ page: 1, x: 0.17, y: 0.26, width: 0.05, height: 0.02 }] },
+        { row: 0, column: 1, regions: [{ page: 1, x: 0.3, y: 0.26, width: 0.17, height: 0.02 }] },
+        { row: 0, column: 2, regions: [{ page: 1, x: 0.58, y: 0.26, width: 0.2, height: 0.02 }] }
+      ]
+    },
+    captions = [caption],
+    items = [
+      { text: 'Term', height: 12, rect: [102, 90, 126, 102], horizontal: true },
+      { text: 'Meaning', height: 12, rect: [180, 90, 226, 102], horizontal: true },
+      { text: 'Example', height: 12, rect: [348, 90, 396, 102], horizontal: true },
+      ...Array.from({ length: 6 }, (_, index) => {
+        const y = 145 + index * 48
+        return [
+          { text: `[${15 + index}]`, height: 12, rect: [102, y, 126, y + 12], horizontal: true },
+          { text: 'MeaningA', height: 12, rect: [180, y, 230, y + 12], horizontal: true },
+          { text: 'ExampleA', height: 12, rect: [348, y, 398, y + 12], horizontal: true }
+        ]
+      }).flat()
+    ],
+    rules = [
+      [60, 80, 540, 80],
+      [60, 120, 540, 120],
+      [60, 500, 540, 500]
+    ]
+  return { caption, captions, previousPage, previousTable, items, rules }
+}
+
+it('recovers a printed continuation only after matching the prior caption, repeated header, record sequence, and full frame', () => {
+  const f = printedContinuation(),
+    result = recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [
+      f.previousTable
+    ]),
+    refined = refineTable(result.table, f.items, [], [], f.rules)
+  expect(result?.caption).toBe(f.caption)
+  expect(result?.table.id).toBe('page-2-table-1')
+  expect(
+    result?.table.structure.objects.filter(
+      (object: { label: string }) => object.label === 'table row'
+    )
+  ).toHaveLength(7)
+  expect(
+    result?.table.structure.objects.filter(
+      (object: { label: string }) => object.label === 'table column'
+    )
+  ).toHaveLength(3)
+  expect(result?.table.cropRect).toEqual([60, 80, 540, 500])
+  expect(refined.grid.map((row: string[]) => row[0])).toEqual([
+    'Term',
+    '[15]',
+    '[16]',
+    '[17]',
+    '[18]',
+    '[19]',
+    '[20]'
+  ])
+  expect(refined.grid.every((row: string[]) => row.length === 3)).toBe(true)
+  expect(
+    refined.cells.flatMap((cell: { sourceItems: unknown[] }) => cell.sourceItems)
+  ).toHaveLength(f.items.length)
+  expect(refined.unassigned).toEqual([])
+  expect(refined.clipped).toEqual([])
+  expect(refined.issues).toEqual([])
+})
+
+it('replaces one tightly matching detector crop after the native continuation proof closes', () => {
+  const f = printedContinuation(),
+    detected = { id: 'page-2-table-1', cropRect: [58, 68, 542, 505] },
+    result = recoverPrintedTableContinuation(
+      f.items,
+      f.rules,
+      2,
+      f.previousPage,
+      f.captions,
+      [f.previousTable],
+      [detected]
+    )
+  expect(result?.replacesDetectedId).toBe(detected.id)
+  expect(result?.table.id).toBe(detected.id)
+  expect(result?.table.cropRect).toEqual([60, 80, 540, 500])
+})
+
+it('chooses an unused numeric table id when the continuation has no matching detector', () => {
+  const f = printedContinuation(),
+    result = recoverPrintedTableContinuation(
+      f.items,
+      f.rules,
+      2,
+      f.previousPage,
+      f.captions,
+      [f.previousTable],
+      [{ id: 'page-2-table-1', cropRect: [550, 550, 560, 560] }]
+    )
+  expect(result?.replacesDetectedId).toBeUndefined()
+  expect(result?.table.id).toBe('page-2-table-2')
+})
+
+it.each([
+  ['broad', { id: 'page-2-table-1', cropRect: [40, 60, 560, 520] }],
+  ['partial', { id: 'page-2-table-1', cropRect: [61, 68, 542, 505] }],
+  ['foreign edge overlap', { id: 'page-2-table-1', cropRect: [500, 400, 550, 520] }],
+  [
+    'multiple intersecting candidates',
+    [
+      { id: 'page-2-table-1', cropRect: [58, 68, 542, 505] },
+      { id: 'page-2-table-2', cropRect: [100, 100, 200, 200] }
+    ]
+  ],
+  ['missing replacement identity', { cropRect: [58, 68, 542, 505] }]
+])('declines %s detector candidates for a printed continuation', (_label, candidates) => {
+  const f = printedContinuation()
+  expect(
+    recoverPrintedTableContinuation(
+      f.items,
+      f.rules,
+      2,
+      f.previousPage,
+      f.captions,
+      [f.previousTable],
+      Array.isArray(candidates) ? candidates : [candidates]
+    )
+  ).toBeUndefined()
+})
+
+it('accepts extractor internal endpoint regions and source rectangles for a prior table', () => {
+  const f = printedContinuation(),
+    prior = {
+      ...f.previousTable,
+      region: [f.previousTable.region.x, f.previousTable.region.y, 0.9, 0.55],
+      sourceViewport: { width: 600, height: 900 },
+      cells: f.previousTable.cells.map((cell) => ({
+        row: cell.row,
+        column: cell.column,
+        sourceRects: cell.regions.map((region) => [
+          region.x * 600,
+          region.y * 900,
+          (region.x + region.width) * 600,
+          (region.y + region.height) * 900
+        ])
+      }))
+    },
+    result = recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [
+      prior
+    ])
+  expect(result?.caption).toBe(f.caption)
+  expect(result?.table.cropRect).toEqual([60, 80, 540, 500])
+})
+
+it('declines continuation grids that exceed the existing cell budget', () => {
+  const f = printedContinuation(),
+    prior = {
+      ...f.previousTable,
+      grid: Array.from({ length: 17 }, () => Array.from({ length: 128 }, () => 'value'))
+    }
+  expect(
+    recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [prior])
+  ).toBeUndefined()
+})
+
+it('matches the existing caption serializer across a printed trailing-hyphen line wrap', () => {
+  const f = printedContinuation()
+  f.captions[0].lines = ['Table 1: Native charac-', 'teristics']
+  f.previousTable.caption.text = 'Table 1: Native charac-teristics'
+  expect(
+    recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [
+      f.previousTable
+    ])?.caption
+  ).toBe(f.caption)
+})
+
+it('preserves ordinary caption spacing and declines mismatched prior captions', () => {
+  const f = printedContinuation()
+  f.captions[0].lines = ['Table 1: Native', 'records']
+  f.previousTable.caption.text = 'Table 1: Nativerecords'
+  expect(
+    recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [
+      f.previousTable
+    ])
+  ).toBeUndefined()
+
+  f.previousTable.caption.text = 'Table 1: Different records'
+  expect(
+    recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [
+      f.previousTable
+    ])
+  ).toBeUndefined()
+})
+
+it.each([
+  'missing continuation footer',
+  'nonconsecutive records',
+  'incomplete frame',
+  'foreign current caption',
+  'following page is a figure'
+])('declines a printed continuation when %s', (variant) => {
+  const f = printedContinuation()
+  if (variant === 'missing continuation footer') f.previousPage.lines = []
+  else if (variant === 'nonconsecutive records')
+    f.items.find((item) => item.text === '[18]')!.text = '[19]'
+  else if (variant === 'incomplete frame') f.rules.pop()
+  else if (variant === 'foreign current caption')
+    f.captions.push({ page: 2, lines: ['Figure 1'], rect: [60, 130, 120, 145] })
+  else
+    expect(
+      recoverPrintedTableContinuation(
+        f.items,
+        f.rules,
+        3,
+        { ...f.previousPage, pageNumber: 2 },
+        f.captions,
+        [f.previousTable]
+      )
+    ).toBeUndefined()
+  if (variant !== 'following page is a figure')
+    expect(
+      recoverPrintedTableContinuation(f.items, f.rules, 2, f.previousPage, f.captions, [
+        f.previousTable
+      ])
+    ).toBeUndefined()
 })
 const statistics = (): ReturnType<typeof readPdfFixture> =>
   load('overlapping-statistical-sections-with-changing-leaf-count')

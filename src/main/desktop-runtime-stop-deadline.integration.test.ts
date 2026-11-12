@@ -60,13 +60,13 @@ it.each(['unanswered', 'closed'] as const)(
     })
     cleanup.push(client.close)
     const start = Date.now()
-    const quit = client.quit()
+    const quit = mode === 'closed' ? client.quit({ deadlineAt: start + 750 }) : client.quit()
     expect(client.quit()).toBe(quit)
     await expect(quit).rejects.toMatchObject({
       code: 'runtime-stop-timeout',
       evidence: { processExited: false, lockHeld: false }
     })
-    expect(Date.now() - start).toBeLessThan(16_000)
+    expect(Date.now() - start).toBeLessThan(mode === 'closed' ? 2_500 : 16_000)
     expect(shutdown).toHaveBeenCalledOnce()
     expect(disconnected).toHaveBeenCalledOnce()
     client.close()

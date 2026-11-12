@@ -1,3 +1,4 @@
+import { compilePowerShellCommand } from './powershell-native-capture'
 import { ExecutionDeadline } from './execution-deadline'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -178,7 +179,10 @@ type ShellInvocation = {
 
 // PowerShell receives a UTF-16LE wrapper around a separately encoded UTF-8 script block, isolating
 // trailing syntax from UTF-8 setup and the $?/$LASTEXITCODE normalization.
-const encodePowerShellCommand = (command: string): string => {
+const powerShellCommandArgs = (
+  command: string,
+  binding: Extract<ShellRuntimeBinding, { kind: 'powershell' }>
+): string[] => {
   const encodedCommand = Buffer.from(command, 'utf8').toString('base64')
   const script = [
     'try {',
@@ -200,7 +204,7 @@ const encodePowerShellCommand = (command: string): string => {
     "$ProgressPreference = 'SilentlyContinue'",
     "$ErrorActionPreference = 'Stop'",
     '$openScienceCommandText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($openScienceCommandBase64))',
-    '$openScienceCommand = [ScriptBlock]::Create($openScienceCommandText)',
+    `$openScienceCommand = ${compilePowerShellCommand(command, '$openScienceCommandText', binding)}`,
     '& $openScienceCommand',
     '$openScienceSucceeded = $?',
     '$openScienceNativeExitCode = $LASTEXITCODE',
@@ -212,7 +216,18 @@ const encodePowerShellCommand = (command: string): string => {
     'exit 1'
   ].join('\n')
 
-  return Buffer.from(script, 'utf16le').toString('base64')
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  // Use UTF-8 for a large 5.1 launch so adding the capture adapter does not consume the
+  // Windows command-line budget of a previously valid cell. The argument contains only
+  // a fixed decoder and Base64 data, independent of user quoting or trailing syntax.
+  if (binding.version === '5.1' && command.includes('2>') && encoded.length >= 30_000) {
+    const utf8 = Buffer.from(script, 'utf8').toString('base64')
+    return [
+      '-Command',
+      `. ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${utf8}'))))`
+    ]
+  }
+  return ['-EncodedCommand', encoded]
 }
 
 // Resolve the command interpreter explicitly instead of using shell:true. Node's Windows default is
@@ -232,8 +247,7 @@ const resolveShellInvocation = (
           '-NoLogo',
           '-NoProfile',
           '-NonInteractive',
-          '-EncodedCommand',
-          encodePowerShellCommand(command)
+          ...powerShellCommandArgs(command, binding)
         ]
       }
     : {

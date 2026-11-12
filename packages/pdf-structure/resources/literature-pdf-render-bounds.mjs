@@ -13,11 +13,27 @@ import { retainNativeRecoveryInputs } from './literature-pdf-native-figure-recov
 import { collectFilledGlyphEvidence } from './literature-pdf-filled-glyph-evidence.mjs'
 import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import {
+  captureNativeMesh4PixelResources,
+  nativeMesh4PixelResourceData,
+  sealNativeMesh4PixelResources
+} from './literature-pdf-figure-native-mesh-resources.mjs'
 
 const nativeGroupPaintMetadata = new WeakMap()
 const nativeGraphicsBudgetBasis = new WeakMap()
 const nativeRenderPaths = new WeakMap()
 const nativeSnapshotRenderTasks = new WeakMap()
+const nativeMesh4Snapshots = new WeakMap(),
+  nativeMesh4Contexts = new WeakMap()
+
+function inheritNativeMesh4Snapshot(source, target, reserved = 0) {
+  const mesh = nativeMesh4Snapshots.get(source)
+  if (!mesh || !mesh.current()) return
+  const data = nativeMesh4PixelResourceData(mesh.handle, target.operators),
+    allocation = Math.max(mesh.reserved ?? 0, reserved)
+  if (data && nativeSnapshotSize(target, 16 * 1024 * 1024 - data.bytes - allocation) !== undefined)
+    nativeMesh4Snapshots.set(target, { ...mesh, reserved: allocation })
+}
 
 // The extractor reads painted-operation boxes, not debugger dependency boxes.
 // PDF.js propagates each box to every preceding transform, which is quadratic
@@ -440,6 +456,22 @@ export function captureNativeFigureRenderContext(
     )
       snapshot.isolatedRasterScope = isolatedRasterScope
     nativeSnapshotRenderTasks.set(snapshot, new WeakRef(renderTask))
+    const hasMesh = snapshot.operators.fnArray.some(
+        (op, i) => op === OPS.setFillColorN && snapshot.operators.argsArray[i]?.[0] === 'Shading'
+      ),
+      meshBytes = hasMesh ? nativeSnapshotSize(snapshot, 16 * 1024 * 1024) : undefined,
+      meshHandle =
+        meshBytes !== undefined &&
+        nativePaths &&
+        !nativePaths.overflow &&
+        captureNativeMesh4PixelResources(
+          renderTask,
+          snapshot.operators,
+          16 * 1024 * 1024 - meshBytes
+        ),
+      meshCurrent = meshHandle && retainNativeRecoveryInputs([snapshot])
+    if (meshCurrent)
+      nativeMesh4Snapshots.set(snapshot, { handle: meshHandle, current: meshCurrent })
     return snapshot
   } catch {
     return
@@ -494,6 +526,7 @@ export function attachNativeCaptionLaneRaster(snapshot, renderTask, bytes, path)
     const remaining = 16 * 1024 * 1024 - png.byteLength - width * height * 4
     if (!(remaining > 0) || nativeSnapshotSize(result, remaining) === undefined) return
     nativeSnapshotRenderTasks.set(result, new WeakRef(renderTask))
+    inheritNativeMesh4Snapshot(snapshot, result, png.byteLength + width * height * 4)
     return result
   } catch {
     return
@@ -545,7 +578,9 @@ export function matchNativeFigureRenderContext(
       forward.set(old.fontName, current.fontName)
       backward.set(current.fontName, old.fontName)
     }
-    return {
+    const result = {
+      pageNumber,
+      sourceSha256,
       operators: snapshot.operators,
       ...(snapshot.isolatedRasterScope
         ? { isolatedRasterScope: snapshot.isolatedRasterScope }
@@ -584,6 +619,11 @@ export function matchNativeFigureRenderContext(
         }))
       }
     }
+    const mesh = nativeMesh4Snapshots.get(snapshot),
+      keep = mesh && retainNativeRecoveryInputs([result], result.viewport)
+    if (keep && mesh.current() && nativeMesh4PixelResourceData(mesh.handle, snapshot.operators))
+      nativeMesh4Contexts.set(result, { ...mesh, keep, pageNumber, sourceSha256 })
+    return result
   } catch {
     return
   }
@@ -591,6 +631,86 @@ export function matchNativeFigureRenderContext(
 
 // Preserve every earlier evidence allocation, including the caption raster's
 // encoded bytes and temporary decoded pixels. This optional family is last.
+export function bindNativeMesh4RenderContext(target, source) {
+  try {
+    const mesh = nativeMesh4Contexts.get(source),
+      sourceValues = mesh && nativeRecoveryContextValues(source),
+      targetValues = sourceValues && nativeRecoveryContextValues(target)
+    if (
+      !mesh ||
+      !mesh.keep() ||
+      !mesh.current() ||
+      !targetValues ||
+      Reflect.ownKeys(targetValues).length !== Reflect.ownKeys(sourceValues).length ||
+      Reflect.ownKeys(sourceValues).some((key) => targetValues[key] !== sourceValues[key])
+    )
+      return target
+    const keep = retainNativeRecoveryInputs([target], target.viewport)
+    if (keep) nativeMesh4Contexts.set(target, { ...mesh, keep: () => mesh.keep() && keep() })
+  } catch {
+    /* Optional pixel evidence declines. */
+  }
+  return target
+}
+
+function nativeRecoveryContextValues(value) {
+  if (!value || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) return
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  if (
+    Reflect.ownKeys(descriptors).some(
+      (key) => typeof key === 'symbol' || !Object.hasOwn(descriptors[key], 'value')
+    )
+  )
+    return
+  return Object.fromEntries(Object.entries(descriptors).map(([key, d]) => [key, d.value]))
+}
+
+export function nativeMesh4RenderContextData(context) {
+  try {
+    const mesh = nativeMesh4Contexts.get(context)
+    return mesh &&
+      mesh.keep() &&
+      mesh.current() &&
+      context.pageNumber === mesh.pageNumber &&
+      context.sourceSha256 === mesh.sourceSha256
+      ? nativeMesh4PixelResourceData(mesh.handle, context.operators)
+      : undefined
+  } catch {
+    return
+  }
+}
+
+// Seal only an exact completed render previously captured by this observer,
+// before structure's normal cleanup releases its private resource stores.
+export function sealNativeMesh4RenderContext(snapshot, renderTask) {
+  try {
+    const mesh = nativeMesh4Snapshots.get(snapshot)
+    if (
+      !mesh ||
+      nativeSnapshotRenderTasks.get(snapshot)?.deref() !== renderTask ||
+      !mesh.current() ||
+      !nativeMesh4PixelResourceData(mesh.handle, snapshot.operators)
+    )
+      return false
+    const task = renderTask._internalRenderTask,
+      d = Object.getOwnPropertyDescriptors(task),
+      fields = ['running', 'cancelled', 'graphicsReady', 'operatorListIdx', 'operatorList']
+    if (
+      fields.some((k) => !d[k] || !Object.hasOwn(d[k], 'value')) ||
+      d.running.value !== false ||
+      d.cancelled.value !== false ||
+      d.graphicsReady.value !== true ||
+      d.operatorListIdx.value !== snapshot.operators.fnArray.length
+    )
+      return false
+    const last = Object.getOwnPropertyDescriptor(d.operatorList.value, 'lastChunk')
+    if (!last || !Object.hasOwn(last, 'value') || last.value !== true) return false
+    return sealNativeMesh4PixelResources(mesh.handle, renderTask, snapshot.operators)
+  } catch {
+    return false
+  }
+}
+
 export function attachNativeCompositingResources(snapshot, renderTask, encodedCaptionBytes = 0) {
   try {
     if (nativeSnapshotRenderTasks.get(snapshot)?.deref() !== renderTask) return snapshot
@@ -657,6 +777,7 @@ export function attachNativeCompositingResources(snapshot, renderTask, encodedCa
     if (!images.length || nativeSnapshotSize(images, budget) === undefined) return snapshot
     const value = { ...snapshot, compositingImages: images }
     nativeSnapshotRenderTasks.set(value, new WeakRef(renderTask))
+    inheritNativeMesh4Snapshot(snapshot, value, reserved)
     return value
   } catch {
     return snapshot
@@ -1150,6 +1271,7 @@ export function attachNativeDualApiEvidence(snapshot, defaultContent, rawContent
     const result = { ...snapshot, dualApiEvidence: evidence }
     if (nativeSnapshotRenderTasks.has(snapshot))
       nativeSnapshotRenderTasks.set(result, nativeSnapshotRenderTasks.get(snapshot))
+    inheritNativeMesh4Snapshot(snapshot, result)
     return nativeSnapshotSize(result, budget) === undefined ? snapshot : result
   } catch {
     return snapshot

@@ -5490,6 +5490,117 @@ export function nativeCaptionedRasterVectorCompositeGrid(page, caption, captions
 // compact, self-contained strip.  Keep the fallback narrow: every graphic
 // must occupy one band immediately above the caption, the vector side must be
 // substantial, and no table or competing caption may cross the union.
+function separateNativeRasterPair(page, caption, captions, images, paths, tokens, font) {
+  if (images.length !== 2 || paths.length < 12 || page.invalidGraphicsBounds !== 0) return false
+  const valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0,
+    whole = (t) =>
+      t.horizontal &&
+      valid(t.rect) &&
+      t.sourceItem?.pageNumber === page.pageNumber &&
+      Number.isSafeInteger(t.sourceItem.index) &&
+      t.sourceItem.index >= 0 &&
+      t.sourceItem.text === t.text &&
+      !t.sourceSegment &&
+      tokens.filter(
+        (q) =>
+          q.sourceItem?.index === t.sourceItem.index ||
+          q.sourceSegment?.index === t.sourceItem.index
+      ).length === 1,
+    compact = (s) => s.replace(/\s/gu, ''),
+    sourceCaption = (c) => {
+      const parts = tokens.filter((t) => valid(t.rect) && intersection(t.rect, c.rect) > 0)
+      return parts.length &&
+        parts.every(whole) &&
+        compact(parts.map((t) => t.text).join('')) === compact(c.lines.join(''))
+        ? parts
+        : undefined
+    },
+    pair = images.slice().sort((a, b) => a[0] - b[0]),
+    bounds = union(pair)
+  if (
+    !sourceCaption(caption) ||
+    pair[0][2] >= pair[1][0] ||
+    Math.abs(pair[0][1] - pair[1][1]) > font / 8 ||
+    Math.abs(pair[0][3] - pair[1][3]) > font / 8
+  )
+    return false
+  const source = page.graphicsBounds.map((g) => ({
+    ...g,
+    rect: (g.paintedNormalizedRect ?? g.normalizedRect)?.map(
+      (v, n) => v * (n % 2 ? page.height : page.width)
+    )
+  }))
+  if (
+    source.some(
+      (g) => !valid(g.rect) || !Number.isSafeInteger(g.operationIndex) || g.operationIndex < 0
+    ) ||
+    new Set(source.map((g) => g.operationIndex)).size !== source.length
+  )
+    return false
+  const owners = captions.filter((other) => {
+    if (
+      other === caption ||
+      other.page !== page.pageNumber ||
+      !/^(?:Figure|Fig\.?)\s+\d+[.:]/iu.test(other.lines?.[0] ?? '') ||
+      other.rect[1] < bounds[3] ||
+      other.rect[1] - bounds[3] > font * 6 ||
+      other.rect[0] < bounds[0] ||
+      other.rect[2] > bounds[2] ||
+      other.rect[2] - other.rect[0] < (bounds[2] - bounds[0]) / 2 ||
+      intersection([bounds[0], 0, bounds[2], page.height], caption.rect) > 0
+    )
+      return false
+    const cap = sourceCaption(other)
+    if (!cap) return false
+    const markers = pair.map((r, n) =>
+      tokens.filter(
+        (t) =>
+          whole(t) &&
+          t.text.startsWith('(' + String.fromCharCode(97 + n) + ')') &&
+          Math.abs(t.rect[0] - r[0]) < font &&
+          t.rect[1] >= r[3] - font / 8 &&
+          t.rect[1] - r[3] < font * 2 &&
+          t.rect[2] <= r[2] + font / 8 &&
+          t.rect[3] < other.rect[1]
+      )
+    )
+    if (
+      markers.some((m) => m.length !== 1) ||
+      markers.some((m) => cap.some((c) => c.sourceItem.index <= m[0].sourceItem.index))
+    )
+      return false
+    const envelopes = source.filter(
+      (g) =>
+        g.kind === 'path' &&
+        g.rect[0] > bounds[2] &&
+        g.rect[0] <= caption.rect[0] &&
+        g.rect[2] >= caption.rect[2] &&
+        g.rect[1] <= bounds[1] + font &&
+        g.rect[3] >= caption.rect[1] - font * 2 &&
+        g.rect[3] <= caption.rect[1] + font &&
+        paths.every((r) => contains(g.rect, r))
+    )
+    if (envelopes.length !== 1) return false
+    const envelope = envelopes[0],
+      packet = source.filter((g) => contains(envelope.rect, g.rect)),
+      last = Math.max(...packet.map((g) => g.operationIndex))
+    return (
+      packet.every((g) => g.kind === 'path' && g.operationIndex >= envelope.operationIndex) &&
+      source.every(
+        (g) =>
+          g.operationIndex < envelope.operationIndex ||
+          g.operationIndex > last ||
+          contains(envelope.rect, g.rect)
+      ) &&
+      !source.some(
+        (g) => intersection(g.rect, bounds) > 0 && intersection(g.rect, envelope.rect) > 0
+      )
+    )
+  })
+  return owners.length === 1
+}
+
 export function nativeCaptionedRasterVectorStrip(
   page,
   caption,
@@ -5563,6 +5674,10 @@ export function nativeCaptionedRasterVectorStrip(
       rect[3] > rect[1] &&
       !tables.some((table) => intersection(table, rect) > 0)
   )
+  // A source-captioned horizontal raster pair is an independent owner even
+  // when its centered caption is narrower than both panel envelopes. Only a
+  // complete disjoint native vector packet can trigger this rejection.
+  if (separateNativeRasterPair(page, caption, captions, images, paths, nativeTokens, font)) return
   // A complete enclosing frame is stronger ownership evidence than the
   // compact strip distance gate. Keep every raster inside that frame,
   // including small panels that would otherwise be dropped by the area gate.
@@ -5916,6 +6031,21 @@ export function nativeCaptionedVectorTableGrid(page, caption, captions, tables) 
       ).length >= 2
   )
   if (repeatedVerticals.length < 4) return
+  // Repeated bars share a baseline too. A table column must instead join the
+  // first through last measured rule row with a continuous family of rules.
+  const connectedColumns = repeatedVerticals.filter((column) => {
+    const segments = vertical
+      .filter((r) => Math.abs((r[0] + r[2]) / 2 - column) <= Math.max(font * 0.75, 4))
+      .sort((a, b) => a[1] - b[1])
+    let end = segments[0]?.[3]
+    if (end === undefined || segments[0][1] > rowCenters[0] + font * 0.75) return false
+    for (const segment of segments.slice(1)) {
+      if (segment[1] > end + font * 0.75) return false
+      end = Math.max(end, segment[3])
+    }
+    return end >= rowCenters.at(-1) - font * 0.75
+  })
+  if (connectedColumns.length < 4) return
   if (blocked(bounds, caption, captions, tables)) return
   const textInside = page.lines.some(
     (line) =>

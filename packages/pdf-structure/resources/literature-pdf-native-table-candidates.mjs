@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { recoverRuledContinuationCounts } from './literature-pdf-sectional-records.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import { joinCaptionLines } from './literature-pdf-caption-group.mjs'
 
 const nativeItemLines = (items) => {
   const groups = []
@@ -527,6 +528,374 @@ export function recoverPriorCohortContinuation(
           ...columns.map((rect) => ({
             label: 'table column',
             rect: rect.map((v, i) => v - cropRect[i % 2])
+          }))
+        ]
+      }
+    }
+  }
+}
+
+// Rebuild only a source-proved continuation whose preceding page explicitly
+// says the same table continues. The prior accepted table supplies its grid;
+// the current page must repeat that header, continue the first-column record
+// sequence, and contain a complete native frame.
+function normalizedContinuationTableRegion(table) {
+  const region = table?.region
+  if (Array.isArray(region)) {
+    if (
+      region.length !== 4 ||
+      !region.every(Number.isFinite) ||
+      region[0] < 0 ||
+      region[1] < 0 ||
+      region[2] > 1 ||
+      region[3] > 1 ||
+      region[2] <= region[0] ||
+      region[3] <= region[1]
+    )
+      return
+    return {
+      page: table.page,
+      x: region[0],
+      y: region[1],
+      width: region[2] - region[0],
+      height: region[3] - region[1]
+    }
+  }
+  if (
+    !region ||
+    (region.page !== undefined && region.page !== table.page) ||
+    ![region.x, region.y, region.width, region.height].every(Number.isFinite) ||
+    region.x < 0 ||
+    region.y < 0 ||
+    region.width <= 0 ||
+    region.height <= 0 ||
+    region.x + region.width > 1 ||
+    region.y + region.height > 1
+  )
+    return
+  return {
+    page: table.page,
+    x: region.x,
+    y: region.y,
+    width: region.width,
+    height: region.height
+  }
+}
+
+function normalizedContinuationCellRegions(table, cell) {
+  if (Array.isArray(cell.regions) && cell.regions.length)
+    return cell.regions.every(
+      (region) =>
+        region?.page === table.page &&
+        [region.x, region.y, region.width, region.height].every(Number.isFinite) &&
+        region.x >= 0 &&
+        region.y >= 0 &&
+        region.width > 0 &&
+        region.height > 0 &&
+        region.x + region.width <= 1 &&
+        region.y + region.height <= 1
+    )
+      ? cell.regions
+      : undefined
+
+  const { width, height } = table.sourceViewport ?? {}
+  if (
+    !Array.isArray(cell.sourceRects) ||
+    !cell.sourceRects.length ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  )
+    return
+  const regions = cell.sourceRects.map((rect) => {
+    if (
+      !Array.isArray(rect) ||
+      rect.length !== 4 ||
+      !rect.every(Number.isFinite) ||
+      rect[0] < 0 ||
+      rect[1] < 0 ||
+      rect[2] > width ||
+      rect[3] > height ||
+      rect[2] <= rect[0] ||
+      rect[3] <= rect[1]
+    )
+      return
+    return {
+      page: table.page,
+      x: rect[0] / width,
+      y: rect[1] / height,
+      width: (rect[2] - rect[0]) / width,
+      height: (rect[3] - rect[1]) / height
+    }
+  })
+  return regions.every(Boolean) ? regions : undefined
+}
+
+export function recoverPrintedTableContinuation(
+  items,
+  rules,
+  pageNumber,
+  previousPage,
+  captions,
+  previousTables,
+  detected = [],
+  scale = 1.5
+) {
+  if (
+    !(scale > 0) ||
+    !previousPage ||
+    previousPage.pageNumber !== pageNumber - 1 ||
+    !Number.isFinite(previousPage.width) ||
+    !Number.isFinite(previousPage.height)
+  )
+    return
+  const priorCaptions = captions.filter(
+      (caption) =>
+        caption.page === pageNumber - 1 && /^Table\s+\d+(?:[:.]|\s)/i.test(caption.lines?.[0] ?? '')
+    ),
+    priorTables = previousTables.flatMap((table) => {
+      const region = normalizedContinuationTableRegion(table)
+      if (
+        !Array.isArray(table.grid) ||
+        table.grid.length > 256 ||
+        table.grid.length < 2 ||
+        !Array.isArray(table.grid[0]) ||
+        table.grid[0].length > 128 ||
+        table.grid[0].length < 2 ||
+        table.grid.length * table.grid[0].length > 2048
+      )
+        return []
+      const cells = table.cells?.map((cell) => {
+        const regions = normalizedContinuationCellRegions(table, cell)
+        return regions ? { ...cell, regions } : undefined
+      })
+      return table.page === pageNumber - 1 &&
+        table.grid?.length >= 2 &&
+        table.grid[0]?.length >= 2 &&
+        cells?.length &&
+        region
+        ? [{ ...table, region, cells }]
+        : []
+    })
+  if (priorCaptions.length !== 1 || priorTables.length !== 1) return
+  const caption = priorCaptions[0],
+    prior = priorTables[0],
+    continued = previousPage.lines?.filter((line) =>
+      /\bcontinued on (?:the )?next page\b/i.test(line.text ?? '')
+    )
+  if (
+    continued?.length !== 1 ||
+    continued[0].y <= prior.region.y * previousPage.height ||
+    prior.caption?.text !== joinCaptionLines(caption.lines)
+  )
+    return
+
+  const { x: rx, width: rw } = prior.region,
+    priorColumnRegions = Array.from({ length: prior.grid[0].length }, (_, column) =>
+      prior.cells
+        .filter((cell) => cell.column === column)
+        .flatMap((cell) => cell.regions ?? [])
+        .filter((region) => region.page === pageNumber - 1)
+    )
+  if (priorColumnRegions.some((regions) => !regions.length)) return
+  const columnExtents = priorColumnRegions.map((regions) => [
+      Math.min(...regions.map((region) => region.x)),
+      Math.max(...regions.map((region) => region.x + region.width))
+    ]),
+    cuts = []
+  for (let column = 1; column < columnExtents.length; column++) {
+    const previousRight = columnExtents[column - 1][1],
+      nextLeft = columnExtents[column][0]
+    if (nextLeft - previousRight < -0.02) return
+    cuts.push(((previousRight + nextLeft) / 2 - rx) / rw)
+  }
+  if (cuts.some((value, index) => value <= 0 || value >= 1 || (index && value <= cuts[index - 1])))
+    return
+
+  const expectedLast = String(prior.grid.at(-1)?.[0] ?? '').match(/^\[(\d+)\]$/)?.[1]
+  if (!expectedLast) return
+  const horizontal = [
+    ...new Map(
+      joinHorizontalTableRules(rules)
+        .filter(
+          (rule) =>
+            Math.abs(rule[2] - rule[0] - rw * previousPage.width * scale) <=
+              rw * previousPage.width * scale * 0.05 &&
+            rule[1] >= 0 &&
+            rule[1] <= previousPage.height * scale * 0.9
+        )
+        .map((rule) => [rule.join(','), rule])
+    ).values()
+  ].sort((a, b) => a[1] - b[1])
+  if (
+    horizontal.length !== 3 ||
+    horizontal[0][1] > previousPage.height * scale * 0.2 ||
+    horizontal.some(
+      (rule) => Math.abs(rule[0] - horizontal[0][0]) > 2 || Math.abs(rule[2] - horizontal[0][2]) > 2
+    )
+  )
+    return
+  const [top, headerBottom, bottom] = horizontal,
+    left = top[0],
+    right = top[2]
+  cuts.unshift(left)
+  cuts.push(right)
+  for (let column = 1; column < cuts.length - 1; column++)
+    cuts[column] = left + cuts[column] * (right - left)
+
+  const markers = items
+    .filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[0] >= cuts[0] &&
+        item.rect[2] <= cuts[1] &&
+        item.rect[1] >= top[1] &&
+        item.rect[3] <= bottom[1] &&
+        /^\[(\d+)\]$/.test(item.text.trim())
+    )
+    .sort((a, b) => a.rect[1] - b.rect[1])
+  if (
+    markers.length < 6 ||
+    markers.length + 1 > 256 ||
+    (markers.length + 1) * prior.grid[0].length > 2048 ||
+    Number(markers[0].text.match(/^\[(\d+)\]$/)[1]) !== Number(expectedLast) + 1 ||
+    markers.some(
+      (marker, index) =>
+        Number(marker.text.match(/^\[(\d+)\]$/)[1]) !== Number(expectedLast) + index + 1 ||
+        (index > 0 && marker.rect[1] - markers[index - 1].rect[1] < marker.height * 0.7)
+    )
+  )
+    return
+
+  if (
+    top[1] >= markers[0].rect[1] ||
+    headerBottom[1] >= (markers[0].rect[1] + markers[0].rect[3]) / 2 ||
+    bottom[1] <= markers.at(-1).rect[3] ||
+    bottom[1] - top[1] < markers.length * Math.max(...markers.map((item) => item.height))
+  )
+    return
+
+  const headerItems = items.filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[0] >= left &&
+        item.rect[2] <= right &&
+        item.rect[1] >= top[1] - Math.max(...markers.map((marker) => marker.height)) * 0.5 &&
+        item.rect[3] <= headerBottom[1] + Math.max(...markers.map((marker) => marker.height))
+    ),
+    currentHeaderText = headerItems.map((item) => item.text).join(' '),
+    words = (text) =>
+      new Set(
+        (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((word) => word.length > 1)
+      ),
+    priorHeaderWords = words(prior.grid[0].join(' ')),
+    currentHeaderWords = words(currentHeaderText),
+    matchingHeaderWords = [...priorHeaderWords].filter((word) => currentHeaderWords.has(word))
+  if (matchingHeaderWords.length < Math.max(3, Math.ceil(priorHeaderWords.size / 2))) return
+
+  const currentCaptions = captions.filter(
+    (candidate) => candidate.page === pageNumber && candidate.rect?.length === 4
+  )
+  if (
+    currentCaptions.some(
+      (candidate) =>
+        candidate.rect[0] * scale < right &&
+        candidate.rect[2] * scale > left &&
+        candidate.rect[1] * scale < bottom[1] &&
+        candidate.rect[3] * scale > top[1]
+    )
+  )
+    return
+
+  const cropRect = [
+      left,
+      Math.min(top[1], ...headerItems.map((item) => item.rect[1])),
+      right,
+      bottom[1]
+    ],
+    rows = [
+      [cropRect[0], cropRect[1], cropRect[2], headerBottom[1]],
+      ...markers.map((marker, index) => [
+        cropRect[0],
+        Math.max(headerBottom[1], marker.rect[1] - marker.height * 0.35),
+        cropRect[2],
+        index + 1 < markers.length
+          ? markers[index + 1].rect[1] - markers[index + 1].height * 0.5
+          : cropRect[3]
+      ])
+    ],
+    columns = cuts.slice(1).map((x, index) => [cuts[index], cropRect[1], x, cropRect[3]])
+  const markerHeights = markers.map((marker) => marker.height).sort((a, b) => a - b),
+    medianMarkerHeight = markerHeights[Math.floor(markerHeights.length / 2)],
+    intersectingDetections = []
+  if (!(medianMarkerHeight > 0) || !Number.isFinite(medianMarkerHeight)) return
+  for (const candidate of detected) {
+    const rect = candidate.cropRect
+    if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) return
+    if (
+      rect[0] < cropRect[2] &&
+      rect[2] > cropRect[0] &&
+      rect[1] < cropRect[3] &&
+      rect[3] > cropRect[1]
+    )
+      intersectingDetections.push(candidate)
+  }
+  if (intersectingDetections.length > 1) return
+  const replacedDetection = intersectingDetections[0]
+  if (replacedDetection) {
+    const rect = replacedDetection.cropRect,
+      extensions = [
+        cropRect[0] - rect[0],
+        cropRect[1] - rect[1],
+        rect[2] - cropRect[2],
+        rect[3] - cropRect[3]
+      ]
+    if (
+      typeof replacedDetection.id !== 'string' ||
+      !replacedDetection.id ||
+      extensions.some((extension) => extension < 0 || extension > medianMarkerHeight)
+    )
+      return
+  }
+  if (rows.some((row, index) => row[1] >= row[3] || (index && row[1] < rows[index - 1][3]))) return
+  if (
+    items.some(
+      (item) =>
+        item.horizontal &&
+        item.text?.trim() &&
+        item.rect[0] < right &&
+        item.rect[2] > left &&
+        item.rect[1] < cropRect[3] &&
+        item.rect[3] > cropRect[1] &&
+        (item.rect[0] < left || item.rect[2] > right)
+    )
+  )
+    return
+
+  let tableId = replacedDetection?.id
+  if (!tableId) {
+    const usedIds = new Set(detected.map((candidate) => candidate.id))
+    let suffix = 1
+    while (usedIds.has(`page-${pageNumber}-table-${suffix}`)) suffix++
+    tableId = `page-${pageNumber}-table-${suffix}`
+  }
+
+  return {
+    caption,
+    ...(replacedDetection ? { replacesDetectedId: replacedDetection.id } : {}),
+    table: {
+      id: tableId,
+      cropRect,
+      structure: {
+        objects: [
+          ...rows.map((rect) => ({
+            label: 'table row',
+            rect: rect.map((value, index) => value - cropRect[index % 2])
+          })),
+          ...columns.map((rect) => ({
+            label: 'table column',
+            rect: rect.map((value, index) => value - cropRect[index % 2])
           }))
         ]
       }

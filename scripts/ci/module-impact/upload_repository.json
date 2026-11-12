@@ -28,7 +28,10 @@
     "src/main/uploads/pdf-ocr.test.ts",
     "src/main/uploads/pdf-ocr.integration.test.ts",
     "test/experiments/pdf-worker-lifetime.test.ts",
-    "test/experiments/pdf-ablation-validation.test.ts"
+    "test/experiments/pdf-ablation-validation.test.ts",
+    "src/main/uploads/fixtures/scaled-gap-joined-token.json",
+    "src/main/uploads/fixtures/scaled-gap-running-head.json",
+    "src/main/uploads/fixtures/scaled-inline-native.json"
   ],
   "interfacePaths": [
     "src/main/uploads/repository.ts",

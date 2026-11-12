@@ -435,7 +435,7 @@ describe('ProviderForm field switching', () => {
     expect(providerType?.textContent).toContain('Bailian for Plan')
     expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
     expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>BaiLian</title>')
-    expect(container.textContent).toContain('qwen3.8-max-preview')
+    expect(container.textContent).toContain('qwen4-max-preview')
   })
 
   it('allows a custom gateway to select the Responses endpoint', () => {

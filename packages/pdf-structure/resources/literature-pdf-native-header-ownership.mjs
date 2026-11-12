@@ -3,8 +3,10 @@ import { captionKind } from './literature-pdf-caption-group.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
-import { rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
+import { rebaseTableCrop, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import { proveNativeCompleteRuledSourcePacket } from './literature-pdf-native-leaf-record-repair.mjs'
+import { recoverNativeSingleParentMathHeaderGrid } from './literature-pdf-native-single-parent-math-header.mjs'
+import { recoverNativeCategoricalParentHeaderGrid } from './literature-pdf-native-categorical-parent-header.mjs'
 import {
   readSourceRow,
   groupSourceRowsWithScripts,
@@ -176,11 +178,28 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
   )
     return
   const context = proveNativeHeaderFrame(table, items, captions, rules)
-  if (!context || context.belowCaption || context.edges.length !== 3) return
+  if (!context || context.edges.length !== 3) return
   const { crop, frame, edges, source, height } = context
   if (edges.some((r) => Math.abs(r[0] - frame[0]) > 0.1 || Math.abs(r[2] - frame[2]) > 0.1)) return
   const original = proveTwoTierWholeFontPacket(source, frame, nativeContext)
   if (!original) return
+  if (context.belowCaption) {
+    const below = captions.filter(
+      (c) =>
+        captionKind(c.lines[0]) === 'table' &&
+        c.rect[1] >= frame[3] &&
+        c.rect[1] - frame[3] < height * 4 &&
+        c.rect[0] < frame[2] &&
+        c.rect[2] > frame[0]
+    )
+    if (
+      below.length !== 1 ||
+      source.some((i) => i.sourceItem.pageNumber !== below[0].page) ||
+      !proveTwoTierWholeCaption(below[0], items, original)
+    )
+      return
+    return recoverNativeCategoricalParentHeaderGrid(table, items, context, rules, nativeContext)
+  }
   const above = captions.filter(
     (c) =>
       captionKind(c.lines[0]) === 'table' &&
@@ -195,6 +214,13 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
     !proveTwoTierWholeCaption(above[0], items, original)
   )
     return
+  const singleParentMath = recoverNativeSingleParentMathHeaderGrid(
+    table,
+    items,
+    context,
+    nativeContext
+  )
+  if (singleParentMath) return singleParentMath
   const pairedUnderlined = recoverClosedPairedUnderlinedHeader(table, context, rules, nativeContext)
   if (pairedUnderlined) return { ...pairedUnderlined, repair: 'native-body-records-recovered' }
   const singleUnderlined = recoverClosedSingleUnderlinedHeader(
@@ -249,7 +275,15 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
         g.some((i) => Math.abs(i.height - height) > height * 0.1)
       )
     }) ||
-    head.some((i) => Math.abs(i.height - height) > height * 0.1)
+    head.some(
+      (i) =>
+        Math.abs(i.height - height) > height * 0.1 &&
+        (i.height < height * 0.55 ||
+          i.height >= height * 0.8 ||
+          head.filter(
+            (a) => Math.abs(a.height - height) <= height * 0.1 && isAdjacentTableScript(i, a)
+          ).length !== 1)
+    )
   )
     return
   const upperY = Math.min(...head.map((i) => i.baseline)),

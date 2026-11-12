@@ -1,3 +1,4 @@
+import { registerDatabaseFixture } from '../database/migrated-database.test-support'
 import { initDataRoot } from '../storage-root'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -41,10 +42,11 @@ import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
 import { UploadRepository } from '../uploads/repository'
+
+const openDatabase = registerDatabaseFixture()
 
 const PROJECT_ID = 'project-1'
 const SESSION_ID = 'session-1'
@@ -60,8 +62,7 @@ describe('artifact finalization startup recovery', () => {
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-finalization-recovery-'))
     initDataRoot(storageRoot)
-    client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
+    client = await openDatabase(storageRoot)
     sessions = new SessionRepository(storageRoot)
     files = new ManagedFileIndexRepository(
       () => Promise.resolve(client),

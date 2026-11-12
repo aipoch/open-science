@@ -79,8 +79,47 @@ it('starts directly from the session button without a chat or fork API, and supp
   await click('Generate research film')
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
   expect(document.body.textContent).toContain('Writing research film…')
+  await click('Run in background')
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(api.researchVideo.cancel).not.toHaveBeenCalled()
+  await click('View generation progress')
+  expect(document.body.textContent).toContain('Writing research film…')
+  expect(api.researchVideo.start).toHaveBeenCalledTimes(1)
   await click('Cancel')
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
+})
+
+it('keeps raw generation errors in collapsed details and copies the full message', async () => {
+  const error = JSON.stringify(
+    [{ code: 'invalid_union', message: 'multiple errors'.repeat(300) }],
+    null,
+    2
+  )
+  status = {
+    canResume: true,
+    filmStep: 2,
+    progress: { phase: 'failed', startedAt: Date.now() },
+    error
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal(
+    'navigator',
+    Object.create(window.navigator, { clipboard: { value: { writeText } } })
+  )
+  await click('Generate research film')
+  const details = document.querySelector('dialog details, [role="dialog"] details')!
+  expect(details.hasAttribute('open')).toBe(false)
+  expect(document.querySelector('[role="alert"]')?.textContent).not.toContain(error)
+  const copy = Array.from(document.querySelectorAll('button')).find(
+    (button) => button.textContent === 'Copy error'
+  )!
+  expect(copy.closest('details')).toBeNull()
+  await click('Copy error')
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(error)
+  expect(copy.textContent).toBe('Copied')
+  expect(details.hasAttribute('open')).toBe(false)
+  await act(async () => details.querySelector('summary')!.click())
+  expect(details.querySelector('pre')?.textContent).toBe(error)
 })
 
 it('keeps the trigger in a loading state until the initial presentation status is known', async () => {

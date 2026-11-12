@@ -50,7 +50,7 @@ const captureChildEnvironment = async (
   await writeFile(
     entry,
     `require('node:fs').writeFileSync(${JSON.stringify(output)}, JSON.stringify(
-      Object.fromEntries(${JSON.stringify([...pathKeys, 'OPEN_SCIENCE_WEB_PORT', 'ELECTRON_RUN_AS_NODE'])}
+      Object.fromEntries(${JSON.stringify([...pathKeys, 'OPEN_SCIENCE_WEB_PORT', 'OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT', 'ELECTRON_RUN_AS_NODE'])}
         .map(key => [key, process.env[key]])))); process.exit(23)`
   )
   await expect(
@@ -71,6 +71,7 @@ const captureChildEnvironment = async (
   ).rejects.toThrow('exit code 23')
   const environment = JSON.parse(await readFile(output, 'utf8'))
   expect(environment.OPEN_SCIENCE_WEB_PORT).toBe('44123')
+  expect(environment.OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT).toBe('1')
   expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
   return environment
 }

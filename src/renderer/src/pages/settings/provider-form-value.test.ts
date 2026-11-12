@@ -325,7 +325,7 @@ describe('provider-kind helpers', () => {
       vendorId: 'minimax',
       region: 'global'
     })
-    expect(providerFormModelForFramework(minimax, ['chat-completions'])).toBe('MiniMax-M3')
+    expect(providerFormModelForFramework(minimax, ['chat-completions'])).toBe('MiniMax-M3.1-Flash')
   })
 
   it('defaults SenseNova to China and selects the Global model for every API path', () => {

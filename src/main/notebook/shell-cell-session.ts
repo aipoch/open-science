@@ -1,3 +1,4 @@
+import { compilePowerShellCommand } from './powershell-native-capture'
 import { NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE } from './process-sandbox'
 import { ExecutionDeadline } from './execution-deadline'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -169,7 +170,9 @@ export class ShellCellSession {
     const name = this.protocolName
     if (powershell) {
       const encoded = Buffer.from(command, 'utf8').toString('base64')
-      const code = `$global:LASTEXITCODE = 0; $${name}_status = 0; try { . ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')))) | Out-Default; if (-not $?) { $${name}_status = 1 }; if ($global:LASTEXITCODE -ne 0) { $${name}_status = $global:LASTEXITCODE } } catch { [Console]::Error.WriteLine($_.ToString()); $${name}_status = 1 }; [Console]::Out.Write(([string][char]0) + '${marker}:' + $${name}_status + ':' + (Get-Location).ProviderPath + [char]0); [Console]::Error.Write(([string][char]0) + '${marker}' + [char]0)`
+      const source = `([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')))`
+      const block = compilePowerShellCommand(command, source, this.identity.runtimeBinding)
+      const code = `$global:LASTEXITCODE = 0; $${name}_status = 0; try { . (${block}) | Out-Default; if (-not $?) { $${name}_status = 1 }; if ($global:LASTEXITCODE -ne 0) { $${name}_status = $global:LASTEXITCODE } } catch { [Console]::Error.WriteLine($_.ToString()); $${name}_status = 1 }; [Console]::Out.Write(([string][char]0) + '${marker}:' + $${name}_status + ':' + (Get-Location).ProviderPath + [char]0); [Console]::Error.Write(([string][char]0) + '${marker}' + [char]0)`
       return Buffer.from(code, 'utf8').toString('base64') + '\n'
     }
     // Octal bytes keep a multiline request on one protocol line without eval escaping or an

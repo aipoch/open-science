@@ -13,9 +13,9 @@ const names = {
 // Keep optional cell origins only when they fit the existing manifest byte limit.
 // Decoder node/text limits are checked again by main before cache publication.
 export function serializeWorkerResult(result) {
-  const serialize = (omitOrigins) =>
+  const serialize = (value, omitOrigins) =>
     JSON.stringify(
-      result,
+      value,
       (key, value) =>
         key === 'sourceTokens' ||
         (omitOrigins &&
@@ -27,8 +27,32 @@ export function serializeWorkerResult(result) {
           : value,
       2
     ) + '\n'
-  const text = serialize(false)
-  return Buffer.byteLength(text) <= 8 * 1024 ** 2 ? text : serialize(true)
+  const text = serialize(result, false)
+  if (Buffer.byteLength(text) <= 8 * 1024 ** 2) return text
+  const bareText = serialize(result, true),
+    bare = JSON.parse(bareText),
+    original = JSON.parse(text),
+    bundles = []
+  // Every element includes all its parts, body proof and mathematical annotations.
+  // A large element must not erase the complete evidence of smaller neighbours.
+  for (const kind of ['figures', 'tables', 'algorithms'])
+    for (const [index, element] of (original[kind] ?? []).entries()) {
+      const cost =
+        Buffer.byteLength(serialize(element, false)) -
+        Buffer.byteLength(serialize(bare[kind][index], false))
+      if (cost > 0) bundles.push({ kind, index, element, cost, order: bundles.length })
+    }
+  let selected = bareText
+  for (const { kind, index, element } of bundles.sort(
+    (a, b) => a.cost - b.cost || a.order - b.order
+  )) {
+    const previous = bare[kind][index]
+    bare[kind][index] = element
+    const candidate = serialize(bare, false)
+    if (Buffer.byteLength(candidate) <= 8 * 1024 ** 2) selected = candidate
+    else bare[kind][index] = previous
+  }
+  return selected
 }
 
 // Only paths produced by this extractor are owned. Unexpected entries remain a cleanup barrier.

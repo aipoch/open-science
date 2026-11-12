@@ -197,3 +197,43 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('reuses complete speech after a player build fails and replaces a damaged mix', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-speech-checkpoint-'))
+  try {
+    const specPath = join(root, 'video.json')
+    await writeFile(
+      specPath,
+      JSON.stringify({
+        title: 'Study',
+        session: 'session.json',
+        scenes: [{ id: 's', msg: 0, lines: [{ caption: 'Evidence.' }], panels: [] }]
+      })
+    )
+    await writeFile(join(root, 'session.json'), JSON.stringify({ messages: [{ md: 'Evidence.' }] }))
+    const synthesize = vi.fn(async () => ({ samples: new Float32Array(2400), sampleRate: 24000 }))
+    for (const expectedCalls of [1, 1, 2]) {
+      if (expectedCalls === 2) await writeFile(join(root, 'speech', 'mix.wav'), 'damaged')
+      const temporaryDirectory = await mkdtemp(join(root, 'attempt-'))
+      const progress = vi.fn()
+      await expect(
+        generateResearchVideoInWorker(
+          {
+            specPath,
+            retainNarration: true,
+            temporaryDirectory,
+            engineDirectory: join(root, 'missing-engine'),
+            modelDirectory: root,
+            outputDirectory: join(temporaryDirectory, 'output')
+          },
+          progress,
+          [{ identity: 'test', synthesize }]
+        )
+      ).rejects.toThrow()
+      expect(progress).toHaveBeenCalledWith({ phase: 'build' })
+      expect(synthesize).toHaveBeenCalledTimes(expectedCalls)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
