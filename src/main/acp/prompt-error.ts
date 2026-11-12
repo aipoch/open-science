@@ -21,7 +21,7 @@ export type PromptErrorContext = {
 }
 
 // The innermost provider detail pulled from a wrapped error message.
-type UpstreamDetail = { text: string; type?: string; status?: number }
+type UpstreamDetail = { text: string; type?: string; status?: number; code?: string | number }
 
 const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 300
 
@@ -131,8 +131,9 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
 
   try {
     const parsed = JSON.parse(jsonText) as {
-      error?: { message?: unknown; type?: unknown; status?: unknown }
+      error?: { message?: unknown; type?: unknown; status?: unknown; code?: unknown }
       message?: unknown
+      code?: unknown
     }
     const err = parsed.error
     const text =
@@ -152,8 +153,10 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
         : undefined
     const wrappedStatus = message.slice(0, braceStart).match(/\b([45]\d{2})\b/)?.[1]
 
+    const code = err?.code ?? parsed.code
     return {
       text,
+      code: typeof code === 'string' || typeof code === 'number' ? code : undefined,
       type: typeof err?.type === 'string' ? err.type : undefined,
       status: nestedStatus ?? (wrappedStatus ? Number(wrappedStatus) : undefined)
     }
@@ -383,6 +386,33 @@ export const collectPromptFailureFacts = (
     origin === 'provider' && transportStatus === 400 && upstream?.status !== undefined
       ? upstream.status
       : transportStatus
+  // An untagged ACP wrapper may carry plain text or any provider-specific body.
+  // Surface that detail without inventing a provider identity or business code.
+  const wrappedResponse =
+    origin === 'agent-runtime' &&
+    error instanceof Error &&
+    error.name === 'RequestError' &&
+    top.code === -32603 &&
+    !data.codexErrorInfo &&
+    !data.errorName &&
+    (!data.service || data.service === 'provider') &&
+    (!data.errorKind || data.errorKind === 'unknown') &&
+    /^\s*internal error:\s*\S/i.test(text)
+  const providerResponse =
+    origin === 'provider' &&
+    (upstream !== undefined ||
+      (!isAgentAuthenticationFailure(error) &&
+        (isApiError(error) ||
+          isProviderErrorKind(error) ||
+          codexProvider ||
+          transportStatus !== undefined)))
+  const responseText =
+    upstream?.text ??
+    ((typeof data.message === 'string' && data.message.trim()) || stripWrapperPrefixes(text))
+  const responseMessage =
+    (wrappedResponse || providerResponse) && !/^internal error[.:]?$/i.test(responseText.trim())
+      ? safeProviderErrorDetail(responseText)
+      : undefined
   const code =
     origin === 'agent-runtime' && top.code === -32002
       ? top.code
@@ -394,17 +424,21 @@ export const collectPromptFailureFacts = (
             ? 'quota_exceeded'
             : data.codexErrorInfo === 'serverOverloaded'
               ? 'overloaded_error'
-              : (upstream?.type ??
-                (data.errorKind !== 'unknown' ? data.errorKind : undefined) ??
+              : ((responseMessage ? upstream?.code : undefined) ??
+                upstream?.type ??
+                (!isProviderErrorKind(error) && data.errorKind !== 'unknown'
+                  ? data.errorKind
+                  : undefined) ??
                 codexKind ??
-                top.code)
+                (origin === 'provider' || wrappedResponse ? undefined : top.code))
   return {
     origin,
+    ...(responseMessage ? { responseMessage } : {}),
     ...(status === undefined ? {} : { status }),
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
     ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
     ...(context.model ? { model: context.model } : {}),
     ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
-    text
+    text: responseMessage ? redactSensitiveText(text) : text
   }
 }

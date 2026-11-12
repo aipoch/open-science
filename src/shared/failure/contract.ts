@@ -13,12 +13,14 @@ export type FailureDiagnostics = Readonly<{
 }>
 
 export type ClassifiedFailure = Readonly<{
+  responseMessage?: string
   category: FailureCategory
   reason?: FailureReason
   diagnostics: FailureDiagnostics
 }>
 
 export type FailureFacts = Readonly<{
+  responseMessage?: string
   origin: 'provider' | 'agent-runtime' | 'environment' | 'session' | 'operation'
   status?: number
   code?: string | number

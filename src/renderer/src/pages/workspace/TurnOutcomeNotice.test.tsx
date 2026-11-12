@@ -71,6 +71,25 @@ describe('turn outcome notice action ownership', () => {
     expect(container.querySelector('[aria-label="Report this error"]')).not.toBeNull()
   })
 
+  it('shows the provider response directly without an application report action', () => {
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      failure: {
+        category: 'service',
+        responseMessage: 'Example service is unavailable',
+        diagnostics: { code: '98123' }
+      }
+    })
+    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'Example service is unavailable'
+    )
+    expect(container.textContent).toContain('code: 98123')
+    expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
+    expect(container.textContent).not.toContain('Report this error')
+  })
+
   it('captures the failed prompt for native Artifact publication retry', () => {
     render({
       kind: 'failed',

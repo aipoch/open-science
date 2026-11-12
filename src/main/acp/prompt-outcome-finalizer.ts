@@ -345,8 +345,8 @@ export class AcpPromptOutcomeFinalizer {
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
-      const text = describePromptError(error, { model: handles.model })
       const failure = classifyFailure(collectPromptFailureFacts(error, { model: handles.model }))
+      const text = failure.responseMessage ?? describePromptError(error, { model: handles.model })
       const recoverable =
         failure.category === 'session'
           ? 'session-lost'

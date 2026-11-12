@@ -129,7 +129,9 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
   }
 }
 export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation =>
-  (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
+  failure.responseMessage
+    ? { ...noticeCatalog.service, feedback: 'none' }
+    : (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
 
 export type ComposerNotice = Readonly<{
   id: string
@@ -168,7 +170,7 @@ export const formatNoticeDiagnostics = (
 ): string =>
   [
     title,
-    description,
+    ...(description ? [description] : []),
     ...Object.entries(notice.failure.diagnostics)
       .filter(
         ([key, value]) =>

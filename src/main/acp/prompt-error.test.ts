@@ -370,6 +370,33 @@ describe('classified failure facts across agent execution paths', () => {
       expect(classifyFailure(facts).category).toBe(category)
     }
   )
+  it('unwraps the provider message and business code without inventing an HTTP status', () => {
+    const error = RequestError.internalError(
+      undefined,
+      JSON.stringify({ message: 'Example service is unavailable', code: 98123 })
+    )
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure).toMatchObject({
+      category: 'service',
+      responseMessage: 'Example service is unavailable',
+      diagnostics: { code: '98123' }
+    })
+    expect(failure.diagnostics.status).toBeUndefined()
+  })
+  it.each([
+    ['Upstream is busy', 'Upstream is busy'],
+    ['{"message":"Busy"}', 'Busy'],
+    ['{"detail":["busy"]}', '{"detail":["busy"]}']
+  ])('surfaces an ACP response without a business code: %s', (body, message) => {
+    const failure = classifyFailure(
+      collectPromptFailureFacts(RequestError.internalError(undefined, body))
+    )
+    expect(failure).toEqual({
+      category: 'service',
+      responseMessage: message,
+      diagnostics: { raw: 'Internal error: ' + body }
+    })
+  })
   it('keeps an opaque protocol error internal even when its prose mentions a status', () => {
     expect(
       classifyFailure(collectPromptFailureFacts(agentError('Record 503 could not be decoded', {})))

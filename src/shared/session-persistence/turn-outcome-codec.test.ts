@@ -198,13 +198,18 @@ describe('legacy failure migration', () => {
       failure: {
         category: 'configuration',
         reason: 'service/wrong-category',
+        responseMessage: 'Provider rejected the request',
         diagnostics: { status: '401', model: 'example', requestId: 123, raw: 'detail' }
       }
     })
     expect(outcome).toEqual({
       kind: 'failed',
       settledAt: 1,
-      failure: { category: 'configuration', diagnostics: { model: 'example', raw: 'detail' } }
+      failure: {
+        category: 'configuration',
+        responseMessage: 'Provider rejected the request',
+        diagnostics: { model: 'example', raw: 'detail' }
+      }
     })
   })
 })

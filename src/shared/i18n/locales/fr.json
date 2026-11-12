@@ -2012,6 +2012,7 @@
     "Model is required.": "Un modèle est requis.",
     "Model not supported over the Codex bridge": "Modèle non pris en charge sur le pont Codex",
     "Model provider": "Fournisseur de modèles",
+    "Model provider error": "Erreur du fournisseur de modèle",
     "Model provider: {{name}}": "Fournisseur du modèle : {{name}}",
     "Model provider: {{name}}; model: {{model}}": "Fournisseur de modèles : {{name}} ; modèle : {{model}}",
     "Model settings": "Paramètres du modèle",
