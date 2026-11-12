@@ -19,11 +19,11 @@ describe('Notebook network sandbox resources', () => {
   it.each([
     [
       'vendor/windows/x64/notebook-appcontainer-host.exe',
-      'dbdb1a6b75c5bdc71b3202a0b14c22112d4221552dba90415476a8d2610964d5'
+      'a61b0944603e01f95bb7b3e6e44737c327906035fdb6cdb8a3c02c3d8df523d0'
     ],
     [
       'vendor/windows/arm64/notebook-appcontainer-host.exe',
-      '8c5f3783d3c0a0628ca753bb47fe526bfc51953e13674bbbc40b41b9367abf5f'
+      '3756c2313812209952994916b4925d7d958731ea96164d0d2e51a9d9bbae1e26'
     ]
   ])('verifies committed %s', (relativePath, expectedHash) => {
     // CI rebuilds the working copy from source; fixed hashes describe the committed fallback.
