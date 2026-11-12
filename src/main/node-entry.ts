@@ -7,10 +7,14 @@ import {
   closeMainAgentProcessOwnership
 } from './acp/main-agent-process-ownership'
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
-import { inspectRuntimeWindowsProcessIds } from './process-tree-windows'
+import {
+  captureRuntimeWindowsProcessCleanup,
+  inspectRuntimeWindowsProcessIds
+} from './process-tree-windows'
 import {
   createLocalServiceLifetime,
   LOCAL_SERVICE_STOP_BUDGET_MS,
+  LOCAL_SERVICE_STOP_ESCALATION_MS,
   serviceStopDeadline
 } from './local-service-lifetime'
 import { installNodeFatalErrors } from './node-fatal-errors'
@@ -233,12 +237,51 @@ async function main(): Promise<void> {
     if (stopRequested) throw new Error('Node runtime startup was cancelled by a shutdown request.')
   }
   let disconnectDatabase: (() => Promise<void>) | undefined
-  const stop = (deadlineAt = serviceStopDeadline()): Promise<void> => {
+  const stop = (deadlineAt = serviceStopDeadline(), forUpdate = false): Promise<void> => {
     stopRequested = true
     runtime?.applicationCommands.beginStopping()
     startupCancellation.abort()
     return (stopping ??= withRuntimeShutdownLifetime(async () => {
       lifetime?.close()
+      let failed = false
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+      let cleanup: ((final?: boolean) => Promise<void>) | undefined
+      if (forUpdate) {
+        try {
+          const reap = captureRuntimeWindowsProcessCleanup()
+          const cleanupDeadline = deadlineAt - LOCAL_SERVICE_STOP_ESCALATION_MS
+          let reaping: Promise<void> | undefined
+          cleanup = async (final = false) => {
+            if (reaping) {
+              await reaping
+              if (!final) return
+            }
+            reaping = reap(Math.min(cleanupDeadline, Date.now() + 4_000))
+              .catch((error) => {
+                failed = true
+                createLogger('node-runtime').error(
+                  'update process cleanup failed',
+                  diagnosticErrorFields(error)
+                )
+              })
+              .finally(() => {
+                reaping = undefined
+              })
+            await reaping
+          }
+          // A stuck disposer must not strand children when the Desktop escalates service stop.
+          cleanupTimer = setTimeout(
+            () => void cleanup!(),
+            Math.max(0, cleanupDeadline - Date.now() - 4_000)
+          )
+        } catch (error) {
+          failed = true
+          createLogger('node-runtime').error(
+            'update process ownership capture failed',
+            diagnosticErrorFields(error)
+          )
+        }
+      }
       // One process-wide deadline covers startup cancellation, preparation, every disposer and
       // the exit record. A failed drain is diagnostic; it cannot leave Node alive indefinitely.
       const deadline = setTimeout(
@@ -255,7 +298,6 @@ async function main(): Promise<void> {
         Math.max(1, deadlineAt - Date.now())
       )
       await startupFinished
-      let failed = false
       try {
         const outcome = preparationOutcome ?? (await runtime?.prepareForQuit())
         if (outcome && outcome !== 'completed') failed = true
@@ -275,6 +317,10 @@ async function main(): Promise<void> {
         () => runtime?.dispose(),
         () => closeMainAgentProcessOwnership(),
         () => disconnectDatabase?.(),
+        async () => {
+          clearTimeout(cleanupTimer)
+          await cleanup?.(true)
+        },
         () => network.close(),
         () => flushLogs()
       ]) {
@@ -355,9 +401,9 @@ async function main(): Promise<void> {
     explicitStart: !process.argv.includes('--desktop'),
     deferFirstConnectionTimeout: true,
     onStoppingAdmission: () => runtime?.applicationCommands.beginStopping(),
-    stop: (_reason, deadlineAt) => {
+    stop: (reason, deadlineAt) => {
       // Cancellation must be visible before an already-resolving startup await resumes.
-      void stop(deadlineAt).catch((error) => {
+      void stop(deadlineAt, reason === 'update').catch((error) => {
         throw error
       })
     },

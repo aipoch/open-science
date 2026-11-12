@@ -1,4 +1,5 @@
 import { systemBootIdentity } from '../system-boot-identity'
+import { windowsProcessIsAlive } from '../windows-process-query'
 import { cancelDebSystemdGate, type DebSystemdGate } from './deb-systemd-gate'
 import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
@@ -427,15 +428,27 @@ export function installationRecoveryStatus(record: InstallationUpdateRecord): Up
     canRecover: true
   }
 }
+function hasExitedWindowsProcess(pid: number): boolean {
+  if (process.platform !== 'win32') return false
+  try {
+    return !windowsProcessIsAlive(pid)
+  } catch {
+    // An unreadable or reused PID is not proof that the installation is free.
+    return false
+  }
+}
 function createInstallationBusyError(
   otherRuntimePids: readonly number[],
   foreignProcessPids: readonly number[],
   processNames?: ReadonlyMap<number, string>
-): UpdateLifecycleError {
+): UpdateLifecycleError | undefined {
+  const names = processNames ?? inspectProcessNames([...otherRuntimePids, ...foreignProcessPids])
+  // The scanner and diagnostic lookup can outlive a holder. Recheck at the rejection boundary.
+  foreignProcessPids = foreignProcessPids.filter((pid) => !hasExitedWindowsProcess(pid))
+  if (!otherRuntimePids.length && !foreignProcessPids.length) return undefined
   const detail =
     foreignProcessPids.length && !otherRuntimePids.length ? 'foreign-process' : 'other-runtime'
   const blockingPids = [...otherRuntimePids, ...foreignProcessPids]
-  const names = processNames ?? inspectProcessNames(blockingPids)
   const message =
     detail === 'foreign-process'
       ? 'Another process is using installation files.'
@@ -455,7 +468,7 @@ async function createInstallationBusyErrorAsync(
   otherRuntimePids: readonly number[],
   foreignProcessPids: readonly number[],
   signal?: AbortSignal
-): Promise<UpdateLifecycleError> {
+): Promise<UpdateLifecycleError | undefined> {
   const processNames = await inspectProcessNamesAsync(
     [...otherRuntimePids, ...foreignProcessPids],
     signal
@@ -503,10 +516,11 @@ export function beginInstallationUpdate(
           runtime.configRoot !== options.runtime.configRoot)
     )
     if (others.length || foreignProcesses.length) {
-      throw createInstallationBusyError(
+      const error = createInstallationBusyError(
         others.map(({ pid }) => pid),
         foreignProcesses
       )
+      if (error) throw error
     }
     const record: InstallationUpdateRecord = {
       schema: 1,
@@ -908,17 +922,21 @@ export async function advanceInstallationUpdateAsync(
       if (!record || record.operationId !== operationId)
         throw new UpdateLifecycleError('install-failed', 'The installation operation has changed.')
       const processNames = await inspectProcessNamesAsync(foreignProcesses, options.signal)
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Another process is using this installation.',
-        {
-          // Occupancy refused the transition; retain the persisted phase and stop evidence.
-          ...installationRecoveryStatus(record),
-          canRetryInstall: false,
-          detail: 'foreign-process',
-          blockingProcesses: foreignProcesses.map((pid) => ({ pid, name: processNames.get(pid) }))
-        }
-      )
+      const blockingProcesses = foreignProcesses
+        .filter((pid) => !hasExitedWindowsProcess(pid))
+        .map((pid) => ({ pid, name: processNames.get(pid) }))
+      if (blockingProcesses.length)
+        throw new UpdateLifecycleError(
+          'installation-busy',
+          'Another process is using this installation.',
+          {
+            // Occupancy refused the transition; retain the persisted phase and stop evidence.
+            ...installationRecoveryStatus(record),
+            canRetryInstall: false,
+            detail: 'foreign-process',
+            blockingProcesses
+          }
+        )
     }
   }
   options.signal?.throwIfAborted()
@@ -1013,12 +1031,14 @@ export async function inspectInstallationAvailability(
       }
     }
   })
-  if (conflict)
-    throw await createInstallationBusyErrorAsync(
+  if (conflict) {
+    const error = await createInstallationBusyErrorAsync(
       conflict.otherRuntimePids,
       conflict.foreignProcessPids,
       signal
     )
+    if (error) throw error
+  }
 }
 
 export function bindInstallationExecutor(

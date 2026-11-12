@@ -15,12 +15,59 @@ import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 import { inspectInstallationProcessesAsync } from './installation-occupancy'
 import { inspectInstallationAvailability } from './installation-protection'
+import { once } from 'node:events'
 
 const scannerFixture = vi.hoisted(() => ({
   preload: '',
   command: '',
   timeoutMs: undefined as number | undefined
 }))
+
+it.runIf(process.platform === 'win32')(
+  'admits a file holder that exits after the native occupancy snapshot',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-exited-holder-'))
+    const installationRoot = join(root, 'app')
+    await mkdir(installationRoot)
+    const file = join(installationRoot, 'fixture.dll')
+    await writeFile(file, 'fixture')
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "require('node:fs').openSync(process.argv[1], 'r');process.stdout.write('ready');process.stdin.resume();process.stdin.on('end', () => process.exit(0))",
+        file
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
+    )
+    const exited = once(child, 'exit')
+    try {
+      await once(child.stdout, 'data')
+      const location = { installationRoot, stateRoot: join(root, 'state') }
+      await expect(inspectInstallationAvailability(location)).rejects.toMatchObject({
+        reason: 'installation-busy',
+        recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: child.pid }] }
+      })
+      await expect(
+        inspectInstallationAvailability({
+          ...location,
+          allowedProcessIds: async () => {
+            // Admission is resolved after the real native scan; synchronize the exit at that seam.
+            child.stdin.end()
+            await exited
+            return []
+          }
+        })
+      ).resolves.toBeUndefined()
+      expect(child.exitCode).toBe(0)
+    } finally {
+      child.stdin.end()
+      await exited
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
 vi.mock('./verification-process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./verification-process')>()
   return {
