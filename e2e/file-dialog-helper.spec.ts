@@ -91,7 +91,8 @@ async function launchHelper(
   kind: 'save' | 'open' = 'save',
   theme: 'light' | 'dark' = 'light',
   options: SaveDialogOptions = {},
-  locale: Locale = 'en'
+  locale: Locale = 'en',
+  unavailablePaths: string[] = []
 ): Promise<{
   page: Page
   result: Promise<FileDialogResult>
@@ -164,7 +165,20 @@ async function launchHelper(
                 options: { defaultPath: root, properties: ['openDirectory', 'createDirectory'] }
               })
         }
-        child.send(request)
+        if (unavailablePaths.length) {
+          void (async () => {
+            await expect.poll(() => inspectorEndpoint).toBeTruthy()
+            await inspectMain(
+              inspectorEndpoint!,
+              `(() => {
+              const {app} = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json')('electron');
+              const original = app.getPath.bind(app);
+              app.getPath = kind => { if (${JSON.stringify(unavailablePaths)}.includes(kind)) throw new Error('fixture missing OS folder'); return original(kind); };
+            })()`
+            )
+            child.send(request)
+          })().catch(reject)
+        } else child.send(request)
       } else if (message.type === 'result') selection = message.result
     })
     child.once('error', reject)
@@ -880,6 +894,26 @@ for (const theme of ['light', 'dark'] as const) {
     }
   })
 }
+
+test('missing optional OS folders do not prevent a valid destination', async () => {
+  const root = test.info().outputPath('optional-folders')
+  await mkdir(root, { recursive: true })
+  const helper = await launchHelper(root, 'save', 'light', {}, 'en', [
+    'desktop',
+    'downloads',
+    'home'
+  ])
+  try {
+    await expect(helper.page.locator('#save-path')).toHaveValue(root)
+    await helper.page.getByRole('button', { name: 'Save', exact: true }).click()
+    expect(await helper.result).toMatchObject({
+      canceled: false,
+      filePath: join(root, 'default.txt')
+    })
+  } finally {
+    await helper.close()
+  }
+})
 
 test('confirmed targets stay protected through final file publication', async () => {
   const root = test.info().outputPath('publication-races')

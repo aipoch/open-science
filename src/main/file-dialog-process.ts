@@ -218,9 +218,17 @@ export async function showFileDialogInHelper(
           raw?.type === 'selection-error' &&
           ready &&
           typeof raw.errorCode === 'string' &&
-          /^[A-Z_]{2,32}$|^selection-failed$/.test(raw.errorCode)
+          /^[A-Z_]{2,32}$|^selection-failed$|^optional-(downloads|home|desktop)-unavailable$/.test(
+            raw.errorCode
+          )
         ) {
-          operation.phase('selection-rejected', { helperPid: child.pid, errorCode: raw.errorCode })
+          // Missing shortcuts are recoverable initialization diagnostics, not rejected selections.
+          operation.phase(
+            raw.errorCode.startsWith('optional-')
+              ? 'optional-folder-unavailable'
+              : 'selection-rejected',
+            { helperPid: child.pid, errorCode: raw.errorCode }
+          )
         } else if (raw?.type === 'result' && ready && !selection) {
           try {
             selection = parseFileDialogResult(request.kind, raw.result)

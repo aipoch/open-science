@@ -110,11 +110,15 @@ export async function showHtmlFileDialog(
       {
         locale: request.appearance.locale ?? resolveLocaleFromTags([app.getLocale()]),
         appearance: request.appearance,
-        shortcuts: [
-          { kind: 'downloads', path: app.getPath('downloads') },
-          { kind: 'home', path: app.getPath('home') },
-          { kind: 'desktop', path: app.getPath('desktop') }
-        ]
+        shortcuts: (['downloads', 'home', 'desktop'] as const).flatMap((kind) => {
+          try {
+            return [{ kind, path: app.getPath(kind) }]
+          } catch {
+            // Optional OS folders can be absent in redirected or isolated Windows profiles.
+            process.send?.({ type: 'selection-error', errorCode: `optional-${kind}-unavailable` })
+            return []
+          }
+        })
       },
       finish,
       (errorCode) => process.send?.({ type: 'selection-error', errorCode })
