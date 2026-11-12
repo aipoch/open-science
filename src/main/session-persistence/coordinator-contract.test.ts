@@ -969,17 +969,24 @@ const archiveRuntime = (
     true
   )
   let runtime: ts.Expression | undefined
+  let localActivity: ts.VariableDeclaration | undefined
   const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'isSessionLocallyBusy') {
+      localActivity = node
+    }
     if (ts.isNewExpression(node) && node.expression.getText(source) === 'ArchiveCoordinator') {
       runtime = node.arguments?.[2]
     }
     ts.forEachChild(node, visit)
   }
   visit(source)
-  if (!runtime) throw new Error('ArchiveCoordinator runtime wiring was not found')
-  const script = ts.transpileModule(`return (${runtime.getText(source)})`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-  }).outputText
+  if (!runtime || !localActivity) throw new Error('ArchiveCoordinator runtime wiring was not found')
+  const script = ts.transpileModule(
+    `const ${localActivity.getText(source)}; return (${runtime.getText(source)})`,
+    {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+    }
+  ).outputText
   return new Function(
     'sideChatOwnerRef',
     'detectArchiveBlockingSessions',
