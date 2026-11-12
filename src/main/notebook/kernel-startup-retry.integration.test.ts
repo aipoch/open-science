@@ -184,7 +184,7 @@ it.skipIf(process.platform !== 'win32').each([
       }
       const shutdown = await executor.shutdown()
       expect(shutdown).toEqual({ reaped: true })
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }
 )
