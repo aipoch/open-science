@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     getAppPath: () => '/application',
     getLocale: () => 'en',
     getVersion: () => 'test',
+    on: vi.fn(),
     once: vi.fn(),
     removeListener: vi.fn()
   },
@@ -31,6 +32,7 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
 
 class Helper extends EventEmitter {
   pid = 123
+  connected = true
   exitCode: number | null = null
   signalCode: string | null = null
   send = vi.fn((_message: unknown, callback: (error: Error | null) => void) => callback(null))
@@ -73,6 +75,7 @@ beforeEach(() => {
   mocks.spawn.mockReturnValue(child)
   mocks.app.isPackaged = false
   mocks.app.getPath.mockReturnValue(tmpdir())
+  mocks.app.on.mockImplementation(lifecycle.on.bind(lifecycle))
   mocks.app.once.mockImplementation(lifecycle.once.bind(lifecycle))
   mocks.app.removeListener.mockImplementation(lifecycle.removeListener.bind(lifecycle))
 })
@@ -87,12 +90,65 @@ const saveRequest = { kind: 'save' as const, options: { defaultPath: filePath } 
 const assertReleased = (): void => {
   expect(window.enabled).toBe(true)
   expect(window.listenerCount('closed')).toBe(0)
+  expect(window.listenerCount('focus')).toBe(0)
+  expect(lifecycle.listenerCount('activate')).toBe(0)
   expect(lifecycle.listenerCount('will-quit')).toBe(0)
   expect(vi.getTimerCount()).toBe(0)
   expect(mocks.rm).toHaveBeenCalledWith('/temporary-dialog-profile', expect.any(Object))
 }
 
 describe('isolated native file dialogs', () => {
+  it('routes activation to the last focused picker and releases focus listeners on close', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin' })
+    const first = showFileDialogInHelper(saveRequest, window.asParent())
+    lifecycle.emit('activate')
+    expect(child.send).not.toHaveBeenCalled()
+    child.ready()
+    const request = child.send.mock.calls[0][0] as { operationId: string }
+    const secondWindow = new Window()
+    const secondChild = new Helper()
+    mocks.spawn.mockReturnValueOnce(secondChild)
+    const second = showFileDialogInHelper(saveRequest, secondWindow.asParent())
+    secondChild.ready()
+    child.send.mockClear()
+    secondChild.send.mockClear()
+
+    lifecycle.emit('activate')
+    expect(secondChild.send).toHaveBeenCalledTimes(1)
+    expect(child.send).not.toHaveBeenCalled()
+    child.emit('message', {
+      type: 'window-state',
+      phase: 'focused',
+      visible: true,
+      focused: true,
+      dockVisible: false
+    })
+    lifecycle.emit('activate')
+    expect(child.send).toHaveBeenLastCalledWith(
+      { type: 'focus', operationId: request.operationId },
+      expect.any(Function)
+    )
+    expect(secondChild.send).toHaveBeenCalledTimes(1)
+    window.emit('focus')
+    expect(child.send).toHaveBeenCalledTimes(2)
+
+    child.emit('message', { type: 'result', result: { canceled: true } })
+    lifecycle.emit('activate')
+    expect(child.send).toHaveBeenCalledTimes(2)
+    child.exit(0)
+    await first
+    secondChild.emit('message', { type: 'result', result: { canceled: true } })
+    secondChild.exit(0)
+    await second
+    expect(secondWindow.enabled).toBe(true)
+    expect(secondWindow.listenerCount('focus')).toBe(0)
+    assertReleased()
+    lifecycle.emit('activate')
+    window.emit('focus')
+    expect(child.send).toHaveBeenCalledTimes(2)
+    expect(secondChild.send).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['renamed.pdf', 'missing-extension', '.md'])(
     'rejects a helper result that bypasses the reviewed export type: %s',
     async (name) => {

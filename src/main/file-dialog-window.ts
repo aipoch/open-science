@@ -25,6 +25,8 @@ export async function showHtmlFileDialog(
     minHeight: request.kind === 'save' ? 340 : 320,
     useContentSize: true,
     show: false,
+    // Keep the caller's taskbar entry without making the helper window unfocusable.
+    skipTaskbar: process.platform === 'win32',
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/file-dialog.js'),
@@ -50,10 +52,12 @@ export async function showHtmlFileDialog(
       type: 'window-state',
       phase,
       visible: window.isVisible(),
-      focused: window.isFocused()
+      focused: window.isFocused(),
+      ...(process.platform === 'darwin' ? { dockVisible: app.dock?.isVisible() } : {})
     })
   }
   reportWindow('created')
+  let refocus: ((message: unknown) => void) | undefined
   const result = new Promise<FileDialogResult>((resolve, reject) => {
     let settled = false
     window.on('focus', () => {
@@ -62,6 +66,27 @@ export async function showHtmlFileDialog(
     let loaded = false
     let rendererReady = false
     let revealing = false
+    refocus = (message: unknown): void => {
+      if (
+        !message ||
+        typeof message !== 'object' ||
+        !('type' in message) ||
+        message.type !== 'focus' ||
+        !('operationId' in message) ||
+        message.operationId !== request.operationId ||
+        !revealing ||
+        settled ||
+        window.isDestroyed()
+      )
+        return
+      // Accessory helpers are absent from Cmd-Tab. Reactivate the existing picker through its owner.
+      if (process.platform === 'darwin') app.focus({ steal: true })
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.moveTop()
+      window.focus()
+    }
+    process.on('message', refocus)
     const fail = (error: Error): void => {
       if (settled) return
       settled = true
@@ -193,6 +218,7 @@ export async function showHtmlFileDialog(
     clearTimeout(displayTimer)
     clearTimeout(revealTimer)
     clearTimeout(foregroundTimer)
+    if (refocus) process.removeListener('message', refocus)
     ipcMain.removeHandler(FILE_DIALOG_UI_CHANNEL)
     if (!window.isDestroyed()) window.destroy()
   }

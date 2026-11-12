@@ -125,7 +125,12 @@ async function launchHelper(
       stdio: ['ignore', 'ignore', 'pipe', 'ipc']
     }
   )
-  const states: Array<{ phase?: string; visible?: boolean; focused?: boolean }> = []
+  const states: Array<{
+    phase?: string
+    visible?: boolean
+    focused?: boolean
+    dockVisible?: boolean
+  }> = []
   let inspectorEndpoint: string | undefined
   child.stderr!.on('data', (data: Buffer) => {
     const match = data.toString().match(/Debugger listening on (ws:\/\/[^\s]+)/)
@@ -141,6 +146,7 @@ async function launchHelper(
         phase?: string
         visible?: boolean
         focused?: boolean
+        dockVisible?: boolean
       }
       if (message.type === 'window-state') states.push(message)
       if (message.type === 'ready') {
@@ -218,6 +224,9 @@ async function launchHelper(
     await expect
       .poll(() => states)
       .toContainEqual(expect.objectContaining({ visible: true, focused: true }))
+    if (process.platform === 'darwin')
+      for (const state of states.filter((state) => state.visible))
+        expect(state.dockVisible).toBe(false)
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /dark/ : /^(?!.*dark).*$/)
     return {
       page,

@@ -27,7 +27,8 @@ class NativeFileDialogError extends Error {
   }
 }
 
-const activeParents = new WeakSet<BaseWindow>()
+// Insertion order tracks the last active owner when several windows have independent pickers.
+const activeParents = new Set<BaseWindow>()
 
 export async function showFileDialogInHelper(
   request: FileDialogRequest,
@@ -91,6 +92,23 @@ export async function showFileDialogInHelper(
       let displayTimeout: ReturnType<typeof setTimeout> | undefined
       let selection: FileDialogResult | undefined
       let exitTimeout: ReturnType<typeof setTimeout> | undefined
+      const focusHelper = (): void => {
+        if (settled || selection || !shown || !child.connected) return
+        try {
+          child.send({ type: 'focus', operationId }, (error) => {
+            if (!settled)
+              operation.phase(error ? 'helper-focus-unavailable' : 'helper-focus-requested', {
+                helperPid: child.pid
+              })
+          })
+        } catch {
+          operation.phase('helper-focus-unavailable', { helperPid: child.pid })
+        }
+      }
+      const activated = (): void => {
+        // Cmd-Tab activates the main app, whose disabled owner cannot focus an accessory helper.
+        if (parent && [...activeParents].at(-1) === parent) focusHelper()
+      }
       const finish = (error?: Error): void => {
         if (settled) return
         settled = true
@@ -100,6 +118,8 @@ export async function showFileDialogInHelper(
         clearTimeout(exitTimeout)
         signal?.removeEventListener('abort', abort)
         parent?.removeListener('closed', closed)
+        parent?.removeListener('focus', focusHelper)
+        app.removeListener('activate', activated)
         app.removeListener('will-quit', quit)
         if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
         if (error) reject(error)
@@ -131,6 +151,10 @@ export async function showFileDialogInHelper(
       )
       signal?.addEventListener('abort', abort, { once: true })
       parent?.once('closed', closed)
+      if (parent && presentation === 'html') {
+        parent.on('focus', focusHelper)
+        app.on('activate', activated)
+      }
       app.once('will-quit', quit)
       child.once('spawn', () => operation.phase('helper-started', { helperPid: child.pid }))
       child.on('error', (error: NodeJS.ErrnoException) => {
@@ -161,6 +185,7 @@ export async function showFileDialogInHelper(
           phase?: unknown
           visible?: unknown
           focused?: unknown
+          dockVisible?: unknown
         } | null
         if (raw?.type === 'ready' && !ready) {
           ready = true
@@ -208,8 +233,13 @@ export async function showFileDialogInHelper(
           operation.phase(`window-${raw.phase}`, {
             helperPid: child.pid,
             visible: raw.visible,
-            focused: raw.focused
+            focused: raw.focused,
+            ...(typeof raw.dockVisible === 'boolean' ? { dockVisible: raw.dockVisible } : {})
           })
+          if (raw.phase === 'focused' && raw.focused && parent) {
+            activeParents.delete(parent)
+            activeParents.add(parent)
+          }
           if (raw.phase === 'shown' && raw.visible) {
             shown = true
             clearTimeout(displayTimeout)
