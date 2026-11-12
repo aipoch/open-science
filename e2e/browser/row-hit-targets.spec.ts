@@ -205,12 +205,14 @@ test('PDF outline edges and indentation navigate; collapse only changes expansio
   await expect(page.getByTestId('actions')).toHaveText('page-2,page-2,page-2,page-2,page-2')
 })
 
-test('marketplace card edges and details button open the same specialist exactly once', async ({
+test('marketplace card body edges and details button open the same specialist exactly once', async ({
   page
 }) => {
   await page.goto('/row-hit-targets.html?surface=marketplace')
-  const primary = page.getByRole('button', { name: /Researcher.*Focused research/ })
-  await clickEdges(page, primary.locator('..'), 'specialist')
+  const primary = page.getByRole('button', { name: 'Researcher', exact: true })
+  await expect(primary).toBeVisible()
+  const body = page.getByText('Focused research', { exact: true }).locator('..')
+  await clickEdges(page, body, 'specialist')
   await page.getByRole('button', { name: 'View details', exact: true }).click()
   await expect(page.getByTestId('actions')).toHaveText(Array(5).fill('specialist').join(','))
 })

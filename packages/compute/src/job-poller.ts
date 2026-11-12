@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { ComputeJobLifecycle, dispatchMayHaveStarted } from './compute-job-lifecycle'
+import { isComputeJobTrackingStopped } from './compute-job-status'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
@@ -305,7 +306,7 @@ export class JobPoller {
   ): Promise<void> {
     const slurmJobs = jobs.filter((job) => job.execution_mode === 'slurm')
     if (slurmJobs.length > 0) await this._pollSlurmProvider(providerId, slurmJobs, signal)
-    jobs = jobs.filter((job) => job.execution_mode !== 'slurm')
+    jobs = jobs.filter((job) => job.execution_mode !== 'slurm' && !isComputeJobTrackingStopped(job))
     if (jobs.length === 0) return
     const noHandle: ComputeJob[] = []
     const invalidHandle: ComputeJob[] = []
@@ -641,6 +642,14 @@ export class JobPoller {
     // The exact workdir was reachable but did not contain a valid launch receipt. Reuse the
     // deletion owner's fail-closed cleanup: it only signals a PID whose cwd proves ownership, then
     // removes the exact validated Job directory. Do not terminalize the row unless cleanup succeeds.
+    const cleanupJob = await this._getJobForRemoteAction(job.job_id, signal)
+    if (
+      !cleanupJob ||
+      cleanupJob.status !== job.status ||
+      cleanupJob.remote_handle !== job.remote_handle ||
+      cleanupJob.remote_workdir !== job.remote_workdir
+    )
+      return undefined
     let cleanupResult
     try {
       cleanupResult = await connection.run(cleanupCommand(workdir, undefined), {
@@ -902,9 +911,8 @@ export class JobPoller {
       if (elapsedSecs >= timeoutSecs + POLLER_KILL_GRACE_SECONDS) {
         // Same-job poll results are serialized. Re-read after acquiring that chain so an earlier
         // terminal result can suppress this stale destructive observation before any remote kill.
-        const current = await this.deps.jobRepository.get(job.job_id)
-        if (signal.aborted) return
-        if (!current || (current.status !== 'submitted' && current.status !== 'running')) return
+        const current = await this._getJobForRemoteAction(job.job_id, signal)
+        if (!current) return
 
         const handle = parseRemoteJobHandle(current.remote_handle, current.remote_workdir)
         if (!handle || handle.driver === 'slurm') {
@@ -919,6 +927,15 @@ export class JobPoller {
             handle.workdir,
             connection
           )
+          // Cancellation can settle while the ownership probe is in flight. Its failure stops
+          // tracking without changing status, so status alone cannot authorize a later signal.
+          const latest = await this._getJobForRemoteAction(job.job_id, signal)
+          if (
+            !latest ||
+            latest.remote_handle !== current.remote_handle ||
+            latest.remote_workdir !== current.remote_workdir
+          )
+            return
           if (ownership === 'unknown') {
             if (signal.aborted) return
             await this._recordTimeoutTerminationUnconfirmed(current)
@@ -963,6 +980,23 @@ export class JobPoller {
       stdoutTail: stdoutTail || null,
       stderrTail: stderrTail || null
     })
+  }
+
+  private async _getJobForRemoteAction(
+    jobId: string,
+    signal: AbortSignal
+  ): Promise<ComputeJob | undefined> {
+    const current = await this.deps.jobRepository.get(jobId)
+    if (
+      signal.aborted ||
+      !current ||
+      (current.status !== 'submitted' && current.status !== 'running') ||
+      current.cancellation_status === 'cancelling' ||
+      current.cancellation_status === 'cancelled' ||
+      isComputeJobTrackingStopped(current)
+    )
+      return undefined
+    return current
   }
 
   private async _recordTimeoutTerminationUnconfirmed(job: ComputeJob): Promise<void> {

@@ -128,7 +128,8 @@ export class AcpProviderSessionResumer {
   async resume(
     request: AcpResumeSessionRequest,
     writerTransfer?: AcpSessionWriterTransfer,
-    isPermissionCurrent: () => boolean = () => true
+    isPermissionCurrent: () => boolean = () => true,
+    onSessionReady?: () => void
   ): Promise<AcpCreateSessionResponse> {
     if (this.writerReleases.has(request.sessionId)) {
       const providerSessionId = await this.releaseForTransfer(request.sessionId)
@@ -141,12 +142,20 @@ export class AcpProviderSessionResumer {
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
     if (attached) {
       this.pendingResumeTransfers.delete(request.sessionId)
-      return this.resumeAttached(request, attached, isPermissionCurrent)
+      const response = await this.resumeAttached(request, attached, isPermissionCurrent)
+      onSessionReady?.()
+      return response
     }
     writerTransfer ??= this.pendingResumeTransfers.get(request.sessionId)
     if (writerTransfer)
       request = { ...request, providerSessionId: writerTransfer.providerSessionId }
-    const response = await this.resumeDetached(request, false, writerTransfer)
+    const response = await this.resumeDetached(
+      request,
+      false,
+      writerTransfer,
+      undefined,
+      onSessionReady
+    )
     this.pendingResumeTransfers.delete(request.sessionId)
     return response
   }
@@ -281,7 +290,8 @@ export class AcpProviderSessionResumer {
     request: AcpResumeSessionRequest,
     compatibleOnly: boolean,
     writerTransfer?: AcpSessionWriterTransfer,
-    knownWriterConnection?: ClientConnection
+    knownWriterConnection?: ClientConnection,
+    onSessionReady?: () => void
   ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
@@ -293,7 +303,7 @@ export class AcpProviderSessionResumer {
       const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd))
       this.deps.assertCurrentConnection(connection)
       identity.renew()
-      return await this.withTimeout(
+      const response = await this.withTimeout(
         (cancellationSignal) =>
           this.resumeConnected(
             request,
@@ -308,6 +318,9 @@ export class AcpProviderSessionResumer {
           ),
         this.progressSessionIds(request)
       )
+      // Hand off protection synchronously before releasing the original resume reservation.
+      onSessionReady?.()
+      return response
     } finally {
       identity.release()
     }

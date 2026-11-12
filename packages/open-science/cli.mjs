@@ -4,7 +4,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { closeSync, createWriteStream, existsSync, openSync, realpathSync } from 'node:fs'
-import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -21,6 +21,7 @@ import {
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
+import { startLaunchLogReader } from './launch-log.mjs'
 import { protectInstallationStartup } from './installation-startup.cjs'
 import {
   requestExistingRuntimeWeb,
@@ -882,10 +883,20 @@ export const terminateDaemon = async (pid, opts) => {
   return !isAlive(pid)
 }
 
-const readLogTail = async (logPath) => {
+// Snapshot the end as well as the start: the daemon may still be writing after a timeout.
+export const readLogTail = async (logPath) => {
   try {
-    const text = await readFile(logPath, 'utf8')
-    return text.split(/\r?\n/).slice(-30).join('\n')
+    const file = await open(logPath, 'r')
+    try {
+      const { size } = await file.stat()
+      if (size === 0) return ''
+      const start = Math.max(0, size - 64 * 1024)
+      const stream = file.createReadStream({ start, end: size - 1 })
+      const text = await readStreamText(stream)
+      return text.split(/\r?\n/).slice(-30).join('\n')
+    } finally {
+      await file.close()
+    }
   } catch {
     return ''
   }
@@ -987,41 +998,64 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   })
   await mkdir(configRoot, { recursive: true, mode: 0o700 })
   const logPath = join(configRoot, `cli-daemon-${randomUUID()}.log`)
-  const logFd = openLaunchLog(logPath)
   const environmentPort = process.env.OPEN_SCIENCE_WEB_PORT?.trim()
   const port = options.port ?? (environmentPort ? parsePortOption(environmentPort) : DEFAULT_PORT)
   const childEnv = {
     ...process.env,
-    OPEN_SCIENCE_CONFIG_ROOT: configRoot,
+    OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT: '1',
     OPEN_SCIENCE_WEB_PORT: String(port)
   }
+  // A computed default is not an override: injecting it would make the backend select
+  // <configRoot>/electron-profile instead of the existing desktop Electron profile.
+  if (
+    options.configRoot ||
+    process.env.OPEN_SCIENCE_CONFIG_ROOT ||
+    process.env.OPEN_SCIENCE_STORAGE_ROOT
+  )
+    childEnv.OPEN_SCIENCE_CONFIG_ROOT = configRoot
   delete childEnv.ELECTRON_RUN_AS_NODE
   if (options.credentialStore === 'file')
     deps.warn(
       'Settings credentials will be stored unencrypted in local files. Use this option at every start; existing encrypted credentials are not migrated. Compute credentials still require OS secure storage.'
     )
   let installationLease
-  let logClosed = false
+  const logFd = openLaunchLog(logPath)
+  let capture
   let startup
   try {
     installationLease = protectInstallationStartup(backend.entry, configRoot)
+    capture = await startLaunchLogReader(backend.command, logFd)
     const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
       detached: true,
-      stdio: ['ignore', logFd, logFd],
+      stdio: ['ignore', capture.input, capture.input],
       windowsHide: true,
       env: childEnv
     })
     const startupPromise = waitForStartup(configRoot, child, deps)
     child.unref()
-    closeSync(logFd)
-    logClosed = true
+    capture.input.destroy()
 
     startup = await startupPromise
   } finally {
-    if (!logClosed) closeSync(logFd)
+    capture?.input.destroy()
+    closeSync(logFd)
     installationLease?.release()
   }
   if (startup.kind !== 'ready') {
+    if (startup.kind === 'exit' || startup.kind === 'error') {
+      // A surviving descendant may still hold the pipe. Give ordinary exits time to drain.
+      let timer
+      try {
+        await Promise.race([
+          capture.closed,
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, 500)
+          })
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
     const logTail = await readLogTail(logPath)
     if (startup.kind !== 'timeout') {
       throw new Error(formatStartupFailure(startup, logTail, options))

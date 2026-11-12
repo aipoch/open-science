@@ -293,7 +293,7 @@ describe('Windows AppContainer launch', () => {
     ).toEqual([ELECTRON_NO_STDIO_INIT, 'repl_loop.js'])
   })
 
-  it('keeps nested optional PATH candidates until their individual permissions are checked', () => {
+  it('keeps nested optional folder candidates until their individual permissions are checked', () => {
     const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'optional-path-')))
     const parent = join(root, 'tools')
     const child = join(parent, 'bin')
@@ -309,6 +309,7 @@ describe('Windows AppContainer launch', () => {
         filesystem: {
           readOnlyRoots: [],
           optionalReadOnlyRoots: [parent, child, child],
+          optionalReadWriteRoots: [parent, child, child],
           readWriteRoots: [root],
           deniedReadRoots: [],
           deniedWriteRoots: []
@@ -321,6 +322,7 @@ describe('Windows AppContainer launch', () => {
         Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
       )
       expect(specification.optionalReadOnlyRoots).toEqual([parent, child])
+      expect(specification.optionalReadWriteRoots).toEqual([parent, child])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

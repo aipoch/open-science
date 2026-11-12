@@ -22,7 +22,8 @@ const knownPatchedHashes = new Set([
   '77e432ad0819c7e490a61a2085fc04b9ba1375c063f41614860bd6f9d7a6a641', // e1ea7d51
   '6a757b0a426ee20bb883217dae1de8cb528bbcc2bdad79c586908495c52e5a84', // 2e224cba
   '395b69a31d0aa9a32c33753b36aeb763692ae59223f7a3e629433cda460ec5c1', // e4b6d48fa
-  '2414956c835d1acb02599358aa6cd33ce68ced2aa3d7be52b75bcc3826835caa' // 98799d397
+  '2414956c835d1acb02599358aa6cd33ce68ced2aa3d7be52b75bcc3826835caa', // 98799d397
+  'c5e6eae72d422fe2561b00050271ca48376cdf7e16d120bd72a92cc79ed2e161' // a5498d8ad
 ])
 if (!knownPatchedHashes.has(digest(installed))) process.exit(0)
 

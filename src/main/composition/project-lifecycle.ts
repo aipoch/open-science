@@ -1,3 +1,4 @@
+import { reserveAcpSessionStorageCleanup } from '../acp/session-registry'
 import type { PromptOptimizationService } from '../projects/prompt-optimization'
 import { join } from 'node:path'
 import { HarnessStorageCleanup } from '../harness-acp/storage-cleanup'
@@ -319,6 +320,7 @@ export function composeProjectLifecycle({
     getProjectDbClient(configRoot)
   )
   const harnessStorageCleanup = new HarnessStorageCleanup({
+    tryClaimIdentities: reserveAcpSessionStorageCleanup,
     sessionDirectory: join(configRoot, 'open-science-agent', 'sessions'),
     receiptDirectory: () => join(resolveDataRoot(), 'open-science-agent', 'tool-receipts'),
     isLive: (projectId, sessionId) =>
@@ -329,7 +331,7 @@ export function composeProjectLifecycle({
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
-      await Promise.all([
+      const results = await Promise.allSettled([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),
@@ -337,14 +339,15 @@ export function composeProjectLifecycle({
         researchFilmLifecycle.deleteSessions(sessionIds),
         harnessStorageCleanup.commit(sessionIds)
       ])
+      // The coordinator must retain deleted identities until every cleanup has settled.
+      const failed = results.find((result) => result.status === 'rejected')
+      if (failed) throw failed.reason
     },
-    onSessionsReconciled: async (sessionIds) => {
-      await Promise.all([
-        visionEvidenceRepository.reconcileSessions(sessionIds),
-        researchFilmLifecycle.reconcileSessions(sessionIds),
-        harnessStorageCleanup.reconcile(sessionIds)
-      ])
-    }
+    onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds),
+    planSessionsReconciliation: async (sessionIds) => [
+      ...(await researchFilmLifecycle.planSessionReconciliation(sessionIds)),
+      ...(await harnessStorageCleanup.planReconciliation(sessionIds))
+    ]
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     promptOptimization,

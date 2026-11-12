@@ -194,6 +194,18 @@ class ArtifactProvenanceVersionWriter {
     )
   }
 
+  async tryWithSessionWrite<Result>(
+    request: Pick<CreateArtifactVersionRequest, 'projectId' | 'appSessionId'>,
+    operation: () => Promise<Result>
+  ): Promise<{ acquired: false } | { acquired: true; result: Result }> {
+    const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
+    if (ArtifactProvenanceVersionWriter.sessionWrites.has(sessionKey)) return { acquired: false }
+    // withSessionWrite reserves synchronously before its first await, so another caller cannot
+    // enter between this availability check and reservation. Busy recovery never joins the queue.
+    const result = await this.withSessionWrite(request, operation)
+    return { acquired: true, result }
+  }
+
   async withSessionWrite<Result>(
     request: Pick<CreateArtifactVersionRequest, 'projectId' | 'appSessionId'>,
     operation: (writeVersion: WriteVersionWithinSession) => Promise<Result>,

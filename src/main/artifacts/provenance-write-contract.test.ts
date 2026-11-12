@@ -82,6 +82,7 @@ const PUBLIC_METHODS = [
   'recordLiteratureAbstractRead',
   'recordLiteraturePdfRead',
   'prepareProjectReconciliation',
+  'planOrphanStagingCleanup',
   'reconcileSession',
   'getLineage',
   'getVersionProvenance',

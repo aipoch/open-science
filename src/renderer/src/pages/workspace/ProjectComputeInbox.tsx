@@ -1,7 +1,7 @@
 import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { isComputeJobCancelled } from '@aipoch/compute'
+import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/compute'
 import { ArrowUpRight, ChevronDown, Cpu, RadioTower } from 'lucide-react'
 
 import {
@@ -117,21 +117,25 @@ const kernelStatusClassName = (status: NotebookProjectKernelActivity['status']):
   return 'inline-flex rounded-full bg-status-warning-surface px-2 py-0.5 text-[10px] font-semibold text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
 }
 
-const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t']): string =>
-  (job.status === 'queued' &&
-  job.cancellation_status !== 'cancelling' &&
-  !isComputeJobCancelled(job)
-    ? computeQueueBlockedLabel(job.queue_blocked_reason, t)
-    : undefined) ??
-  backgroundActivityStatusLabel(
-    isComputeJobCancelled(job)
-      ? 'cancelled'
-      : job.cancellation_status === 'cancelling'
-        ? 'cancelling'
-        : job.status,
-    undefined,
-    t
+const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t']): string => {
+  if (isComputeJobTrackingStopped(job)) return t('Unable to confirm cancellation')
+  return (
+    (job.status === 'queued' &&
+    job.cancellation_status !== 'cancelling' &&
+    !isComputeJobCancelled(job)
+      ? computeQueueBlockedLabel(job.queue_blocked_reason, t)
+      : undefined) ??
+    backgroundActivityStatusLabel(
+      isComputeJobCancelled(job)
+        ? 'cancelled'
+        : job.cancellation_status === 'cancelling'
+          ? 'cancelling'
+          : job.status,
+      undefined,
+      t
+    )
   )
+}
 
 const backendLabels = {
   direct_ssh: 'Direct SSH',

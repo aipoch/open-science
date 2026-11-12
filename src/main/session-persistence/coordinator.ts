@@ -4,6 +4,9 @@ import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/p
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
   SessionDeletionCommittedError,
+  SessionRevisionConflictError,
+  isSessionRevisionConflictError,
+  sessionRevision,
   deleteSessionRecoveryFileRequestSchema,
   type DeleteSessionRecoveryFileRequest,
   type DelegationPolicy,
@@ -50,7 +53,7 @@ import type {
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import * as computeHostAccess from '../compute/session-compute-host-access'
-import type { ProjectSessionDeletionState } from './repository'
+import type { ProjectSessionDeletionState, SessionRecoverySnapshot } from './repository'
 import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -110,6 +113,7 @@ export type PublishedSessionHandoff = {
 
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
+  hasLiveRuntimeSession?(projectId: string, sessionId: string): boolean
   deleteRecoveryFile?(request: DeleteSessionRecoveryFileRequest): Promise<void>
   loadAllWithDiagnostics(options?: {
     mode?: 'repair' | 'read-only'
@@ -122,6 +126,8 @@ type SessionMutationRepository = {
       projectDirectoryCount: number
       sessionFileCount: number
       sessionBytes: number
+      authorityReadMs?: number
+      jsonParseMs?: number
     }
     failure?: SessionLoadFailure
   }>
@@ -142,7 +148,15 @@ type SessionMutationRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
+  loadSessionRecoverySnapshot?(
+    projectId: string,
+    sessionId: string
+  ): Promise<SessionRecoverySnapshot>
   assertSessionIdentityOwnership(sessionId: string, expectedProjectId: string): Promise<void>
+  saveRecoveredSession?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number,
@@ -174,7 +188,9 @@ type SessionFileIndex = {
   ): Promise<void>
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
   reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
-  reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
+  reconcileActiveSessions(
+    sessions: readonly Pick<PersistedChatSession, 'projectId' | 'id'>[]
+  ): Promise<void>
   markReconciliationIncomplete(projectId?: string): void
 }
 
@@ -190,7 +206,12 @@ type SessionProvenancePersistence = {
   abortSessionDeletion(receipt: SessionDeletionReceipt): Promise<void>
 }
 
+type SessionNativeCleanup = { projectId: string; sessionId: string; apply(): Promise<void> }
+
+// commit must settle every started cleanup before resolving or rejecting: ID reservations last
+// until this promise settles, including failures in parallel projection owners.
 type SessionDeletionHandlers = {
+  planReconciliation?(existingSessionIds: string[]): Promise<SessionNativeCleanup[]>
   commit(sessionIds: string[]): Promise<void>
   reconcile(existingSessionIds: string[], archivedSessionIds: string[]): Promise<void>
 }
@@ -209,11 +230,52 @@ const emitRecoverableDiagnostic = (
 
 type SessionAuthorityScan = Awaited<ReturnType<SessionMutationRepository['loadAllWithDiagnostics']>>
 
+type RecoveredSessionReference = Pick<
+  PersistedChatSession,
+  'id' | 'projectId' | 'cwd' | 'revision' | 'updatedAt' | 'archivedAt'
+>
+
+type PreparedSessionRecovery = Readonly<
+  { projectId: string; sessionId: string; metrics?: SessionRecoverySnapshot['metrics'] } & (
+    | { status: 'prepared'; session: PersistedChatSession; expectedRevision: number }
+    | { status: 'repair-required' }
+  )
+>
+
+const HYDRATION_CACHE_IDLE_MS = 30_000
+const HYDRATION_CACHE_MAX_SESSIONS = 32
+const HYDRATION_CACHE_MAX_ESTIMATED_BYTES = 32 * 1024 * 1024
+
+// Estimate retained JS values without serializing a second copy of the transcript. The estimate
+// deliberately overcounts shared strings; it is a retention budget, not a heap measurement.
+const estimateHydrationBytes = (value: unknown): number => {
+  const pending = [value]
+  const seen = new Set<object>()
+  let bytes = 0
+  while (pending.length > 0 && bytes <= HYDRATION_CACHE_MAX_ESTIMATED_BYTES) {
+    const current = pending.pop()
+    if (typeof current === 'string') bytes += 24 + current.length * 2
+    else if (current && typeof current === 'object' && !seen.has(current)) {
+      seen.add(current)
+      bytes += 64
+      for (const key of Object.keys(current)) {
+        bytes += 16 + key.length * 2
+        if (bytes > HYDRATION_CACHE_MAX_ESTIMATED_BYTES) return bytes
+        pending.push((current as Record<string, unknown>)[key])
+      }
+    } else bytes += 8
+  }
+  return bytes
+}
+
 // Reuse only the expensive authority scan. Derived reconciliation still runs on every load so a
 // second window/renderer cannot miss files or artifacts written after the first was cached.
 class SessionHydrationCache {
   private generation = 0
-  private cached: { generation: number; scan: SessionAuthorityScan } | undefined
+  private cached:
+    { generation: number; scan: SessionAuthorityScan; estimatedBytes: number } | undefined
+  private retention = 'empty'
+  private expiry: ReturnType<typeof setTimeout> | undefined
 
   generationForLoad(): number {
     return this.generation
@@ -224,14 +286,46 @@ class SessionHydrationCache {
     return cached && cached.generation === this.generation ? cached.scan : undefined
   }
 
+  diagnostics(): Record<string, string | number> {
+    return {
+      retainedSessionCount: this.cached?.scan.result.sessions.length ?? 0,
+      retainedEstimatedBytes: this.cached?.estimatedBytes ?? 0,
+      cacheRetention: this.retention,
+      cacheMaxSessionCount: HYDRATION_CACHE_MAX_SESSIONS,
+      cacheMaxEstimatedBytes: HYDRATION_CACHE_MAX_ESTIMATED_BYTES
+    }
+  }
+
   set(scan: SessionAuthorityScan, generation: number): void {
     if (generation !== this.generation || scan.isComplete !== true) return
-    this.cached = { generation, scan }
+    clearTimeout(this.expiry)
+    this.expiry = undefined
+    this.cached = undefined
+    if (scan.result.sessions.length > HYDRATION_CACHE_MAX_SESSIONS) {
+      this.retention = 'count-limit'
+      return
+    }
+    const estimatedBytes = estimateHydrationBytes(scan)
+    if (estimatedBytes > HYDRATION_CACHE_MAX_ESTIMATED_BYTES) {
+      this.retention = 'byte-limit'
+      return
+    }
+    this.cached = { generation, scan, estimatedBytes }
+    this.retention = 'admitted'
+    this.expiry = setTimeout(() => {
+      this.cached = undefined
+      this.expiry = undefined
+      this.retention = 'expired'
+    }, HYDRATION_CACHE_IDLE_MS)
+    this.expiry.unref()
   }
 
   invalidate(): void {
+    clearTimeout(this.expiry)
+    this.expiry = undefined
     this.generation += 1
     this.cached = undefined
+    this.retention = 'invalidated'
   }
 }
 
@@ -353,6 +447,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   >()
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly hydrationCache = new SessionHydrationCache()
+  private readonly pendingDeletionCleanups = new Map<string, number>()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
   private readonly stateOwner: SessionPersistenceStateOwner
@@ -481,8 +576,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
       },
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
-      notifyDiscussionDetached: (session) => publishSessionUpdate(session, 'runtime-context'),
-      notifySessionsDeleted: (sessionIds) => this.notifySessionsDeleted(sessionIds)
+      notifyDiscussionDetached: (session) => publishSessionUpdate(session, 'runtime-context')
     })
     this.reconciliationOwner = new SessionPersistenceReconciliationOwner({
       ownsPromptPreparation: (session) => this.stateOwner.ownsPromptPreparation(session),
@@ -553,6 +647,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   adoptPublishedSession(publication: PublishedSessionHandoff): Promise<void> {
     // Capture before enqueueing: the publisher and this owner have independent schedulers.
     const { projectId, sessionId, session, pendingProjectImport } = structuredClone(publication)
+    this.hydrationCache.invalidate()
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       this.assertMutable(projectId, sessionId, 'mutate')
       if (session.id !== sessionId || session.projectId !== projectId)
@@ -582,7 +677,17 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runGlobal(async () => this.stateOwner.metadataSnapshot())
   }
 
-  replaceSessionMetadata(sessions: readonly SessionMetadata[], isComplete: boolean): Promise<void> {
+  replaceSessionMetadata(
+    sessions: readonly SessionMetadata[],
+    isComplete: boolean,
+    expectedGeneration?: number
+  ): Promise<void> {
+    if (expectedGeneration !== undefined) {
+      if (this.recoveryCatalogGeneration() === expectedGeneration)
+        this.stateOwner.replaceMetadata(sessions, isComplete)
+      else this.stateOwner.replaceMetadata(this.stateOwner.metadataSnapshot().sessions, false)
+      return Promise.resolve()
+    }
     return this.operationScheduler.runGlobal(async () => {
       this.stateOwner.replaceMetadata(sessions, isComplete)
     })
@@ -590,6 +695,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
   // Degraded authority read: keeps healthy transcripts navigable while writes remain blocked.
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
+    const queuedAt = performance.now()
     return this.operationScheduler.runGlobal(async () => {
       this.hydrationCache.invalidate()
       this.stateOwner.beginHydration()
@@ -600,7 +706,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       const operation = startDiagnosticOperation(this.log, {
         operation: 'session-hydration',
         cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
-        fields: { mode: 'read-only', startupCleanupEligible: false }
+        fields: {
+          mode: 'read-only',
+          startupCleanupEligible: false,
+          queueWaitMs: performance.now() - queuedAt
+        }
       })
       operation.phase('load-authority')
       let scan: Awaited<ReturnType<SessionMutationRepository['loadAllWithDiagnostics']>>
@@ -633,11 +743,288 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  recoveryCatalogGeneration(): number {
+    return this.hydrationCache.generationForLoad()
+  }
+
+  async cleanupRecoveredSession(
+    prepared: PreparedSessionRecovery,
+    expectedGeneration: number,
+    commit: (operation: () => Promise<void>) => Promise<boolean>,
+    startupCutoff: number,
+    cancelled: () => boolean
+  ): Promise<'complete' | 'busy' | 'stale'> {
+    if (prepared.status !== 'prepared') return 'stale'
+    const { projectId, sessionId, session } = prepared
+    const actions = await this.reconciliationOwner.planOrphanStagingCleanup(session, startupCutoff)
+    const guarded = (
+      operation: () => Promise<'complete' | 'busy' | 'stale'>
+    ): Promise<'complete' | 'busy' | 'stale'> =>
+      this.operationScheduler.runSessionRecovery(projectId, sessionId, async () => {
+        if (cancelled() || this.recoveryCatalogGeneration() !== expectedGeneration) return 'stale'
+        this.assertMutable(projectId, sessionId, 'mutate')
+        if (
+          session.activeRun ||
+          this.stateOwner.ownsPromptPreparation(session) ||
+          this.repository.hasLiveRuntimeSession?.(projectId, sessionId)
+        )
+          return 'busy'
+        return operation()
+      })
+    for (const apply of actions) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // Try Artifact ownership before the catalog fence; a busy writer never queues here.
+      let applying: Promise<'complete' | 'stale' | 'busy'> | undefined
+      let detached!: (outcome: 'complete' | 'stale') => void
+      const detachedPromise = new Promise<'complete' | 'stale'>((resolve) => {
+        detached = resolve
+      })
+      const outcome = await guarded(() => {
+        applying = apply(async (operation) => {
+          const accepted = await commit(operation)
+          // The private directory no longer belongs to live Session authority. Release the Session
+          // reservation at this handoff; recursive physical removal may continue independently.
+          detached(accepted ? 'complete' : 'stale')
+          return accepted
+        })
+        return Promise.race([applying, detachedPromise])
+      })
+      await applying
+      if (outcome !== 'complete') return outcome
+    }
+    const uploads = await guarded(async () => {
+      if (!(await commit(async () => undefined))) return 'stale'
+      // Verified legacy-source cleanup hashes files under the Session lane, never globally.
+      await this.reconciliationOwner.cleanupVersionedUploadSources(session)
+      return 'complete'
+    })
+    if (uploads !== 'complete') return uploads
+    return 'complete'
+  }
+
+  async reconcileRecoveryCatalog(
+    sessions: readonly RecoveredSessionReference[],
+    expectedGeneration: number,
+    commit: (operation: () => Promise<void>) => Promise<boolean>,
+    cancelled: () => boolean = () => false
+  ): Promise<boolean> {
+    // Directory enumeration and receipt planning run before any catalog commit reservation.
+    const workspaceActions = (await this.workspaceOwnership?.planProvisional?.(sessions)) ?? []
+    const nativeActions = [
+      ...(await this.reconciliationOwner.planNativeCleanup(sessions)),
+      ...((await this.sessionDeletionHandlers?.planReconciliation?.(
+        sessions.map(({ id }) => id)
+      )) ?? [])
+    ]
+    const failures: unknown[] = []
+    // Native owner plans contain identities, never permission to delete. Revalidate immediately
+    // before each effect while excluding Session mutation and Project publication/deletion.
+    for (const action of nativeActions) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const accepted = await this.operationScheduler.runSessionRecovery(
+        action.projectId,
+        action.sessionId,
+        async () => {
+          if (cancelled() || this.recoveryCatalogGeneration() !== expectedGeneration) return false
+          if (!(await commit(async () => undefined))) return false
+          try {
+            await action.apply()
+          } catch (error) {
+            failures.push(error)
+          }
+          return true
+        }
+      )
+      if (!accepted) return false
+    }
+    const guarded = (operation: () => Promise<void>): Promise<boolean> =>
+      this.operationScheduler.runGlobal(async () => {
+        if (cancelled() || this.recoveryCatalogGeneration() !== expectedGeneration) return false
+        return commit(async () => {
+          try {
+            await operation()
+          } catch (error) {
+            failures.push(error)
+          }
+        })
+      })
+    if (
+      !(await guarded(async () => {
+        await this.reconciliationOwner.reconcileCatalogIdentities(sessions)
+        await this.sessionDeletionHandlers?.reconcile(
+          sessions.map(({ id }) => id),
+          sessions.filter(({ archivedAt }) => archivedAt !== undefined).map(({ id }) => id)
+        )
+      }))
+    )
+      return false
+    for (const apply of workspaceActions) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      let removeDetached: (() => Promise<void>) | undefined
+      if (
+        !(await guarded(async () => {
+          removeDetached = await apply()
+        }))
+      )
+        return false
+      try {
+        await removeDetached?.()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(failures, 'Session catalog cleanup is incomplete.')
+    return true
+  }
+
+  // The primary snapshot reader never repairs files and does not reserve the Project lane while
+  // reading/parsing history. Temporary or uncertain authority is deferred to guarded commit.
+  async prepareSessionRecovery(
+    projectId: string,
+    sessionId: string
+  ): Promise<PreparedSessionRecovery | undefined> {
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'session-recovery',
+      fields: { mode: 'prepare' }
+    })
+    operation.phase('read-snapshot')
+    try {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      const loaded: SessionRecoverySnapshot = this.repository.loadSessionRecoverySnapshot
+        ? await this.repository.loadSessionRecoverySnapshot(projectId, sessionId)
+        : await this.operationScheduler.runSession(projectId, sessionId, () => {
+            this.assertMutable(projectId, sessionId, 'mutate')
+            return this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+          })
+      this.assertMutable(projectId, sessionId, 'mutate')
+      if (loaded.status === 'unreadable')
+        throw new Error('Cannot recover a Session whose durable JSON is unreadable.')
+      operation.complete({ status: loaded.status, ...('metrics' in loaded ? loaded.metrics : {}) })
+      if (loaded.status === 'repair-required')
+        return { status: loaded.status, projectId, sessionId }
+      if (loaded.status !== 'found') return undefined
+      return {
+        status: 'prepared',
+        projectId,
+        sessionId,
+        session: structuredClone(loaded.session),
+        expectedRevision: sessionRevision(loaded.session),
+        ...('metrics' in loaded ? { metrics: loaded.metrics } : {})
+      }
+    } catch (error) {
+      operation.fail(error, { status: 'failed' })
+      throw error
+    }
+  }
+
+  // A candidate is not authority. Revalidate before any upload/artifact/index side effects, then
+  // keep explicit repository CAS at each JSON save to cover writers outside this coordinator.
+  async commitSessionRecovery(
+    prepared: PreparedSessionRecovery
+  ): Promise<PersistedChatSession | undefined> {
+    const { projectId, sessionId } = prepared
+    const preparedRevision = prepared.status === 'prepared' ? prepared.expectedRevision : undefined
+    const queuedAt = Date.now()
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'session-recovery',
+      fields: { mode: 'commit' }
+    })
+    operation.phase('wait-for-session')
+    try {
+      const result = await this.operationScheduler.runSessionRecovery(
+        projectId,
+        sessionId,
+        async () => {
+          operation.phase('revalidate-authority', {
+            queueWaitMs: Math.max(0, Date.now() - queuedAt)
+          })
+          this.assertMutable(projectId, sessionId, 'mutate')
+          const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+          if (loaded.status === 'unreadable')
+            throw new Error('Cannot recover a Session whose durable JSON is unreadable.')
+          if (loaded.status !== 'found') return undefined
+          const actualRevision = sessionRevision(loaded.session)
+          const expectedRevision = preparedRevision ?? actualRevision
+          if (actualRevision !== expectedRevision)
+            throw new SessionRevisionConflictError(expectedRevision, actualRevision)
+          // Normal reads preserve active runtime state. Never restart an owned run or preparation.
+          if (loaded.session.activeRun || this.stateOwner.ownsPromptPreparation(loaded.session))
+            return loaded.session
+          // Runtime ownership can change without a JSON revision. Replan from the validated read so
+          // stale restore normalization cannot resurrect a released run or disturb a new owner.
+          const recovered = recoverInterruptedDelegatedWorkSession(loaded.session)
+          const session = recovered.interrupted.length
+            ? await (this.repository.saveRecoveredSession
+                ? this.repository.saveRecoveredSession(recovered.session, expectedRevision)
+                : saveSessionWithRevision(this.repository, recovered.session, expectedRevision))
+            : loaded.session
+          const outcome = await this.reconciliationOwner.reconcileLoadedSessions({
+            result: { sessions: [session], manifest: { version: 1 } },
+            allowDestructiveCleanup: false,
+            scope: 'session',
+            phase: (phase) => operation.phase(phase),
+            onPermissionFailure: () => undefined
+          })
+          if (outcome.status === 'degraded') throw outcome.failure
+          const persisted = outcome.result.sessions[0]
+          this.stateOwner.recordSession(persisted)
+          return persisted
+        }
+      )
+      operation.complete({ status: result ? 'ready' : 'unavailable', revisionConflicts: 0 })
+      return result
+    } catch (error) {
+      const conflict = isSessionRevisionConflictError(error)
+      operation.fail(error, {
+        status: conflict ? 'conflict' : 'failed',
+        revisionConflicts: conflict ? 1 : 0
+      })
+      throw error
+    }
+  }
+
+  // Targeted startup recovery never authorizes catalog absence cleanup or consumes the full-scan
+  // startup cleanup boundary. Background callers may also separate preparation from commit.
+  async recoverStartupSession(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession | undefined> {
+    let revisionConflicts = 0
+    const operation = startDiagnosticOperation(this.log, {
+      operation: 'session-recovery',
+      fields: { mode: 'startup' }
+    })
+    try {
+      for (;;) {
+        operation.phase('prepare', { revisionConflicts })
+        const prepared = await this.prepareSessionRecovery(projectId, sessionId)
+        try {
+          const result = prepared ? await this.commitSessionRecovery(prepared) : undefined
+          operation.complete({ status: result ? 'ready' : 'unavailable', revisionConflicts })
+          return result
+        } catch (error) {
+          if (!isSessionRevisionConflictError(error)) throw error
+          revisionConflicts += 1
+          if (revisionConflicts >= 2) throw error
+        }
+      }
+    } catch (error) {
+      operation.fail(error, {
+        status: 'deferred',
+        revisionConflicts,
+        retryable: isSessionRevisionConflictError(error)
+      })
+      throw error
+    }
+  }
+
   /**
    * Loads durable sessions, reconciles Upload storage, and backfills the file projection only after a
    * complete scan has restored active ownership. Chat hydration remains available on any failure.
    */
   loadAll(): Promise<LoadAllSessionsResult> {
+    const queuedAt = performance.now()
     return this.operationScheduler.runGlobal(async () => {
       const hydrationGeneration = this.hydrationCache.generationForLoad()
       const cachedScan = this.hydrationCache.get()
@@ -652,6 +1039,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
         fields: {
           mode: 'reconcile',
+          queueWaitMs: performance.now() - queuedAt,
           startupCleanupEligible: mayRunDestructiveStartupCleanup,
           authorityReused: cachedScan !== undefined
         }
@@ -821,15 +1209,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         return reconciliation.result
       }
 
+      if (degradedReconciliationCount === 0) {
+        this.hydrationCache.set({ ...scan, result: reconciliation.result }, hydrationGeneration)
+      }
       operation.complete({
         status: degradedReconciliationCount > 0 ? 'degraded' : 'ready',
         sessionCount: reconciliation.result.sessions.length,
         warningCount: scan.warnings?.length ?? 0,
-        degradedReconciliationCount
+        degradedReconciliationCount,
+        ...this.hydrationCache.diagnostics()
       })
-      if (degradedReconciliationCount === 0) {
-        this.hydrationCache.set({ ...scan, result: reconciliation.result }, hydrationGeneration)
-      }
       return reconciliation.result
     })
   }
@@ -1278,13 +1667,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     sessionId: string,
     mutation: () => Promise<Result>
   ): Promise<Result> {
-    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+    return this.operationScheduler.runSessionProjectExclusive(projectId, sessionId, async () => {
       this.assertMutable(projectId, sessionId, 'mutate')
       try {
         return await mutation()
       } finally {
         // Force the next save to validate Artifact finalization's binding before reusing topology.
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
+        // External package publishers may commit through another repository instance.
+        this.hydrationCache.invalidate()
       }
     })
   }
@@ -1371,42 +1762,45 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
     const operation = (): Promise<ProjectSessionDeletionResult> =>
-      this.operationScheduler.runProject(projectId, async (scope) => {
-        if (
-          [...this.exportingSessions.values()].some(
-            (reservation) => reservation.projectId === projectId
+      this.withDeletionCleanup((onDeleted) =>
+        this.operationScheduler.runProject(projectId, async (scope) => {
+          if (
+            [...this.exportingSessions.values()].some(
+              (reservation) => reservation.projectId === projectId
+            )
           )
-        )
-          throw new Error('This Project contains a Session locked for export.')
-        // Whole-Project deletion can complete from a durable intent without re-entering
-        // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
-        // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
-        this.hydrationCache.invalidate()
-        this.deletedProjects.add(projectId)
-        try {
-          const deleted = await this.deletionOwner.deleteProjectSessions(
-            projectId,
-            (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
-            options
-          )
-          for (const key of this.sessionRecordProblems.keys()) {
-            if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
-          }
-          return deleted
-        } catch (error) {
+            throw new Error('This Project contains a Session locked for export.')
+          // Whole-Project deletion can complete from a durable intent without re-entering
+          // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
+          // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
+          this.hydrationCache.invalidate()
+          this.deletedProjects.add(projectId)
           try {
-            const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
-            if (state === 'live' || state === 'absent') {
-              this.deletedProjects.delete(projectId)
-              await this.computeJobs?.abortProjectJobDeletion?.(projectId)
+            const deleted = await this.deletionOwner.deleteProjectSessions(
+              projectId,
+              (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
+              onDeleted,
+              options
+            )
+            for (const key of this.sessionRecordProblems.keys()) {
+              if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
             }
-          } catch {
-            // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
-            this.fileIndex.markReconciliationIncomplete(projectId)
+            return deleted
+          } catch (error) {
+            try {
+              const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
+              if (state === 'live' || state === 'absent') {
+                this.deletedProjects.delete(projectId)
+                await this.computeJobs?.abortProjectJobDeletion?.(projectId)
+              }
+            } catch {
+              // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
+              this.fileIndex.markReconciliationIncomplete(projectId)
+            }
+            throw error
           }
-          throw error
-        }
-      })
+        })
+      )
     return this.deletionWork
       ? this.deletionWork.withProjectStopped(projectId, operation)
       : operation()
@@ -1492,53 +1886,62 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    */
   deleteSession(projectId: string, sessionId: string): Promise<void> {
     const operation = (): Promise<void> =>
-      this.operationScheduler.runSessionThenGlobalIfNeeded(
-        projectId,
-        sessionId,
-        async () => {
-          const key = sessionKey(projectId, sessionId)
-          // A committed deletion may need to retry its remaining cleanup. Only an active export
-          // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
-          if (this.exportingSessions.has(key))
-            throw new Error('This Session is locked while its research package is being exported.')
-          this.deletedSessions.add(key)
-          const deletion = await this.deletionOwner
-            .deleteSession(projectId, sessionId)
-            .catch(async (error: unknown) => {
-              try {
-                const authority = await this.repository.loadSessionWithDiagnostics(
+      this.withDeletionCleanup((onDeleted) =>
+        this.operationScheduler.runSessionThenGlobalIfNeeded(
+          projectId,
+          sessionId,
+          async () => {
+            const key = sessionKey(projectId, sessionId)
+            // A committed deletion may need to retry its remaining cleanup. Only an active export
+            // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
+            if (this.exportingSessions.has(key))
+              throw new Error(
+                'This Session is locked while its research package is being exported.'
+              )
+            this.deletedSessions.add(key)
+            const deletion = await this.deletionOwner
+              .deleteSession(projectId, sessionId)
+              .catch(async (error: unknown) => {
+                try {
+                  const authority = await this.repository.loadSessionWithDiagnostics(
+                    projectId,
+                    sessionId
+                  )
+                  if (authority.status === 'found') this.deletedSessions.delete(key)
+                } catch {
+                  // Authority cannot be proven live, so retain the tombstone fail-closed.
+                }
+                throw error
+              })
+            const reconciled =
+              this.stateOwner.metadataSnapshot().isComplete &&
+              (await this.deletionOwner
+                .reconcileProjectSessionDeletion(
                   projectId,
-                  sessionId
+                  sessionId,
+                  deletion.receiptKind,
+                  onDeleted
                 )
-                if (authority.status === 'found') this.deletedSessions.delete(key)
-              } catch {
-                // Authority cannot be proven live, so retain the tombstone fail-closed.
-              }
-              throw error
-            })
-          const reconciled =
-            this.stateOwner.metadataSnapshot().isComplete &&
-            (await this.deletionOwner
-              .reconcileProjectSessionDeletion(projectId, sessionId, deletion.receiptKind)
+                .catch((error: unknown) => {
+                  throw new SessionDeletionCommittedError(error)
+                }))
+            if (reconciled) {
+              this.clearSessionRecordProblem(projectId, sessionId)
+              if (deletion.cleanupError) throw deletion.cleanupError
+              return undefined
+            }
+            return deletion
+          },
+          async ({ receiptKind, cleanupError }) => {
+            await this.deletionOwner
+              .reconcileSessionDeletion(projectId, sessionId, receiptKind, onDeleted)
               .catch((error: unknown) => {
                 throw new SessionDeletionCommittedError(error)
-              }))
-          if (reconciled) {
+              })
             this.clearSessionRecordProblem(projectId, sessionId)
-            if (deletion.cleanupError) throw deletion.cleanupError
-            return undefined
+            if (cleanupError) throw cleanupError
           }
-          return deletion
-        },
-        async ({ receiptKind, cleanupError }) => {
-          await this.deletionOwner
-            .reconcileSessionDeletion(projectId, sessionId, receiptKind)
-            .catch((error: unknown) => {
-              throw new SessionDeletionCommittedError(error)
-            })
-          this.clearSessionRecordProblem(projectId, sessionId)
-          if (cleanupError) throw cleanupError
-        }
+        )
       )
     return this.deletionWork
       ? this.deletionWork.withSessionStopped(projectId, sessionId, operation)
@@ -1572,6 +1975,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): void {
     if (!projectionOnly && this.exportingSessions.has(sessionKey(projectId, sessionId)))
       throw new Error('This Session is locked while its research package is being exported.')
+    if (this.pendingDeletionCleanups.has(sessionId)) {
+      throw new Error('Session deletion cleanup is still pending. Retry after deletion completes.')
+    }
     if (this.deletedProjects.has(projectId)) {
       throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
     }
@@ -1587,6 +1993,39 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       this.onFilesChanged?.(event)
     } catch {
       // A closed window or test sink may reject synchronously after the durable mutation succeeds.
+    }
+  }
+
+  // Reserve ID-only projections before releasing persistence scopes, but never await external
+  // owners while holding those scopes: their queues may already be waiting for a Session save.
+  private async withDeletionCleanup<Result>(
+    operation: (onDeleted: (sessionIds: string[]) => void) => Promise<Result>
+  ): Promise<Result> {
+    const deletedIds = new Set<string>()
+    try {
+      return await operation((sessionIds) => {
+        if (!this.sessionDeletionHandlers) return
+        for (const sessionId of sessionIds) {
+          if (deletedIds.has(sessionId)) continue
+          deletedIds.add(sessionId)
+          this.pendingDeletionCleanups.set(
+            sessionId,
+            (this.pendingDeletionCleanups.get(sessionId) ?? 0) + 1
+          )
+        }
+      })
+    } finally {
+      if (deletedIds.size > 0) {
+        try {
+          await this.notifySessionsDeleted([...deletedIds])
+        } finally {
+          for (const sessionId of deletedIds) {
+            const remaining = this.pendingDeletionCleanups.get(sessionId)! - 1
+            if (remaining === 0) this.pendingDeletionCleanups.delete(sessionId)
+            else this.pendingDeletionCleanups.set(sessionId, remaining)
+          }
+        }
+      }
     }
   }
 
@@ -1636,6 +2075,8 @@ type SessionDeletion = Pick<
 
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }
 export type {
+  PreparedSessionRecovery,
+  RecoveredSessionReference,
   SessionPersistenceCommands,
   ComputeJobDeletionParticipant,
   DelegatedWorkRecordCommands,

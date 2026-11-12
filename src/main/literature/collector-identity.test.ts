@@ -1,3 +1,4 @@
+import { registerDatabaseFixture } from '../database/migrated-database.test-support'
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import { mkdtemp, rm, writeFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,8 +6,6 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { migrateApplicationDatabase } from '../database/migration-service'
-import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog } from './catalog'
 import { LiteratureCollector } from './collector'
 import {
@@ -19,6 +18,8 @@ import { ContentRepository } from '../storage/content-repository'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 import { toCslItem } from '@aipoch/literature-citations/csl'
 import { type LiteratureItemInput } from '@aipoch/literature-library/item'
+
+const openDatabase = registerDatabaseFixture()
 
 const row = (
   key = 'ABCDEFGH',
@@ -69,8 +70,7 @@ describe('collector reviewed identity transaction', () => {
     content: ContentRepository
   }> => {
     root = await mkdtemp(join(tmpdir(), 'collector-identity-review-'))
-    client = createProjectDbClient(root)
-    await migrateApplicationDatabase(client)
+    client = await openDatabase(root)
     const content = new ContentRepository({
       references: persistentContentReferences,
       storageRoot: root,

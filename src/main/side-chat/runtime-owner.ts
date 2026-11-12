@@ -891,9 +891,11 @@ class SideChatRuntimeOwner {
         .filter((chat) => chat.parentSessionId === parentSessionId)
         .map((chat) => chat.sideChat.id)
     ])
-    await Promise.all(
+    const results = await Promise.allSettled(
       [...ids].map((id) => (this.pendingCloses.has(id) ? this.finishClose(id) : this.closeById(id)))
     )
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed) throw failed.reason
   }
 
   private async closeById(sideSessionId: string): Promise<void> {
@@ -946,7 +948,7 @@ class SideChatRuntimeOwner {
     for (const parentSessionId of parentSessionIdsToInvalidate) {
       this.invalidatedParents.add(parentSessionId)
     }
-    await Promise.all(
+    const results = await Promise.allSettled(
       parentSessionIdsToInvalidate.map(async (parentSessionId) => {
         try {
           await this.closeActiveForParent(parentSessionId)
@@ -955,6 +957,8 @@ class SideChatRuntimeOwner {
         }
       })
     )
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed) throw failed.reason
   }
 
   async invalidateProject(projectId: string): Promise<void> {

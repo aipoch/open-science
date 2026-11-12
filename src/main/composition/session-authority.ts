@@ -17,7 +17,10 @@ import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'
 import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
-import { reconcilePermissionGrantOwners } from '../permission-grants/reconciliation'
+import {
+  reconcilePermissionGrantOwners,
+  planPermissionGrantOwnerReconciliation
+} from '../permission-grants/reconciliation'
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
 import { isPermissionGrantScopeLive } from '../permission-grants/scope-liveness'
 import { createManagedFileIndexRepository } from '../project-files/repository'
@@ -40,6 +43,7 @@ import {
   markManagedProjectWorkspacesRetained,
   markManagedWorkspaceRetained,
   reconcileProvisionalManagedWorkspaces,
+  planProvisionalManagedWorkspaceReconciliation,
   restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 } from '../storage/managed-workspace-ownership'
@@ -118,6 +122,9 @@ export async function composeSessionAuthority({
       reconcileActiveSessions(
         sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
       ): Promise<void>
+      planSessionReconciliation(
+        sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
+      ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>>
     }
   }
   projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner }
@@ -218,6 +225,9 @@ export async function composeSessionAuthority({
       reconcileActiveSessions(
         sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
       ): Promise<void>
+      planSessionReconciliation(
+        sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
+      ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>>
     }
   } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
@@ -295,7 +305,19 @@ export async function composeSessionAuthority({
     {
       reconcileSessions: async (sessions) => {
         await reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
-        await sessionCacheOwnerRef.current?.reconcileActiveSessions(sessions)
+      },
+      planReconciliation: async (sessions) => {
+        const permissions = await planPermissionGrantOwnerReconciliation(permissionGrantRegistry, {
+          sessions
+        })
+        return [
+          ...permissions.flatMap(({ owner, apply }) =>
+            owner.kind === 'session'
+              ? [{ projectId: owner.projectId, sessionId: owner.sessionId, apply }]
+              : []
+          ),
+          ...((await sessionCacheOwnerRef.current?.planSessionReconciliation(sessions)) ?? [])
+        ]
       }
     },
     undefined,
@@ -329,6 +351,8 @@ export async function composeSessionAuthority({
       }
     },
     {
+      planProvisional: (sessions) =>
+        planProvisionalManagedWorkspaceReconciliation(sessions, managedWorkspaceRecoveryCutoff),
       reconcileProvisional: (sessions) =>
         reconcileProvisionalManagedWorkspaces(sessions, managedWorkspaceRecoveryCutoff),
       markProjectRetained: markManagedProjectWorkspacesRetained,

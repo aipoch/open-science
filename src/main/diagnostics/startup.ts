@@ -15,7 +15,7 @@ import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diag
 type ApplicationDiagnosticMetadata = {
   logDir: string
   runId?: string
-  mirrorToConsole?: boolean
+  mirrorToConsole?: LoggerConfig['mirrorToConsole']
   consoleFormat?: LoggerConfig['consoleFormat']
   version: string
   isPackaged: boolean

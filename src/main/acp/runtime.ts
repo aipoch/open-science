@@ -445,7 +445,33 @@ class AcpRuntime {
           return continuation.historyReplay
         },
         disconnect: () => this.disconnect(false),
-        resume: (request) => this.resumeSession(request)
+        resume: (request, retainStartup) =>
+          this.resumeSession(request, undefined, () => {
+            const token = Symbol('reloaded-prompt-startup')
+            const startupGeneration = this.connectionGeneration
+            const logProtection = (phase: 'acquired' | 'released', reason?: string): void => {
+              try {
+                log.info('prompt reload startup protection', {
+                  runtimeId: this.resourceRuntimeId,
+                  sessionId: request.sessionId,
+                  startupGeneration,
+                  ...this.diagnosticContext(),
+                  phase,
+                  ...(reason ? { reason } : {}),
+                  ...this.generationActivity.diagnosticSnapshot(),
+                  ...this.connectionTransitions.diagnosticSnapshot()
+                })
+              } catch {
+                // Diagnostics must not interrupt protection ownership or mask the prompt outcome.
+              }
+            }
+            this.generationActivity.acquireStartup(token)
+            retainStartup((reason) => {
+              this.generationActivity.releaseStartup(token)
+              logProtection('released', reason)
+            })
+            logProtection('acquired')
+          })
       },
       artifactPublicationPrompt: (sessionId, files) => {
         if (this.appContinuations.has(sessionId)) return undefined
@@ -959,12 +985,18 @@ class AcpRuntime {
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(
     request: AcpResumeSessionRequest,
-    writerTransfer?: AcpSessionWriterTransfer
+    writerTransfer?: AcpSessionWriterTransfer,
+    onSessionReady?: () => void
   ): Promise<AcpCreateSessionResponse> {
     const resume = async (
       isCurrent: () => boolean = () => true
     ): Promise<AcpCreateSessionResponse> => {
-      const resumed = await this.providerSessionResumer.resume(request, writerTransfer, isCurrent)
+      const resumed = await this.providerSessionResumer.resume(
+        request,
+        writerTransfer,
+        isCurrent,
+        onSessionReady
+      )
       const session = this.activeSessionFor(request.sessionId)
       if (session) await this.options.authorizedDirectories?.initialize(session)
       if (resumed.contextReset) {

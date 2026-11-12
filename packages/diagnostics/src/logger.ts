@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { extname, join } from 'node:path'
+import { consoleMirror } from './console-mirror'
 
 import type { LogFileStatus, LogWriteFailureCategory } from './log-types'
 import {
@@ -31,7 +32,7 @@ export type LoggerConfig = {
   runId: string
   fileName: string
   minLevel: LogLevel
-  mirrorToConsole: boolean
+  mirrorToConsole: boolean | ((scope: string, message: string) => boolean)
   consoleFormat: 'text' | 'json'
   // Max bytes per file before it rotates.
   maxBytes: number
@@ -747,14 +748,15 @@ const repairLogTail = async (path: string): Promise<{ size: number; discarded: n
 const writeLine = async (
   line: string,
   activeConfig: LoggerConfig,
-  state: LogSinkState
+  state: LogSinkState,
+  retryMissingDirectory = true
 ): Promise<boolean> => {
   const { logDir, fileName, maxBytes, maxFiles } = activeConfig
   let failureCategory: LogWriteFailureCategory = 'directory'
   try {
-    await mkdir(logDir, { recursive: true })
     const filePath = join(logDir, fileName)
     if (state.currentBytes === undefined) {
+      await mkdir(logDir, { recursive: true })
       failureCategory = 'inspect'
       const repaired = await repairLogTail(filePath)
       state.currentBytes = repaired.size
@@ -781,8 +783,18 @@ const writeLine = async (
     state.lastWriteSucceeded = true
     state.lastFailureCategory = null
     return true
-  } catch {
+  } catch (error) {
     state.currentBytes = undefined
+    // Opening the file failed before any bytes were appended. Reinitialize and retry this
+    // record once if the directory disappeared while the sink was active.
+    if (
+      retryMissingDirectory &&
+      failureCategory === 'append' &&
+      isMissingFileError(error) &&
+      (error as NodeJS.ErrnoException).syscall === 'open'
+    ) {
+      return writeLine(line, activeConfig, state, false)
+    }
     state.lastWriteSucceeded = false
     state.lastFailureCategory = failureCategory
     state.lostRecords = true
@@ -900,11 +912,8 @@ const flushLogs = (): Promise<LogFlushResult> => {
   return writeChain.then(() => ({ failed: state.lostRecords }))
 }
 
-// Fatal process failures cannot await the ordinary Promise-backed write queue: Node terminates as soon
-// as the uncaughtExceptionMonitor listeners return. Append the final bounded, redacted record
-// synchronously so the diagnostic survives that exit. Rotation and currentBytes bookkeeping are
-// intentionally skipped because the process must not resume after this call; at worst one small fatal
-// record temporarily exceeds the configured cap before the next startup rotates normally.
+// Terminal callers synchronously append one bounded diagnostic before exiting. The normal
+// queue and rotation are asynchronous, so the file may exceed its budget by that final record.
 const writeFatalLogSync = (scope: string, message: string, data?: unknown): void => {
   if (!config || LEVEL_ORDER.error < LEVEL_ORDER[config.minLevel]) return
 
@@ -938,13 +947,13 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
     diagnosticCorrelation.getStore()
   )
 
-  if (mirror) {
+  if (typeof mirror === 'function' ? mirror(scope, message) : mirror) {
     const consoleMethod = level === 'debug' ? 'log' : level
     if (config?.consoleFormat === 'json') {
-      console[consoleMethod](line)
+      consoleMirror[consoleMethod](line)
     } else {
       const record = JSON.parse(line) as { scope: string; msg: string; data?: unknown }
-      console[consoleMethod](
+      consoleMirror[consoleMethod](
         `[${record.scope}] ${record.msg}`,
         Object.hasOwn(record, 'data') ? record.data : ''
       )

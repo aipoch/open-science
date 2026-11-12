@@ -8,7 +8,9 @@
     "src/main/storage/data-location-identity.ts",
     "src/main/storage/data-location-selection.ts",
     "src/main/storage/location-evidence.ts",
-    "src/main/storage/managed-workspace-ownership-dir.ts"
+    "src/main/storage/managed-workspace-ownership-dir.ts",
+    "src/main/storage/root-binding.ts",
+    "src/main/storage/root-binding.test.ts"
   ],
   "interfacePaths": [
     "build/node-runtime.json",
@@ -72,10 +74,16 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts"
+    "src/main/websocket-frame-sender.ts",
+    "src/main/managed-file-versions/version-file-operator.ts",
+    "src/main/session-plan/plan-context-file.ts"
   ],
   "testFiles": {
-    "owner": ["src/main/storage-root.test.ts", "src/main/storage/data-location-identity.test.ts"],
+    "owner": [
+      "src/main/storage-root.test.ts",
+      "src/main/storage/data-location-identity.test.ts",
+      "src/main/storage/root-binding.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -1010,10 +1018,12 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "test/config/electron.vite.config.test.ts",
       "src/main/websocket-frame-sender.test.ts",
-      "src/main/desktop-startup-recovery.integration.test.ts"
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/managed-file-versions/version-file-operator.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Configured-root binding adds shared filesystem identity and ancestor-link checks beyond the reviewed storage-location boundary; retain full CI until this boundary is reviewed."
 }

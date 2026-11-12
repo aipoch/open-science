@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "packages/diagnostics/src/console-mirror.ts",
+    "packages/diagnostics/src/console-output.integration.test.ts",
     "packages/diagnostics/LICENSE",
     "packages/diagnostics/README.md",
     "packages/diagnostics/package.json",
@@ -36,6 +38,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "packages/diagnostics/src/console-output.integration.test.ts",
       "packages/diagnostics/src/diagnostic-redaction.test.ts",
       "packages/diagnostics/src/flush.test.ts",
       "packages/diagnostics/src/logger.test.ts",

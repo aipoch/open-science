@@ -215,6 +215,7 @@ class ComputeJobOperationRepository {
             data: {
               phase: 'active',
               outcome: null,
+              ...(job.executionMode === 'direct_ssh' && { attemptCount: 0 }),
               revision: { increment: 1 },
               errorCode: null,
               errorMessage: null,
@@ -290,8 +291,16 @@ class ComputeJobOperationRepository {
     now: Date,
     leaseMs: number,
     claimToken: string,
-    backend?: 'modal_sandbox' | 'hugging_face_jobs' | 'ray_jobs' | 'kubernetes'
+    backendOrOptions?:
+      | 'modal_sandbox'
+      | 'hugging_face_jobs'
+      | 'ray_jobs'
+      | 'kubernetes'
+      | { deferDirectSshAttempt?: boolean }
   ): Promise<ClaimedComputeJobOperation | null> {
+    const backend = typeof backendOrOptions === 'string' ? backendOrOptions : undefined
+    const deferDirectSshAttempt =
+      typeof backendOrOptions === 'object' && backendOrOptions.deferDirectSshAttempt === true
     const client = await this.getClient()
     return runOperationTransaction(client, async (transaction, attempt) => {
       const attemptNow = attempt === 0 ? now : new Date()
@@ -348,7 +357,13 @@ class ComputeJobOperationRepository {
             { claimToken: { not: null }, claimExpiresAt: { lte: attemptNow } }
           ]
         },
-        orderBy: { createdAt: 'asc' }
+        // Local dispatch waits keep becoming eligible without doing remote work. Rotate the
+        // shared SSH/Slurm queue by last service so old waits cannot starve a newer host's cancel.
+        // Independent backends retain their own queue ordering.
+        orderBy: backend
+          ? { createdAt: 'asc' }
+          : [{ updatedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        include: { job: { select: { executionMode: true } } }
       })
       if (!candidate) return null
 
@@ -356,7 +371,9 @@ class ComputeJobOperationRepository {
         where: { id: candidate.id, revision: candidate.revision, phase: 'active' },
         data: {
           revision: { increment: 1 },
-          attemptCount: { increment: 1 },
+          ...(deferDirectSshAttempt && candidate.job.executionMode === 'direct_ssh'
+            ? {}
+            : { attemptCount: { increment: 1 } }),
           eligibleAt: null,
           claimToken,
           claimExpiresAt: new Date(attemptNow.getTime() + leaseMs),
@@ -368,6 +385,35 @@ class ComputeJobOperationRepository {
         where: { id: candidate.id }
       })
       return { operation: this.record(row), jobId: candidate.jobId }
+    })
+  }
+
+  async beginAttempt(
+    claim: ClaimedComputeJobOperation,
+    now: Date
+  ): Promise<ClaimedComputeJobOperation | null> {
+    const client = await this.getClient()
+    return runOperationTransaction(client, async (transaction, attempt) => {
+      const attemptNow = attempt === 0 ? now : new Date()
+      const result = await transaction.computeJobOperation.updateMany({
+        where: {
+          id: claim.operation.id,
+          phase: 'active',
+          revision: claim.operation.revision,
+          claimToken: claim.operation.claimToken,
+          claimExpiresAt: { gt: attemptNow }
+        },
+        data: {
+          revision: { increment: 1 },
+          attemptCount: { increment: 1 },
+          updatedAt: attemptNow
+        }
+      })
+      if (result.count !== 1) return null
+      const row = await transaction.computeJobOperation.findUniqueOrThrow({
+        where: { id: claim.operation.id }
+      })
+      return { operation: this.record(row), jobId: claim.jobId }
     })
   }
 

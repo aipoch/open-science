@@ -1859,7 +1859,7 @@ describe('Session projection', () => {
     expect(scan).toHaveBeenCalledOnce()
   })
 
-  it('scans Session authority once when startup recovery is required', async () => {
+  it('keeps flagged recovery summary-only until explicitly scheduled', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-recovery-'))
     initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
@@ -1875,10 +1875,10 @@ describe('Session projection', () => {
 
     await repository.ensureSessionProjection(() => repository.loadAll())
 
-    expect(scan).toHaveBeenCalledOnce()
+    expect(scan).not.toHaveBeenCalled()
   })
 
-  it('reports oversized authority when the ready projection needs no startup recovery', async () => {
+  it('keeps a ready summary available when historical authority exceeds the body limit', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-size-limit-'))
     initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
@@ -1901,18 +1901,11 @@ describe('Session projection', () => {
       }
     })
 
-    expect(loaded.result?.diagnostics).toMatchObject({
-      isComplete: false,
-      warnings: [
-        {
-          kind: 'too-large',
-          projectId: saved.projectId,
-          fileName: `${saved.id}.json`,
-          recovered: false
-        }
-      ]
+    expect(loaded.result).toBeUndefined()
+    expect(loaded.sessions).toMatchObject([{ id: saved.id }])
+    expect(await repository.loadSessionWithDiagnostics(saved.projectId, saved.id)).toMatchObject({
+      status: 'unreadable'
     })
-    expect(loaded.sessions).toEqual([])
   })
 
   it('removes a stale ready projection after oversized authority is moved out', async () => {
@@ -1936,9 +1929,11 @@ describe('Session projection', () => {
       }
     }
     await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
-      sessions: []
+      sessions: [{ id: saved.id }]
     })
     await rename(authorityPath, join(storageRoot, 'removed-session.json'))
+
+    expect(await repository.reconcileMissingSessionProjection(saved.projectId, saved.id)).toBe(true)
 
     await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
       sessions: []
@@ -1946,7 +1941,7 @@ describe('Session projection', () => {
     await expect(projection.list()).resolves.toEqual([])
   })
 
-  it('reports an oversized recovery temp behind a ready projection', async () => {
+  it('isolates an oversized recovery temp from ready summary loading', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-temp-size-limit-'))
     initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
@@ -1969,18 +1964,11 @@ describe('Session projection', () => {
       }
     })
 
-    expect(loaded.result?.diagnostics).toMatchObject({
-      isComplete: false,
-      warnings: [
-        {
-          kind: 'too-large',
-          projectId: saved.projectId,
-          fileName: `${saved.id}.json`,
-          recovered: false
-        }
-      ]
+    expect(loaded.result).toBeUndefined()
+    expect(loaded.sessions).toMatchObject([{ id: saved.id }])
+    expect(await repository.loadSessionWithDiagnostics(saved.projectId, saved.id)).toMatchObject({
+      status: 'unreadable'
     })
-    expect(loaded.sessions).toEqual([])
   })
 
   it('does not reuse retained tombstone numbers during a projection-version rebuild', async () => {

@@ -5,6 +5,7 @@ import { join, relative, resolve, sep } from 'node:path'
 
 import type { ActivePlanProjection, PlanLifecycle } from '../../shared/session-plan/contract'
 import { getNotebookInputRoot } from '../notebook/input-staging'
+import { bindStorageRoot, type StorageRootBinding } from '../storage/root-binding'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { planContextFilePlatformStrategy } from './plan-context-file-windows-strategy'
@@ -112,8 +113,14 @@ const tombstone: PlanContextFile = { schemaVersion: 1, active: false }
 
 export class PlanContextFileStore {
   private readonly lanes = new Map<string, Promise<void>>()
+  private readonly rootBinding: StorageRootBinding
 
-  constructor(private readonly options: PlanContextFileStoreOptions) {}
+  constructor(private readonly options: PlanContextFileStoreOptions) {
+    // Match Notebook's existing join/resolve semantics before binding the physical directory.
+    // Resolving links first would move a link/.. input away from OPEN_SCIENCE_INPUT_DIR.
+    this.rootBinding = bindStorageRoot(resolve(options.storageRoot))
+    this.options = { ...options, storageRoot: this.rootBinding.path }
+  }
 
   async refresh(
     projectId: string,
@@ -194,8 +201,8 @@ export class PlanContextFileStore {
   }
 
   private async ensureContextDirectory(projectId: string, sessionId: string): Promise<string> {
+    await this.rootBinding.verify()
     const storageRoot = resolve(this.options.storageRoot)
-    await assertDirectory(storageRoot, 'Storage root')
 
     const inputRoot = resolve(getNotebookInputRoot(storageRoot, projectId, sessionId))
     const relativeInputRoot = relative(storageRoot, inputRoot)

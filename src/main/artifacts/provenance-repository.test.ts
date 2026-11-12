@@ -675,6 +675,191 @@ describe('artifact provenance repository', () => {
     await expect(stat(stagingDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('plans old rowless staging without deleting it before guarded application', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'artifact-staging-cleanup-plan-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const directory = join(
+      storageRoot,
+      'artifacts/project-1/session-1/.provenance/.staging/versions/orphan'
+    )
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'content'), 'orphaned bytes')
+    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1_000)
+    await utimes(directory, oldTime, oldTime)
+    const startupCutoff = (await stat(directory)).ctimeMs + 1
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: async () => client,
+      now: () => new Date(startupCutoff + 2 * 60 * 60 * 1_000)
+    })
+
+    const actions = await repository.planOrphanStagingCleanup(
+      'project-1',
+      'session-1',
+      startupCutoff
+    )
+    expect(actions).toHaveLength(1)
+    await expect(readFile(join(directory, 'content'), 'utf8')).resolves.toBe('orphaned bytes')
+    await expect(actions[0](async () => false)).resolves.toBe('stale')
+    await expect(readFile(join(directory, 'content'), 'utf8')).resolves.toBe('orphaned bytes')
+    let writerEntered = false
+    let writing: Promise<void> | undefined
+    try {
+      await expect(
+        actions[0](async (apply) => {
+          writing = repository.withSessionMutation(
+            { projectId: 'project-1', appSessionId: 'session-1' },
+            async () => {
+              writerEntered = true
+            }
+          )
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          expect(writerEntered).toBe(false)
+          await apply()
+          return true
+        })
+      ).resolves.toBe('complete')
+    } finally {
+      await writing
+    }
+    expect(writerEntered).toBe(true)
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves staging first observed after startup even after the age grace expires', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'artifact-staging-startup-cutoff-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const directory = join(
+      storageRoot,
+      'artifacts/project-1/session-1/.provenance/.staging/versions/new-copy'
+    )
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'content'), 'new in-process bytes')
+    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1_000)
+    await utimes(directory, oldTime, oldTime)
+    // Even backdated directory mtime cannot make a post-startup directory eligible.
+    const startupCutoff = (await stat(directory)).ctimeMs - 1
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: async () => client,
+      now: () => new Date(startupCutoff + 3 * 60 * 60 * 1_000)
+    })
+
+    expect(
+      await repository.planOrphanStagingCleanup('project-1', 'session-1', startupCutoff)
+    ).toEqual([])
+    await expect(readFile(join(directory, 'content'), 'utf8')).resolves.toBe('new in-process bytes')
+  })
+
+  it.each(['touched', 'replaced'] as const)(
+    'yields busy artifact ownership without entering cleanup guard and preserves staging %s',
+    async (change) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'artifact-staging-cleanup-ownership-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
+      const directory = join(
+        storageRoot,
+        'artifacts/project-1/session-1/.provenance/.staging/versions/orphan'
+      )
+      await mkdir(directory, { recursive: true })
+      const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1_000)
+      await utimes(directory, oldTime, oldTime)
+      const startupCutoff = (await stat(directory)).ctimeMs + 1
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: async () => client,
+        now: () => new Date(startupCutoff + 2 * 60 * 60 * 1_000)
+      })
+      const actions = await repository.planOrphanStagingCleanup(
+        'project-1',
+        'session-1',
+        startupCutoff
+      )
+      expect(actions).toHaveLength(1)
+      const entered = createDeferred()
+      const release = createDeferred()
+      const writing = repository.withSessionMutation(
+        { projectId: 'project-1', appSessionId: 'session-1' },
+        async () => {
+          entered.resolve()
+          await release.promise
+          if (change === 'replaced') {
+            await rm(directory, { recursive: true })
+            await mkdir(directory)
+          }
+          await writeFile(join(directory, 'new-copy'), 'active writer bytes')
+          await utimes(directory, new Date(startupCutoff + 10), new Date(startupCutoff + 10))
+        }
+      )
+      await entered.promise
+      let guardEntered = false
+      const commit = async (apply: () => Promise<void>): Promise<boolean> => {
+        guardEntered = true
+        await apply()
+        return true
+      }
+      const applying = actions[0](commit)
+      try {
+        const result = await Promise.race([
+          applying,
+          new Promise<'still waiting'>((resolve) => setImmediate(() => resolve('still waiting')))
+        ])
+        expect(result).toBe('busy')
+        expect(guardEntered).toBe(false)
+        await expect(stat(directory)).resolves.toBeDefined()
+      } finally {
+        release.resolve()
+        await Promise.all([writing, applying])
+      }
+      await expect(actions[0](commit)).resolves.toBe('complete')
+      expect(guardEntered).toBe(true)
+      await expect(readFile(join(directory, 'new-copy'), 'utf8')).resolves.toBe(
+        'active writer bytes'
+      )
+    }
+  )
+
+  it('preserves a directory that gains Version authority after cleanup planning', async () => {
+    const fixture = await createPdfTransactionFixture()
+    const version = await fixture.repository.createVersion(fixture.request)
+    const row = await fixture.client.artifactVersion.findUniqueOrThrow({
+      where: { id: version.versionId }
+    })
+    await fixture.client.artifactVersion.delete({ where: { id: version.versionId } })
+    const directory = join(
+      storageRoot!,
+      'artifacts/project-1/session-1/.provenance/.staging/versions',
+      version.versionId
+    )
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'content'), 'owned bytes')
+    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1_000)
+    await utimes(directory, oldTime, oldTime)
+    const startupCutoff = (await stat(directory)).ctimeMs + 1
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => fixture.client,
+      now: () => new Date(startupCutoff + 2 * 60 * 60 * 1_000)
+    })
+    const actions = await repository.planOrphanStagingCleanup(
+      'project-1',
+      'session-1',
+      startupCutoff
+    )
+    expect(actions).toHaveLength(1)
+    await fixture.client.artifactVersion.create({ data: row })
+    await actions[0](async (apply) => {
+      await apply()
+      return true
+    })
+    await expect(readFile(join(directory, 'content'), 'utf8')).resolves.toBe('owned bytes')
+  })
+
   it('leaves a fresh rowless staging directory for an in-flight writer', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-live-staging-'))
     const client = createProjectDbClient(storageRoot)

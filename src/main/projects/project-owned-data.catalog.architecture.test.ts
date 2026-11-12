@@ -522,11 +522,36 @@ describe('Project-owned data catalog architecture', () => {
       (call) =>
         projectionAfterCommit &&
         call.position > projectionAfterCommit.position &&
-        call.callee === 'this.notifySessionsDeleted'
+        call.callee === 'onDeleted'
     )
     expect(commitAfterAuthority).toBeDefined()
     expect(projectionAfterCommit).toBeDefined()
     expect(notificationAfterProjection).toBeDefined()
+
+    const coordinatorDeletion = classMethod(
+      'src/main/session-persistence/coordinator.ts',
+      'SessionPersistenceCoordinator',
+      'deleteProjectSessions'
+    )
+    expectCallsInOrder(coordinatorDeletion, [
+      'this.withDeletionCleanup',
+      'this.operationScheduler.runProject',
+      'this.deletionOwner.deleteProjectSessions'
+    ])
+    expect(
+      expectCall(
+        coordinatorDeletion,
+        'this.deletionOwner.deleteProjectSessions'
+      ).call.arguments[2].getText(coordinatorDeletion.file)
+    ).toBe('onDeleted')
+    expectCall(
+      classMethod(
+        'src/main/session-persistence/coordinator.ts',
+        'SessionPersistenceCoordinator',
+        'withDeletionCleanup'
+      ),
+      'this.notifySessionsDeleted'
+    )
 
     expectCall(
       classMethod(
@@ -634,13 +659,26 @@ describe('Project-owned data catalog architecture', () => {
         ).node.getText()
       )
     ).toBe("'deleted-sessions'")
-    expectCallsInOrder(
-      classMethod(
-        'src/main/session-persistence/repository.ts',
-        'SessionRepository',
-        'deleteProjectSessions'
-      ),
-      ['writeFile', 'rename']
+    const deleteProjectSessions = classMethod(
+      'src/main/session-persistence/repository.ts',
+      'SessionRepository',
+      'deleteProjectSessions'
+    )
+    expectCallsInOrder(deleteProjectSessions, [
+      'this.mutateCatalog',
+      'writeFile',
+      'this.dependencies.renameFile'
+    ])
+    const markerWrite = expectCall(deleteProjectSessions, 'writeFile')
+    expect(normalized(markerWrite.call.arguments[0].getText(deleteProjectSessions.file))).toBe(
+      'join(liveProjectDir,PROJECT_DELETION_COMMIT_MARKER)'
+    )
+    const deletionSource = normalized(
+      deleteProjectSessions.node.getText(deleteProjectSessions.file)
+    )
+    expect(deletionSource).toContain('awaitthis.mutateCatalog(()=>writeFile(')
+    expect(deletionSource).toContain(
+      'awaitthis.dependencies.renameFile(liveProjectDir,deletedProjectDir)'
     )
     expectCall(
       classMethod(

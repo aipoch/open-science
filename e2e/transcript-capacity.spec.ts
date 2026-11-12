@@ -475,7 +475,9 @@ for (const { count, contextLines } of [
           await page.reload()
           await openProjectSession(page, projectName, session.title)
           const tail = branchId === primaryBranch ? count * 2 - 1 : (count - 4) * 2 - 1
-          await expect(page.locator(`[data-message-id="capacity-message-${tail}"]`)).toBeVisible()
+          await expect(page.locator(`[data-message-id="capacity-message-${tail}"]`)).toBeVisible({
+            timeout: viewTimeout
+          })
           if (branchId === alternateBranch)
             await expect(
               page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)

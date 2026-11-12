@@ -4,6 +4,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { CODEX_SHARED_PROVIDER_ID, CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { SessionDetailsModelOwner } from '../settings/session-details-model-owner'
+import { buildSessionProjection } from '../session-persistence/projection'
 import { composeSessionSurfaces } from '../composition/session-surfaces'
 
 // Keep unrelated surface installation outside this feature's behavioral boundary.
@@ -97,6 +98,13 @@ it.each(
       add: async (dependencies, create) => (await create(dependencies)).capability
     }
     const publish = vi.fn()
+    const sessionPersistenceBackend = {
+      deleteSession: vi.fn(),
+      list: vi.fn(async () => ({ sessions: [buildSessionProjection(session).summary] })),
+      loadOne: vi.fn(async ({ projectId, sessionId }: { projectId: string; sessionId: string }) =>
+        projectId === session.projectId && sessionId === session.id ? session : undefined
+      )
+    }
     const { sessionDetailsOwner } = await composeSessionSurfaces({
       modules,
       configRoot: process.cwd(),
@@ -105,10 +113,7 @@ it.each(
       settingsService: {
         admitSessionDetailsExecutionTarget: (value: PersistedChatSession) => models.admit(value)
       },
-      sessionPersistenceBackend: {
-        deleteSession: vi.fn(),
-        loadAll: async () => ({ sessions: [session] })
-      },
+      sessionPersistenceBackend,
       sessionPersistenceCoordinator: {
         mutateSessionDetailsAuthority: async (
           _projectId: string,
@@ -125,6 +130,11 @@ it.each(
     try {
       await sessionDetailsOwner.start()
       await vi.waitFor(() => expect(session.sessionDetailsGeneration?.status).toBe('succeeded'))
+      expect(sessionPersistenceBackend.list).toHaveBeenCalledOnce()
+      expect(sessionPersistenceBackend.loadOne).toHaveBeenCalledExactlyOnceWith({
+        projectId: 'project',
+        sessionId: 'session'
+      })
       expect(run).toHaveBeenCalledOnce()
       expect(run).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -2231,7 +2231,7 @@ const persist = (request) => {
         capture,
         sidecar,
         Buffer.from(serialized),
-        true
+        { verifyOnly: true }
       )
     }
     // Preserve the initial capture until the complete directory has moved. Failed renames
@@ -2299,7 +2299,7 @@ const verifyPublishedEvidence = (receipt, expected) => {
   return bytes
 }
 
-const writeNativeRecord = (lane, prefix, project, capture, sidecar, serialized, verifyOnly) => {
+const writeNativeRecord = (lane, prefix, project, capture, sidecar, serialized, options) => {
   const retained = new Set([
     ...sidecar.relations.map((r) => r.generation?.generationId),
     ...(sidecar.predecessorGenerations ?? []).map((g) => g.generationId)
@@ -2311,7 +2311,7 @@ const writeNativeRecord = (lane, prefix, project, capture, sidecar, serialized, 
   shadow.append(lane, { relations }, sidecar, serialized, {
     ...shadowIO,
     poolAddressed: true,
-    verifyOnly,
+    ...options,
     projectRoot: project,
     reserveBytes: capture.reserveBytes,
     projectLimit: capture.projectLimit,
@@ -2319,7 +2319,6 @@ const writeNativeRecord = (lane, prefix, project, capture, sidecar, serialized, 
     storageKeyPrefix: prefix
   })
 }
-// Only a retained native summary may turn a pending receipt into a committed log record.
 // Only a retained native summary may turn a pending receipt into a committed log record.
 const settlePublication = (receipt, expected) => {
   if (!receipt.poolAddressed) {
@@ -2335,7 +2334,12 @@ const settlePublication = (receipt, expected) => {
       : dirname(dirname(dirname(lane)))
   if (expected.storageKey !== receipt.storageKeyPrefix + '/' + receipt.finalName + '/evidence.json')
     throw new Error('Retained evidence storage key mismatch.')
-  const committed = shadow.committedRecord(lane, receipt.activityId, prefix, shadowIO)
+  const { committed, appendState } = shadow.inspectNativePublication(
+    lane,
+    receipt.activityId,
+    prefix,
+    shadowIO
+  )
   if (committed) {
     const content = JSON.parse(committed)
     if (
@@ -2349,7 +2353,7 @@ const settlePublication = (receipt, expected) => {
     const serialized = verifyPublishedEvidence(receipt, expected)
     const capture = readCapture(receipt, join(receipt.finalName, CAPTURE_FILE))
     const sidecar = JSON.parse(serialized)
-    writeNativeRecord(lane, prefix, project, capture, sidecar, serialized, false)
+    writeNativeRecord(lane, prefix, project, capture, sidecar, serialized, { appendState })
   }
   removeReceiptOwnedDirectory(
     receipt.finalName,

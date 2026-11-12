@@ -43,7 +43,9 @@ import {
   prepareCredentialValidation,
   selectStartupCredentialIdentity
 } from './credential-identity/bootstrap'
+import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
 import { consumeCredentialInventoryFromEnv } from './credential-identity/inventory-handoff'
+import { selectDefaultCliCredentialProfile } from './credential-identity/legacy-cli-profile'
 import {
   createNodeSecureStorageCipher,
   initializeNodeWindowsProfileKey
@@ -97,6 +99,18 @@ import { resolveElectronProfile } from './storage/electron-profile'
 import { cancelMigrationForQuit, isMigrationInProgress } from './storage/migration-state'
 import { parseWebModeOptions } from './web-service/options'
 
+// Packaged migration certification reads this launch's SQLite verification, and the CLI
+// surfaces terminal errors even if the process exits before the canonical queue flushes.
+const captureOptions =
+  process.env.OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT === '1'
+    ? {
+        mirrorToConsole: (scope: string, message: string) =>
+          (scope === 'main' && message.startsWith('database runtime verified: sqlite_version=')) ||
+          (scope === 'node-runtime' &&
+            (message === 'startup failed' || message === 'fatal local service failure'))
+      }
+    : {}
+
 const startupReporter = createBackendStartupReporter()
 // Helpers retain their own protocol and exit contract. Install before asynchronous bootstrap so
 // early failures cannot escape the same diagnostic-and-exit path as runtime failures.
@@ -147,6 +161,7 @@ async function main(): Promise<void> {
   // Credential preflight can fail before full application diagnostics are initialized.
   initLogger({
     logDir: join(configRoot, 'logs'),
+    ...captureOptions,
     consoleFormat: process.stdout.isTTY ? 'text' : 'json'
   })
   const resourceRecording = new ResourceRecording(
@@ -401,6 +416,15 @@ async function main(): Promise<void> {
           ? join(home, 'Library', 'Application Support')
           : process.env.XDG_CONFIG_HOME || join(home, '.config')
     profilePath = resolveElectronProfile({ appData, configRoot, packaged })
+    const profileSelection = selectDefaultCliCredentialProfile({
+      home,
+      configRoot,
+      profilePath,
+      packaged,
+      credentialStore: getCredentialStore(),
+      startupAttemptId: backendStartupAttemptId
+    })
+    profilePath = profileSelection.profilePath
     const credentialBootstrapLease = acquireCredentialBootstrapLease({
       home,
       profilePath,
@@ -421,10 +445,19 @@ async function main(): Promise<void> {
         profilePath
       })
       abortStartupIfStopping()
+      // Candidate selection releases its temporary leases. Re-read under final ownership and
+      // retain the verified configuration/profile inventory so changed ciphertexts cannot hide.
+      const validationCiphertexts = profileSelection.validationCiphertexts
+        ? [
+            ...profileSelection.validationCiphertexts,
+            ...(preloadedCiphertexts ?? []),
+            ...readCredentialCiphertexts({ configRoot, profilePath })
+          ]
+        : preloadedCiphertexts
       const validateCredentials = prepareCredentialValidation(
         identity,
         { configRoot, profilePath },
-        preloadedCiphertexts
+        validationCiphertexts
       )
       if (identity.backend === 'windows-dpapi') {
         await initializeNodeWindowsProfileKey(profilePath)
@@ -443,6 +476,7 @@ async function main(): Promise<void> {
     }
     const diagnostics = initializeApplicationDiagnostics({
       logDir: join(configRoot, 'logs'),
+      ...captureOptions,
       consoleFormat: process.stdout.isTTY ? 'text' : 'json',
       version: metadata.version,
       isPackaged: packaged,

@@ -137,6 +137,9 @@ type ComputeJobDeletionParticipant = {
 
 type SessionWorkspaceOwnership = {
   reconcileProvisional(sessions: readonly PersistedChatSession[]): Promise<void>
+  planProvisional?(
+    sessions: readonly Pick<PersistedChatSession, 'id' | 'projectId' | 'cwd' | 'updatedAt'>[]
+  ): Promise<Array<() => Promise<(() => Promise<void>) | undefined>>>
   markProjectRetained(projectId: string): Promise<readonly string[]>
   restoreProjectActive(projectId: string, directories: readonly string[]): Promise<void>
   markRetained(
@@ -158,7 +161,6 @@ type SessionPersistenceDeletionOwnerOptions = {
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
   notifyDiscussionDetached(session: PersistedChatSession): void
-  notifySessionsDeleted(sessionIds: string[]): Promise<void>
 }
 
 const ARCHIVE_BLOCKING_SESSION_STATUSES = new Set<PersistedSessionStatus>([
@@ -190,7 +192,6 @@ class SessionPersistenceDeletionOwner {
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
   private readonly notifyDiscussionDetached: (session: PersistedChatSession) => void
-  private readonly notifySessionsDeleted: (sessionIds: string[]) => Promise<void>
 
   constructor(options: SessionPersistenceDeletionOwnerOptions) {
     this.repository = options.repository
@@ -205,7 +206,6 @@ class SessionPersistenceDeletionOwner {
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
     this.notifyDiscussionDetached = options.notifyDiscussionDetached
-    this.notifySessionsDeleted = options.notifySessionsDeleted
   }
 
   async assertProjectArchivable(
@@ -336,6 +336,7 @@ class SessionPersistenceDeletionOwner {
       sessionIds: readonly string[],
       operation: () => Promise<Result>
     ) => Promise<Result>,
+    onDeleted: (sessionIds: string[]) => void,
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
     let deletedSessionIds: string[] = []
@@ -390,7 +391,7 @@ class SessionPersistenceDeletionOwner {
                 await this.computeJobs?.commitProjectJobDeletion(projectId)
                 this.fileIndex.markReconciliationIncomplete(projectId)
                 await this.fileIndex.softDeleteProject(projectId)
-                await this.notifySessionsDeleted(deletedSessionIds)
+                onDeleted(deletedSessionIds)
                 return { status: 'orphan-retained', reason: 'missing-upload-authority' }
               }
               throw error
@@ -428,7 +429,7 @@ class SessionPersistenceDeletionOwner {
             sources: ['artifact', 'upload'],
             kind: 'reset'
           })
-          await this.notifySessionsDeleted(deletedSessionIds)
+          onDeleted(deletedSessionIds)
           return { status: 'completed' }
         } catch (error) {
           if (sessionAuthorityDeleted || !this.workspaceOwnership) throw error
@@ -628,7 +629,8 @@ class SessionPersistenceDeletionOwner {
   async reconcileSessionDeletion(
     projectId: string,
     sessionId: string,
-    receiptKind: SessionDeletionReceipt['kind']
+    receiptKind: SessionDeletionReceipt['kind'],
+    onDeleted: (sessionIds: string[]) => void
   ): Promise<void> {
     // Retain the metadata identity tombstone until the global phase starts so a cross-Project reuse
     // cannot be admitted between authoritative deletion and ID-only projection cleanup.
@@ -672,13 +674,14 @@ class SessionPersistenceDeletionOwner {
       sources: ['artifact', 'upload'],
       kind: receiptKind === 'retained' ? 'upsert' : 'delete'
     })
-    await this.notifySessionsDeleted([sessionId])
+    onDeleted([sessionId])
   }
 
   async reconcileProjectSessionDeletion(
     projectId: string,
     sessionId: string,
-    receiptKind: SessionDeletionReceipt['kind']
+    receiptKind: SessionDeletionReceipt['kind'],
+    onDeleted: (sessionIds: string[]) => void
   ): Promise<boolean> {
     const survivorChanges: Array<{ sessionId: string; sources: ProjectFileSource[] }> = []
     try {
@@ -715,7 +718,7 @@ class SessionPersistenceDeletionOwner {
       sources: ['artifact', 'upload'],
       kind: receiptKind === 'retained' ? 'upsert' : 'delete'
     })
-    await this.notifySessionsDeleted([sessionId])
+    onDeleted([sessionId])
     return true
   }
 }

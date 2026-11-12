@@ -11,6 +11,12 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('keeps the current turn anchored when trailing content shrinks or grows', async ({ page }) => {
+  await page.evaluate(() => {
+    const errors: string[] = []
+    Object.assign(window, { __resizeErrors: errors })
+    // Native ResizeObserver errors need not appear in Playwright's pageerror stream.
+    window.addEventListener('error', (event) => errors.push(event.message))
+  })
   const tool = page.locator('[data-message-id="tool"]')
   for (const transition of ['shrink', 'grow']) {
     const positions = await tool.evaluate(async (element) => {
@@ -37,6 +43,9 @@ test('keeps the current turn anchored when trailing content shrinks or grows', a
       `${transition}: ${positions.join(', ')}`
     ).toBeLessThanOrEqual(2)
   }
+  expect(
+    await page.evaluate(() => (window as unknown as { __resizeErrors: string[] }).__resizeErrors)
+  ).toEqual([])
   await page.screenshot({ path: test.info().outputPath('anchored-content-resize.png') })
 })
 
