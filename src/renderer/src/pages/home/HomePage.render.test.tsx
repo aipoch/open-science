@@ -1546,6 +1546,66 @@ describe('HomePage activity overview', () => {
     }
   )
 
+  it.each(['submitted', 'running'] as const)(
+    'stops counting a %s direct SSH job as Running after cancellation confirmation fails and resumes for Retry',
+    async (status) => {
+      const candidate = session('remote-compute', 'Remote analysis', 'idle', 590_000)
+      useProjectStore.setState({
+        ...createInitialProjectState(),
+        projects: [project],
+        isLoaded: true
+      })
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [candidate] })
+      const stoppedJob: JobSummary = {
+        ...computeJob(candidate.id, status),
+        execution_mode: 'direct_ssh',
+        cancellation_status: 'failed',
+        cancellation_error: {
+          code: 'cancel_confirmation_failed',
+          message: 'Remote cancellation could not be confirmed.'
+        }
+      }
+      useSessionJobStore.getState().applyUpdate(stoppedJob)
+
+      await act(async () =>
+        root.render(
+          <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+        )
+      )
+
+      const runningCard = (): Element | null =>
+        container.querySelector('[aria-label="Open session Remote analysis, running"]')
+      expect(runningCard()).toBeNull()
+      expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+
+      await act(async () =>
+        useSessionJobStore.getState().applyUpdate({
+          ...stoppedJob,
+          cancellation_status: 'cancelling',
+          cancellation_error: undefined
+        })
+      )
+      expect(runningCard()).not.toBeNull()
+      expect(container.querySelector('[aria-label="1 running"]')).not.toBeNull()
+
+      // Other execution modes keep their existing active projection on the same failure.
+      await act(async () =>
+        useSessionJobStore.getState().applyUpdate({ ...stoppedJob, execution_mode: 'slurm' })
+      )
+      expect(runningCard()).not.toBeNull()
+
+      await act(async () => useSessionJobStore.getState().applyUpdate(stoppedJob))
+      expect(runningCard()).toBeNull()
+      expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+
+      // Stopping remote tracking must not suppress a foreground run in the same Session.
+      await act(async () =>
+        useSessionStore.setState({ sessions: [{ ...candidate, status: 'running' }] })
+      )
+      expect(runningCard()).not.toBeNull()
+    }
+  )
+
   it('keeps inactive-branch delegated work Running until its current Attempt becomes terminal', async () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(600_000)
     const branchARunning = sessionWithDelegatedRuns('idle', [

@@ -1,6 +1,11 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
-import { remoteJobPidTerminationFunctionLines } from './remote-job-process'
+import {
+  remoteJobPidTerminationFunctionLines,
+  terminateRemoteJobProcess,
+  terminateRemoteJobProcessIfOwned
+} from './remote-job-process'
+import type { ComputeConnectionLease } from './connection'
 
 // Execute the production shell protocol with deterministic process observations. The kill double
 // never sends a real signal; unexpected targets remain visible in stdout and fail the assertions.
@@ -23,6 +28,31 @@ const execute = (fixture: string): SpawnSyncReturns<string> =>
   )
 
 describe.skipIf(process.platform === 'win32')('remote Job session termination protocol', () => {
+  it.each([
+    'readlink() { return 1; }; ps() { echo "200 200 200 S"; }',
+    'readlink() { echo /job; }; ps() { return 1; }',
+    'readlink() { echo /job; }; ps() { echo "200 100 100 S"; }',
+    `
+owned=1
+readlink() { [ "$owned" = 1 ] && echo /job; }
+ps() { echo '200 200 200 T'; }
+kill() { owned=0; }
+`
+  ])('identifies unavailable ownership during guarded termination: %s', async (fixture) => {
+    const connection = fixtureConnection(fixture)
+    expect(await terminateRemoteJobProcess(200, '/job', connection)).toBe('ownership-unknown')
+    expect(await terminateRemoteJobProcessIfOwned(200, '/job', connection)).toBe(false)
+  })
+
+  it.each([
+    'readlink() { echo /job; }; ps() { echo "200 200 200 S"; }; kill() { return 1; }',
+    'readlink() { echo /job; }; ps() { printf "%s\\n" "200 200 200 T" "201 201 200 D"; }'
+  ])('retains unconfirmed termination after ownership is established: %s', async (fixture) => {
+    expect(await terminateRemoteJobProcess(200, '/job', fixtureConnection(fixture))).toBe(
+      'unconfirmed'
+    )
+  })
+
   it('refuses a process in a shared session even when its cwd matches', () => {
     const result = execute(`
 readlink() { echo /job; }
@@ -119,3 +149,31 @@ allow_exit=1
     expect(result.stdout).toBe('initial:2\nterminated\nresult:0\n')
   })
 })
+
+// Run the exact command built by the public API. Override only process observations and signals;
+// the shell's ownership marker, exit code, and TypeScript classification are all production code.
+const fixtureConnection = (fixture: string): ComputeConnectionLease =>
+  ({
+    run: async (command: string) => {
+      const result = spawnSync(
+        '/bin/sh',
+        [
+          '-c',
+          [
+            'cd() { return 0; }; pwd() { echo /job; }',
+            'sleep() { :; }; lsof() { return 1; }; kill() { return 0; }',
+            fixture,
+            command
+          ].join('\n')
+        ],
+        { encoding: 'utf8' }
+      )
+      return {
+        exitCode: result.status ?? 1,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        timedOut: false,
+        truncated: false
+      }
+    }
+  }) as unknown as ComputeConnectionLease

@@ -48,6 +48,7 @@ const STATUS_STYLE = {
 type JobStatusBadgeProps = {
   status: ComputeJobStatus
   cancellationStatus?: ComputeJobCancellationStatus
+  trackingStopped?: boolean
   errorCode?: string
 }
 
@@ -55,6 +56,7 @@ type JobStatusBadgeProps = {
 export function JobStatusBadge({
   status,
   cancellationStatus,
+  trackingStopped,
   errorCode
 }: JobStatusBadgeProps): React.JSX.Element {
   const { t } = useTranslation()
@@ -71,7 +73,9 @@ export function JobStatusBadge({
             ? 'border-border bg-muted text-muted-foreground'
             : 'border-transparent bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
         }
-      : STATUS_STYLE[status]
+      : trackingStopped
+        ? { labelKey: 'Unable to confirm cancellation', className: STATUS_STYLE.running.className }
+        : STATUS_STYLE[status]
   return (
     <span
       data-testid="job-status-badge"

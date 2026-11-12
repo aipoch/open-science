@@ -24,6 +24,7 @@ import {
   type ModalJobJournal,
   type ModalJobTarget
 } from './modal-job-journal'
+import { isComputeJobTrackingStopped } from '@aipoch/compute'
 import type {
   ComputeJobIntegrityIssue,
   ComputeJobOwner,
@@ -529,7 +530,10 @@ export class ComputeJobRepository {
       include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.excludeDeletingOwners(this.toLifecycleJobs(rows))
+    const jobs = this.toLifecycleJobs(rows)
+    return this.excludeDeletingOwners(
+      includeRemote ? jobs : jobs.filter((job) => !isComputeJobTrackingStopped(job))
+    )
   }
 
   // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
@@ -589,7 +593,7 @@ export class ComputeJobRepository {
       include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
     })
-    return this.toLifecycleJobs(rows)
+    return this.toLifecycleJobs(rows).filter((job) => !isComputeJobTrackingStopped(job))
   }
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
@@ -679,6 +683,21 @@ export class ComputeJobRepository {
             status: { in: [...expectedStatuses] },
             operations: {
               none: { kind: 'cancel', OR: [{ phase: 'active' }, { outcome: 'fulfilled' }] }
+            },
+            // Failed direct SSH cancellation leaves status active but explicitly stops tracking.
+            // Fence stale poll/recovery writes in the same SQL CAS as the status check; a
+            // findNonTerminal snapshot or an earlier application read cannot enforce this.
+            NOT: {
+              executionMode: 'direct_ssh',
+              status: { in: ['submitted', 'running'] },
+              operations: {
+                some: {
+                  kind: 'cancel',
+                  phase: 'settled',
+                  outcome: 'failed',
+                  errorCode: 'cancel_confirmation_failed'
+                }
+              }
             }
           },
           data: this.toUpdateData(

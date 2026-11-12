@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { isComputeJobCancelled } from '@aipoch/compute'
-import { Circle, CircleCheck, CircleX, Clock3, Loader2 } from 'lucide-react'
+import { isComputeJobCancelled, isComputeJobTrackingStopped } from '@aipoch/compute'
+import { Circle, CircleCheck, CircleX, Clock3, Loader2, TriangleAlert } from 'lucide-react'
 
 import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
@@ -207,15 +207,18 @@ const SessionBackgroundActivityLedger = ({
     const isCancelling =
       job.cancellation_status === 'cancelling' ||
       (cancelling.has(job.job_id) && job.cancellation_status !== 'failed')
-    const StatusIcon = isCancelling
-      ? Loader2
-      : job.status === 'success'
-        ? CircleCheck
-        : isActive
-          ? job.status === 'running'
-            ? Circle
-            : Clock3
-          : CircleX
+    const trackingStopped = isComputeJobTrackingStopped(job)
+    const StatusIcon = trackingStopped
+      ? TriangleAlert
+      : isCancelling
+        ? Loader2
+        : job.status === 'success'
+          ? CircleCheck
+          : isActive
+            ? job.status === 'running'
+              ? Circle
+              : Clock3
+            : CircleX
     const startedAt = job.started_at ?? job.created_at
     const endedAt = job.finished_at ?? (isActive ? now : startedAt)
     const seconds = Math.max(0, Math.floor((endedAt - startedAt) / 1_000))
@@ -231,16 +234,25 @@ const SessionBackgroundActivityLedger = ({
         <span className="truncate text-text-100">
           {t('Remote · {{host}}', { host: job.display_name })}
         </span>
-        <span className="flex items-center gap-1.5 text-text-100" aria-live="polite">
+        <span
+          className={`flex items-center gap-1.5 ${trackingStopped ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-text-100'}`}
+          aria-live="polite"
+        >
           <StatusIcon
             className={
-              isCancelling ? 'size-3.5 animate-spin motion-reduce:animate-none' : 'size-3.5'
+              isCancelling
+                ? 'size-3.5 shrink-0 animate-spin motion-reduce:animate-none'
+                : 'size-3.5 shrink-0'
             }
             aria-hidden="true"
           />
-          {jobStatus(job)}
+          {trackingStopped ? t('Unable to confirm cancellation') : jobStatus(job)}
         </span>
-        <span className="tabular-nums text-text-100">{duration}</span>
+        <span className="tabular-nums text-text-100">
+          {trackingStopped || (isComputeJobCancelled(job) && job.started_at === undefined)
+            ? '—'
+            : duration}
+        </span>
         <span className="flex justify-end gap-1">
           <Button variant="outline" size="xs" onClick={() => onOpenComputeJob?.(job)}>
             {t('Open')}

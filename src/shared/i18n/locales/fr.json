@@ -7980,6 +7980,7 @@
     "Not scheduled": "Non planifié",
     "Unable to confirm cancellation": "Impossible de confirmer l’annulation",
     "Cancellation failed": "Échec de l’annulation",
+    "The remote process may still be running. Automatic checks have stopped. Retry to request cancellation again.": "Le processus distant est peut-être encore en cours. Les vérifications automatiques ont cessé. Réessayez pour demander à nouveau l’annulation.",
     "The cancellation attempt ended. The job is still being tracked.": "Cette tentative d’annulation est terminée. Le suivi de la tâche continue.",
     "Unable to get job status": "Impossible d’obtenir l’état de la tâche",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "L’ordonnanceur ne dispose d’aucun résultat pour cette tâche. Le processus distant est peut-être toujours en cours. Vérifiez l’ordonnanceur et les fichiers distants avant de décider de la suite.",

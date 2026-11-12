@@ -7809,6 +7809,7 @@
     "Not scheduled": "Nicht geplant",
     "Unable to confirm cancellation": "Abbruch kann nicht bestätigt werden",
     "Cancellation failed": "Abbruch fehlgeschlagen",
+    "The remote process may still be running. Automatic checks have stopped. Retry to request cancellation again.": "Der Remoteprozess läuft möglicherweise noch. Die automatischen Prüfungen wurden beendet. Versuchen Sie es erneut, um den Abbruch nochmals anzufordern.",
     "The cancellation attempt ended. The job is still being tracked.": "Dieser Abbruchversuch ist beendet. Der Job wird weiterhin verfolgt.",
     "Unable to get job status": "Jobstatus kann nicht abgerufen werden",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "Der Scheduler hat kein verfügbares Ergebnis für diesen Job. Der entfernte Prozess läuft möglicherweise noch. Prüfen Sie den Scheduler und die entfernten Dateien, bevor Sie das weitere Vorgehen festlegen.",

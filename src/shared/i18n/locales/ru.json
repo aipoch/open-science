@@ -8124,6 +8124,7 @@
     "Not scheduled": "Не запланировано",
     "Unable to confirm cancellation": "Не удалось подтвердить отмену",
     "Cancellation failed": "Ошибка отмены",
+    "The remote process may still be running. Automatic checks have stopped. Retry to request cancellation again.": "Возможно, удалённый процесс ещё выполняется. Автоматические проверки остановлены. Повторите попытку, чтобы снова запросить отмену.",
     "The cancellation attempt ended. The job is still being tracked.": "Эта попытка отмены завершена. Отслеживание задания продолжается.",
     "Unable to get job status": "Не удалось получить состояние задания",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "В планировщике нет доступного результата этого задания. Удалённый процесс может всё ещё выполняться. Проверьте планировщик и удалённые файлы, прежде чем решать, что делать дальше.",
