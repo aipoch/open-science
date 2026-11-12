@@ -35,7 +35,7 @@ const f = vi.hoisted(() => ({
   closeOwnership: vi.fn(async () => {}),
   closeNetwork: vi.fn(async () => {}),
   closeMainAgents: vi.fn(async () => {}),
-  reapUpdateProcesses: vi.fn(async (_deadlineAt: number) => {}),
+  reapUpdateProcesses: vi.fn<(deadlineAt: number) => Promise<void>>(async () => {}),
   captureUpdateProcesses: vi.fn<() => (deadlineAt: number) => Promise<void>>(),
   configureMainAgents: vi.fn(async () => {}),
   constructMainAgents: vi.fn(),
