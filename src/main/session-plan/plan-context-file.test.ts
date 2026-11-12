@@ -86,6 +86,28 @@ const readJson = async (path: string): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
 
 describe('PlanContextFileStore', () => {
+  it('keeps a link/.. root aligned with the Notebook input directory', async () => {
+    const root = await temporaryRoot()
+    const physical = join(root, 'physical')
+    const alias = join(root, 'selected')
+    await mkdir(join(physical, 'child'), { recursive: true })
+    await mkdir(join(physical, 'research'))
+    await mkdir(join(root, 'research'))
+    await symlink(join(physical, 'child'), alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const storageRoot = `${alias}/../research`
+    const store = new PlanContextFileStore({ storageRoot, readCurrent: async () => projection() })
+
+    await store.refresh('project-1', 'session-1')
+
+    // Read through the same helper used for the Shell's OPEN_SCIENCE_INPUT_DIR, not the
+    // store's returned path: both consumers must reach the existing session input directory.
+    expect(await readJson(contextPath(storageRoot, 'project-1', 'session-1'))).toMatchObject({
+      active: true,
+      artifactVersionId: 'plan-version-1'
+    })
+    expect(await readdir(join(physical, 'research'))).toEqual([])
+  })
+
   it.each(['', 'data'])(
     'writes through a configured root alias with suffix "%s" and rejects retargeting',
     async (suffix) => {

@@ -343,13 +343,21 @@ const errorChainHasCode = (error: unknown, expectedCode: string): boolean => {
 class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecovery {
   private readonly fileSystem: VersionFileSystem
   private readonly rootBinding: StorageRootBinding
+  private readonly storageLayoutBinding: StorageRootBinding
 
   constructor(private readonly options: NodeVersionFileOperatorOptions) {
     if (!options.storageRoot) throw new Error('Version file storage root is required.')
     this.rootBinding = bindStorageRoot(options.storageRoot)
+    // Repositories resolve storage keys lexically. Preserve the original containment rule when
+    // link/.. makes that layout differ from the configured root's native filesystem meaning.
+    const storageLayoutRoot = resolve(options.storageRoot)
+    this.storageLayoutBinding =
+      storageLayoutRoot === options.storageRoot
+        ? this.rootBinding
+        : bindStorageRoot(storageLayoutRoot)
     // The physical path is fixed before any operation computes paths or serialization keys.
     // Keep caller options untouched: settings and migration receipts retain their logical path.
-    this.options = { ...options, storageRoot: this.rootBinding.path }
+    this.options = { ...options, storageRoot: this.storageLayoutBinding.path }
     this.fileSystem = {
       link: options.fileSystem?.link ?? link,
       lstat: options.fileSystem?.lstat ?? lstat,
@@ -1429,11 +1437,20 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
 
   private async verifyStorageRoot(prepare = false): Promise<void> {
     try {
+      const layoutPath = relative(this.rootBinding.path, this.storageLayoutBinding.path)
+      if (isAbsolute(layoutPath) || layoutPath === '..' || layoutPath.startsWith(`..${sep}`)) {
+        // An unavailable binding retains a logical placeholder path. Preserve its original
+        // availability error instead of treating that placeholder as a canonical boundary.
+        await this.rootBinding.verify()
+        await this.storageLayoutBinding.verify()
+        throw new StorageRootChangedError()
+      }
       if (prepare) {
         await this.rootBinding.prepare((path) => this.fileSystem.mkdir(path))
       } else {
         await this.rootBinding.verify()
       }
+      if (this.storageLayoutBinding !== this.rootBinding) await this.storageLayoutBinding.verify()
     } catch (error) {
       if (!(error instanceof StorageRootChangedError)) throw error
       throw new VersionFileOperatorError('INTEGRITY_FAILED', error.message, undefined, {

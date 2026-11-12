@@ -116,7 +116,9 @@ export class PlanContextFileStore {
   private readonly rootBinding: StorageRootBinding
 
   constructor(private readonly options: PlanContextFileStoreOptions) {
-    this.rootBinding = bindStorageRoot(options.storageRoot)
+    // Match Notebook's existing join/resolve semantics before binding the physical directory.
+    // Resolving links first would move a link/.. input away from OPEN_SCIENCE_INPUT_DIR.
+    this.rootBinding = bindStorageRoot(resolve(options.storageRoot))
     this.options = { ...options, storageRoot: this.rootBinding.path }
   }
 

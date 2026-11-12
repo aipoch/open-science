@@ -18,7 +18,7 @@ import {
   type FileHandle
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -100,6 +100,64 @@ describe('NodeVersionFileOperator', () => {
       readFile(join(cleanupRoot, ...plannedFile.storageRef.split('/')))
     ).resolves.toEqual(content)
   })
+
+  it.each(['inside', 'outside'])(
+    'preserves link/.. storage-key layout and containment when the layout is %s the native root',
+    async (location) => {
+      const { NodeVersionFileOperator } = await import('./version-file-operator')
+      cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+      const physical = join(cleanupRoot, 'physical')
+      const alias =
+        location === 'inside'
+          ? join(physical, 'research', 'holder', 'selected')
+          : join(cleanupRoot, 'selected')
+      await mkdir(join(physical, 'child'), { recursive: true })
+      await mkdir(join(physical, 'research'))
+      await mkdir(dirname(alias), { recursive: true })
+      await symlink(
+        join(physical, 'child'),
+        alias,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      const storageRoot = `${alias}/../research`
+      await mkdir(resolve(storageRoot))
+      const operator = new NodeVersionFileOperator({ storageRoot })
+      const planInput = {
+        operationId: 'operation-dot-root',
+        scope: {
+          source: 'upload' as const,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: 'upload-1'
+        },
+        logicalFilename: 'notes.txt',
+        candidateIndex: 0
+      }
+      const content = Buffer.from('existing repository layout')
+      const layoutMatches = (await realpath(storageRoot)) === (await realpath(resolve(storageRoot)))
+      const publication = operator.publishImmutable({
+        ...planInput,
+        plannedFile: operator.planImmutable(planInput),
+        content
+      })
+      // POSIX resolves the link before ".."; native Windows may normalize it first. In either
+      // case the operator must never publish to a different root than its repository consumers.
+      if (!layoutMatches && location === 'outside') {
+        await expect(publication).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+        expect(await readdir(join(cleanupRoot, 'research'))).toEqual([])
+      } else {
+        const stored = await publication
+        await expect(readFile(join(storageRoot, ...stored.storageRef.split('/')))).resolves.toEqual(
+          content
+        )
+      }
+      await expect(
+        readFile(
+          join(physical, 'research', ...operator.planImmutable(planInput).storageRef.split('/'))
+        )
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
 
   it('publishes when the configured file system does not support hard links', async () => {
     const module = await import('./version-file-operator')
