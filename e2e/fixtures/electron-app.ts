@@ -1013,7 +1013,12 @@ class ElectronAppHarness implements ElectronApp {
       throw error
     })
     for (const file of backendLogs.sort()) {
-      if (file !== 'main.log' && !/^desktop-backend-\d+-\d+\.log$/u.test(file)) continue
+      if (
+        file !== 'main.log' &&
+        file !== 'capacity-shutdown.log' &&
+        !/^desktop-backend-\d+-\d+\.log$/u.test(file)
+      )
+        continue
       await appendFile(
         destination,
         `\n--- Node backend: ${file} ---\n${await readFile(join(backendLogDirectory, file), 'utf8')}`
@@ -2148,6 +2153,65 @@ class ElectronAppHarness implements ElectronApp {
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to clean up.')
     const page = this.currentPage
+    if (this.resourceProfiler && requireGraceful) {
+      // [DEBUG-4302-CAPACITY] Temporary probe for the Mac-only graceful-close stall.
+      const record = (event: string, detail: unknown): void => {
+        this.flushTimeline += JSON.stringify({ timestamp: Date.now(), event, detail }) + '\n'
+      }
+      child.once('exit', (code, signal) => record('process-exit', { code, signal }))
+      child.once('close', (code, signal) => record('process-close', { code, signal }))
+      child.stderr?.on('data', (data: Buffer) => record('stderr', data.toString().slice(-8192)))
+      await application.evaluate(
+        ({ app, BrowserWindow, ipcMain }, path) => {
+          const fs = process.getBuiltinModule('node:fs')
+          const record = (event: string, detail: unknown = undefined): void => {
+            try {
+              fs.appendFileSync(
+                path,
+                JSON.stringify({ timestamp: Date.now(), event, detail }) + '\n'
+              )
+            } catch {
+              /* Diagnostics must not affect exit. */
+            }
+          }
+          record('probe-installed', {
+            pid: process.pid,
+            windows: BrowserWindow.getAllWindows().length
+          })
+          app.on('before-quit', (event) =>
+            record('before-quit', { prevented: event.defaultPrevented })
+          )
+          app.on('will-quit', (event) => record('will-quit', { prevented: event.defaultPrevented }))
+          app.on('quit', (_event, code) => record('quit', code))
+          const quit = app.quit.bind(app)
+          app.quit = () => {
+            record('app-quit-called')
+            quit()
+          }
+          const exit = app.exit.bind(app)
+          app.exit = (code) => {
+            record('app-exit-called', code)
+            exit(code)
+          }
+          process.once('exit', (code) => record('native-exit', code))
+          ipcMain.on('sessions:flush-response', (_event, response) =>
+            record('flush-response', response?.status)
+          )
+          for (const window of BrowserWindow.getAllWindows()) {
+            const send = window.webContents.send.bind(window.webContents)
+            window.webContents.send = (channel, ...args) => {
+              if (
+                channel === 'sessions:flush-request' ||
+                channel === 'window:close-confirm-request'
+              )
+                record('send', { channel, variant: args[0]?.variant })
+              send(channel, ...args)
+            }
+          }
+        },
+        join(this.roots.storageRoot, 'logs', 'capacity-shutdown.log')
+      )
+    }
     await this.stopElectronTrace(application)
     this.resourceProfiler?.detach(application)
     this.application = undefined
