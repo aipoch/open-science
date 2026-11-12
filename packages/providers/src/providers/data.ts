@@ -260,17 +260,51 @@ const definitions: readonly OfficialVendor[] = [
   {
     id: 'bailianplan',
     label: 'Bailian for Plan',
-    // The qwen3.8, GLM, and DeepSeek entries below override this conservative default.
     reasoningEffort: { supported: false },
     apiEndpoints: ['messages', 'chat-completions'],
-    baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
-    chatCompletionsBaseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
-    apiKeyUrl: 'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview',
+    regions: [
+      {
+        // Existing accounts without a saved region use Beijing.
+        id: 'china',
+        label: 'China (Beijing)',
+        baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
+        chatCompletionsBaseUrl:
+          'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+        apiKeyUrl:
+          'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/overview'
+      },
+      {
+        id: 'global',
+        label: 'International (Singapore)',
+        baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+        chatCompletionsBaseUrl:
+          'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        apiKeyUrl:
+          'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview',
+        modelIds: [
+          'qwen3.8-max',
+          'qwen4-max-preview',
+          'qwen3.7-max',
+          'qwen3.7-plus',
+          'qwen3.6-flash',
+          'glm-5.2',
+          'deepseek-v4-pro',
+          'deepseek-v4-flash-0731'
+        ]
+      }
+    ],
+    responsesModels: ['qwen4-max-preview'],
     models: [
       {
         id: 'qwen3.8-max',
         contextWindow: 983_616,
         maxOutputTokens: 131_072,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      {
+        id: 'qwen4-max-preview',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
@@ -302,7 +336,13 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     multimodal: {
-      multimodalModels: ['qwen3.8-max', 'qwen3.8-max-preview', 'qwen3.7-plus', 'qwen3.6-flash']
+      multimodalModels: [
+        'qwen3.8-max',
+        'qwen4-max-preview',
+        'qwen3.8-max-preview',
+        'qwen3.7-plus',
+        'qwen3.6-flash'
+      ]
     }
   },
   {
