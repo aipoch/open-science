@@ -1,3 +1,8 @@
+import { useComparisonTables } from './comparison/useComparisonTables'
+import { ComparisonDestinationDialog } from './comparison/ComparisonDestinationDialog'
+import { ComparisonMemberPicker } from './comparison/ComparisonMemberPicker'
+import { LiteratureComparisonPage } from './comparison/LiteratureComparisonPage'
+import type { ComparisonEvidenceTarget } from './comparison/comparison-display'
 import { LiteratureOverviewBatch } from './detail/LiteratureOverviewBatch'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
@@ -184,6 +189,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     useNavigationStore,
     useProjectStore,
     useTagStore,
+    registerLibraryLeaveGuard,
     createBookmarkPreviewItem,
     requestPdfAnnotationReveal,
     useProjectFormDialog,
@@ -228,6 +234,54 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const listenTags = useTagStore((state) => state.listen)
   const tagRevision = useTagStore((state) => state.revision)
   const [relatedDirection, setRelatedDirection] = useState<'references' | 'citations'>('references')
+  const [comparisonId, setComparisonId] = useState<string>()
+  const [comparisonAction, setComparisonAction] = useState<{
+    tableId: string
+    action: 'configure' | 'export'
+  }>()
+  const comparisonDraftBlocked = useRef(false)
+  const comparisonOwnerMounted = useRef(false)
+  const comparisonReviewRef = useRef<HTMLDivElement>(null)
+  const canLeaveComparison = useCallback((): boolean => {
+    if (!comparisonDraftBlocked.current) return true
+    const review = comparisonReviewRef.current
+    const retry = Array.from(review?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === t('Retry')
+    )
+    ;(retry ?? review?.querySelector('textarea'))?.focus()
+    return false
+  }, [t])
+  const reportComparisonDraftStatus = useCallback(
+    (status: { pending: boolean; failed: boolean }) => {
+      if (comparisonOwnerMounted.current)
+        comparisonDraftBlocked.current = status.pending || status.failed
+    },
+    []
+  )
+  useLayoutEffect(() => {
+    comparisonOwnerMounted.current = true
+    const dispose = registerLibraryLeaveGuard(
+      canLeaveComparison,
+      () => comparisonDraftBlocked.current
+    )
+    const beforeUnload = (event: BeforeUnloadEvent): void => {
+      if (!comparisonDraftBlocked.current) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => {
+      comparisonOwnerMounted.current = false
+      dispose()
+      window.removeEventListener('beforeunload', beforeUnload)
+    }
+  }, [canLeaveComparison, registerLibraryLeaveGuard])
+  const comparisons = useComparisonTables(comparisonId)
+  const [deletingComparison, setDeletingComparison] = useState<{ id: string; name: string }>()
+  const [comparisonDeleteBusy, setComparisonDeleteBusy] = useState(false)
+  const [comparisonDeleteError, setComparisonDeleteError] = useState(false)
+  const [comparisonMembers, setComparisonMembers] = useState<string[]>()
+  const [choosingComparisonMembers, setChoosingComparisonMembers] = useState(false)
   const [section, setSection] = useState<LibrarySection>('inbox')
   const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
@@ -316,6 +370,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [detailController] = useState(() =>
     createLiteratureDetailController((id) => hostApi.literature.get(id))
   )
+  const backgroundReferenceReturn = useRef<(() => void) | undefined>(undefined)
+  useEffect(() => {
+    const unsubscribe = detailController.subscribe(() => {
+      if (detailController.getSnapshot().open) return
+      const restore = backgroundReferenceReturn.current
+      backgroundReferenceReturn.current = undefined
+      restore?.()
+    })
+    return () => {
+      unsubscribe()
+      backgroundReferenceReturn.current = undefined
+    }
+  }, [detailController])
   const selectedItem = detailController.getSnapshot().item
   const [overviewRevision, setOverviewRevision] = useState(0)
   const [activeOverviewRequests, setActiveOverviewRequests] = useState<LiteratureOverviewRequest[]>(
@@ -395,6 +462,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       childLayerDismissGuardUntilRef.current = Date.now() + CHILD_LAYER_DISMISS_GUARD_MS
     }
   }, [])
+
+  const openBackgroundReference = useCallback(
+    async (itemId: string, onReturn: () => void): Promise<void> => {
+      const interaction = ++detailInteractionRef.current
+      const item = await detailController.read(itemId)
+      if (interaction !== detailInteractionRef.current)
+        throw new Error('Reference request superseded')
+      if (!item || item.deletedAt !== undefined) throw new Error('Reference unavailable')
+      backgroundReferenceReturn.current = onReturn
+      openSelectedItemDetail(item)
+    },
+    [detailController, openSelectedItemDetail]
+  )
 
   const openJournalReference = useCallback(
     async (id: string, initiator?: HTMLElement): Promise<void> => {
@@ -853,7 +933,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const selectionBlocked = smartTableBlocked || readingStatusPending
 
+  const openComparison = (id: string, action?: 'configure' | 'export'): void => {
+    if (!canLeaveComparison()) return
+    setComparisonAction(action ? { tableId: id, action } : undefined)
+    setComparisonId(id)
+    setCitationStylesOpen(false)
+    setJournalsOpen(false)
+    setDuplicatesOpen(false)
+  }
+
   const selectLibrary = (nextCollectionId?: string): void => {
+    if (!canLeaveComparison()) return
+    setComparisonId(undefined)
     setCitationStylesOpen(false)
     setJournalsOpen(false)
     setDuplicatesOpen(false)
@@ -1134,6 +1225,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   })
 
   const selectProject = (nextProjectId: string): void => {
+    if (!canLeaveComparison()) return
+    setComparisonId(undefined)
     setCitationStylesOpen(false)
     setJournalsOpen(false)
     setDuplicatesOpen(false)
@@ -1144,6 +1237,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const selectSection = (nextSection: Exclude<LibrarySection, 'library'>): void => {
+    if (!canLeaveComparison()) return
+    setComparisonId(undefined)
     setCitationStylesOpen(false)
     setJournalsOpen(false)
     setDuplicatesOpen(false)
@@ -1662,6 +1757,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         }}
       >
         <LiteratureLibrarySidebar
+          comparisons={{
+            tables: comparisons.tables,
+            selectedId: comparisonId,
+            onCreate: () => {
+              if (!canLeaveComparison()) return
+              setChoosingComparisonMembers(true)
+            },
+            onOpen: openComparison,
+            onDelete: (table) => {
+              if (!canLeaveComparison()) return
+              setComparisonDeleteError(false)
+              setDeletingComparison(table)
+            }
+          }}
           navigation={{
             section,
             collectionId,
@@ -1673,12 +1782,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             selectLibrary,
             selectProject,
             openDuplicates: () => {
+              if (!canLeaveComparison()) return
+              setComparisonId(undefined)
               setCitationStylesOpen(false)
               setJournalsOpen(false)
               setDuplicatesOpen(true)
               clearSelection()
             },
             openJournals: () => {
+              if (!canLeaveComparison()) return
+              setComparisonId(undefined)
               setCitationStylesOpen(false)
               setJournalsVisited(true)
               setJournalsOpen(true)
@@ -1686,6 +1799,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               clearSelection()
             },
             openCitationStyles: () => {
+              if (!canLeaveComparison()) return
+              setComparisonId(undefined)
               setJournalsOpen(false)
               setCitationStylesOpen(true)
               setDuplicatesOpen(false)
@@ -1699,9 +1814,99 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           openCreateCollection={openCreateCollection}
         />
 
-        <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <section
+          aria-label={comparisonId ? t('Comparison tables') : undefined}
+          className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
+        >
+          {comparisonId && (
+            <LiteratureComparisonPage
+              comparisons={comparisons}
+              key={`${comparisonId}:${Boolean(comparisons.selectedTable)}`}
+              table={comparisons.selectedTable}
+              requestedAction={
+                comparisonAction?.tableId === comparisonId ? comparisonAction : undefined
+              }
+              loadingTableName={comparisons.tables.find((table) => table.id === comparisonId)?.name}
+              loadCellHistory={comparisons.loadCellHistory}
+              loadError={comparisons.error}
+              onRetryLoad={() => void comparisons.refresh()}
+              command={comparisons.command}
+              onDraftStatusChange={reportComparisonDraftStatus}
+              reviewRef={comparisonReviewRef}
+              onChooseReferences={() => selectLibrary()}
+              onOpenItem={async (target: ComparisonEvidenceTarget, onReturn) => {
+                if (target.kind === 'reference' && onReturn)
+                  return openBackgroundReference(target.itemId, onReturn)
+                try {
+                  const item = await hostApi.literature.get(target.itemId)
+                  if (!item) throw new Error('Missing reference')
+                  if (target.kind === 'reference') {
+                    openSelectedItemDetail(item)
+                    return
+                  }
+                  const attachment = item.attachments.find((attachment) =>
+                    attachment.versions.some((version) => version.id === target.attachmentVersionId)
+                  )
+                  const version = attachment?.versions.find(
+                    (version) => version.id === target.attachmentVersionId
+                  )
+                  if (!attachment || !version || version.contentType !== 'application/pdf')
+                    throw new Error('Missing evidence version')
+                  setPreviewItem({
+                    id: version.id,
+                    title: version.filename,
+                    type: 'file',
+                    source: 'literature',
+                    sessionId: LITERATURE_PREVIEW_SESSION_ID,
+                    path: createLiteratureAttachmentVersionReference(version.id),
+                    format: 'pdf',
+                    name: version.filename,
+                    mimeType: version.contentType,
+                    size: version.sizeBytes,
+                    versionNumber: version.versionNumber
+                  })
+                  if (target.page) {
+                    const timestamp = new Date().toISOString()
+                    setAnnotationToReveal({
+                      id: `comparison-evidence-${version.id}-${target.page}`,
+                      literatureVersionId: version.id,
+                      kind: 'page-note',
+                      origin: 'user',
+                      version: 1,
+                      createdAt: timestamp,
+                      updatedAt: timestamp,
+                      tagIds: [],
+                      note: '',
+                      target: {
+                        source: {
+                          kind: 'literature-attachment-version',
+                          sourceFileId: attachment.id,
+                          versionId: version.id,
+                          checksum: version.checksum,
+                          name: version.filename,
+                          path: createLiteratureAttachmentVersionReference(version.id)
+                        },
+                        selector: {
+                          kind: 'page-note',
+                          pageNumber: target.page,
+                          pageRotation: 0,
+                          coordinateVersion: 1
+                        }
+                      }
+                    })
+                  }
+                } catch {
+                  setError(t('Literature could not be loaded.'))
+                }
+              }}
+              onOpenDiscovery={(job) =>
+                setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
+              }
+              onOpenComparison={openComparison}
+            />
+          )}
           <LiteratureDuplicatesView
-            active={duplicatesOpen && !citationStylesOpen && !journalsOpen}
+            active={duplicatesOpen && !citationStylesOpen && !journalsOpen && !comparisonId}
             revision={duplicatesRevision}
             onCount={setDuplicateCount}
             onMerged={() => {
@@ -1751,6 +1956,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             disabled={
               section !== 'library' ||
               Boolean(
+                comparisonId ||
                 selectedCollection?.smart ||
                 citationStylesOpen ||
                 journalsOpen ||
@@ -1764,7 +1970,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }
             className={cn(
               'flex h-full min-h-0 w-full max-w-none flex-col px-4 py-6 lg:px-6 lg:py-8',
-              (citationStylesOpen || journalsOpen || duplicatesOpen) && 'hidden'
+              (comparisonId || citationStylesOpen || journalsOpen || duplicatesOpen) && 'hidden'
             )}
           >
             <LiteratureLibraryHeader
@@ -2100,7 +2306,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 )}
                                 {!hasSelection && section !== 'inbox' && overviewActions}
                                 <LiteratureBackgroundTasks
-                                  hidden={hasSelection || section === 'inbox'}
+                                  comparisons={comparisons}
+                                  hidden={section === 'inbox'}
+                                  onOpenComparison={openComparison}
+                                  onOpenItem={openBackgroundReference}
                                   onOpen={(job) =>
                                     setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
                                   }
@@ -2148,6 +2357,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     )}
                                     {hasSelection && (
                                       <LiteratureSelectionToolbar
+                                        onAddToComparison={() => {
+                                          void resolveSelectedItemIds()
+                                            .then(setComparisonMembers)
+                                            .catch(() =>
+                                              setError(t('Comparison table could not be saved.'))
+                                            )
+                                        }}
                                         overviewActions={overviewActions}
                                         overviewMenuAction={generateOverviews}
                                         selectedItemCount={selectedItemCount}
@@ -2596,6 +2812,29 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           </FileDropZone>
         </section>
 
+        {choosingComparisonMembers && (
+          <ComparisonMemberPicker
+            existing={[]}
+            confirmLabel={t('Next')}
+            onAdd={async (ids) => {
+              setChoosingComparisonMembers(false)
+              setComparisonMembers(ids)
+            }}
+            onClose={() => setChoosingComparisonMembers(false)}
+          />
+        )}
+        {comparisonMembers && (
+          <ComparisonDestinationDialog
+            mode="create"
+            tables={comparisons.tables}
+            itemIds={comparisonMembers}
+            command={comparisons.command}
+            onClose={() => setComparisonMembers(undefined)}
+            onAdded={(id) => {
+              openComparison(id)
+            }}
+          />
+        )}
         <LiteratureMergeDialog
           mergeOpen={mergeOpen}
           isBatching={isBatching}
@@ -2792,6 +3031,42 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             void loadCollections().catch(() => setError(t('Literature could not be loaded.')))
           }}
         />
+        <ConfirmActionDialog
+          open={Boolean(deletingComparison)}
+          title={t('Delete comparison table?')}
+          description={t(
+            'Delete “{{name}}” and its extraction and review history? References and PDFs will be kept.',
+            { name: deletingComparison?.name ?? '' }
+          )}
+          cancelLabel={t('Cancel')}
+          confirmLabel={t('Delete')}
+          destructive
+          loading={comparisonDeleteBusy}
+          onCancel={() => setDeletingComparison(undefined)}
+          onConfirm={() => {
+            if (!deletingComparison || comparisonDeleteBusy) return
+            setComparisonDeleteBusy(true)
+            setComparisonDeleteError(false)
+            void comparisons
+              .command({ action: 'delete', tableId: deletingComparison.id })
+              .then(() => {
+                if (comparisonId === deletingComparison.id) setComparisonId(undefined)
+                setDeletingComparison(undefined)
+              })
+              .catch(() => setComparisonDeleteError(true))
+              .finally(() => setComparisonDeleteBusy(false))
+          }}
+        >
+          {comparisonDeleteError && (
+            <ErrorNotice
+              inline
+              role="alert"
+              description={t(
+                'Comparison table could not be deleted. Pause any running extraction and try again.'
+              )}
+            />
+          )}
+        </ConfirmActionDialog>
         <LiteratureCollectionDeleteDialog
           collectionPendingDelete={collectionPendingDelete}
           isDeletingCollection={isDeletingCollection}

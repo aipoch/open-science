@@ -79,7 +79,12 @@
     "src/main/literature/pdf-structure/ocr.ts",
     "src/main/literature/pdf-structure/ocr.test.ts",
     "src/main/literature/overview-batch.ts",
-    "src/main/literature/overview-batch.test.ts"
+    "src/main/literature/overview-batch.test.ts",
+    "src/main/literature/comparison/extractor.test.ts",
+    "src/main/literature/comparison/extractor.ts",
+    "src/main/literature/comparison/owner.integration.test.ts",
+    "src/main/literature/comparison/owner.test.ts",
+    "src/main/literature/comparison/owner.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -108,7 +113,8 @@
     "src/main/literature/full-text-index-sqlite-fixture.ts",
     "src/main/literature/collector.ts",
     "src/main/literature/overview.ts",
-    "src/main/literature/overview-batch.ts"
+    "src/main/literature/overview-batch.ts",
+    "src/main/literature/comparison/owner.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -152,7 +158,10 @@
       "src/main/literature/collector-identity.test.ts",
       "src/main/literature/overview.test.ts",
       "src/main/literature/pdf-structure/ocr.test.ts",
-      "src/main/literature/overview-batch.test.ts"
+      "src/main/literature/overview-batch.test.ts",
+      "src/main/literature/comparison/extractor.test.ts",
+      "src/main/literature/comparison/owner.integration.test.ts",
+      "src/main/literature/comparison/owner.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",

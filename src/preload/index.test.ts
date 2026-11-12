@@ -412,6 +412,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.cancelPdfImport',
       'literature.citationStyles',
       'literature.collect',
+      'literature.comparisons',
       'literature.completeMetadata',
       'literature.exportRecord',
       'literature.formatDocument',

@@ -21,13 +21,11 @@ import {
   PanelLeft,
   ScrollText,
   Store,
-  Users,
-  X
+  Users
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import * as Dialog from '@/components/ui/dialog'
-import { dialogOverlayClassName } from '@/components/ui/dialog-chrome'
 import {
   Select,
   SelectContent,
@@ -1039,29 +1037,16 @@ export const SharingMarketplacePage = ({
               if (!open) setDetail(null)
             }}
           >
-            <Dialog.Portal>
-              <Dialog.Overlay className={dialogOverlayClassName} />
-              <Dialog.Content
-                aria-describedby={undefined}
-                className="fixed inset-y-0 right-0 flex w-full data-[state=closed]:pointer-events-none flex-col border-l border-border bg-card text-foreground shadow-dialog outline-none sm:w-[min(46rem,calc(100vw-4rem))] data-[state=open]:animate-in data-[state=open]:slide-in-from-right data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right motion-reduce:animate-none"
-                onCloseAutoFocus={(event) => {
-                  event.preventDefault()
-                  restoreDetailFocus()
-                }}
-              >
-                <div className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border px-5">
-                  <Dialog.Title className="min-w-0 flex-1 truncate text-sm font-semibold">
-                    {detailTitle}
-                  </Dialog.Title>
-                  <Dialog.Close asChild>
-                    <Button variant="ghost" size="icon-sm" aria-label={t('Close')}>
-                      <X className="size-4" aria-hidden="true" />
-                    </Button>
-                  </Dialog.Close>
-                </div>
-                {detailContent}
-              </Dialog.Content>
-            </Dialog.Portal>
+            <Dialog.DrawerContent
+              title={detailTitle}
+              closeLabel={t('Close')}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault()
+                restoreDetailFocus()
+              }}
+            >
+              {detailContent}
+            </Dialog.DrawerContent>
           </Dialog.Root>
         )}
         <ConfirmActionDialog

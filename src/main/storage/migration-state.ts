@@ -153,11 +153,27 @@ const assertDataRootWriteAvailable = (): void => {
   }
 }
 
-const waitForDataRootWriteAvailability = (): Promise<void> | undefined => {
+const waitForDataRootWriteAvailability = (signal?: AbortSignal): Promise<void> | undefined => {
   if (dataRootWriteAvailability === 'available' || dataRootWriteAvailability === 'accepted-empty') {
     return undefined
   }
-  return new Promise((resolve) => dataRootAvailabilityWaiters.add(resolve))
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      dataRootAvailabilityWaiters.delete(available)
+      signal?.removeEventListener('abort', aborted)
+    }
+    const available = (): void => {
+      cleanup()
+      resolve()
+    }
+    const aborted = (): void => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    dataRootAvailabilityWaiters.add(available)
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (signal?.aborted) aborted()
+  })
 }
 
 // Reserves the lifecycle quit guard before the command's first asynchronous validation/preparation
@@ -281,14 +297,27 @@ export const acquireDataRootWriter = (): (() => void) => {
   }
 }
 
-export const withDataRootWrite = async <Result>(write: () => Promise<Result>): Promise<Result> => {
+// Detached jobs must acquire their own leases rather than inherit a completed caller's lease.
+export const outsideDataRootWriteContext = <Result>(operation: () => Result): Result =>
+  // Mask the caller's lease explicitly: exit() can restore it when a detached writer synchronously
+  // re-enables AsyncLocalStorage on runtimes using the async-hooks implementation.
+  dataRootWriteContext.run(false, operation)
+
+export const withDataRootWrite = async <Result>(
+  write: () => Promise<Result>,
+  signal?: AbortSignal
+): Promise<Result> => {
+  // Cancellation applies only to admission. Once admitted, the caller owns settling its lease,
+  // including nested repository checkpoints that deliberately carry no cancellation signal.
+  signal?.throwIfAborted()
   // Higher-level operations compose lower-level repositories that may independently protect their
   // own write boundary. Treat nested calls in the same async chain as one logical lease: migration
   // already waits for the outer lease, and rejecting the inner call after `pending` rises would abort
   // the very in-flight operation that the drain protocol is designed to let finish.
   if (dataRootWriteContext.getStore()) return write()
-  const availability = waitForDataRootWriteAvailability()
+  const availability = waitForDataRootWriteAvailability(signal)
   if (availability) await availability
+  signal?.throwIfAborted()
   const release = acquireDataRootWriter()
   try {
     return await dataRootWriteContext.run(true, write)

@@ -21,7 +21,8 @@ const {
   reconcileDataRootWriteAvailability,
   runDataRootStartupRecovery,
   waitForDataRootWriters,
-  withDataRootWrite
+  withDataRootWrite,
+  outsideDataRootWriteContext
 } = await import('./migration-state')
 
 // A minimal app double: records the before-quit listener and whether quit() was called.
@@ -68,6 +69,63 @@ describe('migration-state', () => {
     await write
 
     expect(events).toEqual(['recovery', 'write'])
+  })
+
+  it('cancels missing-root admission and removes its listener without running after reconnect', async () => {
+    initializeDataRootWriteAvailability(true)
+    const controller = new AbortController()
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+    const write = vi.fn(async () => undefined)
+    const pending = withDataRootWrite(write, controller.signal)
+    const rejected = expect(pending).rejects.toThrow('cancel admission')
+    controller.abort(new Error('cancel admission'))
+    await rejected
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
+    await reconcileDataRootWriteAvailability(false)
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('checks cancellation before admission and again after availability resumes', async () => {
+    const cancelled = new AbortController()
+    cancelled.abort(new Error('already cancelled'))
+    const write = vi.fn(async () => undefined)
+    await expect(withDataRootWrite(write, cancelled.signal)).rejects.toThrow('already cancelled')
+    initializeDataRootWriteAvailability(true)
+    const controller = new AbortController()
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+    const pending = withDataRootWrite(write, controller.signal)
+    const rejected = expect(pending).rejects.toThrow('cancel resumed admission')
+    initializeDataRootWriteAvailability(false)
+    controller.abort(new Error('cancel resumed admission'))
+    await rejected
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('lets an admitted cancelled writer checkpoint through nested repositories and drain', async () => {
+    const controller = new AbortController()
+    let resume!: () => void
+    const boundary = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const checkpoint = vi.fn(async () => undefined)
+    const operation = withDataRootWrite(async () => {
+      await boundary
+      await withDataRootWrite(checkpoint)
+    }, controller.signal)
+    beginMigration()
+    initializeDataRootWriteAvailability(true)
+    controller.abort()
+    let drained = false
+    const drain = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    resume()
+    await operation
+    await drain
+    expect(checkpoint).toHaveBeenCalledOnce()
   })
 
   it('keeps writers blocked when reconnect recovery fails and retries the failed recovery', async () => {
@@ -226,6 +284,63 @@ describe('migration-state', () => {
     await operation
 
     expect(entered).toBe(true)
+  })
+
+  it('makes detached continuations acquire fresh admission after their caller lease expires', async () => {
+    let continueDetached!: () => void
+    const boundary = new Promise<void>((resolve) => {
+      continueDetached = resolve
+    })
+    let detached!: Promise<void>
+    await withDataRootWrite(async () => {
+      detached = outsideDataRootWriteContext(async () => {
+        await boundary
+        await withDataRootWrite(async () => undefined)
+      })
+    })
+    beginMigration()
+    await waitForDataRootWriters()
+    continueDetached()
+    await expect(detached).rejects.toThrow('moving your data')
+  })
+
+  it('isolates later detached admission when its first writer starts synchronously', async () => {
+    let finishFirst!: () => void
+    const firstBoundary = new Promise<void>((resolve) => {
+      finishFirst = resolve
+    })
+    let enterNext!: () => void
+    const nextBoundary = new Promise<void>((resolve) => {
+      enterNext = resolve
+    })
+    const controller = new AbortController()
+    const checkpoint = vi.fn(async () => undefined)
+    const nextWrite = vi.fn(async () => undefined)
+    let firstEntered = false
+    let detached!: Promise<void>
+    await withDataRootWrite(async () => {
+      detached = outsideDataRootWriteContext(async () => {
+        // Start before outsideDataRootWriteContext returns, as the comparison worker does.
+        await withDataRootWrite(async () => {
+          firstEntered = true
+          await firstBoundary
+          await withDataRootWrite(checkpoint)
+        })
+        enterNext()
+        await withDataRootWrite(nextWrite, controller.signal)
+      })
+    })
+    expect(firstEntered).toBe(true)
+    await reconcileDataRootWriteAvailability(true)
+    finishFirst()
+    await waitForDataRootWriters()
+    await nextBoundary
+    controller.abort(new Error('cancel detached admission'))
+    await expect(detached).rejects.toThrow('cancel detached admission')
+    expect(checkpoint).toHaveBeenCalledOnce()
+    expect(nextWrite).not.toHaveBeenCalled()
+    await reconcileDataRootWriteAvailability(false)
+    expect(nextWrite).not.toHaveBeenCalled()
   })
 
   it('keeps a logical writer active across calls until its idempotent release', async () => {

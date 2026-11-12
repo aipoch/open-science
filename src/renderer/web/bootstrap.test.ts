@@ -79,6 +79,7 @@ type WebApi = {
     create: (request: unknown) => Promise<unknown>
     onCreated: (listener: (payload: unknown) => void) => () => void
   }
+  saveBlobFile: Window['api']['saveBlobFile']
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<{ saved: boolean }>
 }
 
@@ -701,6 +702,86 @@ describe('Web bootstrap event connection', () => {
       )
     )
     await expect(request).resolves.toMatchObject({ id: 'project-1' })
+  })
+
+  it('waits for asynchronous Blob download handoff before starting the next file or revoking its URL', async () => {
+    const blobs = new Map<string, Blob>()
+    const revoked = new Set<string>()
+    const createObjectURL = vi.fn((blob: Blob) => {
+      const url = `blob:export-${blobs.size + 1}`
+      blobs.set(url, blob)
+      return url
+    })
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = createObjectURL
+        static revokeObjectURL = vi.fn((url: string) => revoked.add(url))
+      }
+    )
+    const api = await loadBootstrap()
+    vi.useFakeTimers()
+    const consumed: { name: string; url: string; size: number }[] = []
+    let pending: { name: string; url: string } | undefined
+    let scheduled = false
+    // Model a browser that consumes Blob navigation asynchronously: starting another
+    // download before that handoff replaces the pending request. Safari is checked separately.
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement
+    ) {
+      pending = { name: this.download, url: this.href }
+      if (scheduled) return
+      scheduled = true
+      window.setTimeout(() => {
+        const next = pending!
+        expect(revoked.has(next.url)).toBe(false)
+        consumed.push({ ...next, size: blobs.get(next.url)!.size })
+        scheduled = false
+      }, 100)
+    })
+    const save = (async () => {
+      for (const [name, value] of [
+        ['matrix.csv', 'matrix'],
+        ['evidence.csv', 'evidence']
+      ])
+        await expect(
+          api.saveBlobFile({
+            suggestedName: name,
+            mimeType: 'text/csv;charset=utf-8',
+            data: new TextEncoder().encode(value).buffer
+          })
+        ).resolves.toEqual({ saved: true })
+    })()
+    await vi.runAllTimersAsync()
+    await save
+    expect(consumed).toEqual([
+      { name: 'matrix.csv', url: 'blob:export-1', size: 6 },
+      { name: 'evidence.csv', url: 'blob:export-2', size: 8 }
+    ])
+    expect([...revoked]).toEqual(['blob:export-1', 'blob:export-2'])
+  })
+
+  it('rejects a failed Blob download initiation and releases its URL', async () => {
+    const revoke = vi.fn()
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL = vi.fn(() => 'blob:failed-export')
+        static revokeObjectURL = revoke
+      }
+    )
+    const api = await loadBootstrap()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {
+      throw new Error('download blocked')
+    })
+    await expect(
+      api.saveBlobFile({
+        suggestedName: 'matrix.csv',
+        mimeType: 'text/csv',
+        data: new Uint8Array([1]).buffer
+      })
+    ).rejects.toThrow('download blocked')
+    expect(revoke).toHaveBeenCalledWith('blob:failed-export')
   })
 
   it('streams a managed file to the browser-selected destination without buffering a Blob', async () => {
@@ -1523,12 +1604,14 @@ describe('Web reliability regressions', () => {
       )
       try {
         const api = await loadBootstrap()
-        const outcome = await api
+        const outcomePromise = api
           .saveManagedFile({ source: 'local', path: '/report.pdf', suggestedName: 'report.pdf' })
           .then(
             (result) => result,
             (error) => error
           )
+        await vi.advanceTimersByTimeAsync(1000)
+        const outcome = await outcomePromise
         expect(release).toHaveBeenCalledOnce()
         if (status === 200) {
           if (streaming) {

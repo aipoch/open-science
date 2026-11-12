@@ -1,3 +1,4 @@
+import { literatureComparisonsContract } from './literature-comparison'
 import { overviewBatchRequestSchema, overviewBatchResultSchema } from './literature-overview-batch'
 import {
   literatureOverviewRequestSchema,
@@ -194,6 +195,7 @@ const literatureApplicationCommandContracts = Object.freeze({
     ),
     validationCodec(literatureItemInputSchema)
   ),
+  comparisons: literatureComparisonsContract,
   overviewBatch: defineApplicationCommandContract(
     validationCodec(z.tuple([overviewBatchRequestSchema])),
     validationCodec(overviewBatchResultSchema)

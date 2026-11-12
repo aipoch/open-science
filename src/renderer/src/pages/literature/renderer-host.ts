@@ -132,6 +132,7 @@ export type LiteratureRendererHost = {
   getPreviewFormatForFile(file: { name: string; mimeType?: string }): LiteraturePreviewFormat
   readonly api: LiteratureRendererApi
   onRecovered(listener: () => void): () => void
+  registerLibraryLeaveGuard(guard: () => boolean, isDirty: () => boolean): () => void
   useNavigationStore: SelectorStore<LiteratureNavigation>
   useProjectStore: SelectorStore<{
     projects: LiteratureProject[]

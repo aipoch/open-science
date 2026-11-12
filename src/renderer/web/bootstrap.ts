@@ -522,13 +522,19 @@ const subscribe = (channel: string, listener: Listener): (() => void) => {
   }
 }
 
-const downloadBlob = (blob: Blob, name: string): void => {
+const downloadBlob = async (blob: Blob, name: string): Promise<void> => {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = name
-  anchor.click()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  try {
+    anchor.click()
+    // Safari can replace closely spaced Blob navigations. Keep this URL alive and space
+    // sequential downloads before handing the next file to the browser.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 1000))
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 type BrowserSaveFileHandle = {
@@ -583,9 +589,16 @@ const installWebApi = async (): Promise<EventCursor> => {
     subscribe,
     nativeAdapters: {
       getRuntimeVersions: () => bootstrap.versions,
-      saveBlobFile: (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
-        downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
-        return Promise.resolve({ saved: true })
+      saveBlobFile: async (request: {
+        suggestedName: string
+        mimeType: string
+        data: ArrayBuffer
+      }) => {
+        await downloadBlob(
+          new Blob([request.data], { type: request.mimeType }),
+          request.suggestedName
+        )
+        return { saved: true }
       },
       saveManagedFile: async (request: SaveManagedFileRequest) => {
         const showSaveFilePicker = (
@@ -639,7 +652,7 @@ const installWebApi = async (): Promise<EventCursor> => {
               await response.body.pipeTo(writable, { signal })
               return
             }
-            downloadBlob(await response.blob(), request.suggestedName)
+            await downloadBlob(await response.blob(), request.suggestedName)
           })
           return { saved: true }
         } catch (error) {

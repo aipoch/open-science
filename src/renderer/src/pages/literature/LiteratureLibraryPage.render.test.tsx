@@ -1,3 +1,4 @@
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 // @vitest-environment jsdom
 import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { literatureRendererHost } from '@/lib/literature-renderer-host'
@@ -33,6 +34,7 @@ import {
   type LiteratureOverview
 } from '../../../../shared/literature-overview'
 import type { OverviewBatch } from '../../../../shared/literature-overview-batch'
+import type { ComparisonTable } from '../../../../shared/literature-comparison'
 import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
@@ -442,6 +444,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          comparisons: vi.fn().mockResolvedValue({ tables: [] }),
           overviewBatch: vi.fn().mockResolvedValue(null),
           studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
             sourceKey: request.expectedSourceKey,
@@ -3433,6 +3436,630 @@ describe('LiteratureLibraryPage', () => {
     expect(urlLink.getAttribute('rel')).toBe('noreferrer')
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
   })
+
+  it('starts sidebar comparison creation by choosing references without changing the current view', async () => {
+    get.mockResolvedValue(libraryItem)
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+    )
+    render(<LiteratureLibraryPage />)
+    const open = screen.getByRole('button', { name: 'New comparison table' })
+    fireEvent.click(open)
+    let picker = await screen.findByRole('dialog', { name: 'Choose references' })
+    expect(
+      (within(picker).getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Inbox' }).getAttribute('aria-current')).toBe('page')
+
+    fireEvent.click(open)
+    picker = await screen.findByRole('dialog', { name: 'Choose references' })
+    fireEvent.click(await within(picker).findByRole('checkbox', { name: libraryItem.item.title }))
+    fireEvent.click(within(picker).getByRole('button', { name: 'Next' }))
+    const create = await screen.findByRole('dialog', { name: 'Create comparison table' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Choose references' })).toBeNull()
+    )
+    expect(within(create).getByText('1 selected')).toBeTruthy()
+    expect(within(create).getByRole('textbox', { name: 'Table name' })).toBeTruthy()
+    fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      vi
+        .mocked(window.api.literature.comparisons)
+        .mock.calls.every(([request]) => request.action === 'list')
+    ).toBe(true)
+  })
+
+  it('blocks sidebar creation while a comparison rule has an unsaved draft', async () => {
+    const table: ComparisonTable = {
+      id: 'protected-comparison',
+      name: 'Protected comparison',
+      language: 'en',
+      sourcePolicy: 'full-text',
+      revision: 1,
+      fields: [{ id: 'field', name: 'Population', rule: 'Report N', version: 1 }],
+      members: [],
+      itemIds: [],
+      cells: [],
+      state: 'idle',
+      remainingCellIds: []
+    }
+    vi.mocked(window.api.literature.comparisons).mockResolvedValue({ tables: [table] })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: table.name }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit field' }))
+    const rule = screen.getByRole('textbox', {
+      name: 'Extraction requirements'
+    }) as HTMLTextAreaElement
+    fireEvent.change(rule, { target: { value: 'Unsaved rule' } })
+    fireEvent.click(screen.getByRole('button', { name: 'New comparison table', hidden: true }))
+    expect(screen.queryByRole('dialog', { name: 'Choose references' })).toBeNull()
+    expect(rule.value).toBe('Unsaved rule')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New comparison table' }))
+    expect(await screen.findByRole('dialog', { name: 'Choose references' })).toBeTruthy()
+  })
+
+  function comparisonMenu(name: string): HTMLElement {
+    fireEvent.keyDown(screen.getByRole('button', { name: `Actions for ${name}` }), {
+      key: 'ArrowDown'
+    })
+    return screen.getByRole('menu')
+  }
+
+  it.each([false, true])(
+    'deletes a comparison only after confirmation and refreshes navigation (selected: %s)',
+    async (selected) => {
+      const table: ComparisonTable = {
+        id: 'delete-comparison',
+        name: 'Disposable comparison',
+        language: 'en',
+        sourcePolicy: 'abstract',
+        revision: 1,
+        fields: [{ id: 'field', name: 'Field', rule: 'Extract result', version: 1 }],
+        members: [],
+        itemIds: [],
+        state: 'idle',
+        remainingCellIds: [],
+        cells: []
+      }
+      const survivor = { ...table, id: 'keep-comparison', name: 'Keep comparison' }
+      let deleted = false
+      const comparisons = vi.mocked(window.api.literature.comparisons)
+      comparisons.mockImplementation(async (request) => {
+        if (request.action === 'delete') {
+          deleted = true
+          return { tables: [] }
+        }
+        if (request.action === 'read')
+          return { tables: [request.tableId === table.id ? table : survivor] }
+        return { tables: deleted ? [survivor] : [table, survivor] }
+      })
+      render(<LiteratureLibraryPage />)
+      const entry = await screen.findByRole('button', { name: table.name })
+      if (!selected) {
+        fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
+        expect(screen.queryByRole('button', { name: `Actions for ${table.name}` })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar panel' }))
+      }
+      if (selected) {
+        fireEvent.click(entry)
+        await screen.findByRole('table', { name: 'Comparison matrix' })
+      }
+      fireEvent.click(
+        within(comparisonMenu(table.name)).getByRole('menuitem', {
+          name: `Delete comparison table: ${table.name}`
+        })
+      )
+      let dialog = await screen.findByRole('alertdialog', { name: 'Delete comparison table?' })
+      expect(dialog.textContent).toContain(table.name)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(comparisons.mock.calls.some(([request]) => request.action === 'delete')).toBe(false)
+      expect(screen.getByRole('button', { name: table.name })).toBeTruthy()
+      fireEvent.click(
+        within(comparisonMenu(table.name)).getByRole('menuitem', {
+          name: `Delete comparison table: ${table.name}`
+        })
+      )
+      dialog = await screen.findByRole('alertdialog', { name: 'Delete comparison table?' })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+      expect(comparisons).toHaveBeenCalledWith({ action: 'delete', tableId: table.id })
+      expect(screen.queryByRole('button', { name: table.name })).toBeNull()
+      expect(screen.getByRole('button', { name: survivor.name })).toBeTruthy()
+      expect(screen.queryByRole('region', { name: 'Comparison tables' })).toBeNull()
+    }
+  )
+
+  it('keeps a failed comparison deletion visible for retry and disables deletion during extraction', async () => {
+    const table: ComparisonTable = {
+      id: 'delete-failure',
+      name: 'Retry deletion',
+      language: 'en',
+      sourcePolicy: 'abstract',
+      revision: 1,
+      fields: [],
+      members: [],
+      itemIds: [],
+      state: 'paused',
+      remainingCellIds: [],
+      cells: [
+        { id: 'stale-running', itemId: 'paper', fieldId: 'field', status: 'running', history: [] }
+      ]
+    }
+    const running = {
+      ...table,
+      id: 'running-comparison',
+      name: 'Running comparison',
+      state: 'running' as const
+    }
+    const pending = Promise.withResolvers<{ tables: ComparisonTable[] }>()
+    const comparisons = vi.mocked(window.api.literature.comparisons)
+    comparisons.mockImplementation(async (request) =>
+      request.action === 'delete' ? pending.promise : { tables: [table, running] }
+    )
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('button', { name: table.name })
+    const menu = comparisonMenu(running.name)
+    expect(
+      within(menu)
+        .getByRole('menuitem', { name: `Delete comparison table: ${running.name}` })
+        .getAttribute('aria-disabled')
+    ).toBe('true')
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    fireEvent.click(
+      within(comparisonMenu(table.name)).getByRole('menuitem', {
+        name: `Delete comparison table: ${table.name}`
+      })
+    )
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete comparison table?' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(
+      (within(dialog).getByRole('button', { name: 'Delete' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    pending.reject(new Error('disk unavailable'))
+    await within(dialog).findByRole('alert')
+    expect(
+      (within(dialog).getByRole('button', { name: 'Delete' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect(comparisons.mock.calls.filter(([request]) => request.action === 'delete')).toHaveLength(
+      1
+    )
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: table.name })).toBeTruthy()
+  })
+
+  it('opens a comparison in the main region, switches library views, and closes only its review on Escape', async () => {
+    const sourceKey = literatureOverviewSource(libraryItem).key
+    const table: ComparisonTable = {
+      id: 'main-comparison',
+      name: 'Main comparison',
+      language: 'en',
+      sourcePolicy: 'abstract',
+      revision: 1,
+      fields: [{ id: 'population', name: 'Population', rule: 'Report N', version: 1 }],
+      members: [
+        { itemId: libraryItem.id, title: libraryItem.item.title, abstract: '42 adults', sourceKey }
+      ],
+      itemIds: [libraryItem.id],
+      state: 'completed',
+      remainingCellIds: [],
+      cells: [
+        {
+          id: 'main-cell',
+          itemId: libraryItem.id,
+          fieldId: 'population',
+          status: 'succeeded',
+          history: [
+            {
+              id: 'attempt',
+              fieldVersion: 1,
+              sourceKey,
+              at: '2026-11-06',
+              status: 'succeeded',
+              value: '42 adults',
+              coverage: 'abstract',
+              evidence: [{ quote: '42 adults', pageStart: null, pageEnd: null }]
+            }
+          ]
+        }
+      ]
+    }
+    vi.mocked(window.api.literature.comparisons).mockImplementation(async (request) =>
+      request.action === 'read-cell' ? { tables: [], cell: table.cells[0] } : { tables: [table] }
+    )
+    render(<LiteratureLibraryPage />)
+    const tableEntry = await screen.findByRole('button', { name: table.name })
+    fireEvent.click(tableEntry)
+    const region = await screen.findByRole('region', { name: 'Comparison tables' })
+    const matrix = await within(region).findByRole('table', { name: 'Comparison matrix' })
+    expect(region.closest('main')).toBeTruthy()
+    expect(matrix.closest('[role="dialog"]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(tableEntry.getAttribute('aria-current')).toBe('page')
+    expect(tableEntry.className).toContain('bg-bg-300')
+    const allReferences = within(
+      screen.getByRole('navigation', { name: 'Literature library' })
+    ).getByRole('button', { name: 'All references' })
+    expect(allReferences.hasAttribute('aria-current')).toBe(false)
+    fireEvent.click(allReferences)
+    expect(screen.queryByRole('region', { name: 'Comparison tables' })).toBeNull()
+    expect(screen.queryByRole('table', { name: 'Comparison matrix' })).toBeNull()
+    expect(allReferences.getAttribute('aria-current')).toBe('page')
+    expect(tableEntry.hasAttribute('aria-current')).toBe(false)
+    fireEvent.click(tableEntry)
+    const reopenedRegion = await screen.findByRole('region', { name: 'Comparison tables' })
+    const reopenedMatrix = await within(reopenedRegion).findByRole('table', {
+      name: 'Comparison matrix'
+    })
+    const cell = within(reopenedMatrix).getByRole('button', { name: /42 adults/ })
+    fireEvent.click(cell)
+    const review = await screen.findByRole('dialog', { name: 'Review cell' })
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    fireEvent.keyDown(review, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByRole('region', { name: 'Comparison tables' })).toBe(reopenedRegion)
+    expect(within(reopenedRegion).getByRole('table', { name: 'Comparison matrix' })).toBe(
+      reopenedMatrix
+    )
+    expect(tableEntry.getAttribute('aria-current')).toBe('page')
+    await waitFor(() => expect(document.activeElement).toBe(cell))
+    fireEvent.keyDown(reopenedRegion, { key: 'Escape' })
+    expect(screen.getByRole('region', { name: 'Comparison tables' })).toBe(reopenedRegion)
+  })
+
+  it('releases Library and quit guards after confirmed discard of an unavailable source draft', async () => {
+    const sourceKey = 'unavailable-source'
+    const table: ComparisonTable = {
+      id: 'draft-comparison',
+      name: 'Draft comparison',
+      language: 'en',
+      sourcePolicy: 'abstract',
+      revision: 1,
+      fields: [{ id: 'population', name: 'Population', rule: 'Report N', version: 1 }],
+      members: [
+        {
+          itemId: libraryItem.id,
+          title: libraryItem.item.title,
+          abstract: '42 adults',
+          sourceKey: ''
+        }
+      ],
+      itemIds: [libraryItem.id],
+      state: 'completed',
+      remainingCellIds: [],
+      cells: [
+        {
+          id: 'draft-cell',
+          itemId: libraryItem.id,
+          fieldId: 'population',
+          status: 'unavailable',
+          manual: {
+            value: 'Saved before Trash',
+            confirmed: false,
+            fieldVersion: 1,
+            sourceKey,
+            updatedAt: 'earlier'
+          },
+          history: [
+            {
+              id: 'attempt',
+              fieldVersion: 1,
+              sourceKey,
+              at: '2026-11-06',
+              status: 'succeeded',
+              value: '42 adults',
+              coverage: 'abstract',
+              evidence: [{ quote: '42 adults', pageStart: null, pageEnd: null }]
+            }
+          ]
+        }
+      ]
+    }
+    const persisted = JSON.stringify(table)
+    search.mockImplementation((request: { lifecycle?: string; scope: string }) =>
+      Promise.resolve(
+        request.scope === 'library' && request.lifecycle === 'deleted'
+          ? { entries: [libraryItem] }
+          : { entries: [] }
+      )
+    )
+    const comparisons = vi.mocked(window.api.literature.comparisons)
+    comparisons.mockImplementation(async (request) => {
+      if (request.action === 'read-cell') return { tables: [], cell: table.cells[0] }
+      if (request.action === 'edit-cell') throw new Error('source-unavailable')
+      return { tables: [table] }
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: table.name }))
+    fireEvent.click(await screen.findByRole('button', { name: /Saved before Trash/ }))
+    const input = screen.getByRole('textbox', { name: 'Manual value' }) as HTMLTextAreaElement
+    await waitFor(() => expect(input.value).toBe('Saved before Trash'))
+    fireEvent.change(input, { target: { value: 'Unsavable correction' } })
+    const discard = await screen.findByRole('button', { name: 'Discard changes' })
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Trash' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Manual value' })).toBe(input)
+    discard.focus()
+    fireEvent.click(discard)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await waitFor(() => expect(document.activeElement).toBe(discard))
+    expect(input.value).toBe('Unsavable correction')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    const blockedUnload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(blockedUnload)
+    expect(blockedUnload.defaultPrevented).toBe(true)
+    const leave = vi.fn()
+    previewLeaveGuards.requestAll(leave)
+    expect(leave).not.toHaveBeenCalled()
+    fireEvent.click(discard)
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Manual value' })).toBeNull())
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(false)
+    previewLeaveGuards.requestAll(leave)
+    expect(leave).toHaveBeenCalledTimes(1)
+    const cleanUnload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(cleanUnload)
+    expect(cleanUnload.defaultPrevented).toBe(false)
+    expect(
+      comparisons.mock.calls.filter(([request]) => request.action === 'edit-cell')
+    ).toHaveLength(1)
+    expect(JSON.stringify(table)).toBe(persisted)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ lifecycle: 'deleted' }))
+    )
+    expect(await screen.findByText(libraryItem.item.title)).toBeTruthy()
+    act(() => useNavigationStore.getState().goHome('user'))
+    expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('retains comparison drafts through blocked navigation and failed save until retry succeeds', async () => {
+    const sourceKey = literatureOverviewSource(libraryItem).key
+    const table: ComparisonTable = {
+      id: 'draft-comparison',
+      name: 'Draft comparison',
+      language: 'en',
+      sourcePolicy: 'abstract',
+      revision: 1,
+      fields: [{ id: 'population', name: 'Population', rule: 'Report N', version: 1 }],
+      members: [
+        { itemId: libraryItem.id, title: libraryItem.item.title, abstract: '42 adults', sourceKey }
+      ],
+      itemIds: [libraryItem.id],
+      state: 'completed',
+      remainingCellIds: [],
+      cells: [
+        {
+          id: 'draft-cell',
+          itemId: libraryItem.id,
+          fieldId: 'population',
+          status: 'succeeded',
+          history: [
+            {
+              id: 'attempt',
+              fieldVersion: 1,
+              sourceKey,
+              at: '2026-11-06',
+              status: 'succeeded',
+              value: '42 adults',
+              coverage: 'abstract',
+              evidence: [{ quote: '42 adults', pageStart: null, pageEnd: null }]
+            }
+          ]
+        }
+      ]
+    }
+    let rejectSave!: (reason: Error) => void
+    let saveGate = new Promise<never>((_resolve, reject) => {
+      rejectSave = reject
+    })
+    let saving = true
+    vi.mocked(window.api.literature.comparisons).mockImplementation(async (request) => {
+      if (request.action === 'read-cell') return { tables: [], cell: table.cells[0] }
+      if (request.action === 'edit-cell' && saving) return saveGate
+      return { tables: [table] }
+    })
+    const rendered = render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: table.name }))
+    fireEvent.click(await screen.findByRole('button', { name: /42 adults/ }))
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole('button', {
+            name: /^(Confirm value|Confirm result|Confirm revision)$/
+          }) as HTMLButtonElement
+        ).disabled
+      ).toBe(false)
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Revise' }))
+    const draft = screen.getByRole('textbox', { name: 'Manual value' }) as HTMLTextAreaElement
+    fireEvent.change(draft, { target: { value: 'Human correction' } })
+    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull()
+    expect(screen.queryByRole('navigation', { name: 'Literature library' })).toBeNull()
+    const unload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(true)
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(true)
+    const reload = vi.fn()
+    previewLeaveGuards.requestAll(reload)
+    expect(reload).not.toHaveBeenCalled()
+    act(() => useNavigationStore.getState().goHome('user'))
+    expect(screen.getByRole('textbox', { name: 'Manual value' })).toBe(draft)
+    expect(useNavigationStore.getState().view).toBe('library')
+    await waitFor(() =>
+      expect(window.api.literature.comparisons).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'edit-cell', value: 'Human correction' })
+      )
+    )
+    await act(async () => {
+      rejectSave(new Error('write unavailable'))
+    })
+    await screen.findAllByText('Draft could not be saved.')
+    act(() => useNavigationStore.getState().goHome('user'))
+    expect(draft.value).toBe('Human correction')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry' }))
+    saving = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    const close = screen.getByRole('button', { name: 'Close' }) as HTMLButtonElement
+    await waitFor(() => expect(close.disabled).toBe(false))
+    fireEvent.click(close)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'ArrowDown' })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Browse collections' }))
+    expect(screen.queryByRole('textbox', { name: 'Manual value' })).toBeNull()
+    act(() => useNavigationStore.getState().goHome('user'))
+    expect(useNavigationStore.getState().view).toBe('home')
+    act(() => useNavigationStore.getState().openLibrary('user'))
+    fireEvent.click(screen.getByRole('button', { name: table.name }))
+    fireEvent.click(await screen.findByRole('button', { name: /42 adults/ }))
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole('button', {
+            name: /^(Confirm value|Confirm result|Confirm revision)$/
+          }) as HTMLButtonElement
+        ).disabled
+      ).toBe(false)
+    )
+    saveGate = new Promise<never>((_resolve, reject) => {
+      rejectSave = reject
+    })
+    saving = true
+    fireEvent.click(screen.getByRole('button', { name: 'Revise' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Manual value' }), {
+      target: { value: 'Another draft' }
+    })
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(true)
+    rendered.unmount()
+    await waitFor(() =>
+      expect(window.api.literature.comparisons).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'edit-cell', value: 'Another draft' })
+      )
+    )
+    await act(async () => {
+      rejectSave(new Error('late write failure'))
+    })
+    expect(previewLeaveGuards.hasUnsavedChanges()).toBe(false)
+    act(() => useNavigationStore.getState().goHome('user'))
+    expect(useNavigationStore.getState().view).toBe('home')
+    const cleanUnload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(cleanUnload)
+    expect(cleanUnload.defaultPrevented).toBe(false)
+  })
+
+  it.each(['abstract', 'full-text'] as const)(
+    'opens the explicit comparison %s evidence target rather than the latest attached PDF',
+    async (coverage) => {
+      const original = createLibraryItemWithPdf()
+      const sourceKey = literatureOverviewSource(original).key
+      const item = structuredClone(original)
+      item.attachments[0].versions.push({
+        ...item.attachments[0].versions[0],
+        id: 'version-2',
+        versionNumber: 2,
+        filename: 'newer.pdf',
+        checksum: 'b'.repeat(64)
+      })
+      const table: ComparisonTable = {
+        id: 'comparison',
+        name: 'Comparison navigation',
+        language: 'en',
+        sourcePolicy: coverage,
+        revision: 1,
+        fields: [{ id: 'population', name: 'Population', rule: 'Report N', version: 1 }],
+        members: [
+          { itemId: item.id, title: item.item.title, abstract: item.item.abstract ?? '', sourceKey }
+        ],
+        itemIds: [item.id],
+        state: 'completed',
+        remainingCellIds: [],
+        cells: [
+          {
+            id: 'comparison-cell',
+            itemId: item.id,
+            fieldId: 'population',
+            status: 'succeeded',
+            history: [
+              {
+                id: 'attempt',
+                fieldVersion: 1,
+                sourceKey,
+                at: '2026-11-06',
+                status: 'succeeded',
+                value: '42 adults',
+                coverage,
+                ...(coverage === 'full-text' ? { attachmentVersionId: 'version-1' } : {}),
+                evidence: [
+                  {
+                    quote: '42 adults',
+                    pageStart: coverage === 'full-text' ? 7 : null,
+                    pageEnd: coverage === 'full-text' ? 7 : null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+      get.mockResolvedValue(item)
+      vi.mocked(window.api.literature.comparisons).mockImplementation(async (request) =>
+        request.action === 'read-cell' ? { tables: [], cell: table.cells[0] } : { tables: [table] }
+      )
+      const reveal = vi
+        .spyOn(annotationReveal, 'requestPdfAnnotationReveal')
+        .mockResolvedValue('revealed')
+      try {
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(await screen.findByRole('button', { name: table.name }))
+        const totals = await screen.findByRole('button', { name: /Table totals/ })
+        fireEvent.click(totals)
+        expect(
+          ((await screen.findByRole('button', { name: 'Extract sample' })) as HTMLButtonElement)
+            .disabled
+        ).toBe(false)
+        fireEvent.click(totals)
+        if (coverage === 'full-text')
+          fireEvent.click(await screen.findByRole('button', { name: /42 adults/ }))
+        fireEvent.click(
+          await screen.findByRole('button', {
+            name:
+              coverage === 'abstract' ? `Open reference: ${item.item.title}` : 'Open source page'
+          })
+        )
+        await waitFor(() => expect(get).toHaveBeenCalledWith(item.id))
+        expect(get.mock.calls.every(([id]) => id === item.id)).toBe(true)
+        if (coverage === 'abstract') {
+          const dialog = await screen.findByRole('dialog')
+          expect(within(dialog).getByRole('heading', { name: item.item.title })).not.toBeNull()
+          expect(screen.queryByTestId('literature-pdf-preview')).toBeNull()
+          expect(reveal).not.toHaveBeenCalled()
+        } else {
+          expect((await screen.findByTestId('literature-pdf-preview')).textContent).toContain(
+            'paper.pdf · literature-attachment-version:version-1'
+          )
+          await waitFor(() =>
+            expect(reveal).toHaveBeenCalledWith(
+              expect.objectContaining({
+                literatureVersionId: 'version-1',
+                target: expect.objectContaining({
+                  source: expect.objectContaining({
+                    sourceFileId: 'attachment-1',
+                    versionId: 'version-1',
+                    checksum: 'a'.repeat(64)
+                  }),
+                  selector: expect.objectContaining({ pageNumber: 7 })
+                })
+              })
+            )
+          )
+        }
+      } finally {
+        reveal.mockRestore()
+      }
+    }
+  )
 
   it('opens the exact tagged PDF version and reveals its annotation after preview mounting', async () => {
     const annotation: PdfAnnotation = {
@@ -10263,7 +10890,54 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
-  it('keeps scroll and selection when a hidden background indicator observes completion', async () => {
+  it('returns from a background task reference detail to the same task list', async () => {
+    get.mockResolvedValue(libraryItem)
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+    )
+    const comparisons = vi.mocked(window.api.literature.comparisons)
+    comparisons.mockResolvedValue({
+      tables: [],
+      summaries: [
+        {
+          id: 'background-comparison',
+          name: 'Reading queue',
+          state: 'running',
+          memberCount: 1,
+          total: 1,
+          succeeded: 0,
+          pending: 0,
+          running: 1,
+          failed: 0,
+          unavailable: 0,
+          pendingItemIds: [libraryItem.id],
+          reference: { itemId: libraryItem.id, title: libraryItem.item.title }
+        }
+      ]
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Background tasks' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: `Open reference: ${libraryItem.item.title}` })
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Background tasks' })).toBeNull()
+    )
+    const detail = await screen.findByRole('dialog')
+    expect(within(detail).getByText(libraryItem.item.title)).toBeTruthy()
+    fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+    const tasks = await screen.findByRole('dialog', { name: 'Background tasks' })
+    expect(within(tasks).getByText('Reading queue')).toBeTruthy()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(tasks).getByRole('button', { name: `Open reference: ${libraryItem.item.title}` })
+      )
+    )
+    expect(comparisons.mock.calls.every(([request]) => request.action === 'list')).toBe(true)
+  })
+
+  it('keeps scroll and selection when the background indicator observes completion', async () => {
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
     )
@@ -10289,7 +10963,7 @@ describe('LiteratureLibraryPage', () => {
     const scroll = document.querySelector<HTMLDivElement>('[data-slot="literature-table-scroll"]')!
     scroll.scrollTop = 240
     fireEvent.click(select)
-    expect(screen.queryByRole('button', { name: 'Background tasks' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Background tasks' })).not.toBeNull()
     const listRequests = search.mock.calls.filter(
       ([request]) => request.scope === 'library' && !request.countOnly
     ).length
