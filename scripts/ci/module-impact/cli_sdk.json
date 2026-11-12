@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "cli/profile-startup.test.ts",
     "packages/open-science/CLI.md",
     "packages/open-science/LICENSE",
     "packages/open-science/README.md",
@@ -59,6 +60,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "cli/profile-startup.test.ts",
       "packages/open-science/cli.test.ts",
       "packages/open-science/client-discovery.test.ts",
       "packages/open-science/client.test.ts",

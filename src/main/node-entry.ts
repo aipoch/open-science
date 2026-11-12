@@ -43,7 +43,9 @@ import {
   prepareCredentialValidation,
   selectStartupCredentialIdentity
 } from './credential-identity/bootstrap'
+import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
 import { consumeCredentialInventoryFromEnv } from './credential-identity/inventory-handoff'
+import { selectDefaultCliCredentialProfile } from './credential-identity/legacy-cli-profile'
 import {
   createNodeSecureStorageCipher,
   initializeNodeWindowsProfileKey
@@ -414,6 +416,15 @@ async function main(): Promise<void> {
           ? join(home, 'Library', 'Application Support')
           : process.env.XDG_CONFIG_HOME || join(home, '.config')
     profilePath = resolveElectronProfile({ appData, configRoot, packaged })
+    const profileSelection = selectDefaultCliCredentialProfile({
+      home,
+      configRoot,
+      profilePath,
+      packaged,
+      credentialStore: getCredentialStore(),
+      startupAttemptId: backendStartupAttemptId
+    })
+    profilePath = profileSelection.profilePath
     const credentialBootstrapLease = acquireCredentialBootstrapLease({
       home,
       profilePath,
@@ -434,10 +445,19 @@ async function main(): Promise<void> {
         profilePath
       })
       abortStartupIfStopping()
+      // Candidate selection releases its temporary leases. Re-read under final ownership and
+      // retain the verified configuration/profile inventory so changed ciphertexts cannot hide.
+      const validationCiphertexts = profileSelection.validationCiphertexts
+        ? [
+            ...profileSelection.validationCiphertexts,
+            ...(preloadedCiphertexts ?? []),
+            ...readCredentialCiphertexts({ configRoot, profilePath })
+          ]
+        : preloadedCiphertexts
       const validateCredentials = prepareCredentialValidation(
         identity,
         { configRoot, profilePath },
-        preloadedCiphertexts
+        validationCiphertexts
       )
       if (identity.backend === 'windows-dpapi') {
         await initializeNodeWindowsProfileKey(profilePath)

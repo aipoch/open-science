@@ -1,5 +1,3 @@
-import { Console } from 'node:console'
-import { Writable } from 'node:stream'
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +12,14 @@ const f = vi.hoisted(() => ({
   resourceStore: vi.fn(),
   resourceClose: vi.fn(async () => {}),
   acquireOwnership: vi.fn(),
+  acquireBootstrapLease: vi.fn(() => ({ release: vi.fn() })),
+  selectCredentialProfile:
+    vi.fn<
+      typeof import('./credential-identity/legacy-cli-profile').selectDefaultCliCredentialProfile
+    >(),
+  readCredentialCiphertexts: vi.fn((): Buffer[] => []),
+  consumeCredentialInventory: vi.fn<() => Promise<Buffer[] | undefined>>(async () => undefined),
+  prepareValidation: vi.fn(),
   stopIntent: vi.fn(),
   createLifetime: vi.fn(),
   startFirstConnectionTimeout: vi.fn(),
@@ -174,7 +180,7 @@ vi.mock('./runtime-ownership', () => ({
     acquireSync = f.acquireOwnership
     close = f.closeOwnership
   },
-  acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
+  acquireCredentialBootstrapLease: f.acquireBootstrapLease,
   configureRuntimeDirectoryOwnership: vi.fn()
 }))
 vi.mock('./runtime-metadata', () => ({ configureRuntimeMetadata: vi.fn() }))
@@ -188,6 +194,16 @@ vi.mock('./runtime-network-node', () => ({
   createNodeRuntimeNetwork: () => ({ close: f.closeNetwork })
 }))
 vi.mock('./secure-storage', () => ({ configureSecureStorageCipher: vi.fn() }))
+vi.mock('./credential-identity/legacy-cli-profile', () => ({
+  selectDefaultCliCredentialProfile: f.selectCredentialProfile
+}))
+vi.mock('./credential-identity/ciphertext-inventory', async (original) => ({
+  ...(await original<typeof import('./credential-identity/ciphertext-inventory')>()),
+  readCredentialCiphertexts: f.readCredentialCiphertexts
+}))
+vi.mock('./credential-identity/inventory-handoff', () => ({
+  consumeCredentialInventoryFromEnv: f.consumeCredentialInventory
+}))
 vi.mock('./settings/credential-store-mode', () => ({
   configureCredentialStore: () => {
     if (f.startupFailure) throw new Error('isolated startup failure')
@@ -208,9 +224,9 @@ vi.mock('./credential-identity/bootstrap', () => {
   const identity = { backend: 'mac-keychain', appName: 'Open Science', exists: true } as const
   return {
     selectStartupCredentialIdentity: () => identity,
-    prepareCredentialValidation:
-      () =>
-      (
+    prepareCredentialValidation: (...args: unknown[]) => {
+      f.prepareValidation(...args)
+      return (
         cipher: import('./secure-storage').SecureStorageCipher,
         recover: (error: import('./credential-identity/selection').CredentialIdentityError) => void
       ) => {
@@ -223,6 +239,7 @@ vi.mock('./credential-identity/bootstrap', () => {
           recover
         }).decryptString(Buffer.from('v10fixture'))
       }
+    }
   }
 })
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
@@ -294,6 +311,11 @@ beforeEach(async () => {
   f.inventoryFailure = undefined
   f.startupFailure = false
   f.storageFailure = undefined
+  f.selectCredentialProfile
+    .mockReset()
+    .mockReturnValue({ profilePath: '/isolated-fixture/profile' })
+  f.readCredentialCiphertexts.mockReset().mockReturnValue([])
+  f.consumeCredentialInventory.mockReset().mockResolvedValue(undefined)
   f.startDesktop.mockResolvedValue(
     f.desktop as unknown as Awaited<ReturnType<typeof f.startDesktop>>
   )
@@ -330,17 +352,16 @@ it('exports early startup errors captured by the backend without dropping their 
   const directory = join(root, 'output')
   const name = 'desktop-backend-42-1700000000000.log'
   let stderr = ''
-  const stream = new Writable({
-    write(chunk, _encoding, callback) {
-      stderr += chunk.toString()
-      callback()
-    }
+  const mirror = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr += chunk.toString()
+    return true
   })
-  const terminal = new Console({ stdout: stream, stderr: stream })
+  const stdoutMirror = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+    stderr += chunk.toString()
+    return true
+  })
   const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
-  vi.spyOn(console, 'error').mockImplementation(terminal.error)
-  vi.spyOn(console, 'info').mockImplementation(terminal.info)
   vi.stubEnv('OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT', '1')
   f.initLogs.mockImplementation((options) => {
     logger.initLogger({ ...options, logDir: join(configRoot, 'logs') })
@@ -354,6 +375,15 @@ it('exports early startup errors captured by the backend without dropping their 
     await import('./node-entry')
     await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
     await logger.flushLogs()
+    expect(mirror).toHaveBeenCalled()
+    expect(
+      stderr
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+    ).toContainEqual(
+      expect.objectContaining({ level: 'error', scope: 'node-runtime', msg: 'startup failed' })
+    )
     expect(stderr).not.toContain('ordinary diagnostic')
     expect(stderr).toContain('database runtime verified: sqlite_version=3.46.0')
     expect(await readFile(join(configRoot, 'logs/main.log'), 'utf8')).toContain(
@@ -375,6 +405,8 @@ it('exports early startup errors captured by the backend without dropping their 
       'isolated startup failure'
     )
   } finally {
+    mirror.mockRestore()
+    stdoutMirror.mockRestore()
     vi.unstubAllEnvs()
     f.initLogs.mockReset()
     f.log.error.mockReset()
@@ -545,6 +577,62 @@ const waitForReady = async (
   )
 }
 
+it.each([false, true])(
+  'validates the compatibility profile under final leases (preloaded=%s)',
+  async (preloaded) => {
+    const profilePath = '/isolated-fixture/config/electron-profile'
+    const verified = Buffer.from('previously-verified-inventory')
+    const current = Buffer.from('fresh-locked-inventory')
+    const captured = Buffer.from('additional-preloaded-inventory')
+    f.selectCredentialProfile.mockReturnValue({ profilePath, validationCiphertexts: [verified] })
+    f.readCredentialCiphertexts.mockReturnValue([current])
+    if (preloaded) f.consumeCredentialInventory.mockResolvedValue([captured])
+    const send = await startHealthyRuntime()
+    await waitForReady(send)
+    expect(f.selectCredentialProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configRoot: '/isolated-fixture/config',
+        profilePath: '/isolated-fixture/profile',
+        startupAttemptId: 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b'
+      })
+    )
+    expect(f.acquireBootstrapLease).toHaveBeenCalledWith(expect.objectContaining({ profilePath }))
+    expect(f.acquireOwnership).toHaveBeenCalledWith(profilePath)
+    expect(f.readCredentialCiphertexts).toHaveBeenCalledWith({
+      configRoot: '/isolated-fixture/config',
+      profilePath
+    })
+    expect(f.prepareValidation).toHaveBeenCalledWith(
+      expect.anything(),
+      { configRoot: '/isolated-fixture/config', profilePath },
+      [verified, ...(preloaded ? [captured] : []), current]
+    )
+    expect(f.selectCredentialProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      f.acquireBootstrapLease.mock.invocationCallOrder[0]
+    )
+    expect(f.acquireOwnership.mock.invocationCallOrder[1]).toBeLessThan(
+      f.readCredentialCiphertexts.mock.invocationCallOrder[0]
+    )
+    f.lifecycle.mock.calls[0][0].quit()
+    await vi.waitFor(() => expect(process.exitCode).toBe(0))
+  }
+)
+
+it('keeps the captured desktop credential inventory bound to its selected profile', async () => {
+  const captured = Buffer.from('captured-desktop-inventory')
+  f.consumeCredentialInventory.mockResolvedValue([captured])
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  expect(f.prepareValidation).toHaveBeenCalledWith(
+    expect.anything(),
+    { configRoot: '/isolated-fixture/config', profilePath: '/isolated-fixture/profile' },
+    [captured]
+  )
+  expect(f.readCredentialCiphertexts).not.toHaveBeenCalled()
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
+
 it('mirrors a fatal service report and keeps recoverable background errors in the canonical log', async () => {
   vi.stubEnv('OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT', '1')
   const send = await startHealthyRuntime()
@@ -560,6 +648,20 @@ it('mirrors a fatal service report and keeps recoverable background errors in th
   expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(true)
   f.lifecycle.mock.calls[0][0].quit()
   await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
+
+it('stops startup safely when compatibility profile validation fails', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  f.selectCredentialProfile.mockImplementation(() => {
+    throw new CredentialIdentityError('decryption-failed')
+  })
+  await import('./node-entry')
+  await vi.waitFor(() => expect(process.exit).toHaveBeenCalledWith(1))
+  expect(f.acquireOwnership).toHaveBeenCalledExactlyOnceWith('/isolated-fixture/config')
+  expect(f.acquireBootstrapLease).not.toHaveBeenCalled()
+  expect(f.prepareValidation).not.toHaveBeenCalled()
+  expect(f.createRuntime).not.toHaveBeenCalled()
+  expect(f.closeOwnership).toHaveBeenCalledOnce()
 })
 
 it('creates diagnostics only after consent and stops them when the controlling desktop disconnects', async () => {

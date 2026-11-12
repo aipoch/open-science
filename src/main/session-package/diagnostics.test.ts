@@ -211,33 +211,46 @@ describe('Session package device diagnostics', () => {
 
   it('does not change outcomes when the diagnostic sink throws', async () => {
     initLogger({ logDir: root, mirrorToConsole: true })
-    for (const method of ['info', 'warn', 'error'] as const) {
-      vi.spyOn(console, method).mockImplementation(() => {
-        throw new Error('sink unavailable')
-      })
+    const failWrite = (): never => {
+      throw Object.assign(new Error('sink unavailable'), { code: 'EIO' })
     }
-    const changed = vi.fn()
-    const owner = new SessionPackageOperation(changed)
-    await expect(owner.run('export', undefined, async () => 'saved')).resolves.toBe('saved')
-    const failure = new Error('validation failure')
-    await expect(
-      owner.run('import', undefined, async () => {
-        throw failure
-      })
-    ).rejects.toBe(failure)
-    expect(owner.snapshot?.state).toBe('failed')
-    expect(owner.active).toBe(false)
-    const files = [{ id: 'request', filename: 'research.science' }]
-    changed.mockClear()
-    owner.setPendingImports(files, true)
-    expect(changed).toHaveBeenLastCalledWith(
-      expect.objectContaining({ state: 'failed', pendingImports: files, importQueueFull: true })
-    )
-    changed.mockClear()
-    const replacement = [{ id: 'next', filename: 'next.science' }]
-    owner.setPendingImports(replacement, true)
-    expect(changed).toHaveBeenLastCalledWith(
-      expect.objectContaining({ pendingImports: replacement, importQueueFull: true })
-    )
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(failWrite)
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(failWrite)
+    try {
+      const changed = vi.fn()
+      const owner = new SessionPackageOperation(changed)
+      await expect(owner.run('export', undefined, async () => 'saved')).resolves.toBe('saved')
+      const failure = new Error('validation failure')
+      await expect(
+        owner.run('import', undefined, async () => {
+          throw failure
+        })
+      ).rejects.toBe(failure)
+      expect(owner.snapshot?.state).toBe('failed')
+      expect(owner.active).toBe(false)
+      const files = [{ id: 'request', filename: 'research.science' }]
+      changed.mockClear()
+      owner.setPendingImports(files, true)
+      expect(changed).toHaveBeenLastCalledWith(
+        expect.objectContaining({ state: 'failed', pendingImports: files, importQueueFull: true })
+      )
+      changed.mockClear()
+      const replacement = [{ id: 'next', filename: 'next.science' }]
+      owner.setPendingImports(replacement, true)
+      expect(changed).toHaveBeenLastCalledWith(
+        expect.objectContaining({ pendingImports: replacement, importQueueFull: true })
+      )
+      expect(stdout).toHaveBeenCalledOnce()
+      expect(stderr).toHaveBeenCalledOnce()
+      expect((await records()).map((record) => record.data)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ operation: 'session-package.export', outcome: 'completed' }),
+          expect.objectContaining({ operation: 'session-package.import', outcome: 'failed' })
+        ])
+      )
+    } finally {
+      stdout.mockRestore()
+      stderr.mockRestore()
+    }
   })
 })

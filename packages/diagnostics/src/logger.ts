@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { extname, join } from 'node:path'
+import { consoleMirror } from './console-mirror'
 
 import type { LogFileStatus, LogWriteFailureCategory } from './log-types'
 import {
@@ -949,10 +950,10 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
   if (typeof mirror === 'function' ? mirror(scope, message) : mirror) {
     const consoleMethod = level === 'debug' ? 'log' : level
     if (config?.consoleFormat === 'json') {
-      console[consoleMethod](line)
+      consoleMirror[consoleMethod](line)
     } else {
       const record = JSON.parse(line) as { scope: string; msg: string; data?: unknown }
-      console[consoleMethod](
+      consoleMirror[consoleMethod](
         `[${record.scope}] ${record.msg}`,
         Object.hasOwn(record, 'data') ? record.data : ''
       )

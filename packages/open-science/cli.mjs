@@ -1002,10 +1002,17 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const port = options.port ?? (environmentPort ? parsePortOption(environmentPort) : DEFAULT_PORT)
   const childEnv = {
     ...process.env,
-    OPEN_SCIENCE_CONFIG_ROOT: configRoot,
     OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT: '1',
     OPEN_SCIENCE_WEB_PORT: String(port)
   }
+  // A computed default is not an override: injecting it would make the backend select
+  // <configRoot>/electron-profile instead of the existing desktop Electron profile.
+  if (
+    options.configRoot ||
+    process.env.OPEN_SCIENCE_CONFIG_ROOT ||
+    process.env.OPEN_SCIENCE_STORAGE_ROOT
+  )
+    childEnv.OPEN_SCIENCE_CONFIG_ROOT = configRoot
   delete childEnv.ELECTRON_RUN_AS_NODE
   if (options.credentialStore === 'file')
     deps.warn(
