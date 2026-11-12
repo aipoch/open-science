@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { X } from 'lucide-react'
+import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
 import { useChildLayerDismissalGuard } from '@/components/ui/use-child-layer-dismissal-guard'
 import { useTranslation } from 'react-i18next'
 
@@ -164,12 +165,15 @@ const MobilePreviewSheet = ({
                 <X className="size-4" aria-hidden="true" />
               </button>
             </div>
-            <PreviewPanelSurface
-              className="min-h-0 flex-1"
-              restoredPlanResponder={restoredPlanResponder}
-              {...annotationPort}
-              onPdfContextError={onPdfContextError}
-            />
+            {/* Portaled menus, tooltips and dialogs must clear the z-60 sheet. */}
+            <OverlayLayerProvider value={isMobile ? 60 : 40}>
+              <PreviewPanelSurface
+                className="min-h-0 flex-1"
+                restoredPlanResponder={restoredPlanResponder}
+                {...annotationPort}
+                onPdfContextError={onPdfContextError}
+              />
+            </OverlayLayerProvider>
           </div>
         </div>
       </FocusScope>

@@ -14,7 +14,7 @@
 html[data-windows-titlebar] {
   --windows-titlebar-height: 36px;
   --windows-content-center-y: calc(
-    var(--windows-titlebar-height) + (100vh - var(--windows-titlebar-height)) / 2
+    var(--windows-titlebar-height) + (100dvh - var(--windows-titlebar-height)) / 2
   );
   --windows-content-max-height: calc(100svh - var(--windows-titlebar-height) - 2rem);
 }
@@ -59,6 +59,17 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 @media (min-width: 768px) {
   html[data-windows-titlebar] .windows-app-content .md\:h-screen {
     height: calc(100svh - var(--windows-titlebar-height));
+  }
+}
+
+/* iOS Safari zooms the page when a focused field is below 16px. Unlayered so it outranks the
+   compact text-* utilities that call sites apply for desktop density. */
+@media (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range']),
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable='false']) {
+    font-size: max(16px, 1em);
   }
 }
 
@@ -433,7 +444,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   /* Portaled surfaces are positioned against the browser viewport rather than the content
      wrapper. Keep a zero-height default so the same geometry works on non-Windows surfaces. */
   --windows-titlebar-height: 0px;
-  --windows-content-center-y: 50vh;
+  /* dvh tracks mobile browser toolbars, so centered dialogs stay above the bottom toolbar. */
+  --windows-content-center-y: 50dvh;
   --windows-content-max-height: calc(100svh - 2rem);
   /* Light-theme elevation (referenced by the shadow-* utilities via @theme inline). */
   --shadow-card-value: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
@@ -630,7 +642,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   html,
   body,
   #root {
-    min-height: 100vh;
+    min-height: 100dvh;
     @apply bg-bg-10;
   }
 
@@ -654,6 +666,12 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   html,
   body {
     overflow-x: clip;
+    /* Remote phone sessions: no rubber-band drag of the shell and no pull-to-refresh reload. */
+    overscroll-behavior: none;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
   }
 
   button,
