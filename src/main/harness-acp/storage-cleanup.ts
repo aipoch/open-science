@@ -1,4 +1,4 @@
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { readdir, readFile, rm, lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
 import { harnessOwnerSchema } from './config'
@@ -18,6 +18,7 @@ const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).co
 
 /** Runs after authoritative deletion; bindings remain the retry ledger until every store is clean. */
 export class HarnessStorageCleanup {
+  private readonly startupCutoff = Date.now()
   private initialCatalogObserved = false
   private tail: Promise<void> = Promise.resolve()
 
@@ -33,6 +34,7 @@ export class HarnessStorageCleanup {
       sessionDirectory: string
       receiptDirectory(): string
       isLive(projectId: string, sessionId: string): boolean
+      tryClaimIdentities(sessionIds: readonly string[]): (() => void) | undefined
     }
   ) {}
 
@@ -86,14 +88,102 @@ export class HarnessStorageCleanup {
     })
   }
 
-  private async drain(): Promise<void> {
-    const bindings = await this.bindings()
+  async planReconciliation(
+    existingSessionIds: readonly string[]
+  ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>> {
+    const existing = new Set(existingSessionIds)
+    const candidates = new Map<
+      string,
+      {
+        projectId: string
+        sessionId: string
+        bindings: Awaited<ReturnType<HarnessStorageCleanup['bindings']>>
+        proofs: Array<() => Promise<void>>
+      }
+    >()
+    for (const binding of await this.bindings()) {
+      if (
+        existing.has(binding.sessionId) ||
+        this.options.isLive(binding.projectId, binding.sessionId)
+      )
+        continue
+      const path = join(this.options.sessionDirectory, `${binding.providerId}.json`)
+      const before = await lstat(path)
+      // A provisional binding created after startup is not evidence of committed deletion.
+      if (
+        !before.isFile() ||
+        before.isSymbolicLink() ||
+        before.mtimeMs >= this.startupCutoff ||
+        before.ctimeMs >= this.startupCutoff
+      )
+        continue
+      const recorded = JSON.parse(await readFile(path, 'utf8'))
+      const owner = harnessOwnerSchema.parse(recorded.owner)
+      const verified = await lstat(path)
+      if (
+        owner.projectId !== binding.projectId ||
+        owner.sessionId !== binding.sessionId ||
+        verified.mtimeMs !== before.mtimeMs ||
+        verified.ctimeMs !== before.ctimeMs ||
+        verified.ino !== before.ino
+      )
+        continue
+      const key = JSON.stringify([binding.projectId, binding.sessionId])
+      const candidate = candidates.get(key) ?? { ...binding, bindings: [], proofs: [] }
+      candidate.bindings.push(binding)
+      candidate.proofs.push(async () => {
+        const current = await lstat(path)
+        if (
+          current.dev !== before.dev ||
+          current.ino !== before.ino ||
+          current.mtimeMs !== before.mtimeMs ||
+          current.ctimeMs !== before.ctimeMs
+        )
+          throw new Error('Built-in Agent cleanup ownership changed')
+      })
+      candidates.set(key, candidate)
+    }
+    return [...candidates.values()].map(({ projectId, sessionId, bindings, proofs }) => ({
+      projectId,
+      sessionId,
+      apply: () =>
+        this.serialize(async () => {
+          const release = this.options.tryClaimIdentities([
+            sessionId,
+            ...bindings.map((binding) => binding.providerId)
+          ])
+          if (!release) throw new Error('Built-in Agent cleanup is waiting for Session admission')
+          try {
+            const current = (await this.bindings()).filter(
+              (binding) => binding.projectId === projectId && binding.sessionId === sessionId
+            )
+            const providers = new Set(bindings.map((binding) => binding.providerId))
+            if (
+              current.length !== providers.size ||
+              current.some((binding) => !providers.has(binding.providerId))
+            )
+              throw new Error('Built-in Agent cleanup provider ownership changed')
+            for (const proof of proofs) await proof()
+            this.pending.add(sessionId)
+            await this.drain(bindings, [sessionId])
+          } finally {
+            release()
+          }
+        })
+    }))
+  }
+
+  private async drain(
+    knownBindings?: Awaited<ReturnType<HarnessStorageCleanup['bindings']>>,
+    sessionIds: Iterable<string> = this.pending
+  ): Promise<void> {
+    const bindings = knownBindings ?? (await this.bindings())
     const store = createJournalAgentStore({
       directory: join(this.options.sessionDirectory, 'checkpoints'),
       lockTimeoutMs: 100
     })
     const receipts = new HarnessToolReceipts(this.options.receiptDirectory())
-    for (const sessionId of this.pending) {
+    for (const sessionId of sessionIds) {
       const owned = bindings.filter((binding) => binding.sessionId === sessionId)
       if (owned.some((binding) => this.options.isLive(binding.projectId, sessionId)))
         throw new Error('Cannot delete built-in Agent storage while its Session is live')

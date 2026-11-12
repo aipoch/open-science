@@ -37,7 +37,6 @@ import {
 import {
   DurableJsonReadLimitError,
   DurableJsonRecoveryBarrierError,
-  isRecoverableDurableJsonTemporaryFile,
   readDurableJsonFile,
   readFileWithinLimit,
   recoverDurableJsonDirectory,
@@ -166,6 +165,14 @@ type SessionScanMetrics = {
   projectDirectoryCount: number
   sessionFileCount: number
   sessionBytes: number
+  authorityReadMs: number
+  jsonParseMs: number
+}
+
+export type SessionIdentityCatalog = {
+  sessions: { projectId: string; id: string }[]
+  isComplete: boolean
+  generation: number
 }
 
 type PreparedSessionWrite = {
@@ -195,6 +202,10 @@ type SessionLoadDiagnostic =
   | { status: 'found'; session: PersistedChatSession }
   | { status: 'missing' }
   | { status: 'unreadable' }
+
+type SessionRecoverySnapshot = (SessionLoadDiagnostic | { status: 'repair-required' }) & {
+  metrics?: Pick<SessionScanMetrics, 'sessionBytes' | 'authorityReadMs' | 'jsonParseMs'>
+}
 
 type SessionMutationAuthorityRepository = {
   loadSessionWithDiagnostics(
@@ -333,6 +344,9 @@ const assertSafeSegment = (segment: unknown): string => {
 // at their Project/Session scope, while malformed JSON is backed up for later recovery.
 class SessionRepository {
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
+  private catalogGeneration = 0
+  private activeCatalogMutations = 0
+  private catalogCommitFence: Promise<void> | undefined
   private readonly sessionRevisions = new Map<string, number>()
   private projectionWritesSuspended = false
   private readonly suspendedProjectionSessionWrites = new Map<
@@ -341,7 +355,12 @@ class SessionRepository {
   >()
   private suspendedProjectionCatalogMutation = false
   private projectionInitialization:
-    Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> | undefined
+    | Promise<{
+        result?: LoadAllSessionsResult
+        sessions: SessionSummary[]
+        recoveredSessions?: PersistedChatSession[]
+      }>
+    | undefined
   private backupSequence = 0
   private readonly dependencies: SessionRepositoryDependencies
 
@@ -357,7 +376,10 @@ class SessionRepository {
       hasLiveRuntimeSession:
         dependencies.hasLiveRuntimeSession ?? DEFAULT_DEPENDENCIES.hasLiveRuntimeSession,
       maxSessionBytes: dependencies.maxSessionBytes ?? DEFAULT_DEPENDENCIES.maxSessionBytes,
-      remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
+      remove: (path, options) =>
+        this.mutateCatalog(() =>
+          (dependencies.remove ?? DEFAULT_DEPENDENCIES.remove)(path, options)
+        ),
       readDirectoryEntries:
         dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
       readManifestFile: dependencies.readManifestFile ?? DEFAULT_DEPENDENCIES.readManifestFile,
@@ -373,9 +395,51 @@ class SessionRepository {
               return contents
             }
           : DEFAULT_DEPENDENCIES.readSessionFileWithinLimit),
-      renameFile: dependencies.renameFile ?? DEFAULT_DEPENDENCIES.renameFile,
+      renameFile: (source, destination) =>
+        this.mutateCatalog(() =>
+          (dependencies.renameFile ?? DEFAULT_DEPENDENCIES.renameFile)(source, destination)
+        ),
       wait: dependencies.wait ?? DEFAULT_DEPENDENCIES.wait
     }
+  }
+
+  private async mutateCatalog(operation: () => Promise<void>): Promise<void> {
+    while (this.catalogCommitFence) await this.catalogCommitFence
+    this.catalogGeneration += 1
+    this.activeCatalogMutations += 1
+    try {
+      await operation()
+    } finally {
+      this.activeCatalogMutations -= 1
+      this.catalogGeneration += 1
+    }
+  }
+
+  // Caller also owns the coordinator boundary and must not call scheduled repository operations.
+  // Package publication outside this repository additionally requires its coordinator epoch guard.
+  async runWithSessionCatalogSnapshot(
+    snapshot: SessionIdentityCatalog,
+    operation: () => Promise<void>
+  ): Promise<boolean> {
+    return this.operationScheduler.runGlobal(async () => {
+      if (
+        !snapshot.isComplete ||
+        snapshot.generation !== this.catalogGeneration ||
+        this.activeCatalogMutations > 0
+      )
+        return false
+      let release!: () => void
+      this.catalogCommitFence = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      try {
+        await operation()
+        return true
+      } finally {
+        this.catalogCommitFence = undefined
+        release()
+      }
+    })
   }
 
   private get sessionsDir(): string {
@@ -517,12 +581,17 @@ class SessionRepository {
   }
 
   async ensureSessionProjection(
-    loadAuthority: () => Promise<LoadAllSessionsResult>
-  ): Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> {
+    loadAuthority: () => Promise<LoadAllSessionsResult>,
+    recoverSession?: (summary: SessionSummary) => Promise<PersistedChatSession | undefined>
+  ): Promise<{
+    result?: LoadAllSessionsResult
+    sessions: SessionSummary[]
+    recoveredSessions?: PersistedChatSession[]
+  }> {
     if (!this.projection) throw new Error('Session projection is unavailable.')
     if (this.projectionInitialization) return this.projectionInitialization
 
-    const initialization = this.ensureSessionProjectionNow(loadAuthority)
+    const initialization = this.ensureSessionProjectionNow(loadAuthority, recoverSession)
     this.projectionInitialization = initialization
     void initialization.then(
       () => {
@@ -602,42 +671,30 @@ class SessionRepository {
   }
 
   private async ensureSessionProjectionNow(
-    loadAuthority: () => Promise<LoadAllSessionsResult>
-  ): Promise<{ result?: LoadAllSessionsResult; sessions: SessionSummary[] }> {
+    loadAuthority: () => Promise<LoadAllSessionsResult>,
+    recoverSession?: (summary: SessionSummary) => Promise<PersistedChatSession | undefined>
+  ): Promise<{
+    result?: LoadAllSessionsResult
+    sessions: SessionSummary[]
+    recoveredSessions?: PersistedChatSession[]
+  }> {
     if (!this.projection) throw new Error('Session projection is unavailable.')
 
     const loadReadyProjection = async (): Promise<{
       result?: LoadAllSessionsResult
       sessions: SessionSummary[]
+      recoveredSessions?: PersistedChatSession[]
     }> => {
-      const summaries = await this.operationScheduler.runGlobal(() => this.projection!.list())
-      const needsAuthorityScan =
-        summaries.some((session) => session.needsStartupRecovery) ||
-        (await this.hasOversizedProjectedSession(summaries))
-      if (!needsAuthorityScan) {
-        return { sessions: summaries }
+      const summaries = await this.listProjectionSummaries()
+      // A ready catalog is navigation authority, not a request to inspect historical bodies.
+      // Oversized/corrupt files and temporary evidence are isolated by targeted recovery/open.
+      if (!recoverSession) return { sessions: summaries }
+      const recoveredSessions: PersistedChatSession[] = []
+      for (const summary of summaries.filter((candidate) => candidate.needsStartupRecovery)) {
+        const session = await recoverSession(summary)
+        if (session) recoveredSessions.push(session)
       }
-      const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
-      return this.operationScheduler.runGlobal(async () => {
-        const freshResult = await this.refreshProjectionBuildAuthority(result)
-        const numbers = new Map(summaries.map((session) => [session.id, session.number]))
-        if (freshResult.diagnostics?.isComplete === false) {
-          await this.retainOversizedProjectionRecovery(freshResult.diagnostics.warnings)
-          return {
-            result: freshResult,
-            sessions: projectIncompleteSummaries(freshResult, numbers)
-          }
-        }
-        const numbered = freshResult.sessions.map((session) => ({
-          ...session,
-          number: session.number ?? numbers.get(session.id)
-        }))
-        await this.projection!.replaceAll(numbered)
-        return {
-          result: { ...freshResult, sessions: numbered },
-          sessions: await this.projection!.list()
-        }
-      })
+      return { sessions: await this.listProjectionSummaries(), recoveredSessions }
     }
 
     if (await this.projection.isInitialized()) {
@@ -773,94 +830,31 @@ class SessionRepository {
     }
   }
 
+  private async listProjectionSummaries(): Promise<SessionSummary[]> {
+    const queuedAt = performance.now()
+    return this.operationScheduler.runGlobal(async () => {
+      const startedAt = performance.now()
+      const summaries = await this.projection!.list()
+      try {
+        createLogger('session-persistence').debug('Session summaries loaded', {
+          mode: 'summary',
+          sessionCount: summaries.length,
+          candidateCount: summaries.filter((summary) => summary.needsStartupRecovery).length,
+          queueWaitMs: startedAt - queuedAt,
+          summaryReadMs: performance.now() - startedAt
+        })
+      } catch {
+        // Diagnostics must not affect catalog availability.
+      }
+      return summaries
+    })
+  }
+
   async loadSessionSummaries(): Promise<SessionSummary[]> {
     if (!this.projection || !(await this.projection.isReady())) {
       throw new Error('Session projection is not ready.')
     }
-    return this.operationScheduler.runGlobal(() => this.projection!.list())
-  }
-
-  private async hasOversizedProjectedSession(
-    summaries: readonly SessionSummary[]
-  ): Promise<boolean> {
-    const projectedFilesByProject = new Map<string, Set<string>>()
-    for (const summary of summaries) {
-      const projectedFiles = projectedFilesByProject.get(summary.projectId) ?? new Set<string>()
-      projectedFiles.add(`${summary.id}.json`)
-      projectedFilesByProject.set(summary.projectId, projectedFiles)
-      try {
-        const metadata = await lstat(this.sessionFilePath(summary.projectId, summary.id))
-        if (
-          metadata.isFile() &&
-          !metadata.isSymbolicLink() &&
-          metadata.size > this.dependencies.maxSessionBytes
-        ) {
-          return true
-        }
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error
-      }
-    }
-
-    for (const [projectId, projectedFiles] of projectedFilesByProject) {
-      const directory = this.projectDir(projectId)
-      let entries: SessionDirectoryEntry[]
-      try {
-        entries = await this.dependencies.readDirectoryEntries(directory)
-      } catch (error) {
-        if (isMissingFileError(error)) continue
-        throw error
-      }
-      for (const entry of entries) {
-        if (!entry.isFile()) continue
-        const sessionExtensionIndex = entry.name.lastIndexOf('.json.')
-        if (sessionExtensionIndex < 0) continue
-        const primaryName = entry.name.slice(0, sessionExtensionIndex + '.json'.length)
-        if (!projectedFiles.has(primaryName)) continue
-        const primaryPath = join(directory, primaryName)
-        if (!isRecoverableDurableJsonTemporaryFile(primaryPath, entry.name)) continue
-        try {
-          const metadata = await lstat(join(directory, entry.name))
-          if (
-            metadata.isFile() &&
-            !metadata.isSymbolicLink() &&
-            metadata.size > this.dependencies.maxSessionBytes
-          ) {
-            return true
-          }
-        } catch (error) {
-          if (!isMissingFileError(error)) throw error
-        }
-      }
-    }
-    return false
-  }
-
-  private async retainOversizedProjectionRecovery(
-    warnings: readonly SessionLoadWarning[] | undefined
-  ): Promise<void> {
-    if (!this.projection) return
-    for (const warning of warnings ?? []) {
-      if (
-        warning.kind !== 'too-large' ||
-        !warning.fileName.endsWith('.json') ||
-        warning.fileName.length === '.json'.length
-      ) {
-        continue
-      }
-      const sessionId = warning.fileName.slice(0, -'.json'.length)
-      let projectId: string
-      let safeSessionId: string
-      try {
-        projectId = assertSafeSegment(warning.projectId)
-        safeSessionId = assertSafeSegment(sessionId)
-      } catch {
-        // Unsafe warning identities already keep the scan incomplete; they cannot become a safe
-        // projection reconciliation target.
-        continue
-      }
-      await this.projection.markPending(projectId, safeSessionId)
-    }
+    return this.listProjectionSummaries()
   }
 
   async loadSessionUsageProjection(): Promise<SessionUsageProjection> {
@@ -928,6 +922,69 @@ class SessionRepository {
     return quarantine.exists ? { status: 'unreadable' } : { status: 'missing' }
   }
 
+  // Only a scoped durable recheck may remove stale derived metadata. An unresolved
+  // import, temp, quarantine or unreadable body is never evidence of deletion.
+  async reconcileMissingSessionProjection(projectId: string, sessionId: string): Promise<boolean> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      if (!this.projection || (await isSessionPackagePending(this.storageDir, projectId)))
+        return false
+      const loaded = await this.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status !== 'missing') return false
+      await this.mutateCatalog(() => this.projection!.commitDelete(projectId, sessionId))
+      return true
+    })
+  }
+
+  // Off-lane recovery planning must not use the durable reader: even read-only diagnostics can
+  // promote or remove temporary files. Defer that evidence to the guarded commit instead.
+  async loadSessionRecoverySnapshot(
+    projectIdValue: string,
+    sessionIdValue: string
+  ): Promise<SessionRecoverySnapshot> {
+    const projectId = assertSafeSegment(projectIdValue)
+    const sessionId = assertSafeSegment(sessionIdValue)
+    const boundary = await this.inspectActiveProjectBoundary(projectId)
+    if (boundary !== 'valid') return { status: boundary === 'missing' ? 'missing' : 'unreadable' }
+    const fileName = `${sessionId}.json`
+    const filePath = this.sessionFilePath(projectId, sessionId)
+    const metrics = { sessionBytes: 0, authorityReadMs: 0, jsonParseMs: 0 }
+    try {
+      const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
+      if (entries.some((entry) => temporarySessionPrimaryName(entry.name) === fileName))
+        return { status: 'repair-required' }
+      const before = await lstat(filePath)
+      if (!before.isFile() || before.isSymbolicLink()) return { status: 'unreadable' }
+      const readStartedAt = performance.now()
+      let contents: string
+      try {
+        contents = await this.dependencies.readSessionFileWithinLimit(
+          filePath,
+          this.dependencies.maxSessionBytes
+        )
+      } finally {
+        metrics.authorityReadMs = performance.now() - readStartedAt
+      }
+      const after = await lstat(filePath)
+      if (
+        !after.isFile() ||
+        after.isSymbolicLink() ||
+        before.dev !== after.dev ||
+        before.ino !== after.ino ||
+        before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs ||
+        before.ctimeMs !== after.ctimeMs
+      )
+        return { status: 'repair-required' }
+      const decoded = this.decodeSessionContents(filePath, projectId, contents, undefined, metrics)
+      metrics.sessionBytes = decoded.bytes
+      return { status: 'found', session: decoded.session, metrics }
+    } catch {
+      // Missing, malformed, or changing authority may have temp/quarantine evidence. Only the
+      // guarded diagnostic reader can classify and repair it; never infer absence here.
+      return { status: 'repair-required' }
+    }
+  }
+
   // Verifies durable Session identity from directory/file authority without parsing JSON. This lets
   // an incomplete hydration catalog distinguish a corrupt Session file from a genuinely unused id.
   async assertSessionIdentityOwnership(
@@ -941,6 +998,78 @@ class SessionRepository {
       throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
     if (ownership.projectIds.some((projectId) => projectId !== expectedProjectId))
       throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
+
+  // Complete identity evidence only: never parse, promote, or quarantine conversation bodies here.
+  async scanSessionIdentities(): Promise<SessionIdentityCatalog> {
+    const generation = this.catalogGeneration
+    const mutationsAtStart = this.activeCatalogMutations
+    const rootBefore = await this.catalogDirectoryStamp(this.sessionsDir)
+    const deletionBefore = await this.catalogDirectoryStamp(this.deletedSessionsDir)
+    const directories = await this.listDirectoryNames(this.sessionsDir, {
+      missingIsIncomplete: rootBefore !== 'missing'
+    })
+    const sessions: SessionIdentityCatalog['sessions'] = []
+    let isComplete =
+      directories.isComplete && rootBefore !== undefined && deletionBefore !== undefined
+    const owners = new Map<string, string>()
+    if (deletionBefore !== 'missing') {
+      try {
+        if ((await this.dependencies.readDirectoryEntries(this.deletedSessionsDir)).length > 0)
+          isComplete = false
+      } catch {
+        isComplete = false
+      }
+    }
+    for (const candidate of directories.names) {
+      try {
+        const projectId = assertSafeSegment(candidate)
+        const path = this.projectDir(projectId)
+        const before = await this.catalogDirectoryStamp(path)
+        const files = await this.listSessionFileNames(path, { missingIsIncomplete: true })
+        isComplete &&=
+          files.isComplete &&
+          !files.hasRecoveryEvidence &&
+          before !== undefined &&
+          before !== 'missing'
+        if (await isSessionPackagePending(this.storageDir, projectId)) isComplete = false
+        if (
+          (await this.inspectFileBoundary(join(path, PROJECT_DELETION_COMMIT_MARKER))) !== 'missing'
+        )
+          isComplete = false
+        if ((await this.getProjectSessionDeletionState(projectId)) !== 'live') isComplete = false
+        for (const name of new Set([...files.names, ...files.quarantinedPrimaryFileNames])) {
+          const id = assertSafeSegment(name.slice(0, -'.json'.length))
+          if (owners.has(id) && owners.get(id) !== projectId) isComplete = false
+          owners.set(id, projectId)
+          sessions.push({ projectId, id })
+        }
+        if (before !== (await this.catalogDirectoryStamp(path))) isComplete = false
+      } catch {
+        isComplete = false
+      }
+    }
+    if (
+      rootBefore !== (await this.catalogDirectoryStamp(this.sessionsDir)) ||
+      deletionBefore !== (await this.catalogDirectoryStamp(this.deletedSessionsDir))
+    )
+      isComplete = false
+    isComplete &&=
+      mutationsAtStart === 0 &&
+      this.activeCatalogMutations === 0 &&
+      generation === this.catalogGeneration
+    return { sessions, isComplete, generation }
+  }
+
+  private async catalogDirectoryStamp(path: string): Promise<string | undefined> {
+    try {
+      const stat = await lstat(path)
+      return stat.isDirectory() && !stat.isSymbolicLink()
+        ? `${stat.dev}:${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}`
+        : undefined
+    } catch (error) {
+      return isMissingFileError(error) ? 'missing' : undefined
+    }
   }
 
   private async readSessionIdentityOwners(
@@ -1022,7 +1151,9 @@ class SessionRepository {
     const scanMetrics: SessionScanMetrics = {
       projectDirectoryCount: 0,
       sessionFileCount: 0,
-      sessionBytes: 0
+      sessionBytes: 0,
+      authorityReadMs: 0,
+      jsonParseMs: 0
     }
     const { sessions, isComplete, warnings } = await this.readAllSessions({
       quarantineInvalidFiles,
@@ -1120,6 +1251,16 @@ class SessionRepository {
     )
   }
 
+  // Recovery holds the same identity/CAS protection without serializing unrelated Project saves.
+  async saveRecoveredSession(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSessionRecovery(session.projectId, session.id, () =>
+      this.saveSessionNow(session, expectedRevision, false)
+    )
+  }
+
   // Startup-only repair: never rename graph identities underneath an attached runtime. The backup
   // and revisioned replacement share the normal repository lane, so a retry cannot overwrite a
   // newer Session or lose the original bytes after an interrupted repair.
@@ -1127,7 +1268,7 @@ class SessionRepository {
     session: PersistedChatSession,
     expectedRevision: number
   ): Promise<PersistedChatSession> {
-    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+    return this.operationScheduler.runSessionRecovery(session.projectId, session.id, async () => {
       if (
         this.dependencies.hasLiveRuntimeSession(session.projectId, session.id) ||
         this.dependencies.hasActiveRuntimePrompt(session.projectId, session.id)
@@ -1475,8 +1616,10 @@ class SessionRepository {
       const deletedProjectDir = this.deletedProjectDir(safeProjectId)
       await this.dependencies.remove(deletedProjectDir, { recursive: true, force: true })
       await mkdir(liveProjectDir, { recursive: true })
-      await writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
-      await rename(liveProjectDir, deletedProjectDir)
+      await this.mutateCatalog(() =>
+        writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
+      )
+      await this.dependencies.renameFile(liveProjectDir, deletedProjectDir)
       if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
@@ -1831,11 +1974,13 @@ class SessionRepository {
   }
 
   private async atomicWriteContents(filePath: string, contents: string): Promise<void> {
-    await writeDurableJsonFile(filePath, contents, {
-      remove: this.dependencies.remove,
-      rename: this.dependencies.renameFile,
-      wait: this.dependencies.wait
-    })
+    await this.mutateCatalog(() =>
+      writeDurableJsonFile(filePath, contents, {
+        remove: this.dependencies.remove,
+        rename: this.dependencies.renameFile,
+        wait: this.dependencies.wait
+      })
+    )
   }
 
   private async readManifest(options: { quarantineInvalidFiles: boolean }): Promise<{
@@ -2082,6 +2227,17 @@ class SessionRepository {
         }
       }
     }
+    const readContents = async (path: string, maxBytes?: number): Promise<string> => {
+      const startedAt = performance.now()
+      try {
+        return await (maxBytes === undefined
+          ? this.dependencies.readSessionFile(path)
+          : this.dependencies.readSessionFileWithinLimit(path, maxBytes))
+      } finally {
+        if (options.scanMetrics)
+          options.scanMetrics.authorityReadMs += performance.now() - startedAt
+      }
+    }
     let read:
       | { status: 'found'; value: { session: PersistedChatSession; bytes: number } }
       | { status: 'missing' }
@@ -2089,11 +2245,17 @@ class SessionRepository {
       read = await readDurableJsonFile(
         filePath,
         (contents) =>
-          this.decodeSessionContents(filePath, projectId, contents, options.preserveRuntimeState),
+          this.decodeSessionContents(
+            filePath,
+            projectId,
+            contents,
+            options.preserveRuntimeState,
+            options.scanMetrics
+          ),
         {
           readDirectoryEntries: this.dependencies.readDirectoryEntries,
-          readFile: this.dependencies.readSessionFile,
-          readFileWithinLimit: this.dependencies.readSessionFileWithinLimit,
+          readFile: (path) => readContents(path),
+          readFileWithinLimit: readContents,
           remove: this.dependencies.remove,
           rename: this.dependencies.renameFile,
           wait: this.dependencies.wait
@@ -2193,9 +2355,17 @@ class SessionRepository {
     filePath: string,
     projectId: string,
     contents: string,
-    preserveRuntimeState?: boolean
+    preserveRuntimeState?: boolean,
+    scanMetrics?: Pick<SessionScanMetrics, 'jsonParseMs'>
   ): { session: PersistedChatSession; bytes: number } {
-    const decoded = decodeSessionFile(JSON.parse(contents) as unknown, {
+    const parseStartedAt = performance.now()
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(contents) as unknown
+    } finally {
+      if (scanMetrics) scanMetrics.jsonParseMs += performance.now() - parseStartedAt
+    }
+    const decoded = decodeSessionFile(parsed, {
       preserveLegacyUploadPaths: true,
       preserveRuntimeState:
         preserveRuntimeState !== undefined
@@ -2225,10 +2395,13 @@ class SessionRepository {
   }
 
   // ENOENT is an authoritative empty directory; any other readdir failure is a partial scan.
-  private async listDirectoryNames(dir: string): Promise<{ names: string[]; isComplete: boolean }> {
+  private async listDirectoryNames(
+    dir: string,
+    options: { missingIsIncomplete?: boolean } = {}
+  ): Promise<{ names: string[]; isComplete: boolean }> {
     const boundary = await this.inspectDirectoryBoundary(dir)
     if (boundary !== 'valid') {
-      return { names: [], isComplete: boundary === 'missing' }
+      return { names: [], isComplete: boundary === 'missing' && !options.missingIsIncomplete }
     }
     try {
       const entries = await this.dependencies.readDirectoryEntries(dir)
@@ -2238,7 +2411,7 @@ class SessionRepository {
         isComplete: entries.every((entry) => entry.isDirectory() || entry.isFile())
       }
     } catch (error) {
-      return { names: [], isComplete: isMissingFileError(error) }
+      return { names: [], isComplete: isMissingFileError(error) && !options.missingIsIncomplete }
     }
   }
 
@@ -2253,6 +2426,7 @@ class SessionRepository {
     names: string[]
     isComplete: boolean
     quarantinedPrimaryFileNames: string[]
+    hasRecoveryEvidence: boolean
   }> {
     if (!options.directoryBoundaryValidated) {
       const boundary = await this.inspectDirectoryBoundary(dir)
@@ -2260,14 +2434,23 @@ class SessionRepository {
         return {
           names: [],
           isComplete: boundary === 'missing' && !options.missingIsIncomplete,
-          quarantinedPrimaryFileNames: []
+          quarantinedPrimaryFileNames: [],
+          hasRecoveryEvidence: false
         }
       }
     }
     try {
       const entries = await this.dependencies.readDirectoryEntries(dir)
+      const primaryFiles = new Set(
+        entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+      )
 
       return {
+        hasRecoveryEvidence: entries.some((entry) => {
+          if (temporarySessionPrimaryName(entry.name) !== undefined) return true
+          const quarantine = /^(.*\.json)\.invalid-\d+-\d+$/u.exec(entry.name)
+          return quarantine !== null && !primaryFiles.has(quarantine[1])
+        }),
         names: [
           ...new Set(
             entries.flatMap((entry) => {
@@ -2295,7 +2478,8 @@ class SessionRepository {
       return {
         names: [],
         isComplete: isMissingFileError(error) && !options.missingIsIncomplete,
-        quarantinedPrimaryFileNames: []
+        quarantinedPrimaryFileNames: [],
+        hasRecoveryEvidence: false
       }
     }
   }
@@ -2355,6 +2539,7 @@ const isMissingFileError = (error: unknown): boolean =>
 export { DEV_SESSION_DIR_NAME, PROD_SESSION_DIR_NAME, getSessionPersistenceDir } from './paths'
 export { SessionRepository }
 export type {
+  SessionRecoverySnapshot,
   ProjectSessionDeletionState,
   ProjectSessionLoadDiagnostics,
   SessionLoadDiagnostic,

@@ -1,3 +1,4 @@
+import { reserveAcpSessionStorageCleanup } from '../acp/session-registry'
 import type { PromptOptimizationService } from '../projects/prompt-optimization'
 import { join } from 'node:path'
 import { HarnessStorageCleanup } from '../harness-acp/storage-cleanup'
@@ -319,6 +320,7 @@ export function composeProjectLifecycle({
     getProjectDbClient(configRoot)
   )
   const harnessStorageCleanup = new HarnessStorageCleanup({
+    tryClaimIdentities: reserveAcpSessionStorageCleanup,
     sessionDirectory: join(configRoot, 'open-science-agent', 'sessions'),
     receiptDirectory: () => join(resolveDataRoot(), 'open-science-agent', 'tool-receipts'),
     isLive: (projectId, sessionId) =>
@@ -338,13 +340,11 @@ export function composeProjectLifecycle({
         harnessStorageCleanup.commit(sessionIds)
       ])
     },
-    onSessionsReconciled: async (sessionIds) => {
-      await Promise.all([
-        visionEvidenceRepository.reconcileSessions(sessionIds),
-        researchFilmLifecycle.reconcileSessions(sessionIds),
-        harnessStorageCleanup.reconcile(sessionIds)
-      ])
-    }
+    onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds),
+    planSessionsReconciliation: async (sessionIds) => [
+      ...(await researchFilmLifecycle.planSessionReconciliation(sessionIds)),
+      ...(await harnessStorageCleanup.planReconciliation(sessionIds))
+    ]
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     promptOptimization,

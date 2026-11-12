@@ -36,6 +36,10 @@ type SessionReconciliationRepository = {
   ): Promise<
     { status: 'found'; session: PersistedChatSession } | { status: 'missing' | 'unreadable' }
   >
+  saveRecoveredSession?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
   saveSessionWithBindingRepair?(
     session: PersistedChatSession,
@@ -48,20 +52,31 @@ type SessionReconciliationFileIndex = {
     session: PersistedChatSession,
     options?: { force?: boolean }
   ): Promise<ProjectFileSource[]>
-  reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
+  reconcileActiveSessions(
+    sessions: readonly Pick<PersistedChatSession, 'projectId' | 'id'>[]
+  ): Promise<void>
 }
 
 type SessionReconciliationProvenance = {
+  planSessionCleanup?(
+    sessions: readonly Pick<PersistedChatSession, 'projectId' | 'id'>[]
+  ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>>
   recoverLegacySessionGraph?(
     session: PersistedChatSession
   ): Promise<PersistedChatSession | undefined>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
-  reconcileSessionCleanup?(activeSessions: PersistedChatSession[]): Promise<void>
+  reconcileSessionCleanup?(
+    activeSessions: readonly Pick<PersistedChatSession, 'id' | 'projectId'>[]
+  ): Promise<void>
+  reconcileSessionMessageSnapshots?(session: PersistedChatSession): Promise<void>
   reconcileMessageSnapshots?(activeSessions: PersistedChatSession[]): Promise<void>
 }
 
 type SessionPermissionGrantReconciliation = {
+  planReconciliation?(
+    sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
+  ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>>
   reconcileSessions(
     sessions: ReadonlyArray<{ projectId: string; sessionId: string }>
   ): Promise<void>
@@ -75,6 +90,17 @@ type SessionUploadPersistence = {
 }
 
 type ArtifactStorageReconciler = {
+  planOrphanStagingCleanup?(
+    projectId: string,
+    sessionId: string,
+    startupCutoff: number
+  ): Promise<
+    Array<
+      (
+        commit: (apply: () => Promise<void>) => Promise<boolean>
+      ) => Promise<'complete' | 'stale' | 'busy'>
+    >
+  >
   resolveVersionDescriptors?(request: {
     projectId: string
     appSessionId: string
@@ -124,6 +150,8 @@ type SessionPersistenceReconciliationOwnerOptions = {
 type ReconcileLoadedSessionsInput = {
   result: LoadAllSessionsResult
   allowDestructiveCleanup: boolean
+  // A targeted read is never evidence that an omitted Session was deleted.
+  scope?: 'session'
   phase(name: string): void
   onPermissionFailure(error: unknown): void
 }
@@ -533,6 +561,13 @@ class SessionPersistenceReconciliationOwner {
       }
     }
 
+    const saveRepository =
+      input.scope === 'session' && this.repository.saveRecoveredSession
+        ? {
+            saveSession: (session: PersistedChatSession, revision?: number) =>
+              this.repository.saveRecoveredSession!(session, revision ?? sessionRevision(session))
+          }
+        : this.repository
     input.phase('reconcile-derived-state')
     try {
       const provenance = this.provenance
@@ -558,7 +593,7 @@ class SessionPersistenceReconciliationOwner {
               reconcileMessageSnapshots: provenance.reconcileMessageSnapshots.bind(provenance)
             }
           : undefined
-      await splitProvenance?.reconcileSessionCleanup(sessions)
+      if (input.scope !== 'session') await splitProvenance?.reconcileSessionCleanup(sessions)
 
       if (this.uploads) {
         for (let index = 0; index < sessions.length; index += 1) {
@@ -573,7 +608,11 @@ class SessionPersistenceReconciliationOwner {
               candidateIndex === index ? upgradedSession : candidate
             )
             result = { ...result, sessions }
-            const persisted = await saveSessionWithRevision(this.repository, upgradedSession)
+            const persisted = await saveSessionWithRevision(
+              saveRepository,
+              upgradedSession,
+              input.scope === 'session' ? sessionRevision(session) : undefined
+            )
             sessions = sessions.map((candidate, candidateIndex) =>
               candidateIndex === index ? persisted : candidate
             )
@@ -639,7 +678,11 @@ class SessionPersistenceReconciliationOwner {
           )
           result = { ...result, sessions }
           await this.provenance?.captureFinalizedMessages(recoveredSession)
-          const persisted = await saveSessionWithRevision(this.repository, recoveredSession)
+          const persisted = await saveSessionWithRevision(
+            saveRepository,
+            recoveredSession,
+            input.scope === 'session' ? sessionRevision(session) : undefined
+          )
           sessions = sessions.map((candidate, candidateIndex) =>
             candidateIndex === index ? persisted : candidate
           )
@@ -649,18 +692,87 @@ class SessionPersistenceReconciliationOwner {
       // Message snapshot repair needs the authoritative Artifact attachments recovered above;
       // otherwise a ready snapshot can be compared against incomplete Session JSON and stay
       // unavailable even after the Session is repaired later in this same startup pass.
-      if (splitProvenance) await splitProvenance.reconcileMessageSnapshots(sessions)
-      else await this.provenance?.reconcileSessionDeletions(sessions)
-      // Restore active owners before scan-order-dependent sync offers canonical rows elsewhere.
-      await this.fileIndex.reconcileActiveSessions(sessions)
+      if (input.scope !== 'session') {
+        if (splitProvenance) await splitProvenance.reconcileMessageSnapshots(sessions)
+        else await this.provenance?.reconcileSessionDeletions(sessions)
+        // Restore active owners before scan-order-dependent sync offers canonical rows elsewhere.
+        await this.fileIndex.reconcileActiveSessions(sessions)
+      } else {
+        for (const session of sessions) {
+          await this.provenance?.captureFinalizedMessages(session)
+          await this.provenance?.reconcileSessionMessageSnapshots?.(session)
+        }
+      }
+      input.phase('index-work')
       for (const session of sessions) {
         await this.fileIndex.syncSession(session)
       }
+      input.phase('index-work-complete')
     } catch (failure) {
       return { status: 'degraded', result, failure }
     }
 
     return { status: 'ready', result }
+  }
+
+  async planOrphanStagingCleanup(
+    session: PersistedChatSession,
+    startupCutoff: number
+  ): Promise<
+    Array<
+      (
+        commit: (apply: () => Promise<void>) => Promise<boolean>
+      ) => Promise<'complete' | 'stale' | 'busy'>
+    >
+  > {
+    return (
+      this.artifactStorage?.planOrphanStagingCleanup?.(
+        session.projectId,
+        session.id,
+        startupCutoff
+      ) ?? []
+    )
+  }
+
+  async cleanupVersionedUploadSources(session: PersistedChatSession): Promise<void> {
+    if (hasLegacySessionUpload(session))
+      throw new Error('Legacy upload references still require recovery.')
+    // Every reference is already immutable. This consumes verified legacy copies only, never
+    // produces a new Session authority or invokes full reconciliation inside a catalog guard.
+    await this.uploads?.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+  }
+
+  async planNativeCleanup(
+    sessions: readonly Pick<PersistedChatSession, 'projectId' | 'id'>[]
+  ): Promise<Array<{ projectId: string; sessionId: string; apply(): Promise<void> }>> {
+    const provenance = await this.provenance?.planSessionCleanup?.(sessions)
+    const native = await this.permissionGrants?.planReconciliation?.(
+      sessions.map(({ projectId, id }) => ({ projectId, sessionId: id }))
+    )
+    return [...(provenance ?? []), ...(native ?? [])]
+  }
+
+  async reconcileCatalogIdentities(
+    sessions: readonly Pick<PersistedChatSession, 'projectId' | 'id'>[]
+  ): Promise<void> {
+    const failures: unknown[] = []
+    for (const reconcile of [
+      () =>
+        this.permissionGrants?.planReconciliation
+          ? undefined
+          : this.permissionGrants?.reconcileSessions(
+              sessions.map(({ projectId, id }) => ({ projectId, sessionId: id }))
+            ),
+      () => this.fileIndex.reconcileActiveSessions(sessions)
+    ]) {
+      try {
+        await reconcile()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(failures, 'Session identity cleanup is incomplete.')
   }
 
   async repairFileProjection(sessions: PersistedChatSession[]): Promise<void> {

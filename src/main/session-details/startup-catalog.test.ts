@@ -162,3 +162,47 @@ describe('startup Session details catalog admission', () => {
     expect(input).toEqual(before)
   })
 })
+
+it('repairs deferred generation authority after the owner has started without a catalog reload', async () => {
+  let durable: PersistedChatSession = {
+    ...session(),
+    branchSource: { sessionId: 'parent' },
+    sessionDetailsGeneration: {
+      status: 'running',
+      sourceMessageId: 'm',
+      requestId: 'r',
+      queuedAt: 1,
+      startedAt: 1,
+      frameworkId: 'codex',
+      model: 'model',
+      reasoningEffort: 'medium'
+    }
+  }
+  const owner = createSessionDetailsOwner({
+    sessions: {
+      listSessions: async () => {
+        throw new Error('No catalog reload')
+      },
+      mutateSession: async (_project, _session, mutation) => {
+        const result = mutation(durable)
+        if (result.kind === 'write') durable = result.session
+        return durable
+      }
+    },
+    targets: { resolve: async () => ({ mode: 'disabled' }) },
+    inference: {
+      generate: async () => {
+        throw new Error('No inference')
+      }
+    },
+    lifecycle: { publish: () => undefined },
+    log: { info: () => undefined, warn: () => undefined }
+  })
+  try {
+    await owner.start([])
+    await owner.recoverSession(durable)
+    expect(durable.sessionDetailsGeneration).toBeUndefined()
+  } finally {
+    await owner.shutdown()
+  }
+})

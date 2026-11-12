@@ -359,7 +359,9 @@ describe('managed workspace ownership', () => {
     await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
 
     await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
-    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
+    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([
+      '.retired-workspaces'
+    ])
   })
 
   it('removes a finalized workspace with no authoritative Session', async () => {
@@ -375,7 +377,9 @@ describe('managed workspace ownership', () => {
     await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
 
     await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
-    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
+    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([
+      '.retired-workspaces'
+    ])
   })
 
   it('preserves a finalized workspace referenced by another Session', async () => {
@@ -423,7 +427,7 @@ describe('managed workspace ownership', () => {
     await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
 
     await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
-    await expect(readdir(ownershipDirectory)).resolves.toEqual([])
+    await expect(readdir(ownershipDirectory)).resolves.toEqual(['.retired-workspaces'])
   })
 
   it('finalizes a provisional receipt referenced by an authoritative Session', async () => {

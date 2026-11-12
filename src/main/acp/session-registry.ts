@@ -2,6 +2,25 @@ import type { ActiveSession } from '@agentclientprotocol/sdk'
 
 import { AcpSessionAggregate, type AcpSessionAggregateAttachInput } from './session-aggregate'
 
+// Existing-ID helper admission is host-owned. A failed open may outlive its reservation while
+// disposal completes, so every admitted identity stays protected until the next host process.
+const storageCleanupClaims = new Set<string>()
+const admittedStorageIdentities = new Set<string>()
+const reserveAcpSessionStorageCleanup = (
+  sessionIds: readonly string[]
+): (() => void) | undefined => {
+  const identities = [...new Set(sessionIds)]
+  if (identities.some((id) => storageCleanupClaims.has(id) || admittedStorageIdentities.has(id)))
+    return undefined
+  for (const id of identities) storageCleanupClaims.add(id)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    for (const id of identities) storageCleanupClaims.delete(id)
+  }
+}
+
 type RegistryOptions = {
   onAttachmentChanged?: (entry: AcpSessionRegistryEntry) => void
   addStartupBlocker?: (token: symbol) => void
@@ -115,6 +134,8 @@ class AcpSessionRegistry {
       return { collision: supersededError() }
     }
     const sessionIds = [...new Set(request.sessionIds)]
+    if (sessionIds.some((id) => storageCleanupClaims.has(id)))
+      return { collision: new Error('Session native storage cleanup is in progress.') }
     const deleting = sessionIds.find((id) => (this.identityEpochs.get(id)?.deletions ?? 0) > 0)
     if (deleting) {
       return {
@@ -151,6 +172,7 @@ class AcpSessionRegistry {
       if (owner.blocked) this.options.addStartupBlocker?.(owner.token)
     }
     for (const sessionId of sessionIds) {
+      admittedStorageIdentities.add(sessionId)
       if (!owner.deletionEpochs.has(sessionId)) {
         const epoch = this.epoch(sessionId)
         owner.deletionEpochs.set(sessionId, epoch.value)
@@ -344,7 +366,7 @@ class AcpSessionRegistry {
     if (epoch.deletions === 0 && epoch.reservations === 0) this.identityEpochs.delete(sessionId)
   }
 }
-export { AcpSessionRegistry }
+export { AcpSessionRegistry, reserveAcpSessionStorageCleanup }
 export type {
   AcpPrimarySessionIdentityReservation,
   AcpPrimarySessionIdentityReservationResult,

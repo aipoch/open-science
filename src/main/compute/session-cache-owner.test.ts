@@ -24,6 +24,23 @@ describe('SessionCacheOwner', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it('plans bounded native cleanup and preserves a live operation admitted after planning', async () => {
+    const previous = await owner.createOperationFile('project-1', 'gone', 'old')
+    await writeFile(previous.path, 'old')
+    previous.release()
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    const reopened = new SessionCacheOwner(storageRoot)
+    const plans = await reopened.planSessionReconciliation([])
+    expect(plans).toHaveLength(1)
+    const live = await reopened.createOperationFile('project-1', 'gone', 'new')
+    await writeFile(live.path, 'new')
+    await expect(plans[0].apply()).rejects.toThrow('live work')
+    expect(await readFile(live.path, 'utf8')).toBe('new')
+    live.release()
+    await expect(plans[0].apply()).rejects.toThrow('ownership changed')
+    expect(await readFile(previous.path, 'utf8')).toBe('old')
+  })
+
   it('allocates each download below its owning Project and Session', async () => {
     const operation = await owner.createOperationFile('project-1', 'session-1', 'result.csv')
 

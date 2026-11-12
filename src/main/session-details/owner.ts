@@ -87,6 +87,7 @@ export interface SessionDetailsSafeLogger {
 
 export interface SessionDetailsOwner {
   start(startupSessions?: readonly SessionDetailsSession[]): Promise<void>
+  recoverSession(session: PersistedChatSession): Promise<void>
   afterSessionSaved(session: PersistedChatSession): void
   edit(request: EditSessionDetailsRequest): Promise<PersistedChatSession>
   shutdown(): Promise<void>
@@ -793,6 +794,56 @@ export const createSessionDetailsOwner = (
     }
   }
 
+  const recoverSession = async (session: SessionDetailsSession): Promise<void> => {
+    if (session.packageOrigin) return
+    if (!acceptCompletions || stopping || active.has(keyOf(session.projectId, session.id))) return
+    const generation = session.sessionDetailsGeneration
+    if (generation?.status === 'running') {
+      if (!hasValidGenerationAuthority(session)) {
+        await dependencies.sessions.mutateSession(session.projectId, session.id, (current) => {
+          if (!acceptCompletions || stopping || active.has(keyOf(session.projectId, session.id)))
+            return { kind: 'unchanged' }
+          return current.sessionDetailsGeneration && !hasValidGenerationAuthority(current)
+            ? { kind: 'write', session: withoutGenerationAuthority(current) }
+            : { kind: 'unchanged' }
+        })
+        return
+      }
+      const recovered = await dependencies.sessions.mutateSession(
+        session.projectId,
+        session.id,
+        (current) => {
+          if (!acceptCompletions || stopping || active.has(keyOf(session.projectId, session.id)))
+            return { kind: 'unchanged' }
+          const currentGeneration = current.sessionDetailsGeneration
+          if (
+            currentGeneration?.status !== 'running' ||
+            currentGeneration.requestId !== generation.requestId
+          ) {
+            return { kind: 'unchanged' }
+          }
+          return {
+            kind: 'write',
+            session: {
+              ...current,
+              sessionDetailsGeneration: {
+                ...currentGeneration,
+                status: 'failed',
+                completedAt: now(),
+                usageUnavailable: true
+              }
+            }
+          }
+        }
+      )
+      if (!acceptCompletions || stopping) return
+      publishTransition(recovered)
+      logCompletion(session.id, generation.requestId, 'failed', generation.startedAt, generation)
+    }
+    if (!acceptCompletions || stopping) return
+    await claimAndAdmit(session)
+  }
+
   return {
     async start(startupSessions?: readonly SessionDetailsSession[]): Promise<void> {
       if (started || stopping) return
@@ -801,66 +852,15 @@ export const createSessionDetailsOwner = (
       // Metadata generation in an imported package records the source's history.
       const catalog = startupSessions ?? (await dependencies.sessions.listSessions())
       const sessions = catalog.filter((session) => !session.packageOrigin)
-      for (const session of sessions) {
-        if (!acceptCompletions || stopping) return
-        const generation = session.sessionDetailsGeneration
-        if (generation?.status === 'running') {
-          if (!hasValidGenerationAuthority(session)) {
-            await dependencies.sessions.mutateSession(session.projectId, session.id, (current) => {
-              if (!acceptCompletions || stopping) return { kind: 'unchanged' }
-              return current.sessionDetailsGeneration && !hasValidGenerationAuthority(current)
-                ? { kind: 'write', session: withoutGenerationAuthority(current) }
-                : { kind: 'unchanged' }
-            })
-            continue
-          }
-          const recovered = await dependencies.sessions.mutateSession(
-            session.projectId,
-            session.id,
-            (current) => {
-              if (!acceptCompletions || stopping) return { kind: 'unchanged' }
-              const currentGeneration = current.sessionDetailsGeneration
-              if (
-                currentGeneration?.status !== 'running' ||
-                currentGeneration.requestId !== generation.requestId
-              ) {
-                return { kind: 'unchanged' }
-              }
-              return {
-                kind: 'write',
-                session: {
-                  ...current,
-                  sessionDetailsGeneration: {
-                    ...currentGeneration,
-                    status: 'failed',
-                    completedAt: now(),
-                    usageUnavailable: true
-                  }
-                }
-              }
-            }
-          )
-          if (!acceptCompletions || stopping) return
-          publishTransition(recovered)
-          logCompletion(
-            session.id,
-            generation.requestId,
-            'failed',
-            generation.startedAt,
-            generation
-          )
-        }
-      }
-      for (const session of sessions) {
-        if (!acceptCompletions || stopping) return
-        await claimAndAdmit(session)
-      }
+      for (const session of sessions) await recoverSession(session)
       if (!acceptCompletions || stopping) return
       started = true
       for (const session of pendingSaves.splice(0)) {
         void claimAndAdmit(session)
       }
     },
+
+    recoverSession,
 
     afterSessionSaved(session: PersistedChatSession): void {
       if (session.packageOrigin) return

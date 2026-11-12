@@ -97,6 +97,157 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('reports read and parse costs on the pure background snapshot path without transcript content', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(createSession())
+    const snapshot = await repository.loadSessionRecoverySnapshot('project-a', 'session-1')
+    expect(snapshot).toMatchObject({
+      status: 'found',
+      metrics: {
+        sessionBytes: expect.any(Number),
+        authorityReadMs: expect.any(Number),
+        jsonParseMs: expect.any(Number)
+      }
+    })
+    if (snapshot.status !== 'found') throw new Error('Missing snapshot')
+    expect(snapshot.metrics!.sessionBytes).toBeGreaterThan(0)
+    expect(JSON.stringify(snapshot.metrics)).not.toContain('Summarize this file')
+  })
+
+  it('fences unscoped durable-reader repair while a current catalog cleanup commits', async () => {
+    const root = await createStorageRoot()
+    const directory = join(root, 'sessions', 'project-a')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'session-1.json'), '{bad')
+    const repository = new SessionRepository(root)
+    const snapshot = await repository.scanSessionIdentities()
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const cleanup = repository.runWithSessionCatalogSnapshot(snapshot, async () => {
+      entered.resolve()
+      await release.promise
+    })
+    await entered.promise
+    let repaired = false
+    const repair = repository.loadSessionWithDiagnostics('project-a', 'session-1').then(() => {
+      repaired = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const repairedBeforeRelease = repaired
+    release.resolve()
+    await Promise.all([cleanup, repair])
+    expect(repairedBeforeRelease).toBe(false)
+    expect(await repository.runWithSessionCatalogSnapshot(snapshot, async () => undefined)).toBe(
+      false
+    )
+  })
+
+  it('rejects complete cleanup snapshots after authority saves and deletions', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const session = await repository.saveSession(createSession())
+    const beforeSave = await repository.scanSessionIdentities()
+    expect(beforeSave.isComplete).toBe(true)
+    await repository.saveSession({ ...session, cwd: '/new-workspace' })
+    const cleanup = vi.fn(async () => undefined)
+    expect(await repository.runWithSessionCatalogSnapshot(beforeSave, cleanup)).toBe(false)
+    expect(cleanup).not.toHaveBeenCalled()
+    const current = await repository.scanSessionIdentities()
+    expect(await repository.runWithSessionCatalogSnapshot(current, cleanup)).toBe(true)
+    await repository.deleteSession(session.projectId, session.id)
+    expect(await repository.runWithSessionCatalogSnapshot(current, cleanup)).toBe(false)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['unreadable', 'disappearing-project', 'created-project', 'tombstone', 'symlink'])(
+    'keeps identity absence cleanup incomplete for %s catalogs',
+    async (kind) => {
+      const root = await createStorageRoot()
+      const directory = join(root, 'sessions', 'project-a')
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'history.json'), 'not parsed')
+      if (kind === 'tombstone')
+        await mkdir(join(root, 'deleted-sessions', 'deleted-project'), { recursive: true })
+      if (kind === 'symlink')
+        await symlink(join(directory, 'history.json'), join(directory, 'alias.json'))
+      const repository = new SessionRepository(root, {
+        readSessionFile: async () => {
+          throw new Error('Body reads forbidden')
+        },
+        readDirectoryEntries: async (path) => {
+          if (path === directory && kind === 'unreadable')
+            throw Object.assign(new Error('denied'), { code: 'EACCES' })
+          if (path === directory && kind === 'disappearing-project') {
+            await rm(directory, { recursive: true, force: true })
+            throw Object.assign(new Error('gone'), { code: 'ENOENT' })
+          }
+          const entries = await readdir(path, { withFileTypes: true })
+          if (path === join(root, 'sessions') && kind === 'created-project') {
+            await mkdir(join(root, 'sessions', 'new-project'), { recursive: true })
+            await writeFile(join(root, 'sessions', 'new-project', 'new.json'), 'not parsed')
+          }
+          return entries
+        }
+      })
+      expect((await repository.scanSessionIdentities()).isComplete).toBe(false)
+    }
+  )
+
+  it.each(['temp', 'quarantine', 'duplicate', 'pending-package', 'deletion'])(
+    'reserves identities but refuses complete cleanup during %s uncertainty',
+    async (kind) => {
+      const root = await createStorageRoot()
+      const projectId =
+        kind === 'pending-package' ? 'import-12345678-1234-1234-1234-123456789abc' : 'project-a'
+      const directory = join(root, 'sessions', projectId)
+      await mkdir(directory, { recursive: true })
+      const name =
+        kind === 'temp'
+          ? 'history.json.123.tmp'
+          : kind === 'quarantine'
+            ? 'history.json.invalid-100-1'
+            : 'history.json'
+      await writeFile(join(directory, name), 'do not parse')
+      if (kind === 'duplicate') {
+        await mkdir(join(root, 'sessions', 'project-b'), { recursive: true })
+        await writeFile(join(root, 'sessions', 'project-b', 'history.json'), 'do not parse')
+      }
+      if (kind === 'pending-package')
+        await mkdir(join(root, 'session-package-imports', projectId.slice(7)), { recursive: true })
+      if (kind === 'deletion') await writeFile(join(directory, '.project-deletion-committed'), '')
+      const readBody = vi.fn(async () => {
+        throw new Error('Body reads forbidden')
+      })
+      const scan = await new SessionRepository(root, {
+        readSessionFile: readBody
+      }).scanSessionIdentities()
+      expect(scan.isComplete).toBe(false)
+      expect(scan.sessions).toContainEqual({ projectId, id: 'history' })
+      if (kind === 'duplicate') expect(scan.sessions).toHaveLength(2)
+      expect(readBody).not.toHaveBeenCalled()
+      expect(await readFile(join(directory, name), 'utf8')).toBe('do not parse')
+    }
+  )
+
+  it('enumerates complete Session identities without reading any conversation body', async () => {
+    const root = await createStorageRoot()
+    const readBody = vi.fn(async () => {
+      throw new Error('Body reads forbidden')
+    })
+    const repository = new SessionRepository(root, { readSessionFile: readBody })
+    await mkdir(join(root, 'sessions', 'project-a'), { recursive: true })
+    await writeFile(join(root, 'sessions', 'project-a', 'history.json'), 'not parsed', 'utf8')
+    await writeFile(
+      join(root, 'sessions', 'project-a', 'history.json.invalid-100-1'),
+      'retained backup'
+    )
+    const catalog = await repository.scanSessionIdentities()
+    expect(catalog).toMatchObject({
+      isComplete: true,
+      sessions: [{ projectId: 'project-a', id: 'history' }]
+    })
+    expect(readBody).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'deletes binding repair backups when the primary is missing: %s',
     async (missingPrimary) => {
@@ -1061,7 +1212,12 @@ describe('session persistence repository (per-session files)', () => {
   })
 
   it('reports aggregate Session scan scale without exposing catalog identifiers', async () => {
-    const repository = new SessionRepository(await createStorageRoot())
+    const repository = new SessionRepository(await createStorageRoot(), {
+      readSessionFile: async (path) => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return readFile(path, 'utf8')
+      }
+    })
     const projectA = join(storageRoot!, 'sessions', 'project-a')
     const projectB = join(storageRoot!, 'sessions', 'project-b')
     const rawA = JSON.stringify({
@@ -1082,8 +1238,12 @@ describe('session persistence repository (per-session files)', () => {
     expect(scan.scanMetrics).toEqual({
       projectDirectoryCount: 2,
       sessionFileCount: 2,
-      sessionBytes: Buffer.byteLength(rawA, 'utf8') + Buffer.byteLength(rawB, 'utf8')
+      sessionBytes: Buffer.byteLength(rawA, 'utf8') + Buffer.byteLength(rawB, 'utf8'),
+      authorityReadMs: expect.any(Number),
+      jsonParseMs: expect.any(Number)
     })
+    expect(scan.scanMetrics.authorityReadMs).toBeGreaterThanOrEqual(15)
+    expect(scan.scanMetrics.jsonParseMs).toBeGreaterThanOrEqual(0)
     expect(JSON.stringify(scan.scanMetrics)).not.toContain('private-session')
     expect(JSON.stringify(scan.scanMetrics)).not.toContain('project-a')
   })

@@ -12,6 +12,7 @@ import {
   runModuleImpactShadowCli
 } from './module-impact-shadow.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
 const changeImpactManifest = JSON.parse(
   readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8')
@@ -83,11 +84,21 @@ describe('module impact shadow', () => {
       { path: 'src/main/session-persistence/coordinator.ts', status: 'modified' }
     ])
 
-    expect(report.resolved.reasonChains).toContain(
-      'session_persistence -> project_lifecycle -> capability routing only'
+    const manifest = loadModuleImpactManifest()
+    expect(report.shadow.reasonChains).toContain(
+      `session_persistence -> ${manifest.modules.session_persistence.fullTestReason} -> full`
     )
-    expect(report.shadow.testFiles).toContain('src/main/projects/deletion-coordinator.test.ts')
-    expect(report.shadow.testFiles).toContain('src/main/session-persistence/ipc.test.ts')
+    expect(report.shadow.mode).toBe('full')
+    expect(report.shadow.testFiles).toEqual([])
+    expect(report.resolved.lanes).toEqual(changeImpactManifest.laneOrder)
+    expect(manifest.modules.session_persistence.consumerModules).toContain('project_lifecycle')
+    const lifecycle = manifest.modules.project_lifecycle.testFiles
+    expect(Object.values(lifecycle).flat()).toContain(
+      'src/main/projects/deletion-coordinator.test.ts'
+    )
+    expect(manifest.modules.session_persistence.testFiles.contract).toContain(
+      'src/main/session-persistence/ipc.test.ts'
+    )
   })
 
   it('keeps documentation in its own lane when accompanying an owned code change', () => {

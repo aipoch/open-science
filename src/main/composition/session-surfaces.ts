@@ -148,8 +148,27 @@ export async function composeSessionSurfaces({
       })
       const owner = createSessionDetailsOwner({
         sessions: {
-          listSessions: async () =>
-            (await dependencies.sessionPersistenceBackend.loadAll()).sessions,
+          listSessions: async () => {
+            const catalog = await dependencies.sessionPersistenceBackend.list!()
+            if (
+              catalog.diagnostics?.isComplete === false ||
+              catalog.diagnostics?.isProjectDeletionRecoveryComplete === false
+            )
+              return []
+            const sessions = await Promise.all(
+              catalog.sessions
+                .filter((session) => session.needsStartupRecovery)
+                .map((session) =>
+                  dependencies.sessionPersistenceBackend.loadOne({
+                    projectId: session.projectId,
+                    sessionId: session.id
+                  })
+                )
+            )
+            return sessions.filter(
+              (session): session is NonNullable<typeof session> => session !== undefined
+            )
+          },
           mutateSession: (projectId, sessionId, mutation) =>
             dependencies.sessionPersistenceCoordinator.mutateSessionDetailsAuthority(
               projectId,

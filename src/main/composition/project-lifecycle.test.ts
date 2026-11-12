@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   visionDelete: vi.fn(),
   visionReconcile: vi.fn(),
   harnessDelete: vi.fn(),
-  harnessReconcile: vi.fn(),
+  harnessReconcile: vi.fn(async () => []),
   archiveOwner: {
     withProjectDeletion: vi.fn(async (_id, operation) => operation()),
     restoreProjectDeletion: vi.fn(),
@@ -49,7 +49,7 @@ vi.mock('../acp/vision-evidence-repository', () => ({
 vi.mock('../harness-acp/storage-cleanup', () => ({
   HarnessStorageCleanup: class {
     commit = mocks.harnessDelete
-    reconcile = mocks.harnessReconcile
+    planReconciliation = mocks.harnessReconcile
   }
 }))
 vi.mock('../desktop-surface-declarations', () => ({}))
@@ -77,7 +77,10 @@ const fixture = (() => {
     broadcast: vi.fn()
   })
   const dependencies = {
-    researchFilmLifecycle: { deleteSessions: vi.fn(), reconcileSessions: vi.fn() },
+    researchFilmLifecycle: {
+      deleteSessions: vi.fn(),
+      planSessionReconciliation: vi.fn(async () => [])
+    },
     applicationEvents: {},
     notificationInbox: {
       setSessionAvailability: vi.fn(),
@@ -174,7 +177,11 @@ describe('Project lifecycle composition', () => {
     await handlers.reconcile(['session-1'], ['session-1'])
     await expect(broker.request(info)).resolves.toBe(false)
     expect(mocks.visionReconcile).toHaveBeenCalledWith(['session-1'])
-    expect(dependencies.researchFilmLifecycle.reconcileSessions).toHaveBeenCalledWith(['session-1'])
+    expect(mocks.harnessReconcile).not.toHaveBeenCalled()
+    await handlers.planReconciliation?.(['session-1'])
+    expect(dependencies.researchFilmLifecycle.planSessionReconciliation).toHaveBeenCalledWith([
+      'session-1'
+    ])
     expect(mocks.harnessReconcile).toHaveBeenCalledWith(['session-1'])
     const clearHosts = vi.fn()
     result.sessionEnabledComputeHostsOwnerRef.current = { clear: clearHosts } as never

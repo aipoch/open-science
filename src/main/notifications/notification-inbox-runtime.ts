@@ -9,6 +9,7 @@ type NotificationInboxDeletionRuntimeDependencies = Readonly<{
   sessionPersistenceCoordinator: {
     setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void
   }
+  planSessionsReconciliation?: SessionDeletionHandlers['planReconciliation']
   onSessionsDeleted?: (sessionIds: readonly string[]) => Promise<void>
   onSessionsReconciled?: (existingSessionIds: readonly string[]) => Promise<void>
 }>
@@ -19,6 +20,7 @@ export const bindNotificationInboxDeletionRuntime = (
   dependencies: NotificationInboxDeletionRuntimeDependencies
 ): void => {
   dependencies.sessionPersistenceCoordinator.setSessionDeletionHandlers({
+    planReconciliation: dependencies.planSessionsReconciliation,
     commit: async (sessionIds) => {
       await Promise.all([
         dependencies.inbox.invalidateSessions(sessionIds),
