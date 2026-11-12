@@ -278,6 +278,7 @@ it.each(['none', 'auxiliary', 'requested'])(
         nativeConditionalFigureReferenceStarts: () => new Set(),
         recordPaintedOperationBounds: () => undefined,
         captureNativeFigureRenderContext: () => ({ glyphBounds: ['retained'] }),
+        sealNativeMesh4RenderContext: () => false,
         nativeLigatureDualApiCaptureRequired: () => false,
         attachNativeCompositingResources: (snapshot: unknown) => snapshot
       }

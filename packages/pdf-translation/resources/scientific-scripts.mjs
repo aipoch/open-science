@@ -830,6 +830,49 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
     }
   }
   for (const run of runs) run.label = run.label.replace(/[,.;:]+$/u, '')
+  // A lowered callee suffix precedes its argument; require its complete native base.
+  const nativeCallee = (match, run) => {
+    if (run.rise >= 0 || !/^[A-Za-z\p{Script=Greek}\d]{1,3}$/u.test(run.label)) return false
+    const bases = markers.filter(
+      (base) =>
+        base.sourceOffset === match.index &&
+        base.sourceOffset + base.label.length === run.sourceOffset &&
+        /^[A-Za-z\p{Script=Greek}]$/u.test(base.label) &&
+        source.slice(base.sourceOffset, run.sourceOffset) === base.label &&
+        base.scale >= 0.9 &&
+        base.scale <= 1.1 &&
+        Math.abs(base.rise) < 0.01
+    )
+    if (bases.length !== 1) return false
+    const base = bases[0]
+    if (
+      ![base, run].every(
+        (part) =>
+          part.sourceIndices.length === 1 &&
+          Number.isInteger(part.sourceIndices[0]) &&
+          part.sourceIndices[0] >= 0 &&
+          part.bounds?.length === 4 &&
+          part.bounds.every(Number.isFinite) &&
+          part.bounds[0] < part.bounds[2] &&
+          part.bounds[1] < part.bounds[3]
+      ) ||
+      base.sourceIndices[0] + 1 !== run.sourceIndices[0]
+    )
+      return false
+    const h = base.bounds[3] - base.bounds[1]
+    return (
+      run.scale >= base.scale * 0.5 &&
+      run.scale < base.scale * 0.85 &&
+      run.rise >= -h * 0.6 &&
+      run.rise <= -h * 0.05 &&
+      run.bounds[0] > base.bounds[0] &&
+      run.bounds[0] >= base.bounds[2] - h * 0.2 &&
+      run.bounds[0] <= base.bounds[2] + h * 0.5 &&
+      run.bounds[1] + run.bounds[3] < base.bounds[1] + base.bounds[3] &&
+      run.bounds[3] > base.bounds[1] &&
+      run.bounds[3] <= base.bounds[3]
+    )
+  }
   for (const run of runs) {
     const token = sourceTokens.find(
       (match) =>
@@ -839,7 +882,8 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
             /^\([A-Za-z\p{Script=Greek}]{1,3}\)$/u.test(run.label))) &&
         (match.index + match[0].length === run.sourceOffset + run.label.length ||
           ((/^′{1,3}$/u.test(run.label) ||
-            (run.rise < 0 && /^[\p{Script=Greek}]+(?:,[\p{Script=Greek}]+)+$/u.test(run.label))) &&
+            (run.rise < 0 && /^[\p{Script=Greek}]+(?:,[\p{Script=Greek}]+)+$/u.test(run.label)) ||
+            nativeCallee(match, run)) &&
             /^\([A-Za-z\p{Script=Greek}\d−+-]+\)$/u.test(
               match[0].slice(run.sourceOffset + run.label.length - match.index)
             )) ||

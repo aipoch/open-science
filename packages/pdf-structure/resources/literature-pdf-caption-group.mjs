@@ -11514,12 +11514,13 @@ export async function recoverNativeCaptionLane(input) {
 // belong to one literal, contiguous native stream and the next plate stays separate.
 export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, context) {
   try {
+    const table = /^TABLE\s+[IVXLCDM]+\.\s+\p{Lu}/u.test(candidate?.lines?.[0] ?? '')
     if (
       !candidate ||
       candidate.page !== page.pageNumber ||
       candidate.lines?.length !== 1 ||
       candidate.regions ||
-      !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+[.:]\s+\p{L}/u.test(candidate.lines[0]) ||
+      (!table && !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+[.:]\s+\p{L}/u.test(candidate.lines[0])) ||
       /[.!?]$/u.test(candidate.lines[0].trim()) ||
       page.invalidGraphicsBounds !== 0 ||
       context?.pageNumber !== page.pageNumber ||
@@ -11558,9 +11559,13 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
       tail = following[0]
     if (
       !tail ||
-      !/^[\p{Ll}][\p{L}-]{2,20}[.!?]$/u.test(tail.text.trim()) ||
-      Math.abs(tail.x - rect[0]) > 0.02 ||
-      tail.width >= (rect[2] - rect[0]) * 0.3 ||
+      !(table ? /^\p{Lu}{2,}(?:[ -]\p{Lu}{2,})+$/u : /^[\p{Ll}][\p{L}-]{2,20}[.!?]$/u).test(
+        tail.text.trim()
+      ) ||
+      (table
+        ? Math.abs((tail.x * 2 + tail.width - rect[0] - rect[2]) / 2) > tail.fontSize * 0.15
+        : Math.abs(tail.x - rect[0]) > 0.02) ||
+      tail.width >= (rect[2] - rect[0]) * (table ? 0.6 : 0.3) ||
       tail.fontSize >= matches[0].fontSize - 0.7
     )
       return
@@ -11576,7 +11581,7 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
     const terminal = tailOwners[0],
       em = terminal.r.height,
       markerEnd = first.findIndex((_, i) =>
-        /^(?:Fig\.?|Figure)[A-Z]?\d+[.:]$/u.test(
+        (table ? /^TABLE[IVXLCDM]+\.$/u : /^(?:Fig\.?|Figure)[A-Z]?\d+[.:]$/u).test(
           compact(
             first
               .slice(0, i + 1)
@@ -11604,23 +11609,39 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
         (r, i) =>
           Math.abs(r.rect[3] - rect[3]) > 0.02 ||
           (i &&
+            !(table && i === markerEnd + 1) &&
             (r.rect[0] < first[i - 1].rect[2] - em * 0.02 ||
               r.rect[0] - first[i - 1].rect[2] > em * 0.5))
       ) ||
-      punctuation.length !== 1 ||
-      !/^[-–—]$/u.test(punctuation[0].r.str) ||
-      punctuation[0].r.height <= em ||
-      punctuation[0].r.height > em * 1.35 ||
-      body
-        .filter((r) => !punctuation.includes(r))
-        .some((r) => r.r.fontName !== terminal.r.fontName || Math.abs(r.r.height - em) > 0.02) ||
-      compact(
-        body
-          .filter((r) => !punctuation.includes(r))
-          .map((r) => r.r.str)
-          .join('')
-      ).length <
-        compact(candidate.lines[0]).length * 0.65 ||
+      (!table &&
+        (punctuation.length !== 1 ||
+          !/^[-–—]$/u.test(punctuation[0].r.str) ||
+          punctuation[0].r.height <= em ||
+          punctuation[0].r.height > em * 1.35 ||
+          body
+            .filter((r) => !punctuation.includes(r))
+            .some(
+              (r) => r.r.fontName !== terminal.r.fontName || Math.abs(r.r.height - em) > 0.02
+            ) ||
+          compact(
+            body
+              .filter((r) => !punctuation.includes(r))
+              .map((r) => r.r.str)
+              .join('')
+          ).length <
+            compact(candidate.lines[0]).length * 0.65)) ||
+      (table &&
+        (punctuation.length === 0 ||
+          body.some(
+            (r) =>
+              r.r.fontName !== terminal.r.fontName ||
+              !/^[\p{Lu}\d ,./–-]+$/u.test(r.r.str) ||
+              (Math.abs(r.r.height - em) > 0.02 &&
+                Math.abs(r.r.height - matches[0].fontSize) > 0.02)
+          ) ||
+          !body.some((r) => Math.abs(r.r.height - em) < 0.02 && /\p{Lu}{3,}/u.test(r.r.str)) ||
+          matches[0].fontSize <= em ||
+          matches[0].fontSize > em * 1.35)) ||
       terminal.rect[3] - last.rect[3] < em ||
       terminal.rect[3] - last.rect[3] > em * 1.6
     )
@@ -11638,6 +11659,88 @@ export function recoverNativeMixedFontCaptionTail(candidate, page, tokens, conte
       )
     )
       return
+    if (table) {
+      // A smaller small-caps title row must close above a native table header,
+      // with the same segmented opening/divider and a complete lower boundary.
+      const paint = new Map(),
+        rules = collectTableRules(context.operators, context.viewport, paint),
+        bands = []
+      for (const rule of rules
+        .filter(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > tailRect[3] &&
+            r[0] >= rect[0] - em * 4 &&
+            r[2] <= rect[2] + em * 4
+        )
+        .toSorted((a, b) => a[1] - b[1] || a[0] - b[0])) {
+        const last = bands.at(-1)
+        if (last && Math.abs(last[0][1] - rule[1]) < 0.01) last.push(rule)
+        else bands.push([rule])
+      }
+      const opening = bands[0]
+      if (
+        !opening ||
+        opening.length < 3 ||
+        opening.length > 16 ||
+        opening[0][1] - tailRect[3] > em * 2 ||
+        opening[0][0] > rect[0] ||
+        opening.at(-1)[2] < rect[2] ||
+        opening.some(
+          (r, n) =>
+            !valid(paint.get(r.join(','))) ||
+            (n && (r[0] <= opening[n - 1][2] || r[0] - opening[n - 1][2] > em * 0.2))
+        )
+      )
+        return
+      const divider = bands.find(
+        (band, n) =>
+          n > 0 &&
+          band.length === opening.length &&
+          band[0][1] - opening[0][1] >= em &&
+          band[0][1] - opening[0][1] < em * 5 &&
+          band.every(
+            (r, k) =>
+              Math.abs(r[0] - opening[k][0]) < 0.02 &&
+              Math.abs(r[2] - opening[k][2]) < 0.02 &&
+              valid(paint.get(r.join(',')))
+          )
+      )
+      const closing =
+        divider &&
+        bands.find(
+          (band) =>
+            band[0][1] > divider[0][1] + em * 2 &&
+            band[0][0] <= opening[0][0] &&
+            band.at(-1)[2] >= opening.at(-1)[2] &&
+            band.every(
+              (r, n) => valid(paint.get(r.join(','))) && (!n || r[0] <= band[n - 1][2] + em * 0.2)
+            )
+        )
+      if (!divider || !closing) return
+      const frame = [opening[0][0], opening[0][1], opening.at(-1)[2], closing[0][1]],
+        header = inv.records.filter(
+          (r) =>
+            r.part.length &&
+            r.part.every(
+              (p) =>
+                valid(p.g.ink) &&
+                !p.g.rendererSkipped &&
+                p.g.textPaint?.fillAlpha === 1 &&
+                p.g.ink[1] > paint.get(opening[0].join(','))[3] &&
+                p.g.ink[3] < paint.get(divider[0].join(','))[1] &&
+                p.g.ink[0] >= frame[0] &&
+                p.g.ink[2] <= frame[2]
+            )
+        )
+      if (header.length < 3 || inv.evidence.images.some((image) => hit(image.rect, closed))) return
+      for (const [index, state] of inv.evidence.paths) {
+        if (context.operators.argsArray[index]?.[0] === OPS.endPath) continue
+        const path = nativeFigurePathPaint(inv, index, state)
+        if (!path || hit(path.rect, closed)) return
+      }
+      return { ...candidate, lines: [...candidate.lines, tail.text], rect: closed }
+    }
     const lowerCaption = following.find(
         (l) => l.y > tailRect[3] && captionKind(l.text) === 'figure'
       ),

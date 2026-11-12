@@ -2093,7 +2093,21 @@
     "packages/pdf-structure/test/wrapped-prose-header.test.ts",
     "packages/pdf-structure/test/fixtures/native-centered-stage-records.mjs",
     "packages/pdf-structure/test/native-shaded-form-crop.test.ts",
-    "packages/pdf-structure/test/native-peer-figure-barrier.test.ts"
+    "packages/pdf-structure/test/native-peer-figure-barrier.test.ts",
+    "packages/pdf-structure/resources/literature-pdf-figure-native-raster-subcaptions.mjs",
+    "packages/pdf-structure/test/native-raster-panel-subcaptions.test.ts",
+    "packages/pdf-structure/test/native-vector-pair-tail.test.ts",
+    "packages/pdf-structure/resources/literature-pdf-native-bullet-formulas.mjs",
+    "packages/pdf-structure/test/native-bullet-formulas.test.ts",
+    "packages/pdf-structure/resources/literature-pdf-onnx-sessions.mjs",
+    "packages/pdf-structure/test/onnx-session-lifecycle.test.ts",
+    "packages/pdf-structure/test/native-grouped-header-stroke-crop.test.ts",
+    "packages/pdf-structure/test/onnx-stage-worker.test.ts",
+    "packages/pdf-structure/resources/literature-pdf-native-segmented-header.mjs",
+    "packages/pdf-structure/test/fixtures/segmented-header-records.mjs",
+    "packages/pdf-structure/test/fixtures/small-caps-table-caption.mjs",
+    "packages/pdf-structure/test/native-segmented-header.test.ts",
+    "packages/pdf-structure/test/native-small-caps-table-caption.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2770,7 +2784,15 @@
       "packages/pdf-structure/test/table-compact-caption-ownership.test.ts",
       "packages/pdf-structure/test/wrapped-prose-header.test.ts",
       "packages/pdf-structure/test/native-shaded-form-crop.test.ts",
-      "packages/pdf-structure/test/native-peer-figure-barrier.test.ts"
+      "packages/pdf-structure/test/native-peer-figure-barrier.test.ts",
+      "packages/pdf-structure/test/native-raster-panel-subcaptions.test.ts",
+      "packages/pdf-structure/test/native-vector-pair-tail.test.ts",
+      "packages/pdf-structure/test/native-bullet-formulas.test.ts",
+      "packages/pdf-structure/test/onnx-session-lifecycle.test.ts",
+      "packages/pdf-structure/test/native-grouped-header-stroke-crop.test.ts",
+      "packages/pdf-structure/test/onnx-stage-worker.test.ts",
+      "packages/pdf-structure/test/native-segmented-header.test.ts",
+      "packages/pdf-structure/test/native-small-caps-table-caption.test.ts"
     ],
     "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [

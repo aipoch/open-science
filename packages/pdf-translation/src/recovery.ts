@@ -373,7 +373,7 @@ function ordinaryAcademicHeading(source: string): string | undefined {
     .trim()
     .replace(/\s+/gu, ' ')
     .replace(/^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+/iu, '')
-  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study)$/iu.test(
+  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study|related work)$/iu.test(
     heading
   )
     ? heading
@@ -387,6 +387,14 @@ function ordinaryAcademicHeading(source: string): string | undefined {
 function isOrdinaryScientificLabel(source: string): boolean {
   source = source.trim().replace(/^#\s*(params?|parameters)\.?$/i, '$1')
   if (ordinaryAcademicHeading(source) || scientificApiRole.test(source)) return true
+  // Complete descriptive labels only; a containing organization or method
+  // name cannot borrow an exemption from an ordinary word.
+  if (
+    /^(?:commutative algebra|(?:date|chl) range|input sequence|atom attention encoder|physical validity constraints)$/iu.test(
+      source
+    )
+  )
+    return true
   // Publication labels and clinical table summaries are not proper names.
   if (
     /^(?:open[ -]access|original (?:article|research)|research article|review article|systematic review|case report|brief report|short communication|editorial|letter to the editor|edited by|reviewed by|additional information|supplemental material|(?:competing interests|contributorship) statement)$/iu.test(

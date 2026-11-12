@@ -16766,51 +16766,54 @@ for (const fault of [
 
 // An independent fraction already has a protected expectation owner. A new
 // multi-glyph radical row must not make that isolated mathematical E prose.
-test('an independent expectation fraction retains its original mathematical protection', () => {
-  const f = ruledNativeRadicalPage(),
-    p = f.page,
-    native = (
-      str: string,
-      x: number,
-      y: number,
-      width: number,
-      fontName = 'math',
-      hasEOL = false
-    ): PdfLayoutTextItem => ({
-      ...p.items[fontName === 'body' ? 0 : fontName === 'radical' ? f.roots[0] : f.bases[0]],
-      str,
-      width,
-      transform: [10, 0, 0, 10, x, y],
-      fontName,
-      hasEOL
-    })
-  p.items = [
-    native(
-      'The complete preceding explanation describes this independent estimate.',
-      40,
-      550,
-      400,
-      'body',
-      true
-    ),
-    native('E', 200, 518, 7.4),
-    native('1', 224, 524.7, 5, 'math', true),
-    native('√', 216.3, 518.3, 8.3, 'radical'),
-    native('R θ', 224.6, 509.8, 12, 'math', true)
-  ]
-  const evidence = p.nativeReferenceEvidence
-  assert.ok(evidence?.complete)
-  evidence.rules = [
-    { left: 216.3, right: 236.6, baseline: 520.5, halfHeight: 0.2, operators: [8] },
-    { left: 224.6, right: 236.6, baseline: 518.5, halfHeight: 0.2, operators: [9] }
-  ]
-  const before = structuredClone(p),
-    result = extractDocument({ pages: [p], pageCount: 1 }),
-    expectation = result.units.find((u) => u.items.includes('1:1'))!
-  assert.equal(expectation.sourceOnly, true)
-  assert.equal(expectation.preserve, 'formula')
-  assert.deepEqual(p, before)
-})
+test.each(['R θ', 'R T'])(
+  'an independent expectation fraction retains its mathematical protection with %s',
+  (radicand) => {
+    const f = ruledNativeRadicalPage(),
+      p = f.page,
+      native = (
+        str: string,
+        x: number,
+        y: number,
+        width: number,
+        fontName = 'math',
+        hasEOL = false
+      ): PdfLayoutTextItem => ({
+        ...p.items[fontName === 'body' ? 0 : fontName === 'radical' ? f.roots[0] : f.bases[0]],
+        str,
+        width,
+        transform: [10, 0, 0, 10, x, y],
+        fontName,
+        hasEOL
+      })
+    p.items = [
+      native(
+        'The complete preceding explanation describes this independent estimate.',
+        40,
+        550,
+        400,
+        'body',
+        true
+      ),
+      native('E', 200, 518, 7.4),
+      native('1', 224, 524.7, 5, 'math', true),
+      native('√', 216.3, 518.3, 8.3, 'radical'),
+      native(radicand, 224.6, 509.8, 12, 'math', true)
+    ]
+    const evidence = p.nativeReferenceEvidence
+    assert.ok(evidence?.complete)
+    evidence.rules = [
+      { left: 216.3, right: 236.6, baseline: 520.5, halfHeight: 0.2, operators: [8] },
+      { left: 224.6, right: 236.6, baseline: 518.5, halfHeight: 0.2, operators: [9] }
+    ]
+    const before = structuredClone(p),
+      result = extractDocument({ pages: [p], pageCount: 1 }),
+      expectation = result.units.find((u) => u.items.includes('1:1'))!
+    assert.equal(expectation.sourceOnly, true)
+    assert.equal(expectation.preserve, 'formula')
+    assert.deepEqual(p, before)
+  }
+)
 
 for (const fault of [
   'mathematical predecessor',

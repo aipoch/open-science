@@ -18,6 +18,7 @@ import { nativeWholeSourceGlyphObservations } from './literature-pdf-symbol-text
 import { collectClosedFigureFrames, collectTableRules } from './literature-pdf-graphics.mjs'
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
 import { recoverNativeScientificColumns } from './literature-pdf-native-scientific-columns.mjs'
+import { recoverNativeSegmentedHeaderRecords } from './literature-pdf-native-segmented-header.mjs'
 import {
   hasNativeLiteralColumnConflict,
   hasNativeRepeatedLeafAmbiguity
@@ -2041,6 +2042,13 @@ export function refineTable(
   nativeFontRoleWitness
 ) {
   const originalPageItems = pageItems
+  const segmentedHeader = recoverNativeSegmentedHeaderRecords(
+    table,
+    pageItems,
+    captions,
+    rules,
+    nativeRecordContext
+  )
   const leadingCoefficientHeader = recoverNativeRuledCoefficientHeader(
     table,
     pageItems,
@@ -13676,6 +13684,7 @@ export function refineTable(
   // every row and leaf lane independently of a merged detector prediction.
   // Rebuild only a complete proof: each selected source token has one owner.
   const nativeRecordPlan =
+    (segmentedHeader?.groups ? segmentedHeader : undefined) ??
     recoverNativeOverlayMathRecords(table, pageItems, captions, sourceRules) ??
     recoverNativeRuledGroupedStubColumns(table, pageItems, columns, sourceRules) ??
     closedSingleNativeRecord ??
@@ -15388,6 +15397,8 @@ export function refineTable(
     if (!unassigned.length) issues.delete('unassigned-source-text')
     repairs.push('native-centered-numeric-rows-recovered')
   }
+  const segmentedHeaderUnresolved =
+    segmentedHeader && (segmentedHeader.ambiguous || !repairs.includes(segmentedHeader.repair))
   const result = {
     id: table.id,
     cropRect: outputCrop,
@@ -15397,9 +15408,14 @@ export function refineTable(
     unassigned,
     clipped: outputClipped.map((i) => ({ text: i.text, rect: i.rect })),
     excludedCaptionItems: excludedCaptionItems.map((i) => i.text),
-    issues: [...issues],
+    issues: [
+      ...new Set([
+        ...issues,
+        ...(segmentedHeaderUnresolved ? ['native-table-structure-ambiguous'] : [])
+      ])
+    ],
     repairs,
-    reviewCandidate: issues.size === 0,
+    reviewCandidate: issues.size === 0 && !segmentedHeaderUnresolved,
     selectedTextItems: items.length
   }
   const headerResult =

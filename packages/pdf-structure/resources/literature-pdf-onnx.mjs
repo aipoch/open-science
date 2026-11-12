@@ -3,6 +3,7 @@
 // Usage: node resources/pdf-structure/literature-pdf-onnx.mjs PDF ASSET_DIR ORT_PACKAGE_OR_ENTRY PAGES OUT_DIR
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { cpus, platform, arch } from 'node:os'
@@ -15,6 +16,7 @@ import { collectTableRules, findCaptionedNumericTableRegions } from './literatur
 import { repairPdfSymbolText } from './literature-pdf-symbol-text.mjs'
 import { readingRotation, isUprightText } from './literature-pdf-orientation.mjs'
 import { deduplicateTableDetections } from './literature-pdf-onnx-postprocess.mjs'
+import { createOnnxSessionLifecycle } from './literature-pdf-onnx-sessions.mjs'
 
 const [pdfPath, assetDirectory, runtimeDirectory, pageList, outputDirectory, mode] =
   process.argv.slice(2)
@@ -54,8 +56,33 @@ const models = {
     ]
   }
 }
-const sessions = {}
 const modelEvidence = {}
+const phase = (name, action) =>
+  console.log(JSON.stringify({ phase: `onnx:${name}:${action}`, memory: process.memoryUsage() }))
+const verifiedModelBytes = async (name) => {
+  const bytes = await readFile(join(assetDirectory, `${name}.onnx`))
+  assert.equal(
+    createHash('sha256').update(bytes).digest('hex'),
+    models[name].sha256,
+    'Model checksum mismatch.'
+  )
+  return bytes
+}
+const sessions = createOnnxSessionLifecycle(async (name) => {
+  phase(name, 'create')
+  const bytes = await verifiedModelBytes(name),
+    start = performance.now(),
+    session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] })
+  try {
+    assert.deepEqual(session.inputNames, ['pixel_values'])
+  } catch (error) {
+    await session.release()
+    throw error
+  }
+  modelEvidence[name].loadMs = Math.round(performance.now() - start)
+  phase(name, 'created')
+  return session
+}, pages.length === 1)
 const started = performance.now()
 let pdfBytes = await readFile(pdfPath)
 const sourceSha256 = createHash('sha256').update(pdfBytes).digest('hex')
@@ -74,6 +101,8 @@ const task = getDocument({
 pdfBytes = undefined
 
 async function infer(name, png, width, height) {
+  const session = await sessions.get(name)
+  phase(name, 'preprocess')
   const start = performance.now()
   const model = models[name]
   // Pinned conversion's shortest-edge 800 / longest-edge bound; bilinear via existing Sharp.
@@ -98,7 +127,8 @@ async function infer(name, png, width, height) {
   const preprocessMs = performance.now() - start
   let output
   try {
-    output = await sessions[name].run({ pixel_values: tensor })
+    phase(name, 'run')
+    output = await session.run({ pixel_values: tensor })
     const classes = model.labels.length + 1
     assert.equal(output.logits.dims[2], classes)
     assert.equal(output.pred_boxes.dims[2], 4)
@@ -129,6 +159,7 @@ async function infer(name, png, width, height) {
   } finally {
     tensor.dispose()
     for (const value of Object.values(output ?? {})) value.dispose()
+    phase(name, 'disposed-tensors')
   }
 }
 
@@ -139,19 +170,19 @@ function inside(rect, x, y) {
 try {
   await mkdir(outputDirectory, { recursive: true })
   for (const [name, model] of Object.entries(models)) {
-    const bytes = await readFile(join(assetDirectory, `${name}.onnx`))
-    assert.equal(
-      createHash('sha256').update(bytes).digest('hex'),
-      model.sha256,
-      'Model checksum mismatch.'
-    )
-    const start = performance.now()
-    sessions[name] = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] })
-    assert.deepEqual(sessions[name].inputNames, ['pixel_values'])
+    // Keep full pinned-asset verification without retaining unused model buffers.
+    const hash = createHash('sha256')
+    let bytes = 0
+    for await (const chunk of createReadStream(join(assetDirectory, `${name}.onnx`))) {
+      hash.update(chunk)
+      bytes += chunk.length
+    }
+    assert.equal(hash.digest('hex'), model.sha256, 'Model checksum mismatch.')
     modelEvidence[name] = {
       ...model,
-      bytes: bytes.length,
-      loadMs: Math.round(performance.now() - start)
+      bytes,
+      // Zero denotes no session creation; pinned asset evidence remains complete.
+      loadMs: 0
     }
   }
   const document = await task.promise
@@ -170,6 +201,8 @@ try {
       await page.render({ canvas, canvasContext: context, viewport }).promise
       const png = await canvas.encode('png')
       const detection = await infer('detection', png, canvas.width, canvas.height)
+      await sessions.afterDetection()
+      if (pages.length === 1) phase('detection', 'released')
       detection.objects = deduplicateTableDetections(detection.objects)
       const textItems = content.items
         .filter((item) => 'str' in item && item.str.trim())
@@ -338,6 +371,9 @@ try {
   }
   await writeFile(join(outputDirectory, 'onnx-probe.json'), JSON.stringify(report, null, 2) + '\n')
 } finally {
-  await task.destroy()
-  for (const session of Object.values(sessions)) await session.release()
+  try {
+    await task.destroy()
+  } finally {
+    await sessions.close()
+  }
 }

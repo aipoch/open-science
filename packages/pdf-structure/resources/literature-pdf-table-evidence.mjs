@@ -3,6 +3,7 @@ import { isDeepStrictEqual as navigationSourceExact } from 'node:util'
 import { inside } from './literature-pdf-table-geometry.mjs'
 import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { hasNativeNonTableLayout } from './literature-pdf-native-non-table-layout.mjs'
+import { hasNativeBulletFormulaList } from './literature-pdf-native-bullet-formulas.mjs'
 import { joinHorizontalTableRules, classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
 import { groupSourceRowsWithScripts } from './literature-pdf-source-records.mjs'
 import { proveNativeClosedLeafHeader } from './literature-pdf-native-header-grid.mjs'
@@ -4263,6 +4264,7 @@ export function hasTableEvidence(
   if (isNativeCodeListing(table, caption, pageItems)) return false
   if (isCaptionlessRuledActionListing(table, caption, pageItems, sourceRules)) return false
   if (caption) return true
+  if (hasNativeBulletFormulaList(table, pageItems, sourceRules)) return false
   if (isNativeBibliographyWithAffiliationMarkers(table, pageItems)) return false
   if (hasNativeNonTableLayout(table, pageItems, sourceRules)) return false
   if (

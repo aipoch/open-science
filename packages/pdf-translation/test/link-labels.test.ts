@@ -258,17 +258,26 @@ it.each([
   }
 )
 
-it.each([
-  { name: 'unchanged panel', target: '图 2(a)', accepted: true },
-  { name: 'localized parentheses', target: '图 2（a）', accepted: true },
-  { name: 'changed panel letter', target: '图 2(b)', accepted: false },
-  { name: 'missing panel suffix', target: '图 2', accepted: false },
-  { name: 'changed panel number', target: '图 3(a)', accepted: false },
-  { name: 'extra same panel occurrence', target: '图 2(a) 和图 2(a)', accepted: false }
-])('maps only the complete numbered panel: $name', ({ target, accepted }) => {
-  const result = translatedPdfLinkFragment('See Figure 2(a).', `参见${target}。`, '2', 11)
-  expect(result).toEqual(accepted ? { start: 4, text: '2' } : null)
-})
+it.each(
+  [
+    { name: 'unchanged panel', target: '图 2(a)', accepted: true },
+    { name: 'localized parentheses', target: '图 2（a）', accepted: true },
+    { name: 'changed panel letter', target: '图 2(b)', accepted: false },
+    { name: 'changed panel letter case', target: '图 2(A)', accepted: false },
+    { name: 'missing panel suffix', target: '图 2', accepted: false },
+    { name: 'changed panel number', target: '图 3(a)', accepted: false },
+    { name: 'extra same panel occurrence', target: '图 2(a) 和图 2(a)', accepted: false }
+  ].flatMap((testCase) =>
+    ['Figure', 'figure', 'FIG.'].map((sourcePrefix) => ({ ...testCase, sourcePrefix }))
+  )
+)(
+  'maps only the complete numbered panel: $sourcePrefix/$name',
+  ({ target, accepted, sourcePrefix }) => {
+    const source = `See ${sourcePrefix} 2(a).`
+    const result = translatedPdfLinkFragment(source, `参见${target}。`, '2', source.indexOf('2'))
+    expect(result).toEqual(accepted ? { start: 4, text: '2' } : null)
+  }
+)
 
 it.each(
   readPdfTranslationCases<{
@@ -1832,3 +1841,23 @@ it.each(['year', 'author', 'bracket', 'missing-close', 'extra-occurrence'])(
     ).toBeNull()
   }
 )
+
+it.each([
+  { target: '参见3(b)，该模型。', accepted: true },
+  { target: '参见3（b），该模型。', accepted: true },
+  { target: '参见3(B)，该模型。', accepted: false },
+  { target: '参见3(c)，该模型。', accepted: false },
+  { target: '参见3，该模型。', accepted: false },
+  { target: '参见3(b)及3(b)。', accepted: false },
+  { target: '参见3(b)及3(B)。', accepted: false },
+  { target: '参见3(b)及3(c)。', accepted: false },
+  { target: '参见13(b)，该模型。', accepted: false }
+])('maps a unique complete native wrapped compound: $target', ({ target, accepted }) => {
+  const source = '3(b), which uses a model.'
+  expect(translatedPdfLinkFragment(source, target, '3', 0)).toEqual(
+    accepted ? { start: target.indexOf('3'), text: '3' } : null
+  )
+  expect(translatedPdfLinkFragment('3(b) and 3(b)', target, '3', 0)).toBeNull()
+  expect(translatedPdfLinkFragment('3(b) and 3(c)', target, '3', 0)).toBeNull()
+  expect(translatedPdfLinkFragment('3, which uses a model.', target, '3', 0)).toBeNull()
+})

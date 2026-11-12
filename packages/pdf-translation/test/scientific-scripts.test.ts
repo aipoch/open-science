@@ -17,6 +17,62 @@ import {
 
 it.each([
   'valid',
+  'missing-body',
+  'foreign-body',
+  'nonadjacent',
+  'raised',
+  'changed-call',
+  'distant',
+  'missing-bounds'
+] as const)('keeps native lowered callee scripts before repeated arguments: %s', (fault) => {
+  const source = 'Use Qr(t) and Qr(t).',
+    target = '使用Qr(t)与Qr(t)。',
+    markers: ScientificScriptMarker[] = [...source.matchAll(/Qr\(t\)/gu)].flatMap((m, n) => [
+      {
+        label: 'Q',
+        sourceOffset: m.index,
+        scale: 1,
+        rise: 0,
+        sourceIndices: [10 + n * 5],
+        bounds: [100 + n * 40, 700, 108 + n * 40, 708]
+      },
+      {
+        label: 'r',
+        sourceOffset: m.index + 1,
+        scale: 2 / 3,
+        rise: -1.8,
+        sourceIndices: [11 + n * 5],
+        bounds: [108 + n * 40, 698.5, 112 + n * 40, 704]
+      }
+    ])
+  for (const marker of markers) {
+    if (fault === 'foreign-body' && marker.label === 'Q') marker.label = 'R'
+    if (fault === 'nonadjacent' && marker.label === 'r') marker.sourceIndices[0]++
+    if (fault === 'raised' && marker.label === 'r') marker.rise = 1.8
+    if (fault === 'distant' && marker.label === 'r') marker.bounds = [130, 698.5, 134, 704]
+    if (fault === 'missing-bounds') delete marker.bounds
+  }
+  const spans = resolveScientificScriptSpans(
+    source,
+    fault === 'changed-call' ? target.replaceAll('(t)', '(u)') : target,
+    fault === 'missing-body' ? markers.filter((m) => m.label !== 'Q') : markers
+  )
+  expect(spans).toEqual(
+    fault === 'valid'
+      ? [...target.matchAll(/Qr\(t\)/gu)].map((m, n) => ({
+          start: m.index + 1,
+          end: m.index + 2,
+          scale: 2 / 3,
+          rise: -1.8,
+          sourceIndices: [11 + n * 5],
+          sourceOffsets: [[...source.matchAll(/Qr\(t\)/gu)][n].index + 1]
+        }))
+      : []
+  )
+})
+
+it.each([
+  'valid',
   'flat',
   'missing-lower',
   'foreign-object',

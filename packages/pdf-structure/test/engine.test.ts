@@ -477,176 +477,258 @@ it.skipIf(process.platform !== 'win32')(
   30000
 )
 
-it.each(['success', 'transfer-success', 'render-failure', 'inference-failure'])(
-  'releases completed page resources and inference tensors on %s',
-  async (mode) => {
-    const { readFile } = await import('node:fs/promises'),
-      { runInNewContext } = await import('node:vm'),
-      assert = (await import('node:assert/strict')).default,
-      { dirname, resolve } = await import('node:path'),
-      { pathToFileURL } = await import('node:url')
-    const source = (
-      await readFile(new URL('../resources/literature-pdf-onnx.mjs', import.meta.url), 'utf8')
+it.each([
+  'success',
+  'transfer-success',
+  'render-failure',
+  'inference-failure',
+  'structure-success',
+  'structure-failure'
+])('releases completed page resources and inference tensors on %s', async (mode) => {
+  const { readFile } = await import('node:fs/promises'),
+    { runInNewContext } = await import('node:vm'),
+    assert = (await import('node:assert/strict')).default,
+    { dirname, resolve } = await import('node:path'),
+    { pathToFileURL } = await import('node:url'),
+    { createOnnxSessionLifecycle } = await import(
+      new URL('../resources/literature-pdf-onnx-sessions.mjs', import.meta.url).href
     )
-      .replace(/^import\b[\s\S]*?from ['"][^'"]+['"]\n/gm, '')
-      .replace(
-        'await import(pathToFileURL(runtimeEntry).href)',
-        '({ ...runtime, InferenceSession: { create: async (...args) => { const session = await runtime.InferenceSession.create(...args); return { ...session, inputNames: Array.from(session.inputNames) } } } })'
-      )
-      .replaceAll('import.meta.url', "'file:///resources/literature-pdf-onnx.mjs'")
-    const events: string[] = [],
-      canvas = {
+  const source = (
+    await readFile(new URL('../resources/literature-pdf-onnx.mjs', import.meta.url), 'utf8')
+  )
+    .replace(/^import\b[\s\S]*?from ['"][^'"]+['"]\n/gm, '')
+    .replace(
+      'await import(pathToFileURL(runtimeEntry).href)',
+      '({ ...runtime, InferenceSession: { create: async (...args) => { const session = await runtime.InferenceSession.create(...args); return { ...session, inputNames: Array.from(session.inputNames) } } } })'
+    )
+    .replaceAll('import.meta.url', "'file:///resources/literature-pdf-onnx.mjs'")
+  const events: string[] = [],
+    png = Buffer.from('same-pixels'),
+    canvas = {
+      width: 300,
+      height: 300,
+      getContext: () => ({}),
+      encode: async () => png
+    },
+    backing = Buffer.alloc(40),
+    pdfBytes = backing.subarray(7, 20),
+    observed: {
+      data?: Uint8Array
+      offset?: number
+      length?: number
+      sourceSha256?: string
+      rulesReady?: boolean
+    } = {},
+    page = {
+      getTextContent: async () => ({
+        items: [{ str: 'Native value', transform: [10, 0, 0, 10, 30, 270], width: 40, height: 10 }]
+      }),
+      getViewport: () => ({
         width: 300,
         height: 300,
-        getContext: () => ({}),
-        encode: async () => Buffer.from('png')
-      },
-      backing = Buffer.alloc(40),
-      pdfBytes = backing.subarray(7, 20),
-      observed: { data?: Uint8Array; offset?: number; length?: number; sourceSha256?: string } = {},
-      page = {
-        getTextContent: async () => ({ items: [] }),
-        getViewport: () => ({ width: 300, height: 300 }),
-        render: () => ({
-          promise: mode === 'render-failure' ? Promise.reject(Error(mode)) : Promise.resolve()
-        }),
-        getOperatorList: async () => ({}),
-        cleanup: () => events.push('page')
-      },
-      document = {
-        numPages: 1,
-        getPage: async () => page,
-        cleanup: async () => events.push('document')
-      },
-      task = { promise: Promise.resolve(document), destroy: async () => events.push('destroy') }
-    let sessionIndex = 0
-    class Tensor {
-      dispose(): void {
-        events.push('tensor')
+        convertToViewportPoint: (x: number, y: number) => [x, 300 - y]
+      }),
+      render: () => ({
+        promise: mode === 'render-failure' ? Promise.reject(Error(mode)) : Promise.resolve()
+      }),
+      getOperatorList: async () => ({}),
+      cleanup: () => {
+        events.push('page')
+      }
+    },
+    document = {
+      numPages: 1,
+      getPage: async () => page,
+      cleanup: async () => {
+        events.push('document')
+      }
+    },
+    task = {
+      promise: Promise.resolve(document),
+      destroy: async () => {
+        events.push('destroy')
       }
     }
-    const runtime = {
-      env: { versions: { web: '1.29.0' }, wasm: {} },
-      Tensor,
-      InferenceSession: {
-        create: async () => {
-          const index = sessionIndex++
-          return {
-            inputNames: ['pixel_values'],
-            release: async () => events.push(`session:${index}`),
-            run: async () => {
-              if (mode === 'inference-failure') throw Error(mode)
-              return {
-                logits: {
-                  dims: [1, 1, 3],
-                  data: Float32Array.from([-10, -10, 10]),
-                  dispose: () => events.push('logits')
-                },
-                pred_boxes: {
-                  dims: [1, 1, 4],
-                  data: Float32Array.from([0.5, 0.5, 1, 1]),
-                  dispose: () => events.push('boxes')
-                }
+  let sessionIndex = 0
+  class Tensor {
+    dispose(): void {
+      events.push('tensor')
+    }
+  }
+  const runtime = {
+    env: { versions: { web: '1.29.0' }, wasm: {} },
+    Tensor,
+    InferenceSession: {
+      create: async () => {
+        const index = sessionIndex++
+        if (index === 1)
+          expect(events.filter((e) => !['page', 'document'].includes(e)).slice(0, 4)).toEqual([
+            'tensor',
+            'logits',
+            'boxes',
+            'session:0'
+          ])
+        return {
+          inputNames: ['pixel_values'],
+          release: async () => events.push(`session:${index}`),
+          run: async () => {
+            if (mode === 'inference-failure' || (mode === 'structure-failure' && index === 1))
+              throw Error(mode)
+            return {
+              logits: {
+                dims: [1, 1, index === 0 ? 3 : 7],
+                data: Float32Array.from(
+                  index === 1
+                    ? [-10, -10, -10, -10, -10, -10, 10]
+                    : mode.startsWith('structure-')
+                      ? [10, -10, -10]
+                      : [-10, -10, 10]
+                ),
+                dispose: () => events.push('logits')
+              },
+              pred_boxes: {
+                dims: [1, 1, 4],
+                data: Float32Array.from([0.5, 0.5, 1, 1]),
+                dispose: () => events.push('boxes')
               }
             }
           }
         }
       }
     }
-    const chain = {
-        resize: () => chain,
-        removeAlpha: () => chain,
-        toColourspace: () => chain,
-        raw: () => chain,
-        toBuffer: async () => Buffer.alloc(800 * 800 * 3)
+  }
+  const chain = {
+      resize: (width: number, height: number) => {
+        expect([width, height]).toEqual([800, 800])
+        return chain
       },
-      sharp = Object.assign(() => chain, {
+      removeAlpha: () => chain,
+      toColourspace: () => chain,
+      raw: () => chain,
+      extract: (rect: { width: number; height: number }) => {
+        expect(rect.width).toBe(300)
+        expect(rect.height).toBe(300)
+        return chain
+      },
+      png: () => chain,
+      toBuffer: async () => Buffer.alloc(800 * 800 * 3)
+    },
+    sharp = Object.assign(
+      (input: unknown) => {
+        if (!sessionIndex || sessionIndex === 1) expect(input).toBe(png)
+        return chain
+      },
+      {
         versions: { sharp: 'test' },
         kernel: { linear: 'linear' }
-      })
-    const run = runInNewContext(`(async()=>{${source}})()`, {
-      assert,
-      dirname,
-      join,
-      resolve,
-      pathToFileURL,
-      runtime,
-      sharp,
-      performance,
-      process: {
-        argv: ['node', 'script', 'source.pdf', 'assets', 'runtime.mjs', '1', 'out', 'production'],
-        versions: {},
-        memoryUsage: () => ({}),
-        resourceUsage: () => ({ maxRSS: 0 })
-      },
-      stat: async () => ({ size: 13, isDirectory: () => false }),
-      readFile: async (path: string) =>
-        path.endsWith('.onnx')
-          ? Buffer.from(path.includes('detection') ? 'detection' : 'structure')
-          : pdfBytes,
-      createHash: () => ({
-        update: (bytes: Buffer) => ({
-          digest: () =>
-            bytes.toString() === 'detection'
-              ? '5be82ec9d157814ea8616588398d7baec17aed0780b870f7adf24b280ee1b5aa'
-              : bytes.toString() === 'structure'
-                ? '2c90a63298df61006a45267932f47b345a8b104ce53fd504eacf11aee3c05a41'
-                : 'source'
-        })
-      }),
-      createRequire: () => ({ resolve: () => '/pdfjs/package.json' }),
-      getDocument: (options: { data: Uint8Array }) => {
-        observed.data = options.data
-        observed.offset = options.data.byteOffset
-        observed.length = options.data.byteLength
-        if (mode === 'transfer-success')
-          structuredClone(options.data.buffer, { transfer: [options.data.buffer] })
-        return task
-      },
-      createCanvas: () => canvas,
-      mkdir: async () => undefined,
-      writeFile: async (_path: string, data: string) => {
-        observed.sourceSha256 = JSON.parse(data).sourceSha256
-      },
-      repairPdfSymbolText: async (_page: unknown, content: unknown) => content,
-      readingRotation: () => 0,
-      isUprightText: () => true,
-      collectTableRules: () => [],
-      findCaptionedNumericTableRegions: () => [],
-      deduplicateTableDetections: (objects: unknown) => objects,
-      cpus: () => [],
-      platform: () => 'test',
-      arch: () => 'test',
-      version: 'test',
-      console: { log: () => undefined }
-    })
-    if (mode === 'success' || mode === 'transfer-success') await run
-    else await expect(run).rejects.toThrow(mode)
-    expect.soft(observed.data?.buffer).toBe(pdfBytes.buffer)
-    expect.soft(observed.data?.byteOffset).toBe(pdfBytes.byteOffset)
-    expect(observed.data?.byteLength).toBe(pdfBytes.byteLength)
-    expect(observed.offset).toBe(7)
-    expect(observed.length).toBe(13)
-    if (mode === 'transfer-success') expect(observed.data?.byteLength).toBe(0)
-    expect.soft([canvas.width, canvas.height]).toEqual([1, 1])
-    expect(events).toContain('page')
-    expect.soft(events).toContain('document')
-    expect(events).toContain('destroy')
-    expect(events).toContain('session:0')
-    expect(events).toContain('session:1')
-    if (mode !== 'render-failure') expect.soft(events).toContain('tensor')
-    if (mode === 'success' || mode === 'transfer-success') {
-      expect(observed.sourceSha256).toBe('source')
-      expect(events).toEqual([
-        'tensor',
-        'logits',
-        'boxes',
-        'page',
-        'document',
-        'destroy',
-        'session:0',
-        'session:1'
+      }
+    )
+  const run = runInNewContext(`(async()=>{${source}})()`, {
+    assert,
+    dirname,
+    join,
+    resolve,
+    pathToFileURL,
+    runtime,
+    createOnnxSessionLifecycle,
+    sharp,
+    performance,
+    process: {
+      argv: ['node', 'script', 'source.pdf', 'assets', 'runtime.mjs', '1', 'out', 'production'],
+      versions: {},
+      memoryUsage: () => ({}),
+      resourceUsage: () => ({ maxRSS: 0 })
+    },
+    stat: async () => ({ size: 13, isDirectory: () => false }),
+    readFile: async (path: string) =>
+      path.endsWith('.onnx')
+        ? Buffer.from(path.includes('detection') ? 'detection' : 'structure')
+        : pdfBytes,
+    createReadStream: async function* (path: string) {
+      yield Buffer.from(path.includes('detection') ? 'detection' : 'structure')
+    },
+    createHash: () => {
+      const chunks: Buffer[] = []
+      const hash = {
+        update(bytes: Buffer) {
+          chunks.push(Buffer.from(bytes))
+          return hash
+        },
+        digest: () => {
+          const bytes = Buffer.concat(chunks)
+          return bytes.toString() === 'detection'
+            ? '5be82ec9d157814ea8616588398d7baec17aed0780b870f7adf24b280ee1b5aa'
+            : bytes.toString() === 'structure'
+              ? '2c90a63298df61006a45267932f47b345a8b104ce53fd504eacf11aee3c05a41'
+              : 'source'
+        }
+      }
+      return hash
+    },
+    createRequire: () => ({ resolve: () => '/pdfjs/package.json' }),
+    getDocument: (options: { data: Uint8Array }) => {
+      observed.data = options.data
+      observed.offset = options.data.byteOffset
+      observed.length = options.data.byteLength
+      if (mode === 'transfer-success')
+        structuredClone(options.data.buffer, { transfer: [options.data.buffer] })
+      return task
+    },
+    createCanvas: () => canvas,
+    mkdir: async () => undefined,
+    writeFile: async (_path: string, data: string) => {
+      observed.sourceSha256 = JSON.parse(data).sourceSha256
+    },
+    repairPdfSymbolText: async (_page: unknown, content: unknown) => content,
+    readingRotation: () => 0,
+    isUprightText: () => true,
+    collectTableRules: () => {
+      observed.rulesReady = true
+      return [[20, 40, 60, 40]]
+    },
+    findCaptionedNumericTableRegions: (text: unknown, rules: unknown) => {
+      expect(text).toEqual([
+        { text: 'Native value', x: 30, baseline: 30, width: 60, height: 15, horizontal: true }
       ])
-    }
+      expect(rules).toEqual([[20, 40, 60, 40]])
+      return []
+    },
+    deduplicateTableDetections: (objects: unknown) => objects,
+    cpus: () => [],
+    platform: () => 'test',
+    arch: () => 'test',
+    version: 'test',
+    console: { log: () => undefined }
+  })
+  if (mode.endsWith('success')) await run
+  else await expect(run).rejects.toThrow(mode)
+  expect.soft(observed.data?.buffer).toBe(pdfBytes.buffer)
+  expect.soft(observed.data?.byteOffset).toBe(pdfBytes.byteOffset)
+  expect(observed.data?.byteLength).toBe(pdfBytes.byteLength)
+  expect(observed.offset).toBe(7)
+  expect(observed.length).toBe(13)
+  if (mode === 'transfer-success') expect(observed.data?.byteLength).toBe(0)
+  expect.soft([canvas.width, canvas.height]).toEqual([1, 1])
+  expect(events).toContain('page')
+  expect.soft(events).toContain('document')
+  expect(events).toContain('destroy')
+  if (mode === 'render-failure') expect(sessionIndex).toBe(0)
+  else expect(events).toContain('session:0')
+  if (mode.startsWith('structure-')) expect(events).toContain('session:1')
+  else expect(events).not.toContain('session:1')
+  if (mode !== 'render-failure') expect.soft(events).toContain('tensor')
+  if (mode.endsWith('success')) {
+    expect(observed.sourceSha256).toBe('source')
+    expect(events).toEqual([
+      'tensor',
+      'logits',
+      'boxes',
+      'session:0',
+      ...(mode === 'structure-success' ? ['tensor', 'logits', 'boxes'] : []),
+      'page',
+      'document',
+      'destroy',
+      ...(mode === 'structure-success' ? ['session:1'] : [])
+    ])
   }
-)
+})
