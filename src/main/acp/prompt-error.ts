@@ -21,7 +21,7 @@ export type PromptErrorContext = {
 }
 
 // The innermost provider detail pulled from a wrapped error message.
-type UpstreamDetail = { text: string; type?: string; status?: number; code?: string | number }
+type UpstreamDetail = { text: string; type?: string; status?: number }
 
 const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 300
 
@@ -131,9 +131,8 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
 
   try {
     const parsed = JSON.parse(jsonText) as {
-      error?: { message?: unknown; type?: unknown; status?: unknown; code?: unknown }
+      error?: { message?: unknown; type?: unknown; status?: unknown }
       message?: unknown
-      code?: unknown
     }
     const err = parsed.error
     const text =
@@ -153,10 +152,8 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
         : undefined
     const wrappedStatus = message.slice(0, braceStart).match(/\b([45]\d{2})\b/)?.[1]
 
-    const code = err?.code ?? parsed.code
     return {
       text,
-      code: typeof code === 'string' || typeof code === 'number' ? code : undefined,
       type: typeof err?.type === 'string' ? err.type : undefined,
       status: nestedStatus ?? (wrappedStatus ? Number(wrappedStatus) : undefined)
     }
@@ -424,8 +421,7 @@ export const collectPromptFailureFacts = (
             ? 'quota_exceeded'
             : data.codexErrorInfo === 'serverOverloaded'
               ? 'overloaded_error'
-              : ((responseMessage ? upstream?.code : undefined) ??
-                upstream?.type ??
+              : (upstream?.type ??
                 (!isProviderErrorKind(error) && data.errorKind !== 'unknown'
                   ? data.errorKind
                   : undefined) ??
