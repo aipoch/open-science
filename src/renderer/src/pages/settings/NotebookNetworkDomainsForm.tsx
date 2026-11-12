@@ -1,11 +1,13 @@
-import { TrustedPrivateServices } from './TrustedPrivateServices'
-import { SettingsSection } from './SettingsLayout'
+import {
+  NotebookNetworkAccessEditor,
+  type NetworkEditorLeaveState
+} from './NotebookNetworkAccessEditor'
+export type { NetworkEditorLeaveState } from './NotebookNetworkAccessEditor'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { LoaderCircle } from 'lucide-react'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { type NotebookNetworkSettings } from '../../../../shared/notebook-network-settings'
 import {
   type NotebookNetworkStatus,
   type NotebookNetworkStatusReason
@@ -15,11 +17,9 @@ import { ErrorNotice } from '@/components/error-notice'
 import { Notice } from '@/components/notice'
 import { formatBytes } from '../../../../shared/update'
 import { Button } from '@/components/ui/button'
-import { useSettingsStore } from '@/stores/settings-store'
 
 // Product/runtime names are technical identifiers, shared unchanged across locales.
 const RUNTIME_COMPONENT_NAMES = { node: 'Node.js', powershell: 'PowerShell' } as const
-type FormMessage = Readonly<{ kind: 'success' | 'error'; text: string }>
 
 const statusReasonLabel = (
   reason: NotebookNetworkStatusReason,
@@ -46,46 +46,17 @@ const statusReasonLabel = (
   }
 }
 
-export type NetworkEditorLeaveState = Readonly<{ dirty: boolean; busy: boolean }>
 const NotebookNetworkDomainsForm = ({
   onLeaveStateChange
 }: {
   onLeaveStateChange?: (state: NetworkEditorLeaveState | null) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const saved = useSettingsStore((state) => state.notebookNetwork)
-  const setNotebookNetwork = useSettingsStore((state) => state.setNotebookNetwork)
-  const [draft, setDraft] = useState<NotebookNetworkSettings>(saved)
-  const [baseAllowedDomains, setBaseAllowedDomains] = useState(saved.allowedDomains)
-  const [baseline, setBaseline] = useState(saved)
-  const [privateEditing, setPrivateEditing] = useState(false)
-  const mounted = useRef(true)
-  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline) || privateEditing
-  const [message, setMessage] = useState<FormMessage | undefined>()
-  const [isSaving, setIsSaving] = useState(false)
-  const [observedSettings, setObservedSettings] = useState(saved)
-  // Defer external snapshots until edits end, retaining their original merge baseline.
-  if (observedSettings !== saved && !dirty && !isSaving) {
-    setObservedSettings(saved)
-    setDraft(saved)
-    setBaseline(saved)
-    setBaseAllowedDomains(saved.allowedDomains)
-  }
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [cancelError, setCancelError] = useState(false)
-  useEffect(() => {
-    onLeaveStateChange?.({ dirty, busy: isSaving })
-  }, [dirty, isSaving, onLeaveStateChange])
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      onLeaveStateChange?.(null)
-    }
-  }, [onLeaveStateChange])
   const preparing = isInstalling || status.kind === 'checking'
   const busy = preparing || isRemoving
   const preparation = status.kind === 'checking' ? status.runtimePreparation : undefined
@@ -180,36 +151,12 @@ const NotebookNetworkDomainsForm = ({
     }
   }
 
-  const save = async (): Promise<void> => {
-    if (isSaving || privateEditing) return
-    setIsSaving(true)
-    setMessage(undefined)
-    try {
-      const next = await setNotebookNetwork(
-        draft,
-        baseAllowedDomains,
-        baseline.trustedPrivateDestinations ?? []
-      )
-      if (!mounted.current) return
-      setObservedSettings(useSettingsStore.getState().notebookNetwork)
-      setBaseline(next)
-      setDraft(next)
-      setBaseAllowedDomains(next.allowedDomains)
-      setMessage({ kind: 'success', text: t('Network rules saved.') })
-    } catch {
-      if (!mounted.current) return
-      setMessage({
-        kind: 'error',
-        text: t('Could not save network rules. Reopen this page and try again.')
-      })
-    } finally {
-      if (mounted.current) setIsSaving(false)
-    }
-  }
-
   return (
     <div className="space-y-6 p-5">
-      <section aria-label={t('Notebook network protection')}>
+      <section
+        aria-label={t('Notebook network protection')}
+        hidden={status.kind === 'ready' && window.api.platform !== 'win32'}
+      >
         <div className="rounded-xl border border-border bg-bg-10 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1 basis-60">
@@ -403,80 +350,12 @@ const NotebookNetworkDomainsForm = ({
         </div>
       </section>
 
-      <SettingsSection
-        title={t('Public internet access')}
-        description={t(
-          'HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.'
-        )}
-      >
-        {status.kind !== 'checking' && status.kind !== 'ready' ? (
-          <InlineNotice className="mt-3" level="warning">
-            {t('Protection is not active. These rules apply only to protected execution.')}
-          </InlineNotice>
-        ) : null}
-      </SettingsSection>
-
-      <TrustedPrivateServices
-        rules={(draft.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)}
-        grants={(saved.destinationGrants ?? []).filter((grant) => grant.revokedAt === undefined)}
-        onRevoke={async (id) => {
-          await setNotebookNetwork(
-            saved,
-            saved.allowedDomains,
-            saved.trustedPrivateDestinations ?? [],
-            [id]
-          )
-        }}
-        disabled={isSaving}
-        onEditingChange={setPrivateEditing}
-        onChange={(rules) => {
-          setMessage(undefined)
-          setDraft({
-            ...draft,
-            trustedPrivateDestinations: [
-              ...rules,
-              ...(draft.trustedPrivateDestinations ?? []).filter((rule) => rule.managedGrantId)
-            ]
-          })
-        }}
-      />
-
-      {message?.kind === 'error' ? (
-        <InlineNotice level="error" role="alert">
-          {message.text}
+      {status.kind !== 'checking' && status.kind !== 'ready' ? (
+        <InlineNotice level="warning">
+          {t('Protection is not active. These rules apply only to protected execution.')}
         </InlineNotice>
-      ) : message ? (
-        <p className="text-xs text-muted-foreground" role="status">
-          {message.text}
-        </p>
       ) : null}
-      <div className="sticky bottom-0 -mx-5 border-t border-border bg-card px-5 py-3">
-        <p className="mb-3 text-xs leading-5 text-muted-foreground">
-          {t('Saving rules resets protected connections and may interrupt transfers.')}
-        </p>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground" role="status">
-            {dirty ? t('Unsaved changes') : t('No unsaved changes')}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              disabled={isSaving || privateEditing}
-              onClick={() => {
-                setDraft(saved)
-                setBaseline(saved)
-                setBaseAllowedDomains(saved.allowedDomains)
-                setMessage(undefined)
-              }}
-            >
-              {t('Cancel')}
-            </Button>
-            <Button type="button" onClick={() => void save()} disabled={isSaving || privateEditing}>
-              {isSaving ? t('Saving…') : t('Save changes')}
-            </Button>
-          </div>
-        </div>
-      </div>
+      <NotebookNetworkAccessEditor onLeaveStateChange={onLeaveStateChange} />
     </div>
   )
 }

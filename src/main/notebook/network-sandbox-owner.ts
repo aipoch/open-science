@@ -1,3 +1,4 @@
+import { strictNetworkRuleMatches } from '@aipoch/notebook-network-sandbox/network-address'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   destinationGrantAllows,
@@ -379,6 +380,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private sandbox: NotebookNetworkSandbox | undefined
   private initializePromise: Promise<void> | undefined
   private initialized = false
+  private policyAbort = new AbortController()
   private settings: NotebookNetworkSettings | undefined
   private trustBundle: NotebookTrustBundle | undefined
   private readonly nextExecutionGrants = new Map<string, Set<string>>()
@@ -758,6 +760,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
           if (activeSignal?.aborted) return false
+          const policySignal = this.policyAbort.signal
+          const liveSettings =
+            this.settings ?? normalizeNotebookNetworkSettings(await this.options.getSettings())
+          if (policySignal.aborted) return false
+          if (liveSettings.mode === 'strict')
+            return strictNetworkRuleMatches(
+              liveSettings.strictWhitelist ?? [],
+              request.host,
+              request.port ?? 443,
+              request.protocol ?? 'https'
+            )
           if (request.addresses) {
             if (!executionActive || !activeExecutionId || request.signal.aborted) return false
             // This snapshot is emitted by the trusted gateway, never parsed from process output.
@@ -814,7 +827,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               risks: [],
               blockReason: request.reason ?? 'approval-required'
             }
-            const signal = activeSignal ?? new AbortController().signal
+            const signal = AbortSignal.any([
+              policySignal,
+              request.signal,
+              ...(activeSignal ? [activeSignal] : [])
+            ])
             let approvedOnceAddresses: readonly string[] = addresses
             const result = this.options.requestDecision({
               onOnceGrant: (approved) => {
@@ -909,7 +926,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           existingConnections.add(request.canResume ?? (() => !request.signal.aborted))
           connections.set(key, existingConnections)
           if (existing) return existing
-          const signal = activeSignal ?? new AbortController().signal
+          const signal = AbortSignal.any([
+            policySignal,
+            request.signal,
+            ...(activeSignal ? [activeSignal] : [])
+          ])
           const canResume = (): boolean =>
             executionActive &&
             generation === executionGeneration &&
@@ -1288,6 +1309,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         decisionSource: 'aborted',
         message: 'The network access request was cancelled. No access was granted.'
       })
+    const policySignal = this.policyAbort.signal
+    const liveSettings =
+      this.settings ?? normalizeNotebookNetworkSettings(await this.options.getSettings())
+    if (liveSettings.mode === 'strict' || policySignal.aborted) {
+      return this.networkAccessResult('', 'blocked', request.runtime, {
+        message:
+          'Authorization is unavailable in strict mode. Add the destination manually to the whitelist.'
+      })
+    }
     if (request.recordId) {
       const record = this.blockedRecords.get(request.recordId)
       if (
@@ -1300,7 +1330,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       // A query issued before the user responds must observe the committed settings, not the
       // intermediate continuing state in the session transaction.
       const decision = record ? await record.result : undefined
-      if (request.signal?.aborted)
+      if (request.signal?.aborted || policySignal.aborted)
         return this.networkAccessResult('', 'denied', request.runtime, {
           decisionSource: 'aborted'
         })
@@ -1317,6 +1347,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           grant.projectId === request.projectId &&
           grant.sessionId === request.sessionId
       )
+      if (policySignal.aborted) return this.networkAccessResult('', 'blocked', request.runtime)
       if (saved && persisted?.status !== 'pending')
         return this.networkAccessResult(
           saved.hostname,
@@ -1380,10 +1411,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           'The current session allows public network access without approval. Explicit deny rules still apply.'
       })
     }
-    const settings = normalizeNotebookNetworkSettings(
-      this.settings ?? (await this.options.getSettings())
-    )
-    this.settings = settings
+    const settings = liveSettings
     if (
       settings.trustedPrivateDestinations?.some(
         (grant) =>
@@ -1424,7 +1452,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   applySettings(settings: NotebookNetworkSettings): void {
-    this.settings = normalizeNotebookNetworkSettings(settings)
+    const next = normalizeNotebookNetworkSettings(settings)
+    if (next.mode !== this.settings?.mode || next.mode === 'strict') {
+      this.policyAbort.abort()
+      this.policyAbort = new AbortController()
+    }
+    this.settings = next
     try {
       if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
       this.log.info('network policy applied', {
@@ -1983,13 +2016,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       fields: { platform: this.platform }
     })
     try {
-      this.settings = normalizeNotebookNetworkSettings(
-        this.settings ?? (await this.options.getSettings())
-      )
+      const storedSettings = await this.options.getSettings()
+      this.settings ??= normalizeNotebookNetworkSettings(storedSettings)
       const parentProxy = await this.options.getParentProxy?.()
       this.trustBundle = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
-      this.sandbox = this.createSandbox(this.settings, parentProxy)
+      const initialSettings = this.settings
+      this.sandbox = this.createSandbox(initialSettings, parentProxy)
       await this.sandbox.initialize()
+      if (this.settings !== initialSettings)
+        this.sandbox.updatePolicy(buildNotebookNetworkPolicy(this.settings))
       this.initialized = true
       operation.complete({
         customDomainCount: this.settings.allowedDomains.length,
@@ -2463,7 +2498,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       purpose?: 'probe' | 'block'
     }
   ): Promise<boolean> {
-    if (request.signal.aborted) return Promise.resolve(false)
+    if (request.signal.aborted || this.settings?.mode === 'strict') return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
     // Read live authority on every connection/probe so another session or a later downgrade

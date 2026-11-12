@@ -549,6 +549,8 @@
         "e2e/pdf-translation-performance.spec.ts",
         "e2e/runtime-approval.spec.ts",
         "e2e/network-destination-approval.spec.ts",
+        "e2e/notebook-network-entry.spec.ts",
+        "e2e/notebook-network-modes.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
         "e2e/session-wait-status.spec.ts",

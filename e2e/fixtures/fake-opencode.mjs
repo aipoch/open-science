@@ -2246,6 +2246,45 @@ if (process.argv.includes('--version')) {
             if (!run.runId) throw new Error('WSL background admission has no runId')
           })
           reply = 'WSL background task submitted for cancellation.'
+        } else if (/Verify strict Notebook network port (\d+) (blocked|allowed)/u.test(prompt)) {
+          const [, port, expected] =
+            /Verify strict Notebook network port (\d+) (blocked|allowed)/u.exec(prompt)
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const listed = toolResult(
+              'list_notebook_runtimes',
+              await client.callTool({ name: 'list_notebook_runtimes', arguments: {} })
+            )
+            const python = listed.runtimes.find(
+              (runtime) =>
+                runtime.language === 'python' && runtime.source === 'external' && runtime.runnable
+            )
+            if (!python) throw new Error('No runnable external Python')
+            toolResult(
+              'notebook_bind_runtime',
+              await client.callTool({
+                name: 'notebook_bind_runtime',
+                arguments: { language: 'python', runtimeId: python.runtimeId }
+              })
+            )
+            const code = `import urllib.request, urllib.error\ntry:\n    print(urllib.request.urlopen("http://localhost:${port}/", timeout=10).read().decode())\nexcept urllib.error.HTTPError as error:\n    print(error.read().decode())`
+            const result = toolResult(
+              'notebook_execute',
+              await client.callTool(
+                { name: 'notebook_execute', arguments: { language: 'python', code } },
+                undefined,
+                { timeout: 120000, resetTimeoutOnProgress: true }
+              ),
+              { allowToolError: true }
+            )
+            const output = JSON.stringify(result)
+            if (
+              !output.includes(
+                expected === 'allowed' ? 'strict-e2e-ok' : 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED'
+              )
+            )
+              throw new Error(`Unexpected strict Notebook result: ${output}`)
+          })
+          reply = `Strict Notebook ${expected} verified.`
         } else if (/Verify network destination approval port (\d+)/u.test(prompt)) {
           const port = /Verify network destination approval port (\d+)/u.exec(prompt)[1]
           const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`

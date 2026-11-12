@@ -4970,3 +4970,121 @@ describe('trusted gateway destination records', () => {
     await f.owner.dispose()
   })
 })
+
+it.each(['settings', 'sandbox'] as const)(
+  'applies strict policy selected while %s initialization is pending',
+  async (phase) => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const getSettings = vi.fn(async () => {
+      if (phase === 'settings') await pending
+      return DEFAULT_NOTEBOOK_NETWORK_SETTINGS
+    })
+    if (phase === 'sandbox') backend.initialize.mockImplementationOnce(() => pending)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'linux'
+    })
+    const started = owner.initialize()
+    await vi.waitFor(() =>
+      expect(phase === 'settings' ? getSettings : backend.initialize).toHaveBeenCalled()
+    )
+    owner.applySettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'strict',
+      strictWhitelist: []
+    })
+    release()
+    await started
+    if (phase === 'sandbox')
+      expect(backend.updatePolicy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mode: 'strict', strictWhitelist: [] })
+      )
+    await expect(
+      owner.requestNetworkAccess({
+        hostname: 'example.org',
+        projectId: 'p',
+        sessionId: 's',
+        runtime: 'python',
+        reason: 'test'
+      })
+    ).resolves.toMatchObject({ status: 'blocked' })
+    await owner.dispose()
+  }
+)
+
+it('aborts pending approvals on Strict and rejects old/full-access grants', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'strict-pending-'))
+  fixtureDirectories.push(root)
+  let resolveDecision!: (choice: 'allowOnce') => void
+  const requestDecision = vi.fn((request: { signal?: AbortSignal }) => {
+    expect(request.signal).toBeDefined()
+    return new Promise<'allowOnce'>((resolve) => {
+      resolveDecision = resolve
+    })
+  })
+  let fullAccess = false
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: root,
+    temporaryRoot: join(root, 'commands'),
+    platform: 'linux',
+    getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    persistAlwaysAllow: vi.fn(),
+    requestDecision,
+    hasFullAccess: () => fullAccess
+  })
+  const wrapped = await owner.wrap({
+    executable: '/bin/sh',
+    args: ['-c', 'true'],
+    cwd: root,
+    env: {},
+    commandText: 'true',
+    executionReference: 'strict-pending-run',
+    sessionId: 's',
+    projectId: 'p',
+    runtime: 'bash',
+    filesystem: {
+      readOnlyRoots: [],
+      readWriteRoots: [root],
+      deniedReadRoots: [],
+      deniedWriteRoots: []
+    }
+  })
+  const end = wrapped.beginExecution!()
+  const pending = backend.request!({
+    host: 'localhost',
+    port: 80,
+    protocol: 'http',
+    addresses: ['127.0.0.1'],
+    purpose: 'block'
+  })
+  await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
+  const decisionRequest = requestDecision.mock.calls[0]![0] as unknown as { signal: AbortSignal }
+  owner.applySettings({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, mode: 'strict', strictWhitelist: [] })
+  expect(decisionRequest.signal.aborted).toBe(true)
+  fullAccess = true
+  await expect(
+    backend.request!({ host: 'localhost', port: 80, protocol: 'http', addresses: ['127.0.0.1'] })
+  ).resolves.toBe(false)
+  await expect(
+    owner.requestNetworkAccess({
+      hostname: 'localhost',
+      recordId: 'stale-record',
+      sessionId: 's',
+      projectId: 'p',
+      reason: 'test',
+      runtime: 'bash'
+    })
+  ).resolves.toMatchObject({ status: 'blocked' })
+  owner.applySettings(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+  resolveDecision('allowOnce')
+  await expect(pending).resolves.toBe(false)
+  end()
+  await wrapped.cleanup('exit', { processesTerminated: true })
+  await owner.dispose()
+})

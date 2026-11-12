@@ -704,6 +704,8 @@ class SettingsService {
     const operation = startDiagnosticOperation(this.log, { operation: 'settings-load' })
     try {
       operation.phase('read-authority')
+      // Publish the durable one-time network migration before any renderer takes its baseline.
+      await this.notebookNetwork.get()
       const stored = await this.repository.getSettings()
       operation.phase('migrate-legacy-key-refs')
       const settings = await this.migrateLegacyKeyRefs(stored)

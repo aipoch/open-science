@@ -484,7 +484,7 @@ const NotebookNetworkApprovalDetail = ({
         <dd className="break-all font-mono text-foreground">
           {formatNetworkHostname(approval.hostname)}
         </dd>
-        <dt>{t('Protocol')}</dt>
+        <dt>{t('Network protocol')}</dt>
         <dd className="font-mono text-foreground">{approval.protocol.toUpperCase()}</dd>
         <dt>{t('Port')}</dt>
         <dd className="font-mono text-foreground">

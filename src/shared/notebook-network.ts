@@ -1,18 +1,22 @@
+import { normalizeStrictWhitelist, normalizeWhitelistGroups } from './notebook-network-strict'
 import { normalizeNetworkDestinationGrants } from './network-destination-grants'
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import {
   OPEN_SCIENCE_DOMAIN_GROUP_IDS,
+  OPEN_SCIENCE_DOMAIN_GROUPS,
   formatNetworkHostname,
   requiresNetworkException,
   normalizeNetworkHostname,
   type OpenScienceDomainGroupId,
-  type OpenScienceDomainGroup,
   type TrustedPrivateDestination,
   type NotebookNetworkSettings,
   type NotebookNetworkPolicy
 } from './notebook-network-settings'
 export { formatNetworkHostname, normalizeNetworkHostname } from './notebook-network-settings'
-export { OPEN_SCIENCE_DOMAIN_GROUP_IDS } from './notebook-network-settings'
+export {
+  OPEN_SCIENCE_DOMAIN_GROUP_IDS,
+  OPEN_SCIENCE_DOMAIN_GROUPS
+} from './notebook-network-settings'
 export type {
   OpenScienceDomainGroupId,
   OpenScienceDomainGroup,
@@ -66,113 +70,11 @@ export type NotebookNetworkStatus = Readonly<{
   )
 
 export const DEFAULT_NOTEBOOK_NETWORK_SETTINGS: NotebookNetworkSettings = Object.freeze({
+  mode: 'relaxed',
   allowedDomains: [],
   disabledOpenScienceDomainGroups: [],
   disabledOpenScienceDomains: []
 })
-
-export const OPEN_SCIENCE_DOMAIN_GROUPS: readonly OpenScienceDomainGroup[] = Object.freeze([
-  {
-    id: 'packageRegistries',
-    locked: true,
-    domains: [
-      'pypi.org',
-      '*.pypi.org',
-      'files.pythonhosted.org',
-      'conda.anaconda.org',
-      'repo.anaconda.com',
-      'anaconda.org',
-      '*.anaconda.org',
-      '*.conda.io',
-      ...AUTOMATIC_PACKAGE_MIRROR_DOMAINS,
-      'cran.r-project.org',
-      'cloud.r-project.org',
-      'bioconductor.org',
-      'www.bioconductor.org',
-      'registry.npmjs.org',
-      'github.com',
-      '*.github.com',
-      '*.githubusercontent.com'
-    ]
-  },
-  {
-    id: 'nih',
-    domains: ['*.ncbi.nlm.nih.gov', '*.nih.gov', 'cactus.nci.nih.gov']
-  },
-  {
-    id: 'genomics',
-    domains: [
-      'rest.ensembl.org',
-      'grch37.rest.ensembl.org',
-      '*.ensembl.org',
-      'reactome.org',
-      '*.reactome.org',
-      'rest.kegg.jp',
-      '*.kegg.jp',
-      'cellguide.cellxgene.cziscience.com',
-      'gnomad.broadinstitute.org',
-      'gtexportal.org',
-      'jaspar.elixir.no',
-      'www.encodeproject.org',
-      'mygene.info',
-      'rfam.org',
-      'www.cbioportal.org',
-      'sparql.rhea-db.org',
-      'bindingdb.org',
-      'www.bindingdb.org',
-      'r12.finngen.fi',
-      'pheweb.jp',
-      'api.genome.ucsc.edu',
-      'unibind.uio.no'
-    ]
-  },
-  {
-    id: 'proteomics',
-    domains: [
-      'rest.uniprot.org',
-      '*.uniprot.org',
-      'string-db.org',
-      '*.string-db.org',
-      '*.ebi.ac.uk',
-      'search.foldseek.com',
-      'rcsb.org',
-      '*.rcsb.org',
-      '*.proteinatlas.org'
-    ]
-  },
-  {
-    id: 'literature',
-    domains: [
-      'api.semanticscholar.org',
-      'api.biorxiv.org',
-      'www.biorxiv.org',
-      'api.crossref.org',
-      'doi.org',
-      'api.openalex.org',
-      'arxiv.org',
-      '*.arxiv.org'
-    ]
-  },
-  {
-    id: 'clinical',
-    domains: [
-      'api.fda.gov',
-      'clinicaltrials.gov',
-      '*.clinicaltrials.gov',
-      'api.clinpgx.org',
-      'api.platform.opentargets.org',
-      'cancer.sanger.ac.uk',
-      'actionability.clinicalgenome.org',
-      'search.clinicalgenome.org',
-      'erepo.genome.network',
-      'civicdb.org',
-      'api.grants.gov',
-      'www.antibodyregistry.org',
-      'cartblanche22.docking.org',
-      'files.docking.org'
-    ]
-  }
-])
 
 const uniqueSorted = <Value extends string>(values: readonly Value[]): Value[] =>
   [...new Set(values)].sort()
@@ -337,6 +239,14 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
     : []
 
   return {
+    mode: record.mode === 'strict' ? 'strict' : 'relaxed',
+    ...(record.strictWhitelistVersion === 1 ? { strictWhitelistVersion: 1 as const } : {}),
+    ...(Array.isArray(record.strictWhitelist)
+      ? { strictWhitelist: normalizeStrictWhitelist(record.strictWhitelist) }
+      : {}),
+    ...(Array.isArray(record.strictWhitelistGroups)
+      ? { strictWhitelistGroups: normalizeWhitelistGroups(record.strictWhitelistGroups) }
+      : {}),
     ...(Array.isArray(record.destinationGrants)
       ? {
           destinationGrants: normalizeNetworkDestinationGrants(record.destinationGrants).filter(
@@ -395,7 +305,9 @@ const buildLinkPreviewDomainPolicy = (settings: NotebookNetworkSettings): Notebo
 export const buildNotebookNetworkPolicy = (
   settings: NotebookNetworkSettings
 ): NotebookNetworkPolicy => ({
-  ...(settings.trustedPrivateDestinations?.length
+  mode: settings.mode ?? 'relaxed',
+  ...(settings.mode === 'strict' ? { strictWhitelist: settings.strictWhitelist ?? [] } : {}),
+  ...(settings.mode !== 'strict' && settings.trustedPrivateDestinations?.length
     ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
     : {}),
   allowedDomains: [],
@@ -403,7 +315,6 @@ export const buildNotebookNetworkPolicy = (
   deniedDomains: [],
   deniedDomainReasons: {}
 })
-import { AUTOMATIC_PACKAGE_MIRROR_DOMAINS } from './mirror'
 
 // Shape validation only. Trusted entries are explicit protocol/host exceptions;
 // runtime access does not depend on a DNS address snapshot.
@@ -412,14 +323,16 @@ export const normalizeTrustedPrivateDestinations = (
 ): TrustedPrivateDestination[] => {
   if (!Array.isArray(value)) return []
   const entries = new Map<string, TrustedPrivateDestination>()
+  const ids = new Set<string>()
   for (const item of value) {
     if (!item || typeof item !== 'object') continue
-    const { hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
+    const { id, hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
     const hostValue = typeof hostname === 'string' ? normalizeNetworkHostname(hostname) : undefined
     const host = hostValue ? { ok: true as const, hostname: hostValue } : undefined
     const hasManagedId = typeof managedGrantId === 'string' && managedGrantId.length > 0
     const hasManagedSource = source === 'global-destination-grant'
     if (
+      (id !== undefined && (typeof id !== 'string' || !id.trim())) ||
       !host?.ok ||
       (protocol !== undefined && protocol !== 'http' && protocol !== 'https') ||
       !Number.isInteger(port) ||
@@ -434,8 +347,10 @@ export const normalizeTrustedPrivateDestinations = (
     if (!requiresNetworkException(host.hostname, protocol)) continue
     const key = `${protocol ?? 'https'}://${formatNetworkHostname(host.hostname)}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
-    if (entries.has(key)) return []
+    if (entries.has(key) || (id !== undefined && ids.has(id))) return []
+    if (id !== undefined) ids.add(id)
     entries.set(key, {
+      ...(id !== undefined ? { id } : {}),
       hostname: host.hostname,
       port,
       ...(protocol !== undefined ? { protocol } : {}),
