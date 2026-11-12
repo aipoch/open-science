@@ -1,9 +1,13 @@
 {
   "ownerPaths": [
     "src/renderer/src/stores/notification-inbox-store.test.ts",
-    "src/renderer/src/stores/notification-inbox-store.ts"
+    "src/renderer/src/stores/notification-inbox-store.ts",
+    "src/renderer/src/stores/research-film-notice-store.ts"
   ],
-  "interfacePaths": ["src/renderer/src/stores/notification-inbox-store.ts"],
+  "interfacePaths": [
+    "src/renderer/src/stores/notification-inbox-store.ts",
+    "src/renderer/src/stores/research-film-notice-store.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": ["src/renderer/src/stores/notification-inbox-store.test.ts"],
@@ -241,5 +245,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Research film navigation adds branch-scoped dialog visibility beyond the reviewed notification state boundary; retain full CI validation until the expanded sources and runtime contracts are reviewed."
 }

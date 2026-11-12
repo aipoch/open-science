@@ -6,6 +6,7 @@ import { EMPTY_SNAPSHOT, useNotificationInboxStore } from './notification-inbox-
 afterEach(() => {
   useNotificationInboxStore.setState({
     ...EMPTY_SNAPSHOT,
+    activeResearchFilm: undefined,
     status: 'idle',
     error: undefined,
     markAllReadPending: false,
@@ -40,12 +41,25 @@ describe('notification inbox store', () => {
     vi.stubGlobal('window', {
       api: { notifications: { getSnapshot: vi.fn(async () => snapshot) } }
     })
-    useNotificationInboxStore.setState({ revision: 9, unreadCount: 4, latestSequence: 12 })
+    useNotificationInboxStore.setState({
+      revision: 9,
+      unreadCount: 4,
+      latestSequence: 12,
+      activeResearchFilm: {
+        id: 'running',
+        projectId: 'p',
+        sessionId: 's',
+        branchId: 'b',
+        sessionTitle: 'Film',
+        progress: { phase: 'writing', startedAt: 1 }
+      }
+    })
 
     await useNotificationInboxStore.getState().refresh()
 
     expect(useNotificationInboxStore.getState()).toMatchObject({
       ...snapshot,
+      activeResearchFilm: undefined,
       status: 'ready',
       error: undefined
     })

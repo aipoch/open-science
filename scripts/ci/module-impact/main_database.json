@@ -105,7 +105,9 @@
     "src/main/database/slurm-job-reliability-migration.test.ts",
     "src/main/database/migrations/0056-compute-kubernetes-workspace.ts",
     "src/main/database/migrations/0057-project-optimization-prompt.ts",
-    "src/main/database/migrated-database.test-support.ts"
+    "src/main/database/migrated-database.test-support.ts",
+    "src/main/database/migrations/0058-research-film-notifications.ts",
+    "src/main/database/research-film-notifications-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -156,7 +158,8 @@
       "src/main/database/workspace-pdf-translation-migration.test.ts",
       "src/main/database/literature-personal-note-search-migration.test.ts",
       "src/main/database/literature-doi-identity-migration.test.ts",
-      "src/main/database/slurm-job-reliability-migration.test.ts"
+      "src/main/database/slurm-job-reliability-migration.test.ts",
+      "src/main/database/research-film-notifications-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

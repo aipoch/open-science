@@ -353,6 +353,8 @@ export const createApplicationModules = async (
     runner: optimizationRunner
   })
   const researchFilm = await composeResearchFilm({
+    onActivity: (activity) => storageStartup.notificationInbox.setActiveResearchFilm(activity),
+    onOutcome: (outcome) => notifications.taskNotifications.notifyResearchFilmOutcome(outcome),
     ...settingsBootstrap,
     ...sessionFoundation,
     ...sessionAuthority,

@@ -1,4 +1,8 @@
 import type { SessionWaitReason } from './session-persistence'
+import type {
+  ResearchFilmActivity,
+  ResearchVideoPresentationRequest
+} from './research-video-presentation'
 
 // The conversation a desktop-notification click should open. Main holds it (consume-once) until
 // the renderer pulls it via 'notifications:take-pending-open-session' once its session store is
@@ -7,6 +11,7 @@ import type { SessionWaitReason } from './session-persistence'
 export type OpenSessionFromNotificationRequest = {
   sessionId: string
   token: number
+  researchFilm?: ResearchVideoPresentationRequest
 }
 
 // Renderer-owned visibility evidence. Durable session existence comes from main's complete scan.
@@ -29,6 +34,7 @@ export type NotificationSource =
   | 'compute'
   | 'skill-import'
   | 'session-plan'
+  | 'research-film'
 
 export type NotificationAttentionReason =
   | SessionWaitReason
@@ -48,6 +54,7 @@ export type NotificationInboxItem = Readonly<{
   attentionReason?: NotificationAttentionReason
   projectId?: string
   sessionId?: string
+  branchId?: string
   originId: string
   title: string
   summary: string
@@ -63,6 +70,7 @@ export type NotificationInboxSnapshot = Readonly<{
   unreadCount: number
   latestSequence: number
   items: readonly NotificationInboxItem[]
+  activeResearchFilm?: ResearchFilmActivity
 }>
 
 export type NotificationInboxChanged = Readonly<{

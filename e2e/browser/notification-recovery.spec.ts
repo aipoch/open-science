@@ -117,3 +117,39 @@ test('exposes notification errors and named recovery controls to the accessibili
     results.violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) }))
   ).toEqual([])
 })
+
+test('finds a background film, reopens its branch window, and opens its failure notification without restarting', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 700, height: 500 })
+  await page.goto('/notification-recovery.html?film')
+  const bell = page.getByRole('button', { name: 'Messages, no unread messages' })
+  await bell.click()
+  const center = page.getByRole('dialog', { name: 'Message center' })
+  await expect(center.getByText('In progress', { exact: true })).toBeVisible()
+  await expect(center.getByRole('button', { name: 'Mark all read' })).toBeDisabled()
+  await center.getByRole('button', { name: /protein folding/ }).click()
+  const film = page.getByRole('dialog', { name: 'Research film', exact: true })
+  await expect(film.getByText('Writing research film…', { exact: true })).toBeVisible()
+  await film.getByRole('button', { name: 'Run in background' }).click()
+  await expect(film).toHaveCount(0)
+  await expect(bell).toBeFocused()
+  await page.evaluate(() =>
+    (
+      window as unknown as { notificationQuality: { finishFilm(): void } }
+    ).notificationQuality.finishFilm()
+  )
+  const toast = page.getByTestId('notification-live-toast')
+  await expect(toast).toContainText('Research video failed')
+  await toast.getByRole('button', { name: 'Open', exact: true }).click()
+  await expect(film).toBeVisible()
+  await expect(film.getByRole('button', { name: 'Try again' })).toBeEnabled()
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { notificationQuality: { starts: number } }).notificationQuality
+          .starts
+    )
+  ).toBe(0)
+  expect(await film.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+})

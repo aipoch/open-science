@@ -46,10 +46,11 @@ export function ResearchVideoProgressLine({
   })
 
   if (compact) {
+    const label = filmStep === 3 && !terminal ? t('Generating animations…') : labels[progress.phase]
     return (
       <div className="min-w-0 flex-1 space-y-1 text-xs">
         <div role="status" className="flex min-w-0 items-center justify-between gap-2">
-          <p className="min-w-0 truncate font-medium text-foreground">{labels[progress.phase]}</p>
+          <p className="min-w-0 truncate font-medium text-foreground">{label}</p>
           <p className="shrink-0 tabular-nums text-muted-foreground">
             {counted
               ? t('{{completed}} / {{total}} completed', {
@@ -66,7 +67,7 @@ export function ResearchVideoProgressLine({
                 ? (progress.completed! / progress.total!) * 100
                 : undefined
             }
-            label={labels[progress.phase]}
+            label={label}
           />
         )}
       </div>

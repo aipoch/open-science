@@ -20,6 +20,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { openNotificationProject, useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import {
+  openResearchFilmNotification,
+  isResearchFilmVisible,
+  useResearchFilmNoticeStore
+} from '@/stores/research-film-notice-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { NotificationErrorBoundary } from './NotificationErrorBoundary'
@@ -86,6 +91,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
   const status = useNotificationInboxStore((state) => state.status)
   const latestSequence = useNotificationInboxStore((state) => state.latestSequence)
   const items = useNotificationInboxStore((state) => state.items)
+  const visibleFilms = useResearchFilmNoticeStore((state) => state.visible)
   const markRead = useNotificationInboxStore((state) => state.markRead)
   const sessions = useSessionStore((state) => state.sessions)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
@@ -135,7 +141,9 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         item.sequence > previousSequence &&
         item.readAt === undefined &&
         item.targetInvalidatedAt === undefined &&
-        (!activeSessionId || item.sessionId !== activeSessionId)
+        (item.source === 'research-film'
+          ? !isResearchFilmVisible(item)
+          : !activeSessionId || item.sessionId !== activeSessionId)
     )
     if (added.length === 0) return
 
@@ -151,7 +159,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         count: (currentLead ? (current?.count ?? 0) : 0) + added.length
       }
     })
-  }, [items, latestSequence, projects, selectedSessionId, sessions, status, view])
+  }, [items, latestSequence, projects, selectedSessionId, sessions, status, view, visibleFilms])
 
   useEffect(() => {
     const dismiss = (): void => setNotice(undefined)
@@ -231,7 +239,20 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
     }
     let opened = true
     try {
-      if (notification.sessionId) {
+      if (
+        notification.source === 'research-film' &&
+        notification.sessionId &&
+        notification.projectId
+      ) {
+        opened = openResearchFilmNotification(
+          {
+            projectId: notification.projectId,
+            sessionId: notification.sessionId,
+            branchId: notification.branchId
+          },
+          completeOpen
+        )
+      } else if (notification.sessionId) {
         opened = useNavigationStore
           .getState()
           .openSessionById(notification.sessionId, 'notification', completeOpen)

@@ -32,6 +32,9 @@ type NotificationInboxControllerDependencies = Readonly<{
 }>
 
 type NotificationInboxController = Readonly<{
+  setActiveResearchFilm(
+    activity: import('../../shared/research-video-presentation').ResearchFilmActivity | undefined
+  ): void
   restore(): Promise<void>
   getSnapshot(limit?: number): Promise<NotificationInboxSnapshot>
   record(input: NotificationInboxRecord): Promise<void>
@@ -80,6 +83,8 @@ export const createNotificationInboxController = (
   let revision = 1
   let unreadCount = 0
   let latestSequence = 0
+  let activeResearchFilm:
+    import('../../shared/research-video-presentation').ResearchFilmActivity | undefined
   let visibleSessionId: string | undefined
   let viewRevision = 0
   let desktop: NotificationInboxDesktopRuntime | undefined
@@ -157,7 +162,11 @@ export const createNotificationInboxController = (
     unreadCount = snapshot.unreadCount
     latestSequence = snapshot.latestSequence
     refreshBadge()
-    return { revision, ...snapshot }
+    return {
+      revision,
+      ...snapshot,
+      ...(activeResearchFilm ? { activeResearchFilm: structuredClone(activeResearchFilm) } : {})
+    }
   }
 
   const recordNow = async (input: NotificationInboxRecord): Promise<void> => {
@@ -168,7 +177,7 @@ export const createNotificationInboxController = (
     const desktopAtStart = desktop
     const revisionAtStart = viewRevision
     let readAt: number | undefined
-    if (sessionId && (await isAppFocused())) {
+    if (sessionId && input.source !== 'research-film' && (await isAppFocused())) {
       const visible = await confirmVisibleSession(sessionId)
       if (
         (await isAppFocused()) &&
@@ -270,6 +279,10 @@ export const createNotificationInboxController = (
   }
 
   return {
+    setActiveResearchFilm: (activity) => {
+      activeResearchFilm = activity
+      publish({ changed: true, unreadCount, latestSequence })
+    },
     restore,
     getSnapshot,
     record,

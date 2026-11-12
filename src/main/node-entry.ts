@@ -898,8 +898,8 @@ async function main(): Promise<void> {
         request: delivery.requestAttention,
         clear: delivery.clearAttention
       })
-      runtime.taskNotifications.setActivationHandler((sessionId) => {
-        if (sessionId) runtime?.taskNotifications.setPendingOpenSession(sessionId)
+      runtime.taskNotifications.setActivationHandler((sessionId, researchFilm) => {
+        if (sessionId) runtime?.taskNotifications.setPendingOpenSession(sessionId, researchFilm)
         delivery.activate(sessionId)
       })
     }

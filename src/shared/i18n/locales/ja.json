@@ -44,7 +44,11 @@
     "Close window": "ウィンドウを閉じる",
     "Review potentially destructive code": "破壊的な操作を含む可能性があるコードを確認",
     "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "終了すると未完了のタスクは中断されます。保存済みの会話とファイルは保持されます。"
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "終了すると未完了のタスクは中断されます。保存済みの会話とファイルは保持されます。",
+    "Research film ready": "研究ショート動画の準備ができました",
+    "Research video failed": "研究解説に失敗しました",
+    "Open the research film for details.": "詳細を確認するには研究動画を開いてください。",
+    "Open the research film to view it.": "研究動画を開いてご覧ください。"
   },
   "native": {
     "Local State is in use by another process.": "Local State は別のプロセスで使用されています。",
@@ -7784,7 +7788,6 @@
     "Finishing video encoding…": "動画のエンコードを完了中…",
     "Verifying video…": "動画を検証中…",
     "Research video cancelled": "研究解説をキャンセルしました",
-    "Research video failed": "研究解説に失敗しました",
     "Elapsed: {{seconds}} s": "経過時間：{{seconds}} 秒",
     "Video export component installation failed. Retry to continue.": "動画書き出しコンポーネントのインストールに失敗しました。再試行してください。",
     "Video export components required: {{size}} MiB": "動画書き出しコンポーネントが必要です：{{size}} MiB",
@@ -7808,7 +7811,6 @@
     "Writing research film…": "研究ショート動画を構成中…",
     "Create a short film from this conversation.": "既存の会話から研究ショート動画を作成します。",
     "Generating a new film may take several minutes. Continue?": "新しい動画の生成には数分かかる場合があります。続行しますか？",
-    "Research film ready": "研究ショート動画の準備ができました",
     "This session is unavailable.": "このセッションは利用できません。",
     "Add conversation content before generating.": "生成する前に会話の内容を追加してください。",
     "Wait for a completed response before generating.": "完全な応答が得られてから生成してください。",
@@ -8036,6 +8038,11 @@
     "Source URL": "ソース URL",
     "Branch or tag": "ブランチまたはタグ",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "スペシャリストのマーケットプレイスカタログを公開している GitHub リポジトリまたはブランチの URL を使用してください。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "インストールしたスキルはエージェントの動作を変える可能性があります。信頼できるソースのみを追加してください。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "インストールしたスキルはエージェントの動作を変える可能性があります。信頼できるソースのみを追加してください。",
+    "In progress": "進行中",
+    "Research film in progress": "研究動画を生成中",
+    "Could not open the research film branch.": "研究動画のブランチを開けませんでした。",
+    "The branch may be unavailable or busy. Open the conversation and try again.": "ブランチが利用できないか、処理中の可能性があります。会話を開いて、もう一度お試しください。",
+    "Research films can only be opened in the desktop app.": "研究動画はデスクトップアプリでのみ開けます。"
   }
 }

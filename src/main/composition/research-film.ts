@@ -51,6 +51,8 @@ export async function composeResearchFilm({
   sessionPackageService,
   researchFilmLifecycle,
   recordAuxiliaryUsage,
+  onActivity,
+  onOutcome,
   modules
 }: {
   configRoot: string
@@ -60,6 +62,8 @@ export async function composeResearchFilm({
   sessionPackageService: Pick<SessionPackageService, 'readResearchFilm'>
   researchFilmLifecycle: ResearchFilmLifecycle
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
+  onActivity?: Parameters<typeof createResearchVideoPresentationOwner>[0]['onActivity']
+  onOutcome?: Parameters<typeof createResearchVideoPresentationOwner>[0]['onOutcome']
   modules: ApplicationModuleBuilder
 }): Promise<{
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
@@ -224,6 +228,8 @@ export async function composeResearchFilm({
     return response.text
   }
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    onActivity,
+    onOutcome,
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,

@@ -15,6 +15,45 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 const request = { projectId: 'project', sessionId: 'session' }
+
+it.each(['completed', 'failed', 'cancelled'] as const)(
+  'publishes background film activity and a single %s outcome',
+  async (outcome) => {
+    const f = await fixture()
+    const onActivity = vi.fn<NonNullable<Options['onActivity']>>()
+    const onOutcome = vi.fn<NonNullable<Options['onOutcome']>>(async () => {})
+    let finish!: () => void
+    f.options.writeScreenplay.mockImplementationOnce(
+      (_source, signal) =>
+        new Promise((resolve, reject) => {
+          finish = () =>
+            outcome === 'failed' ? reject(new Error('author failed')) : resolve(script)
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const owner = createResearchVideoPresentationOwner({ ...f.options, onActivity, onOutcome })
+    await owner.start(request)
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    const active = onActivity.mock.calls.find(([activity]) => activity)?.[0]
+    expect(active).toMatchObject({
+      ...request,
+      sessionTitle: 'Rainfall',
+      progress: { phase: 'preparing' }
+    })
+    await owner.start(request)
+    if (outcome === 'cancelled') owner.cancel(request)
+    else finish()
+    await vi.waitFor(() => expect(onActivity).toHaveBeenLastCalledWith(undefined))
+    if (outcome === 'cancelled') expect(onOutcome).not.toHaveBeenCalled()
+    else {
+      expect(onOutcome).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: active!.id, failed: outcome === 'failed' })
+      )
+      if (outcome === 'completed') expect((await owner.status(request)).result).toBeDefined()
+    }
+    await owner.close()
+  }
+)
 const session = {
   id: 'session',
   projectId: 'project',

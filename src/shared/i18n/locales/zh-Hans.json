@@ -44,7 +44,11 @@
     "Close window": "关闭窗口",
     "Review potentially destructive code": "检查可能具有破坏性的代码",
     "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "退出将中断未完成的任务。已保存的对话和文件会保留。"
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "退出将中断未完成的任务。已保存的对话和文件会保留。",
+    "Research film ready": "研究短片已就绪",
+    "Research video failed": "研究讲解失败",
+    "Open the research film for details.": "打开研究短片查看详情。",
+    "Open the research film to view it.": "打开研究短片观看。"
   },
   "native": {
     "Local State is in use by another process.": "Local State 正被其他进程占用。",
@@ -7784,7 +7788,6 @@
     "Finishing video encoding…": "正在完成视频编码…",
     "Verifying video…": "正在校验视频…",
     "Research video cancelled": "研究讲解已取消",
-    "Research video failed": "研究讲解失败",
     "Elapsed: {{seconds}} s": "已用时：{{seconds}} 秒",
     "Video export component installation failed. Retry to continue.": "视频导出组件安装失败。请重试以继续。",
     "Video export components required: {{size}} MiB": "需要视频导出组件：{{size}} MiB",
@@ -7808,7 +7811,6 @@
     "Writing research film…": "正在编写研究短片…",
     "Create a short film from this conversation.": "根据已有会话生成研究短片。",
     "Generating a new film may take several minutes. Continue?": "生成新短片可能需要几分钟，是否继续？",
-    "Research film ready": "研究短片已就绪",
     "This session is unavailable.": "此会话不可用。",
     "Add conversation content before generating.": "请先添加会话内容。",
     "Wait for a completed response before generating.": "请等待一条完整回复后再生成。",
@@ -8036,6 +8038,11 @@
     "Source URL": "来源地址",
     "Branch or tag": "分支或标签",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用发布专家市场目录的公开 GitHub 仓库或分支链接。",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。"
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安装的技能可能改变智能体的行为。请仅信任您认可的来源。",
+    "In progress": "进行中",
+    "Research film in progress": "研究短片生成中",
+    "Could not open the research film branch.": "无法打开研究短片所在分支。",
+    "The branch may be unavailable or busy. Open the conversation and try again.": "该分支可能不可用或正在运行。请打开会话后重试。",
+    "Research films can only be opened in the desktop app.": "研究短片仅可在桌面应用中打开。"
   }
 }

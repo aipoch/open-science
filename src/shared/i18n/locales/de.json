@@ -44,7 +44,11 @@
     "Close window": "Fenster schließen",
     "Review potentially destructive code": "Potenziell destruktiven Code prüfen",
     "Confirm Notebook kernel and environment": "Notebook-Kernel und Umgebung bestätigen",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Beim Beenden werden nicht abgeschlossene Aufgaben unterbrochen. Ihre gespeicherten Konversationen und Dateien bleiben erhalten."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Beim Beenden werden nicht abgeschlossene Aufgaben unterbrochen. Ihre gespeicherten Konversationen und Dateien bleiben erhalten.",
+    "Research film ready": "Forschungsfilm ist bereit",
+    "Research video failed": "Forschungsvideo fehlgeschlagen",
+    "Open the research film for details.": "Öffnen Sie den Forschungsfilm, um Details anzuzeigen.",
+    "Open the research film to view it.": "Öffnen Sie den Forschungsfilm, um ihn anzusehen."
   },
   "native": {
     "Local State is in use by another process.": "Local State wird von einem anderen Prozess verwendet.",
@@ -7948,7 +7952,6 @@
     "Finishing video encoding…": "Videokodierung wird abgeschlossen…",
     "Verifying video…": "Video wird geprüft…",
     "Research video cancelled": "Forschungsvideo abgebrochen",
-    "Research video failed": "Forschungsvideo fehlgeschlagen",
     "Elapsed: {{seconds}} s": "Verstrichen: {{seconds}} s",
     "Video export component installation failed. Retry to continue.": "Installation der Videoexport-Komponenten fehlgeschlagen. Zum Fortfahren erneut versuchen.",
     "Video export components required: {{size}} MiB": "Videoexport-Komponenten erforderlich: {{size}} MiB",
@@ -7972,7 +7975,6 @@
     "Writing research film…": "Forschungsfilm wird konzipiert…",
     "Create a short film from this conversation.": "Einen Kurzfilm aus dieser Konversation erstellen.",
     "Generating a new film may take several minutes. Continue?": "Die Erstellung eines neuen Films kann einige Minuten dauern. Fortfahren?",
-    "Research film ready": "Forschungsfilm ist bereit",
     "This session is unavailable.": "Diese Sitzung ist nicht verfügbar.",
     "Add conversation content before generating.": "Fügen Sie vor der Erstellung Inhalte zur Konversation hinzu.",
     "Wait for a completed response before generating.": "Warten Sie vor der Erstellung auf eine vollständige Antwort.",
@@ -8205,6 +8207,11 @@
     "Source URL": "Quell-URL",
     "Branch or tag": "Branch oder Tag",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Verwenden Sie die URL eines öffentlichen GitHub-Repositorys oder Branches, das einen Spezialisten-Marktplatzkatalog veröffentlicht.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Installierte Fähigkeiten können das Verhalten von Agenten ändern. Vertrauen Sie nur Ihnen bekannten Quellen."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Installierte Fähigkeiten können das Verhalten von Agenten ändern. Vertrauen Sie nur Ihnen bekannten Quellen.",
+    "In progress": "In Bearbeitung",
+    "Research film in progress": "Forschungsfilm wird erstellt",
+    "Could not open the research film branch.": "Der Zweig des Forschungsfilms konnte nicht geöffnet werden.",
+    "The branch may be unavailable or busy. Open the conversation and try again.": "Der Zweig ist möglicherweise nicht verfügbar oder beschäftigt. Öffnen Sie die Konversation und versuchen Sie es erneut.",
+    "Research films can only be opened in the desktop app.": "Forschungsfilme können nur in der Desktop-App geöffnet werden."
   }
 }

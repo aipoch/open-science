@@ -17,7 +17,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0052_literature_personal_note_search'
-const currentMigrationId = '0057_project_optimization_prompt'
+const currentMigrationId = '0058_research_film_notifications'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient
@@ -68,6 +68,7 @@ it('backfills existing personal notes in bounded batches without changing source
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
+      '0057_project_optimization_prompt',
       currentMigrationId
     ]
   })
@@ -165,6 +166,7 @@ it('rolls back the column and ledger when verification fails', async () => {
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
+      '0057_project_optimization_prompt',
       currentMigrationId
     ]
   })
@@ -180,6 +182,7 @@ it('backfills an existing target column when its migration has not been recorded
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
+      '0057_project_optimization_prompt',
       currentMigrationId
     ]
   })

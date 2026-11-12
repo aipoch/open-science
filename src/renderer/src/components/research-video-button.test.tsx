@@ -89,6 +89,44 @@ it('starts directly from the session button without a chat or fork API, and supp
   expect(api.researchVideo.cancel).toHaveBeenCalledExactlyOnceWith(request)
 })
 
+it('opens a notified film without starting generation and releases dialog visibility on close', async () => {
+  const onClosed = vi.fn()
+  await act(async () =>
+    root.render(
+      <ResearchVideoButton
+        key="notification"
+        {...request}
+        initiallyOpen
+        onClosed={onClosed}
+        renderTrigger={() => null}
+      />
+    )
+  )
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await click('Close')
+  expect(onClosed).toHaveBeenCalled()
+})
+
+it('offers an explicit retry after a notification opens a failed narration installation', async () => {
+  status = { preflightError: 'Narration installation did not finish. Retry to continue.' }
+  await act(async () =>
+    root.render(
+      <ResearchVideoButton
+        key="failed-notification"
+        {...request}
+        initiallyOpen
+        renderTrigger={() => null}
+      />
+    )
+  )
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  api.researchVideo.status.mockImplementationOnce(async () => (status = {}))
+  await click('Try again')
+  expect(api.researchVideo.status).toHaveBeenCalledWith({ ...request, checkReadiness: true })
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
+})
+
 it('keeps raw generation errors in collapsed details and copies the full message', async () => {
   const error = JSON.stringify(
     [{ code: 'invalid_union', message: 'multiple errors'.repeat(300) }],

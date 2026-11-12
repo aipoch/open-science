@@ -32,6 +32,7 @@ import type {
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useResearchFilmNoticeStore } from '@/stores/research-film-notice-store'
 
 export type ResearchVideoTriggerState = { label: string; disabledReason?: string }
 
@@ -85,8 +86,12 @@ function FilmErrorNotice({
 
 export function ResearchVideoButton({
   renderTrigger,
+  initiallyOpen = false,
+  onClosed,
   ...request
 }: ResearchVideoPresentationRequest & {
+  initiallyOpen?: boolean
+  onClosed?: () => void
   renderTrigger?: (
     open: (() => void) | undefined,
     state: ResearchVideoTriggerState
@@ -94,7 +99,23 @@ export function ResearchVideoButton({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const { projectId, sessionId, branchId } = request
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(initiallyOpen)
+  const visibilityId = useId()
+  useEffect(() => {
+    if (!open) return
+    useResearchFilmNoticeStore.setState((state) => ({
+      visible: { ...state.visible, [visibilityId]: { projectId, sessionId, branchId } }
+    }))
+    return () =>
+      useResearchFilmNoticeStore.setState((state) => {
+        const visible = { ...state.visible }
+        delete visible[visibilityId]
+        return { visible }
+      })
+  }, [open, projectId, sessionId, branchId, visibilityId])
+  useEffect(() => {
+    if (initiallyOpen && !open) onClosed?.()
+  }, [initiallyOpen, open, onClosed])
   const deletionScope = JSON.stringify([projectId, sessionId, branchId])
   const [deletionTarget, setDeletionTarget] = useState<string>()
   const confirmDeletion = deletionTarget === deletionScope
@@ -182,6 +203,13 @@ export function ResearchVideoButton({
     status.preflightError &&
     status.preflightError !== missingRuntime &&
     knownPreflight
+  const canRetryPreparation =
+    initiallyOpen &&
+    statusLoaded &&
+    !status.canResume &&
+    !status.result &&
+    !status.generationBlock &&
+    Boolean(failure || preflight)
   const triggerState: ResearchVideoTriggerState = {
     label: !statusLoaded
       ? t('Loading…')
@@ -387,7 +415,14 @@ export function ResearchVideoButton({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
-            triggerRef.current?.querySelector('button')?.focus()
+            const trigger =
+              triggerRef.current?.querySelector('button') ??
+              (initiallyOpen
+                ? document.querySelector<HTMLButtonElement>(
+                    '[data-notification-bell-trigger="true"]'
+                  )
+                : null)
+            trigger?.focus()
             if (settingsAfterClose.current) {
               useSettingsStore.getState().openSettingsToPanel('model')
               settingsAfterClose.current = false
@@ -399,7 +434,8 @@ export function ResearchVideoButton({
               installing ||
               status.canResume ||
               status.result ||
-              model?.availability === 'ready') && (
+              model?.availability === 'ready' ||
+              canRetryPreparation) && (
               <footer className={`${dialogFooterClassName} justify-between gap-2`}>
                 {busy || installing ? (
                   <>
@@ -415,6 +451,16 @@ export function ResearchVideoButton({
                       {t('Run in background')}
                     </Button>
                   </>
+                ) : canRetryPreparation ? (
+                  <Button
+                    className="ml-auto"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() => void generate()}
+                  >
+                    {pending && <Loader2 className="animate-spin" aria-hidden="true" />}
+                    {t('Try again')}
+                  </Button>
                 ) : confirmDeletion ? (
                   <div
                     className="w-full space-y-3"

@@ -43,6 +43,7 @@ type NotificationRecordInput = Readonly<{
   attentionReason?: NotificationAttentionReason
   projectId?: string
   sessionId?: string
+  branchId?: string
   originId: string
   title: string
   summary: string
@@ -109,6 +110,7 @@ const toInboxItem = (row: DbNotificationInboxItem): NotificationInboxItem => ({
     : {}),
   ...(row.projectId ? { projectId: row.projectId } : {}),
   ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+  ...(row.branchId ? { branchId: row.branchId } : {}),
   originId: row.originId,
   title: row.title,
   summary: row.summary,
@@ -203,6 +205,7 @@ export class NotificationInboxDbRepository {
             attentionReason: input.attentionReason,
             projectId: input.projectId,
             sessionId: input.sessionId,
+            branchId: input.branchId,
             originId: input.originId,
             title: input.title,
             summary: input.summary,
@@ -276,7 +279,9 @@ export class NotificationInboxDbRepository {
     readAt: number
   ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
-    return this.updateReadStateForValues('sessionId', normalized, readAt)
+    return this.updateReadStateForValues('sessionId', normalized, readAt, {
+      OR: [{ source: null }, { source: { not: 'research-film' } }]
+    })
   }
 
   markSessionTaskOutcomesRead(
@@ -285,7 +290,8 @@ export class NotificationInboxDbRepository {
   ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
     return this.updateReadStateForValues('sessionId', normalized, readAt, {
-      kind: { startsWith: 'task.' }
+      kind: { startsWith: 'task.' },
+      OR: [{ source: null }, { source: { not: 'research-film' } }]
     })
   }
 
@@ -295,7 +301,8 @@ export class NotificationInboxDbRepository {
   ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
     return this.updateReadStateForValues('sessionId', normalized, readAt, {
-      kind: 'task.completed'
+      kind: 'task.completed',
+      OR: [{ source: null }, { source: { not: 'research-film' } }]
     })
   }
 

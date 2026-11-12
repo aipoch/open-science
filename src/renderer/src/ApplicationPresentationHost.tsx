@@ -14,6 +14,7 @@ import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
 import { LanguageSaveToast } from '@/components/LanguageControls'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
+import { ResearchFilmNotificationHost } from '@/components/ResearchFilmNotificationHost'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { useSettingsUndoPortal } from '@/components/use-settings-undo-portal'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
@@ -477,6 +478,7 @@ const ApplicationPresentationContent = ({
                 ) : null}
                 <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
                 <NotificationLiveToast />
+                <ResearchFilmNotificationHost />
               </div>
             </BottomNoticeStack>
             {quitPersistenceAlert}

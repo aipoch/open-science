@@ -52,6 +52,12 @@ export type ResearchVideoPresentationOwner = {
 
 /** User-initiated derived presentations live separately from immutable imported conversation history. */
 export function createResearchVideoPresentationOwner(options: {
+  onActivity?: (
+    activity: import('../../shared/research-video-presentation').ResearchFilmActivity | undefined
+  ) => void
+  onOutcome?: (
+    outcome: import('../../shared/research-video-presentation').ResearchFilmOutcome
+  ) => Promise<void>
   dataRoot(): string
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
   checkReadiness?: () => Promise<void>
@@ -186,6 +192,23 @@ export function createResearchVideoPresentationOwner(options: {
     let base: string | undefined
     let writes = Promise.resolve()
     let filmStep = 1
+    let activity:
+      import('../../shared/research-video-presentation').ResearchFilmActivity | undefined
+    const publishActivity = (): void => {
+      try {
+        options.onActivity?.(activity ? structuredClone(activity) : undefined)
+      } catch {
+        log.info('film activity delivery failed')
+      }
+    }
+    const publishOutcome = async (failed: boolean): Promise<void> => {
+      if (!activity) return
+      try {
+        await options.onOutcome?.({ ...structuredClone(activity), failed })
+      } catch {
+        log.info('film outcome delivery failed')
+      }
+    }
     let replayStep = 0
     const record = (step: number, completed?: number, total?: number): void => {
       filmStep = Math.max(step, replayStep)
@@ -231,6 +254,10 @@ export function createResearchVideoPresentationOwner(options: {
               : 4
       )
       states.set(key, { filmStep, progress: { ...step, startedAt } })
+      if (activity) {
+        activity = { ...activity, filmStep, progress: { ...step, startedAt } }
+        publishActivity()
+      }
     }
     let admitted = false
     let lease: Awaited<ReturnType<LocalModelOwner['acquireUse']>> | undefined
@@ -252,6 +279,14 @@ export function createResearchVideoPresentationOwner(options: {
                 : 'Research session is unavailable.'
         )
       let source = researchVideoSessionSource(session, request)
+      activity = {
+        ...request,
+        branchId: source.provenance.branchId,
+        id: randomUUID(),
+        sessionTitle: session.title,
+        progress: { phase: 'preparing', startedAt }
+      }
+      publishActivity()
       const checksums: string[] = []
       await stageResearchVideoSessionImages(
         source,
@@ -270,8 +305,7 @@ export function createResearchVideoPresentationOwner(options: {
         const snapshot = await options.models.installForUse(signal)
         signal.throwIfAborted()
         if (snapshot.availability !== 'ready' || snapshot.updateAvailable) {
-          states.set(key, { error: 'Narration installation did not finish. Retry to continue.' })
-          return
+          throw new Error('Narration installation did not finish. Retry to continue.')
         }
         const scope = { ...request, branchId: source.provenance.branchId }
         const latest = await options.loadSession(scope.projectId, scope.sessionId)
@@ -378,6 +412,10 @@ export function createResearchVideoPresentationOwner(options: {
                   total
                 }
               })
+              if (activity) {
+                activity = { ...activity, filmStep, progress: states.get(key)!.progress! }
+                publishActivity()
+              }
             },
             generate: options.generate,
             modelDirectory: dirname(model.path),
@@ -422,6 +460,7 @@ export function createResearchVideoPresentationOwner(options: {
       await removePendingPointer(base).catch(() =>
         log.info('film cleanup deferred', { operationId: id, phase: 'publishing' })
       )
+      await publishOutcome(false)
     } catch (error) {
       await writes.catch(() => {})
       if (base && saved && (!signal.aborted || closed)) {
@@ -455,6 +494,7 @@ export function createResearchVideoPresentationOwner(options: {
                 : {})
             }
       )
+      if (!signal.aborted) await publishOutcome(true)
     } finally {
       installingKey = undefined
       prepared()
@@ -471,6 +511,8 @@ export function createResearchVideoPresentationOwner(options: {
         await removePendingPointer(base).catch(() => {})
       }
       lease?.release()
+      activity = undefined
+      publishActivity()
     }
   }
   return {

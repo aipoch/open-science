@@ -38,6 +38,7 @@ const resolveDetailPreview = (
   session: ChatSession | undefined
 ): string | undefined => {
   if (!session) return undefined
+  if (notification.source === 'research-film') return undefined
 
   if (notification.source === 'agent-question') {
     const question = (Array.isArray(session.activities) ? session.activities : [])?.find(

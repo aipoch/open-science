@@ -12,6 +12,7 @@ import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { NotificationLiveToast } from './NotificationLiveToast'
+import { useResearchFilmNoticeStore } from '@/stores/research-film-notice-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -62,6 +63,7 @@ const flushToastPosition = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  useResearchFilmNoticeStore.setState({ target: undefined, visible: {} })
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   useNotificationInboxStore.setState({
@@ -98,6 +100,26 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
 })
+
+it.each([false, true])(
+  'uses film dialog visibility (%s), not conversation visibility, for result toasts',
+  async (visible) => {
+    const target = { projectId: 'project-1', sessionId: 'session-1', branchId: 'branch' }
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: target.projectId })
+    useSessionStore.setState({ selectedSessionId: target.sessionId })
+    if (visible) useResearchFilmNoticeStore.setState({ visible: { dialog: target } })
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () =>
+      useNotificationInboxStore.setState({
+        latestSequence: 2,
+        items: [item(2, { ...target, source: 'research-film', title: 'Research film ready' })]
+      })
+    )
+    expect(document.querySelector('[data-testid="notification-live-toast"]') !== null).toBe(
+      !visible
+    )
+  }
+)
 
 afterEach(() => {
   act(() => root.unmount())

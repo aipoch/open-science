@@ -25,6 +25,8 @@ import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { openNotificationProject, useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { openResearchFilmNotification } from '@/stores/research-film-notice-store'
+import { ResearchVideoProgressLine } from './research-video-progress'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -253,6 +255,7 @@ const NotificationBellContent = ({
   })
   const panelId = useId()
   const items = useNotificationInboxStore((state) => state.items)
+  const activeFilm = useNotificationInboxStore((state) => state.activeResearchFilm)
   const unreadCount = useNotificationInboxStore((state) => state.unreadCount)
   const status = useNotificationInboxStore((state) => state.status)
   const refresh = useNotificationInboxStore((state) => state.refresh)
@@ -494,7 +497,12 @@ const NotificationBellContent = ({
     }
 
     try {
-      if (item.sessionId) {
+      if (item.source === 'research-film' && item.sessionId && item.projectId) {
+        openResearchFilmNotification(
+          { projectId: item.projectId, sessionId: item.sessionId, branchId: item.branchId },
+          completeOpen
+        )
+      } else if (item.sessionId) {
         const opened = useNavigationStore
           .getState()
           .openSessionById(item.sessionId, 'notification', completeOpen)
@@ -566,6 +574,11 @@ const NotificationBellContent = ({
                 )}
                 aria-hidden="true"
                 onAnimationEnd={() => setDotPopSequence(undefined)}
+              />
+            ) : activeFilm ? (
+              <span
+                className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary ring-2 ring-bg-000"
+                aria-label={t('Research film in progress')}
               />
             ) : null}
           </button>
@@ -687,7 +700,36 @@ const NotificationBellContent = ({
                       }}
                     />
                   ) : null}
-                  {items.length === 0 ? (
+                  {activeFilm ? (
+                    <section aria-label={t('In progress')}>
+                      <div className="px-4 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-100">
+                        {t('In progress')}
+                      </div>
+                      <button
+                        type="button"
+                        className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() =>
+                          openResearchFilmNotification(activeFilm, () => setOpen(false))
+                        }
+                      >
+                        <LoaderCircle
+                          className="mt-1 size-4 shrink-0 text-primary motion-safe:animate-spin"
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="mb-1 block truncate text-xs font-medium text-text-000">
+                            {activeFilm.sessionTitle}
+                          </span>
+                          <ResearchVideoProgressLine
+                            progress={activeFilm.progress}
+                            filmStep={activeFilm.filmStep}
+                            compact
+                          />
+                        </span>
+                      </button>
+                    </section>
+                  ) : null}
+                  {items.length === 0 && !activeFilm ? (
                     <div className="px-3 py-10 text-center text-sm text-text-100">
                       {status === 'error'
                         ? null

@@ -38,7 +38,7 @@ it('upgrades the prior translation schema without changing its saved records and
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0049_pascalcase_table_names',
-    to: '0057_project_optimization_prompt',
+    to: '0058_research_film_notifications',
     applied: [
       '0050_literature_translation',
       '0051_literature_reading_status',
@@ -47,7 +47,8 @@ it('upgrades the prior translation schema without changing its saved records and
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
       '0056_compute_kubernetes_workspace',
-      '0057_project_optimization_prompt'
+      '0057_project_optimization_prompt',
+      '0058_research_film_notifications'
     ]
   })
   expect(

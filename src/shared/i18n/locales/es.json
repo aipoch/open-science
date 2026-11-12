@@ -44,7 +44,11 @@
     "Close window": "Cerrar ventana",
     "Review potentially destructive code": "Revisar código potencialmente destructivo",
     "Confirm Notebook kernel and environment": "Confirmar el kernel y el entorno de Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Al salir, se interrumpirán las tareas pendientes. Se conservarán las conversaciones y los archivos guardados."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Al salir, se interrumpirán las tareas pendientes. Se conservarán las conversaciones y los archivos guardados.",
+    "Research film ready": "Cortometraje de investigación listo",
+    "Research video failed": "Error en el vídeo de investigación",
+    "Open the research film for details.": "Abra el vídeo de investigación para consultar los detalles.",
+    "Open the research film to view it.": "Abra el vídeo de investigación para verlo."
   },
   "native": {
     "Local State is in use by another process.": "Otro proceso está utilizando Local State.",
@@ -8120,7 +8124,6 @@
     "Finishing video encoding…": "Finalizando la codificación del vídeo…",
     "Verifying video…": "Verificando el vídeo…",
     "Research video cancelled": "Vídeo de investigación cancelado",
-    "Research video failed": "Error en el vídeo de investigación",
     "Elapsed: {{seconds}} s": "Tiempo transcurrido: {{seconds}} s",
     "Video export component installation failed. Retry to continue.": "No se pudieron instalar los componentes de exportación de vídeo. Vuelva a intentarlo para continuar.",
     "Video export components required: {{size}} MiB": "Se requieren componentes de exportación de vídeo: {{size}} MiB",
@@ -8144,7 +8147,6 @@
     "Writing research film…": "Preparando el cortometraje de investigación…",
     "Create a short film from this conversation.": "Crear un cortometraje a partir de esta conversación.",
     "Generating a new film may take several minutes. Continue?": "Generar un nuevo cortometraje puede tardar varios minutos. ¿Continuar?",
-    "Research film ready": "Cortometraje de investigación listo",
     "This session is unavailable.": "Esta sesión no está disponible.",
     "Add conversation content before generating.": "Añada contenido a la conversación antes de generar el cortometraje.",
     "Wait for a completed response before generating.": "Espere a recibir una respuesta completa antes de generar el cortometraje.",
@@ -8382,6 +8384,11 @@
     "Source URL": "URL de la fuente",
     "Branch or tag": "Rama o etiqueta",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilice la URL de un repositorio público de GitHub o de una rama que publique un catálogo del mercado de especialistas.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca.",
+    "In progress": "En curso",
+    "Research film in progress": "Generación de vídeo de investigación en curso",
+    "Could not open the research film branch.": "No se pudo abrir la rama del vídeo de investigación.",
+    "The branch may be unavailable or busy. Open the conversation and try again.": "Es posible que la rama no esté disponible o esté ocupada. Abra la conversación e inténtelo de nuevo.",
+    "Research films can only be opened in the desktop app.": "Los vídeos de investigación solo se pueden abrir en la aplicación de escritorio."
   }
 }

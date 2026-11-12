@@ -58,7 +58,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
-        '0057_project_optimization_prompt'
+        '0057_project_optimization_prompt',
+        '0058_research_film_notifications'
       ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(

@@ -128,7 +128,7 @@
     {
       "tableName": "NotificationInboxItem",
       "name": "NotificationInboxItem_source_check",
-      "expression": "\"source\" IS NULL OR \"source\" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan')"
+      "expression": "\"source\" IS NULL OR \"source\" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan', 'research-film')"
     },
     {
       "tableName": "NotificationInboxItem",

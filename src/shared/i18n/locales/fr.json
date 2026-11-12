@@ -44,7 +44,11 @@
     "Close window": "Fermer la fenêtre",
     "Review potentially destructive code": "Examiner le code potentiellement destructeur",
     "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "Quitter interrompra les tâches inachevées. Vos conversations et fichiers enregistrés seront conservés.",
+    "Research film ready": "Court-métrage de recherche prêt",
+    "Research video failed": "Échec de la vidéo de recherche",
+    "Open the research film for details.": "Ouvrez le film de recherche pour voir les détails.",
+    "Open the research film to view it.": "Ouvrez le film de recherche pour le regarder."
   },
   "native": {
     "Local State is in use by another process.": "Local State est utilisé par un autre processus.",
@@ -8120,7 +8124,6 @@
     "Finishing video encoding…": "Finalisation de l’encodage vidéo…",
     "Verifying video…": "Vérification de la vidéo…",
     "Research video cancelled": "Vidéo de recherche annulée",
-    "Research video failed": "Échec de la vidéo de recherche",
     "Elapsed: {{seconds}} s": "Temps écoulé : {{seconds}} s",
     "Video export component installation failed. Retry to continue.": "Échec de l’installation des composants d’export vidéo. Réessayez pour continuer.",
     "Video export components required: {{size}} MiB": "Composants d’export vidéo requis : {{size}} MiB",
@@ -8144,7 +8147,6 @@
     "Writing research film…": "Préparation du court-métrage de recherche…",
     "Create a short film from this conversation.": "Créer un court-métrage à partir de cette conversation.",
     "Generating a new film may take several minutes. Continue?": "La génération d’un nouveau film peut prendre plusieurs minutes. Continuer ?",
-    "Research film ready": "Court-métrage de recherche prêt",
     "This session is unavailable.": "Cette session n’est pas disponible.",
     "Add conversation content before generating.": "Ajoutez du contenu à la conversation avant de générer le film.",
     "Wait for a completed response before generating.": "Attendez une réponse complète avant de générer le film.",
@@ -8382,6 +8384,11 @@
     "Source URL": "URL de la source",
     "Branch or tag": "Branche ou tag",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilisez l’URL d’un dépôt GitHub public ou d’une branche publiant un catalogue de la place de marché des spécialistes.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez.",
+    "In progress": "En cours",
+    "Research film in progress": "Film de recherche en cours de création",
+    "Could not open the research film branch.": "Impossible d’ouvrir la branche du film de recherche.",
+    "The branch may be unavailable or busy. Open the conversation and try again.": "La branche est peut-être indisponible ou occupée. Ouvrez la conversation et réessayez.",
+    "Research films can only be opened in the desktop app.": "Les films de recherche ne peuvent être ouverts que dans l’application de bureau."
   }
 }

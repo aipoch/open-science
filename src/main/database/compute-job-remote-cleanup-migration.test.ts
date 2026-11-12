@@ -99,10 +99,11 @@ describe('Compute Job remote cleanup migration', () => {
         '0054_slurm_job_reliability',
         '0055_session_discussion_parent',
         '0056_compute_kubernetes_workspace',
-        '0057_project_optimization_prompt'
+        '0057_project_optimization_prompt',
+        '0058_research_film_notifications'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0057_project_optimization_prompt'
+      to: '0058_research_film_notifications'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

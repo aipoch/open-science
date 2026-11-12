@@ -22,6 +22,7 @@ beforeEach(() => {
     compute: { replayApproval: vi.fn(async () => null) }
   } as unknown as Window['api']
   useNotificationInboxStore.setState({
+    activeResearchFilm: undefined,
     markRead: useNotificationInboxStore.getInitialState().markRead,
     markAllRead: useNotificationInboxStore.getInitialState().markAllRead,
     revision: 1,
@@ -49,6 +50,31 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
+})
+
+it('shows an active film independently of unread history', async () => {
+  useNotificationInboxStore.setState({
+    items: [],
+    unreadCount: 0,
+    activeResearchFilm: {
+      id: 'a',
+      projectId: 'p',
+      sessionId: 's',
+      sessionTitle: 'Rainfall film',
+      progress: { phase: 'writing', startedAt: Date.now() }
+    }
+  })
+  await act(async () => root.render(<NotificationBell />))
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[data-notification-bell-trigger]')!.click()
+  )
+  expect(document.body.textContent).toContain('Rainfall film')
+  expect(document.body.textContent).not.toContain('No messages yet.')
+  expect(
+    Array.from(document.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Mark all read')
+    )?.disabled
+  ).toBe(true)
 })
 
 afterEach(() => {

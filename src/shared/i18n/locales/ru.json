@@ -44,7 +44,11 @@
     "Close window": "Закрыть окно",
     "Review potentially destructive code": "Проверить потенциально разрушительный код",
     "Confirm Notebook kernel and environment": "Подтвердить ядро и окружение Notebook",
-    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся."
+    "Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.": "При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся.",
+    "Research film ready": "Исследовательский фильм готов",
+    "Research video failed": "Не удалось создать исследовательское видео",
+    "Open the research film for details.": "Откройте исследовательский фильм для просмотра подробностей.",
+    "Open the research film to view it.": "Откройте исследовательский фильм для просмотра."
   },
   "native": {
     "Local State is in use by another process.": "Local State используется другим процессом.",
@@ -8265,7 +8269,6 @@
     "Finishing video encoding…": "Завершение кодирования видео…",
     "Verifying video…": "Проверка видео…",
     "Research video cancelled": "Исследовательское видео отменено",
-    "Research video failed": "Не удалось создать исследовательское видео",
     "Elapsed: {{seconds}} s": "Прошло: {{seconds}} с",
     "Video export component installation failed. Retry to continue.": "Не удалось установить компоненты экспорта видео. Повторите попытку, чтобы продолжить.",
     "Video export components required: {{size}} MiB": "Требуются компоненты экспорта видео: {{size}} MiB",
@@ -8289,7 +8292,6 @@
     "Writing research film…": "Подготовка исследовательского фильма…",
     "Create a short film from this conversation.": "Создать короткий фильм на основе этого диалога.",
     "Generating a new film may take several minutes. Continue?": "Создание нового фильма может занять несколько минут. Продолжить?",
-    "Research film ready": "Исследовательский фильм готов",
     "This session is unavailable.": "Этот сеанс недоступен.",
     "Add conversation content before generating.": "Перед созданием фильма добавьте содержание диалога.",
     "Wait for a completed response before generating.": "Перед созданием фильма дождитесь полного ответа.",
@@ -8532,6 +8534,11 @@
     "Source URL": "URL источника",
     "Branch or tag": "Ветка или тег",
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Укажите URL публичного репозитория GitHub или ветки, публикующей каталог маркетплейса специалистов.",
-    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам."
+    "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам.",
+    "In progress": "Выполняется",
+    "Research film in progress": "Создаётся исследовательский фильм",
+    "Could not open the research film branch.": "Не удалось открыть ветку исследовательского фильма.",
+    "The branch may be unavailable or busy. Open the conversation and try again.": "Ветка может быть недоступна или занята. Откройте диалог и повторите попытку.",
+    "Research films can only be opened in the desktop app.": "Исследовательские фильмы можно открывать только в настольном приложении."
   }
 }

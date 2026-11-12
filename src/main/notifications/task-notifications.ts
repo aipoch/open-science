@@ -1,4 +1,8 @@
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import type {
+  ResearchFilmOutcome,
+  ResearchVideoPresentationRequest
+} from '../../shared/research-video-presentation'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type { ComputeApprovalRequest } from '../../shared/compute'
@@ -151,7 +155,10 @@ const AUTHORIZATION_INBOX_SUMMARY = {
   compute: 'A compute request needs your approval.',
   'skill-import': 'A Skill import needs your approval.',
   'session-plan': 'A plan needs your approval.'
-} as const satisfies Record<Exclude<NotificationSource, 'agent-question' | 'agent-runtime'>, string>
+} as const satisfies Record<
+  Exclude<NotificationSource, 'agent-question' | 'agent-runtime' | 'research-film'>,
+  string
+>
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
 
@@ -342,7 +349,8 @@ export class TaskNotificationService {
   private readonly tracks = new Map<string, ChainEntry[]>()
   private readonly pendingAgentQuestions = new Map<string, Set<string>>()
   private trackCounter = 0
-  private activationHandler: ((sessionId?: string) => void) | undefined
+  private activationHandler:
+    ((sessionId?: string, researchFilm?: ResearchVideoPresentationRequest) => void) | undefined
   private attentionHandlers: TaskNotificationAttentionHandlers | undefined
   // Click target held for the renderer to pull: a push sent before the renderer's listener exists
   // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
@@ -385,7 +393,9 @@ export class TaskNotificationService {
   // Bound once the window lifecycle exists (index.ts, after installAppLifecycle): clicking a
   // notification surfaces the main window (always) and opens the conversation when the notification
   // belonged to a known session.
-  setActivationHandler(handler: (sessionId?: string) => void): void {
+  setActivationHandler(
+    handler: (sessionId?: string, researchFilm?: ResearchVideoPresentationRequest) => void
+  ): void {
     this.activationHandler = handler
   }
 
@@ -397,8 +407,45 @@ export class TaskNotificationService {
 
   // Records the conversation a notification click should open, so a renderer that misses the push
   // nudge (still loading, sessions not yet hydrated) can pull it when ready.
-  setPendingOpenSession(sessionId: string): void {
-    this.pendingOpenSession = { sessionId, token: ++this.pendingOpenSessionToken }
+  setPendingOpenSession(sessionId: string, researchFilm?: ResearchVideoPresentationRequest): void {
+    this.pendingOpenSession = {
+      sessionId,
+      token: ++this.pendingOpenSessionToken,
+      ...(researchFilm ? { researchFilm } : {})
+    }
+  }
+
+  notifyResearchFilmOutcome = async (outcome: ResearchFilmOutcome): Promise<void> => {
+    const { projectId, sessionId, branchId } = outcome
+    const title = outcome.failed ? 'Research video failed' : 'Research film ready'
+    const summary = outcome.failed
+      ? 'Open the research film for details.'
+      : 'Open the research film to view it.'
+    await this.recordInbox({
+      dedupeKey: `research-film:${outcome.id}`,
+      kind: outcome.failed ? 'task.failed' : 'task.completed',
+      source: 'research-film',
+      projectId,
+      sessionId,
+      branchId,
+      originId: outcome.id,
+      title,
+      summary
+    })
+    const translate = this.deps.translate
+    await this.deliver(
+      {
+        title: outcome.failed
+          ? translate('Research video failed')
+          : translate('Research film ready'),
+        body: truncate(outcome.sessionTitle, MAX_BODY_LENGTH),
+        genericBody: outcome.failed
+          ? translate('Open the research film for details.')
+          : translate('Open the research film to view it.')
+      },
+      sessionId,
+      { projectId, sessionId, branchId }
+    )
   }
 
   // Lets the renderer check whether the target already exists in a partially hydrated store without
@@ -813,7 +860,11 @@ export class TaskNotificationService {
   // rejection on the broadcast path that callers void. Clicks route through the activation handler
   // only when the notification belongs to a known session. Focus is checked both before and after
   // the settings read so a user who switches back during the async gap doesn't get a spurious banner.
-  private async deliver(notification: TaskNotification, sessionId?: string): Promise<void> {
+  private async deliver(
+    notification: TaskNotification,
+    sessionId?: string,
+    researchFilm?: ResearchVideoPresentationRequest
+  ): Promise<void> {
     if (await this.isAppFocused()) return
 
     let enabled = false
@@ -842,7 +893,8 @@ export class TaskNotificationService {
       }
 
       try {
-        this.activationHandler?.(sessionId)
+        if (researchFilm) this.activationHandler?.(sessionId, researchFilm)
+        else this.activationHandler?.(sessionId)
       } catch (error) {
         reportTaskNotificationError(this.deps.onDeliveryError, error)
       }

@@ -407,6 +407,7 @@ model NotificationInboxItem {
   attentionReason     String?
   projectId           String?
   sessionId           String?
+  branchId            String?
   originId            String
   title               String
   summary             String

@@ -43,6 +43,38 @@ const repository = (
   }) as unknown as NotificationInboxDbRepository
 
 describe('createNotificationInboxController', () => {
+  it('keeps film activity transient and film outcomes unread when only the conversation is visible', async () => {
+    const db = repository()
+    const inbox = createNotificationInboxController({ repository: db, onChanged: vi.fn() })
+    inbox.configureDesktop({ isAppFocused: () => true, badge: { setCount: vi.fn() } })
+    await inbox.syncViewState({ visibleSessionId: 's' })
+    const activity = {
+      id: 'attempt',
+      projectId: 'p',
+      sessionId: 's',
+      branchId: 'b',
+      sessionTitle: 'Film',
+      progress: { phase: 'writing' as const, startedAt: 1 }
+    }
+    inbox.setActiveResearchFilm(activity)
+    await inbox.markAllRead(0)
+    expect(await inbox.getSnapshot()).toMatchObject({ activeResearchFilm: activity })
+    expect(db.record).not.toHaveBeenCalled()
+    await inbox.record({
+      dedupeKey: 'research-film:attempt',
+      kind: 'task.completed',
+      source: 'research-film',
+      projectId: 'p',
+      sessionId: 's',
+      branchId: 'b',
+      originId: 'attempt',
+      title: 'Research film ready',
+      summary: ''
+    })
+    expect(vi.mocked(db.record).mock.calls[0][0].readAt).toBeUndefined()
+    inbox.setActiveResearchFilm(undefined)
+    expect((await inbox.getSnapshot()).activeResearchFilm).toBeUndefined()
+  })
   it('persists and broadcasts in headless mode while leaving native badges disabled', async () => {
     const db = repository()
     const onChanged = vi.fn()

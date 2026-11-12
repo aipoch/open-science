@@ -5,6 +5,7 @@ import type { SessionWriteIssue } from './lib/session-persistence/session-write-
 import { createRoot, type Root } from 'react-dom/client'
 import { i18next } from './i18n'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+import { useResearchFilmNoticeStore } from '@/stores/research-film-notice-store'
 import { WindowsTitleBar } from '@/components/WindowsTitleBar'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -324,6 +325,9 @@ vi.mock('@/components/LifecycleToast', () => ({
 vi.mock('@/components/ConnectorAuthToast', () => ({
   ConnectorAuthToast: (): React.JSX.Element => <div data-testid="connector-auth-toast" />
 }))
+vi.mock('@/components/ResearchFilmNotificationHost', () => ({
+  ResearchFilmNotificationHost: () => null
+}))
 vi.mock('@/components/NotificationLiveToast', () => ({
   NotificationLiveToast: (): React.JSX.Element => <div data-testid="notification-live-toast" />
 }))
@@ -641,6 +645,7 @@ describe('App startup routing', () => {
       }
     } as unknown as Window['api']
     mocks.openSessionById.mockReset()
+    useResearchFilmNoticeStore.setState({ target: undefined, visible: {} })
     mocks.sessions = []
     mocks.navigation.view = 'home'
     mocks.navigation.userNavigationRevision = 0
@@ -2371,48 +2376,67 @@ describe('App startup routing', () => {
     ).toBeNull()
   })
 
-  it('retains a notification target until recovery completes', async () => {
-    mocks.settings.isLoaded = true
-    mocks.sessionPersistence.isHydrated = false
-    mocks.sessionPersistence.isLoading = true
-    mocks.sessionPersistence.isReady = false
-    mocks.notifications.peekPendingOpenSession.mockResolvedValue({ sessionId: 's-9', token: 9 })
-    mocks.notifications.takePendingOpenSession.mockResolvedValue({ sessionId: 's-9', token: 9 })
+  it.each([false, true])(
+    'retains a notification target until recovery completes (film: %s)',
+    async (film) => {
+      mocks.settings.isLoaded = true
+      mocks.sessionPersistence.isHydrated = false
+      mocks.sessionPersistence.isLoading = true
+      mocks.sessionPersistence.isReady = false
+      const researchFilm = { projectId: 'p', sessionId: 's-9', branchId: 'original-branch' }
+      const target = { sessionId: 's-9', token: 9, ...(film ? { researchFilm } : {}) }
+      mocks.notifications.peekPendingOpenSession.mockResolvedValue(target)
+      mocks.notifications.takePendingOpenSession.mockResolvedValue(target)
+      mocks.openSessionById.mockImplementation((_id, _origin, afterNavigate) => {
+        afterNavigate?.()
+        return true
+      })
 
-    await render()
+      await render()
 
-    // Sessions still hydrating: the pending click target must not be consumed or dropped.
-    expect(mocks.openSessionById).not.toHaveBeenCalled()
+      // Sessions still hydrating: the pending click target must not be consumed or dropped.
+      expect(mocks.openSessionById).not.toHaveBeenCalled()
 
-    // Partial hydration cannot prove an absent target was deleted, so only the non-destructive peek
-    // runs and the target stays pending in main until a complete retry.
-    mocks.sessionPersistence.isHydrated = true
-    mocks.sessionPersistence.isLoading = false
-    await act(async () => root.render(<App />))
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
+      // Partial hydration cannot prove an absent target was deleted, so only the non-destructive peek
+      // runs and the target stays pending in main until a complete retry.
+      mocks.sessionPersistence.isHydrated = true
+      mocks.sessionPersistence.isLoading = false
+      await act(async () => root.render(<App />))
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
 
-    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalled()
-    expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
-    expect(mocks.openSessionById).not.toHaveBeenCalled()
+      expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalled()
+      expect(mocks.notifications.takePendingOpenSession).not.toHaveBeenCalled()
+      expect(mocks.openSessionById).not.toHaveBeenCalled()
 
-    mocks.sessionPersistence.isHydrated = false
-    mocks.sessionPersistence.isLoading = true
-    await act(async () => root.render(<App />))
+      mocks.sessionPersistence.isHydrated = false
+      mocks.sessionPersistence.isLoading = true
+      await act(async () => root.render(<App />))
 
-    mocks.sessions = [{ id: 's-9' }]
-    mocks.sessionPersistence.isHydrated = true
-    mocks.sessionPersistence.isLoading = false
-    mocks.sessionPersistence.isReady = true
-    await act(async () => root.render(<App />))
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
+      mocks.sessions = [{ id: 's-9' }]
+      mocks.sessionPersistence.isHydrated = true
+      mocks.sessionPersistence.isLoading = false
+      mocks.sessionPersistence.isReady = true
+      await act(async () => root.render(<App />))
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
 
-    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(9)
-    expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'notification')
-  })
+      expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(9)
+      if (film) {
+        expect(mocks.openSessionById).toHaveBeenCalledWith(
+          's-9',
+          'notification',
+          expect.any(Function)
+        )
+        expect(useResearchFilmNoticeStore.getState().target).toMatchObject(researchFilm)
+      } else {
+        expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'notification')
+        expect(useResearchFilmNoticeStore.getState().target).toBeUndefined()
+      }
+    }
+  )
 
   const notificationUnavailableErrors = [
     "No handler registered for 'notifications:peek-pending-open-session'",

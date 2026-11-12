@@ -330,6 +330,54 @@ const createService = (overrides: {
 }
 
 describe('TaskNotificationService', () => {
+  it('records film results independently of desktop delivery and retains the branch on a native click', async () => {
+    const record = vi.fn(async () => undefined)
+    const { service, shown } = createService({
+      inbox: { record, settleAction: vi.fn(), settleAuthorization: vi.fn() },
+      showContent: async () => false
+    })
+    service.setActivationHandler((sessionId, film) =>
+      service.setPendingOpenSession(sessionId!, film)
+    )
+    const target = { projectId: 'project', sessionId: 'session', branchId: 'branch' }
+    await service.notifyResearchFilmOutcome({
+      ...target,
+      id: 'attempt',
+      sessionTitle: 'Private research',
+      progress: { phase: 'writing', startedAt: 1 },
+      failed: false
+    })
+    expect(record).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        ...target,
+        source: 'research-film',
+        kind: 'task.completed',
+        dedupeKey: 'research-film:attempt'
+      })
+    )
+    expect(shown).toHaveLength(1)
+    expect(shown[0].body).not.toContain('Private research')
+    shown[0].onClick()
+    expect(service.peekPendingOpenSession()).toMatchObject({
+      sessionId: target.sessionId,
+      researchFilm: target
+    })
+    const quiet = createService({
+      isEnabled: async () => false,
+      inbox: { record, settleAction: vi.fn(), settleAuthorization: vi.fn() }
+    })
+    await quiet.service.notifyResearchFilmOutcome({
+      ...target,
+      id: 'retry',
+      sessionTitle: 'Private research',
+      progress: { phase: 'writing', startedAt: 2 },
+      failed: true
+    })
+    expect(record).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: 'task.failed', dedupeKey: 'research-film:retry' })
+    )
+    expect(quiet.shown).toHaveLength(0)
+  })
   it('localizes system delivery while keeping the inbox title as a stable English key', async () => {
     const inbox = {
       record: vi.fn(async () => undefined),

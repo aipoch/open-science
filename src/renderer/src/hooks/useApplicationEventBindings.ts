@@ -20,6 +20,7 @@ import type { StartupView } from '@/pages/onboarding/startup-gate'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { openResearchFilmNotification } from '@/stores/research-film-notice-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -426,7 +427,8 @@ const useApplicationEventBindings = ({
             return
           }
           setUnavailableNotificationToken(undefined)
-          useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
+          if (consumed.researchFilm) openResearchFilmNotification(consumed.researchFilm)
+          else useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
         } catch (error) {
           if (isNotificationRuntimeClosing(error)) return
           // Startup/recovery can reject commands before submission. Retry the same intent;

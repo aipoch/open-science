@@ -1,3 +1,4 @@
+import { researchFilmNotificationsMigration } from './migrations/0058-research-film-notifications'
 import { computeKubernetesWorkspaceMigration } from './migrations/0056-compute-kubernetes-workspace'
 import { sessionDiscussionParentMigration } from './migrations/0055-session-discussion-parent'
 import { projectOptimizationPromptMigration } from './migrations/0057-project-optimization-prompt'
@@ -1027,6 +1028,17 @@ const MIGRATION_MANIFEST = [
       projectOptimizationPromptMigration.id,
       projectOptimizationPromptMigration.statements,
       projectOptimizationPromptMigration.verifiers
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...researchFilmNotificationsMigration,
+    checksum: checksumMigrationPayload(
+      researchFilmNotificationsMigration.id,
+      researchFilmNotificationsMigration.statements,
+      researchFilmNotificationsMigration.verifiers,
+      researchFilmNotificationsMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

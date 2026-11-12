@@ -22,6 +22,7 @@ describe('message center projection contract', () => {
       | 'compute'
       | 'skill-import'
       | 'session-plan'
+      | 'research-film'
     >()
     expectTypeOf<'project' | 'session'>().not.toMatchTypeOf<NotificationSource>()
   })

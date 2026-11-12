@@ -13,6 +13,13 @@ export const researchVideoPresentationRequestSchema = z
 export type ResearchVideoPresentationRequest = z.infer<
   typeof researchVideoPresentationRequestSchema
 >
+export type ResearchFilmActivity = ResearchVideoPresentationRequest & {
+  id: string
+  sessionTitle: string
+  progress: ResearchVideoProgress
+  filmStep?: number
+}
+export type ResearchFilmOutcome = ResearchFilmActivity & { failed: boolean }
 export const researchVideoStartRequestSchema = researchVideoPresentationRequestSchema.extend({
   resume: z.boolean().optional(),
   installNarration: z.boolean().optional()
