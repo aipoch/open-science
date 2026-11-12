@@ -1,7 +1,7 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  AIPOCH Open-Science is a local-first open-source AI research workbench for reproducible science, with flexible model backends. Export selected work as a portable <code>.science</code> Research Package so others can inspect the research record.
+  AIPOCH Open-Science is a local-first open-source AI research workbench for reproducible science, with flexible model backends. Share a portable <code>.science</code> Research Package so others can inspect the evidence behind a result, or export a Research Film to show how you reached it.
 </p>
 
 <p align="center">
@@ -64,6 +64,14 @@ _November 11, 2026_
 - **Reliability improvements**: Windows update recovery, answered questions, and research films across session switches improve; idle interpreters are reclaimed after 15 minutes without session activity.
 
 [View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+
+<a id="share-your-research"></a>
+
+## A research record to share, a film to watch
+
+**Hand off a result with a [`.science` package](https://aipoch.com/docs/guides/research-packages/).** Export the conversation branches, file versions, Notebook records, and verification evidence you want to share. Recipients can import the package into their own projects, open the read-only record, and trace a figure or table back to its inputs. Verification records describe the sender’s checks. In the desktop app, **Fork to continue** creates a writable copy.
+
+**Present the same work as a [Research Film](https://aipoch.com/docs/guides/research-films/).** In the desktop app, choose **Generate research film** on a completed conversation branch. Your configured model prepares the presentation from the recorded session, and the local speech engine generates English narration. Review the film, then download the HTML player or export an MP4. A `.science` package can also carry the player for a film already generated on an included branch.
 
 ## 🚀 Quick Start
 
@@ -138,154 +146,43 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 > Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
 
-## AIPOCH Open-Science `.science` Research Packages
+<a id="core-capabilities"></a>
 
-Export a completed research session as a portable `.science` package for review, handoff, and archiving. Choose the conversation branches, file versions, Notebook records, and verification evidence to include, then import the package into another project or computer.
+## What can you do with AIPOCH Open-Science?
 
-Export and import are available in the desktop app, local Web sessions, and the headless CLI. Remote Web sessions cannot read or write arbitrary local package paths.
-
-**Export → transfer → inspect**
-
-1. Export a completed session and choose the contents to include.
-2. Move the `.science` file to a collaborator or another computer.
-3. Import it into a project. The right-hand **Research replay** shows the recorded process; the left-hand conversation lets you ask about it and follow fixed step references.
-
-Imported records remain read-only. Watching a replay does not execute code, call a model, or restore credentials. Your first question creates an associated writable discussion. Choose **Fork to continue** to create a writable copy for follow-up work. Re-executing a result still requires a complete recipe, required inputs, and an available runtime.
-
-Questions from imported research or a replay step open step-linked child discussions without changing the import. Discussions survive archiving; deleting the parent turns them into ordinary conversations.
-
-Side Chat conversations, private reading bookmarks, and credentials are excluded; included files depend on export selection. Received verification records describe the sender’s checks, not a rerun on this computer. See the [`.science` package guide](https://aipoch.com/docs/guides/research-packages/).
+| Task              | How it works                                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Review literature | Import references from Zotero, screen papers against your criteria, and open the source PDFs to check a finding.                                       |
+| Analyze data      | Run Python or R in a Notebook and inspect the resulting tables and figures alongside the source files.                                                 |
+| Trace a result    | Open a file version in **Provenance** to inspect its inputs, code, and execution history. Rerun it when the recipe, inputs, and runtime are available. |
+| Hand off a result | Share a [`.science` package](#share-your-research) so others can inspect the recorded steps and file versions behind a result.                         |
+| Extend a workflow | Enable scientific data connectors, choose built-in skills, or install additional skills and specialists from the marketplaces.                         |
+| Choose a model    | Connect a supported provider or custom gateway, or use a supported Claude or Codex subscription. Available protocols depend on the agent backend.      |
 
 <a id="benchmark-performance"></a>
 
 ## Benchmark Results
 
-AIPOCH evaluated AIPOCH Open-Science on literature search and question answering, research workflows, biomedical data analysis, computational reproducibility, and hypothesis discovery. The results below come from AIPOCH’s own runs. Each score describes a particular task and evaluation setup.
+AIPOCH evaluated Open-Science on research tasks ranging from literature search to reproducing published results.
 
-| Task                                  | What AIPOCH Open-Science achieved                                                                                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Find the target paper                 | For **68 of 75 test questions**, the target paper appeared in the first 30 results on LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                   |
-| Answer questions using the literature | In a separate run on LitQA2-FullText, Open-Science answered **70 of 75 test questions correctly** (**93.33% accuracy**, deepseek-flash with Max reasoning).                         |
-| Synthesize a cited answer             | On 100 ScholarQA-CS2 validation questions, Open-Science earned a **composite quality score of 0.9289/1** using deepseek-v4-flash. Official test references use different questions. |
-| Carry out research workflows          | In local ASI-Bench runs using the same model, Open-Science scored **59.46** on B4 and Codex scored **55.45**. On B2 the scores were nearly identical (**56.11** and **56.09**).     |
-| Analyze biomedical data               | On BiomniBench-DA Public 50, two judges scored the outputs **81.04** and **77.06**. Their equal-weight mean was **79.05**.                                                          |
-| Reproduce published results           | On CORE-Bench-Hard, Open-Science answered **36 of 37 test tasks correctly (97.30% task accuracy)** in a local evaluation. The final tally includes retests.                         |
-| Discover hypotheses from data         | On a **25-task subset of the DiscoveryBench validation split**, Open-Science earned a **mean score of 0.7467/1** with a local model judge.                                          |
-
-### AstaBench — Literature tasks
+| Task                                  | Benchmark                                 | Result from AIPOCH’s run                                                                |
+| ------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| Find a paper                          | LitQA2-FullText-Search, Test              | Target paper in the top 30 for **68/75** questions (90.67% Recall@30).                  |
+| Answer a question from the literature | LitQA2-FullText, Test                     | **70/75** correct answers (93.33% accuracy).                                            |
+| Write a cited answer                  | ScholarQA-CS2, 100 validation questions   | **0.9289/1** composite quality score. Official test references use different questions. |
+| Carry out a workflow                  | ASI-Bench, local runs with the same model | **59.46** on B4 (Codex 55.45) and **56.11** on B2 (Codex 56.09).                        |
+| Reproduce published results           | CORE-Bench-Hard                           | **36/37** tasks correct (97.30%, including retests).                                    |
+| Analyze biomedical data               | BiomniBench-DA, Public 50                 | **79.05** mean judge score (81.04 and 77.06, weighted equally).                         |
+| Generate hypotheses                   | DiscoveryBench, 25 validation tasks       | **0.7467/1** mean score using a local model judge.                                      |
 
 <details>
-<summary><strong>Paper retrieval — target paper found for 68 of 75 questions</strong></summary>
+<summary>Evaluation scope and reports</summary>
 
-AIPOCH ran the official 75-question LitQA2-FullText-Search Test split locally. Its result matched the highest Recall@30 in the October 26, 2026 comparison snapshot. This local run was not an official leaderboard submission or placement.
+These local runs used different metrics, models, and task sets from August to November 2026. The scores describe those runs. They were not rerun for this release.
 
-![AIPOCH Open-Science LitQA2 retrieval comparison: 90.67% local Recall@30 on the official Test split](docs/images/readme/astabench-litqa2-test.jpg)
-
-Recall@30 counts a hit when the target paper appears in the first 30 results; it does not measure answer accuracy. Costs were not standardized across the runs.
+[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da)
 
 </details>
-
-<details>
-<summary><strong>Full-text question answering — 70 of 75 answers correct</strong></summary>
-
-AIPOCH ran the 75-question LitQA2-FullText Test split in AstaBench v0.5.4. The chart orders the local result and historical reference records by score. Its “#1” refers to that comparison.
-
-![AIPOCH Open-Science LitQA2 full-text question answering comparison: 93.33% local accuracy](docs/images/readme/astabench-litqa2-fulltext-local-comparison.png)
-
-Accuracy measures correct answers. Here, 93.33% is the local answer accuracy and 90.67% is a historical reference answer accuracy. The retrieval chart above uses a different metric. Reference records were captured on October 28, 2026; the highest reference score was checked again on November 2.
-
-</details>
-
-<details>
-<summary><strong>Cited-answer quality — local validation result and official test references</strong></summary>
-
-The local ScholarQA-CS2 result measures the quality of cited answers on 100 Validation questions. Reference results are from the Test split, so the scores do not establish a head-to-head ranking.
-
-![AIPOCH Open-Science ScholarQA-CS2 comparison: 0.9289 local Validation composite score, shown separately from official Test references](docs/images/readme/astabench-scholarqa-cs2.jpg)
-
-The composite score is reported on a 0–1 scale; it is not the percentage of questions answered completely correctly.
-
-</details>
-
-### AstaBench — Reproducibility and hypothesis discovery
-
-<details>
-<summary><strong>CORE-Bench-Hard — 36 of 37 tasks correct, including retests</strong></summary>
-
-Given a study’s code, data, and README, the agent must reproduce the requested results. AIPOCH ran DeepSeek Flash with Max reasoning and used the official programmatic scorer locally. A task earns one point only if all required answers are correct. All 37 tasks received a score. The November 6 tally includes retests and is not a first-pass success rate. [Evaluation report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard).
-
-</details>
-
-<details>
-<summary><strong>DiscoveryBench — mean score of 0.7467/1 on 25 validation tasks</strong></summary>
-
-AIPOCH used deepseek-v4-flash both to generate hypotheses and to judge them with a local implementation of the DiscoveryBench scoring procedure. Of the 25 tasks scored, 18 received full credit, 2 received partial credit, and 5 received zero. The November 9 run used a validation subset and a different judge from the official full-test evaluation, so the scores cannot be ranked together.
-
-</details>
-
-### ASI-Bench — Following a plan and choosing methods
-
-The four conditions ask the agent to execute a specified plan (B1), organize a workflow (B2), choose methods (B3), or work through distracting information (B4). The first two rows of the chart compare local runs using the same GPT-6 Astra model.
-
-![AIPOCH Open-Science ASI-Bench results alongside local Codex runs and published references across B1–B4](docs/images/readme/asi-bench-b1-b4.jpg)
-
-Open-Science scored **79.35, 56.11, 59.67, and 59.46** on B1–B4; the local Codex reference scored **74.78, 56.09, 58.12, and 55.45**. The B2 scores were nearly identical. Other published runs differ in task instances, configurations, or judging.
-
-The local B1 score covers 59 tasks after one scorer-related exclusion. Three local repeats were reported for B1/B2. B3/B4 used Open-Science v0.32.0 and a substitute judge; each score averages three 60-task runs.
-
-### BiomniBench-DA — Biomedical data analysis
-
-On the Public 50 task set, the Gemini 3.1 Pro judge scored the outputs **81.04** and the DeepSeek v4-pro judge scored them **77.06**. AIPOCH reports their equal-weight mean, **79.05**, for the gpt-5.6-sol (xhigh) configuration.
-
-<details>
-<summary><strong>Judge scores and historical references — judge coverage varies</strong></summary>
-
-The chart combines entries with different judge coverage. Its “#1” describes the ordering of that collection. A ranking under a common judging procedure would require comparable scoring for all entries.
-
-![AIPOCH Open-Science BiomniBench-DA Public 50 comparison showing two judge scores and their mean](docs/images/readme/biomnibench-public50-leaderboard.png)
-
-79.05 is a mean judge score across this internal evaluation.
-
-</details>
-
-**Evaluation scope:** These reports cover local/internal runs from August to November 2026 with the stated models and splits; the evaluations were not rerun for the current release. Reference scores are historical snapshots, not live rankings. Scores from different benchmark families are not directly comparable, and numerical gaps do not establish statistical significance.
-
-Read the [AstaBench and ASI-Bench report](https://aipoch.com/benchmark/open-science) and the [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) for evaluation details.
-
-<a id="core-capabilities"></a>
-
-## Why should I use AIPOCH Open-Science?
-
-1. **Read papers and analyze your data in one project.**
-   - Import references from Zotero or paste up to 100 identifiers or article links at a time. With a screening model configured, screen papers against your inclusion and exclusion criteria. You can review the model’s decisions alongside your own and open the PDFs to check a finding in context.
-   - Preview scientific data, documents, images, and molecular structures alongside your papers. Run Python or R in a notebook to turn a project dataset into a table or figure, then inspect the output alongside the files you started with.
-
-2. **Check how a result was produced and what supports the answer.**
-   - Open a specific version of a figure, table, or report in **Provenance** to see the available inputs, code, and execution history. When the inputs, recipe, and runtime are available, rerun that version in the desktop app and compare the outputs.
-   - Turn on **Reviewer** for a separate check of an agent’s answer against the execution logs and files available for that turn. Inspect the issues it flags and the follow-up review after the agent makes a correction.
-
-3. **Give a colleague the context behind a result.**
-   - Choose the conversation branches, file versions, Notebook records, and verification evidence to include in a `.science` package. A colleague can open it on another computer and inspect the steps behind a figure or table.
-   - The imported record opens read-only. Importing it runs no code and restores no credentials. The verification records show what was checked on the sender’s computer. To explore a follow-up question, your colleague can select **Fork to continue** and work in a writable copy.
-
-4. **Choose the tools and computing resources for your analysis.**
-   - Choose a model provider and use **48 built-in connectors** to access scientific data sources. Some connectors require you to enable them first.
-   - Start with **24 built-in skills** for recurring tasks. The [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) lists **525 skills** you can install. To delegate part of a task, choose from **10 specialists** in the [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace).
-   - Run an analysis locally, or submit it to a computing environment you manage through SSH, Slurm, Kubernetes, Hugging Face Jobs, Modal, or Ray. Review the target, command, resources, and outputs before approving a remote job. Cloud jobs may incur charges on the connected account.
-
-## Model Providers
-
-AIPOCH Open-Science is model-agnostic at the product level: connect it to major cloud LLM providers, a custom gateway, or reuse an existing Claude or Codex subscription. Provider availability currently depends on the selected agent backend and the API protocols it supports. The following connection options are available:
-
-| Provider mode                | How it works                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key.                                                                                                                                                                                                                                                                                                                                                    |
-| **Custom Gateway**           | Supply a Base URL and exact model ID with an API protocol supported by the selected agent backend (Messages, Chat Completions, or Responses), then run the connection test. Remote gateways require HTTPS and an API Key. Loopback endpoints such as `localhost`, `127.0.0.1`, or `[::1]` may use HTTP without a key; presets include Ollama, LM Studio, llama.cpp, and vLLM. A default API format does not guarantee server or model compatibility. |
-| **Codex Subscription**       | Select Open-Science Agent or Codex, then choose Codex Subscription as the provider type. Import an existing Codex sign-in or sign in with Open-Science.                                                                                                                                                                                                                                                                                              |
-| **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback).                                                                                                                     |
-| **xAI (Grok) OAuth**         | Use the built-in xAI (Grok) OAuth device sign-in. Access depends on your xAI account and the selected backend’s protocol support; validate the connection in the app.                                                                                                                                                                                                                                                                                |
-
-There are 25 preset provider options, including OpenAI, Anthropic, DeepSeek, NVIDIA Build, and others; available models and regional endpoints depend on the installed version and selected agent backend. Check the provider selector and connection test in the app.
 
 ## Data, Permissions, and Trust
 
@@ -311,58 +208,11 @@ The effective profile depends on the selected backend and existing grants. Conne
 
 Review connector parameters and tool activity before approving them. Never include API Keys, access tokens, patient identifiers, unpublished data, or sensitive local paths in screenshots or public issue logs.
 
-## Development & Packaging
+## Developer guides
 
-AIPOCH Open-Science has an ordinary Node backend and an Electron desktop client, built with React, TypeScript, Prisma/SQLite, and the built-in Open-Science Agent runtime alongside optional agent backends.
-
-Prerequisites for source development:
-
-- Node.js 24 (see [`.nvmrc`](.nvmrc)) with npm
-- Git
-- Notebook execution optionally uses app-managed Python/R environments or a compatible interpreter you configure.
-
-```bash
-git clone https://github.com/aipoch/open-science.git
-cd open-science
-npm install
-npm run dev
-```
-
-See the [development command and packaging reference](docs/development-quick-reference.md) and [contribution guide](CONTRIBUTING.md) for build commands and the development workflow.
-
-### Localhost Web and standalone Node runtime
-
-The same Web UI can run on an ordinary Node backend without Electron or a graphical display.
-Electron starts or attaches to that same Node service. One runtime owns each data directory.
-
-```bash
-npm run dev:web       # Build and run the Node backend + Web UI
-npm run pack:backend  # Build a target-specific standalone npm tarball
-```
-
-For a published installation, use `npm install --global @aipoch/open-science`; the commands above
-are for source development. Install the package or locally built tarball, then run
-`open-science start --no-open` and `open-science url` to open the
-existing UI. See the [standalone runtime guide](docs/standalone-runtime.md) for installation,
-secure credential storage, host capability boundaries and data compatibility.
-
-The desktop app and browser share the same service. App connections and an explicit `open-science start` hold keep it running. Quitting the last App stops the service only when no explicit hold remains.
-
-### Mobile remote access
-
-Scan a QR code to open the current workspace on a phone or tablet over local WiFi or a Pinggy tunnel. Local WiFi pairing stays on your network; internet tunnels route traffic through Pinggy’s servers, as disclosed in the connection dialog.
-
-### Headless CLI and SDK
-
-The headless CLI and zero-dependency Node.js SDK use the same local daemon, projects, sessions,
-credentials, and permissions as the desktop and web interfaces. Detailed usage lives with the
-publishable package so there is one command reference to maintain:
-
-- [CLI guide](packages/open-science/CLI.md) - installation, service lifecycle, task automation,
-  artifacts, output formats, and exit codes
-- [SDK package overview](packages/open-science/README.md) - Node.js quick start and package entry point
-
-The standalone CLI can expose its research tools to external MCP clients through `open-science mcp`. Start and authenticate the selected profile's service first. The adapter uses that profile's existing permissions; it is not a separate sandbox or read-only view, so connected clients can persist changes and incur model costs. It does not expose arbitrary shell or RPC access, credential management, file import/export, download-to-path operations, or a remote HTTP MCP endpoint.
+- **Development** · [Build and package from source](docs/development-quick-reference.md) · [Contribute a change](CONTRIBUTING.md)
+- **Running Open-Science** · [Standalone runtime](docs/standalone-runtime.md) · [Service lifecycle](packages/open-science/CLI.md#service-lifecycle) · [Mobile pairing](https://aipoch.com/docs/guides/remote-access/#mobile-pairing)
+- **Automation** · [CLI](packages/open-science/CLI.md) · [Node.js SDK](packages/open-science/README.md) · [Connect an MCP client](packages/open-science/CLI.md#external-agents-through-mcp)
 
 ## Frequently Asked Questions
 
