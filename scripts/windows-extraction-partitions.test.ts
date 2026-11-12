@@ -1,6 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 
@@ -229,6 +236,14 @@ describe.skipIf(process.platform !== 'win32')('real Windows partition extraction
         expect(report.toolFailures.length).toBeGreaterThan(0)
         expect(report.toolFailures[0]).toMatchObject({ errorSource: '7za' })
         expect(report.toolFailures[0].toolExitCode).not.toBe(0)
+        if (mode === 'blocked-path') {
+          expect(report.toolFailures[0].stdout).toContain(join(f.output, 'app.exe'))
+          expect(report.toolFailures[0].stdout).toContain('ERROR:')
+          expect(report.toolFailures[0].stdoutTruncated).toBe(false)
+        }
+        if (mode === 'corrupt' || mode === 'truncated') {
+          expect(report.toolFailures[0].stdout + report.toolFailures[0].stderr).toContain('ERROR:')
+        }
       }
     },
     30_000
@@ -243,9 +258,12 @@ describe.skipIf(process.platform !== 'win32')('real Windows partition extraction
         source,
         `using System; using System.IO; using System.Threading;
 class Extractor { static int Main(string[] args) {
+  Console.OutputEncoding = new System.Text.UTF8Encoding(false);
   foreach (string arg in args) if (arg.StartsWith("-x@")) return 0;
   foreach (string arg in args) if (arg.StartsWith("-i@")) {
     string list = arg.Substring(3); Thread.Sleep(list.EndsWith("files-2-0.txt") ? 300 : 1200);
+    Console.WriteLine("failure \\u4e2d\\u6587 " + Path.GetFileName(list));
+    Console.Write(new string('o', 100000)); Console.Error.Write(new string('e', 100000));
     File.WriteAllText(list + ".finished", "exited");
     return list.EndsWith("files-2-0.txt") ? 1 : 0;
   } return 2;
@@ -270,8 +288,16 @@ class Extractor { static int Main(string[] args) {
         mode === 'missing-second-list' ? 'powershell-extractor' : '7za'
       )
       expect(report.toolFailures).toEqual([
-        expect.objectContaining({ errorSource: '7za', toolExitCode: 1 })
+        expect.objectContaining({
+          errorSource: '7za',
+          toolExitCode: 1,
+          stdout: expect.stringContaining('failure 中文 files-2-0.txt'),
+          stdoutTruncated: true,
+          stderrTruncated: true
+        })
       ])
+      expect(report.toolFailures[0].stdout.length).toBeLessThanOrEqual(16384)
+      expect(report.toolFailures[0].stderr.length).toBeLessThanOrEqual(16384)
       if (mode === 'missing-second-list') {
         expect(report.errors[0]).toMatchObject({
           operation: 'read-extraction-list',
@@ -316,6 +342,11 @@ class Extractor { static int Main(string[] args) {
         expect(message).toContain(`Error source: powershell-extractor; result: ${result.status}.`)
         expect(message).not.toContain('Error source: 7za;')
         expect(message).toContain('files-2-1.txt')
+        const logs = readdirSync(join(f.root, 'logs')).filter((name) => name.endsWith('.log'))
+        expect(logs).toHaveLength(1)
+        expect(readFileSync(join(f.root, 'logs', logs[0]), 'utf8')).toContain(
+          'failure 中文 files-2-0.txt'
+        )
       }
       expect(readFileSync(join(f.lists, 'files-2-0.txt.finished'), 'utf8')).toBe('exited')
       if (mode === 'nonzero-child')
