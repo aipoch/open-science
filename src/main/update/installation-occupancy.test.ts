@@ -55,6 +55,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
 beforeEach(() => {
   vi.resetAllMocks()
+  Object.assign(mocks.realpath, { native: mocks.realpath })
   mocks.resolveNative.mockReturnValue('/native/process_tree_native.node')
   mocks.readdir.mockReturnValue([])
   mocks.readFile.mockReturnValue('')
@@ -142,10 +143,11 @@ describe('cold Windows resource scans', () => {
     }
   )
 
-  it('enumerates every file and directory link without restatting regular files', async () => {
+  it('enumerates every file and distinct directory while stopping directory-link cycles', async () => {
     const root = join(process.cwd(), 'installation ü')
     const nested = join(root, 'nested')
     const linked = join(root, 'directory-link')
+    const cycle = join(linked, 'ancestor')
     const entry = (
       parentPath: string,
       name: string,
@@ -169,10 +171,10 @@ describe('cold Windows resource scans', () => {
         ]
       ],
       [nested, [entry(nested, 'data.json', 'file')]],
-      [linked, [entry(linked, 'archive.asar', 'file')]]
+      [linked, [entry(linked, 'archive.asar', 'file'), entry(linked, 'ancestor', 'link')]]
     ])
     const stat = vi.fn((file: string) => {
-      if (file === root || file === linked) return { isDirectory: () => true }
+      if (file === root || file === linked || file === cycle) return { isDirectory: () => true }
       if (file === join(root, 'file-link')) return { isDirectory: () => false }
       throw Object.assign(new Error('missing'), { code: 'ENOENT' })
     })
@@ -186,7 +188,13 @@ describe('cold Windows resource scans', () => {
       runInNewContext(args[1], {
         require: (name: string) =>
           name === 'node:fs'
-            ? { realpathSync: () => root, statSync: stat, readdirSync: readdir }
+            ? {
+                realpathSync: Object.assign((file: string) => file, {
+                  native: (file: string) => (file === cycle ? root : file)
+                }),
+                statSync: stat,
+                readdirSync: readdir
+              }
             : name === 'node:path'
               ? { join }
               : { listWindowsInstallationOccupants: occupants },
@@ -213,7 +221,8 @@ describe('cold Windows resource scans', () => {
       root,
       linked,
       join(root, 'file-link'),
-      join(root, 'broken-link')
+      join(root, 'broken-link'),
+      cycle
     ])
     expect(readdir).toHaveBeenCalledTimes(3)
     // Traversal errors must still reject the whole scan, never return a partial resource list.

@@ -237,7 +237,13 @@ export async function inspectInstallationProcessesAsync(
             // Reuse Dirent types while retaining its directory-link traversal and file-link exclusion.
             // Keep physical ASAR archives as resources; Electron recursive readdir expands virtual entries.
             const directories = [root]
+            const visited = new Set()
             for (let index = 0; index < directories.length; index++) {
+              // Canonical paths stop self/ancestor junction cycles without dropping distinct targets.
+              // Resolution failures remain unknown occupancy, not proof that a directory is empty.
+              const canonical = fs.realpathSync.native(directories[index])
+              if (visited.has(canonical)) continue
+              visited.add(canonical)
               for (const entry of fs.readdirSync(directories[index], { withFileTypes: true })) {
                 const file = join(entry.parentPath, entry.name)
                 if (entry.isFile()) files.push(file)

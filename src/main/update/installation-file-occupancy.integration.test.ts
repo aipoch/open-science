@@ -80,7 +80,7 @@ it.runIf(process.platform === 'win32')(
 )
 
 it.runIf(process.platform === 'win32')(
-  'finds an ordinary data file through an installation directory junction',
+  'finds a data-file holder through junctions with self and ancestor cycles',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'installation-junction-scan-'))
     const installation = join(root, 'Science')
@@ -88,14 +88,24 @@ it.runIf(process.platform === 'win32')(
     const junction = join(installation, 'resources')
     let child: ReturnType<typeof spawn> | undefined
     let exited: Promise<void> | undefined
-    let linked = false
+    const links: string[] = []
     try {
       await mkdir(installation)
       await mkdir(target)
       const file = join(target, 'data ü.json')
       await writeFile(file, '{}')
       await symlink(target, junction, 'junction')
-      linked = true
+      links.push(junction)
+      const self = join(target, 'self')
+      await symlink(target, self, 'junction')
+      links.push(self)
+      const ancestor = join(target, 'ancestor')
+      await symlink(installation, ancestor, 'junction')
+      links.push(ancestor)
+      const preload = join(root, 'bounded-scan.cjs')
+      await writeFile(preload, '')
+      scannerFixture.preload = preload
+      scannerFixture.timeoutMs = 5000
       child = spawn(
         process.execPath,
         [
@@ -120,7 +130,9 @@ it.runIf(process.platform === 'win32')(
     } finally {
       if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
       await exited
-      if (linked) await unlink(junction)
+      scannerFixture.preload = ''
+      scannerFixture.timeoutMs = undefined
+      for (const link of links.reverse()) await unlink(link)
       await rm(root, { recursive: true, force: true })
     }
   },
