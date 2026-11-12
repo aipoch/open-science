@@ -506,7 +506,23 @@ const copyToAvailableDestination = async (
 }
 
 const extensionForMime = (mimeType: string): string | undefined => {
-  switch (mimeType) {
+  switch (mimeType.split(';', 1)[0].trim().toLowerCase()) {
+    case 'application/json':
+      return 'json'
+    case 'application/pdf':
+      return 'pdf'
+    case 'application/zip':
+      return 'zip'
+    case 'application/x-ipynb+json':
+      return 'ipynb'
+    case 'image/jpeg':
+      return 'jpg'
+    case 'image/webp':
+      return 'webp'
+    case 'image/gif':
+      return 'gif'
+    case 'text/html':
+      return 'html'
     case 'image/svg+xml':
       return 'svg'
     case 'image/png':
@@ -678,7 +694,17 @@ export const createFileSaveCommands = (
       const dialogOptions = {
         defaultPath: request.suggestedName,
         filters: extension
-          ? [{ name: extension.toUpperCase(), extensions: [extension] }]
+          ? [
+              {
+                name: extension.toUpperCase(),
+                extensions:
+                  extension === 'jpg'
+                    ? ['jpg', 'jpeg']
+                    : extension === 'html'
+                      ? ['html', 'htm']
+                      : [extension]
+              }
+            ]
           : undefined
       }
       const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(

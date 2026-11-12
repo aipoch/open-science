@@ -2,14 +2,18 @@ import { test, expect, chromium, type Browser, type Page } from '@playwright/tes
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, parse, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+import WebSocket from 'ws'
 import type { FileDialogHelperRequest, FileDialogResult } from '../src/main/file-dialog-protocol'
+import type { SaveDialogOptions } from 'electron'
+import type { Locale } from '../src/shared/locale'
 let publishUserFile: typeof import('../src/main/user-file-publisher').publishUserFile
 
 const runtimeRequire = createRequire(__filename)
+type WindowBounds = { x: number; y: number; width: number; height: number }
 
 test.beforeAll(async () => {
   const info = test.info()
@@ -27,11 +31,15 @@ test.beforeAll(async () => {
 
 async function launchHelper(
   root: string,
-  kind: 'save' | 'open' = 'save'
+  kind: 'save' | 'open' = 'save',
+  theme: 'light' | 'dark' = 'light',
+  options: SaveDialogOptions = {},
+  locale: Locale = 'en'
 ): Promise<{
   page: Page
   result: Promise<FileDialogResult>
   child: ChildProcess
+  probeWindow: (action?: 'minimum' | 'bottom') => Promise<WindowBounds>
   close: () => Promise<void>
 }> {
   const profile = join(dirname(root), 'profiles', randomUUID())
@@ -45,21 +53,42 @@ async function launchHelper(
   delete env.ELECTRON_RENDERER_URL
   const child = spawn(
     runtimeRequire('electron') as string,
-    [resolve('.'), '--open-science-file-dialog-helper', '--remote-debugging-port=0', '--lang=en'],
+    [
+      resolve('.'),
+      '--open-science-file-dialog-helper',
+      '--remote-debugging-port=0',
+      '--inspect=0',
+      '--lang=en'
+    ],
     {
       env,
+      windowsHide: false,
       stdio: ['ignore', 'ignore', 'pipe', 'ipc']
     }
   )
+  const states: Array<{ phase?: string; visible?: boolean; focused?: boolean }> = []
+  let inspectorEndpoint: string | undefined
+  child.stderr!.on('data', (data: Buffer) => {
+    const match = data.toString().match(/Debugger listening on (ws:\/\/[^\s]+)/)
+    if (match) inspectorEndpoint = match[1]
+  })
   let browser: Browser | undefined
   const result = new Promise<FileDialogResult>((resolveResult, reject) => {
     let selection: FileDialogResult | undefined
     child.on('message', (raw: unknown) => {
-      const message = raw as { type?: string; result?: FileDialogResult }
+      const message = raw as {
+        type?: string
+        result?: FileDialogResult
+        phase?: string
+        visible?: boolean
+        focused?: boolean
+      }
+      if (message.type === 'window-state') states.push(message)
       if (message.type === 'ready') {
         const request: FileDialogHelperRequest = {
           type: 'show',
           presentation: 'html',
+          appearance: { theme, followsSystem: false, locale },
           operationId: randomUUID(),
           appVersion: 'e2e',
           crashDumpsPath: join(dirname(root), 'dumps'),
@@ -68,7 +97,8 @@ async function launchHelper(
                 kind: 'save',
                 options: {
                   defaultPath: join(root, 'default.txt'),
-                  filters: [{ name: 'Text', extensions: ['txt'] }]
+                  filters: [{ name: 'Text', extensions: ['txt'] }],
+                  ...options
                 }
               }
             : {
@@ -110,13 +140,65 @@ async function launchHelper(
     browser = await chromium.connectOverCDP(endpoint)
     const context = browser.contexts()[0]
     const page = context.pages()[0] ?? (await context.waitForEvent('page'))
-    await expect(
-      page.getByRole('heading', { name: kind === 'save' ? 'Save file' : 'Select folder' })
-    ).toBeVisible()
+    await expect(page.locator('h1')).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('lang', locale)
+    // DOM visibility alone also passes for a hidden BrowserWindow. Require the OS host acknowledgement.
+    await expect
+      .poll(() => states)
+      .toContainEqual(expect.objectContaining({ visible: true, focused: true }))
+    await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /dark/ : /^(?!.*dark).*$/)
     return {
       page,
       result,
       child,
+      probeWindow: async (action) => {
+        await expect.poll(() => inspectorEndpoint).toBeTruthy()
+        // Electron omits Chrome's Browser.setWindowBounds CDP domain. Resize the actual native
+        // window through its main-process inspector instead of emulating a renderer viewport.
+        return new Promise<WindowBounds>((resolveResize, reject) => {
+          const socket = new WebSocket(inspectorEndpoint!)
+          const timer = setTimeout(() => {
+            socket.terminate()
+            reject(new Error('Window resize timed out'))
+          }, 10_000)
+          socket.once('open', () =>
+            socket.send(
+              JSON.stringify({
+                id: 1,
+                method: 'Runtime.evaluate',
+                params: {
+                  expression: `(() => {
+                    const { BrowserWindow, screen } = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json')('electron');
+                    const window = BrowserWindow.getAllWindows()[0];
+                    if ('${action ?? 'read'}' === 'minimum') window.setSize(480, window.getSize()[1]);
+                    if ('${action ?? 'read'}' === 'bottom') {
+                      const bounds = window.getBounds();
+                      const area = screen.getDisplayMatching(bounds).workArea;
+                      window.setPosition(bounds.x, area.y + area.height - bounds.height);
+                    }
+                    return window.getBounds();
+                  })()`,
+                  returnByValue: true
+                }
+              })
+            )
+          )
+          socket.on('message', (data) => {
+            const reply = JSON.parse(data.toString())
+            if (reply.id !== 1) return
+            clearTimeout(timer)
+            socket.close()
+            if (reply.error || reply.result?.exceptionDetails)
+              reject(new Error(JSON.stringify(reply)))
+            else resolveResize(reply.result.result.value)
+          })
+          socket.once('error', (error) => {
+            clearTimeout(timer)
+            socket.terminate()
+            reject(error)
+          })
+        })
+      },
       close: async () => {
         await browser?.close()
         if (child.exitCode === null) child.kill('SIGKILL')
@@ -202,13 +284,13 @@ test('HTML folder selection and invalid-name recovery do not open native dialogs
   const folder = await launchHelper(root, 'open')
   try {
     await folder.page.getByRole('button', { name: '中文目录', exact: true }).click()
-    await expect(folder.page.getByRole('textbox', { name: 'Folder path' })).toHaveValue(
+    await expect(folder.page.getByRole('textbox', { name: 'Save path' })).toHaveValue(
       join(root, '中文目录')
     )
     await folder.page.getByRole('button', { name: 'New folder' }).click()
     await folder.page.getByRole('textbox', { name: 'Folder name' }).fill('新建-Abc')
     await folder.page.getByRole('button', { name: 'Create', exact: true }).click()
-    await expect(folder.page.getByRole('textbox', { name: 'Folder path' })).toHaveValue(
+    await expect(folder.page.getByRole('textbox', { name: 'Save path' })).toHaveValue(
       join(root, '中文目录', '新建-Abc')
     )
     await folder.page.screenshot({ path: info.outputPath('03-html-folder.png') })
@@ -222,9 +304,11 @@ test('HTML folder selection and invalid-name recovery do not open native dialogs
   }
   const invalid = await launchHelper(root)
   try {
-    await invalid.page.getByRole('textbox', { name: 'File name', exact: true }).fill('CON.txt')
+    await invalid.page
+      .getByRole('textbox', { name: 'File name', exact: true })
+      .fill('../escape.txt')
     await invalid.page.getByRole('button', { name: 'Save', exact: true }).click()
-    await expect(invalid.page.getByText('Enter a valid Windows file name.')).toBeVisible()
+    await expect(invalid.page.getByText('Enter a valid file name.')).toBeVisible()
     await invalid.page.screenshot({ path: info.outputPath('04-invalid-filename.png') })
     await invalid.page.getByRole('button', { name: 'Cancel', exact: true }).click()
     expect(await invalid.result).toEqual({ canceled: true, filePath: '' })
@@ -232,3 +316,347 @@ test('HTML folder selection and invalid-name recovery do not open native dialogs
     await invalid.close()
   }
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`repeated ${theme} pickers are visible, focused and themed`, async () => {
+    const root = test.info().outputPath('repeated')
+    await mkdir(root, { recursive: true })
+    for (let index = 0; index < 5; index++) {
+      const helper = await launchHelper(root, 'save', theme)
+      try {
+        if (index === 0) await expect.poll(() => helper.page.evaluate(() => innerHeight)).toBe(340)
+        if (index === 0)
+          await helper.page.screenshot({ path: test.info().outputPath(`picker-${theme}.png`) })
+        if (index === 0) {
+          await helper.page.getByRole('button', { name: 'Browse', exact: true }).click()
+          await expect(helper.page.getByRole('region', { name: 'Folders' })).toBeVisible()
+          await expect(
+            helper.page.getByRole('button', { name: /^(Downloads|Home|Desktop)$/ })
+          ).toHaveCount(0)
+          await expect.poll(() => helper.page.evaluate(() => innerHeight)).toBeGreaterThan(500)
+          await helper.page.screenshot({
+            path: test.info().outputPath(`picker-${theme}-expanded.png`)
+          })
+          await helper.page.getByRole('button', { name: 'Hide folders' }).click()
+          await expect.poll(() => helper.page.evaluate(() => innerHeight)).toBe(340)
+        }
+        await helper.page.getByRole('button', { name: 'Cancel', exact: true }).click()
+        expect(await helper.result).toEqual({ canceled: true, filePath: '' })
+      } finally {
+        await helper.close()
+      }
+    }
+  })
+}
+
+test('compact save navigation updates the destination and keyboard actions preserve composition', async () => {
+  const root = test.info().outputPath('compact-navigation')
+  const nested = join(root, '中文目录')
+  await mkdir(nested, { recursive: true })
+  const helper = await launchHelper(root)
+  try {
+    const name = helper.page.getByRole('textbox', { name: 'File name', exact: true })
+    await expect(name).toBeFocused()
+    expect(
+      await name.evaluate((node: HTMLInputElement) => [node.selectionStart, node.selectionEnd])
+    ).toEqual([0, 7])
+    const path = helper.page.getByRole('textbox', { name: 'Save path' })
+    await path.fill(nested)
+    await path.press('Enter')
+    await expect(helper.page.getByRole('region', { name: 'Folders' })).toBeVisible()
+    await expect(helper.page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
+    const parent = helper.page.getByRole('button', { name: 'Parent folder', exact: true })
+    await expect(parent).toHaveCount(1)
+    await expect(parent).toHaveText('Parent folder')
+    await parent.click()
+    await expect(path).toHaveValue(root)
+    await helper.page.getByRole('button', { name: '中文目录', exact: true }).click()
+    await expect(path).toHaveValue(nested)
+    await name.fill('analysis.v2.TXT')
+    await name.dispatchEvent('keydown', { key: 'Escape', isComposing: true })
+    await expect(name).toBeVisible()
+    await name.press('Enter').catch((error) => {
+      if (!helper.page.isClosed()) throw error
+    })
+    expect(await helper.result).toEqual({
+      canceled: false,
+      filePath: join(nested, 'analysis.v2.TXT')
+    })
+  } finally {
+    await helper.close()
+  }
+  const cancel = await launchHelper(root)
+  try {
+    await cancel.page
+      .getByRole('textbox', { name: 'File name', exact: true })
+      .press('Escape')
+      .catch((error) => {
+        if (!cancel.page.isClosed()) throw error
+      })
+    expect(await cancel.result).toEqual({ canceled: true, filePath: '' })
+  } finally {
+    await cancel.close()
+  }
+})
+
+test('actual export types preserve aliases and compound suffixes and require explicit mismatch resolution', async () => {
+  const root = test.info().outputPath('file-formats')
+  await mkdir(root, { recursive: true })
+  const cases = [
+    {
+      original: 'plan.md',
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+      entered: 'plan.pdf',
+      message: 'File type: Markdown (.md); suggested name: “plan.pdf.md”.',
+      correction: 'plan.pdf.md',
+      expected: 'plan.pdf.md'
+    },
+    {
+      original: 'report.md',
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+      entered: 'analysis.v2',
+      message: 'File type: Markdown (.md); suggested name: “analysis.v2.md”.',
+      correction: 'analysis.v2.md',
+      expected: 'analysis.v2.md'
+    },
+    {
+      original: 'photo.jpg',
+      filters: [{ name: 'JPEG', extensions: ['jpg', 'jpeg'] }],
+      entered: '图片.JPEG',
+      expected: '图片.JPEG'
+    },
+    { original: 'archive.tar.gz', filters: [], entered: '数据', expected: '数据.tar.gz' },
+    {
+      original: 'archive.tar.gz',
+      filters: [],
+      entered: 'data.tar',
+      message: 'File type: Original file (.tar.gz); suggested name: “data.tar.tar.gz”.',
+      correction: 'data.tar.gz',
+      expected: 'data.tar.gz'
+    }
+  ]
+  for (const [index, scenario] of cases.entries()) {
+    const helper = await launchHelper(root, 'save', 'light', {
+      defaultPath: join(root, scenario.original),
+      filters: scenario.filters
+    })
+    try {
+      await expect(
+        helper.page.getByRole('textbox', { name: 'File type', exact: true })
+      ).toHaveCount(0)
+      await expect(helper.page.getByRole('combobox')).toHaveCount(0)
+      const name = helper.page.getByRole('textbox', { name: 'File name', exact: true })
+      await name.fill(scenario.entered)
+      await name.press('Enter').catch((error) => {
+        if (!helper.page.isClosed()) throw error
+      })
+      if (scenario.correction) {
+        await expect(helper.page.getByText(scenario.message!, { exact: true })).toBeVisible()
+        await helper.page.screenshot({
+          path: test.info().outputPath(`filename-review-${index}.png`)
+        })
+        await expect(helper.page.getByRole('button', { name: /^Use “/ })).toHaveCount(0)
+        await expect(name).toHaveValue(scenario.entered)
+        await name.fill(scenario.correction)
+        await expect(name).toHaveValue(scenario.correction)
+        await helper.page.getByRole('button', { name: 'Save', exact: true }).click()
+      }
+      const target = join(root, scenario.expected)
+      expect(await helper.result).toEqual({ canceled: false, filePath: target })
+      const bytes = Buffer.from(`unchanged encoded payload ${index}`)
+      await publishUserFile(target, (path) => writeFile(path, bytes))
+      expect(await readFile(target)).toEqual(bytes)
+    } finally {
+      await helper.close()
+    }
+  }
+})
+
+for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 'ko'] as const) {
+  test(`localized save layout preserves the standard width: ${locale}`, async () => {
+    const info = test.info()
+    const catalog: Record<string, Record<string, string>> = locale === 'en'
+      ? { renderer: {}, common: {} }
+      : JSON.parse(await readFile(resolve(`src/shared/i18n/locales/${locale}.json`), 'utf8'))
+    const copy = (key: string): string => catalog.renderer[key] ?? catalog.common[key] ?? key
+    const root = info.outputPath(
+      'long-path-目录',
+      'research-project-with-a-long-directory-name',
+      'export-destination'
+    )
+    const childName = '实际子目录-subfolder'
+    await mkdir(join(root, childName), { recursive: true })
+    const enteredName = `研究-analysis.${'long-filename-'.repeat(7)}v2`
+    const target = join(root, `${enteredName}.txt`)
+    await writeFile(target, 'keep existing bytes')
+    const measurements: unknown[] = []
+    for (const theme of ['light', 'dark'] as const) {
+      const helper = await launchHelper(
+        root,
+        'save',
+        theme,
+        {
+          defaultPath: join(root, 'report.txt'),
+          filters: [{ name: 'TXT', extensions: ['txt'] }]
+        },
+        locale
+      )
+      try {
+        const page = helper.page
+        // Observe the real default width; resizing here would hide locale-dependent regressions.
+        await expect.poll(() => page.evaluate(() => innerWidth)).toBe(600)
+        const inspect = async (state: string): Promise<void> => {
+          const measurement = await page.evaluate(() => {
+            const issues: string[] = []
+            const visible = (element: HTMLElement): boolean => {
+              const r = element.getBoundingClientRect()
+              return r.width > 0 && r.height > 0 && !element.closest('[aria-hidden="true"]')
+            }
+            const controls = [
+              ...document.querySelectorAll<HTMLElement>('button, label, input, h1')
+            ].filter(visible)
+            const boxes = controls.map((element) => ({
+              element,
+              rect: element.getBoundingClientRect(),
+              label: element.textContent?.trim() || element.getAttribute('aria-label') || element.id
+            }))
+            for (const { element, rect, label } of boxes) {
+              if (
+                rect.left < -1 ||
+                rect.right > innerWidth + 1 ||
+                rect.top < -1 ||
+                rect.bottom > innerHeight + 1
+              )
+                issues.push(`outside viewport: ${label}`)
+              if (
+                element.tagName !== 'INPUT' &&
+                (element.scrollWidth > element.clientWidth + 1 ||
+                  element.scrollHeight > element.clientHeight + 1)
+              )
+                issues.push(`clipped control: ${label}`)
+            }
+            for (let i = 0; i < boxes.length; i++)
+              for (let j = i + 1; j < boxes.length; j++) {
+                const a = boxes[i],
+                  b = boxes[j]
+                if (a.element.contains(b.element) || b.element.contains(a.element)) continue
+                if (
+                  Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left) > 1 &&
+                  Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top) > 1
+                )
+                  issues.push(`overlap: ${a.label} / ${b.label}`)
+              }
+            for (const element of document.querySelectorAll<HTMLElement>(
+              '[role="alert"], [role="alertdialog"]'
+            )) {
+              if (visible(element) && element.scrollWidth > element.clientWidth + 1)
+                issues.push('horizontal overflow in message')
+            }
+            const hint = document.querySelector<HTMLElement>('#save-name-hint')
+            if (hint) {
+              const rect = hint.getBoundingClientRect()
+              const body = document.querySelector('fieldset')!.getBoundingClientRect()
+              if (rect.top < body.top || rect.bottom > body.bottom)
+                issues.push('filename hint is vertically clipped')
+              if (
+                getComputedStyle(hint).color ===
+                getComputedStyle(document.querySelector('main')!).color
+              )
+                issues.push('filename hint is not visually muted')
+            }
+            if (document.documentElement.scrollWidth > innerWidth)
+              issues.push('horizontal page overflow')
+            return { width: innerWidth, height: innerHeight, issues }
+          })
+          measurements.push({ locale, theme, state, ...measurement })
+          await page.screenshot({ path: info.outputPath(`${locale}-${theme}-${state}.png`) })
+          expect(measurement.width, `${locale} ${theme} ${state}`).toBe(600)
+          expect(measurement.issues, `${locale} ${theme} ${state}`).toEqual([])
+        }
+        const path = page.locator('#save-path')
+        const name = page.locator('#save-name')
+        await expect(
+          page.getByRole('heading', { name: copy('Save file'), exact: true })
+        ).toBeVisible()
+        await inspect('compact')
+        await name.fill(`${enteredName}.txt`)
+        await page.getByRole('button', { name: copy('Browse'), exact: true }).click()
+        const parent = page.getByRole('button', { name: copy('Parent folder'), exact: true })
+        await expect(parent).toHaveCount(1)
+        await expect(parent).toHaveText(copy('Parent folder'))
+        await expect(page.getByRole('button', { name: childName, exact: true })).toBeVisible()
+        await expect.poll(() => page.evaluate(() => innerHeight)).toBeGreaterThan(500)
+        await inspect('expanded')
+        await parent.click()
+        await expect(path).toHaveValue(dirname(root))
+        await path.fill(root)
+        await path.press('Enter')
+        await expect(page.getByRole('button', { name: childName, exact: true })).toBeVisible()
+        if (locale === 'de' && theme === 'light') {
+          await path.fill(parse(root).root)
+          await path.press('Enter')
+          await expect(page.getByRole('button', { name: copy('Save'), exact: true })).toBeEnabled()
+          await expect(parent).toBeDisabled()
+          await path.fill(root)
+          await path.press('Enter')
+          await expect(parent).toBeEnabled()
+        }
+        await page.getByRole('button', { name: copy('New folder'), exact: true }).click()
+        await expect(page.getByRole('textbox', { name: copy('Folder name') })).toBeVisible()
+        await inspect('new-folder')
+        await page
+          .locator('form')
+          .getByRole('button', { name: copy('Cancel'), exact: true })
+          .click()
+        await page.getByRole('button', { name: copy('Hide folders'), exact: true }).click()
+        await expect.poll(() => page.evaluate(() => innerHeight)).toBe(340)
+        const collapsedBounds = await helper.probeWindow('bottom')
+        const footerBounds = await page.locator('main > footer').boundingBox()
+        await name.fill(enteredName)
+        await page.getByRole('button', { name: copy('Save'), exact: true }).click()
+        const suggestion = copy('File type: {{type}}; suggested name: “{{name}}”.')
+          .replace('{{type}}', 'TXT (.txt)')
+          .replace('{{name}}', `${enteredName}.txt`)
+        const hint = page.getByText(suggestion, { exact: true })
+        await expect(hint).toBeVisible()
+        await expect(name).toHaveAttribute('aria-describedby', 'save-name-hint')
+        await expect(hint).toHaveCSS('font-weight', '400')
+        expect(await helper.probeWindow()).toEqual(collapsedBounds)
+        expect(await page.locator('main > footer').boundingBox()).toEqual(footerBounds)
+        await inspect('suffix-hint')
+        await name.fill(`${enteredName}.txt`)
+        await expect(hint).toHaveCount(0)
+        expect(await helper.probeWindow()).toEqual(collapsedBounds)
+        expect(await page.locator('main > footer').boundingBox()).toEqual(footerBounds)
+        await page.getByRole('button', { name: copy('Save'), exact: true }).click()
+        const confirmation = page.getByRole('alertdialog')
+        await expect(confirmation).toBeVisible()
+        await expect(
+          confirmation.getByRole('heading', { name: copy('Replace existing file?') })
+        ).toBeVisible()
+        // Wait for the real modal transition before measuring its transformed bounds.
+        await expect
+          .poll(() =>
+            confirmation.evaluate((node) =>
+              node.getAnimations().some((animation) => animation.playState === 'running')
+            )
+          )
+          .toBe(false)
+        expect(await helper.probeWindow()).toEqual(collapsedBounds)
+        await inspect('overwrite')
+        await confirmation
+          .getByRole('button', { name: copy('Keep existing file'), exact: true })
+          .click()
+        expect(await readFile(target, 'utf8')).toBe('keep existing bytes')
+        await page.getByRole('button', { name: copy('Cancel'), exact: true }).click()
+        expect(await helper.result).toEqual({ canceled: true, filePath: '' })
+      } finally {
+        await helper.close()
+        await writeFile(
+          info.outputPath('layout-measurements.json'),
+          JSON.stringify(measurements, null, 2)
+        )
+      }
+    }
+  })
+}

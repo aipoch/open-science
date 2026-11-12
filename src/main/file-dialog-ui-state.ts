@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { validFileBasename, saveFileFormat } from './file-dialog-filename'
+import { resolveSaveFileName } from '../shared/file-save-name'
 import { lstat, mkdir, opendir, stat } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import type { FileDialogRequest, FileDialogResult } from './file-dialog-protocol'
 import type {
   FileDialogLocation,
@@ -11,18 +13,6 @@ import type {
 
 const validPath = (value: unknown): value is string =>
   typeof value === 'string' && value.length <= 32_768 && !value.includes('\0') && isAbsolute(value)
-
-export function validWindowsFilename(name: string): boolean {
-  // Reject aliases and path syntax before joining; the publisher must receive one basename.
-  return (
-    name.length > 0 &&
-    name.length <= 255 &&
-    !/[<>:"/\\|?*]/.test(name) &&
-    !Array.from(name).some((character) => character.charCodeAt(0) < 32) &&
-    !/[. ]$/.test(name) &&
-    !/^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:[. ]|$)/i.test(name)
-  )
-}
 
 async function listLocation(path: string): Promise<FileDialogLocation> {
   if (!validPath(path)) throw new Error('Invalid directory')
@@ -65,7 +55,8 @@ export class FileDialogUiSession {
 
   constructor(
     private readonly request: FileDialogRequest,
-    private readonly defaults: Pick<FileDialogUiState, 'locale' | 'shortcuts'>,
+    private readonly defaults: Pick<FileDialogUiState, 'locale' | 'shortcuts'> &
+      Partial<Pick<FileDialogUiState, 'appearance'>>,
     private readonly finish: (result: FileDialogResult) => void,
     private readonly reportFailure: (code: string) => void
   ) {}
@@ -93,11 +84,12 @@ export class FileDialogUiSession {
     if (!location) throw new Error('No accessible initial directory')
     return {
       ...this.defaults,
+      appearance: this.defaults.appearance ?? { theme: 'light', followsSystem: true },
       mode: directoryMode ? 'directory' : 'save',
       title: this.request.options.title,
       buttonLabel: this.request.options.buttonLabel,
       filename: directoryMode || initialIsDirectory ? '' : basename(initial),
-      filters: this.request.options.filters ?? [],
+      format: directoryMode ? null : saveFileFormat(this.request.options),
       location
     }
   }
@@ -126,7 +118,7 @@ export class FileDialogUiSession {
           if (
             !validPath(action.directory) ||
             typeof action.name !== 'string' ||
-            !validWindowsFilename(action.name)
+            !validFileBasename(action.name)
           )
             return { type: 'error', code: 'filename' }
           const path = join(action.directory, action.name)
@@ -143,27 +135,14 @@ export class FileDialogUiSession {
             return { type: 'done' }
           }
           let filename = action.filename
-          if (typeof filename !== 'string' || !validWindowsFilename(filename))
+          if (typeof filename !== 'string' || !validFileBasename(filename))
             return { type: 'error', code: 'filename' }
-          const filters = this.request.options.filters ?? []
-          if (
-            !Number.isInteger(action.filterIndex) ||
-            action.filterIndex < 0 ||
-            (filters.length && action.filterIndex >= filters.length)
-          )
-            return { type: 'error', code: 'extension' }
-          const extensions = filters[action.filterIndex]?.extensions ?? []
-          if (!extname(filename) && extensions.length && !extensions.includes('*'))
-            filename += `.${extensions[0]}`
-          if (!validWindowsFilename(filename)) return { type: 'error', code: 'filename' }
-          if (
-            extensions.length &&
-            !extensions.includes('*') &&
-            !extensions.some((extension) =>
-              filename.toLowerCase().endsWith(`.${extension.toLowerCase()}`)
-            )
-          )
-            return { type: 'error', code: 'extension' }
+          const resolved = resolveSaveFileName(filename, saveFileFormat(this.request.options))
+          if (resolved.kind === 'review')
+            return { type: 'error', code: 'extension', suggestions: resolved }
+          filename = resolved.filename
+          if (!resolved.stem || !validFileBasename(filename))
+            return { type: 'error', code: 'filename' }
           const path = join(action.directory, filename)
           const existing = await fingerprint(path)
           if (existing !== undefined) {

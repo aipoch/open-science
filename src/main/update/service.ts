@@ -158,9 +158,8 @@ export class UpdateService implements UpdateStrategy {
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
-  // Platform-aware save location. Windows/Linux write straight to the Downloads folder (no OS
-  // permission gate). macOS Downloads is TCC-protected, so a native save panel grants access via
-  // implicit consent (no permission prompt) and lets the user confirm the location.
+  // Windows/Linux retain automatic installer downloads. macOS lets the user review the target
+  // through the shared desktop picker; filesystem permissions are checked when writing.
   private async resolveSavePath(defaultFileName: string): Promise<string | null> {
     const downloadsPath = join(app.getPath('downloads'), defaultFileName)
     if (this.platform !== 'darwin') return downloadsPath

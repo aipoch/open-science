@@ -6,6 +6,7 @@ import { FileDialogUiSession } from './file-dialog-ui-state'
 
 const roots: string[] = []
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -36,6 +37,7 @@ async function fixture(): Promise<{
 }
 
 it('rejects malformed and escaping selections at the filesystem boundary', async () => {
+  vi.stubGlobal('process', { ...process, platform: 'win32' })
   const { root, session, finish } = await fixture()
   for (const filename of [
     '../escape.txt',
@@ -47,26 +49,29 @@ it('rejects malformed and escaping selections at the filesystem boundary', async
     1,
     null
   ]) {
-    expect(
-      await session.action({ type: 'select', directory: root, filename, filterIndex: 0 })
-    ).toEqual({ type: 'error', code: 'filename' })
+    expect(await session.action({ type: 'select', directory: root, filename })).toEqual({
+      type: 'error',
+      code: 'filename'
+    })
   }
   expect(
     await session.action({
       type: 'select',
       directory: '../relative',
-      filename: 'output.txt',
-      filterIndex: 0
+      filename: 'output.txt'
     })
   ).toEqual({ type: 'error', code: 'folder' })
   expect(
     await session.action({
       type: 'select',
       directory: root,
-      filename: 'output.exe',
-      filterIndex: 0
+      filename: 'output.exe'
     })
-  ).toEqual({ type: 'error', code: 'extension' })
+  ).toMatchObject({
+    type: 'error',
+    code: 'extension',
+    suggestions: { keep: 'output.exe.txt', replace: 'output.txt' }
+  })
   expect(await session.action({ type: 'replace', token: 'unissued' })).toEqual({
     type: 'error',
     code: 'changed'
@@ -81,8 +86,7 @@ it('invalidates replacement consent after browsing and never follows an output s
   const confirmation = await session.action({
     type: 'select',
     directory: root,
-    filename: 'existing.txt',
-    filterIndex: 0
+    filename: 'existing.txt'
   })
   expect(confirmation.type).toBe('confirm')
   if (confirmation.type !== 'confirm') throw new Error('Missing confirmation')
@@ -98,11 +102,19 @@ it('invalidates replacement consent after browsing and never follows an output s
       await session.action({
         type: 'select',
         directory: root,
-        filename: 'link.txt',
-        filterIndex: 0
+        filename: 'link.txt'
       })
     ).toEqual({ type: 'error', code: 'destination' })
   }
   expect(await readFile(file, 'utf8')).toBe('keep')
   expect(finish).not.toHaveBeenCalled()
+})
+
+it('keeps macOS filenames independent of Windows reserved names', async () => {
+  vi.stubGlobal('process', { ...process, platform: 'darwin' })
+  const { root, session, finish } = await fixture()
+  expect(await session.action({ type: 'select', directory: root, filename: 'CON.txt' })).toEqual({
+    type: 'done'
+  })
+  expect(finish).toHaveBeenCalledWith({ canceled: false, filePath: join(root, 'CON.txt') })
 })

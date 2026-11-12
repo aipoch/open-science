@@ -1,5 +1,6 @@
 {
   "common": {
+    "Download failed": "Le téléchargement a échoué",
     "The conversation changed. Close and reopen export to review it.": "La conversation a changé. Fermez puis rouvrez l’exportation pour la vérifier.",
     "Approval needed": "Approbation nécessaire",
     "Cancel": "Annuler",
@@ -1468,7 +1469,6 @@
     "Download and set up": "Téléchargez et configurez",
     "Download artifacts…": "Télécharger les artefacts…",
     "Download as .ipynb": "Télécharger en .ipynb",
-    "Download failed": "Le téléchargement a échoué",
     "Download failed for {{name}}": "Échec du téléchargement pour {{name}}",
     "Download failed. Try again": "Le téléchargement a échoué. Réessayez",
     "Download file to OS Downloads folder": "Télécharger le fichier dans le dossier Téléchargements du système d'exploitation",
@@ -8324,24 +8324,24 @@
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilisez l’URL d’un dépôt GitHub public ou d’une branche publiant un catalogue de la place de marché des spécialistes.",
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Les compétences installées peuvent modifier le comportement des agents. Ne faites confiance qu’aux sources que vous connaissez.",
     "Cannot open this folder. Check the path and permissions.": "Impossible d’ouvrir ce dossier. Vérifiez le chemin et les autorisations.",
-    "Enter a valid Windows file name.": "Saisissez un nom de fichier Windows valide.",
-    "Use an extension matching the selected file type.": "Utilisez une extension correspondant au type de fichier sélectionné.",
+    "Enter a valid file name.": "Saisissez un nom de fichier valide.",
     "Cannot use this destination. Choose another file or folder.": "Impossible d’utiliser cet emplacement. Choisissez un autre fichier ou dossier.",
     "The destination changed. Review it and save again.": "La destination a changé. Vérifiez-la et enregistrez à nouveau.",
     "Select folder": "Sélectionner un dossier",
     "Parent folder": "Dossier parent",
-    "Go": "Aller",
-    "Downloads": "Téléchargements",
-    "Desktop": "Bureau",
     "Folders": "Dossiers",
     "No subfolders": "Aucun sous-dossier",
     "Some folders are not listed. Enter the folder path to open them.": "Certains dossiers ne sont pas affichés. Saisissez leur chemin pour les ouvrir.",
-    "File type": "Type de fichier",
     "Replace existing file?": "Remplacer le fichier existant ?",
     "“{{name}}” already exists. Replace it?": "« {{name}} » existe déjà. Le remplacer ?",
     "Keep existing file": "Conserver le fichier existant",
     "Replace": "Remplacer",
     "New folder": "Nouveau dossier",
-    "Folder name": "Nom du dossier"
+    "Folder name": "Nom du dossier",
+    "Original file": "Fichier d’origine",
+    "Save path": "Chemin de sauvegarde",
+    "Browse": "Parcourir",
+    "Hide folders": "Masquer les dossiers",
+    "File type: {{type}}; suggested name: “{{name}}”.": "Type de fichier : {{type}} ; nom suggéré : « {{name}} »."
   }
 }

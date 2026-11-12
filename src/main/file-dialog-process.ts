@@ -3,10 +3,14 @@ import { randomUUID } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, type BaseWindow } from 'electron'
+import { app, nativeTheme, type BaseWindow } from 'electron'
+import { assertSelectedSavePath } from './file-dialog-filename'
+import { getFileDialogAppearance } from './file-dialog-appearance'
 import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   FILE_DIALOG_HELPER_ARG,
+  FILE_DIALOG_DISPLAY_TIMEOUT_MS,
+  usesHtmlFileDialog,
   FILE_DIALOG_PROFILE_ENV,
   parseFileDialogResult,
   type FileDialogRequest,
@@ -41,15 +45,11 @@ export async function showFileDialogInHelper(
   const log = createLogger('native-file-dialog')
   // Windows common-dialog edit controls can crash inside third-party IME callbacks.
   // Keep text entry in Chromium while retaining the helper as a process-level safety net.
-  const presentation =
-    process.platform === 'win32' &&
-    (request.kind === 'save' ||
-      (request.kind === 'open' &&
-        request.options.properties?.includes('openDirectory') &&
-        !request.options.properties?.includes('openFile') &&
-        !request.options.properties?.includes('multiSelections')))
-      ? 'html'
-      : 'native'
+  const presentation = usesHtmlFileDialog(request) ? 'html' : 'native'
+  const appearance = getFileDialogAppearance(parent) ?? {
+    theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+    followsSystem: true
+  }
   const operationId = randomUUID()
   const operation = startDiagnosticOperation(log, {
     operation: 'native-file-dialog',
@@ -82,11 +82,13 @@ export async function showFileDialogInHelper(
         FILE_DIALOG_HELPER_ARG,
         `--lang=${app.getLocale()}`
       ],
-      { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true }
+      { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: presentation !== 'html' }
     )
     const result = await new Promise<FileDialogResult>((resolve, reject) => {
       let settled = false
       let ready = false
+      let shown = false
+      let displayTimeout: ReturnType<typeof setTimeout> | undefined
       let selection: FileDialogResult | undefined
       let exitTimeout: ReturnType<typeof setTimeout> | undefined
       const finish = (error?: Error): void => {
@@ -94,6 +96,7 @@ export async function showFileDialogInHelper(
         settled = true
         clearTimeout(startupTimeout)
         clearTimeout(dialogTimeout)
+        clearTimeout(displayTimeout)
         clearTimeout(exitTimeout)
         signal?.removeEventListener('abort', abort)
         parent?.removeListener('closed', closed)
@@ -151,16 +154,35 @@ export async function showFileDialogInHelper(
       })
       child.on('message', (message: unknown) => {
         if (settled) return
-        const raw = message as { type?: string; result?: unknown; errorCode?: unknown } | null
+        const raw = message as {
+          type?: string
+          result?: unknown
+          errorCode?: unknown
+          phase?: unknown
+          visible?: unknown
+          focused?: unknown
+        } | null
         if (raw?.type === 'ready' && !ready) {
           ready = true
           clearTimeout(startupTimeout)
-          operation.phase('show-dialog', { helperPid: child.pid })
+          operation.phase('dialog-requested', { helperPid: child.pid })
+          if (presentation === 'html')
+            displayTimeout = setTimeout(
+              () =>
+                finish(
+                  new NativeFileDialogError(
+                    'display-timeout',
+                    'File dialog did not become visible.'
+                  )
+                ),
+              FILE_DIALOG_DISPLAY_TIMEOUT_MS
+            )
           child.send(
             {
               ...request,
               type: 'show',
               presentation,
+              appearance,
               operationId,
               crashDumpsPath: app.getPath('crashDumps'),
               appVersion: app.getVersion()
@@ -176,6 +198,23 @@ export async function showFileDialogInHelper(
             }
           )
         } else if (
+          raw?.type === 'window-state' &&
+          ready &&
+          presentation === 'html' &&
+          ['created', 'renderer-ready', 'shown', 'focused'].includes(String(raw.phase)) &&
+          typeof raw.visible === 'boolean' &&
+          typeof raw.focused === 'boolean'
+        ) {
+          operation.phase(`window-${raw.phase}`, {
+            helperPid: child.pid,
+            visible: raw.visible,
+            focused: raw.focused
+          })
+          if (raw.phase === 'shown' && raw.visible) {
+            shown = true
+            clearTimeout(displayTimeout)
+          }
+        } else if (
           raw?.type === 'selection-error' &&
           ready &&
           typeof raw.errorCode === 'string' &&
@@ -185,6 +224,11 @@ export async function showFileDialogInHelper(
         } else if (raw?.type === 'result' && ready && !selection) {
           try {
             selection = parseFileDialogResult(request.kind, raw.result)
+            if (request.kind === 'save' && !selection.canceled && 'filePath' in selection)
+              assertSelectedSavePath(request.options, selection.filePath)
+            if (presentation === 'html' && !shown && !selection.canceled)
+              throw new Error('Selection arrived before the window was shown')
+            clearTimeout(displayTimeout)
             exitTimeout = setTimeout(
               () =>
                 finish(

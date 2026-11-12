@@ -8,6 +8,8 @@ import {
   type SaveDialogReturnValue
 } from 'electron'
 import { showFileDialogInHelper } from './file-dialog-process'
+import { assertSelectedSavePath } from './file-dialog-filename'
+import { usesHtmlFileDialog } from './file-dialog-protocol'
 
 const runFileDialog = async <Result extends { canceled: boolean }>(
   kind: 'open' | 'save',
@@ -42,7 +44,7 @@ export function showOpenDialog(
 ): Promise<OpenDialogReturnValue> {
   const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
   const dialogOptions = options ?? (parentOrOptions as OpenDialogOptions)
-  if (process.platform === 'win32')
+  if (process.platform === 'win32' || usesHtmlFileDialog({ kind: 'open', options: dialogOptions }))
     return showFileDialogInHelper(
       { kind: 'open', options: dialogOptions },
       parent,
@@ -68,15 +70,17 @@ export function showSaveDialog(
 ): Promise<SaveDialogReturnValue> {
   const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
   const dialogOptions = options ?? (parentOrOptions as SaveDialogOptions)
-  if (process.platform === 'win32')
+  if (process.platform === 'win32' || usesHtmlFileDialog({ kind: 'save', options: dialogOptions }))
     return showFileDialogInHelper(
       { kind: 'save', options: dialogOptions },
       parent,
       signal
     ) as Promise<SaveDialogReturnValue>
-  return runFileDialog('save', parent, (dialogParent) =>
-    dialogParent
+  return runFileDialog('save', parent, async (dialogParent) => {
+    const selected = await (dialogParent
       ? dialog.showSaveDialog(dialogParent, dialogOptions)
-      : dialog.showSaveDialog(dialogOptions)
-  )
+      : dialog.showSaveDialog(dialogOptions))
+    if (!selected.canceled) assertSelectedSavePath(dialogOptions, selected.filePath)
+    return selected
+  })
 }

@@ -8,6 +8,7 @@ import type {
   desktopMessageOptionsSchema,
   DesktopNativeOperation
 } from './desktop-native-contract'
+import { assertSelectedSavePath } from './file-dialog-filename'
 import { readFile, rm } from 'node:fs/promises'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import type { dialog, shell, WebContents, BrowserWindow, Notification } from 'electron'
@@ -91,7 +92,14 @@ export type DesktopFileInteraction = Readonly<{
 let fileInteraction: DesktopFileInteraction | undefined
 export function configureDesktopFileInteraction(value: DesktopFileInteraction): void {
   if (fileInteraction) throw new Error('Desktop file interaction is already configured.')
-  fileInteraction = value
+  fileInteraction = {
+    ...value,
+    chooseSavePath: async (options, callerId) => {
+      const selected = await value.chooseSavePath(options, callerId)
+      if (!selected.canceled) assertSelectedSavePath(options, selected.filePath)
+      return selected
+    }
+  }
 }
 export function desktopFileInteraction(): DesktopFileInteraction {
   if (fileInteraction) return fileInteraction
@@ -105,7 +113,11 @@ export function desktopFileInteraction(): DesktopFileInteraction {
         throw new Error('Desktop command window is no longer available.')
       return host.chooseFiles(parent, options)
     },
-    chooseSavePath: (options, callerId) => host.chooseSavePathForCaller(callerId, options),
+    chooseSavePath: async (options, callerId) => {
+      const selected = await host.chooseSavePathForCaller(callerId, options)
+      if (!selected.canceled) assertSelectedSavePath(options, selected.filePath)
+      return selected
+    },
     confirm: (options) => host.confirm(options),
     renderResearchVideo: host.renderResearchVideo,
     researchVideoProgress: host.researchVideoProgress,

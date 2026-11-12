@@ -1,5 +1,6 @@
 {
   "common": {
+    "Download failed": "下載失敗",
     "The conversation changed. Close and reopen export to review it.": "對話已發生變更。請關閉並重新開啟匯出以檢查內容。",
     "Approval needed": "需要批准",
     "Cancel": "取消",
@@ -1507,7 +1508,6 @@
     "Download and set up": "下載並設定",
     "Download artifacts…": "下載產物…",
     "Download as .ipynb": "下載為 .ipynb",
-    "Download failed": "下載失敗",
     "Download failed for {{name}}": "{{name}} 下載失敗",
     "Download failed. Try again": "下載失敗，請重試",
     "Download file to OS Downloads folder": "將檔案下載到系統下載資料夾",
@@ -7984,24 +7984,24 @@
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "使用發佈專家市集目錄的公開 GitHub 儲存庫或分支連結。",
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。",
     "Cannot open this folder. Check the path and permissions.": "無法開啟此資料夾。請檢查路徑與權限。",
-    "Enter a valid Windows file name.": "請輸入有效的 Windows 檔案名稱。",
-    "Use an extension matching the selected file type.": "請使用與所選檔案類型相符的副檔名。",
+    "Enter a valid file name.": "請輸入有效的檔案名稱。",
     "Cannot use this destination. Choose another file or folder.": "無法使用此目標位置。請選擇其他檔案或資料夾。",
     "The destination changed. Review it and save again.": "目標檔案已變更。請檢查後重新儲存。",
     "Select folder": "選擇資料夾",
-    "Parent folder": "上層資料夾",
-    "Go": "前往",
-    "Downloads": "下載",
-    "Desktop": "桌面",
+    "Parent folder": "上一層資料夾",
     "Folders": "資料夾",
     "No subfolders": "沒有子資料夾",
     "Some folders are not listed. Enter the folder path to open them.": "部分資料夾未列出。請輸入資料夾路徑以開啟。",
-    "File type": "檔案類型",
     "Replace existing file?": "取代現有檔案？",
     "“{{name}}” already exists. Replace it?": "「{{name}}」已存在。是否取代？",
     "Keep existing file": "保留現有檔案",
     "Replace": "取代",
     "New folder": "新增資料夾",
-    "Folder name": "資料夾名稱"
+    "Folder name": "資料夾名稱",
+    "Original file": "原始檔案",
+    "Save path": "儲存路徑",
+    "Browse": "瀏覽",
+    "Hide folders": "收合資料夾",
+    "File type: {{type}}; suggested name: “{{name}}”.": "檔案類型為 {{type}}，建議使用「{{name}}」。"
   }
 }

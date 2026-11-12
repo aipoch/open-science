@@ -86,11 +86,12 @@ describe('native operations requested by the Node runtime', () => {
           value.signal.signal
         )
       ).resolves.toEqual(result)
+      const isolated = platform === 'win32' || (platform === 'darwin' && save)
       expect(native.mock.calls).toEqual([
-        platform === 'win32' ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
+        isolated ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
       ])
       expect(value.resolve).toHaveBeenCalledWith(value.clientId)
-      if (platform === 'win32') {
+      if (isolated) {
         expect(mocks.isolated).toHaveBeenCalledWith(
           { kind: save ? 'save' : 'open', options: { title: 'Export' } },
           value.window,
@@ -177,8 +178,8 @@ describe('native operations requested by the Node runtime', () => {
     expect(native).toHaveBeenCalledWith({})
   })
 
-  it('records local dialog cancellation and rejection without swallowing the native error', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin' })
+  it('records Linux native dialog cancellation and rejection without swallowing the error', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
     const value = setup()
     const request = {
       kind: 'native-request' as const,

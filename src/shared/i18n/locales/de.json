@@ -1,5 +1,6 @@
 {
   "common": {
+    "Download failed": "Der Download ist fehlgeschlagen",
     "The conversation changed. Close and reopen export to review it.": "Die Konversation wurde geändert. Schließen Sie den Export und öffnen Sie ihn erneut, um die aktuelle Fassung zu prüfen.",
     "Cancel": "Abbrechen",
     "Stay": "In der App bleiben",
@@ -1362,7 +1363,6 @@
     "Download and set up": "Herunterladen und einrichten",
     "Download artifacts…": "Artefakte herunterladen…",
     "Download as .ipynb": "Als .ipynb herunterladen",
-    "Download failed": "Der Download ist fehlgeschlagen",
     "Download failed for {{name}}": "Download für {{name}} fehlgeschlagen",
     "Download failed. Try again": "Der Download ist fehlgeschlagen. Versuchen Sie es erneut",
     "Download file to OS Downloads folder": "Datei in den Downloadordner des Betriebssystems herunterladen",
@@ -8150,24 +8150,24 @@
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Verwenden Sie die URL eines öffentlichen GitHub-Repositorys oder Branches, das einen Spezialisten-Marktplatzkatalog veröffentlicht.",
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Installierte Fähigkeiten können das Verhalten von Agenten ändern. Vertrauen Sie nur Ihnen bekannten Quellen.",
     "Cannot open this folder. Check the path and permissions.": "Dieser Ordner kann nicht geöffnet werden. Prüfen Sie den Pfad und die Berechtigungen.",
-    "Enter a valid Windows file name.": "Geben Sie einen gültigen Windows-Dateinamen ein.",
-    "Use an extension matching the selected file type.": "Verwenden Sie eine Erweiterung, die zum ausgewählten Dateityp passt.",
+    "Enter a valid file name.": "Geben Sie einen gültigen Dateinamen ein.",
     "Cannot use this destination. Choose another file or folder.": "Dieses Ziel kann nicht verwendet werden. Wählen Sie eine andere Datei oder einen anderen Ordner.",
     "The destination changed. Review it and save again.": "Das Ziel wurde geändert. Prüfen Sie es und speichern Sie erneut.",
     "Select folder": "Ordner auswählen",
     "Parent folder": "Übergeordneter Ordner",
-    "Go": "Öffnen",
-    "Downloads": "Downloads",
-    "Desktop": "Desktop",
     "Folders": "Ordner",
     "No subfolders": "Keine Unterordner",
     "Some folders are not listed. Enter the folder path to open them.": "Einige Ordner werden nicht angezeigt. Geben Sie den Ordnerpfad ein, um sie zu öffnen.",
-    "File type": "Dateityp",
     "Replace existing file?": "Vorhandene Datei ersetzen?",
     "“{{name}}” already exists. Replace it?": "„{{name}}“ ist bereits vorhanden. Ersetzen?",
     "Keep existing file": "Vorhandene Datei behalten",
     "Replace": "Ersetzen",
     "New folder": "Neuer Ordner",
-    "Folder name": "Ordnername"
+    "Folder name": "Ordnername",
+    "Original file": "Originaldatei",
+    "Save path": "Speicherpfad",
+    "Browse": "Durchsuchen",
+    "Hide folders": "Ordner ausblenden",
+    "File type: {{type}}; suggested name: “{{name}}”.": "Dateityp: {{type}}; empfohlener Name: „{{name}}“."
   }
 }

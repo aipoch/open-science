@@ -1,4 +1,6 @@
 import { isAbsolute } from 'node:path'
+import { isLocale } from '../shared/locale'
+import type { FileDialogAppearance } from '../shared/file-dialog-ui'
 import type {
   OpenDialogOptions,
   OpenDialogReturnValue,
@@ -8,11 +10,19 @@ import type {
 
 export const FILE_DIALOG_HELPER_ARG = '--open-science-file-dialog-helper'
 export const FILE_DIALOG_PROFILE_ENV = 'OPEN_SCIENCE_FILE_DIALOG_PROFILE'
+export const FILE_DIALOG_DISPLAY_TIMEOUT_MS = 15_000
 
 export type FileDialogRequest =
   { kind: 'open'; options: OpenDialogOptions } | { kind: 'save'; options: SaveDialogOptions }
 
 export type FileDialogResult = OpenDialogReturnValue | SaveDialogReturnValue
+
+export const usesHtmlFileDialog = (request: FileDialogRequest): boolean =>
+  (process.platform === 'win32' || process.platform === 'darwin') &&
+  (request.kind === 'save' ||
+    (request.options.properties?.includes('openDirectory') === true &&
+      !request.options.properties.includes('openFile') &&
+      !request.options.properties.includes('multiSelections')))
 
 export type FileDialogHelperRequest = FileDialogRequest & {
   type: 'show'
@@ -20,6 +30,7 @@ export type FileDialogHelperRequest = FileDialogRequest & {
   operationId: string
   crashDumpsPath: string
   appVersion: string
+  appearance: FileDialogAppearance
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -31,6 +42,10 @@ export const isFileDialogHelperRequest = (value: unknown): value is FileDialogHe
   (value.presentation === 'native' || value.presentation === 'html') &&
   (value.kind === 'open' || value.kind === 'save') &&
   record(value.options) &&
+  record(value.appearance) &&
+  (value.appearance.theme === 'light' || value.appearance.theme === 'dark') &&
+  typeof value.appearance.followsSystem === 'boolean' &&
+  (value.appearance.locale === undefined || isLocale(value.appearance.locale)) &&
   typeof value.operationId === 'string' &&
   typeof value.appVersion === 'string' &&
   typeof value.crashDumpsPath === 'string' &&

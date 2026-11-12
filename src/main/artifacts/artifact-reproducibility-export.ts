@@ -891,7 +891,7 @@ const createArtifactReproducibilityReceiptExporter = (
       if (selected.canceled || !selected.filePath) return { saved: false }
 
       const finalPath = selected.filePath
-      const destination = finalPath.endsWith('.zip') ? finalPath : `${finalPath}.zip`
+      const destination = finalPath.toLowerCase().endsWith('.zip') ? finalPath : `${finalPath}.zip`
       const outputs: Record<string, Uint8Array> = {}
       const manifest: Array<{ entityId: string; relativePath: string; archivePath: string }> = []
       const archivedChecksums = new Map<string, string>()
@@ -971,7 +971,7 @@ const createArtifactReproducibilityReceiptExporter = (
       })
       if (selected.canceled || !selected.filePath) return { saved: false }
 
-      const destination = selected.filePath.endsWith('.zip')
+      const destination = selected.filePath.toLowerCase().endsWith('.zip')
         ? selected.filePath
         : `${selected.filePath}.zip`
       await (dependencies.writeArchive ?? writeFile)(destination, archive)

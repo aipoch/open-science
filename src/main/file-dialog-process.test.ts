@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { BaseWindow } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { rememberFileDialogAppearance } from './file-dialog-appearance'
 import { showFileDialogInHelper } from './file-dialog-process'
 
 const mocks = vi.hoisted(() => ({
@@ -22,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
 vi.mock('node:fs', () => ({ mkdtempSync: () => '/temporary-dialog-profile' }))
 vi.mock('node:fs/promises', () => ({ rm: mocks.rm }))
-vi.mock('electron', () => ({ app: mocks.app }))
+vi.mock('electron', () => ({ app: mocks.app, nativeTheme: { shouldUseDarkColors: false } }))
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => mocks.log
@@ -34,6 +35,12 @@ class Helper extends EventEmitter {
   signalCode: string | null = null
   send = vi.fn((_message: unknown, callback: (error: Error | null) => void) => callback(null))
   kill = vi.fn()
+  ready(): void {
+    this.emit('message', { type: 'ready' })
+    const request = this.send.mock.calls.at(-1)?.[0] as { presentation?: string }
+    if (request.presentation === 'html')
+      this.emit('message', { type: 'window-state', phase: 'shown', visible: true, focused: true })
+  }
   exit(code: number | null, signal: string | null = null): void {
     this.exitCode = code
     this.signalCode = signal
@@ -86,6 +93,30 @@ const assertReleased = (): void => {
 }
 
 describe('isolated native file dialogs', () => {
+  it.each(['renamed.pdf', 'missing-extension', '.md'])(
+    'rejects a helper result that bypasses the reviewed export type: %s',
+    async (name) => {
+      const pending = showFileDialogInHelper(
+        {
+          kind: 'save',
+          options: {
+            defaultPath: join(tmpdir(), 'plan.md'),
+            filters: [{ name: 'Markdown', extensions: ['md'] }]
+          }
+        },
+        window.asParent()
+      )
+      const rejection = expect(pending).rejects.toMatchObject({ reason: 'invalid-result' })
+      child.ready()
+      child.emit('message', {
+        type: 'result',
+        result: { canceled: false, filePath: join(tmpdir(), name) }
+      })
+      await rejection
+      expect(child.kill).toHaveBeenCalled()
+      assertReleased()
+    }
+  )
   it.each([
     { kind: 'save' as const, options: {}, presentation: 'html' },
     { kind: 'open' as const, options: { properties: ['openDirectory'] }, presentation: 'html' },
@@ -103,7 +134,7 @@ describe('isolated native file dialogs', () => {
         { kind, options } as Parameters<typeof showFileDialogInHelper>[0],
         window.asParent()
       )
-      child.emit('message', { type: 'ready' })
+      child.ready()
       expect(child.send).toHaveBeenCalledWith(
         expect.objectContaining({ presentation }),
         expect.any(Function)
@@ -131,7 +162,8 @@ describe('isolated native file dialogs', () => {
     expect(options.env.NODE_OPTIONS).toBeUndefined()
     expect(options.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
     expect(options.stdio).toContain('ipc')
-    child.emit('message', { type: 'ready' })
+    expect(options.windowsHide).toBe(false)
+    child.ready()
     expect(child.send).toHaveBeenCalledWith(
       expect.objectContaining(saveRequest),
       expect.any(Function)
@@ -152,7 +184,7 @@ describe('isolated native file dialogs', () => {
     async (stage) => {
       const pending = showFileDialogInHelper(saveRequest, window.asParent())
       const rejection = expect(pending).rejects.toThrow('exited unexpectedly')
-      child.emit('message', { type: 'ready' })
+      child.ready()
       if (stage === 'after-selection')
         child.emit('message', { type: 'result', result: { canceled: false, filePath } })
       child.emit('disconnect')
@@ -177,7 +209,7 @@ describe('isolated native file dialogs', () => {
       const controller = new AbortController()
       const pending = showFileDialogInHelper(saveRequest, window.asParent(), controller.signal)
       const rejection = expect(pending).rejects.toThrow()
-      child.emit('message', { type: 'ready' })
+      child.ready()
       if (reason === 'abort') controller.abort()
       else if (reason === 'quit') lifecycle.emit('will-quit')
       else {
@@ -198,7 +230,7 @@ describe('isolated native file dialogs', () => {
     await expect(showFileDialogInHelper(saveRequest, window.asParent())).rejects.toThrow(
       'already open'
     )
-    child.emit('message', { type: 'ready' })
+    child.ready()
     child.emit('message', {
       type: 'result',
       result: { canceled: false, filePath: '../unexpected' }
@@ -206,6 +238,32 @@ describe('isolated native file dialogs', () => {
     await rejection
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     expect(mocks.spawn).toHaveBeenCalledTimes(1)
+    assertReleased()
+  })
+
+  it('uses the invoking window appearance and rejects a helper that remains hidden', async () => {
+    rememberFileDialogAppearance(window.asParent(), { theme: 'dark', followsSystem: false })
+    const pending = showFileDialogInHelper(saveRequest, window.asParent())
+    const rejection = expect(pending).rejects.toThrow('did not become visible')
+    child.emit('message', { type: 'ready' })
+    expect(child.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appearance: expect.objectContaining({ theme: 'dark', followsSystem: false })
+      }),
+      expect.any(Function)
+    )
+    child.emit('message', { type: 'window-state', phase: 'shown', visible: false, focused: false })
+    await vi.advanceTimersByTimeAsync(15_000)
+    await rejection
+    assertReleased()
+  })
+
+  it('does not accept a successful selection before the HTML window is shown', async () => {
+    const pending = showFileDialogInHelper(saveRequest, window.asParent())
+    const rejection = expect(pending).rejects.toThrow('invalid selection')
+    child.emit('message', { type: 'ready' })
+    child.emit('message', { type: 'result', result: { canceled: false, filePath } })
+    await rejection
     assertReleased()
   })
 
@@ -226,7 +284,7 @@ describe('isolated native file dialogs', () => {
       window.asParent()
     )
     expect(mocks.spawn.mock.calls[0][1]).toEqual(['--open-science-file-dialog-helper', '--lang=en'])
-    child.emit('message', { type: 'ready' })
+    child.ready()
     child.emit('message', { type: 'result', result: { canceled: true, filePaths: [] } })
     child.exit(0)
     await expect(pending).resolves.toEqual({ canceled: true, filePaths: [] })

@@ -1,5 +1,6 @@
 {
   "common": {
+    "Download failed": "Falló la descarga",
     "The conversation changed. Close and reopen export to review it.": "La conversación cambió. Cierre y vuelva a abrir la exportación para revisarla.",
     "Approval needed": "Se necesita aprobación",
     "Cancel": "Cancelar",
@@ -1469,7 +1470,6 @@
     "Download and set up": "Descargar y configurar",
     "Download artifacts…": "Descargar artefactos…",
     "Download as .ipynb": "Descargar como .ipynb",
-    "Download failed": "Falló la descarga",
     "Download failed for {{name}}": "Error de descarga para {{name}}",
     "Download failed. Try again": "Falló la descarga. Inténtelo de nuevo",
     "Download file to OS Downloads folder": "Descargar archivo a la carpeta de descargas del sistema operativo",
@@ -8324,24 +8324,24 @@
     "Use a public GitHub repository or branch URL that publishes a Specialist Marketplace catalog.": "Utilice la URL de un repositorio público de GitHub o de una rama que publique un catálogo del mercado de especialistas.",
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca.",
     "Cannot open this folder. Check the path and permissions.": "No se puede abrir esta carpeta. Compruebe la ruta y los permisos.",
-    "Enter a valid Windows file name.": "Introduzca un nombre de archivo de Windows válido.",
-    "Use an extension matching the selected file type.": "Use una extensión que coincida con el tipo de archivo seleccionado.",
+    "Enter a valid file name.": "Introduzca un nombre de archivo válido.",
     "Cannot use this destination. Choose another file or folder.": "No se puede usar este destino. Elija otro archivo u otra carpeta.",
     "The destination changed. Review it and save again.": "El destino ha cambiado. Revíselo y vuelva a guardar.",
     "Select folder": "Seleccionar carpeta",
     "Parent folder": "Carpeta superior",
-    "Go": "Ir",
-    "Downloads": "Descargas",
-    "Desktop": "Escritorio",
     "Folders": "Carpetas",
     "No subfolders": "No hay subcarpetas",
     "Some folders are not listed. Enter the folder path to open them.": "Algunas carpetas no aparecen. Introduzca la ruta de la carpeta para abrirla.",
-    "File type": "Tipo de archivo",
     "Replace existing file?": "¿Reemplazar el archivo existente?",
     "“{{name}}” already exists. Replace it?": "«{{name}}» ya existe. ¿Desea reemplazarlo?",
     "Keep existing file": "Conservar archivo existente",
     "Replace": "Reemplazar",
     "New folder": "Nueva carpeta",
-    "Folder name": "Nombre de la carpeta"
+    "Folder name": "Nombre de la carpeta",
+    "Original file": "Archivo original",
+    "Save path": "Ruta de guardado",
+    "Browse": "Examinar",
+    "Hide folders": "Ocultar carpetas",
+    "File type: {{type}}; suggested name: “{{name}}”.": "Tipo de archivo: {{type}}; nombre sugerido: «{{name}}»."
   }
 }
