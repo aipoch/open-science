@@ -3737,7 +3737,7 @@ describe('SettingsPage layout', () => {
     )
   })
 
-  it('opens Notebook network access from the Runtimes protection banner', async () => {
+  it('opens Notebook network access from the Runtimes network summary', async () => {
     useRuntimeSettingsStore.setState({
       envs: { python: [], r: [] },
       loaded: true,
@@ -3756,11 +3756,12 @@ describe('SettingsPage layout', () => {
     })
 
     const banner = document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
-    expect(banner?.textContent).toContain('Network protection on')
+    expect(banner?.querySelector('h3')?.textContent).toBe('Notebook network access')
 
     const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Network settings'
+      (button) => button.textContent?.trim() === 'Manage access'
     )
+    expect(manage).toBeDefined()
     await act(async () => {
       manage?.click()
     })
