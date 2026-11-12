@@ -208,6 +208,8 @@ type SessionProvenancePersistence = {
 
 type SessionNativeCleanup = { projectId: string; sessionId: string; apply(): Promise<void> }
 
+// commit must settle every started cleanup before resolving or rejecting: ID reservations last
+// until this promise settles, including failures in parallel projection owners.
 type SessionDeletionHandlers = {
   planReconciliation?(existingSessionIds: string[]): Promise<SessionNativeCleanup[]>
   commit(sessionIds: string[]): Promise<void>
@@ -445,6 +447,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   >()
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly hydrationCache = new SessionHydrationCache()
+  private readonly pendingDeletionCleanups = new Map<string, number>()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
   private readonly stateOwner: SessionPersistenceStateOwner
@@ -573,8 +576,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
       },
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
-      notifyDiscussionDetached: (session) => publishSessionUpdate(session, 'runtime-context'),
-      notifySessionsDeleted: (sessionIds) => this.notifySessionsDeleted(sessionIds)
+      notifyDiscussionDetached: (session) => publishSessionUpdate(session, 'runtime-context')
     })
     this.reconciliationOwner = new SessionPersistenceReconciliationOwner({
       ownsPromptPreparation: (session) => this.stateOwner.ownsPromptPreparation(session),
@@ -1760,42 +1762,45 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
     const operation = (): Promise<ProjectSessionDeletionResult> =>
-      this.operationScheduler.runProject(projectId, async (scope) => {
-        if (
-          [...this.exportingSessions.values()].some(
-            (reservation) => reservation.projectId === projectId
+      this.withDeletionCleanup((onDeleted) =>
+        this.operationScheduler.runProject(projectId, async (scope) => {
+          if (
+            [...this.exportingSessions.values()].some(
+              (reservation) => reservation.projectId === projectId
+            )
           )
-        )
-          throw new Error('This Project contains a Session locked for export.')
-        // Whole-Project deletion can complete from a durable intent without re-entering
-        // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
-        // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
-        this.hydrationCache.invalidate()
-        this.deletedProjects.add(projectId)
-        try {
-          const deleted = await this.deletionOwner.deleteProjectSessions(
-            projectId,
-            (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
-            options
-          )
-          for (const key of this.sessionRecordProblems.keys()) {
-            if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
-          }
-          return deleted
-        } catch (error) {
+            throw new Error('This Project contains a Session locked for export.')
+          // Whole-Project deletion can complete from a durable intent without re-entering
+          // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
+          // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
+          this.hydrationCache.invalidate()
+          this.deletedProjects.add(projectId)
           try {
-            const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
-            if (state === 'live' || state === 'absent') {
-              this.deletedProjects.delete(projectId)
-              await this.computeJobs?.abortProjectJobDeletion?.(projectId)
+            const deleted = await this.deletionOwner.deleteProjectSessions(
+              projectId,
+              (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
+              onDeleted,
+              options
+            )
+            for (const key of this.sessionRecordProblems.keys()) {
+              if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
             }
-          } catch {
-            // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
-            this.fileIndex.markReconciliationIncomplete(projectId)
+            return deleted
+          } catch (error) {
+            try {
+              const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
+              if (state === 'live' || state === 'absent') {
+                this.deletedProjects.delete(projectId)
+                await this.computeJobs?.abortProjectJobDeletion?.(projectId)
+              }
+            } catch {
+              // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
+              this.fileIndex.markReconciliationIncomplete(projectId)
+            }
+            throw error
           }
-          throw error
-        }
-      })
+        })
+      )
     return this.deletionWork
       ? this.deletionWork.withProjectStopped(projectId, operation)
       : operation()
@@ -1881,53 +1886,62 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    */
   deleteSession(projectId: string, sessionId: string): Promise<void> {
     const operation = (): Promise<void> =>
-      this.operationScheduler.runSessionThenGlobalIfNeeded(
-        projectId,
-        sessionId,
-        async () => {
-          const key = sessionKey(projectId, sessionId)
-          // A committed deletion may need to retry its remaining cleanup. Only an active export
-          // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
-          if (this.exportingSessions.has(key))
-            throw new Error('This Session is locked while its research package is being exported.')
-          this.deletedSessions.add(key)
-          const deletion = await this.deletionOwner
-            .deleteSession(projectId, sessionId)
-            .catch(async (error: unknown) => {
-              try {
-                const authority = await this.repository.loadSessionWithDiagnostics(
+      this.withDeletionCleanup((onDeleted) =>
+        this.operationScheduler.runSessionThenGlobalIfNeeded(
+          projectId,
+          sessionId,
+          async () => {
+            const key = sessionKey(projectId, sessionId)
+            // A committed deletion may need to retry its remaining cleanup. Only an active export
+            // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
+            if (this.exportingSessions.has(key))
+              throw new Error(
+                'This Session is locked while its research package is being exported.'
+              )
+            this.deletedSessions.add(key)
+            const deletion = await this.deletionOwner
+              .deleteSession(projectId, sessionId)
+              .catch(async (error: unknown) => {
+                try {
+                  const authority = await this.repository.loadSessionWithDiagnostics(
+                    projectId,
+                    sessionId
+                  )
+                  if (authority.status === 'found') this.deletedSessions.delete(key)
+                } catch {
+                  // Authority cannot be proven live, so retain the tombstone fail-closed.
+                }
+                throw error
+              })
+            const reconciled =
+              this.stateOwner.metadataSnapshot().isComplete &&
+              (await this.deletionOwner
+                .reconcileProjectSessionDeletion(
                   projectId,
-                  sessionId
+                  sessionId,
+                  deletion.receiptKind,
+                  onDeleted
                 )
-                if (authority.status === 'found') this.deletedSessions.delete(key)
-              } catch {
-                // Authority cannot be proven live, so retain the tombstone fail-closed.
-              }
-              throw error
-            })
-          const reconciled =
-            this.stateOwner.metadataSnapshot().isComplete &&
-            (await this.deletionOwner
-              .reconcileProjectSessionDeletion(projectId, sessionId, deletion.receiptKind)
+                .catch((error: unknown) => {
+                  throw new SessionDeletionCommittedError(error)
+                }))
+            if (reconciled) {
+              this.clearSessionRecordProblem(projectId, sessionId)
+              if (deletion.cleanupError) throw deletion.cleanupError
+              return undefined
+            }
+            return deletion
+          },
+          async ({ receiptKind, cleanupError }) => {
+            await this.deletionOwner
+              .reconcileSessionDeletion(projectId, sessionId, receiptKind, onDeleted)
               .catch((error: unknown) => {
                 throw new SessionDeletionCommittedError(error)
-              }))
-          if (reconciled) {
+              })
             this.clearSessionRecordProblem(projectId, sessionId)
-            if (deletion.cleanupError) throw deletion.cleanupError
-            return undefined
+            if (cleanupError) throw cleanupError
           }
-          return deletion
-        },
-        async ({ receiptKind, cleanupError }) => {
-          await this.deletionOwner
-            .reconcileSessionDeletion(projectId, sessionId, receiptKind)
-            .catch((error: unknown) => {
-              throw new SessionDeletionCommittedError(error)
-            })
-          this.clearSessionRecordProblem(projectId, sessionId)
-          if (cleanupError) throw cleanupError
-        }
+        )
       )
     return this.deletionWork
       ? this.deletionWork.withSessionStopped(projectId, sessionId, operation)
@@ -1961,6 +1975,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): void {
     if (!projectionOnly && this.exportingSessions.has(sessionKey(projectId, sessionId)))
       throw new Error('This Session is locked while its research package is being exported.')
+    if (this.pendingDeletionCleanups.has(sessionId)) {
+      throw new Error('Session deletion cleanup is still pending. Retry after deletion completes.')
+    }
     if (this.deletedProjects.has(projectId)) {
       throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
     }
@@ -1976,6 +1993,39 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       this.onFilesChanged?.(event)
     } catch {
       // A closed window or test sink may reject synchronously after the durable mutation succeeds.
+    }
+  }
+
+  // Reserve ID-only projections before releasing persistence scopes, but never await external
+  // owners while holding those scopes: their queues may already be waiting for a Session save.
+  private async withDeletionCleanup<Result>(
+    operation: (onDeleted: (sessionIds: string[]) => void) => Promise<Result>
+  ): Promise<Result> {
+    const deletedIds = new Set<string>()
+    try {
+      return await operation((sessionIds) => {
+        if (!this.sessionDeletionHandlers) return
+        for (const sessionId of sessionIds) {
+          if (deletedIds.has(sessionId)) continue
+          deletedIds.add(sessionId)
+          this.pendingDeletionCleanups.set(
+            sessionId,
+            (this.pendingDeletionCleanups.get(sessionId) ?? 0) + 1
+          )
+        }
+      })
+    } finally {
+      if (deletedIds.size > 0) {
+        try {
+          await this.notifySessionsDeleted([...deletedIds])
+        } finally {
+          for (const sessionId of deletedIds) {
+            const remaining = this.pendingDeletionCleanups.get(sessionId)! - 1
+            if (remaining === 0) this.pendingDeletionCleanups.delete(sessionId)
+            else this.pendingDeletionCleanups.set(sessionId, remaining)
+          }
+        }
+      }
     }
   }
 

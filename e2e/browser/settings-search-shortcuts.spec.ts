@@ -13,31 +13,52 @@ for (const platform of ['Win32', 'MacIntel']) {
     const globalSearch = settings.getByRole('combobox', { name: 'Search settings' })
     const modifier = platform === 'MacIntel' ? 'Meta' : 'Control'
 
+    await navigation.getByRole('button', { name: 'Tags', exact: true }).click()
+    const localSearch = settings.getByRole('searchbox', {
+      name: 'Search tagged resources',
+      exact: true
+    })
+    await expect(localSearch).toBeVisible()
+    await expect(globalSearch).toHaveAttribute('aria-keyshortcuts', `${modifier}+K`)
+    await expect(localSearch).toHaveAttribute('aria-keyshortcuts', `${modifier}+Alt+K`)
+    // Local hints were removed to keep narrow panel searches readable; the shortcut remains.
+    await expect(localSearch.locator('..').locator('kbd')).toHaveCount(0)
+
+    await page.keyboard.press(`${modifier}+k`)
+    await expect(globalSearch).toBeFocused()
+    await page.keyboard.press(`${modifier}+Alt+k`)
+    await expect(localSearch).toBeFocused()
+    await localSearch.fill('a query')
+    await page.keyboard.press(`${modifier}+k`)
+    await expect(globalSearch).toBeFocused()
+    await expect(localSearch).toHaveValue('a query')
+    await page.keyboard.press(`${modifier}+Alt+k`)
+    await expect(localSearch).toBeFocused()
+
+    // Resource searches moved out of Settings; exercise their shortcuts in the owning surface.
+    await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
+    await expect(settings).toBeHidden()
+    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+    const resources = page.getByRole('navigation', { name: 'Resource center', exact: true })
     for (const [panel, label] of [
       ['Specialists', 'Search specialists'],
       ['Skills', 'Search skills'],
-      ['Connectors', 'Search connectors'],
-      ['Tags', 'Search tagged resources']
+      ['Connectors', 'Search connectors']
     ]) {
-      await navigation.getByRole('button', { name: panel, exact: true }).click()
-      const localSearch = settings.getByRole('searchbox', { name: label, exact: true })
-      await expect(localSearch).toBeVisible()
-      await expect(globalSearch).toHaveAttribute('aria-keyshortcuts', `${modifier}+K`)
-      await expect(localSearch).toHaveAttribute('aria-keyshortcuts', `${modifier}+Alt+K`)
-      // Local hints were removed to keep narrow panel searches readable; the shortcut remains.
-      await expect(localSearch.locator('..').locator('kbd')).toHaveCount(0)
-
-      await page.keyboard.press(`${modifier}+k`)
-      await expect(globalSearch).toBeFocused()
+      const tab = resources.getByRole('button', { name: panel, exact: true })
+      await tab.click()
+      const search = page.getByRole('searchbox', { name: label, exact: true })
+      await expect(search).toBeVisible()
+      await expect(search).toHaveAttribute('aria-keyshortcuts', `${modifier}+Alt+K`)
+      await expect(search.locator('..').locator('kbd')).toHaveCount(0)
       await page.keyboard.press(`${modifier}+Alt+k`)
-      await expect(localSearch).toBeFocused()
-      await localSearch.fill('a query')
-      await page.keyboard.press(`${modifier}+k`)
-      await expect(globalSearch).toBeFocused()
-      await expect(localSearch).toHaveValue('a query')
+      await expect(search).toBeFocused()
+      await search.fill('a query')
+      await tab.focus()
       await page.keyboard.press(`${modifier}+Alt+k`)
-      await expect(localSearch).toBeFocused()
-      await localSearch.fill('')
+      await expect(search).toBeFocused()
+      await expect(search).toHaveValue('a query')
+      await search.fill('')
     }
   })
 }

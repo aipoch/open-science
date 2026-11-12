@@ -97,6 +97,18 @@ import { resolveElectronProfile } from './storage/electron-profile'
 import { cancelMigrationForQuit, isMigrationInProgress } from './storage/migration-state'
 import { parseWebModeOptions } from './web-service/options'
 
+// Packaged migration certification reads this launch's SQLite verification, and the CLI
+// surfaces terminal errors even if the process exits before the canonical queue flushes.
+const captureOptions =
+  process.env.OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT === '1'
+    ? {
+        mirrorToConsole: (scope: string, message: string) =>
+          (scope === 'main' && message.startsWith('database runtime verified: sqlite_version=')) ||
+          (scope === 'node-runtime' &&
+            (message === 'startup failed' || message === 'fatal local service failure'))
+      }
+    : {}
+
 const startupReporter = createBackendStartupReporter()
 // Helpers retain their own protocol and exit contract. Install before asynchronous bootstrap so
 // early failures cannot escape the same diagnostic-and-exit path as runtime failures.
@@ -147,6 +159,7 @@ async function main(): Promise<void> {
   // Credential preflight can fail before full application diagnostics are initialized.
   initLogger({
     logDir: join(configRoot, 'logs'),
+    ...captureOptions,
     consoleFormat: process.stdout.isTTY ? 'text' : 'json'
   })
   const resourceRecording = new ResourceRecording(
@@ -443,6 +456,7 @@ async function main(): Promise<void> {
     }
     const diagnostics = initializeApplicationDiagnostics({
       logDir: join(configRoot, 'logs'),
+      ...captureOptions,
       consoleFormat: process.stdout.isTTY ? 'text' : 'json',
       version: metadata.version,
       isPackaged: packaged,

@@ -31,7 +31,7 @@ export type LoggerConfig = {
   runId: string
   fileName: string
   minLevel: LogLevel
-  mirrorToConsole: boolean
+  mirrorToConsole: boolean | ((scope: string, message: string) => boolean)
   consoleFormat: 'text' | 'json'
   // Max bytes per file before it rotates.
   maxBytes: number
@@ -900,11 +900,8 @@ const flushLogs = (): Promise<LogFlushResult> => {
   return writeChain.then(() => ({ failed: state.lostRecords }))
 }
 
-// Fatal process failures cannot await the ordinary Promise-backed write queue: Node terminates as soon
-// as the uncaughtExceptionMonitor listeners return. Append the final bounded, redacted record
-// synchronously so the diagnostic survives that exit. Rotation and currentBytes bookkeeping are
-// intentionally skipped because the process must not resume after this call; at worst one small fatal
-// record temporarily exceeds the configured cap before the next startup rotates normally.
+// Terminal callers synchronously append one bounded diagnostic before exiting. The normal
+// queue and rotation are asynchronous, so the file may exceed its budget by that final record.
 const writeFatalLogSync = (scope: string, message: string, data?: unknown): void => {
   if (!config || LEVEL_ORDER.error < LEVEL_ORDER[config.minLevel]) return
 
@@ -938,7 +935,7 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
     diagnosticCorrelation.getStore()
   )
 
-  if (mirror) {
+  if (typeof mirror === 'function' ? mirror(scope, message) : mirror) {
     const consoleMethod = level === 'debug' ? 'log' : level
     if (config?.consoleFormat === 'json') {
       console[consoleMethod](line)

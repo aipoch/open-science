@@ -345,6 +345,141 @@ describe('SessionPersistenceCoordinator contracts', () => {
     expect((await completion).every((result) => result.status === 'fulfilled')).toBe(true)
   })
 
+  it('finishes deletion cleanup while a new Session in the same Project awaits its first save', async () => {
+    const deleting = createDeferred()
+    const releaseDeletion = createDeferred()
+    const { repository, sessions } = createRepository()
+    vi.mocked(repository.deleteSession).mockImplementationOnce(async (_projectId, sessionId) => {
+      deleting.resolve()
+      await releaseDeletion.promise
+      sessions.delete(sessionId)
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const hosts = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => [],
+      sessionAuthority: coordinator,
+      withDataRootWrite: (operation) => operation()
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: (sessionIds) => hosts.clear(sessionIds),
+      reconcile: async () => undefined
+    })
+    await coordinator.loadAll()
+    const deletion = coordinator.deleteSession('project-1', 'session-1')
+    await deleting.promise
+    const creation = hosts.createSession(createSession({ id: 'new-session' }), (session) =>
+      coordinator.saveSession(session)
+    )
+    await setImmediate()
+    let settled = false
+    const completion = Promise.all([deletion, creation]).then(() => {
+      settled = true
+    })
+    releaseDeletion.resolve()
+    await setImmediate()
+    expect(settled).toBe(true)
+    await completion
+    expect(sessions.has('session-1')).toBe(false)
+    expect(sessions.has('new-session')).toBe(true)
+  })
+
+  it.each(['session', 'global', 'project'] as const)(
+    'releases persistence scopes but reserves deleted identities through %s cleanup',
+    async (kind) => {
+      const cleanupStarted = createDeferred()
+      const releaseCleanup = createDeferred()
+      const { repository } = createRepository()
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      if (kind !== 'global') await coordinator.loadAll()
+      coordinator.setSessionDeletionHandlers({
+        commit: async () => {
+          cleanupStarted.resolve()
+          await releaseCleanup.promise
+          throw new Error('projection cleanup unavailable')
+        },
+        reconcile: async () => undefined
+      })
+      let deleted = false
+      const deletion = (
+        kind === 'project'
+          ? coordinator.deleteProjectSessions('project-1')
+          : coordinator.deleteSession('project-1', 'session-1')
+      ).then(() => {
+        deleted = true
+      })
+      await cleanupStarted.promise
+      const reused = createSession({ projectId: 'project-2' })
+      let reuseError: unknown
+      const reuse = coordinator.saveSession(reused).catch((error: unknown) => {
+        reuseError = error
+      })
+      let independentSaved = false
+      const independent = coordinator
+        .saveSession(
+          createSession({
+            id: 'independent',
+            projectId: kind === 'project' ? 'project-2' : 'project-1'
+          })
+        )
+        .then(() => {
+          independentSaved = true
+        })
+      await setImmediate()
+      try {
+        expect(deleted).toBe(false)
+        expect(independentSaved).toBe(true)
+        expect(reuseError).toEqual(
+          expect.objectContaining({ message: expect.stringContaining('cleanup is still pending') })
+        )
+      } finally {
+        releaseCleanup.resolve()
+      }
+      await Promise.all([deletion, reuse, independent])
+      await expect(coordinator.saveSession(reused)).resolves.toMatchObject({
+        projectId: 'project-2'
+      })
+    }
+  )
+
+  it('retains identity reservations until every overlapping deletion cleanup settles', async () => {
+    const firstStarted = createDeferred()
+    const secondStarted = createDeferred()
+    const firstGate = createDeferred()
+    const secondGate = createDeferred()
+    const { repository } = createRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await coordinator.loadAll()
+    coordinator.setSessionDeletionHandlers({
+      commit: vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          firstStarted.resolve()
+          await firstGate.promise
+        })
+        .mockImplementationOnce(async () => {
+          secondStarted.resolve()
+          await secondGate.promise
+        }),
+      reconcile: async () => undefined
+    })
+    const first = coordinator.deleteSession('project-1', 'session-1')
+    await firstStarted.promise
+    const second = coordinator.deleteSession('project-1', 'session-1')
+    await secondStarted.promise
+    firstGate.resolve()
+    await first
+    const reused = createSession({ projectId: 'project-2' })
+    try {
+      await expect(coordinator.saveSession(reused)).rejects.toThrow('cleanup is still pending')
+    } finally {
+      secondGate.resolve()
+    }
+    await second
+    await expect(coordinator.saveSession(reused)).resolves.toMatchObject({ projectId: 'project-2' })
+  })
+
   it('keeps scoped lanes failure-tolerant and snapshots behind a global barrier', async () => {
     const gate = createDeferred()
     const order: string[] = []

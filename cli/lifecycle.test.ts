@@ -1,8 +1,10 @@
-import { EventEmitter } from 'node:events'
+import { spawn } from 'node:child_process'
+import { EventEmitter, once } from 'node:events'
 import { closeSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
@@ -17,6 +19,7 @@ import {
   isProcessAlive,
   openLaunchLog,
   parseCliArgs,
+  readLogTail,
   runCli,
   reportCliError,
   statusCommand,
@@ -406,6 +409,76 @@ describe('terminateDaemon', () => {
 })
 
 describe('headless startup', () => {
+  it('caps combined native output and drains the writer after its launcher exits', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-detached-log-'))
+    const path = join(directory, 'launch.log')
+    const writer = join(directory, 'writer.cjs')
+    try {
+      await writeFile(
+        writer,
+        `
+        const fs = require('node:fs')
+        const deadline = Date.now() + 10000
+        const timer = setInterval(() => {
+          if (Date.now() > deadline) process.exit(1)
+          if (!fs.existsSync('go')) return
+          clearInterval(timer)
+          process.stdout.write(Buffer.alloc(3 * 1024 * 1024, 65), () => {
+            process.stderr.write(Buffer.alloc(4 * 1024 * 1024, 66), () => fs.writeFileSync('done', 'ok'))
+          })
+        }, 20)
+      `
+      )
+      const moduleUrl = pathToFileURL(resolve('packages/open-science/launch-log.mjs')).href
+      const launcher = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+        import { spawn } from 'node:child_process'
+        import { closeSync, openSync } from 'node:fs'
+        import { startLaunchLogReader } from ${JSON.stringify(moduleUrl)}
+        const fd = openSync('launch.log', 'wx', 0o600)
+        const capture = await startLaunchLogReader(process.execPath, fd)
+        closeSync(fd)
+        const child = spawn(process.execPath, ['writer.cjs'], {
+          detached: true, windowsHide: true, stdio: ['ignore', capture.input, capture.input]
+        })
+        child.unref()
+        capture.input.destroy()
+      `
+        ],
+        { cwd: directory, stdio: 'ignore', windowsHide: true }
+      )
+      expect(await once(launcher, 'exit')).toEqual([0, null])
+      await writeFile(join(directory, 'go'), '')
+      await vi.waitFor(
+        async () => expect(await readFile(join(directory, 'done'), 'utf8')).toBe('ok'),
+        { timeout: 5000 }
+      )
+      const output = await readFile(path)
+      expect(output.length).toBe(5 * 1024 * 1024)
+      expect(output[0]).toBe(65)
+      expect(output.at(-1)).toBe(66)
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 })
+    }
+  }, 15000)
+
+  it('bounds startup diagnostics even when the daemon emits one long line', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-tail-'))
+    const path = join(directory, 'daemon.log')
+    try {
+      await writeFile(path, 'x'.repeat(128 * 1024) + '\r\nlatest error')
+      const tail = await readLogTail(path)
+      expect(tail.length).toBeLessThanOrEqual(64 * 1024)
+      expect(tail).toMatch(/x\nlatest error$/)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('refuses to overwrite another launch diagnostic log', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-log-'))
     const logPath = join(directory, 'cli-daemon.log')

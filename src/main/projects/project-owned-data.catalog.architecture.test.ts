@@ -522,11 +522,36 @@ describe('Project-owned data catalog architecture', () => {
       (call) =>
         projectionAfterCommit &&
         call.position > projectionAfterCommit.position &&
-        call.callee === 'this.notifySessionsDeleted'
+        call.callee === 'onDeleted'
     )
     expect(commitAfterAuthority).toBeDefined()
     expect(projectionAfterCommit).toBeDefined()
     expect(notificationAfterProjection).toBeDefined()
+
+    const coordinatorDeletion = classMethod(
+      'src/main/session-persistence/coordinator.ts',
+      'SessionPersistenceCoordinator',
+      'deleteProjectSessions'
+    )
+    expectCallsInOrder(coordinatorDeletion, [
+      'this.withDeletionCleanup',
+      'this.operationScheduler.runProject',
+      'this.deletionOwner.deleteProjectSessions'
+    ])
+    expect(
+      expectCall(
+        coordinatorDeletion,
+        'this.deletionOwner.deleteProjectSessions'
+      ).call.arguments[2].getText(coordinatorDeletion.file)
+    ).toBe('onDeleted')
+    expectCall(
+      classMethod(
+        'src/main/session-persistence/coordinator.ts',
+        'SessionPersistenceCoordinator',
+        'withDeletionCleanup'
+      ),
+      'this.notifySessionsDeleted'
+    )
 
     expectCall(
       classMethod(

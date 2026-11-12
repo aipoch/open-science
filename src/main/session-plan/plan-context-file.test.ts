@@ -3,6 +3,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -33,7 +34,7 @@ const hostPlatform = process.platform
 const temporaryRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'plan-context-file-'))
   roots.push(root)
-  return root
+  return realpath(root)
 }
 
 afterEach(async () => {
@@ -85,6 +86,97 @@ const readJson = async (path: string): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
 
 describe('PlanContextFileStore', () => {
+  it('keeps a link/.. root aligned with the Notebook input directory', async () => {
+    const root = await temporaryRoot()
+    const physical = join(root, 'physical')
+    const alias = join(root, 'selected')
+    await mkdir(join(physical, 'child'), { recursive: true })
+    await mkdir(join(physical, 'research'))
+    await mkdir(join(root, 'research'))
+    await symlink(join(physical, 'child'), alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const storageRoot = `${alias}/../research`
+    const store = new PlanContextFileStore({ storageRoot, readCurrent: async () => projection() })
+
+    await store.refresh('project-1', 'session-1')
+
+    // Read through the same helper used for the Shell's OPEN_SCIENCE_INPUT_DIR, not the
+    // store's returned path: both consumers must reach the existing session input directory.
+    expect(await readJson(contextPath(storageRoot, 'project-1', 'session-1'))).toMatchObject({
+      active: true,
+      artifactVersionId: 'plan-version-1'
+    })
+    expect(await readdir(join(physical, 'research'))).toEqual([])
+  })
+
+  it.each(['', 'data'])(
+    'writes through a configured root alias with suffix "%s" and rejects retargeting',
+    async (suffix) => {
+      const root = await temporaryRoot()
+      const physical = join(root, 'physical')
+      const alias = join(root, 'selected')
+      await mkdir(join(physical, suffix), { recursive: true })
+      await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      const options = { storageRoot: join(alias, suffix), readCurrent: async () => projection() }
+      const store = new PlanContextFileStore(options)
+      await store.refresh('project-1', 'session-1')
+      expect(
+        await readJson(contextPath(join(physical, suffix), 'project-1', 'session-1'))
+      ).toMatchObject({
+        active: true,
+        artifactVersionId: 'plan-version-1'
+      })
+      expect(options.storageRoot).toBe(join(alias, suffix))
+
+      const other = join(root, 'other')
+      await mkdir(join(other, suffix), { recursive: true })
+      await rm(alias, { recursive: true })
+      await symlink(other, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      await expect(store.refresh('project-1', 'session-1')).rejects.toThrow('root alias changed')
+      expect(await readdir(join(other, suffix))).toEqual([])
+    }
+  )
+
+  it.each(['', 'data'])(
+    'defers a dangling root alias with suffix "%s" without trusting a later target',
+    async (suffix) => {
+      const root = await temporaryRoot()
+      const physical = join(root, 'physical')
+      const alias = join(root, 'selected')
+      await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      const options = { storageRoot: join(alias, suffix), readCurrent: async () => projection() }
+      const store = new PlanContextFileStore(options)
+      await expect(store.refresh('project-1', 'session-1')).rejects.toThrow()
+      await mkdir(join(physical, suffix), { recursive: true })
+      await expect(store.refresh('project-1', 'session-1')).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(await readdir(join(physical, suffix))).toEqual([])
+      await new PlanContextFileStore(options).refresh('project-1', 'session-1')
+      expect(
+        await readJson(contextPath(join(physical, suffix), 'project-1', 'session-1'))
+      ).toMatchObject({
+        active: true
+      })
+    }
+  )
+
+  it('rejects an aliased root replaced by a different directory at the same path', async () => {
+    const root = await temporaryRoot()
+    const physical = join(root, 'physical')
+    const alias = join(root, 'selected')
+    await mkdir(physical)
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const store = new PlanContextFileStore({
+      storageRoot: alias,
+      readCurrent: async () => projection()
+    })
+    await store.refresh('project-1', 'session-1')
+    await rename(physical, join(root, 'previous'))
+    await mkdir(physical)
+    await expect(store.refresh('project-1', 'session-1')).rejects.toThrow('root alias changed')
+    expect(await readdir(physical)).toEqual([])
+  })
+
   it('writes the complete selected projection as pretty JSON with platform publication permissions', async () => {
     const root = await temporaryRoot()
     const current = projection()
