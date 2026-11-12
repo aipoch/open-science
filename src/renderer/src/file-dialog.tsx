@@ -46,10 +46,16 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
   const nameInput = useRef<HTMLInputElement>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<FileDialogUiError | null>(null)
+  const [errorOwner, setErrorOwner] = useState<'path' | 'name' | 'new-folder' | 'destination'>(
+    'destination'
+  )
   const [suggestedName, setSuggestedName] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<{ token: string; filename: string } | null>(null)
   const expanded = browsing
-  const filenameError = error === 'filename' || error === 'extension' ? error : null
+  const filenameError = errorOwner === 'name' ? error : null
+  const pathError = errorOwner === 'path' ? error : null
+  const newFolderError = newFolder !== null && errorOwner === 'new-folder' ? error : null
+  const destinationError = errorOwner === 'destination' ? error : null
   const formatLabel = initial.format
     ? `${initial.format.name || t('Original file')} (${initial.format.extensions.map((extension) => `.${extension}`).join(', ')})`
     : t('Original file')
@@ -108,10 +114,21 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
       } else if (reply.type === 'confirm') setConfirmation(reply)
       else if (reply.type === 'error') {
         setError(reply.code)
+        // The same validation code can belong to different fields, especially in directory mode.
+        setErrorOwner(
+          action.type === 'mkdir'
+            ? 'new-folder'
+            : reply.code === 'folder'
+              ? 'path'
+              : reply.code === 'filename' || reply.code === 'extension'
+                ? 'name'
+                : 'destination'
+        )
         setSuggestedName(reply.suggestions?.keep ?? null)
       }
     } catch {
       setError('destination')
+      setErrorOwner(action.type === 'mkdir' ? 'new-folder' : 'destination')
     } finally {
       pending.current = false
       setBusy(false)
@@ -157,44 +174,60 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
         disabled={busy || Boolean(confirmation)}
         className={`${dialogBodyClassName} flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto`}
       >
-        <div className={rowClass}>
-          <label htmlFor="save-path" className="text-sm text-muted-foreground">
-            {t('Save path')}
-          </label>
-          <div className="flex min-w-0 items-center gap-2">
-            <Input
-              id="save-path"
-              className={inputClass}
-              value={path}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => {
-                setPath(event.target.value)
-                setError(null)
-                setSuggestedName(null)
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter') return
-                event.preventDefault()
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return
-                setBrowsing(true)
-                void run({ type: 'browse', path })
-              }}
-            />
-            <Button
-              variant="outline"
-              className="h-9 shrink-0"
-              aria-expanded={browsing}
-              aria-controls="folder-browser"
-              onClick={() => {
-                setBrowsing(!browsing)
-                if (!browsing) void run({ type: 'browse', path })
-              }}
-            >
-              {t('Browse')}
-              <ChevronDown className={`size-4 ${browsing ? 'rotate-180' : ''}`} />
-            </Button>
+        <div className="flex shrink-0 flex-col gap-1.5">
+          <div className={rowClass}>
+            <label htmlFor="save-path" className="text-sm text-muted-foreground">
+              {t('Save path')}
+            </label>
+            <div className="flex min-w-0 items-center gap-2">
+              <Input
+                id="save-path"
+                className={inputClass}
+                value={path}
+                spellCheck={false}
+                autoComplete="off"
+                aria-invalid={Boolean(pathError)}
+                aria-describedby={pathError ? 'save-path-hint' : undefined}
+                onChange={(event) => {
+                  setPath(event.target.value)
+                  setError(null)
+                  setSuggestedName(null)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return
+                  setBrowsing(true)
+                  void run({ type: 'browse', path })
+                }}
+              />
+              <Button
+                variant="outline"
+                className="h-9 shrink-0"
+                aria-expanded={browsing}
+                aria-controls="folder-browser"
+                onClick={() => {
+                  setBrowsing(!browsing)
+                  if (!browsing) void run({ type: 'browse', path })
+                }}
+              >
+                {t('Browse')}
+                <ChevronDown className={`size-4 ${browsing ? 'rotate-180' : ''}`} />
+              </Button>
+            </div>
           </div>
+          {pathError && (
+            <div className={rowClass}>
+              <span aria-hidden="true" />
+              <p
+                id="save-path-hint"
+                role="alert"
+                className="text-sm leading-5 text-muted-foreground"
+              >
+                {errors[pathError]}
+              </p>
+            </div>
+          )}
         </div>
         {browsing && (
           <section
@@ -236,32 +269,57 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
             </div>
             {newFolder !== null && (
               <form
-                className="flex gap-2 px-2 pt-2"
+                className="flex flex-col gap-1.5 px-2 pt-2"
                 onSubmit={(event) => {
                   event.preventDefault()
                   void run({ type: 'mkdir', directory: location.path, name: newFolder })
                 }}
               >
-                <Input
-                  className={inputClass}
-                  autoFocus
-                  aria-label={t('Folder name')}
-                  value={newFolder}
-                  onChange={(event) => setNewFolder(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === 'Enter' &&
-                      (event.nativeEvent.isComposing || event.keyCode === 229)
-                    )
-                      event.preventDefault()
-                  }}
-                />
-                <Button type="submit" variant="outline">
-                  {t('Create')}
-                </Button>
-                <Button type="button" variant="ghost" onClick={() => setNewFolder(null)}>
-                  {t('Cancel')}
-                </Button>
+                <div className="flex gap-2">
+                  <Input
+                    className={inputClass}
+                    autoFocus
+                    aria-label={t('Folder name')}
+                    value={newFolder}
+                    aria-invalid={Boolean(newFolderError)}
+                    aria-describedby={newFolderError ? 'new-folder-hint' : undefined}
+                    onChange={(event) => {
+                      setNewFolder(event.target.value)
+                      setError(null)
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === 'Enter' &&
+                        (event.nativeEvent.isComposing || event.keyCode === 229)
+                      )
+                        event.preventDefault()
+                    }}
+                  />
+                  <Button type="submit" variant="outline">
+                    {t('Create')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setNewFolder(null)
+                      setError(null)
+                    }}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </div>
+                {newFolderError && (
+                  <p
+                    id="new-folder-hint"
+                    role="alert"
+                    className="text-sm leading-5 text-muted-foreground"
+                  >
+                    {newFolderError === 'filename'
+                      ? t('Enter a valid folder name.')
+                      : errors[newFolderError]}
+                  </p>
+                )}
               </form>
             )}
             <div className="max-h-44 overflow-y-auto p-1">
@@ -288,7 +346,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
           </section>
         )}
         {!directoryMode && (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex shrink-0 flex-col gap-1.5">
             <div className={rowClass}>
               <label htmlFor="save-name" className="text-sm text-muted-foreground">
                 {t('File name')}
@@ -312,24 +370,30 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
                 }}
               />
             </div>
-            {/* Reserve room for translated feedback without resizing the window or moving its footer. */}
-            <div className={rowClass}>
-              <span aria-hidden="true" />
-              <div className="min-h-20">
-                {filenameError && (
-                  <p
-                    id="save-name-hint"
-                    role="alert"
-                    className="text-sm font-normal leading-5 text-muted-foreground [overflow-wrap:anywhere]"
-                  >
-                    {errors[filenameError]}
-                  </p>
-                )}
+            {filenameError && (
+              <div className={rowClass}>
+                <span aria-hidden="true" />
+                <div>
+                  {filenameError && (
+                    <p
+                      id="save-name-hint"
+                      role="alert"
+                      className="text-sm font-normal leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+                    >
+                      {errors[filenameError]}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
-        {error && !filenameError && <ErrorNotice inline title={errors[error]} level="error" />}
+        {/* Reuse the body's remaining space; never append feedback after an empty spacer. */}
+        {destinationError && (
+          <div className="shrink-0" id="save-destination-hint">
+            <ErrorNotice inline description={errors[destinationError]} role="alert" level="error" />
+          </div>
+        )}
       </fieldset>
       <footer className={`${dialogFooterClassName} bg-background`}>
         <Button

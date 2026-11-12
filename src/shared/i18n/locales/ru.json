@@ -8472,6 +8472,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Установленные навыки могут изменить поведение агентов. Доверяйте только знакомым источникам.",
     "Cannot open this folder. Check the path and permissions.": "Не удалось открыть папку. Проверьте путь и права доступа.",
     "Enter a valid file name.": "Введите допустимое имя файла.",
+    "Enter a valid folder name.": "Введите допустимое имя папки.",
     "Cannot use this destination. Choose another file or folder.": "Этот путь назначения недоступен. Выберите другой файл или папку.",
     "The destination changed. Review it and save again.": "Объект назначения изменился. Проверьте его и сохраните снова.",
     "Select folder": "Выбрать папку",

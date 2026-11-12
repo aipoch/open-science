@@ -8325,6 +8325,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "Las habilidades instaladas pueden cambiar el comportamiento de los agentes. Confíe únicamente en fuentes que conozca.",
     "Cannot open this folder. Check the path and permissions.": "No se puede abrir esta carpeta. Compruebe la ruta y los permisos.",
     "Enter a valid file name.": "Introduzca un nombre de archivo válido.",
+    "Enter a valid folder name.": "Introduzca un nombre de carpeta válido.",
     "Cannot use this destination. Choose another file or folder.": "No se puede usar este destino. Elija otro archivo u otra carpeta.",
     "The destination changed. Review it and save again.": "El destino ha cambiado. Revíselo y vuelva a guardar.",
     "Select folder": "Seleccionar carpeta",

@@ -7985,6 +7985,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "安裝的技能可能改變智能體的行為。請僅信任您認可的來源。",
     "Cannot open this folder. Check the path and permissions.": "無法開啟此資料夾。請檢查路徑與權限。",
     "Enter a valid file name.": "請輸入有效的檔案名稱。",
+    "Enter a valid folder name.": "請輸入有效的資料夾名稱。",
     "Cannot use this destination. Choose another file or folder.": "無法使用此目標位置。請選擇其他檔案或資料夾。",
     "The destination changed. Review it and save again.": "目標檔案已變更。請檢查後重新儲存。",
     "Select folder": "選擇資料夾",

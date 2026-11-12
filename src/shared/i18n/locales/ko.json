@@ -7983,6 +7983,7 @@
     "Installed Skills can change Agent behavior. Only trust sources you recognize.": "설치한 스킬은 에이전트 동작을 변경할 수 있습니다. 신뢰할 수 있는 소스만 추가하세요.",
     "Cannot open this folder. Check the path and permissions.": "이 폴더를 열 수 없습니다. 경로와 권한을 확인하세요.",
     "Enter a valid file name.": "유효한 파일 이름을 입력하세요.",
+    "Enter a valid folder name.": "올바른 폴더 이름을 입력하세요.",
     "Cannot use this destination. Choose another file or folder.": "이 저장 위치를 사용할 수 없습니다. 다른 파일이나 폴더를 선택하세요.",
     "The destination changed. Review it and save again.": "저장 대상이 변경되었습니다. 확인 후 다시 저장하세요.",
     "Select folder": "폴더 선택",

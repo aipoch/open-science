@@ -751,6 +751,136 @@ for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 
   })
 }
 
+for (const theme of ['light', 'dark'] as const) {
+  test(`destination feedback stays visible and recovers in ${theme}`, async () => {
+    const info = test.info()
+    const root = info.outputPath('feedback')
+    await mkdir(root, { recursive: true })
+    const helper = await launchHelper(root, 'save', theme)
+    const records: unknown[] = []
+    const check = async (state: string): Promise<void> => {
+      const box = await helper.page.getByRole('alert').evaluate((node) => {
+        const text = node.getBoundingClientRect()
+        const body = document.querySelector('fieldset')!.getBoundingClientRect()
+        return {
+          top: text.top,
+          bottom: text.bottom,
+          left: text.left,
+          right: text.right,
+          body: { top: body.top, bottom: body.bottom, left: body.left, right: body.right },
+          scrollTop: document.querySelector('fieldset')!.scrollTop
+        }
+      })
+      records.push({ state, ...box })
+      expect(box.top).toBeGreaterThanOrEqual(box.body.top)
+      expect(box.bottom).toBeLessThanOrEqual(box.body.bottom)
+      expect(box.left).toBeGreaterThanOrEqual(box.body.left)
+      expect(box.right).toBeLessThanOrEqual(box.body.right)
+      expect(box.scrollTop).toBe(0)
+      await helper.page.screenshot({ path: info.outputPath(`${theme}-${state}.png`) })
+    }
+    try {
+      const page = helper.page
+      const path = page.locator('#save-path')
+      const name = page.locator('#save-name')
+      await assertCompactGeometry(helper)
+      const bounds = await helper.probeWindow()
+      const footer = await page.locator('main > footer').boundingBox()
+      await path.fill(join(root, 'missing'))
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await expect(page.getByRole('alert')).toHaveText(
+        'Cannot use this destination. Choose another file or folder.'
+      )
+      await check('destination')
+      expect(await helper.probeWindow()).toEqual(bounds)
+      expect(await page.locator('main > footer').boundingBox()).toEqual(footer)
+      await path.fill(root)
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await path.fill(join(root, 'missing'))
+      await path.press('Enter')
+      await expect(page.getByRole('alert')).toHaveText(
+        'Cannot open this folder. Check the path and permissions.'
+      )
+      await expect(path).toHaveAttribute('aria-describedby', 'save-path-hint')
+      await check('folder')
+      await path.fill(root)
+      await path.press('Enter')
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Hide folders' }).click()
+      await assertCompactGeometry(helper)
+      await writeFile(join(root, 'existing.txt'), 'before')
+      await name.fill('existing.txt')
+      const changedBounds = await helper.probeWindow()
+      const changedFooter = await page.locator('main > footer').boundingBox()
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      await expect(page.getByRole('alertdialog')).toBeVisible()
+      await writeFile(join(root, 'existing.txt'), 'external change')
+      await page.getByRole('button', { name: 'Replace', exact: true }).click()
+      await expect(page.getByRole('alert')).toHaveText(
+        'The destination changed. Review it and save again.'
+      )
+      await check('changed')
+      expect(await helper.probeWindow()).toEqual(changedBounds)
+      expect(await page.locator('main > footer').boundingBox()).toEqual(changedFooter)
+      await name.fill('recovered.txt')
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Save', exact: true }).click()
+      const selected = await helper.result
+      expect(selected).toMatchObject({ canceled: false, filePath: join(root, 'recovered.txt') })
+      await publishUserFile(join(root, 'recovered.txt'), (p) => writeFile(p, 'recovered'), {
+        target: 'target' in selected ? selected.target : undefined
+      })
+      expect(await readFile(join(root, 'existing.txt'), 'utf8')).toBe('external change')
+    } finally {
+      await helper.close()
+      await writeFile(
+        info.outputPath('feedback-measurements.json'),
+        JSON.stringify(records, null, 2)
+      )
+    }
+  })
+
+  test(`invalid new directory feedback recovers in ${theme}`, async () => {
+    const info = test.info()
+    const root = info.outputPath('mkdir-feedback')
+    await mkdir(root, { recursive: true })
+    const helper = await launchHelper(root, 'open', theme)
+    try {
+      const page = helper.page
+      await page.getByRole('button', { name: 'New folder', exact: true }).click()
+      const name = page.getByRole('textbox', { name: 'Folder name', exact: true })
+      const invalid = process.platform === 'win32' ? 'CON' : '../escape'
+      await name.fill(invalid)
+      const bounds = await helper.probeWindow()
+      const footer = await page.locator('main > footer').boundingBox()
+      await page.getByRole('button', { name: 'Create', exact: true }).click()
+      await expect(name).toHaveValue(invalid)
+      await expect(name).toHaveAttribute('aria-invalid', 'true')
+      const hint = page.getByRole('alert')
+      await expect(hint).toHaveText('Enter a valid folder name.')
+      const layout = await hint.evaluate((node) => ({
+        bottom: node.getBoundingClientRect().bottom,
+        limit: document.querySelector('fieldset')!.getBoundingClientRect().bottom
+      }))
+      expect(layout.bottom).toBeLessThanOrEqual(layout.limit)
+      expect(await helper.probeWindow()).toEqual(bounds)
+      expect(await page.locator('main > footer').boundingBox()).toEqual(footer)
+      await page.screenshot({ path: info.outputPath(`${theme}-invalid-directory.png`) })
+      await name.fill('新建-recovered')
+      await expect(hint).toHaveCount(0)
+      await page.getByRole('button', { name: 'Create', exact: true }).click()
+      await expect(page.locator('#save-path')).toHaveValue(join(root, '新建-recovered'))
+      await page.getByRole('button', { name: 'Select folder', exact: true }).click()
+      expect(await helper.result).toEqual({
+        canceled: false,
+        filePaths: [join(root, '新建-recovered')]
+      })
+    } finally {
+      await helper.close()
+    }
+  })
+}
+
 test('confirmed targets stay protected through final file publication', async () => {
   const root = test.info().outputPath('publication-races')
   await mkdir(root, { recursive: true })
