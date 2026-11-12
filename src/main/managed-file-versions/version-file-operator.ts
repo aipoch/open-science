@@ -347,14 +347,21 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     // The configured root is the trust boundary, not a child storage reference. Bind an existing
     // directory alias once; later retargeting must not redirect immutable reads or publications.
     // Keep the caller's logical path untouched (settings and migration receipts retain it).
-    if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
-      const storageRoot = realpathSync.native(options.storageRoot)
-      this.rootAlias = {
-        path: options.storageRoot,
-        identity: lstatSync(storageRoot, { bigint: true })
+    try {
+      if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
+        const storageRoot = realpathSync.native(options.storageRoot)
+        this.rootAlias = {
+          path: options.storageRoot,
+          identity: lstatSync(storageRoot, { bigint: true })
+        }
+        this.options = { ...options, storageRoot }
       }
-      this.options = { ...options, storageRoot }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+      // A root can disappear after startup validation. Keep composition available, but leave
+      // the alias untrusted: operation-time checks reject it until this owner is reconstructed.
     }
     this.fileSystem = {
       link: options.fileSystem?.link ?? link,

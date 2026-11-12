@@ -1229,6 +1229,31 @@ describe('NodeVersionFileOperator', () => {
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
+  it('defers a dangling root alias error to use without trusting a later target', async () => {
+    const { NodeVersionFileOperator } = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const physical = join(cleanupRoot, 'physical')
+    const alias = join(cleanupRoot, 'selected')
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const operator = new NodeVersionFileOperator({ storageRoot: alias })
+    const content = Buffer.from('reconnected content')
+    const integrity = {
+      sizeBytes: content.byteLength,
+      checksum: createHash('sha256').update(content).digest('hex')
+    }
+    await expect(operator.openImmutable('content.txt', integrity)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    await mkdir(physical)
+    await writeFile(join(physical, 'content.txt'), content)
+    await expect(operator.openImmutable('content.txt', integrity)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    const reconnected = new NodeVersionFileOperator({ storageRoot: alias })
+    const lease = await reconnected.openImmutable('content.txt', integrity)
+    await lease.close()
+  })
+
   it('rejects an aliased root replaced by a different directory at the same path', async () => {
     const { NodeVersionFileOperator } = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))

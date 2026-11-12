@@ -120,14 +120,21 @@ export class PlanContextFileStore {
   constructor(private readonly options: PlanContextFileStoreOptions) {
     // Match immutable file storage: accept the configured directory alias at construction,
     // then keep all descendant and replacement checks anchored to its original physical root.
-    if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
-      const storageRoot = realpathSync.native(options.storageRoot)
-      this.rootAlias = {
-        path: options.storageRoot,
-        identity: lstatSync(storageRoot, { bigint: true })
+    try {
+      if (lstatSync(options.storageRoot, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        // Match fs.promises.realpath's native semantics, including Windows short-name expansion.
+        const storageRoot = realpathSync.native(options.storageRoot)
+        this.rootAlias = {
+          path: options.storageRoot,
+          identity: lstatSync(storageRoot, { bigint: true })
+        }
+        this.options = { ...options, storageRoot }
       }
-      this.options = { ...options, storageRoot }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+      // A root can disappear after startup validation. Keep composition available, but leave
+      // the alias untrusted: operation-time checks reject it until this owner is reconstructed.
     }
   }
 
