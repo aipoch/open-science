@@ -338,6 +338,43 @@ describe('worker result boundary', () => {
   )
 
   it.each(['nodes', 'text'])(
+    'retains complete small origin bundles beside an oversized %s bundle',
+    async (budget) => {
+      const value = raw()
+      const figure = (value.figures as Record<string, unknown>[])[0]
+      const small = {
+        ...figure,
+        sourceItems: [{ pageNumber: 1, index: 10000, text: 'Native label' }]
+      }
+      const large = {
+        ...figure,
+        id: 'large-algorithm',
+        thumbnail: 'thumbnails/large-algorithm.png',
+        nativeBody: {
+          kind: 'algorithm',
+          sourceItems: Array.from({ length: budget === 'nodes' ? 8192 : 12 }, (_, index) => ({
+            pageNumber: 1,
+            index,
+            text: budget === 'text' ? 'x'.repeat(190000) : 'x'
+          }))
+        }
+      }
+      value.figures = [small]
+      value.algorithms = [large]
+      await writeFile(join(root, 'thumbnails/large-algorithm.png'), png)
+      await save(value)
+      const result = await readWorkerResult(root, identity, new Map())
+      expect(result.elements.find((element) => element.kind === 'figure')?.sourceItems).toEqual(
+        small.sourceItems
+      )
+      expect(
+        result.elements.find((element) => element.kind === 'algorithm')?.nativeBody
+      ).toBeUndefined()
+      expect(parsePdfStructureResult(result, identity)).toEqual(result)
+    }
+  )
+
+  it.each(['nodes', 'text'])(
     'omits the complete optional body proof when its %s budget is exceeded',
     async (budget) => {
       const value = raw(),
@@ -360,6 +397,137 @@ describe('worker result boundary', () => {
       expect(result.elements[0].nativeBody).toBeUndefined()
     }
   )
+
+  it.each(['wrong-page', 'duplicate', 'negative-index', 'oversized-string'])(
+    'rejects invalid evidence before omitting an oversized bundle: %s',
+    async (change) => {
+      const value = raw()
+      const sourceItems = Array.from({ length: 8192 }, (_, index) => ({
+        pageNumber: 1,
+        index,
+        text: 'x'
+      }))
+      if (change === 'wrong-page') sourceItems[0].pageNumber = 2
+      if (change === 'duplicate') sourceItems[1].index = 0
+      if (change === 'negative-index') sourceItems[0].index = -1
+      if (change === 'oversized-string') sourceItems[0].text = 'x'.repeat(262145)
+      value.algorithms = [
+        {
+          ...(value.figures as Record<string, unknown>[])[0],
+          nativeBody: { kind: 'algorithm', sourceItems }
+        }
+      ]
+      value.figures = []
+      await save(value)
+      await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
+    }
+  )
+
+  it('omits all parts and mathematical annotations of one oversized element together', async () => {
+    const parts = [0, 1].map((index) => {
+      const table = rawTable()
+      for (const cell of table.cells)
+        for (const source of cell.sourceItems) source.index += index * 10000
+      return { ...table, title: `Part ${index + 1}` }
+    })
+    parts[0].cells[0].sourceItems = Array.from({ length: 8192 }, (_, index) => ({
+      pageNumber: 1,
+      index: index + 10,
+      text: 'x'
+    }))
+    const first = parts[1].cells[0].sourceItems[0]
+    Object.assign(parts[1], {
+      unreliableMathSourceItems: [first],
+      issues: ['native-table-structure-ambiguous']
+    })
+    const value = raw()
+    value.figures = []
+    value.tables = [
+      {
+        ...(raw().figures as Record<string, unknown>[])[0],
+        parts
+      }
+    ]
+    await save(value)
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].tableParts).toHaveLength(2)
+    for (const part of result.elements[0].tableParts!) {
+      expect(part.table.unreliableMathSourceItems).toBeUndefined()
+      expect(part.table.cells.map((cell) => cell.text)).toEqual(['=', '10'])
+      expect(part.table.cells.every((cell) => cell.sourceItems === undefined)).toBe(true)
+    }
+  })
+
+  it('budgets complete source segments after raw-to-public geometry conversion', async () => {
+    const table = rawTable()
+    const first = { ...table.cells[0], sourceItems: undefined }
+    Object.assign(first, {
+      sourceSegments: Array.from({ length: 1900 }, (_, index) => ({
+        pageNumber: 1,
+        index: index + 10,
+        text: 'x',
+        start: 0,
+        end: 1,
+        rect: [60 + index / 1000, 100, 80 + index / 1000, 120]
+      })),
+      sourceRects: Array.from({ length: 1900 }, (_, index) => [
+        60 + index / 1000,
+        100,
+        80 + index / 1000,
+        120
+      ])
+    })
+    const value = raw()
+    const figure = (value.figures as Record<string, unknown>[])[0]
+    value.figures = [
+      { ...figure, sourceItems: [{ pageNumber: 1, index: 10000, text: 'Native label' }] }
+    ]
+    value.tables = [
+      {
+        ...table,
+        id: 'segment-table',
+        thumbnail: 'thumbnails/segment-table.png',
+        cells: [first, table.cells[1]]
+      }
+    ]
+    expect(() => checkPdfStructureDecodingBudget(value)).not.toThrow()
+    await writeFile(join(root, 'thumbnails/segment-table.png'), png)
+    await save(value)
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].sourceItems).toHaveLength(1)
+    const cells = result.elements[1].table!.cells
+    expect(cells[0].sourceSegments).toBeUndefined()
+    expect(cells[1].sourceItems).toBeUndefined()
+    expect(cells.map((cell) => cell.text)).toEqual(['=', '10'])
+  })
+
+  it('retains a small element source bundle when worker serialization exceeds its byte budget', () => {
+    const value = raw()
+    const figure = (value.figures as Record<string, unknown>[])[0]
+    Object.assign(figure, {
+      sourceItems: [{ pageNumber: 1, index: 10000, text: 'Native label' }]
+    })
+    value.algorithms = [
+      {
+        ...figure,
+        id: 'large-algorithm',
+        sourceItems: undefined,
+        nativeBody: {
+          kind: 'algorithm',
+          sourceItems: Array.from({ length: 16 }, (_, index) => ({
+            pageNumber: 1,
+            index,
+            text: '中'.repeat(200000)
+          }))
+        }
+      }
+    ]
+    const serialized = serializeWorkerResult(value)
+    const result = JSON.parse(serialized)
+    expect(result.figures[0].sourceItems).toEqual(figure.sourceItems)
+    expect(result.algorithms[0].nativeBody).toBeUndefined()
+    expect(Buffer.byteLength(serialized)).toBeLessThanOrEqual(8 * 1024 ** 2)
+  })
 
   it('omits the complete optional body proof when its serialized UTF-8 budget is exceeded', async () => {
     const value = raw()

@@ -16,6 +16,7 @@ import { PdfTranslationWriter } from '../src/writer.js'
 import type { PdfTranslationPdfRequest, PdfTranslationPdfResult } from '../src/contracts.js'
 import { TestCallerRegistry } from './support/callers.js'
 import { resolve } from './paths.js'
+import { generateReflow } from '../resources/reflow.mjs'
 
 const fragment = (
   pageNumber: number,
@@ -161,14 +162,21 @@ it('retains ambiguous internal targets instead of choosing the nearest paragraph
       fragments: [fragment(2, 0.08)]
     }
   ])
-  expect(output.reflow!.originalPageNumbers).toEqual([1, 2])
-  expect(output.layoutFailures.map((f) => f.code)).toEqual(['annotations', 'annotations'])
+  expect(output.reflow!.originalPageNumbers).toEqual([2])
+  expect(output.layoutFailures).toEqual([
+    expect.objectContaining({ unitIndex: 1, code: 'annotations' })
+  ])
   const task = getDocument({ data: output.data.slice() })
   try {
     const parsed = await task.promise,
       links = await (await parsed.getPage(1)).getAnnotations()
     expect(await parsed.getPageIndex(links[0].dest[0])).toBe(1)
     expect(links[0].dest[3]).toBe(200)
+    expect(
+      (await (await parsed.getPage(1)).getTextContent()).items
+        .map((item) => ('str' in item ? item.str : ''))
+        .join('')
+    ).toContain('Translated reference.')
   } finally {
     await task.destroy()
   }
@@ -182,7 +190,7 @@ it.each([false, true])(
     const page = pdf.addPage([400, 500])
     page.drawText('Original body.', { font, x: 40, y: 440, size: 12 })
     if (rotatePage) page.setRotation(degrees(90))
-    else page.drawText('Vertical text.', { font, x: 300, y: 200, size: 12, rotate: degrees(90) })
+    else page.drawText('Vertical text.', { font, x: 60, y: 400, size: 12, rotate: degrees(90) })
     const output = await generate(pdf, [
       {
         source: 'Original body.',
@@ -353,6 +361,92 @@ it('retains the original page when a translated link position is unproved', asyn
       .join('')
     expect(text).toBe('Original linked words.')
     expect(text).not.toContain('Original links')
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each([false, true])(
+  'copies only an unproved internal-link origin and its joined source pages (joined=%s)',
+  async (joined) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    const texts = joined
+      ? ['Read paper and paper.', 'Continued source.', 'Destination.']
+      : ['Read paper and paper.', 'Destination.']
+    for (const text of texts)
+      pdf.addPage([400, 500]).drawText(text, { font, x: 40, y: 440, size: 12 })
+    const target = texts.length
+    link(pdf, 1, [70, 438, 102, 453], {
+      Dest: [pdf.getPage(target - 1).ref, PDFName.of('XYZ'), 40, 450, null]
+    })
+    const output = await generate(pdf, [
+      {
+        source: texts.slice(0, -1).join(' '),
+        translation: '无法定位重复词语的完整译文。',
+        fragments: joined ? [fragment(1, 0.08), fragment(2, 0.08)] : [fragment(1, 0.08)]
+      },
+      {
+        source: 'Destination.',
+        translation: 'Translated destination remains available.',
+        fragments: [fragment(target, 0.08)]
+      }
+    ])
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({ unitIndex: 0, code: 'annotations' })
+    ])
+    expect(output.reflow!.originalPageNumbers).toEqual(joined ? [1, 2] : [1])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const document = await task.promise,
+        annotations = await (await document.getPage(1)).getAnnotations(),
+        destinationPage = await document.getPageIndex(annotations[0].dest[0])
+      expect(destinationPage).toBe(target - 1)
+      expect(
+        (await (await document.getPage(destinationPage + 1)).getTextContent()).items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join('')
+      ).toContain('Translated destination remains available.')
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it('copies only an unproved destination while preserving its incoming translated link', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const text of ['Read paper.', 'Destination.'])
+    pdf.addPage([400, 500]).drawText(text, { font, x: 40, y: 440, size: 12 })
+  link(pdf, 1, [40, 438, 41 + font.widthOfTextAtSize('Read paper.', 12), 453], {
+    Dest: [pdf.getPage(1).ref, PDFName.of('FitR'), 40, 420, 120, 460]
+  })
+  const output = await generate(pdf, [
+    {
+      source: 'Read paper.',
+      translation: 'Translated incoming link.',
+      fragments: [fragment(1, 0.08)]
+    },
+    {
+      source: 'Destination.',
+      translation: 'Destination translated.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([
+    expect.objectContaining({ unitIndex: 1, code: 'annotations' })
+  ])
+  expect(output.reflow!.originalPageNumbers).toEqual([2])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const document = await task.promise,
+      page = await document.getPage(1),
+      annotations = await page.getAnnotations()
+    expect(
+      (await page.getTextContent()).items.map((item) => ('str' in item ? item.str : '')).join('')
+    ).toContain('Translated incoming link.')
+    expect(await document.getPageIndex(annotations[0].dest[0])).toBe(1)
+    expect(annotations[0].dest.slice(1)).toEqual([{ name: 'FitR' }, 40, 420, 120, 460])
   } finally {
     await task.destroy()
   }
@@ -813,19 +907,24 @@ it('retains ambiguous labels and rewrites links on copied pages after preceding 
       fragments: [fragment(3, 0.08)]
     }
   ])
-  expect(output.layoutFailures.map((f) => [f.unitIndex, f.code])).toEqual([
-    [1, 'annotations'],
-    [2, 'annotations']
-  ])
+  expect(output.layoutFailures.map((f) => [f.unitIndex, f.code])).toEqual([[1, 'annotations']])
   const task = getDocument({ data: output.data.slice() })
   try {
     const parsed = await task.promise,
       originals = output.reflow!.originalPageNumbers!
+    expect(originals).toHaveLength(1)
     expect(originals[0]).toBeGreaterThan(2)
     const links = await (await parsed.getPage(originals[0])).getAnnotations()
     expect(links).toHaveLength(1)
-    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(originals[1] - 1)
-    expect(links[0].dest.slice(2)).toEqual([40, 450, null])
+    const target = output.reflow!.units.find((unit) => unit.unitIndex === 2)!.fragments[0]
+    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(target.pageNumber - 1)
+    expect(links[0].dest[2]).toBeCloseTo(target.rect.x * 595.28, 3)
+    expect(links[0].dest[3]).toBeCloseTo((1 - target.rect.y) * 841.89, 3)
+    expect(
+      (await (await parsed.getPage(target.pageNumber)).getTextContent()).items
+        .map((item) => ('str' in item ? item.str : ''))
+        .join('')
+    ).toContain('Translated destination.')
   } finally {
     await task.destroy()
   }
@@ -1547,6 +1646,144 @@ it('remaps page labels, print ranges, unreferenced named destinations and openin
   }
 })
 
+it.each([false, true])(
+  'retains a whole native script owner before graphics without mutating its target (raised=%s)',
+  async (raised) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500]),
+      prefix = 'Explain x',
+      suffix = ' without changing scripts.',
+      source = prefix + '2' + suffix,
+      smallX = 40 + font.widthOfTextAtSize(prefix, 12)
+    page.drawText(prefix, { font, x: 40, y: 440, size: 12 })
+    page.drawText('2', { font, x: smallX, y: raised ? 444 : 440, size: 8 })
+    page.drawText(suffix, {
+      font,
+      x: smallX + font.widthOfTextAtSize('2', 8),
+      y: 440,
+      size: 12
+    })
+    page.drawText('Another ordinary paragraph.', { font, x: 40, y: 330, size: 12 })
+    const data = await pdf.save(),
+      original = getDocument({ data: data.slice() })
+    let items: { index: number; text: string; y: number }[]
+    try {
+      const text = await (await (await original.promise).getPage(1)).getTextContent()
+      items = text.items.flatMap((i, index) =>
+        'str' in i && i.str.trim() ? [{ index, text: i.str, y: i.transform[5] }] : []
+      )
+    } finally {
+      await original.destroy()
+    }
+    const units = [
+        {
+          source,
+          translation: '解释 x2，并保持上标。',
+          kind: 'text',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.075, width: 0.8, height: 0.08 },
+              items: items!.filter((i) => i.y > 420).map(({ index, text }) => ({ index, text }))
+            }
+          ]
+        },
+        {
+          source: 'Another ordinary paragraph.',
+          translation: '另一普通段落。',
+          kind: 'text',
+          fragments: [
+            {
+              ...fragment(1, 0.3),
+              items: items!.filter((i) => i.y < 400).map(({ index, text }) => ({ index, text }))
+            }
+          ]
+        }
+      ],
+      snapshot = JSON.stringify(units)
+    Object.freeze(units[0])
+    const output = await generateReflow({ data, pages: [{ width: 400, height: 500 }], units })
+    expect(JSON.stringify(units)).toBe(snapshot)
+    expect(output.reflow.originalPageNumbers).toEqual([])
+    expect(output.layoutFailures).toEqual(
+      raised
+        ? [
+            expect.objectContaining({
+              unitIndex: 0,
+              code: 'unsupported-layout',
+              phase: 'planning'
+            })
+          ]
+        : []
+    )
+    const translated = getDocument({ data: output.data.slice() })
+    try {
+      const current = await translated.promise,
+        content = await (await current.getPage(1)).getTextContent(),
+        text = content.items.map((i) => ('str' in i ? i.str : '')).join(''),
+        operators = await (await current.getPage(1)).getOperatorList()
+      expect(text).toContain('另一普通段落。')
+      expect(text.includes('解释')).toBe(!raised)
+      expect(operators.fnArray.filter((op) => op === OPS.paintImageXObject)).toHaveLength(
+        raised ? 1 : 0
+      )
+    } finally {
+      await translated.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'preserves native punctuation-bearing citation actions (changed vector=%s)',
+  async (changedVector) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      source = 'First [7, 9]. Next [7, 12].',
+      translation = changedVector ? '首先 [7, 9]，随后 [7, 13]。' : '首先 [7, 9]，随后 [7, 12]。'
+    pdf.addPage([400, 500]).drawText(source, { font, x: 40, y: 440, size: 12 })
+    const starts = [source.indexOf('[7,'), source.lastIndexOf('[7,')]
+    starts.forEach((start, index) => {
+      const x = 40 + font.widthOfTextAtSize(source.slice(0, start), 12),
+        right = x + font.widthOfTextAtSize('[7,', 12)
+      link(pdf, 1, [x - 0.1, 437, right + 0.1, 452], {
+        A: { S: 'URI', URI: PDFString.of(`https://example.org/reference/${index}`) }
+      })
+    })
+    const output = await generate(pdf, [
+      {
+        source,
+        translation,
+        kind: 'text',
+        fragments: [{ ...fragment(1, 0.08), items: [{ index: 0, text: source }] }]
+      }
+    ])
+    expect(output.reflow?.originalPageNumbers).toEqual(changedVector ? [1] : [])
+    if (changedVector)
+      expect(output.layoutFailures).toContainEqual(
+        expect.objectContaining({ unitIndex: 0, code: 'annotations' })
+      )
+    else expect(output.layoutFailures).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        page = await parsed.getPage(1),
+        annotations = await page.getAnnotations(),
+        text = (await page.getTextContent()).items.map((i) => ('str' in i ? i.str : '')).join('')
+      expect(annotations.map((a) => a.url)).toEqual([
+        'https://example.org/reference/0',
+        'https://example.org/reference/1'
+      ])
+      expect(text.replace(/\s/gu, '')).toContain(
+        (changedVector ? source : translation).replace(/\s/gu, '')
+      )
+      if (!changedVector) expect(annotations[0].rect).not.toEqual(annotations[1].rect)
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
 async function blankPageAnchorFixture(): Promise<{
   pdf: PDFDocument
   units: PdfTranslationPdfRequest['units']
@@ -1607,6 +1844,34 @@ it('maps a complete native page anchor from a blank top strip to its emitted fir
     await task.destroy()
   }
 })
+
+it.each([0, 0.02])(
+  'maps incoming native page aliases only at the certified source point (offset=%s)',
+  async (offset) => {
+    const { pdf, units } = await blankPageAnchorFixture()
+    link(pdf, 2, [40, 437, 100, 452], {
+      A: { S: 'GoTo', D: [pdf.getPage(0).ref, 'XYZ', 40, 490 - offset, null] }
+    })
+    const output = await generate(pdf, units)
+    expect(output.reflow?.originalPageNumbers).toEqual(offset ? [1, 2] : [2])
+    if (offset)
+      expect(output.layoutFailures).toContainEqual(
+        expect.objectContaining({ unitIndex: 0, code: 'annotations' })
+      )
+    else expect(output.layoutFailures).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        annotations = await (await parsed.getPage(2)).getAnnotations(),
+        destination = annotations[0].dest
+      expect(annotations).toHaveLength(1)
+      expect(await parsed.getPageIndex(destination[0])).toBe(0)
+      if (!offset) expect(destination.slice(1)).toEqual([{ name: 'XYZ' }, 44, 797.89, null])
+    } finally {
+      await task.destroy()
+    }
+  }
+)
 
 it.each([
   'missing family member',
@@ -2371,5 +2636,136 @@ it.each(['table', 'figure'] as const)(
     } finally {
       await task.destroy()
     }
+  }
+)
+
+it.each(['margin', 'axis', 'nested-axis'])(
+  'keeps a complete original rotated %s label while independently reflowing body text',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    page.drawText('Independent body paragraph.', { font, size: 12, x: 60, y: 440 })
+    if (kind === 'nested-axis') {
+      const graphic = await PDFDocument.create(),
+        labelFont = await graphic.embedFont(StandardFonts.Helvetica),
+        chart = graphic.addPage([160, 220])
+      chart.drawRectangle({ x: 20, y: 20, width: 100, height: 150, borderWidth: 1 })
+      chart.drawText('Measured response', {
+        font: labelFont,
+        size: 10,
+        x: 14,
+        y: 30,
+        rotate: degrees(90),
+        color: rgb(0, 1, 0)
+      })
+      const embedded = await pdf.embedPage(chart)
+      page.drawPage(embedded, { x: 90, y: 100 })
+    } else {
+      page.drawText('Measured response', {
+        font,
+        size: 10,
+        x: kind === 'margin' ? 15 : 100,
+        y: 100,
+        rotate: degrees(90),
+        color: rgb(0, 1, 0)
+      })
+      if (kind === 'axis')
+        page.drawRectangle({ x: 110, y: 90, width: 130, height: 180, borderWidth: 1 })
+    }
+    const output = await generate(pdf, [
+      {
+        source: 'Independent body paragraph.',
+        translation: '独立的正文段落。',
+        fragments: [
+          { pageNumber: 1, rect: { x: 58 / 400, y: 44 / 500, width: 260 / 400, height: 28 / 500 } }
+        ]
+      }
+    ])
+    expect(output.layoutFailures).toEqual([])
+    expect(output.reflow?.originalPageNumbers ?? []).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const document = await task.promise
+      let text = '',
+        pictures = 0,
+        green = 0
+      for (let number = 1; number <= document.numPages; number++) {
+        const result = await document.getPage(number)
+        text += (await result.getTextContent()).items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join('')
+        pictures += (await result.getOperatorList()).fnArray.filter(
+          (op) => op === OPS.paintImageXObject
+        ).length
+        const viewport = result.getViewport({ scale: 2 }),
+          canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height)),
+          context = canvas.getContext('2d')
+        await result.render({ canvasContext: context, viewport }).promise
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+        for (let at = 0; at < pixels.length; at += 4)
+          if (pixels[at] < 100 && pixels[at + 1] > 180 && pixels[at + 2] < 100) green++
+      }
+      expect(text).toContain('独立的正文段落。')
+      // The unsupported glyphs stay in an original crop, rather than vanish
+      // when unrelated translated prose makes the page eligible for reflow.
+      expect(pictures).toBeGreaterThan(0)
+      expect(green).toBeGreaterThan(20)
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it('retains a page when a rotated native object intersects a translated source fragment', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    page = pdf.addPage([400, 500])
+  page.drawText('Original body.', { font, size: 12, x: 50, y: 430 })
+  page.drawText('Rotated content', { font, size: 10, x: 60, y: 330, rotate: degrees(90) })
+  const output = await generate(pdf, [
+    {
+      source: 'Original body.',
+      translation: '译文正文。',
+      fragments: [
+        { pageNumber: 1, rect: { x: 45 / 400, y: 45 / 500, width: 200 / 400, height: 130 / 500 } }
+      ]
+    }
+  ])
+  expect(output.layoutFailures).toContainEqual(
+    expect.objectContaining({ unitIndex: 0, code: 'unsupported-layout' })
+  )
+  expect(output.reflow?.originalPageNumbers).toEqual([1])
+})
+
+it.each(['intersecting-native-text', 'too-small-crop', 'borderline-crop'])(
+  'retains unsupported directions when the original crop cannot be proved complete: %s',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    page.drawText('Independent body.', { font, size: 12, x: 50, y: 440 })
+    page.drawText('Rotated label', {
+      font,
+      size: kind === 'too-small-crop' ? 1 : kind === 'borderline-crop' ? 2.5 : 10,
+      x: 100,
+      y: 180,
+      rotate: degrees(90)
+    })
+    if (kind === 'intersecting-native-text')
+      page.drawText('Independent horizontal label.', { font, size: 10, x: 50, y: 210 })
+    const output = await generate(pdf, [
+      {
+        source: 'Independent body.',
+        translation: '独立正文。',
+        fragments: [
+          { pageNumber: 1, rect: { x: 48 / 400, y: 45 / 500, width: 240 / 400, height: 25 / 500 } }
+        ]
+      }
+    ])
+    expect(output.layoutFailures).toContainEqual(
+      expect.objectContaining({ unitIndex: 0, code: 'unsupported-layout' })
+    )
+    expect(output.reflow?.originalPageNumbers).toEqual([1])
   }
 )

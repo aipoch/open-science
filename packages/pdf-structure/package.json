@@ -38,6 +38,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
+    "fontkit": "2.0.4",
+    "pdf-lib": "1.17.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12"
   }

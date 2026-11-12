@@ -9290,6 +9290,147 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('does not renew idle Shell lifetime when replay reads the run index', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const readFinished = createDeferred<void>()
+    const readIndex = repository.readSessionRunIndex.bind(repository)
+    const read = vi.spyOn(repository, 'readSessionRunIndex').mockImplementation(async (...args) => {
+      const result = await readIndex(...args)
+      await readFinished.promise
+      return result
+    })
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    let live = true
+    const release = vi.fn(async () => {
+      live = false
+      return true
+    })
+    let admitted = 0
+    const isSessionBusy = vi.fn(() => admitted > 0)
+    const identity = {}
+    const idleProcesses = vi.fn(() =>
+      live
+        ? [
+            {
+              identity,
+              projectId: 'default-project',
+              sessionId: 'idle-shell',
+              group: 'shell' as const,
+              lastUsedAt: 1_000_000,
+              release
+            }
+          ]
+        : []
+    )
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository,
+      isSessionBusy,
+      admitSessionWork: () => {
+        admitted++
+        return () => {
+          admitted--
+        }
+      },
+      shellProcess: {
+        execute: vi.fn(),
+        idleProcesses
+      }
+    })
+    try {
+      service.noteSessionActivity('idle-shell')
+      await vi.waitFor(() => expect(isSessionBusy).toHaveBeenCalled())
+      now.mockReturnValue(1_000_000 + 14 * 60_000)
+      const reading = service.runIndex({ sessionId: 'idle-shell', workspaceCwd: root })
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+      now.mockReturnValue(1_000_000 + 15 * 60_000)
+      const sweeps = idleProcesses.mock.calls.length
+      service.noteSessionActivity('another-session')
+      await vi.waitFor(() => expect(idleProcesses.mock.calls.length).toBeGreaterThan(sweeps))
+      expect(release).not.toHaveBeenCalled()
+      readFinished.resolve()
+      await reading
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    } finally {
+      readFinished.resolve()
+      await service.dispose()
+      now.mockRestore()
+    }
+  })
+
+  it('reclaims excess idle interpreter instances and gates cold execution until cleanup finishes', async () => {
+    const root = await createStorageRoot()
+    let busy = true
+    const stopped = createDeferred<void>()
+    const release = vi.fn(() => stopped.promise.then(() => true))
+    const dispatch = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      isSessionBusy: () => busy,
+      executorFactory: () => {
+        let identity: object | undefined
+        return {
+          execute: async (request) => {
+            identity ??= {}
+            dispatch(request.sessionId)
+            return {
+              status: 'completed',
+              stdout: 'ok',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }
+          },
+          idleProcesses: () =>
+            identity
+              ? [
+                  {
+                    identity,
+                    processKey: `python:${DEFAULT_PY_ENV}`,
+                    release: async () => {
+                      await release()
+                      identity = undefined
+                      return true
+                    }
+                  }
+                ]
+              : [],
+          shutdown: async () => ({ reaped: true })
+        }
+      }
+    })
+    try {
+      const runs = []
+      for (let index = 0; index < 4; index++)
+        runs.push(
+          await service.execute({ sessionId: `idle-${index}`, workspaceCwd: root, code: '1' })
+        )
+      expect(release).not.toHaveBeenCalled()
+      busy = false
+      service.noteSessionActivity('idle-3')
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      const resumed = service.execute({ sessionId: 'idle-0', workspaceCwd: root, code: '2' })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(dispatch).toHaveBeenCalledTimes(4)
+      stopped.resolve()
+      const run = await resumed
+      expect(run.status).toBe('completed')
+      expect(run.kernelEpochId).not.toBe(runs[0].kernelEpochId)
+      expect(dispatch).toHaveBeenCalledTimes(5)
+      const history = await service.state({ sessionId: 'idle-0', workspaceCwd: root })
+      expect(history.kernelStatus).toBe('idle')
+    } finally {
+      stopped.resolve()
+      await service.dispose()
+    }
+  })
+
   it.each(['idle-shutdown', 'termination'] as const)(
     'keeps live and durable kernel state unchanged when %s persistence fails',
     async (callback) => {

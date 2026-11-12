@@ -1169,8 +1169,7 @@
                     },
                     "text": {
                       "type": "string",
-                      "maxLength": 40,
-                      "description": ""
+                      "description": "Prefer a short takeaway, about 40 characters. Preserve necessary qualifications."
                     },
                     "tone": {
                       "type": "string",

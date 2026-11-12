@@ -240,6 +240,10 @@ describe('composer prompt optimization', () => {
       requestId: optimize.mock.calls[0][0].requestId,
       stage: 'references'
     })
+    expect(result.current.optimization.diagnostics).toEqual({
+      requestId: optimize.mock.calls[0][0].requestId,
+      code: 'prompt-optimization/references'
+    })
     unmount()
   })
   it('invalidates in-flight optimization when sending and never restores a sent draft', async () => {
@@ -291,6 +295,12 @@ it('does not duplicate service failures in renderer diagnostics', async () => {
     await result.current.optimization.optimize()
   })
   expect(result.current.optimization.notice).toBe('failed')
+  expect(result.current.optimization.diagnostics).toEqual({
+    requestId: optimize.mock.calls[0][0].requestId
+  })
+  expect(docToText(result.current.doc)).toBe('Original')
   expect(event).not.toHaveBeenCalled()
+  act(() => result.current.optimization.edited())
+  expect(result.current.optimization.diagnostics).toBeUndefined()
   unmount()
 })

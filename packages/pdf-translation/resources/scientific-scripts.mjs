@@ -56,6 +56,160 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     sourceGroups = [...source.matchAll(pattern)],
     targetGroups = [...translation.matchAll(pattern)],
     groups = []
+  // Preserve complete native differential parentheses and spaced tensor runs.
+  // These families keep original objects, including a shared "= (" run; no
+  // source substring or whitespace-normalized identifier grants ownership.
+  const boundary = /[\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_′″‴'\u{1d400}-\u{1d7ff}]/u,
+    occurrences = (text, label) => {
+      const found = []
+      for (let at = text.indexOf(label); at >= 0; at = text.indexOf(label, at + label.length))
+        if (
+          !boundary.test([...text.slice(0, at)].at(-1) ?? '') &&
+          !boundary.test([...text.slice(at + label.length)][0] ?? '')
+        )
+          found.push(at)
+      return found
+    },
+    nativeParts = (start, end, count) => {
+      const parts = markers
+        .filter((part) => part.sourceOffset < end && part.sourceOffset + part.label.length > start)
+        .sort((a, b) => a.sourceOffset - b.sourceOffset)
+      return parts.length === count &&
+        parts.every(
+          (part, index) =>
+            Number.isInteger(part.sourceOffset) &&
+            part.sourceOffset >= start &&
+            part.sourceOffset + part.label.length <= end &&
+            source.slice(part.sourceOffset, part.sourceOffset + part.label.length) === part.label &&
+            Number.isFinite(part.scale) &&
+            Number.isFinite(part.rise) &&
+            part.sourceIndices.length === 1 &&
+            Number.isInteger(part.sourceIndices[0]) &&
+            part.sourceIndices[0] >= 0 &&
+            (!index || part.sourceIndices[0] === parts[index - 1].sourceIndices[0] + 1) &&
+            part.bounds?.length === 4 &&
+            part.bounds.every(Number.isFinite) &&
+            part.bounds[0] < part.bounds[2] &&
+            part.bounds[1] < part.bounds[3]
+        )
+        ? parts
+        : undefined
+    },
+    body = (part) => part.scale >= 0.9 && part.scale <= 1.1 && Math.abs(part.rise) < 0.01,
+    small = (part) => part.scale >= 0.5 && part.scale < 0.85,
+    center = (part) => (part.bounds[1] + part.bounds[3]) / 2,
+    addNativeGroup = (start, end, parts, baseline) => {
+      const label = source.slice(start, end),
+        from = occurrences(source, label),
+        to = occurrences(translation, label),
+        ordinal = from.indexOf(start)
+      if (ordinal < 0 || from.length !== to.length) return
+      groups.push({
+        sourceOffset: start,
+        targetOffset: to[ordinal],
+        label,
+        sourceIndices: parts.flatMap((part) => part.sourceIndices),
+        baselineIndex: baseline.sourceIndices[0],
+        nativeScriptGroup: true
+      })
+    }
+  for (const match of source.matchAll(/\(∂([A-Za-z\p{Script=Greek}])\)(\p{Script=Greek})/gu)) {
+    const opening = markers.filter(
+        (part) =>
+          ['(', '= ('].includes(part.label) &&
+          part.sourceOffset + part.label.length === match.index + 1
+      ),
+      start = opening[0]?.sourceOffset,
+      end = match.index + match[0].length,
+      parts = opening.length === 1 && nativeParts(start, end, 5)
+    if (!parts) continue
+    const [open, operator, inner, close, outer] = parts,
+      height = open.bounds[3] - open.bounds[1]
+    if (
+      operator.label !== '∂' ||
+      inner.label !== match[1] ||
+      close.label !== ')' ||
+      outer.label !== match[2] ||
+      parts.some(
+        (part, index) =>
+          index &&
+          part.sourceOffset !== parts[index - 1].sourceOffset + parts[index - 1].label.length
+      ) ||
+      ![open, operator, close].every(body) ||
+      ![inner, outer].every(small) ||
+      Math.abs(inner.scale - outer.scale) >= 0.01 ||
+      inner.rise >= -height * 0.05 ||
+      inner.rise < -height * 0.4 ||
+      outer.rise <= height * 0.1 ||
+      outer.rise > height * 0.6 ||
+      center(inner) >= center(open) ||
+      center(outer) <= center(open) ||
+      Math.abs(close.bounds[1] - open.bounds[1]) > height * 0.05 ||
+      Math.abs(close.bounds[3] - open.bounds[3]) > height * 0.05 ||
+      parts.some(
+        (part, index) =>
+          part.bounds[1] < open.bounds[1] - height * 0.1 ||
+          part.bounds[3] > open.bounds[3] + height * 0.1 ||
+          (index &&
+            (part.bounds[0] < parts[index - 1].bounds[2] - height * 0.1 ||
+              part.bounds[0] > parts[index - 1].bounds[2] + height * 0.5))
+      )
+    )
+      continue
+    addNativeGroup(start, end, parts, open)
+  }
+  for (const match of source.matchAll(
+    /(?:∇(\p{Script=Greek}))?T (\p{Script=Greek}[a-z\p{Script=Greek}])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      prefix = !!match[1],
+      parts = nativeParts(start, end, prefix ? 4 : 2)
+    if (!parts) continue
+    const [base, raised] = parts.slice(-2),
+      height = base.bounds[3] - base.bounds[1],
+      gap = raised.bounds[0] - base.bounds[2]
+    if (
+      base.label !== 'T' ||
+      base.sourceOffset !== start + (prefix ? 2 : 0) ||
+      raised.label !== match[2] ||
+      raised.sourceOffset !== base.sourceOffset + 2 ||
+      !body(base) ||
+      !small(raised) ||
+      raised.rise <= height * 0.1 ||
+      raised.rise > height * 0.8 ||
+      center(raised) <= center(base) ||
+      raised.bounds[1] <= base.bounds[1] ||
+      raised.bounds[3] > base.bounds[3] + height * 0.5 ||
+      gap < -height * 0.1 ||
+      gap > height * 0.5
+    )
+      continue
+    if (prefix) {
+      const [operator, lower] = parts
+      if (
+        operator.label !== '∇' ||
+        operator.sourceOffset !== start ||
+        !body(operator) ||
+        lower.label !== match[1] ||
+        lower.sourceOffset !== start + 1 ||
+        !small(lower) ||
+        Math.abs(operator.scale - base.scale) >= 0.05 ||
+        Math.abs(lower.scale - raised.scale) >= 0.01 ||
+        lower.rise >= -height * 0.05 ||
+        lower.rise < -height * 0.5 ||
+        center(lower) >= center(operator) ||
+        lower.bounds[3] <= operator.bounds[1] ||
+        lower.bounds[0] < operator.bounds[2] - height * 0.1 ||
+        lower.bounds[0] > operator.bounds[2] + height * 0.5 ||
+        base.bounds[0] < lower.bounds[2] - height * 0.1 ||
+        base.bounds[0] > lower.bounds[2] + height * 0.5 ||
+        Math.abs(center(operator) - center(base)) > height * 0.3
+      )
+        continue
+    }
+    addNativeGroup(start, end, parts, base)
+  }
   // Publishers can insert a space between a body variable and its native
   // scripts (W Qi), with a comma sharing the variable's object. Keep the
   // complete script stack; the body object and its punctuation remain prose.
@@ -379,6 +533,74 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     )
       continue
     if (/^[A-Za-z\p{Script=Greek}\d]+⊥?$/u.test(label)) {
+      const productBoundary =
+          /[\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_′″‴'⊥\u{1d400}-\u{1d7ff}]/u,
+        completeProduct = (text, token) =>
+          !productBoundary.test([...text.slice(0, token.index)].at(-1) ?? '') &&
+          !productBoundary.test([...text.slice(token.index + token[0].length)][0] ?? '')
+      // Adjacent indexed factors form one identifier in extracted prose. Keep
+      // their complete native packet instead of flattening either lowered run.
+      if (
+        parts.length === 4 &&
+        [0, 2].every(
+          (index) =>
+            /^[A-Za-z\p{Script=Greek}]$/u.test(parts[index].label) &&
+            parts[index].scale >= 0.9 &&
+            parts[index].scale <= 1.1 &&
+            Math.abs(parts[index].rise) <= 0.01
+        ) &&
+        [1, 3].every(
+          (index) =>
+            /^[A-Za-z\p{Script=Greek}\d]{1,3}$/u.test(parts[index].label) &&
+            parts[index].scale >= 0.5 &&
+            parts[index].scale < 0.85 &&
+            parts[index].rise < -0.1
+        ) &&
+        from.every((token) => completeProduct(source, token)) &&
+        to.every((token) => completeProduct(translation, token)) &&
+        sameStyle(parts[0], parts[2]) &&
+        sameStyle(parts[1], parts[3]) &&
+        parts.every(
+          (part, index) =>
+            part.sourceIndices.length === 1 &&
+            Number.isInteger(part.sourceIndices[0]) &&
+            part.sourceIndices[0] >= 0 &&
+            (!index || part.sourceIndices[0] === parts[index - 1].sourceIndices[0] + 1) &&
+            Number.isFinite(part.scale) &&
+            Number.isFinite(part.rise) &&
+            part.bounds?.length === 4 &&
+            part.bounds.every(Number.isFinite) &&
+            part.bounds[0] < part.bounds[2] &&
+            part.bounds[1] < part.bounds[3]
+        ) &&
+        [0, 2].every((index) => {
+          const base = parts[index],
+            lower = parts[index + 1],
+            width = base.bounds[2] - base.bounds[0],
+            height = base.bounds[3] - base.bounds[1]
+          return (
+            -lower.rise >= height * 0.05 &&
+            -lower.rise <= height * 0.6 &&
+            lower.bounds[0] >= base.bounds[2] - width * 0.25 &&
+            lower.bounds[0] <= base.bounds[2] + width * 0.5 &&
+            lower.bounds[1] < base.bounds[3] &&
+            lower.bounds[3] > base.bounds[1] &&
+            (!index ||
+              (base.bounds[0] >= parts[index - 1].bounds[2] - width * 0.1 &&
+                base.bounds[0] <= parts[index - 1].bounds[2] + width * 0.5))
+          )
+        })
+      ) {
+        groups.push({
+          sourceOffset: match.index,
+          targetOffset: to[from.indexOf(match)].index,
+          label,
+          sourceIndices: parts.flatMap((part) => part.sourceIndices),
+          baselineIndex: parts[0].sourceIndices[0],
+          indexedProduct: true
+        })
+        continue
+      }
       // A native body with aligned upper/lower runs is one mathematical token.
       // Moving the three original objects together preserves long precision
       // labels (FP32) or a lowered perpendicular, as well as their shared

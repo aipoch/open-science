@@ -122,7 +122,7 @@ jobs:
           const selected = mode === 'full' ? groups : [mode]
           const include = selected.flatMap(group => group === 'regressions'
             ? (mode === 'regressions' && shard !== 'all' ? [Number(shard)] : [1, 2, 3, 4, 5, 6]).map(shard => ({ group, shard }))
-            : [{ group, shard: 1 }])
+            : (group === 'workspace' ? [1, 2] : [1]).map(shard => ({ group, shard })))
           appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -216,7 +216,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
-        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=1500000
+        run: npm run test:e2e:workspace -- --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests --global-timeout=1500000
       - name: Test workspace message images
         id: workspace_images
         if: ${{ matrix.group == 'workspace-images' }}

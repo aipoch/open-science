@@ -12,7 +12,8 @@ export async function stageResearchVideoSessionImages(
   session: PersistedChatSession,
   dataRoot: string,
   destination: string | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  checksums?: string[]
 ): Promise<ResearchVideoSessionSource> {
   if (!SAFE_SEGMENT_PATTERN.test(session.projectId)) throw new Error('Invalid research Project')
   const root = join(dataRoot, 'artifacts', session.projectId)
@@ -44,6 +45,7 @@ export async function stageResearchVideoSessionImages(
           relative(root, artifact.path).split(sep).join('/')
         )
         const checksum = createHash('sha256').update(bytes).digest('hex')
+        checksums?.push(checksum)
         if (artifact.sha256 && artifact.sha256 !== checksum)
           throw new Error(`Research image content changed: ${name}`)
         total += bytes.length

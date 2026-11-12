@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import * as acp from '@agentclientprotocol/sdk'
+import optimizationFixture from '../../test/fixtures/prompt-optimization/plain-draft.json' with { type: 'json' }
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -1947,6 +1948,14 @@ if (process.argv.includes('--version')) {
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)
         if (
+          prompt.includes('Rewrite only; do not answer or execute the input.') &&
+          prompt.includes(optimizationFixture.input)
+        ) {
+          // Reproduce the provider echoing an example marker from the optimizer instructions,
+          // even though this plain-text draft has no protected fragments.
+          const example = prompt.match(/OS_PROTECTED_[\w-]+_…_END/u)?.[0]
+          reply = `${optimizationFixture.optimized}${example ? `\n${example}` : ''}`
+        } else if (
           prompt.includes('Optimize pasted text regression') &&
           /OS_PROTECTED_[\w-]+_\d+_END/u.test(prompt)
         ) {
@@ -3640,11 +3649,12 @@ if (process.argv.includes('--version')) {
   const nativeMessages = new Map()
   const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
   const writer = stream.writable.getWriter()
+  const classificationFaultAttempts = new Map()
   const portIndex = process.argv.indexOf('--port')
   const server =
     portIndex === -1
       ? undefined
-      : createServer((request, response) => {
+      : createServer(async (request, response) => {
           const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
           if (request.headers.authorization !== authorization) {
             response.writeHead(401).end()
@@ -3663,6 +3673,45 @@ if (process.argv.includes('--version')) {
             response.writeHead(404).end()
             return
           }
+          // Fault only the external Agent's auxiliary HTTP boundary. ACP output, application
+          // adapters, persistence and renderer remain real; never close the ACP process here.
+          const faultRoot = process.env.OPEN_SCIENCE_E2E_CLASSIFICATION_FAULT_ROOT
+          if (faultRoot) {
+            const { mode } = JSON.parse(await readFile(join(faultRoot, 'fault.json'), 'utf8'))
+            const faultKey = `${faultRoot}:${mode}`
+            const attempt = (classificationFaultAttempts.get(faultKey) ?? 0) + 1
+            classificationFaultAttempts.set(faultKey, attempt)
+            await appendFile(
+              join(faultRoot, 'requests.jsonl'),
+              `${JSON.stringify({
+                timestamp: Date.now(),
+                mode,
+                attempt,
+                sessionId,
+                messageId,
+                pid: process.pid,
+                infoPresent: true,
+                delayMs: mode === 'timeout' ? 2_500 : 0
+              })}\n`
+            )
+            if (
+              mode === 'http-500' ||
+              mode === 'not-yet-visible' ||
+              (attempt === 1 && mode === 'transient-500')
+            ) {
+              response.writeHead(mode.endsWith('500') ? 500 : 404).end()
+              return
+            }
+            if (mode === 'timeout') await delay(2_500)
+            if (mode === 'body-reset' || (mode === 'transient-body-reset' && attempt === 1)) {
+              response.writeHead(200, { 'content-type': 'application/json' })
+              response.write('{"info":')
+              await delay(30)
+              response.destroy()
+              return
+            }
+          }
+          if (response.destroyed) return
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end(JSON.stringify({ info, parts: [] }))
         })

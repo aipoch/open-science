@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildSync } from 'esbuild'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   absolutePhysicalPath,
@@ -27,6 +27,40 @@ import { ViolationLog } from '../runtime/src/gateway/violation-log.js'
 const linuxIt = it.skipIf(process.platform === 'win32')
 
 describe('Notebook filesystem policy', () => {
+  it.each(['EACCES', 'EPERM'])(
+    'skips inaccessible optional paths on %s but preserves required failures',
+    (code) => {
+      const path = join(tmpdir(), 'unavailable-optional-root')
+      const failure = Object.assign(new Error('Cannot resolve folder'), { code })
+      const realpath = vi.spyOn(realpathSync, 'native').mockImplementation(() => {
+        throw failure
+      })
+      const policy = {
+        readOnlyRoots: [],
+        readWriteRoots: [],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+      try {
+        expect(
+          normalizeFilesystemLayout({
+            ...policy,
+            optionalReadOnlyRoots: [path],
+            optionalReadWriteRoots: [path]
+          })
+        ).toMatchObject({ optionalReadOnlyRoots: [], optionalReadWriteRoots: [] })
+        expect(() => normalizeFilesystemLayout({ ...policy, readOnlyRoots: [path] })).toThrow(
+          failure
+        )
+        expect(() => normalizeFilesystemLayout({ ...policy, readWriteRoots: [path] })).toThrow(
+          failure
+        )
+      } finally {
+        realpath.mockRestore()
+      }
+    }
+  )
+
   it('relaxes folder isolation only when explicitly disabled and preserves explicit denies and network isolation', () => {
     const root = mkdtempSync(join(tmpdir(), 'open-science-folder-policy-'))
     try {

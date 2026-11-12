@@ -334,6 +334,7 @@ describe('independent source regression', () => {
   const full = [
     { group: 'functional', shard: 1 },
     { group: 'workspace', shard: 1 },
+    { group: 'workspace', shard: 2 },
     { group: 'presentation', shard: 1 },
     ...[1, 2, 3, 4, 5, 6].map((shard) => ({ group: 'regressions', shard })),
     { group: 'capacity', shard: 1 },
@@ -362,7 +363,7 @@ describe('independent source regression', () => {
     }
   }
 
-  it('selects all eleven jobs for full coverage even with a diagnostic shard input', () => {
+  it('selects all twelve jobs for full coverage even with a diagnostic shard input', () => {
     for (const shard of ['all', '1', '2', '3', '4', '5', '6'])
       expect(selectGroups('full', shard)).toEqual({ status: 0, matrix: { include: full } })
     expect(scheduled.jobs.regression.strategy?.matrix).toBe(
@@ -377,7 +378,6 @@ describe('independent source regression', () => {
   it('runs focused modes through the same jobs without unrelated groups', () => {
     for (const group of [
       'functional',
-      'workspace',
       'presentation',
       'capacity',
       'delegation',
@@ -386,6 +386,12 @@ describe('independent source regression', () => {
       'presentation-screening'
     ])
       expect(selectGroups(group)).toEqual({ status: 0, matrix: { include: [{ group, shard: 1 }] } })
+    expect(scheduled.jobs.regression.steps.find(({ id }) => id === 'workspace')?.run).toContain(
+      '--shard=${{ matrix.shard }}/2'
+    )
+    expect(selectGroups('workspace').matrix).toEqual({
+      include: full.filter(({ group }) => group === 'workspace')
+    })
     for (const shard of ['1', '2', '3', '4', '5', '6'])
       expect(selectGroups('regressions', shard)).toEqual({
         status: 0,

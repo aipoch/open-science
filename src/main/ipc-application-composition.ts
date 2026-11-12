@@ -336,6 +336,7 @@ export const createApplicationModules = async (
     appVersion: runtimeMetadata().version,
     configRoot: sessionAuthority.configRoot,
     profileNamespace: 'prompt-optimization',
+    taskOnly: true,
     allowNativeCodexSubscription: true,
     resolveTarget: (target, context) =>
       settingsBootstrap.settingsService.resolveExplicitAgentBackend(target, context)

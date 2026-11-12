@@ -965,6 +965,19 @@ const ConversationPanel = ({
   const contextResetNotice = useWorkspaceOperationErrors((state) =>
     activeSession ? state.contextResets?.[activeSession.id] : false
   )
+  useNoticeCountdown(
+    contextResetNotice ? 6000 : undefined,
+    false,
+    () => {
+      if (!activeSession) return
+      useWorkspaceOperationErrors.setState(({ contextResets }) => {
+        const next = { ...contextResets }
+        delete next[activeSession.id]
+        return { contextResets: next }
+      })
+    },
+    contextResetNotice ? activeSession?.id : undefined
+  )
   const persistenceSizeLimit = !persistenceIssue || persistenceIssue.kind === 'size-limit'
   const persistenceChecking = persistenceIssue?.state === 'checking'
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
@@ -1031,7 +1044,10 @@ const ConversationPanel = ({
             : promptOptimization.notice === 'failed'
               ? 'service/prompt-optimization'
               : 'input/prompt-optimization-changed',
-          diagnostics: {}
+          diagnostics:
+            !promptOptimization.tooLong && promptOptimization.notice === 'failed'
+              ? (promptOptimization.diagnostics ?? {})
+              : {}
         }
       },
       {

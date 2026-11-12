@@ -38,6 +38,7 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   resolveTarget: (
     target: ExplicitAgentBackendTarget,
     context: {
+      storageRoot: string
       systemPromptAppends: string[]
       includeSkillAndConnectorContext: false
       forceCodexNativeResponsesCompatibility?: true
@@ -48,6 +49,8 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   // Use the supplied task contract without Workspace instructions, skills or client tools.
   taskOnly?: boolean
   allowNativeCodexSubscription?: boolean
+  // Validation must exercise the configured route, including native Responses.
+  preserveModelRoute?: boolean
 }>
 
 type ActiveRun = {
@@ -150,6 +153,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     let jobRoot: string | undefined
     let backend: ResolvedAgentBackend | undefined
     let backendTransferred = false
+    let deferredProfileCleanup = false
     let runtime: RestrictedInferenceRuntime | undefined
     let sessionId: string | undefined
     let toolLessBridgeScopeRegistered = false
@@ -162,7 +166,11 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     const cancelPrompt = (): void => {
       if (runtime && sessionId) void runtime.cancelPrompt({ sessionId }).catch(() => undefined)
     }
-    const onAbort = (): void => cancelPrompt()
+    const onAbort = (): void => {
+      cancelPrompt()
+      // Also interrupt initialize/session creation; cancellation alone only reaches a live prompt.
+      if (this.options.preserveModelRoute) void runtime?.shutdownForQuit().catch(() => undefined)
+    }
     active.controller.signal.addEventListener('abort', onAbort, { once: true })
     const ensureActive = (): void => {
       if (active.controller.signal.aborted) {
@@ -208,13 +216,43 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         input.target.frameworkId === 'codex' &&
         isCodexSubscriptionProviderId(input.target.providerId) &&
         this.options.allowNativeCodexSubscription === true
-      backend = await this.options.resolveTarget(input.target, {
+      const resolvingBackend = this.options.resolveTarget(input.target, {
         // Install restricted instructions only in the disposable profile prepared below. OpenCode
         // materializes resolver appends into the shared Main Agent config before this isolation step.
+        storageRoot: profileRoot,
         systemPromptAppends: [],
         includeSkillAndConnectorContext: false,
-        ...(nativeCodexSubscriptionAllowed ? {} : { forceCodexNativeResponsesCompatibility: true })
+        ...(nativeCodexSubscriptionAllowed || this.options.preserveModelRoute
+          ? {}
+          : { forceCodexNativeResponsesCompatibility: true })
       })
+      if (this.options.preserveModelRoute) {
+        const signal = active.controller.signal
+        let abortResolution = (): void => undefined
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          abortResolution = () =>
+            reject(new RestrictedInferenceError('cancelled', 'Restricted inference was cancelled.'))
+          signal.addEventListener('abort', abortResolution, { once: true })
+          if (signal.aborted) abortResolution()
+        })
+        try {
+          backend = await Promise.race([resolvingBackend, cancelled])
+        } catch (error) {
+          if (signal.aborted) {
+            // A non-cancellable version probe/config writer may finish later. Never launch it;
+            // release its acquired transports before removing the profile it may still write to.
+            deferredProfileCleanup = true
+            const abandonedRoot = jobRoot
+            void resolvingBackend
+              .then(releaseUnattachedBackend, () => undefined)
+              .finally(() => rm(abandonedRoot, { recursive: true, force: true }))
+              .catch(() => log.warn('Abandoned validation profile cleanup failed'))
+          }
+          throw error
+        } finally {
+          signal.removeEventListener('abort', abortResolution)
+        }
+      } else backend = await resolvingBackend
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
         taskOnly: this.options.taskOnly,
@@ -230,7 +268,10 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       ensureActive()
       const bridge = resolvedBackend.responsesTransportLease
       const nativeCodexSubscriptionToolingDisabled =
-        resolvedBackend.framework.id === 'codex' && nativeCodexSubscriptionAllowed
+        resolvedBackend.framework.id === 'codex' &&
+        (nativeCodexSubscriptionAllowed ||
+          (this.options.preserveModelRoute === true &&
+            resolvedBackend.modelRoute === 'codex-responses'))
       if (
         resolvedBackend.framework.id === 'codex' &&
         !nativeCodexSubscriptionToolingDisabled &&
@@ -269,7 +310,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       const created = await runtime.createSession({ cwd, permissionProfile: 'ask' })
       sessionId = created.sessionId
       ensureActive()
-      if (bridge) {
+      if (bridge?.registerToolLessSession && bridge.unregisterToolLessSession) {
         bridge.registerToolLessSession!(sessionId)
         toolLessBridgeScopeRegistered = true
       }
@@ -343,7 +384,8 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       }
       await runtime?.shutdownForQuit().catch(() => undefined)
       if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
-      if (jobRoot) await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)
+      if (jobRoot && !deferredProfileCleanup)
+        await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)
       this.activeRuns.delete(active)
       active.finish()
     }

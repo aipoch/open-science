@@ -1,8 +1,12 @@
 import { expect } from '@playwright/test'
+import optimizationFixture from '../test/fixtures/prompt-optimization/plain-draft.json'
+import { readFile, writeFile } from 'node:fs/promises'
 import { test } from './fixtures/electron-app'
 import { homeNewProjectButton } from './fixtures/project'
 
 test.use({ windowMode: 'normal' })
+
+const syntheticDraft = optimizationFixture.input
 
 const DEFAULT_OPTIMIZATION_PROMPT =
   "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
@@ -51,6 +55,12 @@ test('optimizes drafts without sending and persists project-specific templates',
   await expect(editor).toHaveText('Prompt optimization cancellation fixture.')
   await expect(optimize).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)
+  await editor.fill(syntheticDraft)
+  await optimize.click()
+  await expect(editor).toHaveText(optimizationFixture.optimized)
+  await expect(editor).not.toContainText('OS_PROTECTED_')
+  await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
+  await expect(editor).toHaveText(syntheticDraft)
   await editor.fill(original)
   await optimize.click()
   await expect(editor).toHaveText(improved)
@@ -58,6 +68,7 @@ test('optimizes drafts without sending and persists project-specific templates',
     await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
   ).toHaveLength(0)
   const undo = page.getByRole('button', { name: 'Undo optimization', exact: true })
+  await editor.hover()
   await undo.hover()
   await expect(page.getByRole('tooltip')).toHaveText('Undo optimization')
   await editor.fill(`${improved} Prompt optimization cancellation fixture.`)
@@ -70,13 +81,13 @@ test('optimizes drafts without sending and persists project-specific templates',
   const editedDraft = `${improved} Keep the evidence.`
   await editor.fill(editedDraft)
   await optimize.click()
-  await expect(editor).toHaveText(`Deterministic reply: ${editedDraft}`)
+  await expect(editor).toHaveText(improved)
   await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
   await expect(editor).toHaveText(editedDraft)
   await expect(optimize).toBeFocused()
   await expect(optimize).toBeVisible()
   await optimize.click()
-  await expect(editor).toContainText('Deterministic reply:')
+  await expect(editor).toHaveText(improved)
   await page.screenshot({ path: testInfo.outputPath('optimized-draft.png') })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -126,6 +137,16 @@ test('optimizes drafts without sending and persists project-specific templates',
     })
   ).toBeVisible()
   await expect(editor).toHaveText('Explain `print(1)`')
+  const notice = page.locator(
+    '[data-testid="composer-notice-slot"][data-notice-operation="prompt-optimization"]'
+  )
+  await notice.locator('summary').click()
+  const diagnostics = await notice.locator('pre').innerText()
+  expect(
+    diagnostics.split('Could not optimize your question. Your draft was kept. Please try again.')
+  ).toHaveLength(2)
+  expect(diagnostics).toMatch(/requestId: [\da-f-]{36}/)
+  await page.screenshot({ path: testInfo.outputPath('optimization-error-diagnostics.png') })
 
   await page.locator('button[title="Prompt optimization"]').click()
   await page.getByRole('menuitem', { name: 'Project settings', exact: true }).click()
@@ -173,4 +194,76 @@ test('optimizes drafts without sending and persists project-specific templates',
   await page.getByRole('menuitem', { name: 'Plan first', exact: true }).click()
   await expect(editor).toHaveText('')
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)
+})
+
+// Uses the existing live-agent credential flow; normal regression runs skip provider calls.
+test.describe('live prompt optimization', () => {
+  const liveSettings = process.env.OPEN_SCIENCE_OPTIMIZATION_LIVE_SETTINGS
+  test.skip(!liveSettings, 'Set OPEN_SCIENCE_OPTIMIZATION_LIVE_SETTINGS to run live acceptance.')
+  test('optimizes a synthetic draft with the configured live model', async ({ app }, testInfo) => {
+    test.setTimeout(480_000)
+    await app.completeOnboarding()
+    const { activeModel } = JSON.parse(await readFile(liveSettings!, 'utf8')) as {
+      activeModel: string
+    }
+    const page = await app.configureLiveAgent(
+      liveSettings!,
+      activeModel,
+      process.env.OPEN_SCIENCE_E2E_LIVE_PROFILE
+    )
+    const results = await page.evaluate(async (draft) => {
+      const project = await window.api.projects.create({ name: 'Live optimization fixture' })
+      const settings = await window.api.settings.getSettings()
+      const results: Array<{
+        ok: boolean
+        requestId: string
+        hasText?: boolean
+        containsMarker?: boolean
+        preservesCode?: boolean
+        preservesFormula?: boolean
+      }> = []
+      for (const input of [
+        draft,
+        draft,
+        draft,
+        `${draft}\n\nKeep the code \`sample_task()\` and formula $x^2$ unchanged.`
+      ]) {
+        const requestId = crypto.randomUUID()
+        try {
+          const result = await window.api.projects.optimizePrompt({
+            projectId: project.id,
+            requestId,
+            input,
+            agentConfiguration: {
+              providerId: settings.activeProviderId!,
+              model: settings.activeModel!,
+              reasoningEffort: 'high'
+            }
+          })
+          results.push({
+            ok: true,
+            requestId,
+            hasText: Boolean(result.text.trim()),
+            containsMarker: result.text.includes('OS_PROTECTED_'),
+            preservesCode: result.text.includes('`sample_task()`'),
+            preservesFormula: result.text.includes('$x^2$')
+          })
+        } catch {
+          results.push({ ok: false, requestId })
+        }
+      }
+      return results
+    }, syntheticDraft)
+    await writeFile(
+      testInfo.outputPath('optimization-results.json'),
+      JSON.stringify(results, null, 2)
+    )
+    for (const result of results) {
+      expect(result.ok, JSON.stringify(result)).toBe(true)
+      expect(result.hasText).toBe(true)
+      expect(result.containsMarker).toBe(false)
+    }
+    expect(results[3].preservesCode).toBe(true)
+    expect(results[3].preservesFormula).toBe(true)
+  })
 })

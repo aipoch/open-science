@@ -37,6 +37,7 @@ import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookExecutionOwner } from './execution-owner'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
+import type { IdleInterpreter } from './idle-reclamation'
 
 type RuntimeSession = NotebookSessionAggregate
 const log = createLogger('notebook:file-evidence-lifecycle')
@@ -65,6 +66,9 @@ type NotebookKernelStatusPersistenceFailure = {
 }
 
 type NotebookSessionLifecycleOptions = {
+  onActivityChanged?: (sessionId?: string) => void
+  observeSession?: (sessionId: string) => () => void
+  isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
   admitSessionWork?: (projectId: string, sessionId: string) => () => void
   storageRoot: string
   defaultProjectId: string
@@ -116,6 +120,101 @@ const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstance
 
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
+  private readonly idleTeardowns = new Map<string, Promise<boolean>>()
+
+  hasPendingWork(sessionId: string): boolean {
+    return (
+      this.terminal ||
+      Boolean(
+        this.shutdownAllPromise ||
+        this.pendingOperationsBySession.get(sessionId)?.size ||
+        this.pendingEnsuresBySession.get(sessionId)?.size
+      )
+    )
+  }
+
+  idleInterpreters(): IdleInterpreter[] {
+    return [...this.options.sessions.values()].flatMap((session) =>
+      session.idleProcesses().map((process) => ({
+        identity: process.identity,
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        group: process.processKey === 'repl' ? ('repl' as const) : ('data' as const),
+        lastUsedAt:
+          session.kernelActivityEntries().find(([key]) => key === process.processKey)?.[2] ?? 0,
+        release: (stillIdle) =>
+          this.reclaimIdleInterpreter(
+            {
+              ...process,
+              projectId: session.projectId,
+              sessionId: session.sessionId,
+              release: () =>
+                this.options.runtimeBindings.withSessionTeardown(
+                  notebookLaneKey(session.lane),
+                  async () => {
+                    await this.options.runtimeBindings.waitForWrites(notebookLaneKey(session.lane))
+                    await this.options.waitForRevocationDrains()
+                    if (await this.options.isSessionBusy?.(session.projectId, session.sessionId))
+                      return false
+                    if (!stillIdle() || this.hasPendingWork(session.sessionId)) return false
+                    if (this.options.sessions.get(session.lane) !== session) return false
+                    const instance = kernelInstanceForProcessKey(process.processKey)
+                    let stopped: boolean
+                    try {
+                      stopped = await process.release()
+                    } catch (error) {
+                      // Routing may already be invalidated even if tree cleanup could not be verified.
+                      await this.projectKernelTerminated(
+                        session.lane,
+                        instance.kind,
+                        'environment' in instance ? instance.environment : undefined
+                      )
+                      throw error
+                    }
+                    if (stopped) {
+                      await this.projectKernelIdleShutdown(
+                        session.lane,
+                        instance.kind,
+                        'environment' in instance ? instance.environment : undefined
+                      )
+                    }
+                    return stopped
+                  }
+                )
+            },
+            stillIdle
+          )
+      }))
+    )
+  }
+
+  reclaimIdleInterpreter(
+    resource: Pick<IdleInterpreter, 'projectId' | 'sessionId' | 'release'>,
+    stillIdle: () => boolean
+  ): Promise<boolean> {
+    if (
+      this.terminal ||
+      this.deletingSessionIds.has(resource.sessionId) ||
+      this.deletingProjectIds.has(resource.projectId) ||
+      this.hasPendingWork(resource.sessionId) ||
+      this.idleTeardowns.has(resource.sessionId) ||
+      !stillIdle()
+    )
+      return Promise.resolve(false)
+    // Install the gate synchronously. New Notebook work waits, rather than racing a terminating tree.
+    const teardown = Promise.resolve()
+      .then(async () => {
+        if (await this.options.isSessionBusy?.(resource.projectId, resource.sessionId)) return false
+        if (this.hasPendingWork(resource.sessionId) || !stillIdle() || this.terminal) return false
+        return resource.release(stillIdle)
+      })
+      .finally(() => {
+        if (this.idleTeardowns.get(resource.sessionId) === teardown)
+          this.idleTeardowns.delete(resource.sessionId)
+      })
+    this.idleTeardowns.set(resource.sessionId, teardown)
+    return teardown
+  }
   private readonly announcedAgentLaneKeys = new Set<string>()
   private readonly deletingProjectIds = new Set<string>()
   private readonly deletingSessionIds = new Set<string>()
@@ -148,6 +247,8 @@ class NotebookSessionLifecycleOwner {
   }
 
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
+    const idleTeardown = this.idleTeardowns.get(request.sessionId)
+    if (idleTeardown) return idleTeardown.then(() => this.ensure(request))
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const lane = this.laneForRequest(request)
     let releaseAdmission: (() => void) | undefined
@@ -268,8 +369,13 @@ class NotebookSessionLifecycleOwner {
 
   runProjectOperation<Result>(
     request: NotebookSessionRequest,
-    operation: (deletionSignal: AbortSignal) => Promise<Result>
+    operation: (deletionSignal: AbortSignal) => Promise<Result>,
+    trackActivity = true
   ): Promise<Result> {
+    if (trackActivity) this.options.onActivityChanged?.(request.sessionId)
+    const idleTeardown = this.idleTeardowns.get(request.sessionId)
+    if (idleTeardown)
+      return idleTeardown.then(() => this.runProjectOperation(request, operation, trackActivity))
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     let releaseAdmission: (() => void) | undefined
     try {
@@ -278,6 +384,9 @@ class NotebookSessionLifecycleOwner {
     } catch (error) {
       return Promise.reject(error)
     }
+    const releaseObservation = trackActivity
+      ? undefined
+      : this.options.observeSession?.(request.sessionId)
     const controller = new AbortController()
     const controllers =
       this.operationAbortControllersByProject.get(projectId) ?? new Set<AbortController>()
@@ -335,47 +444,53 @@ class NotebookSessionLifecycleOwner {
         ) {
           this.pendingOperationsBySession.delete(request.sessionId)
         }
+        this.options.onActivityChanged?.(trackActivity ? request.sessionId : undefined)
+        releaseObservation?.()
       })
       .catch(() => undefined)
     return running
   }
 
   inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
-    return this.runProjectOperation(request, async (deletionSignal) => {
-      const language = parseNotebookLanguage(request.language)
-      const environment = resolveEnvName(language, request.environment)
-      const processKey = processKeyFor(language, environment)
-      const session = this.options.sessions.get(this.laneForRequest(request))
-      if (!session) return { status: 'unavailable', reason: 'kernel-not-live' }
+    return this.runProjectOperation(
+      request,
+      async (deletionSignal) => {
+        const language = parseNotebookLanguage(request.language)
+        const environment = resolveEnvName(language, request.environment)
+        const processKey = processKeyFor(language, environment)
+        const session = this.options.sessions.get(this.laneForRequest(request))
+        if (!session) return { status: 'unavailable', reason: 'kernel-not-live' }
 
-      const kernelEpochId = session.currentKernelEpochId(processKey)
-      if (!kernelEpochId) return { status: 'unavailable', reason: 'kernel-not-live' }
+        const kernelEpochId = session.currentKernelEpochId(processKey)
+        if (!kernelEpochId) return { status: 'unavailable', reason: 'kernel-not-live' }
 
-      try {
-        const result = await session.enqueueExecution(
-          processKey,
-          () =>
-            session.inspectNamespace({
-              language,
-              environment,
-              includePrivate: request.includePrivate === true
-            }),
-          deletionSignal
-        )
-        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
-          return { status: 'unavailable', reason: 'kernel-restarted' }
+        try {
+          const result = await session.enqueueExecution(
+            processKey,
+            () =>
+              session.inspectNamespace({
+                language,
+                environment,
+                includePrivate: request.includePrivate === true
+              }),
+            deletionSignal
+          )
+          if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
+            return { status: 'unavailable', reason: 'kernel-restarted' }
+          }
+          if (result.status === 'unavailable') {
+            return { status: 'unavailable', reason: 'kernel-not-live' }
+          }
+          return { ...result, language, environment, kernelEpochId }
+        } catch (error) {
+          if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
+            return { status: 'unavailable', reason: 'kernel-restarted' }
+          }
+          throw error
         }
-        if (result.status === 'unavailable') {
-          return { status: 'unavailable', reason: 'kernel-not-live' }
-        }
-        return { ...result, language, environment, kernelEpochId }
-      } catch (error) {
-        if (session.currentKernelEpochId(processKey) !== kernelEpochId) {
-          return { status: 'unavailable', reason: 'kernel-restarted' }
-        }
-        throw error
-      }
-    })
+      },
+      false
+    )
   }
 
   createExecutor(lane: NotebookLaneIdentity): NotebookSessionOwnedExecutor {
@@ -394,6 +509,8 @@ class NotebookSessionLifecycleOwner {
       generation,
       executor: new NotebookKernelExecutor({
         ...this.options.defaultExecutorOptions(),
+        // Session-aware reclamation owns production idleness, including model/background activity.
+        idleTimeoutMs: 0,
         platform: this.options.platform,
         processLifecycle: this.options.processLifecycle,
         laneKey: notebookLaneKey(lane),
@@ -505,6 +622,10 @@ class NotebookSessionLifecycleOwner {
   ): Promise<T> {
     const releaseFence = this.options.shellExecution.fenceShellRuns(scope)
     try {
+      const idle = scope.sessionId
+        ? [this.idleTeardowns.get(scope.sessionId)].filter(Boolean)
+        : [...this.idleTeardowns.values()]
+      if (idle.length) await Promise.allSettled(idle)
       await this.options.shellExecution.cancelShellRuns(scope, reason)
       return await cleanup()
     } finally {
@@ -572,8 +693,8 @@ class NotebookSessionLifecycleOwner {
       return this.shutdownAllPromise
     }
     this.abortAllOperations(new Error('Notebook runtime is shutting down.'))
-    const shutdown = this.options.runtimeBindings
-      .withGlobalTeardown(async () => {
+    const stop = (): Promise<{ reaped: boolean }> =>
+      this.options.runtimeBindings.withGlobalTeardown(async () => {
         const result = await this.options.sessions.shutdownAll()
         if (afterShutdown) {
           if (!result.reaped)
@@ -584,9 +705,11 @@ class NotebookSessionLifecycleOwner {
         }
         return result
       })
-      .finally(() => {
-        if (this.shutdownAllPromise === shutdown) this.shutdownAllPromise = undefined
-      })
+    const shutdown = (
+      this.idleTeardowns.size ? Promise.allSettled(this.idleTeardowns.values()).then(stop) : stop()
+    ).finally(() => {
+      if (this.shutdownAllPromise === shutdown) this.shutdownAllPromise = undefined
+    })
     this.shutdownAllPromise = shutdown
     return shutdown
   }
@@ -594,9 +717,11 @@ class NotebookSessionLifecycleOwner {
   dispose(): Promise<{ reaped: boolean }> {
     if (this.disposalPromise) return this.disposalPromise
     this.beginDisposal()
-    const disposal = this.options.runtimeBindings.withGlobalTeardown(() =>
-      this.options.sessions.dispose()
-    )
+    const stop = (): Promise<{ reaped: boolean }> =>
+      this.options.runtimeBindings.withGlobalTeardown(() => this.options.sessions.dispose())
+    const disposal = this.idleTeardowns.size
+      ? Promise.allSettled(this.idleTeardowns.values()).then(stop)
+      : stop()
     this.disposalPromise = disposal
     return disposal
   }

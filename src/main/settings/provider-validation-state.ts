@@ -1,7 +1,8 @@
-import type { ModelProtocol } from '@aipoch/providers'
+import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
 import {
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
+  providerValidationRoute,
   providerValidationTargetMatches,
   type AgentFrameworkId,
   type ProviderType,
@@ -17,13 +18,30 @@ type ProviderValidationPatch = Pick<
 
 export const providerRuntimeValidationTarget = (
   target: {
+    provider?: {
+      type: ProviderType
+      vendorId?: OfficialVendorId
+      baseUrl?: string
+      chatCompletionsBaseUrl?: string
+    }
     providerType: ProviderType
     effectiveModel?: string
     apiEndpoints: readonly ModelProtocol[]
     needsChatResponsesToChatCompletionsBridge: boolean
+    needsNativeResponsesCompatibility?: boolean
   },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): ProviderValidationTarget => ({
+  ...providerValidationRoute(
+    {
+      ...target.provider,
+      type: target.providerType,
+      apiEndpoints: target.apiEndpoints,
+      needsChatResponsesToChatCompletionsBridge: target.needsChatResponsesToChatCompletionsBridge,
+      needsNativeResponsesCompatibility: target.needsNativeResponsesCompatibility
+    },
+    framework.id
+  ),
   model: target.effectiveModel,
   endpoint: preferredEndpoint(
     target.apiEndpoints,
@@ -39,9 +57,12 @@ export const targetForValidationResult = (
   result: ValidateProviderResult,
   target: ProviderValidationTarget
 ): ProviderValidationTarget | undefined =>
-  !result.ok && ['auth', 'bad-url', 'network', 'timeout', 'server-error'].includes(result.category)
-    ? undefined
-    : target
+  result.testedTarget?.frameworkId
+    ? result.testedTarget
+    : !result.ok &&
+        ['auth', 'bad-url', 'network', 'timeout', 'server-error'].includes(result.category)
+      ? undefined
+      : target
 
 export const buildProviderValidationPatch = (
   provider: StoredProvider,

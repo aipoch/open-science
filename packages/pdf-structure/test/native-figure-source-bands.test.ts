@@ -346,3 +346,70 @@ it.each(['missing-native', 'crossing-stroke', 'wide-miter'])(
     expect(associate(f)[0].rect).toBeUndefined()
   }
 )
+
+const describedTerminalPlate = (): { pages: Page[]; captions: Caption[] } => {
+  const { pages } = splitPages()
+  const source = pages[1],
+    next = pages[2]
+  source.graphicsBounds[0].normalizedRect = [100 / 600, 399.9 / 800, 500 / 600, 720 / 800]
+  source.lines = Array.from({ length: 12 }, (_, i) => ({
+    text:
+      i === 0
+        ? 'Figure 7 shows an isolated experimental illustration'
+        : i === 11
+          ? 'The final observations complete this explanation.'
+          : 'The source description continues in the same paragraph',
+    x: 72,
+    y: 72 + i * 26,
+    width: i === 11 ? 300 : 450,
+    height: 12,
+    fontSize: 12
+  }))
+  next.lines = [
+    {
+      text: 'Figure 7. Independent native plate.',
+      x: 100,
+      y: 60,
+      width: 400,
+      height: 12,
+      fontSize: 12
+    }
+  ]
+  const captions = [{ page: 3, lines: [next.lines[0].text], rect: [100, 60, 500, 72] }]
+  return { pages: [source, next], captions }
+}
+
+it('uses a complete local description to retain a terminal raster with its next-page caption', () => {
+  const f = describedTerminalPlate(),
+    before = structuredClone(f)
+  const found = associatePreviousPageRasterFigure(f.pages[0], f.pages, f.captions)
+  expect(found).toHaveLength(1)
+  expect(found[0].caption.page).toBe(3)
+  expect(found[0].rect).toEqual([100, 399.9, 500, 720])
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'number',
+  'intervening-paragraph',
+  'competing-graphic',
+  'crossing-prose',
+  'detached-image',
+  'font',
+  'caption',
+  'invalid-graphics'
+])('retains unresolved cross-page ownership without complete local evidence: %s', (change) => {
+  const f = describedTerminalPlate(),
+    page = f.pages[0]
+  if (change === 'number') f.captions[0].lines[0] = 'Figure 8. Independent native plate.'
+  if (change === 'intervening-paragraph') page.lines[6].y += 7
+  if (change === 'competing-graphic')
+    page.graphicsBounds.push({ kind: 'path', normalizedRect: [0.3, 0.55, 0.4, 0.65] })
+  if (change === 'crossing-prose') page.lines.at(-1)!.y = 400
+  if (change === 'detached-image') page.graphicsBounds[0].normalizedRect[1] = 460 / 800
+  if (change === 'font') page.lines[6].fontSize = 10
+  if (change === 'caption')
+    f.captions.push({ page: 2, lines: ['Figure 9. Competing title.'], rect: [100, 390, 500, 400] })
+  if (change === 'invalid-graphics') page.invalidGraphicsBounds = 1
+  expect(associatePreviousPageRasterFigure(page, f.pages, f.captions)).toEqual([])
+})

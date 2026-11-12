@@ -12,6 +12,9 @@ import {
 import { readProcessStartToken } from '@aipoch/environment'
 
 const windowsProcessIsAlive = vi.hoisted(() => vi.fn<(pid: number) => boolean>(() => true))
+const reapWindowsOwnedJob = vi.hoisted(() => vi.fn<(name: string) => Promise<boolean>>())
+
+vi.mock('../process-tree-windows', () => ({ reapWindowsOwnedJob }))
 
 vi.mock('../windows-process-query', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../windows-process-query')>()
@@ -37,6 +40,7 @@ describe('KernelProcessLifecycleOwner', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks()
+    reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
   })
@@ -500,6 +504,57 @@ describe('KernelProcessLifecycleOwner', () => {
     }
   )
 
+  it.each(['ensureReady', 'recover'] as const)(
+    'retries a named Windows Job after %s cannot confirm reaping',
+    async (initialRecovery) => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-process-job-'))
+      const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      const scope = { laneKey: 'lane', processKey: 'repl', kernelEpochId: 'epoch' }
+      const intent = first.beginSpawn(scope, undefined, undefined, true)
+      first.recordSpawned(intent, { pid: 4242 })
+      reapWindowsOwnedJob.mockRejectedValueOnce(new Error('Job query unavailable'))
+      const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      await expect(restarted[initialRecovery]()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+      expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
+
+      reapWindowsOwnedJob.mockResolvedValueOnce(true)
+      const retry = restarted.ensureReady()
+      expect(restarted.ensureReady()).toBe(retry)
+      await retry
+      expect(reapWindowsOwnedJob).toHaveBeenCalledTimes(2)
+      expect(reapWindowsOwnedJob).toHaveBeenLastCalledWith(
+        `Local\\OpenScience.Notebook.${intent.record.receiptId}`
+      )
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+    }
+  )
+
+  it.each(['different-receipt', 'different-namespace', 'different-platform'])(
+    'does not authorize a named Job from a %s receipt',
+    async (mismatch) => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-job-'))
+      const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      const intent = first.beginSpawn(
+        { laneKey: 'lane', processKey: 'repl', kernelEpochId: 'epoch' },
+        undefined,
+        undefined,
+        true
+      )
+      const receipt = first.recordSpawned(intent, { pid: 4242 })
+      const record = JSON.parse(await readFile(receipt.path, 'utf8'))
+      if (mismatch === 'different-receipt') record.windowsJobName += '-other'
+      if (mismatch === 'different-namespace') {
+        record.windowsJobName = `Local\\OpenScience.Delegation.${record.receiptId}`
+      }
+      if (mismatch === 'different-platform') record.platform = 'linux'
+      await writeFile(receipt.path, JSON.stringify(record))
+      const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+      expect(reapWindowsOwnedJob).not.toHaveBeenCalled()
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+    }
+  )
+
   it('retains a Windows tree proof until receipt completion settles', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-proof-settlement-'))
     const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
@@ -528,6 +583,35 @@ describe('KernelProcessLifecycleOwner', () => {
     await expect(readFile(proof.path, 'utf8')).resolves.toContain(proof.token)
     owner.complete(receipt, true)
     await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rechecks a failed Windows startup when the supervisor proof becomes terminal', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-late-proof-'))
+    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+    const proof = { path: proofPath, token: 'proof-token', requestPath: `${proofPath}.request` }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    const intent = first.beginSpawn(
+      { laneKey: 'lane-a', processKey: 'python:default-python', kernelEpochId: 'epoch-a' },
+      undefined,
+      proof
+    )
+    first.recordSpawned(intent, { pid: 4242 })
+    windowsProcessIsAlive.mockReturnValueOnce(false).mockReturnValueOnce(false)
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await writeFile(
+      proof.path,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+
+    const retryError = await restarted.ensureReady().then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    // A fresh owner accepts the exact same terminal proof; only the cached failed call is stale.
+    await new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' }).ensureReady()
+    expect(retryError).toBeUndefined()
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
   })
 
   it('keeps a Windows reused-PID receipt fenced until its tree proof is terminal', async () => {

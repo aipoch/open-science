@@ -92,6 +92,8 @@ type ProviderValidationHistory = {
   scopes: Map<string, number>
 }
 
+// Runtime failures are protocol-wide. A newer native recovery must also retire older failures
+// for that model/protocol; this watermark is not evidence that other Agent routes are verified.
 const validationScopeKey = (target: ProviderValidationTarget): string =>
   JSON.stringify([target.model, target.endpoint])
 

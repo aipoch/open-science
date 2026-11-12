@@ -18,6 +18,8 @@ import {
   attachNativeRecoveryPaintProfile,
   createNativeForeignAccentProfile,
   retainNativeRecoveryInputs,
+  retainNativeCompactPixelInputs,
+  retainNativeArrayPixelInputs,
   nativeRecoveryOwnValues
 } from './literature-pdf-native-figure-recovery-profile.mjs'
 import { tableTextToken, nativeFigureLabelBounds } from './literature-pdf-orientation.mjs'
@@ -28,16 +30,90 @@ import {
   printedFaceStateEntry
 } from './literature-pdf-native-printed-face-packet.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
+import { nativeIdentityHatchPatternStates } from './literature-pdf-figure-native-identity-hatch.mjs'
+import { nativeMesh4RenderContextData } from './literature-pdf-render-bounds.mjs'
 import { area, intersection, union } from './literature-pdf-page-geometry.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
+import { nativeFillStrokeGlyphEnvelope } from './literature-pdf-figure-native-stroked-text.mjs'
+import {
+  createNativeBoundedPixelProgram,
+  nativeBoundedPixelProgramData
+} from './literature-pdf-native-bounded-pixel-program.mjs'
 const cropOnlyPaintMode = Symbol('crop-only-native-paint'),
   cropOnlyPaintCertificates = new WeakMap()
+const compactPixelCertificates = new WeakMap()
+const arrayBoundPixelMode = Symbol('array-bound-native-pixel'),
+  arrayBoundPixelCertificates = new WeakMap()
+const meshPixelMode = Symbol('native-mesh4-pixel'),
+  meshPixelCertificates = new WeakMap()
+const boundedPixelMode = Symbol('native-bounded-program-pixel'),
+  boundedPixelCertificates = new WeakMap()
 const leadingType3PixelMode = Symbol('leading-type3-forms-pixel')
+const fillStrokeTextPixelMode = Symbol('fill-stroke-text-pixel')
 const nativeProgramPaintCurrents = new WeakMap()
 const rasterTitlePlans = new WeakMap()
+
+// A separate pixel purpose. Its bounded clips never enter ordinary Source or
+// exact-visibility certificates. Admission remains closed until the complete
+// native observer and literal inventory have both been bound.
+export function createNativeBoundedFigurePixelCertificate(page, tokens, context) {
+  try {
+    const own = nativeRecoveryOwnValues(context)
+    if (!own || own.type3GlyphPrograms !== undefined || own.pixelType3Programs !== undefined) return
+    const keep = retainNativeArrayPixelInputs([page, tokens, context], own.viewport)
+    if (!keep) return
+    const packet = nativePagePacketCore(
+      page,
+      tokens,
+      context,
+      true,
+      undefined,
+      false,
+      false,
+      undefined,
+      false,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      boundedPixelMode
+    )
+    const program = packet?.boundedProgram
+    if (!program || !program.current() || !nativeProgramPaintCurrents.get(packet.glyphs)?.()) return
+    const retained = retainNativeArrayPixelInputs(
+      [packet.records, packet.glyphs, packet.packets],
+      own.viewport
+    )
+    if (!retained) return
+    const current = () =>
+      keep() &&
+      retained() &&
+      program.current() &&
+      !!nativeProgramPaintCurrents.get(packet.glyphs)?.()
+    if (!current()) return
+    const data = Object.freeze({ ...packet, program, current })
+    const handle = Object.freeze({})
+    boundedPixelCertificates.set(handle, { page, tokens, context, current, data })
+    return handle
+  } catch {
+    return
+  }
+}
+
+export function nativeBoundedFigurePixelCertificateData(handle, page, tokens, context) {
+  const entry = boundedPixelCertificates.get(handle)
+  return entry &&
+    entry.page === page &&
+    entry.tokens === tokens &&
+    entry.context === context &&
+    entry.current()
+    ? entry.data
+    : undefined
+}
 
 // A complete raster matrix can print its repeated row titles outside the images.
 // This changes pixels only: every pre-caption native owner must close one title,
@@ -1060,6 +1136,7 @@ function nativeColoredAxisPatternStates(o, v, evidence) {
   for (let i = 0; i < o.fnArray.length; i++) {
     const op = o.fnArray[i],
       a = o.argsArray[i]
+
     if (op === OPS.save || op === OPS.paintFormXObjectBegin) {
       if (stack.length >= 32) return
       stack.push({ op, matrix: [...matrix], form })
@@ -1132,6 +1209,8 @@ function nativeColoredAxisPatternStates(o, v, evidence) {
 // Physical paint only. This purpose is deliberately outside the legacy paint
 // certificate registry and every text/table/label reader of that registry.
 const uncoloredSavedPixelMode = Symbol('uncolored-saved-pixel-only'),
+  identityHatchPixelMode = Symbol('identity-hatch-pixel-only'),
+  identityHatchGridPixelMode = Symbol('identity-hatch-grid-pixel-only'),
   uncoloredSavedPixelEvidence = new WeakMap()
 function nativeUncoloredSavedPatternStates(o) {
   const states = new Map(),
@@ -1217,6 +1296,15 @@ function nativeUncoloredSavedPatternStates(o) {
   return states
 }
 export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
+  return createSavedHatchPixelEvidence(page, tokens, context, uncoloredSavedPixelMode)
+}
+export function createNativeIdentityHatchPixelEvidence(page, tokens, context) {
+  return createSavedHatchPixelEvidence(page, tokens, context, identityHatchPixelMode)
+}
+export function createNativeIdentityHatchGridPixelEvidence(page, tokens, context) {
+  return createSavedHatchPixelEvidence(page, tokens, context, identityHatchGridPixelMode)
+}
+function createSavedHatchPixelEvidence(page, tokens, context, purpose) {
   try {
     const own = nativeRecoveryOwnValues(context),
       keep = own && retainNativeRecoveryInputs([page, tokens, context], own.viewport)
@@ -1225,7 +1313,13 @@ export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
       context.pageNumber !== page.pageNumber ||
       !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '') ||
       context.type3GlyphPrograms !== undefined ||
-      ![2, 3].includes(context.operators.fnArray.filter((op) => op === OPS.setFillColorN).length) ||
+      !(
+        purpose === identityHatchGridPixelMode
+          ? [13]
+          : purpose === identityHatchPixelMode
+            ? [3, 6]
+            : [2, 3]
+      ).includes(context.operators.fnArray.filter((op) => op === OPS.setFillColorN).length) ||
       context.operators.fnArray.some((op) =>
         [OPS.paintFormXObjectBegin, OPS.paintFormXObjectEnd, OPS.beginGroup, OPS.endGroup].includes(
           op
@@ -1245,7 +1339,7 @@ export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
       false,
       undefined,
       undefined,
-      uncoloredSavedPixelMode
+      purpose
     )
     if (
       !p ||
@@ -1338,7 +1432,7 @@ export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
           undefined,
           undefined,
           undefined,
-          uncoloredSavedPixelMode
+          purpose
         )
         if (!completeScopedNativeDualApiPacket(packet, literalCertificate)) return
       }
@@ -1364,16 +1458,34 @@ export function createNativeSavedUncoloredPixelEvidence(page, tokens, context) {
       outputCurrent = retainNativeRecoveryInputs([details])
     if (!outputCurrent || !keep()) return
     const handle = Object.freeze({})
-    uncoloredSavedPixelEvidence.set(handle, { page, tokens, context, keep, outputCurrent, details })
+    uncoloredSavedPixelEvidence.set(handle, {
+      page,
+      tokens,
+      context,
+      keep,
+      outputCurrent,
+      details,
+      purpose
+    })
     return handle
   } catch {
     return
   }
 }
 export function nativeSavedUncoloredPixelEvidenceData(handle, page, tokens, context) {
+  return savedHatchPixelEvidenceData(handle, page, tokens, context, uncoloredSavedPixelMode)
+}
+export function nativeIdentityHatchPixelEvidenceData(handle, page, tokens, context) {
+  return savedHatchPixelEvidenceData(handle, page, tokens, context, identityHatchPixelMode)
+}
+export function nativeIdentityHatchGridPixelEvidenceData(handle, page, tokens, context) {
+  return savedHatchPixelEvidenceData(handle, page, tokens, context, identityHatchGridPixelMode)
+}
+function savedHatchPixelEvidenceData(handle, page, tokens, context, purpose) {
   try {
     const p = uncoloredSavedPixelEvidence.get(handle)
     return p &&
+      p.purpose === purpose &&
       p.page === page &&
       p.tokens === tokens &&
       p.context === context &&
@@ -1401,8 +1513,18 @@ function nativePageProgramPhase(
   cropMode
 ) {
   const normalRaster = isNormalRasterPixelPurpose(cropMode),
-    cropOnly = cropMode === cropOnlyPaintMode || normalRaster,
-    uncoloredPixel = cropMode === uncoloredSavedPixelMode
+    strokeText = cropMode === fillStrokeTextPixelMode,
+    meshPixel = cropMode === meshPixelMode,
+    boundedPixel = cropMode === boundedPixelMode,
+    cropOnly =
+      cropMode === cropOnlyPaintMode ||
+      cropMode === arrayBoundPixelMode ||
+      normalRaster ||
+      strokeText ||
+      meshPixel,
+    identityHatchPixel =
+      cropMode === identityHatchPixelMode || cropMode === identityHatchGridPixelMode,
+    uncoloredPixel = cropMode === uncoloredSavedPixelMode || identityHatchPixel
   const compositing =
     recoveryProfile === undefined
       ? undefined
@@ -1470,10 +1592,21 @@ function nativePageProgramPhase(
   if (normalRaster && !normalRasterProgramAllowed(context, cropMode)) return
   const neutralTextStates = nativeOpaqueTextGraphicsStateInputs(o, cropMode)
   if (!neutralTextStates) return
-  const evidence = { images: [], paths: new Map(), texts: new Map(), frames: new Map() }
-  if (groupedAxis) evidence.isolatedGroups = new Map()
-  if (recovery) attachNativeRecoveryPaintProfile(evidence, recoveryProfile, page, tokens, context)
-  collectClosedFigureFrames(o, v, evidence, compositing ? recoveryProfile : undefined)
+  const boundedHandle = boundedPixel && createNativeBoundedPixelProgram(page, tokens, context)
+  const boundedProgram =
+    boundedHandle && nativeBoundedPixelProgramData(boundedHandle, page, tokens, context)
+  if (boundedPixel && (!boundedProgram || typedPrograms || recovery || compositing)) return
+  const evidence = boundedProgram?.evidence ?? {
+    images: [],
+    paths: new Map(),
+    texts: new Map(),
+    frames: new Map()
+  }
+  if (!boundedProgram) {
+    if (groupedAxis) evidence.isolatedGroups = new Map()
+    if (recovery) attachNativeRecoveryPaintProfile(evidence, recoveryProfile, page, tokens, context)
+    collectClosedFigureFrames(o, v, evidence, compositing ? recoveryProfile : undefined)
+  }
   if (
     groupedAxis &&
     (evidence.invalidIsolatedGroups ||
@@ -1482,11 +1615,17 @@ function nativePageProgramPhase(
   )
     return
   if (normalRaster && !normalRasterPhysicalClips(o, v, evidence)) return
-  const patternStates = uncoloredPixel
-    ? nativeUncoloredSavedPatternStates(o)
-    : cropOnly
-      ? nativeColoredAxisPatternStates(o, v, evidence)
-      : undefined
+  const meshData = meshPixel && nativeMesh4RenderContextData(context)
+  if (meshPixel && !meshData) return
+  const patternStates = meshPixel
+    ? new Map(meshData.states.map((state) => [state.operationIndex, state]))
+    : identityHatchPixel
+      ? nativeIdentityHatchPatternStates(o, cropMode === identityHatchGridPixelMode)
+      : uncoloredPixel
+        ? nativeUncoloredSavedPatternStates(o)
+        : cropOnly
+          ? nativeColoredAxisPatternStates(o, v, evidence)
+          : undefined
   const printedFace =
     printedFaceScope === undefined
       ? undefined
@@ -1498,6 +1637,12 @@ function nativePageProgramPhase(
     miterLimit = 10,
     typedFillColor = '#000000',
     typedFillAlpha = 1,
+    typedStrokeColor = '#000000',
+    typedStrokeAlpha = 1,
+    typedLineWidth = 1,
+    typedLineJoin = 0,
+    typedLineCap = 0,
+    typedTextRenderingMode = 0,
     charSpacing = 0,
     wordSpacing = 0,
     tm = [1, 0, 0, 1, 0, 0],
@@ -1510,7 +1655,7 @@ function nativePageProgramPhase(
     markedContentStack = [],
     markedContentBindings = [],
     glyphs = [],
-    strokeMargins = new Map()
+    strokeMargins = boundedProgram?.strokeMargins ?? new Map()
   const skipped = new Map(),
     usedSkipped = new Set()
   if (context.skippedSpaceGlyphs !== undefined) {
@@ -1565,6 +1710,42 @@ function nativePageProgramPhase(
     }
     const op = o.fnArray[i],
       a = o.argsArray[i]
+    if (
+      strokeText &&
+      [
+        OPS.setTextRenderingMode,
+        OPS.setLineWidth,
+        OPS.setLineJoin,
+        OPS.setLineCap,
+        OPS.setMiterLimit,
+        OPS.setStrokeRGBColor
+      ].includes(op)
+    ) {
+      const retained = retainNativeRecoveryInputs([a])
+      if (!retained || !Array.isArray(a) || a.length !== 1) return
+      if (op === OPS.setStrokeRGBColor) {
+        if (typeof a[0] !== 'string' || !/^#[a-f0-9]{6}$/iu.test(a[0])) return
+        typedStrokeColor = a[0]
+      } else {
+        if (!Number.isFinite(a[0])) return
+        if (op === OPS.setTextRenderingMode) {
+          if (![0, 2].includes(a[0])) return
+          typedTextRenderingMode = a[0]
+        } else if (op === OPS.setLineWidth) {
+          if (a[0] < 0) return
+          typedLineWidth = a[0]
+        } else if (op === OPS.setMiterLimit) {
+          if (a[0] < 1) return
+          miterLimit = a[0]
+        } else {
+          if (![0, 1, 2].includes(a[0])) return
+          if (op === OPS.setLineJoin) typedLineJoin = a[0]
+          else typedLineCap = a[0]
+        }
+      }
+      markedContentBindings.push(() => o.argsArray[i] === a && retained())
+      continue
+    }
     // The closed printed-face profile already validates its balanced Figure
     // wrappers. Preserve that existing scoped contradiction proof; ordinary
     // Source callers still accept only their separate structural-tag contract.
@@ -1610,7 +1791,12 @@ function nativePageProgramPhase(
           tag = a[0]
           if (
             !(tag === 'Artifact' && (a[1] === null || a[1] === undefined)) &&
-            !(['P', 'Span'].includes(tag) && Number.isSafeInteger(a[1]) && a[1] >= 0)
+            !(['P', 'Span'].includes(tag) && Number.isSafeInteger(a[1]) && a[1] >= 0) &&
+            !(
+              cropMode === normalWholeCellMode &&
+              tag === 'Span' &&
+              (a[1] === null || a[1] === undefined)
+            )
           )
             return
         }
@@ -1629,6 +1815,12 @@ function nativePageProgramPhase(
         miterLimit,
         typedFillColor,
         typedFillAlpha,
+        typedStrokeColor,
+        typedStrokeAlpha,
+        typedLineWidth,
+        typedLineJoin,
+        typedLineCap,
+        typedTextRenderingMode,
         charSpacing,
         wordSpacing,
         tm,
@@ -1648,6 +1840,12 @@ function nativePageProgramPhase(
         miterLimit,
         typedFillColor,
         typedFillAlpha,
+        typedStrokeColor,
+        typedStrokeAlpha,
+        typedLineWidth,
+        typedLineJoin,
+        typedLineCap,
+        typedTextRenderingMode,
         charSpacing,
         wordSpacing,
         tm,
@@ -1664,6 +1862,12 @@ function nativePageProgramPhase(
         miterLimit,
         typedFillColor,
         typedFillAlpha,
+        typedStrokeColor,
+        typedStrokeAlpha,
+        typedLineWidth,
+        typedLineJoin,
+        typedLineCap,
+        typedTextRenderingMode,
         charSpacing,
         wordSpacing,
         tm,
@@ -1680,6 +1884,12 @@ function nativePageProgramPhase(
         miterLimit,
         typedFillColor,
         typedFillAlpha,
+        typedStrokeColor,
+        typedStrokeAlpha,
+        typedLineWidth,
+        typedLineJoin,
+        typedLineCap,
+        typedTextRenderingMode,
         charSpacing,
         wordSpacing,
         tm,
@@ -1734,7 +1944,7 @@ function nativePageProgramPhase(
         x = y = lx = ly = 0
       } else if (op === OPS.showText) {
         const state = evidence.texts.get(i),
-          physicalClip = normalRaster ? state?.potentialClipEnvelope : state?.clip
+          physicalClip = normalRaster || boundedPixel ? state?.potentialClipEnvelope : state?.clip
         if (
           !physicalClip ||
           !finite(state.transform, 6) ||
@@ -1833,16 +2043,49 @@ function nativePageProgramPhase(
           const advanceWidth = type3
             ? g.width * size * type3Font.fontMatrix[0]
             : (g.width * size) / 1000
-          const ink = box(
-              rendererSkipped
-                ? [x, y, x, y]
-                : [x + b[0] * size, y + b[1] * size, x + b[2] * size, y + b[3] * size],
-              m
-            ),
-            advance = box([x, y, x + advanceWidth, y + size], m)
+          let ink = box(
+            rendererSkipped
+              ? [x, y, x, y]
+              : [x + b[0] * size, y + b[1] * size, x + b[2] * size, y + b[3] * size],
+            m
+          )
+          const advance = box([x, y, x + advanceWidth, y + size], m)
+          let fillStrokeText
+          if (strokeText && typedTextRenderingMode === 2 && !rendererSkipped) {
+            if (ink[0] === ink[2] && ink[1] === ink[3] && /^\s+$/u.test(g.unicode)) {
+              // A source-proved empty space path has no stroke perimeter.
+            } else {
+              fillStrokeText = {
+                ink: [...ink],
+                matrix: [...m],
+                textMatrix: [...tm],
+                lineWidth: typedLineWidth,
+                lineJoin: typedLineJoin,
+                lineCap: typedLineCap,
+                miterLimit,
+                fillColor: typedFillColor,
+                fillAlpha: typedFillAlpha,
+                strokeColor: typedStrokeColor,
+                strokeAlpha: typedStrokeAlpha,
+                clip: [...physicalClip]
+              }
+              const envelope = nativeFillStrokeGlyphEnvelope(ink, fillStrokeText, 4)
+              if (!envelope) return
+              ink = envelope
+            }
+          }
+          // An empty-outline or render-certified skipped space paints no ink,
+          // even if its positioning point falls just outside a cell clip.
+          // Its native advance and complete program still participate.
+          const unpaintedWhitespace =
+            g.unicode === ' ' &&
+            (rendererSkipped || b.every((n) => n === 0)) &&
+            ink[0] === ink[2] &&
+            ink[1] === ink[3]
           if (
             !finite(ink, 4) ||
             (!inside(physicalClip, ink) &&
+              !unpaintedWhitespace &&
               !printedFace?.outside(state.clip) &&
               !(cropOnly && valid(physicalClip)))
           )
@@ -1858,7 +2101,14 @@ function nativePageProgramPhase(
             show
           }
           z.textPaint = { fillColor: typedFillColor, fillAlpha: typedFillAlpha }
-          if (normalRaster) {
+          if (fillStrokeText) z.fillStrokeText = fillStrokeText
+          if (boundedPixel) {
+            z.originalPaintClip = state.exactClip
+            z.exactClip = state.exactClip
+            z.potentialClipEnvelope = [...physicalClip]
+            z.clipState = state.clipState
+            z.scope = state.scope
+          } else if (normalRaster) {
             z.originalPaintClip = state.clip
             z.potentialClipEnvelope = [...physicalClip]
             z.originalClipQuads = state.originalClipQuads
@@ -1897,8 +2147,10 @@ function nativePageProgramPhase(
         packet.shows.push(show)
       } else if (op === OPS.setFillRGBColor) typedFillColor = a?.[0]
       else if (op === OPS.setGState && neutralTextStates.states.has(i)) {
-        for (const entry of neutralTextStates.states.get(i))
+        for (const entry of neutralTextStates.states.get(i)) {
           if (entry[0] === 'ca') typedFillAlpha = entry[1]
+          if (strokeText && entry[0] === 'CA') typedStrokeAlpha = entry[1]
+        }
       } else if (op === OPS.setGState && allowOpaqueTextState) {
         if (
           !Array.isArray(a?.[0]) ||
@@ -1908,7 +2160,10 @@ function nativePageProgramPhase(
           )
         )
           return
-        for (const e of a[0]) if (e[0] === 'ca') typedFillAlpha = e[1]
+        for (const e of a[0]) {
+          if (e[0] === 'ca') typedFillAlpha = e[1]
+          if (strokeText && e[0] === 'CA') typedStrokeAlpha = e[1]
+        }
       } else if (recovery?.inertTextOperation(i)) {
         // No text paint can consume this leading or terminal line transition.
       } else if (![OPS.dependency, OPS.setStrokeRGBColor].includes(op)) return
@@ -1923,18 +2178,28 @@ function nativePageProgramPhase(
             !(
               (['CA', 'ca'].includes(e[0]) && Number.isFinite(e[1]) && e[1] >= 0 && e[1] <= 1) ||
               (e[0] === 'SMask' && e[1] === false) ||
-              ((normalRaster || recovery?.nested || recovery?.rasterOperation(i)) &&
+              ((normalRaster ||
+                boundedPixel ||
+                cropMode === normalWholeCellMode ||
+                recovery?.nested ||
+                recovery?.rasterOperation(i)) &&
                 e[0] === 'BM' &&
                 e[1] === 'source-over') ||
-              (printedFace && printedFaceStateEntry(e))
+              (printedFace && printedFaceStateEntry(e)) ||
+              (cropMode === normalWholeCellMode && normalWholeCellStrokeEntry(e))
             )
         )
       )
         return
       for (const e of a[0]) {
         if (e[0] === 'ca') typedFillAlpha = e[1]
-        if (printedFace && e[0] === 'ML') miterLimit = e[1]
+        if (strokeText && e[0] === 'CA') typedStrokeAlpha = e[1]
+        if ((printedFace || cropMode === normalWholeCellMode) && e[0] === 'ML') miterLimit = e[1]
       }
+    } else if (op === OPS.setFillColorN && boundedPixel) {
+      const pattern = boundedProgram.patternStates.get(i)
+      if (!pattern || pattern.originalArgs !== a || pattern.visibilityAuthority !== false) return
+      typedFillColor = pattern
     } else if (op === OPS.setFillColorN && (cropOnly || uncoloredPixel)) {
       const pattern = patternStates?.get(i)
       if (!pattern) return
@@ -1960,7 +2225,7 @@ function nativePageProgramPhase(
         ].includes(a?.[0])
       )
         return
-      strokeMargins.set(i, miterLimit)
+      if (!boundedPixel) strokeMargins.set(i, miterLimit)
       if (typedPrograms)
         evidence.paths.get(i).fillPaint = {
           fillColor: typedFillColor,
@@ -1994,7 +2259,10 @@ function nativePageProgramPhase(
     return
   nativeProgramPaintCurrents.set(
     glyphs,
-    () => markedContentBindings.every((current) => current()) && neutralTextStates.current()
+    () =>
+      markedContentBindings.every((current) => current()) &&
+      neutralTextStates.current() &&
+      (!boundedProgram || boundedProgram.current())
   )
   return {
     finite,
@@ -2009,7 +2277,8 @@ function nativePageProgramPhase(
     glyphs,
     strokeMargins,
     patternStates,
-    recovery
+    recovery,
+    ...(boundedProgram ? { boundedProgram } : {})
   }
 }
 
@@ -2217,7 +2486,8 @@ function nativePagePacketCore(
     records,
     packets,
     glyphs,
-    strokeMargins
+    strokeMargins,
+    ...(program.boundedProgram ? { boundedProgram: program.boundedProgram } : {})
   }
 }
 
@@ -2336,7 +2606,21 @@ export function nativeSingleClosingTablePixelEvidenceData(handle, page, tokens, 
 
 // Fixed whole-cell contract, not a switch that drops foreign evidence. Every
 // exterior glyph remains literal/font/clip bound and available to the caller.
+const normalWholeCellMode = Symbol('normal-compositing-whole-cell')
+const normalWholeCellStrokeEntry = (e) =>
+  Array.isArray(e) &&
+  e.length === 2 &&
+  ((['LC', 'LJ'].includes(e[0]) && [0, 1, 2].includes(e[1])) ||
+    (e[0] === 'LW' && Number.isFinite(e[1]) && e[1] > 0) ||
+    (e[0] === 'ML' && Number.isFinite(e[1]) && e[1] >= 1))
+export function nativeNormalCompositingWholeCellInkPacket(page, tokens, context, cell) {
+  if (!normalRasterProgramAllowed(context, normalWholeCellMode)) return
+  return wholeCellInkPacket(page, tokens, context, cell, normalWholeCellMode)
+}
 export function nativeWholeCellInkPacket(page, tokens, context, cell) {
+  return wholeCellInkPacket(page, tokens, context, cell)
+}
+function wholeCellInkPacket(page, tokens, context, cell, purpose) {
   if (
     !cell ||
     cell.sourceSegments?.length ||
@@ -2372,7 +2656,23 @@ export function nativeWholeCellInkPacket(page, tokens, context, cell) {
       return
     claims.add(o.index)
   }
-  return nativePagePacketCore(page, tokens, context, false, claims, false, true)
+  return nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    purpose === normalWholeCellMode,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    purpose
+  )
 }
 
 // A fraction relation may span several predicted cells. Retain every foreign
@@ -2404,6 +2704,44 @@ export function nativeFractionInkPacket(page, tokens, context, sourceItems) {
 // complete group observer; all declared owners still require whole advances.
 export function nativeClosedProgramInkPacket(page, tokens, context, sourceItems) {
   return closedProgramInkPacket(page, tokens, context, sourceItems, false)
+}
+
+// Only this pixel-purpose observes fill+stroke glyph envelopes. It never
+// changes ordinary text ownership or the default closed-program admission.
+export function nativeFillStrokeTextInkPacket(page, tokens, context, sourceItems) {
+  if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 64) return
+  const claims = new Set()
+  for (const item of sourceItems) {
+    const raw = context?.content?.items?.[item?.index]
+    if (
+      item?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(item.index) ||
+      typeof item.text !== 'string' ||
+      !item.text.trim() ||
+      claims.has(item.index) ||
+      raw?.str !== item.text ||
+      JSON.stringify(raw.sourceItem) !== JSON.stringify(item)
+    )
+      return
+    claims.add(item.index)
+  }
+  return nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    true,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    context.operators.fnArray.includes(OPS.beginGroup),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    fillStrokeTextPixelMode
+  )
 }
 
 // A separate preview purpose may consume the complete dual-API witness. It
@@ -3382,6 +3720,41 @@ export function createNativeFigurePaintCertificate(page, tokens, context) {
     cropOnlyPaintCertificates
   )
 }
+export function createNativeCompactFigurePixelCertificate(page, tokens, context) {
+  return nativeFigurePaintForPurpose(
+    page,
+    tokens,
+    context,
+    cropOnlyPaintMode,
+    compactPixelCertificates
+  )
+}
+
+export function nativeCompactFigurePixelCertificateData(handle, page, tokens, context) {
+  return figurePaintCertificateData(compactPixelCertificates, handle, page, tokens, context)
+}
+export function createNativeArrayBoundFigurePixelCertificate(page, tokens, context) {
+  return nativeFigurePaintForPurpose(
+    page,
+    tokens,
+    context,
+    arrayBoundPixelMode,
+    arrayBoundPixelCertificates
+  )
+}
+export function nativeArrayBoundFigurePixelCertificateData(handle, page, tokens, context) {
+  return figurePaintCertificateData(arrayBoundPixelCertificates, handle, page, tokens, context)
+}
+export function createNativeMesh4PixelCertificate(page, tokens, context) {
+  if (!nativeMesh4RenderContextData(context)) return
+  return nativeFigurePaintForPurpose(page, tokens, context, meshPixelMode, meshPixelCertificates)
+}
+
+export function nativeMesh4PixelCertificateData(handle, page, tokens, context) {
+  return nativeMesh4RenderContextData(context)
+    ? figurePaintCertificateData(meshPixelCertificates, handle, page, tokens, context)
+    : undefined
+}
 // An independently bounded Type3 path can prove preview ink without making its
 // d1 advance or outer clip into an ordinary font outline. The Source entry above
 // still requires equality. This optional purpose also requires the complete
@@ -3583,11 +3956,11 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry, live
         (!witness || !witness.witnessViewport || typeof witness.witnessViewport !== 'object'))
     )
       return
-    const retained = retainNativeRecoveryInputs(
-      [page, tokens, context],
-      own.viewport,
-      witness?.witnessViewport
-    )
+    const retained = (
+      registry === arrayBoundPixelCertificates
+        ? retainNativeArrayPixelInputs
+        : retainNativeRecoveryInputs
+    )([page, tokens, context], own.viewport, witness?.witnessViewport)
     if (
       !retained ||
       !Array.isArray(tokens) ||
@@ -3810,14 +4183,23 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry, live
         : {}),
       viewport: { width: page.width, height: page.height }
     }
-    const outputCurrent = retainNativeRecoveryInputs([details]),
+    const outputCurrent = (
+        registry === arrayBoundPixelCertificates
+          ? retainNativeArrayPixelInputs
+          : registry === compactPixelCertificates || registry === meshPixelCertificates
+            ? retainNativeCompactPixelInputs
+            : retainNativeRecoveryInputs
+      )([details]),
       handle = Object.freeze({})
     if (!outputCurrent || (leading && !leading.current())) return
     registry.set(handle, {
       page,
       tokens,
       context,
-      retained: () => retained() && (!leading || leading.current()),
+      retained: () =>
+        retained() &&
+        (!leading || leading.current()) &&
+        (registry !== meshPixelCertificates || !!nativeMesh4RenderContextData(context)),
       outputCurrent,
       details
     })
@@ -3827,8 +4209,11 @@ function nativeFigurePaintForPurpose(page, tokens, context, mode, registry, live
   }
 }
 export function nativeFigurePaintCertificateData(handle, page, tokens, context) {
+  return figurePaintCertificateData(cropOnlyPaintCertificates, handle, page, tokens, context)
+}
+function figurePaintCertificateData(registry, handle, page, tokens, context) {
   try {
-    const proof = cropOnlyPaintCertificates.get(handle)
+    const proof = registry.get(handle)
     return proof &&
       proof.page === page &&
       proof.tokens === tokens &&
@@ -5625,6 +6010,7 @@ function normalRasterProgramAllowed(context, purpose) {
             e.length !== 2 ||
             !(
               (e[0] === 'BM' && e[1] === 'source-over') ||
+              (purpose === normalWholeCellMode && normalWholeCellStrokeEntry(e)) ||
               (['CA', 'ca'].includes(e[0]) &&
                 (e[1] === 1 || (isForeignCaptionRasterPurpose(purpose) && e[1] === 0))) ||
               (isForeignCaptionRasterPurpose(purpose) && e[0] === 'SMask' && e[1] === false)
@@ -5636,6 +6022,10 @@ function normalRasterProgramAllowed(context, purpose) {
       op === OPS.beginMarkedContentProps &&
       !(
         (a?.length === 2 && a[0] === 'Artifact' && a[1] === undefined) ||
+        (purpose === normalWholeCellMode &&
+          a?.length === 2 &&
+          a[0] === 'Span' &&
+          (a[1] === null || a[1] === undefined)) ||
         (a?.length === 2 && ['P', 'Span'].includes(a[0]) && Number.isSafeInteger(a[1]) && a[1] >= 0)
       )
     )

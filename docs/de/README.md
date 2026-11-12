@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  KI-Forschungsumgebung für reproduzierbare Wissenschaft — quelloffen, lokal betrieben und modellunabhängig.
+  AIPOCH Open-Science ist eine quelloffene, lokal ausgerichtete KI-Forschungsumgebung für reproduzierbare Wissenschaft mit flexibler Modellauswahl. Exportieren Sie ausgewählte Arbeit als portables <code>.science</code>-Paket, damit andere den Forschungsnachweis prüfen können.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science Demo zur Erstellung eines .science-Pakets" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">Auf YouTube ansehen: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,27 +53,19 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) ist eine quelloffene Arbeitsumgebung für die Forschung mit KI. Beginnen Sie mit einer Frage, einer wissenschaftlichen Veröffentlichung oder einer Datendatei. Beschreiben Sie in eigenen Worten, was Sie herausfinden möchten, und arbeiten Sie mit einem KI-Agenten, um Belege zu sichten, Daten zu analysieren oder ein Diagramm zu erstellen.
+### 💡 AIPOCH Open-Science v1.2.1 — Neuerungen
 
-Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
+_11. November 2026_
 
-### 💡 AIPOCH Open-Science v1.2.0 — Neuerungen
+- **Einheitliche Ressourcenverwaltung**: Fähigkeiten, Konnektoren, Spezialisten und Marktplatz-Installationen gemeinsam verwalten; die Installation funktioniert auch in der Web-Oberfläche.
+- **Manuelle Prompt-Optimierung**: Den eingerichteten Anbieter aus dem Eingabebereich aufrufen, das Ergebnis prüfen, bearbeiten oder rückgängig machen und eigene Vorlagen in den Projekteinstellungen speichern.
+- **Verbesserter integrierter Agent**: Codex-Abonnements für Hauptagent und Unteragenten nutzen, Claude Fable 5.2 mit 1 Mio. Token Kontext wählen und die unterstützten Ausgabelimits der Anbieter verwenden.
+- **Literatur als CSV**: Ausgewählte Publikationen oder ein ganzes Projekt bzw. eine Sammlung mit 16 festen englischen Spaltennamen exportieren.
+- **Kompakte Forschungsexporte**: Notebook- und Compute-Verläufe speichern gleiche Belege nur einmal; lange `.science`-Verläufe werden kleiner und schneller exportiert.
+- **Cloud-Compute-Anmeldung**: Modal und Hugging Face bereiten kompatibles Python vor der Browser-Autorisierung vor; die Kontoprüfung nutzt den Systemproxy.
+- **Zuverlässigkeit**: Verbesserte Windows-Update-Wiederherstellung, Fortsetzung nach beantworteten Fragen und Forschungsfilme beim Sitzungswechsel; Interpreter werden nach 15 Minuten ohne Sitzungsaktivität freigegeben.
 
-_9. November 2026_
-
-- **Remote-Berechnungen**: Genehmigte Aufträge auf selbst angebundenen Kubernetes-, Hugging-Face-Jobs-, Modal- oder Ray-Zielen neben SSH und Slurm ausführen, mit Einzelfreigabe und fortsetzbarer Ergebnissammlung nach Neustarts.
-- **Integrierter Agent**: Der eigenständige Open-Science Agent ist bei neuen Einrichtungen voreingestellt; Claude Code, OpenCode, Codex, CodeBuddy und Pi bleiben verfügbar.
-- **Schnellere macOS-Updates**: Nur geänderte Blöcke des App-Abbilds herunterladen, bei Bedarf automatisch den vollständigen Download nutzen.
-- **Diskussionen zu Schritten**: Fragen zu importierter `.science`-Forschung oder einem Wiedergabeschritt öffnen eine verknüpfte untergeordnete Unterhaltung; der Import bleibt schreibgeschützt.
-- **Quellenvorschau**: Beim Überfahren eines Quellenlinks erscheint die Zieldomain, bei freigegebenen HTTPS-Quellen auch Titel und Beschreibung.
-- **Verbesserter Arbeitsbereich**: Einfachere Seitenleiste, hervorgehobenes „Fork to continue“ und eine stabile Leseposition beim Senden aus einem früheren Gesprächsschritt.
-- **Zuverlässigkeit**: macOS prüft vor Updates die laufende App; Windows nennt blockierende Dateien und hält die Eingabe oberhalb der Taskleiste. PDF-Übersetzungen mit festem Layout behalten erfolgreiche Seiten, wenn eine Seite fehlschlägt.
-
-[Vollständige Versionshinweise v1.2.0](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
-</p>
+[Vollständige Versionshinweise v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 ## 🚀 Schnellstart
 

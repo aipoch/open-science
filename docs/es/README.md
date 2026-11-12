@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  Entorno de investigación con IA para una ciencia reproducible — de código abierto, centrado en la ejecución local e independiente del modelo.
+  AIPOCH Open-Science es un entorno de investigación con IA de código abierto, centrado en el trabajo local y con modelos flexibles para una ciencia reproducible. Exporte el trabajo seleccionado como un paquete <code>.science</code> portátil para que otras personas puedan examinar el registro de investigación.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="Demostración de AIPOCH Open-Science para crear un paquete .science" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">Ver en YouTube: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,27 +53,19 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) es un entorno de investigación de código abierto que incorpora inteligencia artificial. Empiece con una pregunta, un artículo científico o un archivo de datos. Describa con sus propias palabras qué quiere averiguar y trabaje con un agente de IA para examinar las pruebas, analizar datos o crear un gráfico.
+### 💡 AIPOCH Open-Science v1.2.1 — Novedades
 
-Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el código y el historial de ejecución disponibles. Para compartir su trabajo, elija las ramas de conversación, las versiones de los archivos, los registros del Notebook y las pruebas de verificación que quiera incluir y expórtelos en un paquete `.science`.
+_11 de noviembre de 2026_
 
-### 💡 AIPOCH Open-Science v1.2.0 — Novedades
+- **Centro de recursos unificado**: Gestione habilidades, conectores, especialistas e instalaciones del mercado en un solo lugar; también se puede instalar desde la interfaz web.
+- **Optimización manual del prompt**: Invoque al proveedor configurado desde el compositor, revise o edite el resultado y deshágalo; guarde plantillas propias en la configuración del proyecto.
+- **Agente integrado mejorado**: Use suscripciones de Codex para el agente principal y los subagentes, Claude Fable 5.2 con un contexto de 1 millón de tokens y los límites de salida admitidos por cada proveedor.
+- **Bibliografía en CSV**: Exporte referencias seleccionadas, un proyecto completo o una colección con 16 nombres de columna fijos en inglés.
+- **Exportaciones de investigación compactas**: Notebook y Compute almacenan una sola vez cada evidencia única, reduciendo el tamaño y el tiempo de exportación de historiales `.science` largos.
+- **Inicio de sesión en cómputo en la nube**: Modal y Hugging Face preparan Python compatible antes de la autorización en el navegador; la verificación de cuentas usa el proxy del sistema.
+- **Fiabilidad**: Mejoras en la recuperación de actualizaciones de Windows, la continuación tras responder preguntas y los vídeos de investigación al cambiar de sesión; los intérpretes se liberan tras 15 minutos sin actividad de la sesión.
 
-_9 de noviembre de 2026_
-
-- **Cómputo remoto**: Ejecute trabajos aprobados en destinos Kubernetes, Hugging Face Jobs, Modal o Ray conectados por usted, además de SSH y Slurm, con aprobación por trabajo y recuperación de la recogida de resultados tras reinicios.
-- **Agente integrado**: Open-Science Agent es el entorno independiente predeterminado en las nuevas instalaciones; Claude Code, OpenCode, Codex, CodeBuddy y Pi siguen disponibles.
-- **Actualizaciones de macOS más rápidas**: Descargue solo los bloques modificados de la imagen de la aplicación, con descarga completa automática si es necesario.
-- **Discusiones por paso**: Las preguntas desde una investigación `.science` importada o un paso de reproducción abren una conversación secundaria vinculada al paso; la importación sigue siendo de solo lectura.
-- **Vista previa de fuentes**: Al pasar el cursor sobre un enlace se muestra el dominio de destino y, para fuentes HTTPS aprobadas, el título y la descripción.
-- **Mejoras del espacio de trabajo**: Barra lateral más sencilla, acción «Fork to continue» destacada y posición de lectura estable al enviar desde un turno anterior.
-- **Fiabilidad**: macOS verifica la aplicación en ejecución antes de actualizar; Windows identifica los archivos bloqueantes y mantiene la entrada sobre la barra de tareas. La traducción de PDF de diseño fijo conserva las páginas correctas si una falla.
-
-[Notas completas v1.2.0](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
-
-<p align="center">
- <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
-</p>
+[Notas completas v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 ## 🚀 Inicio rápido
 

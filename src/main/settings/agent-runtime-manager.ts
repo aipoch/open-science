@@ -1,3 +1,4 @@
+import { providerValidationRoute } from '../../shared/settings'
 import { installManagedPi, uninstallManagedPi } from './managed-pi'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
@@ -510,6 +511,10 @@ export class AgentRuntimeManager {
         : false
       const activeValidationTarget = activeProvider
         ? {
+            ...providerValidationRoute(
+              { ...activeProvider, apiEndpoints: activeEndpoints },
+              framework.id
+            ),
             model: activeModel,
             endpoint: preferredEndpoint(
               activeEndpoints ?? [],

@@ -1,4 +1,17 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+
+async function openUseCases(page: Page, surface: 'panel' | 'full'): Promise<void> {
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  if (surface === 'panel') {
+    await page.getByRole('combobox', { name: 'Resource type' }).click()
+    await page.getByRole('option', { name: 'Use Cases', exact: true }).click()
+  } else {
+    await page
+      .getByRole('navigation', { name: 'Resource center' })
+      .getByRole('button', { name: 'Use Cases' })
+      .click()
+  }
+}
 
 const catalog = Array.from({ length: 7 }, (_, index) => ({
   name: `case-${index + 1}`,
@@ -30,7 +43,7 @@ test('opens whole cards with mouse and keyboard without overlay actions', async 
   page
 }, info) => {
   await page.goto('/home-use-cases.html')
-  const section = page.getByRole('region', { name: 'Use Case Gallery' })
+  const section = page.getByRole('region', { name: 'Use Cases' })
   await expect(section.getByRole('article')).toHaveCount(6)
   const card = section.getByRole('article').first()
   await expect(card.getByRole('button', { name: 'Details', exact: true })).toHaveCount(0)
@@ -68,7 +81,7 @@ test('appends six cases per scroll without replacing cards or repeating the fina
     return route.fulfill({ json: many })
   })
   await page.goto('/home-use-cases.html?long')
-  const section = page.getByRole('region', { name: 'Use Case Gallery' })
+  const section = page.getByRole('region', { name: 'Use Cases' })
   const cards = section.getByRole('article')
   await expect(cards).toHaveCount(6)
   const first = await cards.first().boundingBox()
@@ -160,10 +173,7 @@ test('browses and filters the marketplace, preserving the loaded list when detai
   }))
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html?long')
-  await page
-    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
-    .getByRole('button')
-    .click()
+  await page.getByRole('heading', { name: 'Use Cases', exact: true }).getByRole('button').click()
   const dialog = page.getByRole('dialog', { name: 'Case details', exact: true })
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:')
   await expect(dialog).toHaveCount(0)
@@ -220,9 +230,9 @@ test('opens the same marketplace from the toolbar and detail Go to case library 
   page
 }, info) => {
   await page.goto('/home-use-cases.html?long')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'full')
   await expect(page.getByRole('navigation', { name: 'Resource center' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Use Case Gallery', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: 'Use Cases', exact: true })).toHaveCount(1)
   await expect(page.getByRole('textbox', { name: 'Search examples' })).toBeVisible()
   await page.getByRole('button', { name: 'Collapse sidebar panel' }).click()
   await expect(page.getByRole('button', { name: 'Expand sidebar panel' })).toBeVisible()
@@ -268,9 +278,7 @@ test('keeps the homepage gallery title visible while its cards scroll', async ({
   }))
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html?long')
-  const title = page
-    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
-    .getByRole('button')
+  const title = page.getByRole('heading', { name: 'Use Cases', exact: true }).getByRole('button')
   await page.getByRole('article').last().scrollIntoViewIfNeeded()
   await expect(page.getByRole('article')).toHaveCount(12)
   const scroll = page.locator('[data-home-scroll]')
@@ -288,9 +296,7 @@ test('keeps the homepage gallery title visible while its cards scroll', async ({
   expect(position!.y).toBeGreaterThanOrEqual(viewport!.y)
   expect(position!.y).toBeLessThan(viewport!.y + 40)
   await expect(
-    page
-      .locator('[data-home-navigation]')
-      .getByRole('button', { name: 'Use Case Gallery', exact: true })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Cases', exact: true })
   ).toHaveAttribute('aria-current', 'location')
 })
 
@@ -450,12 +456,15 @@ test('continues the existing import from the card at project selection and confi
 
 test('renders Chinese copy in dark mode', async ({ page }, info) => {
   await page.goto('/home-use-cases.html?zh&dark')
-  await expect(page.getByRole('region', { name: '案例库' }).getByRole('article')).toHaveCount(6)
+  await expect(page.getByRole('region', { name: '案例' }).getByRole('article')).toHaveCount(6)
   await page.getByRole('article').first().hover()
   await page.screenshot({ path: info.outputPath('home-examples-dark-zh.png') })
   await page.getByRole('button', { name: '资源中心', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: '资源中心', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '案例库', exact: true })).toBeVisible()
+  await page
+    .getByRole('navigation', { name: '资源中心', exact: true })
+    .getByRole('button', { name: '案例', exact: true })
+    .click()
+  await expect(page.getByRole('heading', { name: '案例', exact: true })).toBeVisible()
   await page.screenshot({ path: info.outputPath('case-library-dark-zh.png') })
 })
 
@@ -475,7 +484,7 @@ test('keeps a full-size cover placeholder until an image loads, including failed
     })
   })
   await page.goto('/home-use-cases.html', { waitUntil: 'domcontentloaded' })
-  const cards = page.getByRole('region', { name: 'Use Case Gallery' }).getByRole('article')
+  const cards = page.getByRole('region', { name: 'Use Cases' }).getByRole('article')
   await expect(cards).toHaveCount(6)
   await cards.first().scrollIntoViewIfNeeded()
   const sizes = (): Promise<number[]> =>
@@ -516,7 +525,7 @@ for (const catalogFails of [false, true]) {
           })
     })
     await page.goto('/home-use-cases.html')
-    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+    await openUseCases(page, 'full')
     const cards = page.getByRole('main').getByRole('article')
     await expect(cards).toHaveCount(2)
     const failed = cards.nth(0).locator('img')
@@ -576,10 +585,10 @@ test('home navigation has two capsule targets beside the shared scrolling conten
 }, info) => {
   await page.setViewportSize({ width: 1760, height: 900 })
   await page.goto('/home-use-cases.html?long&updates')
-  const gallery = page.getByRole('region', { name: 'Use Case Gallery' })
+  const gallery = page.getByRole('region', { name: 'Use Cases' })
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Use Case Gallery', exact: true })
+    .getByRole('button', { name: 'Use Cases', exact: true })
   const back = page
     .locator('[data-home-navigation]')
     .getByRole('button', { name: 'Projects', exact: true })
@@ -606,7 +615,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
     await scroller
       .locator('..')
       .locator('[data-home-navigation]')
-      .getByRole('button', { name: 'Use Case Gallery', exact: true })
+      .getByRole('button', { name: 'Use Cases', exact: true })
       .count()
   ).toBe(1)
   const capsule = jump.locator('[data-home-navigation-capsule]')
@@ -621,7 +630,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
   await jump.hover()
   await expect(capsule).toHaveCSS('height', '7px')
   await expect(capsule).toHaveCSS('width', '24px')
-  await expect(page.getByRole('tooltip')).toHaveText('Use Case Gallery')
+  await expect(page.getByRole('tooltip')).toHaveText('Use Cases')
   const expandedBounds = (await capsule.boundingBox())!
   expect(expandedBounds.x).toBeGreaterThan(recentBounds.x + recentBounds.width)
   expect(expandedBounds.x + expandedBounds.width).toBeLessThanOrEqual(
@@ -668,7 +677,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
     .toBeLessThan(1)
   await expect(jump).toBeVisible()
   await jump.click()
-  const galleryHeading = gallery.getByRole('heading', { name: 'Use Case Gallery', exact: true })
+  const galleryHeading = gallery.getByRole('heading', { name: 'Use Cases', exact: true })
   // A short catalog cannot scroll the heading past the last row, so either it sits on the
   // viewport top or the page is already at the end with the heading as high as it can go.
   await expect
@@ -699,16 +708,16 @@ test('home navigation has two capsule targets beside the shared scrolling conten
 test('home navigation gallery target is keyboard operable', async ({ page }) => {
   await page.setViewportSize({ width: 1760, height: 900 })
   await page.goto('/home-use-cases.html?long&updates')
-  const gallery = page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+  const gallery = page.getByRole('region', { name: 'Use Cases', exact: true })
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Use Case Gallery', exact: true })
+    .getByRole('button', { name: 'Use Cases', exact: true })
   await expect(jump).toBeVisible()
   await jump.focus()
   await page.keyboard.press('Enter')
   await expect(gallery.getByRole('article').first()).toBeInViewport({ ratio: 1 })
   await expect(
-    gallery.getByRole('heading', { name: 'Use Case Gallery', exact: true }).getByRole('button')
+    gallery.getByRole('heading', { name: 'Use Cases', exact: true }).getByRole('button')
   ).toBeInViewport()
 })
 
@@ -722,7 +731,7 @@ test('home navigation stays absent when everything fits or the gallery is unavai
   await page.goto('/home-use-cases.html')
   await expect(page.getByRole('article')).toHaveCount(3)
   await expect(
-    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Case Gallery' })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Cases' })
   ).toBeHidden()
   await expect(
     page.locator('[data-home-navigation]').getByRole('button', { name: 'Projects' })
@@ -730,9 +739,9 @@ test('home navigation stays absent when everything fits or the gallery is unavai
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: [] }))
   await page.goto('/home-use-cases.html?long')
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Use Case Gallery' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Use Cases' })).toHaveCount(0)
   await expect(
-    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Case Gallery' })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Cases' })
   ).toHaveCount(0)
 })
 
@@ -744,7 +753,7 @@ test('home navigation capsules fit small windows with reduced motion and scrolli
   await page.goto('/home-use-cases.html?long&updates&many-updates&zh&dark')
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: '案例库', exact: true })
+    .getByRole('button', { name: '案例', exact: true })
   const back = page
     .locator('[data-home-navigation]')
     .getByRole('button', { name: '项目', exact: true })
@@ -766,17 +775,17 @@ test('home navigation capsules fit small windows with reduced motion and scrolli
   expect(bounds.x).toBeGreaterThan(projectBounds.x + projectBounds.width)
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
   await jump.click()
-  const gallery = page.getByRole('region', { name: '案例库' })
+  const gallery = page.getByRole('region', { name: '案例' })
   await expect
     .poll(() =>
-      gallery.getByRole('heading', { name: '案例库', exact: true }).evaluate((element) => {
+      gallery.getByRole('heading', { name: '案例', exact: true }).evaluate((element) => {
         const bar = element.parentElement!.getBoundingClientRect()
         const viewport = element.closest('[data-home-scroll]')!.getBoundingClientRect()
         return Math.abs(bar.top - viewport.top)
       })
     )
     .toBeLessThanOrEqual(2)
-  await expect(gallery.getByRole('button', { name: '案例库', exact: true })).toBeInViewport()
+  await expect(gallery.getByRole('button', { name: '案例', exact: true })).toBeInViewport()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await expect(jump).toBeHidden()
   await page.screenshot({ path: info.outputPath('home-navigation-small.png') })
@@ -822,7 +831,7 @@ test('refreshes marketplace data on demand, preserves filters and recovers from 
     })
   })
   await page.goto('/home-use-cases.html')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'full')
   await expect(
     page.getByText('Discover and reuse research resources', { exact: true })
   ).toBeVisible()
@@ -915,7 +924,7 @@ test('animates the capsule shape without moving its bounds and respects reduced 
   await page.goto('/home-use-cases.html?long')
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Use Case Gallery', exact: true })
+    .getByRole('button', { name: 'Use Cases', exact: true })
   const capsule = jump.locator('[data-home-navigation-capsule]')
   const shape = jump.locator('[data-home-navigation-shape]')
   const initialBounds = await capsule.boundingBox()
@@ -947,7 +956,7 @@ test('opens the marketplace in the conversation workbench and browses details in
   await page.goto('/home-use-cases.html?panel')
   const draft = page.getByRole('textbox', { name: 'Conversation draft' })
   await draft.fill('An unfinished research question')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   await expect(panel).toBeVisible()
   await expect(page.getByTestId('navigation')).toHaveText('workspace:research')
@@ -963,11 +972,10 @@ test('opens the marketplace in the conversation workbench and browses details in
   const searchBounds = (await search.boundingBox())!
   const categoryBounds = (await categories.boundingBox())!
   expect(searchBounds.y).toBeGreaterThan(headingBounds.y + headingBounds.height)
-  expect(searchBounds.width).toBeGreaterThan((await panel.boundingBox())!.width * 0.8)
+  await expect(search).toBeInViewport({ ratio: 1 })
   expect(categoryBounds.y).toBeGreaterThanOrEqual(searchBounds.y + searchBounds.height)
-  expect(categoryBounds.y + categoryBounds.height - (await panel.boundingBox())!.y).toBeLessThan(
-    140
-  )
+  const listBounds = (await panel.locator('[data-use-case-browser-scroll]').boundingBox())!
+  expect(categoryBounds.y + categoryBounds.height).toBeLessThanOrEqual(listBounds.y)
   const refresh = panel.getByRole('button', { name: 'Refresh examples', exact: true })
   await refresh.click()
   const confirmation = refresh.locator('.lucide-check')
@@ -1012,7 +1020,10 @@ test('opens the marketplace in the conversation workbench and browses details in
   await details.getByRole('button', { name: 'Back to list', exact: true }).click()
   await expect(cards).toHaveCount(6)
   await expect(cards.first().getByRole('button')).toBeFocused()
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: 'Sessions' })
+    .getByRole('button', { name: 'Resource center', exact: true })
+    .click()
   await expect(page.getByRole('tab', { name: 'Resource center', exact: true })).toHaveCount(1)
   await page.screenshot({ path: info.outputPath('marketplace-workspace-list.png') })
   await page.getByRole('button', { name: 'Close preview of Resource center', exact: true }).click()
@@ -1022,7 +1033,7 @@ test('opens the marketplace in the conversation workbench and browses details in
 
 test('opens the full marketplace from its compact workbench header', async ({ page }) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   await panel.getByRole('button', { name: 'View in case library' }).click()
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:research')
@@ -1045,7 +1056,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
   await page.route('**/manifest.json', (route) => route.fulfill({ json: manyCases }))
   await page.setViewportSize({ width: 1600, height: 700 })
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   await panel.getByRole('textbox', { name: 'Search examples' }).fill('Research example')
   await panel.getByRole('button', { name: 'Biology', exact: true }).click()
@@ -1087,7 +1098,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
   )
   await expect(anchor).toBeInViewport()
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'full')
   await expect(full.getByRole('textbox', { name: 'Search examples' })).toHaveValue('')
   await expect(full.getByRole('button', { name: 'All categories', exact: true })).toHaveAttribute(
     'aria-pressed',
@@ -1100,7 +1111,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
 
 test('syncs changed and cleared full-page filters back to the project panel', async ({ page }) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = (surface: Locator): Locator =>
     surface.getByRole('textbox', { name: 'Search examples' })
@@ -1143,7 +1154,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
 }, info) => {
   await page.goto('/home-use-cases.html?long')
   const scroller = page.locator('[data-home-scroll]')
-  const gallery = page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+  const gallery = page.getByRole('region', { name: 'Use Cases', exact: true })
   const card = gallery.getByRole('article').first()
   await card.scrollIntoViewIfNeeded()
   const viewport = (await scroller.boundingBox())!
@@ -1156,9 +1167,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
   )
   const bounds = (await card.boundingBox())!
   const grid = (await card.locator('..').boundingBox())!
-  const header = gallery
-    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
-    .locator('..')
+  const header = gallery.getByRole('heading', { name: 'Use Cases', exact: true }).locator('..')
   const headerBounds = (await header.boundingBox())!
   expect(headerBounds.y).toBeCloseTo(viewport.y, 0)
   const clip = {
@@ -1193,15 +1202,15 @@ test('selects the case marketplace without resetting its filters or opening deta
   page
 }, info) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example 1')
   const selector = panel.getByRole('combobox', { name: 'Resource type', exact: true })
-  await expect(selector).toHaveText('Use Case Gallery')
+  await expect(selector).toHaveText('Use Cases')
   await selector.click()
-  await expect(page.getByRole('option')).toHaveCount(1)
-  const option = page.getByRole('option', { name: 'Use Case Gallery', exact: true })
+  await expect(page.getByRole('option')).toHaveCount(4)
+  const option = page.getByRole('option', { name: 'Use Cases', exact: true })
   await expect(option).toHaveAttribute('aria-selected', 'true')
   await page.screenshot({ path: info.outputPath('marketplace-type-selector.png') })
   await option.click()
@@ -1231,12 +1240,11 @@ for (const surface of ['panel', 'dialog'] as const) {
     )
     await page.setViewportSize({ width: 1100, height: 800 })
     await page.goto(`/home-use-cases.html?download${surface === 'panel' ? '&panel' : ''}`)
-    if (surface === 'panel')
-      await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+    if (surface === 'panel') await openUseCases(page, 'panel')
     const owner =
       surface === 'panel'
         ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
-        : page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+        : page.getByRole('region', { name: 'Use Cases', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
       surface === 'panel' ? owner : page.getByRole('dialog', { name: 'Case details', exact: true })
@@ -1275,12 +1283,12 @@ for (const surface of ['panel', 'dialog'] as const) {
     )
     await page.goto(`/home-use-cases.html${surface === 'panel' ? '?panel' : ''}`)
     if (surface === 'panel') {
-      await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+      await openUseCases(page, 'panel')
     }
     const owner =
       surface === 'panel'
         ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
-        : page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+        : page.getByRole('region', { name: 'Use Cases', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
       surface === 'panel' ? owner : page.getByRole('dialog', { name: 'Case details', exact: true })
@@ -1347,7 +1355,7 @@ for (const outcome of ['changed', 'unchanged', 'failed'] as const) {
       })
     })
     await page.goto('/home-use-cases.html?panel')
-    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+    await openUseCases(page, 'panel')
     const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
     const search = panel.getByRole('textbox', { name: 'Search examples' })
     await search.fill('Research example 1')
@@ -1406,7 +1414,7 @@ for (const surface of ['panel', 'standalone'] as const) {
         : route.fulfill({ json: outcome === 'empty' ? [] : catalog })
     })
     await page.goto(`/home-use-cases.html${surface === 'panel' ? '?panel' : ''}`)
-    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+    await openUseCases(page, surface === 'panel' ? 'panel' : 'full')
     const market =
       surface === 'panel'
         ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
@@ -1441,7 +1449,7 @@ test('recovers from a retired category without losing search or restoring the re
   let current = many
   await page.route('**/manifest.json', (route) => route.fulfill({ json: current }))
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const market = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = market.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example')
@@ -1483,7 +1491,7 @@ test('adapts the case library to wide windows and fills the viewport before wait
   }))
   await page.route('**/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'full')
   const viewport = page.locator('[data-use-case-browser-scroll]')
   const cards = page.getByRole('main').getByRole('article')
   await expect(cards).toHaveCount(6)
@@ -1536,7 +1544,7 @@ test('keeps loaded homepage cases behind a one-row viewport and loads later batc
   // Tall enough that the short project list leaves free space, so the gallery can pin.
   await page.setViewportSize({ width: 1100, height: 900 })
   await page.goto('/home-use-cases.html')
-  const section = page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+  const section = page.getByRole('region', { name: 'Use Cases', exact: true })
   const cards = section.getByRole('article')
   await expect(cards).toHaveCount(6)
   const projects = page.getByRole('region', { name: 'Projects', exact: true })
@@ -1544,7 +1552,7 @@ test('keeps loaded homepage cases behind a one-row viewport and loads later batc
   const projectBottom = (await projects.boundingBox())!.y + (await projects.boundingBox())!.height
   const sessionBottom = (await sessions.boundingBox())!.y + (await sessions.boundingBox())!.height
   const heading = await section
-    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
+    .getByRole('heading', { name: 'Use Cases', exact: true })
     .boundingBox()
   expect(heading!.y).toBeGreaterThanOrEqual(Math.max(projectBottom, sessionBottom))
   const rowBreak = await cards.evaluateAll((elements) => {
@@ -1588,7 +1596,7 @@ test('keeps loaded homepage cases behind a one-row viewport and loads later batc
   expect(peekedAgain).toBeLessThan(secondHeight * 0.6)
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Use Case Gallery', exact: true })
+    .getByRole('button', { name: 'Use Cases', exact: true })
   // The first row is still fully on screen, so the section dots stay hidden.
   await expect(jump).toBeHidden()
   await page.locator('[data-home-scroll]').evaluate((element) => {
@@ -1603,7 +1611,7 @@ test('reflows the case library within the project panel without losing filters o
 }, info) => {
   await page.setViewportSize({ width: 1440, height: 800 })
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await openUseCases(page, 'panel')
   const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example')

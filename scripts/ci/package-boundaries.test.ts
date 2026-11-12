@@ -1,3 +1,4 @@
+import { createModuleTestPlan } from './module-test-impact.mjs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { relative, resolve, sep } from 'node:path'
@@ -294,6 +295,16 @@ it.each([
 })
 
 const hostBoundaryManifest = loadModuleImpactManifest()
+const hostPlans = new Map<string, ReturnType<typeof createModuleTestPlan>>()
+function hostModulePlan(id: string): ReturnType<typeof createModuleTestPlan> {
+  let plan = hostPlans.get(id)
+  if (!plan) {
+    plan = createModuleTestPlan(id, hostBoundaryManifest)
+    hostPlans.set(id, plan)
+  }
+  return plan
+}
+
 it('retains dedicated downstream host evidence while excluding independent upstream suites', async () => {
   const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
   const manifest = structuredClone(hostBoundaryManifest)
@@ -332,22 +343,16 @@ const hostBoundaryCases = (
 })
 
 it('includes host modules with selective test plans', async () => {
-  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
-  expect(
-    hostBoundaryCases.some(
-      ({ id }) => createModuleTestPlan(id, hostBoundaryManifest).mode === 'selective'
-    )
-  ).toBe(true)
+  expect(hostBoundaryCases.some(({ id }) => hostModulePlan(id).mode === 'selective')).toBe(true)
 })
 
 // Each module keeps its own timeout as the ownership manifest grows.
 it.each(hostBoundaryCases)(
   'host-only selective plans exclude independent upstream package suites: $id',
   async ({ id, source }) => {
-    const { createAffectedTestPlan, createModuleTestPlan } =
-      await import('./module-test-impact.mjs')
+    const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
     for (const plan of [
-      createModuleTestPlan(id, hostBoundaryManifest),
+      hostModulePlan(id),
       createAffectedTestPlan(
         [{ path: source, status: 'modified' }],
         { status: 'not-requested', testFiles: [] },
@@ -476,10 +481,9 @@ it('Compute host edits never register or select upstream Compute units', async (
 it.each(Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][])(
   '%s module plan excludes unrelated upstream package tests',
   async (id, module) => {
-    const { createModuleTestPlan } = await import('./module-test-impact.mjs')
     // Validate executed coverage while the trusted retirement policy permits cleanup of
     // historical redundant registrations. Full-validation owners retain their fallback.
-    const plan = createModuleTestPlan(id, hostBoundaryManifest)
+    const plan = hostModulePlan(id)
     if (plan.mode === 'full') return
     const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
     expect(

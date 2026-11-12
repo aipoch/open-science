@@ -4942,8 +4942,15 @@ it('checks the actual PNG halo beyond the independently repeated header drawing'
   expect(nativeSingleVectorGroupPng(png, candidate)).toBe(false)
 })
 it('uses a real bounded transparency canvas without granting its labels Source ownership', async () => {
-  const { nativeRenderedGroupPixelCrop, nativeRenderedGroupPixelPngSafe } = await import(
+  const {
+      nativeRenderedGroupPixelCrop,
+      nativeNonisolatedGroupPixelCrop,
+      nativeRenderedGroupPixelPngSafe
+    } = await import(
       pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+    ),
+    { createNativeNonisolatedGroupCropProfile } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-figure-recovery-profile.mjs')).href
     ),
     {
       recordPaintedOperationBounds,
@@ -4992,7 +4999,7 @@ it('uses a real bounded transparency canvas without granting its labels Source o
     ids: number[] = []
   for (const withType3 of [false, true]) {
     const form = stream(
-        'q /Pattern cs /Shade scn 100 100 200 180 re f Q q /Pattern cs /Tile scn 270 240 20 20 re f Q q 20 0 0 20 150 110 cm /PanelImage Do Q 0 0 0 rg BT /Text 10 Tf 1 0 0 1 105 260 Tm (Left label) Tj 1 0 0 1 200 200 Tm (Middle label) Tj 1 0 0 1 230 130 Tm (Right label) Tj ET' +
+        'q /Pattern cs /Shade scn 100 100 200 180 re f Q q /Pattern cs /Tile scn 270 240 20 20 re f Q q 20 0 0 20 150 110 cm /PanelImage Do Q 0 0 0 rg BT /Text 10 Tf 2 Tr 1 0 0 1 105 260 Tm (Left label) Tj 1 0 0 1 200 200 Tm (Middle label) Tj 1 0 0 1 230 130 Tm (Right label) Tj ET' +
           (withType3 ? ' BT /Type3 10 Tf 1 0 0 1 150 150 Tm (A) Tj ET' : ''),
         `/Type /XObject /Subtype /Form /BBox [100 100 300 280] /Group << /S /Transparency /I false /K false >> /Resources << /Font << /Text ${face} 0 R /Type3 ${type3} 0 R >> /Pattern << /Shade ${pattern} 0 R /Tile ${tile} 0 R >> /XObject << /PanelImage ${secondImage} 0 R >> >>`
       ),
@@ -5100,16 +5107,31 @@ it('uses a real bounded transparency canvas without granting its labels Source o
             pageContent: content,
             operators: await nativePage.getOperatorList()
           },
-          plan = nativeRenderedGroupPixelCrop(
-            page,
-            figure,
-            [caption],
-            [],
-            tokens,
-            context,
-            figure.rect,
-            live
-          )
+          profile = createNativeNonisolatedGroupCropProfile(page, tokens, context)
+        if (pageNumber === 1)
+          expect(
+            nativeRenderedGroupPixelCrop(
+              page,
+              figure,
+              [caption],
+              [],
+              tokens,
+              context,
+              figure.rect,
+              live
+            )
+          ).toBeUndefined()
+        const plan = nativeNonisolatedGroupPixelCrop(
+          page,
+          figure,
+          [caption],
+          [],
+          tokens,
+          context,
+          figure.rect,
+          live,
+          profile
+        )
         if (pageNumber === 2) expect(plan).toBeUndefined()
         else {
           const rgba = canvas.getContext('2d').getImageData(100, 130, 20, 15).data

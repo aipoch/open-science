@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 const {
   nativeCaptionedVectorChartStrip,
+  nativeCaptionedIndexedVectorPanels,
   nativeCaptionedVectorBarChart,
   nativeCaptionedVectorBarPanels
 } = await import(
@@ -409,4 +410,95 @@ it('claims adjacent unframed native bar panels immediately before their caption'
   expect(result?.rect[0]).toBeLessThanOrEqual(140)
   expect(result?.rect[2]).toBeGreaterThanOrEqual(390)
   expect(associateFigures(page, [caption])[0].reason).toBe('native-vector-bar-panels')
+})
+
+function indexedVectorStrip(): ReturnType<typeof JSON.parse> {
+  const caption = {
+    page: 1,
+    lines: ['Fig. 1. Indexed states (a1,a2) and (b1,b2).'],
+    rect: [300, 165, 580, 180]
+  }
+  const tokens = ['(a1)', '(a2)', '(b1)', '(b2)'].map((text, index) => ({
+    text,
+    rect: [315 + index * 60, 140, 335 + index * 60, 150],
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text }
+  }))
+  return {
+    caption,
+    tokens,
+    page: {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [
+        ...tokens.map((t) => ({
+          text: t.text,
+          x: t.rect[0],
+          y: 140,
+          width: 20,
+          height: 10,
+          fontSize: 10
+        })),
+        { text: caption.lines[0], x: 300, y: 165, width: 280, height: 15, fontSize: 10 }
+      ],
+      graphicsBounds: Array.from({ length: 12 }, (_, n) => ({
+        kind: 'path',
+        operationIndex: 10 + n * 2,
+        normalizedRect: [
+          (310 + Math.floor(n / 3) * 60) / 600,
+          (70 + (n % 3) * 15) / 800,
+          (350 + Math.floor(n / 3) * 60) / 600,
+          (90 + (n % 3) * 15) / 800
+        ]
+      }))
+    }
+  }
+}
+
+it.each([
+  'intact',
+  'missing-key',
+  'native-alias',
+  'caption-reference',
+  'lookalike-reference',
+  'interleaved-graphic',
+  'crossing-path',
+  'prose',
+  'table'
+])('recovers only a native closed indexed vector strip: %s', (kind) => {
+  const f = indexedVectorStrip(),
+    tables: number[][] = []
+  if (kind === 'missing-key') f.page.lines.shift()
+  if (kind === 'native-alias') f.tokens.push({ ...f.tokens[0] })
+  if (kind === 'caption-reference') f.caption.lines = ['Fig. 1. Independent states.']
+  if (kind === 'lookalike-reference')
+    f.caption.lines = ['Fig. 1. Indexed states (a10,a20,b10,b20).']
+  if (kind === 'interleaved-graphic')
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: 15,
+      normalizedRect: [10 / 600, 50 / 800, 50 / 600, 100 / 800]
+    })
+  if (kind === 'crossing-path') f.page.graphicsBounds[0].normalizedRect[0] = 250 / 600
+  if (kind === 'prose')
+    f.page.lines.push({
+      text: 'Independent paragraph',
+      x: 320,
+      y: 60,
+      width: 150,
+      height: 15,
+      fontSize: 10
+    })
+  if (kind === 'table') tables.push([300, 60, 580, 100])
+  const result = nativeCaptionedIndexedVectorPanels(
+    f.page,
+    f.caption,
+    [f.caption],
+    tables,
+    f.tokens
+  )
+  expect(!!result).toBe(kind === 'intact')
+  if (result) expect(result.rect.map((v: number) => Math.round(v))).toEqual([310, 70, 530, 150])
 })

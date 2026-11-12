@@ -29,7 +29,11 @@ export async function preparePdfTranslationStructure({
   signal: AbortSignal
   nativeDocumentFactory?: typeof import('pdfjs-dist').getDocument
   preserveUnitIdentity?: boolean
-}): Promise<{ extraction: PdfTranslationExtraction; retainedUnitIds: readonly string[] }> {
+}): Promise<{
+  extraction: PdfTranslationExtraction
+  retainedUnitIds: readonly string[]
+  retainedSourcePageNumbers?: readonly number[]
+}> {
   signal.throwIfAborted()
   const unchanged = { extraction, retainedUnitIds: [] }
   if (!context) return unchanged

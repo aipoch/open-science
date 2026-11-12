@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  面向可重現科學研究的 AI 研究工作台——開源、本機優先、模型無關。
+  AIPOCH Open-Science 是一款面向可重現科學研究的本機優先、開源 AI 研究工作台，可靈活選擇模型。將選定的研究內容匯出為可移交的 <code>.science</code> 包，讓他人檢查研究紀錄。
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science Research Generation Demo — .science 包產生示範" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">在 YouTube 觀看: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,27 +53,19 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) 是一款開源 AI 研究工作台。你可以從一個問題、一篇論文或一個資料檔開始。用自己的話說明你想釐清什麼，再和 AI 智能體一起檢視證據、分析資料或繪製圖表。
+### 💡 AIPOCH Open-Science v1.2.1 更新
 
-想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
+_2026 年 11 月 11 日_
 
-### 💡 AIPOCH Open-Science v1.2.0 更新
+- **統一資源中心**：集中管理技能、連接器、專家及市集安裝；Web 介面也支援從市集安裝。
+- **手動最佳化提示詞**：從輸入區呼叫已設定的服務商，檢閱、編輯或復原結果；自訂範本儲存在專案設定中。
+- **內建智能體升級**：主智能體與子智能體可使用 Codex 訂閱；新增支援 1M 詞元上下文的 Claude Fable 5.2，並採用服務商支援的輸出上限。
+- **文獻 CSV 匯出**：匯出所選文獻、整個專案或文獻集的中繼資料，使用 16 個固定英文欄位名稱。
+- **精簡研究匯出**：Notebook 與 Compute 對相同內容的證據只儲存一次，縮小長篇 `.science` 紀錄並加快匯出。
+- **雲端運算登入**：Modal 與 Hugging Face 在瀏覽器授權前準備相容的 Python，帳戶驗證使用系統代理。
+- **可靠性改進**：改善 Windows 更新復原、回答提問後的繼續執行，以及切換會話時的研究影片產生；會話無活動 15 分鐘後回收閒置直譯器。
 
-_2026 年 11 月 9 日_
-
-- **遠端運算**：除 SSH、Slurm 外，可在自行連接的 Kubernetes、Hugging Face Jobs、Modal 或 Ray 目標執行任務，支援逐項核准與重新啟動後恢復結果收集。
-- **內建智能體**：獨立的 Open-Science Agent 成為新安裝的預設智能體；Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 仍可選用。
-- **更快的 macOS 更新**：只下載應用程式映像中變更的區塊，必要時自動改用完整下載。
-- **步驟討論**：從匯入的 `.science` 研究或重播步驟提問，開啟連結至該步驟的子會話；匯入記錄仍保持唯讀。
-- **來源預覽**：將游標停在來源連結上可查看目標網域；經核准的 HTTPS 來源還可顯示標題和描述。
-- **工作區改進**：簡化側邊欄，突出「分叉以繼續」，從較早回合傳送訊息時維持閱讀位置。
-- **可靠性修正**：macOS 更新檢查驗證執行中的應用程式；Windows 顯示佔用檔案，並避免工作列遮住輸入區；固定版面 PDF 翻譯在單頁失敗時保留成功頁面。
-
-[查看 v1.2.0 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
-</p>
+[查看 v1.2.1 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 ## 🚀 快速開始
 

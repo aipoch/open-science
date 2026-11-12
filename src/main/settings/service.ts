@@ -1,3 +1,4 @@
+import { ProviderAcpValidator } from './provider-acp-validation'
 import { SkillSourceRepository } from '../skills/source-repository'
 import type {
   SavedSkillSource,
@@ -474,6 +475,7 @@ class SettingsService {
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
   private readonly installCoordinator: SettingsInstallCoordinator
+  private readonly providerAcpValidator: ProviderAcpValidator
   private readonly backendResolver: AgentBackendResolver
   private readonly harnessSessions: HarnessSessionOwner
   private readonly scenarioModels: ScenarioModelOwner
@@ -525,6 +527,7 @@ class SettingsService {
   async dispose(): Promise<void> {
     const outcomes = await Promise.allSettled([
       this.skillMarketplaceQueue.dispose(),
+      this.providerAcpValidator.dispose(),
       this.providers.dispose(),
       this.classification.flushUsage(false),
       this.runtimeManager.dispose(),
@@ -645,6 +648,8 @@ class SettingsService {
         return this.runtimeManager.resolveCodexExecutable(adapterPath, nativePath)
       },
       resolveCodexProxyEnvironment: () => this.runtimeManager.resolveCodexProxyEnvironment(),
+      runAcpValidation: (provider, settings) =>
+        this.providerAcpValidator.validate(provider, settings),
       runClaudeSubscriptionProbe: (provider, settings) =>
         this.runtimeManager.runClaudeSubscriptionProbe(provider, settings),
       codexAuth: options.codexAuth,
@@ -675,6 +680,11 @@ class SettingsService {
       bindCodexHarnessConnection: (target) => this.providers.bindCodexHarnessConnection(target),
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
+    this.providerAcpValidator = new ProviderAcpValidator(
+      this.configRoot,
+      (provider, settings, storageRoot) =>
+        this.backendResolver.resolveValidationTarget(provider, settings, storageRoot)
+    )
     this.detachSkillDiagnostics = attachSkillDiagnostics()
     this.scenarioModels = createScenarioModels(
       this.repository,

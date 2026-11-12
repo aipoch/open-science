@@ -165,6 +165,78 @@ describe('terminal recovery through the real Session persistence scheduler', () 
     }
   })
 
+  it.each(['release', 'cancel', 'timeout', 'superseded'] as const)(
+    'guards continuation admission queued behind a global operation (%s)',
+    async (outcome) => {
+      const h = await harness()
+      await h.owner.commitTerminal(h.event, vi.fn())
+      const scanEntered = deferred()
+      const scanRelease = deferred()
+      const scan = h.repository.loadAllWithDiagnostics.bind(h.repository)
+      vi.spyOn(h.repository, 'loadAllWithDiagnostics').mockImplementationOnce(async () => {
+        scanEntered.resolve()
+        await scanRelease.promise
+        return scan()
+      })
+      let globalOperation: Promise<unknown> | undefined
+      const load = h.coordinator.loadSessionForContinuation.bind(h.coordinator)
+      vi.spyOn(h.coordinator, 'loadSessionForContinuation').mockImplementationOnce(
+        async (...args) => {
+          const session = await load(...args)
+          globalOperation = h.coordinator.loadAll()
+          await scanEntered.promise
+          return session
+        }
+      )
+      vi.useFakeTimers()
+      const controller = new AbortController()
+      let current = true
+      const followUp = h.owner
+        .begin(h.nextScope, h.nextAdmission, {
+          signal: controller.signal,
+          assertCurrent: () => {
+            if (!current) throw new Error('Continuation no longer owns the interaction.')
+          }
+        })
+        .then(
+          () => ({ status: 'admitted' as const }),
+          (error: unknown) => ({ status: 'rejected' as const, error })
+        )
+      try {
+        await scanEntered.promise
+        await vi.advanceTimersByTimeAsync(6_000)
+        expect(await Promise.race([followUp, Promise.resolve('pending')])).toBe('pending')
+        if (outcome === 'cancel') controller.abort()
+        if (outcome === 'timeout') {
+          await vi.advanceTimersByTimeAsync(TERMINAL_CONTINUATION_WAIT_BUDGET_MS - 6_000)
+        }
+        if (outcome === 'cancel' || outcome === 'timeout') {
+          await vi.advanceTimersByTimeAsync(0)
+          expect(await Promise.race([followUp, Promise.resolve('pending')])).toMatchObject({
+            status: 'rejected',
+            error:
+              outcome === 'cancel'
+                ? { name: 'AbortError' }
+                : { message: 'Main runtime completion has not committed yet.' }
+          })
+        }
+        current = outcome !== 'superseded'
+      } finally {
+        scanRelease.resolve()
+        await globalOperation
+      }
+      expect(await followUp).toMatchObject({
+        status: outcome === 'release' ? 'admitted' : 'rejected'
+      })
+      const latest = await h.read()
+      if (latest.status !== 'found') throw new Error('Expected durable Session authority.')
+      expect(latest.session.runtimeSessionAdmissions).toHaveLength(outcome === 'release' ? 2 : 1)
+      expect(latest.session.messages.some(({ id }) => id === 'next')).toBe(outcome === 'release')
+      expect(latest.session).not.toHaveProperty('signal')
+      expect(latest.session).not.toHaveProperty('assertCurrent')
+    }
+  )
+
   it.each([false, true])(
     'waits outside the Session lane for a slow terminal write (abort=%s)',
     async (abort) => {

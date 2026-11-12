@@ -101,6 +101,75 @@ function topology(cell, ff) {
     return
   return seq
 }
+// A closed function header is still mathematical source when its two native
+// script tiers were serialized as ordinary words. Match every printed run and
+// rectangle; the table's reading-order rectangle array need not be paint-order.
+function closedScriptHeader(cell, ff, source, crop) {
+  if (
+    cell.row !== 0 ||
+    ff.length !== 6 ||
+    !Array.isArray(crop) ||
+    crop.length !== 4 ||
+    !crop.every(Number.isFinite) ||
+    crop[2] <= crop[0] ||
+    crop[3] <= crop[1]
+  )
+    return
+  const seq = [...ff].sort((a, b) => a.sourceItem.index - b.sourceItem.index),
+    [name, open, base, a, b, close] = seq,
+    h = base.height,
+    upper = a.baseline < b.baseline ? a : b,
+    lower = upper === a ? b : a,
+    body = [name, open, base, close],
+    letter = (s) => /^[\p{L}]$/u.test(s),
+    near = (x, y, tolerance = 0.025) => Math.abs(x - y) < h * tolerance
+  if (
+    !letter(name.text) ||
+    !letter(base.text) ||
+    open.text !== '(' ||
+    close.text !== ')' ||
+    !/^[\p{L}]{1,16}$/u.test(upper.text) ||
+    !/^[\p{L}]{1,16}$/u.test(lower.text) ||
+    !(h > 0) ||
+    body.some((f) => !near(f.height, h) || !near(f.baseline, base.baseline)) ||
+    [upper, lower].some((f) => f.height < h * 0.5 || f.height > h * 0.8) ||
+    !near(upper.height, lower.height) ||
+    base.baseline - upper.baseline < h * 0.2 ||
+    base.baseline - upper.baseline > h * 0.6 ||
+    lower.baseline - base.baseline < h * 0.1 ||
+    lower.baseline - base.baseline > h * 0.4 ||
+    !near(upper.rect[0], lower.rect[0], 0.1) ||
+    [upper, lower].some(
+      (f) => f.rect[0] < base.rect[2] - h * 0.03 || f.rect[0] - base.rect[2] > h * 0.15
+    ) ||
+    close.rect[0] < Math.max(upper.rect[2], lower.rect[2]) - h * 0.03 ||
+    close.rect[0] - Math.max(upper.rect[2], lower.rect[2]) > h * 0.2 ||
+    [open, base].some(
+      (f, i) => f.rect[0] < body[i].rect[2] - h * 0.03 || f.rect[0] - body[i].rect[2] > h * 0.15
+    ) ||
+    ff.some((f) => f.rect.some((n, axis) => (axis < 2 ? n < crop[axis] : n > crop[axis]))) ||
+    ![
+      name.text + open.text + base.text + upper.text + lower.text + close.text,
+      name.text + open.text + base.text + lower.text + upper.text + close.text
+    ].includes(compact(cell.text))
+  )
+    return
+  for (let i = 1; i < seq.length; i++) {
+    const previous = seq[i - 1].sourceItem.index,
+      current = seq[i].sourceItem.index
+    if (current - previous > 3) return
+    for (let j = previous + 1; j < current; j++)
+      if (typeof source.items[j]?.str !== 'string' || source.items[j].str.trim()) return
+  }
+  return seq
+}
+function exactRectSet(fonts, rects) {
+  return (
+    fonts.length === rects.length &&
+    fonts.every((f) => rects.filter((r) => same(f?.rect, r)).length === 1) &&
+    rects.every((r) => fonts.filter((f) => same(f?.rect, r)).length === 1)
+  )
+}
 export function nativeScientificOrderReliability(table, inventory, rules, context) {
   try {
     const p = context?.nativeGlyphContext,
@@ -142,10 +211,11 @@ export function nativeScientificOrderReliability(table, inventory, rules, contex
         if (++total > 4096) return empty()
         owners.set(key(o), (owners.get(key(o)) ?? 0) + 1)
       }
-    const candidates = []
+    const candidates = [],
+      headers = new Set()
     for (const cell of table.cells) {
       if (
-        cell.row < 1 ||
+        cell.row < 0 ||
         cell.rowSpan !== 1 ||
         cell.colSpan !== 1 ||
         cell.sourceSegments?.length ||
@@ -160,7 +230,9 @@ export function nativeScientificOrderReliability(table, inventory, rules, contex
             !f ||
             owners.get(key(f.sourceItem)) !== 1 ||
             !equal(f.sourceItem, cell.sourceItems[i]) ||
-            !same(f.rect, cell.sourceRects[i]) ||
+            (cell.row === 0
+              ? !exactRectSet(ff, cell.sourceRects)
+              : !same(f.rect, cell.sourceRects[i])) ||
             !Number.isFinite(f.fontAscent) ||
             !Number.isFinite(f.fontDescent) ||
             f.fontAscent <= 0 ||
@@ -169,8 +241,12 @@ export function nativeScientificOrderReliability(table, inventory, rules, contex
         !proveNativeUniqueWholeFonts(ff, inventory)
       )
         continue
-      const seq = topology(cell, ff)
-      if (seq) candidates.push(seq)
+      const seq =
+        cell.row === 0 ? closedScriptHeader(cell, ff, source, table.cropRect) : topology(cell, ff)
+      if (seq) {
+        candidates.push(seq)
+        if (cell.row === 0) headers.add(seq)
+      }
     }
     const claimed = candidates.flat()
     if (!claimed.length || candidates.length > 32) return empty()
@@ -259,7 +335,8 @@ export function nativeScientificOrderReliability(table, inventory, rules, contex
       })
     )
       return empty()
-    const affected = []
+    const affected = [],
+      conflicts = new Set()
     for (const seq of candidates) {
       const packet = nativeFractionInkPacket(
         context.sourcePage,
@@ -289,7 +366,12 @@ export function nativeScientificOrderReliability(table, inventory, rules, contex
           Math.max(...ink.map((r) => r[2])),
           Math.max(...ink.map((r) => r[3]))
         ])
-      if (extents.some((r, i) => i && r[0] <= extents[i - 1][2])) continue
+      if (
+        headers.has(seq)
+          ? extents.some((r, i) => extents.some((s, j) => j < i && overlap(r, s)))
+          : extents.some((r, i) => i && r[0] <= extents[i - 1][2])
+      )
+        continue
       const ink = sourceInk.flat(),
         box = [
           Math.min(...ink.map((r) => r[0])),
@@ -305,11 +387,12 @@ export function nativeScientificOrderReliability(table, inventory, rules, contex
         !straightPaintClear(packet, box, v.scale)
       )
         continue
+      // A valid mathematical header is not a structural conflict. Its whole
+      // sources are consulted only by the independently blocked-table collector.
+      if (!headers.has(seq)) conflicts.add('native-scientific-exponent-order-conflict')
       affected.push(...seq.map((f) => f.sourceItem))
     }
-    return affected.length
-      ? { conflicts: ['native-scientific-exponent-order-conflict'], sources: affected }
-      : empty()
+    return affected.length ? { conflicts: [...conflicts], sources: affected } : empty()
   } catch {
     return empty()
   }

@@ -149,6 +149,7 @@ b.x,
   justify-content: center;
 }
 .ov-foot {
+  max-width: 100%;
   display: flex;
   justify-content: center;
 }
@@ -900,6 +901,31 @@ b.x,
   font-weight: 700;
   color: #fff;
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.16);
+}
+.verdict.reading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+  max-width: 32em;
+  border-radius: 1em;
+  line-height: 1.25;
+}
+.pn-verdict,
+.verdict-viewport {
+  min-width: 0;
+}
+.verdict-viewport {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.verdict-viewport > span {
+  display: block;
+}
+.verdict-viewport.paged > span {
+  height: 3lh;
+  column-count: 1;
+  column-fill: auto;
+  column-gap: 0;
 }
 .verdict.good {
   background: var(--s-good);

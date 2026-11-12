@@ -175,8 +175,14 @@ export async function composeAgentRuntime({
       permissionGrantRegistry,
       taskNotifications,
       notificationInbox,
-      onSessionTurnStarted: approvalSessionLifecycle.onSessionTurnStarted,
-      onSessionTurnEnded: approvalSessionLifecycle.onSessionTurnEnded,
+      onSessionTurnStarted: (sessionId, turnToken) => {
+        notebookService.noteSessionActivity(sessionId)
+        approvalSessionLifecycle.onSessionTurnStarted?.(sessionId, turnToken)
+      },
+      onSessionTurnEnded: (sessionId, turnToken) => {
+        notebookService.noteSessionActivity(sessionId)
+        approvalSessionLifecycle.onSessionTurnEnded?.(sessionId, turnToken)
+      },
       onSkillImportAttachmentEligible: approvalSessionLifecycle.onSkillImportAttachmentEligible,
       onTrustedMessageAttribution: (projectId, event) =>
         messageAttributionAuthority.recordRuntimeEvent(projectId, event),

@@ -151,3 +151,37 @@ it('keeps an open grouped header and its first boolean record in the grid', () =
   expect(result.unassigned).toEqual([])
   expect(result.repairs).toContain('native-open-grouped-header-recovered')
 })
+
+it('keeps a wrapped comparison heading in one complete native header band', async () => {
+  const { recoverWrappedComparisonHeader } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-native-header-grid.mjs')).href
+  )
+  const items = [
+    token('Measure', 10, 20, 50),
+    token('Response analy-', 110, 20, 80),
+    token('sis', 110, 40, 20),
+    token('Control', 210, 20, 60),
+    token('estimate', 210, 40, 60),
+    ...['Accuracy', 'Recall', 'Score'].flatMap((text, n) => [
+      token(text, 10, 80 + n * 20, 50),
+      token('0.82', 110, 80 + n * 20, 30),
+      token('0.71', 210, 80 + n * 20, 30)
+    ])
+  ]
+  const table = { cropRect: [0, 0, 300, 150] }
+  const captions = [{ lines: ['Table 1: Model comparison.'] }]
+  const rules = [10, 60, 145].map((y) => [0, y, 300, y])
+  const result = recoverWrappedComparisonHeader(table, items, captions, rules)
+  expect(result?.rows).toHaveLength(4)
+  expect(result?.rows[0]).toEqual([0, 10, 300, 60])
+  expect(result?.ownedTokens.size).toBe(items.length)
+  expect(recoverWrappedComparisonHeader(table, items, captions, rules.slice(1))).toBeUndefined()
+  expect(
+    recoverWrappedComparisonHeader(
+      table,
+      [...items, token('Foreign heading', 170, 40, 70)],
+      captions,
+      rules
+    )
+  ).toBeUndefined()
+})

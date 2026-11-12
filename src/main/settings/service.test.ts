@@ -44,6 +44,18 @@ import { SkillCatalogModule } from '../skills/catalog'
 import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
+// Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('./provider-acp-validation', () => ({
+  ProviderAcpValidator: class {
+    validate = vi.fn(async () => ({
+      ok: false,
+      category: 'unknown',
+      message: 'test runtime unavailable'
+    }))
+    dispose = vi.fn(async () => undefined)
+  }
+}))
+
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -3799,15 +3811,15 @@ describe('SettingsService: preflight & spawn config', () => {
     const backend = await resolveActiveBackend(service)
 
     // End-to-end guard for the whole capability chain: resolveProvider must carry supportsImageInput
-    // for the multimodal default (kimi-k3) and prepareModelConfig must surface it, so OpenCode receives
+    // for the multimodal default (kimi-k3.1-pro) and prepareModelConfig must surface it, so OpenCode receives
     // the model as image-capable instead of a bare entry whose image parts it would strip. Deleting the
     // wiring in resolveProvider or buildModelCapabilities makes this fail.
     const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    const agentProviderId = opencodeTransportProviderId(provider.id, 'kimi-k3')
-    expect(content.provider[agentProviderId].models['kimi-k3']).toEqual({
+    const agentProviderId = opencodeTransportProviderId(provider.id, 'kimi-k3.1-pro')
+    expect(content.provider[agentProviderId].models['kimi-k3.1-pro']).toEqual({
       attachment: true,
       modalities: { input: ['text', 'image'] },
-      limit: { context: 1_000_000, output: 32_000 }
+      limit: { context: 1_048_576, output: 32_000 }
     })
     expect(backend.args).toEqual(['--port', '42424', '--hostname', '127.0.0.1'])
     expect(backend.opencodeUsageApi).toEqual({
@@ -4227,7 +4239,7 @@ describe('SettingsService: preflight & spawn config', () => {
       headers: { authorization: expect.stringMatching(/^Bearer [a-f0-9]+$/) }
     })
     // This is not the Chat Completions bridge: preserve the provider model and native catalog.
-    expect(backend.sessionModel).toBe('MiniMax-M3')
+    expect(backend.sessionModel).toBe('MiniMax-M3.1-Flash')
     const codexConfig = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
     expect(codexConfig.model_catalog_json).toMatch(
       new RegExp(
@@ -4383,7 +4395,7 @@ describe('SettingsService: official vendors', () => {
     ).providers[0]
 
     const catalogDefault = defaultVendorModel('zhipu')
-    expect(catalogDefault).toBe('glm-5.3')
+    expect(catalogDefault).toBe('glm-5.3-flash')
 
     // A model in the catalog is honored.
     let snapshot = await service.setActiveProvider(created.id, 'glm-5.2')
@@ -4426,8 +4438,8 @@ describe('SettingsService: official vendors', () => {
         permissions: { ask: ['WebFetch'] },
         availableModels: [
           'deepseek-v4-flash',
-          'deepseek-v4-pro',
           'deepseek-flash',
+          'deepseek-v4-pro',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
@@ -4444,8 +4456,8 @@ describe('SettingsService: official vendors', () => {
     ).resolves.toMatchObject({
       availableModels: [
         'deepseek-v4-flash',
-        'deepseek-v4-pro',
         'deepseek-flash',
+        'deepseek-v4-pro',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
@@ -4664,7 +4676,7 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek Pro through the native Responses route under Codex', async () => {
+  it('probes the default DeepSeek Flash model through the native Responses route under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
     const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
@@ -4677,7 +4689,7 @@ describe('SettingsService: official vendors', () => {
     expect(result).toMatchObject({ ok: true, category: 'ok' })
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
-      model: 'deepseek-v4-pro',
+      model: 'deepseek-flash',
       stream: true,
       tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
     })
@@ -4776,7 +4788,7 @@ describe('SettingsService: image-input capability', () => {
     const claude = claudeSnapshot.providers.find((p) => p.vendorId === 'anthropic')
     expect(claude?.supportsImageInput).toBe(true)
 
-    // MiniMax defaults to the natively multimodal M3 model.
+    // MiniMax's bundled default supports images.
     const minimaxSnapshot = await service.upsertProvider({
       type: 'official',
       name: 'MiniMax',
@@ -4786,7 +4798,7 @@ describe('SettingsService: image-input capability', () => {
     const minimax = minimaxSnapshot.providers.find((p) => p.vendorId === 'minimax')
     expect(minimax?.supportsImageInput).toBe(true)
 
-    // DeepSeek's default model is text-only.
+    // The stable DeepSeek Flash default supports images.
     const deepseekSnapshot = await service.upsertProvider({
       type: 'official',
       name: 'DeepSeek',
@@ -4794,7 +4806,7 @@ describe('SettingsService: image-input capability', () => {
       key: 'k'
     })
     const deepseek = deepseekSnapshot.providers.find((p) => p.vendorId === 'deepseek')
-    expect(deepseek?.supportsImageInput).toBe(false)
+    expect(deepseek?.supportsImageInput).toBe(true)
   })
 
   it('tracks the active model for a vendor with mixed vision support (DeepSeek)', async () => {
@@ -4873,7 +4885,7 @@ describe('SettingsService: image-input capability', () => {
 
   it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
     const service = createService()
-    // A refresh reorders Kimi's catalog so a text-only id leads, while the spawned default stays kimi-k3.
+    // A refresh reorders Kimi's catalog so a text-only id leads, while the default remains multimodal.
     vi.stubGlobal(
       'fetch',
       vi
@@ -4888,7 +4900,7 @@ describe('SettingsService: image-input capability', () => {
     await service.refreshProviderModels({ providerId: created.id })
 
     // With no active model, the capability must match the model resolveProvider actually spawns — the
-    // vendor default kimi-k3 (multimodal) — not the refreshed list head kimi-k2.7-code (text-only), or
+    // bundled multimodal default — not the refreshed list head kimi-k2.7-code (text-only), or
     // OpenCode would keep stripping images from a default that supports them.
     const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
     expect(view?.models[0]).toBe('kimi-k2.7-code')

@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  再現可能な科学のための AI 研究ワークベンチ — オープンソース、ローカルファースト、モデル非依存。
+  AIPOCH Open-Science は、再現可能な科学研究のための、ローカル優先でオープンソース、モデルを柔軟に選べる AI 研究ワークベンチです。選択した研究内容を持ち運び可能な <code>.science</code> パッケージとして書き出し、研究記録を他の人が確認できるようにします。
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Open-Science の .science パッケージ作成デモ" src="../images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">YouTube で見る: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -45,27 +53,19 @@
 
 > このドキュメントは英語版 `README.md` の翻訳です。内容に相違がある場合は、[英語版](../../README.md)が優先されます。
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) は、オープンソースの AI 研究ワークベンチです。一つの疑問や一本の論文、一つのデータファイルから始められます。知りたいことを自分の言葉で伝え、AI エージェントと一緒に根拠を調べたり、データを分析したり、グラフを作ったりできます。
+### 💡 AIPOCH Open-Science v1.2.1 の更新
 
-結果がどのように得られたかを知りたいときは、記録されている入力、コード、実行履歴を確認できます。作業内容を共有するときは、会話の分岐、ファイルのバージョン、Notebook の記録、検証の根拠のうち、含めたいものを選んで `.science` パッケージとしてエクスポートできます。
+_2026 年 11 月 11 日_
 
-### 💡 AIPOCH Open-Science v1.2.0 の更新
+- **統合リソースセンター**：スキル、コネクタ、スペシャリストとマーケットプレイスからのインストールを一元管理できます。Web UI でもインストールできます。
+- **手動のプロンプト最適化**：入力欄から設定済みプロバイダーを呼び出し、結果の確認・編集・取り消しができます。独自テンプレートはプロジェクト設定に保存できます。
+- **内蔵エージェントの強化**：メインエージェントとサブエージェントで Codex サブスクリプションを利用し、100 万トークンのコンテキストを持つ Claude Fable 5.2 と、各プロバイダーが対応する出力上限を使えます。
+- **文献情報の CSV 出力**：選択した文献、プロジェクト全体、コレクションを、固定の英語列名 16 個でエクスポートできます。
+- **コンパクトな研究エクスポート**：Notebook と Compute の同一内容の根拠を一度だけ保存し、長い `.science` 履歴のサイズとエクスポート時間を削減します。
+- **クラウド計算のサインイン**：Modal と Hugging Face はブラウザー認証の前に互換性のある Python を準備し、アカウント確認にシステムプロキシを使用します。
+- **信頼性の改善**：Windows 更新の復旧、質問への回答後の続行、セッション切り替え中の研究動画生成を改善しました。セッションが 15 分間操作されないと、アイドル状態のインタープリターを解放します。
 
-_2026 年 11 月 9 日_
-
-- **リモート計算**：SSH、Slurm に加え、自分で接続した Kubernetes、Hugging Face Jobs、Modal、Ray でジョブを実行できます。ジョブごとの承認と再起動後の結果収集の再開に対応します。
-- **内蔵エージェント**：独立した Open-Science Agent が新規設定の既定になりました。Claude Code、OpenCode、Codex、CodeBuddy、Pi も引き続き選べます。
-- **高速な macOS 更新**：アプリイメージの変更ブロックだけを取得し、必要に応じて自動で全体のダウンロードに切り替えます。
-- **ステップ別の議論**：インポートした `.science` 研究や再生ステップから質問すると、そのステップに紐づく子の会話が開きます。インポートは読み取り専用のままです。
-- **ソースのプレビュー**：リンクにカーソルを合わせると宛先ドメインが表示され、承認済みの HTTPS ソースではタイトルと説明も確認できます。
-- **ワークスペースの改善**：サイドバーを簡素化し、「Fork to continue」を強調しました。以前のターンから送信しても読んでいた位置を保ちます。
-- **信頼性の改善**：macOS の更新前に実行中のアプリを確認し、Windows ではファイルの占有元を示して入力欄がタスクバーに隠れないようにします。固定レイアウト PDF の翻訳は一部のページが失敗しても成功したページを保持します。
-
-[v1.2.0 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />
-</p>
+[v1.2.1 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 ## 🚀 クイックスタート
 

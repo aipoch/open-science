@@ -1,12 +1,14 @@
 import { researchFilmResources } from './resources.js'
 import type { ResearchVideoStep } from './progress.js'
-import { mkdtemp, readFile, writeFile, rm, mkdir, copyFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { lstat, readdir, mkdtemp, readFile, writeFile, rm, mkdir, copyFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 import { availableParallelism, totalmem } from 'node:os'
 import type { SpeechSynthesizer } from './narration.js'
 
 export type ResearchVideoGenerationInput = {
+  retainNarration?: boolean
   speechConcurrency?: 1 | 2
   specPath: string
   provenance?: Record<string, unknown>
@@ -234,17 +236,66 @@ export async function generateResearchVideoInWorker(
   )
   const spec = JSON.parse(await readFile(specPath, 'utf8'))
   progress({ phase: 'loading' })
-  const voiceDirectory = join(input.temporaryDirectory, 'voice')
-  const { mix } = await prepareVideoNarration({
-    spec,
-    synthesizer: synthesizers[0],
-    additionalSynthesizer: synthesizers[1],
-    onProgress: progress,
-    outputDirectory: voiceDirectory,
-    signal: new AbortController().signal
-  })
-  const mixPath = join(input.temporaryDirectory, 'mix.wav')
-  await writeFile(mixPath, mix, { flag: 'wx' })
+  const speech = input.retainNarration
+    ? join(dirname(input.specPath), 'speech')
+    : input.temporaryDirectory
+  const voiceDirectory = join(speech, 'voice')
+  const mixPath = join(speech, 'mix.wav')
+  const marker = join(speech, 'complete.json')
+  const inputKey = createHash('sha256')
+    .update(JSON.stringify([1, spec, input.provenance?.modelRevision]))
+    .digest('hex')
+  // Check the bytes once before using a previous run's speech/timing files.
+  const signature = async (): Promise<string> => {
+    const hash = createHash('sha256').update(inputKey)
+    if (!(await lstat(voiceDirectory)).isDirectory()) throw new Error('Invalid narration directory')
+    const names = await readdir(voiceDirectory)
+    if (names.length > 256) throw new Error('Too many narration files')
+    let bytes = 0
+    for (const name of ['mix.wav', ...names.sort().map((name) => 'voice/' + name)]) {
+      const path = join(speech, name)
+      const stat = await lstat(path)
+      bytes += stat.size
+      if (!stat.isFile() || bytes > 200 * 1024 * 1024)
+        throw new Error('Invalid narration checkpoint')
+      hash.update(JSON.stringify([name, stat.size])).update(await readFile(path))
+    }
+    return hash.digest('hex')
+  }
+  let ready = false
+  if (input.retainNarration) {
+    const stat = await lstat(speech).catch((e: NodeJS.ErrnoException) => {
+      if (e.code !== 'ENOENT') throw e
+    })
+    if (stat?.isDirectory()) {
+      try {
+        const receipt = await lstat(marker)
+        ready =
+          receipt.isFile() &&
+          receipt.size === 64 &&
+          (await readFile(marker, 'utf8')) === (await signature())
+      } catch {
+        /* An interrupted or incomplete cache is rebuilt below. */
+      }
+    }
+    if (!ready) {
+      await rm(speech, { recursive: true, force: true })
+      await mkdir(speech, { mode: 0o700 })
+    }
+  }
+  if (!ready) {
+    const { mix } = await prepareVideoNarration({
+      spec,
+      synthesizer: synthesizers[0],
+      additionalSynthesizer: synthesizers[1],
+      onProgress: progress,
+      outputDirectory: voiceDirectory,
+      signal: new AbortController().signal
+    })
+    await writeFile(mixPath, mix, { flag: 'wx' })
+    if (input.retainNarration)
+      await writeFile(marker, await signature(), { flag: 'wx', mode: 0o600 })
+  }
   progress({ phase: 'build' })
   return buildResearchVideoPlayer({ ...input, specPath, voiceDirectory, mixPath })
 }

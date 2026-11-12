@@ -27,6 +27,7 @@ import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { ProviderList } from './ProviderList'
 import {
   marketplaceCatalog,
   marketplaceDetail
@@ -490,6 +491,49 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('shows native recovery only in the tested agent while retaining the HTTP failure elsewhere', async () => {
+    const provider: ProviderView = {
+      ...installCustomProviderSnapshot(),
+      lastValidationFailure: {
+        at: 10,
+        category: 'model-not-found',
+        target: { model: 'model-a', endpoint: 'messages' }
+      },
+      lastValidatedAt: 20,
+      lastValidatedTarget: {
+        model: 'model-a',
+        endpoint: 'messages',
+        frameworkId: 'claude-code',
+        route: 'claude-anthropic'
+      }
+    }
+    const render = async (agentFrameworkId: 'claude-code' | 'opencode'): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <ProviderList
+            providers={[provider]}
+            activeProviderId={provider.id}
+            agentFrameworkId={agentFrameworkId}
+            frameworkEndpoints={['messages']}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onTest={vi.fn()}
+          />
+        )
+      )
+    }
+    await render('claude-code')
+    expect(container.querySelector('[aria-label="Connection verified"]')).not.toBeNull()
+    expect(
+      container.querySelector('[aria-label="Test failed: the configured model was not found."]')
+    ).toBeNull()
+    await render('opencode')
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Test failed: the configured model was not found."]')
+    ).not.toBeNull()
+  })
+
   it.each([
     ['Manage skills', 'skills'],
     ['Add connector', 'connectors'],

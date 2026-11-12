@@ -84,6 +84,170 @@ it('removes only an equivalent whole-source candidate and preserves the captione
   }
 })
 
+it('retains the enclosing uncaptioned owner of two complete identical native grids', () => {
+  const { tokens, complete } = example()
+  const duplicate = {
+    ...structuredClone(complete),
+    id: 'duplicate',
+    cropRect: [6, 26, 170, 84],
+    thumbnail: 'duplicate.png'
+  }
+  for (const candidates of [
+    [complete, duplicate],
+    [duplicate, complete]
+  ]) {
+    const before = structuredClone(candidates)
+    const result = regions.deduplicateSourceOwnedTableSubsets(candidates, tokens)
+    expect(result).toEqual([complete])
+    expect(result[0]).toBe(complete)
+    expect(candidates).toEqual(before)
+  }
+})
+
+it('notifies only strict equivalent removals with original references after proof work', () => {
+  const { tokens, complete } = example()
+  const duplicate = { ...structuredClone(complete), id: 'duplicate', cropRect: [6, 26, 170, 84] }
+  const notifications: unknown[][] = []
+  const result = regions.deduplicateSourceOwnedTableSubsets(
+    [complete, duplicate],
+    tokens,
+    [],
+    (survivor: unknown, discarded: unknown) => notifications.push([survivor, discarded])
+  )
+  expect(result).toEqual([complete])
+  expect(notifications).toHaveLength(1)
+  expect(notifications[0][0]).toBe(complete)
+  expect(notifications[0][1]).toBe(duplicate)
+  // A subset removal is a separate proof and never sends this notification.
+  const other = example()
+  regions.deduplicateSourceOwnedTableSubsets([other.narrow, other.complete], other.tokens, [], () =>
+    notifications.push(['unexpected'])
+  )
+  expect(notifications).toHaveLength(1)
+})
+
+it('does not notify a rejected equivalent pair with unknown metadata', () => {
+  const { tokens, complete } = example()
+  const duplicate = { ...structuredClone(complete), id: 'duplicate', unknownOwner: true }
+  let calls = 0
+  expect(
+    regions.deduplicateSourceOwnedTableSubsets([complete, duplicate], tokens, [], () => calls++)
+  ).toEqual([complete, duplicate])
+  expect(calls).toBe(0)
+})
+
+it('retains uncaptioned copies whose complete native crops do not enclose one another', () => {
+  const { tokens, complete } = example()
+  const shifted = { ...structuredClone(complete), id: 'shifted', cropRect: [4, 26, 170, 85] }
+  expect(regions.deduplicateSourceOwnedTableSubsets([complete, shifted], tokens)).toEqual([
+    complete,
+    shifted
+  ])
+})
+
+it.each([
+  'source viewport',
+  'caption diagnostic',
+  'native body',
+  'unreliable Source',
+  'future field'
+])('retains uncaptioned candidates with different %s metadata', (condition) => {
+  const { tokens, complete } = example(),
+    duplicate = { ...structuredClone(complete), id: 'duplicate' }
+  if (condition === 'source viewport') duplicate.sourceViewport.width *= 2
+  if (condition === 'caption diagnostic')
+    Object.assign(duplicate, { captionIssue: 'shared-table-caption' })
+  if (condition === 'native body')
+    Object.assign(duplicate, {
+      nativeBody: { kind: 'math-table', sourceItems: [tokens[0].sourceItem] }
+    })
+  if (condition === 'unreliable Source')
+    Object.assign(duplicate, { unreliableMathSourceItems: [tokens[0].sourceItem] })
+  if (condition === 'future field')
+    Object.assign(duplicate, { futureSemanticField: { sourceRole: 'unreviewed' } })
+  const candidates = [complete, duplicate]
+  expect(regions.deduplicateSourceOwnedTableSubsets(candidates, tokens)).toEqual(candidates)
+})
+
+it('retains uncaptioned copies when an unknown overlapping table still competes', () => {
+  const { tokens, complete } = example(),
+    duplicate = { ...structuredClone(complete), id: 'duplicate' },
+    unknown = { ...structuredClone(complete), id: 'unknown', cells: [], grid: [] },
+    candidates = [complete, duplicate, unknown]
+  expect(regions.deduplicateSourceOwnedTableSubsets(candidates, tokens)).toEqual(candidates)
+})
+
+// PDF paint order can place an upper script before its lower sibling. Both
+// complete tables already display the same physically placed rich text.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function scriptExample() {
+  const f = example(),
+    base = f.tokens[0],
+    upper = Object.assign(
+      {
+        text: 'C',
+        horizontal: true,
+        rect: [20.6, 28, 25, 35],
+        sourceItem: { pageNumber: 1, index: 10, text: 'C' }
+      },
+      { baseline: 35, height: 7 }
+    ),
+    lower = Object.assign(
+      {
+        text: 'i',
+        horizontal: true,
+        rect: [20.2, 34, 24, 41],
+        sourceItem: { pageNumber: 1, index: 11, text: 'i' }
+      },
+      { baseline: 41, height: 7 }
+    )
+  base.text = base.sourceItem.text = 'A'
+  base.rect = [10, 30, 20, 40]
+  Object.assign(base, { baseline: 40, height: 10 })
+  f.tokens.push(upper, lower)
+  Object.assign(f.complete.cells[0], {
+    text: 'AiC',
+    textRuns: [
+      { text: 'A', position: 'normal' },
+      { text: 'i', position: 'subscript' },
+      { text: 'C', position: 'superscript' }
+    ],
+    sourceItems: [base, upper, lower].map((t) => ({ ...t.sourceItem })),
+    sourceRects: [base, upper, lower].map((t) => [...t.rect])
+  })
+  f.complete.grid[0][0] = 'AiC'
+  const duplicate = { ...structuredClone(f.complete), id: 'duplicate' }
+  return { ...f, duplicate, base, upper, lower }
+}
+
+it('compares complete native sibling scripts without changing their text or Source order', () => {
+  const f = scriptExample(),
+    candidates = [f.complete, f.duplicate],
+    before = structuredClone(candidates)
+  expect(regions.deduplicateSourceOwnedTableSubsets(candidates, f.tokens)).toEqual([f.complete])
+  expect(candidates).toEqual(before)
+})
+
+it.each(['wrong role', 'same lane', 'partial source', 'missing native height'])(
+  'retains script-bearing copies with %s',
+  (condition) => {
+    const f = scriptExample()
+    if (condition === 'wrong role')
+      Object.assign(f.duplicate.cells[0], {
+        textRuns: [
+          { text: 'A', position: 'normal' },
+          { text: 'i', position: 'superscript' },
+          { text: 'C', position: 'subscript' }
+        ]
+      })
+    if (condition === 'same lane') f.lower.baseline = f.upper.baseline
+    if (condition === 'partial source') f.duplicate.cells[0].sourceRects[1][2] -= 1
+    if (condition === 'missing native height') Object.assign(f.base, { height: undefined })
+    const candidates = [f.complete, f.duplicate]
+    expect(regions.deduplicateSourceOwnedTableSubsets(candidates, f.tokens)).toEqual(candidates)
+  }
+)
+
 it('removes a source-equivalent uncaptioned duplicate with an obsolete detector shape warning', () => {
   const { tokens, complete, caption } = example()
   const captioned = { ...structuredClone(complete), id: 'captioned', caption }

@@ -49,6 +49,7 @@ const outcomes = [
   'running',
   'unvalidated-interface',
   'max_tokens',
+  'max_turn_requests',
   'output-limit',
   'transport',
   'recovered',
@@ -306,13 +307,19 @@ it.each(outcomes)(
               ? 'byte output limit'
               : outcome === 'max_tokens'
                 ? 'output token limit'
-                : outcome === 'empty'
-                  ? 'no research film content'
-                  : 'refusal'
+                : outcome === 'max_turn_requests'
+                  ? 'max_turn_requests'
+                  : outcome === 'empty'
+                    ? 'no research film content'
+                    : 'refusal'
         )
         expect(status.result).toBeUndefined()
         const calls =
-          outcome === 'recovered' ? 3 : ['max_tokens', 'output-limit'].includes(outcome) ? 2 : 1
+          outcome === 'recovered'
+            ? 3
+            : ['max_tokens', 'max_turn_requests', 'empty', 'output-limit'].includes(outcome)
+              ? 2
+              : 1
         expect(mocks.run).toHaveBeenCalledTimes(calls)
         expect(input.recordAuxiliaryUsage).toHaveBeenCalledTimes(calls)
         expect(input.settingsService.captureActiveExplicitAgentBackendTarget).toHaveBeenCalledOnce()
