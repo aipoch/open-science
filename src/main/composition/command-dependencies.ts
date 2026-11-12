@@ -229,6 +229,7 @@ export function composeCommandDependencies({
     tags: researchCatalog.tagService,
     literature: createLiteratureCommandOwner({
       literatureOverview: researchCatalog.literatureOverview,
+      literatureComparisons: researchCatalog.literatureComparisons,
       literatureOverviewBatch: researchCatalog.literatureOverviewBatch,
       journalAttributes: researchCatalog.journalAttributes,
       literatureBatchJobs: researchCatalog.literatureBatchJobs,

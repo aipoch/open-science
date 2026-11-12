@@ -10,7 +10,11 @@ import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import { createInitialProjectState, useProjectStore } from './project-store'
 import { createInitialSessionState, useSessionStore } from './session-store'
 import { useNavigationStore, type PdfReadingDocument } from './navigation-store'
-import { previewLeaveGuards, workbenchPreviewGuardScope } from './preview-leave-guard'
+import {
+  libraryLeaveGuardScope,
+  previewLeaveGuards,
+  workbenchPreviewGuardScope
+} from './preview-leave-guard'
 import {
   createInitialPreviewWorkbenchState,
   pendingPdfContextSelections,
@@ -81,6 +85,31 @@ beforeEach(() => {
 })
 
 describe('navigation store', () => {
+  it('preserves Library comparison drafts across global and same-library navigation', () => {
+    useNavigationStore.setState({ view: 'library', activeProjectId: 'project-a' })
+    const dispose = previewLeaveGuards.register(
+      libraryLeaveGuardScope,
+      () => false,
+      () => true
+    )
+    const before = useNavigationStore.getState()
+    before.goHome('user')
+    before.returnFromLibrary('user')
+    before.requestWslSetupProjectCreation()
+    before.openLibrary('user', { section: 'library' })
+    before.openLiteratureItem('paper', 'user')
+    before.openProjectLiterature('project-b', 'user')
+    before.openCollectionLiterature('collection', 'user')
+    const onResourceCenterOpened = vi.fn()
+    before.openResourceCenter('user', { resource: 'skills' }, onResourceCenterOpened)
+    before.openMarketplace('user')
+    expect(useNavigationStore.getState()).toBe(before)
+    expect(onResourceCenterOpened).not.toHaveBeenCalled()
+    dispose()
+    before.returnFromLibrary('user')
+    expect(useNavigationStore.getState().view).toBe('workspace')
+  })
+
   it('defaults Resource Center to Skills while preserving explicit Use Cases navigation', () => {
     useNavigationStore.getState().openResourceCenter('user')
     expect(useNavigationStore.getState().resourceCenterIntent).toEqual({ resource: 'skills' })

@@ -9,6 +9,7 @@ import type { ComposerDoc } from '@/pages/workspace/composer/composer-doc'
 import { useProjectStore } from './project-store'
 import {
   dialogPreviewGuardScope,
+  libraryLeaveGuardScope,
   previewLeaveGuards,
   workbenchPreviewGuardScope
 } from './preview-leave-guard'
@@ -254,6 +255,8 @@ const requestPreviewLeaveForNavigation = (
   action: () => void
 ): boolean => {
   const navigation = useNavigationStore.getState()
+  if (navigation.view === 'library')
+    return previewLeaveGuards.request(libraryLeaveGuardScope, action)
   const staysInCurrentWorkspace =
     navigation.view !== 'workspace' ||
     (target.view === 'workspace' && target.projectId === navigation.activeProjectId)
@@ -325,10 +328,13 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
       return
     }
 
-    const { selectedSessionId, clearSelection } = useSessionStore.getState()
-    if (selectedSessionId && !isActiveSession(activeProjectId, selectedSessionId)) clearSelection()
-    set((state) => navigationState(state, origin, { view: 'workspace', activeProjectId }))
-    usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
+    requestPreviewLeaveForNavigation({ view: 'workspace', projectId: activeProjectId }, () => {
+      const { selectedSessionId, clearSelection } = useSessionStore.getState()
+      if (selectedSessionId && !isActiveSession(activeProjectId, selectedSessionId))
+        clearSelection()
+      set((state) => navigationState(state, origin, { view: 'workspace', activeProjectId }))
+      usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
+    })
   },
 
   // Marketplace leaves Workspace through the same unsaved-preview guard as Library.
@@ -618,11 +624,15 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   },
 
   requestWslSetupProjectCreation: () => {
-    set((state) => ({
-      ...navigationState(state, 'user', { view: 'home' }),
-      pendingProjectCreation: true,
-      pendingWslSetupAfterProjectCreation: true
-    }))
+    const action = (): void => {
+      set((state) => ({
+        ...navigationState(state, 'user', { view: 'home' }),
+        pendingProjectCreation: true,
+        pendingWslSetupAfterProjectCreation: true
+      }))
+    }
+    if (get().view === 'library') previewLeaveGuards.request(libraryLeaveGuardScope, action)
+    else action()
   },
 
   consumeProjectCreation: () => set({ pendingProjectCreation: false }),

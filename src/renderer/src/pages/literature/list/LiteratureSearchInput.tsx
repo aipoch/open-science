@@ -2,20 +2,25 @@ import { Search } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 
 const SEARCH_DEBOUNCE_MS = 300
 
 const LiteratureSearchInput = ({
+  label,
+  className,
   initialValue,
   resetRevision,
   onCommit,
   onDraftChange
 }: Readonly<{
+  label?: string
+  className?: string
   initialValue: string
   resetRevision: number
   onCommit: (value: string) => void
-  onDraftChange: () => void
+  onDraftChange?: () => void
 }>): React.JSX.Element => {
   const { t } = useTranslation()
   const [draft, setDraft] = useState(initialValue)
@@ -33,7 +38,7 @@ const LiteratureSearchInput = ({
   const updateDraft = (value: string): void => {
     if (value === draft) return
     setDraft(value)
-    onDraftChange()
+    onDraftChange?.()
   }
 
   useEffect(() => {
@@ -46,7 +51,7 @@ const LiteratureSearchInput = ({
   }, [draft, isComposing, onCommit, resetRevision])
 
   return (
-    <label className="relative block min-w-0 flex-1 sm:w-80 sm:flex-none">
+    <label className={cn('relative block min-w-0 flex-1 sm:w-80 sm:flex-none', className)}>
       <Search
         className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
         aria-hidden="true"
@@ -59,8 +64,8 @@ const LiteratureSearchInput = ({
           setIsComposing(false)
         }}
         onChange={(event) => updateDraft(event.target.value)}
-        placeholder={t('Search references')}
-        aria-label={t('Search references')}
+        placeholder={label ?? t('Search references')}
+        aria-label={label ?? t('Search references')}
         className="pl-9"
       />
     </label>

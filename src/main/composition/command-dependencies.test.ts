@@ -151,6 +151,7 @@ function fixture() {
     notebookRuntime: {},
     researchCatalog: {
       literatureOverview: { run: vi.fn() },
+      literatureComparisons: { run: vi.fn() },
       literatureOverviewBatch: { run: vi.fn() },
       literatureCatalog: { get: vi.fn() },
       memoryService,

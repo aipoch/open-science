@@ -12,7 +12,9 @@
     "src/shared/literature-link.ts",
     "src/shared/literature-link.test.ts",
     "src/shared/literature-overview.ts",
-    "src/shared/literature-overview-batch.ts"
+    "src/shared/literature-overview-batch.ts",
+    "src/shared/literature-comparison.test.ts",
+    "src/shared/literature-comparison.ts"
   ],
   "interfacePaths": [
     "src/shared/literature.ts",
@@ -23,7 +25,8 @@
     "src/shared/literature-collector.ts",
     "src/shared/literature-link.ts",
     "src/shared/literature-overview.ts",
-    "src/shared/literature-overview-batch.ts"
+    "src/shared/literature-overview-batch.ts",
+    "src/shared/literature-comparison.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -36,7 +39,8 @@
       "src/shared/literature.test.ts",
       "src/shared/smart-collection-rule.test.ts",
       "src/shared/literature-collector.test.ts",
-      "src/shared/literature-link.test.ts"
+      "src/shared/literature-link.test.ts",
+      "src/shared/literature-comparison.test.ts"
     ],
     "contract": [
       "src/preload/electron-renderer-contract-adapter.test.ts",

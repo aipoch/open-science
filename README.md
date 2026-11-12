@@ -150,14 +150,14 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 ## What can you do with AIPOCH Open-Science?
 
-| Task              | How it works                                                                                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Review literature | Import references from Zotero, screen papers against your criteria, and open the source PDFs to check a finding.                                       |
-| Analyze data      | Run Python or R in a Notebook and inspect the resulting tables and figures alongside the source files.                                                 |
-| Trace a result    | Open a file version in **Provenance** to inspect its inputs, code, and execution history. Rerun it when the recipe, inputs, and runtime are available. |
-| Hand off a result | Share a [`.science` package](#share-your-research) so others can inspect the recorded steps and file versions behind a result.                         |
-| Extend a workflow | Enable scientific data connectors, choose built-in skills, or install additional skills and specialists from the marketplaces.                         |
-| Choose a model    | Connect a supported provider or custom gateway, or use a supported Claude or Codex subscription. Available protocols depend on the agent backend.      |
+| Task              | How it works                                                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Review literature | Import references from Zotero, screen papers against your criteria, and open the source PDFs to check a finding. Compare findings across references and export the matrix as CSV. |
+| Analyze data      | Run Python or R in a Notebook and inspect the resulting tables and figures alongside the source files.                                                                            |
+| Trace a result    | Open a file version in **Provenance** to inspect its inputs, code, and execution history. Rerun it when the recipe, inputs, and runtime are available.                            |
+| Hand off a result | Share a [`.science` package](#share-your-research) so others can inspect the recorded steps and file versions behind a result.                                                    |
+| Extend a workflow | Enable scientific data connectors, choose built-in skills, or install additional skills and specialists from the marketplaces.                                                    |
+| Choose a model    | Connect a supported provider or custom gateway, or use a supported Claude or Codex subscription. Available protocols depend on the agent backend.                                 |
 
 <a id="benchmark-performance"></a>
 

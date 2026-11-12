@@ -1,6 +1,7 @@
 import { FileTypeIcon } from '@/pages/workspace/file-type-icon'
 import { getPreviewFormatForFile } from '@/pages/workspace/preview-support'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+import { libraryLeaveGuardScope, previewLeaveGuards } from '@/stores/preview-leave-guard'
 import { createElement, lazy, memo, Suspense, type ComponentProps, type ReactElement } from 'react'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -48,6 +49,8 @@ export const literatureRendererHost: LiteratureRendererHost = {
     useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
       if (state.phase === 'connected' && previous.phase !== 'connected') listener()
     }),
+  registerLibraryLeaveGuard: (guard, isDirty) =>
+    previewLeaveGuards.register(libraryLeaveGuardScope, guard, isDirty),
   useNavigationStore,
   useProjectStore,
   useTagStore,
