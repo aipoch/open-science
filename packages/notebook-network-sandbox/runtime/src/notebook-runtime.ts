@@ -27,11 +27,14 @@ import {
   installWindowsAppContainer,
   setWindowsRuntimeAccess as setWindowsRuntimeAccessImpl,
   getWindowsRuntimeAccess as getWindowsRuntimeAccessImpl,
+  preflightWindowsFilesystem as preflightWindowsFilesystemImpl,
   readAppContainerStatus,
   removeWindowsAppContainer,
   windowsLaunch,
   windowsSupervisedLaunch,
   windowsStandardLaunch,
+  type WindowsAclPreflightRequest,
+  type WindowsAclPreflightResult,
   type WindowsShell,
   type WindowsRuntimeVerification
 } from './platform/windows-appcontainer.js'
@@ -45,6 +48,8 @@ import {
 type SandboxDependencyCheck = Readonly<{ warnings: string[]; errors: string[] }>
 
 type NetworkRuntimeConfig = Readonly<{
+  mode?: 'relaxed' | 'strict'
+  strictWhitelist?: readonly import('../../src/network-address.js').StrictNetworkRule[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
@@ -176,6 +181,8 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
 
 const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
   new DestinationPolicy({
+    mode: config.mode,
+    strictWhitelist: config.strictWhitelist,
     trustedPrivateDestinations: config.trustedPrivateDestinations,
     allowedDomains: config.allowedDomains,
     askDomains: config.askDomains,
@@ -795,6 +802,19 @@ const setWindowsRuntimeAccess = (
     )
   )
 
+const preflightWindowsFilesystem = (
+  config: NetworkRuntimeConfig,
+  request: WindowsAclPreflightRequest,
+  signal?: AbortSignal
+): Promise<WindowsAclPreflightResult> =>
+  preflightWindowsFilesystemImpl(
+    config.windowsHostPath,
+    config.installationId,
+    config.windowsOwnershipRoot,
+    request,
+    signal
+  )
+
 const NotebookNetworkRuntime = {
   initialize,
   wrap,
@@ -819,6 +839,7 @@ const NotebookNetworkRuntime = {
   resetCommandConnections,
   cleanupAfterCommand,
   refreshWindowsProtection,
+  preflightWindowsFilesystem,
   reset
 } as const
 
@@ -828,6 +849,7 @@ export {
   removeWindows,
   setWindowsRuntimeAccess,
   getWindowsRuntimeAccess,
+  preflightWindowsFilesystem,
   isWindowsProtectionConfigured,
   statusForPlatform
 }
@@ -837,5 +859,7 @@ export type {
   NetworkWrapRequest,
   SandboxDependencyCheck,
   WindowsShell,
+  WindowsAclPreflightRequest,
+  WindowsAclPreflightResult,
   WindowsRuntimeVerification
 }

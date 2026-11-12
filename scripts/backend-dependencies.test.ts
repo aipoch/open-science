@@ -342,6 +342,7 @@ describe('desktop-only dependency contents', () => {
       for (const file of [
         'scripts/stage-backend.mjs',
         'scripts/backend-dependencies.mjs',
+        'scripts/build-notebook-host.mjs',
         'scripts/desktop-pdf-lib.mjs',
         'scripts/desktop-dependency-chains.mjs'
       ])
@@ -349,6 +350,11 @@ describe('desktop-only dependency contents', () => {
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
       await put('out/backend/dependencies.json', '[]')
+      if (process.platform === 'win32')
+        await put(
+          'packages/notebook-network-sandbox/vendor/windows/build.mjs',
+          '// Native compilation is covered separately; this fixture stages synthetic helper assets.\n'
+        )
       const stage = (): Promise<unknown> =>
         promisify(execFile)(
           process.execPath,

@@ -11,6 +11,7 @@ import {
   isElectronPackage,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
+import { prepareBackendStage } from './build-notebook-host.mjs'
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
@@ -35,7 +36,7 @@ const bundledDependencies = desktopBundledDependencies(metadata)
 const dependencyRoots = values.desktop
   ? desktopBackendDependencies(manifest.dependencies, metadata)
   : Object.keys(manifest.dependencies)
-await rm(stage, { recursive: true, force: true })
+await prepareBackendStage({ stage, removeStage: rm })
 await mkdir(stage, { recursive: true })
 await cp(backend, join(stage, 'out/backend'), {
   recursive: true,

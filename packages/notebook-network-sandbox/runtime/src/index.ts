@@ -3,6 +3,7 @@ export {
   installWindows,
   setWindowsRuntimeAccess,
   getWindowsRuntimeAccess,
+  preflightWindowsFilesystem,
   isWindowsProtectionConfigured,
   removeWindows,
   statusForPlatform,
@@ -11,5 +12,7 @@ export {
   type NetworkWrapRequest,
   type SandboxDependencyCheck,
   type WindowsShell,
+  type WindowsAclPreflightRequest,
+  type WindowsAclPreflightResult,
   type WindowsRuntimeVerification
 } from './notebook-runtime.js'

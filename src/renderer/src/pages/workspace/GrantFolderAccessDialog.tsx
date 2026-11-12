@@ -650,9 +650,8 @@ const GrantFolderAccessDialogContent = ({
               inline
               role="alert"
               className="max-h-[min(180px,30svh)] overflow-y-auto [container-type:normal]"
-              description={t('Folder access could not be updated.')}
-              errorCode={grantError || undefined}
-              diagnosticsLabel={t('Error details')}
+              title={t('Folder access could not be updated.')}
+              description={grantError || undefined}
             />
           ) : null}
           <div className="flex items-center gap-2.5">

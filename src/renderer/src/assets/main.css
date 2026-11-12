@@ -589,6 +589,25 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --ring: oklch(0.66 0.1 184);
 }
 
+/* Muted mode colors from the approved Notebook access design. */
+@utility notebook-network-relaxed {
+  @apply border-emerald-200 bg-emerald-50 text-emerald-800;
+  @variant dark {
+    border-color: #495449;
+    background-color: #343f35;
+    color: #b1c7b8;
+  }
+}
+
+@utility notebook-network-strict {
+  @apply border-indigo-200 bg-indigo-50 text-indigo-800;
+  @variant dark {
+    border-color: #4c4c61;
+    background-color: #353542;
+    color: #c2c3df;
+  }
+}
+
 /* Keyboard focus must remain visible in forced colors and appear without a transition. */
 @utility keyboard-focus {
   outline: 2px solid var(--ring);

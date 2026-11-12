@@ -151,7 +151,8 @@ const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
       const saved = {
         allowedDomains: settings.allowedDomains,
         disabledOpenScienceDomainGroups: settings.disabledOpenScienceDomainGroups,
-        disabledOpenScienceDomains: settings.disabledOpenScienceDomains
+        disabledOpenScienceDomains: settings.disabledOpenScienceDomains,
+        mode: settings.mode
       }
       persisted.notebookNetwork = saved
       return Promise.resolve(saved)
