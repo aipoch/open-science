@@ -3548,14 +3548,31 @@ mod windows_host {
         let Some(AclPathFailure(path)) = error.downcast_ref::<AclPathFailure>() else {
             return false;
         };
+        let failed_root = spec
+            .optional_read_only_roots
+            .iter()
+            .chain(&spec.optional_read_write_roots)
+            .any(|root| paths_equal(root, Path::new(path)));
+        let failed_write_boundary = spec
+            .denied_write_roots
+            .iter()
+            .any(|root| paths_equal(root, Path::new(path)));
         let mut removed = false;
-        for roots in [
-            &mut spec.optional_read_only_roots,
-            &mut spec.optional_read_write_roots,
+        for (roots, writable) in [
+            (&mut spec.optional_read_only_roots, false),
+            (&mut spec.optional_read_write_roots, true),
         ] {
             roots.retain(|root| {
-                let affected =
-                    path_is_within(path, Path::new(root)) || path_is_within(root, Path::new(path));
+                // Retry independent overlapping roots before deciding they also fail. A tree
+                // grant can fail while a parent read grant or child traversal still succeeds.
+                let affected = if failed_root {
+                    paths_equal(root, Path::new(path))
+                } else {
+                    path_is_within(root, Path::new(path))
+                        || (writable
+                            && failed_write_boundary
+                            && path_is_within(path, Path::new(root)))
+                };
                 removed |= affected;
                 !affected
             });
@@ -5014,6 +5031,59 @@ mod windows_host {
                 );
             }
             fs::remove_dir_all(&parent).unwrap();
+        }
+
+        #[test]
+        fn nested_optional_failure_preserves_independent_parent_and_child_grants() {
+            for failure_at_boundary in [false, true] {
+                let installation_id = "abab1212abab1212abab1232";
+                let parent = unique_test_root("nested-optional-retry");
+                let readable = parent.join("readable");
+                let writable = readable.join("writable");
+                let nested = writable.join("nested");
+                let protected = writable.join(".git");
+                fs::create_dir_all(&nested).unwrap();
+                fs::create_dir_all(&protected).unwrap();
+                let root = parent.join(installation_id);
+                let id = new_lease_id().unwrap();
+                let capability =
+                    CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+                let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                    "executable": "unused", "arguments": [], "cwd": parent,
+                    "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [],
+                    "optionalReadOnlyRoots": [readable, nested],
+                    "optionalReadWriteRoots": [writable], "deniedWriteRoots": [protected]
+                }))
+                .unwrap();
+                let failure_path = if failure_at_boundary {
+                    &protected
+                } else {
+                    &writable
+                }
+                .to_string_lossy()
+                .into_owned();
+                AFTER_ACL_GRANT.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move |_| {
+                        Err(anyhow::anyhow!("injected nested write failure")
+                            .context(AclPathFailure(failure_path)))
+                    }))
+                });
+                let mut lease =
+                    AclLease::acquire(installation_id, &root, id, &capability, &spec).unwrap();
+                let grants = lease.record.grants.clone();
+                lease.release().unwrap();
+                fs::remove_dir_all(&parent).unwrap();
+                for path in [&readable, &nested] {
+                    assert!(grants.iter().any(|grant| paths_equal(&grant.path, path)
+                        && grant.access == AclGrant::ReadOnlyTree));
+                }
+                assert!(
+                    !grants
+                        .iter()
+                        .any(|grant| paths_equal(&grant.path, &writable)
+                            && grant.access == AclGrant::ModifyTree)
+                );
+            }
         }
 
         #[test]
