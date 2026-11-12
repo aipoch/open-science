@@ -545,6 +545,23 @@ const waitForReady = async (
   )
 }
 
+it('mirrors a fatal service report and keeps recoverable background errors in the canonical log', async () => {
+  vi.stubEnv('OPEN_SCIENCE_CAPTURED_LAUNCH_OUTPUT', '1')
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const mirror = f.initLogs.mock.lastCall![0].mirrorToConsole
+  const error = new Error('diagnostic fixture')
+  f.createLifetime.mock.lastCall![0].report(error)
+  expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(false)
+  f.startDesktop.mock.lastCall![0].onNotificationError!(error)
+  expect(mirror('notifications', f.log.warn.mock.lastCall![0])).toBe(false)
+  const { installNodeFatalErrors } = await import('./node-fatal-errors')
+  vi.mocked(installNodeFatalErrors).mock.lastCall![0].report(error, 'uncaughtException')
+  expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(true)
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
+
 it('creates diagnostics only after consent and stops them when the controlling desktop disconnects', async () => {
   const send = await startHealthyRuntime()
   await waitForReady(send)
