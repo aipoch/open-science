@@ -235,6 +235,9 @@ describe('terminal recovery through the real Session persistence scheduler', () 
       expect(await followUp).toMatchObject({
         status: outcome === 'release' ? 'admitted' : 'rejected'
       })
+      // A timed-out wait leaves its admission queued. Drain it while the fake deadline is still
+      // expired, before reading durable state or restoring real time during fixture cleanup.
+      await h.coordinator.loadAll()
       const latest = await h.read()
       if (latest.status !== 'found') throw new Error('Expected durable Session authority.')
       expect(latest.session.runtimeSessionAdmissions).toHaveLength(outcome === 'release' ? 2 : 1)

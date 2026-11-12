@@ -27,11 +27,14 @@ import {
   installWindowsAppContainer,
   setWindowsRuntimeAccess as setWindowsRuntimeAccessImpl,
   getWindowsRuntimeAccess as getWindowsRuntimeAccessImpl,
+  preflightWindowsFilesystem as preflightWindowsFilesystemImpl,
   readAppContainerStatus,
   removeWindowsAppContainer,
   windowsLaunch,
   windowsSupervisedLaunch,
   windowsStandardLaunch,
+  type WindowsAclPreflightRequest,
+  type WindowsAclPreflightResult,
   type WindowsShell,
   type WindowsRuntimeVerification
 } from './platform/windows-appcontainer.js'
@@ -799,6 +802,19 @@ const setWindowsRuntimeAccess = (
     )
   )
 
+const preflightWindowsFilesystem = (
+  config: NetworkRuntimeConfig,
+  request: WindowsAclPreflightRequest,
+  signal?: AbortSignal
+): Promise<WindowsAclPreflightResult> =>
+  preflightWindowsFilesystemImpl(
+    config.windowsHostPath,
+    config.installationId,
+    config.windowsOwnershipRoot,
+    request,
+    signal
+  )
+
 const NotebookNetworkRuntime = {
   initialize,
   wrap,
@@ -823,6 +839,7 @@ const NotebookNetworkRuntime = {
   resetCommandConnections,
   cleanupAfterCommand,
   refreshWindowsProtection,
+  preflightWindowsFilesystem,
   reset
 } as const
 
@@ -832,6 +849,7 @@ export {
   removeWindows,
   setWindowsRuntimeAccess,
   getWindowsRuntimeAccess,
+  preflightWindowsFilesystem,
   isWindowsProtectionConfigured,
   statusForPlatform
 }
@@ -841,5 +859,7 @@ export type {
   NetworkWrapRequest,
   SandboxDependencyCheck,
   WindowsShell,
+  WindowsAclPreflightRequest,
+  WindowsAclPreflightResult,
   WindowsRuntimeVerification
 }

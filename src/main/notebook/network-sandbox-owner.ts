@@ -4,7 +4,7 @@ import {
   destinationGrantAllows,
   type NetworkBlockEvidence
 } from '../../shared/network-destination-grants'
-import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import { NotebookNetworkSandbox, wslUncDistro } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, realpathSync, type Stats } from 'node:fs'
@@ -76,7 +76,8 @@ import {
   type NotebookTrustBundle,
   type NotebookTrustBundleStatus
 } from './trust-bundle'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { getAppClaudeConfigDir } from '../settings/provider-env'
+import type { GrantedLocalRoot, GrantedLocalRootAccess } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
 import { windowsCondaPrefixForR } from '@aipoch/environment'
 import { rKernelProtocolProbe } from '@aipoch/environment'
@@ -325,6 +326,11 @@ const protectedWriteRoots = (readWriteRoots: readonly string[]): string[] =>
     ...readWriteRoots.map((root) => join(root, '.git'))
   ].filter(existsSync)
 
+// Application authority that must never be writable from a broad or nested grant. Grant-time and
+// execution-time planning must keep these write boundaries consistent.
+const authorityWriteDenyRoots = (configRoot: string | undefined): string[] =>
+  configRoot ? [join(configRoot, 'settings.json'), join(configRoot, 'sessions')] : []
+
 const dependencyReason = (message: string): NotebookNetworkStatusReason => {
   if (message.includes('bubblewrap')) return 'linuxBubblewrapMissing'
   if (message.includes('Seatbelt')) return 'macSeatbeltUnavailable'
@@ -437,6 +443,34 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       throw new Error('Prepare Notebook protection in Settings before protected execution.')
     if (this.windowsRuntime) await this.windowsRuntime.prepare(false)
     return true
+  }
+
+  async preflightGrantedRoot(
+    path: string,
+    access: GrantedLocalRootAccess,
+    requestedPath?: string
+  ): Promise<void> {
+    if (this.platform !== 'win32') return
+    // WSL2 grants use guest-side bubblewrap and must not depend on native helper readiness.
+    if (wslUncDistro(path)) return
+    if (!(await this.windowsProtectionConfigured())) return
+    const filesystem = {
+      readOnlyRoots: [path],
+      readWriteRoots: access === 'rw' ? [path] : [],
+      deniedReadRoots: this.options.configRoot
+        ? [getAppClaudeConfigDir(this.options.configRoot)]
+        : [],
+      deniedWriteRoots: [
+        ...(this.options.configRoot ? await managedSkillReadRoots(this.options.configRoot) : []),
+        ...authorityWriteDenyRoots(this.options.configRoot),
+        ...protectedWriteRoots(access === 'rw' ? [path] : [])
+      ]
+    }
+    await this.getOrCreateSandbox().preflightGrantedRoot(path, access, requestedPath, {
+      filesystem,
+      // A grant is persisted once; report protected descendants now rather than on every command.
+      scope: 'tree'
+    })
   }
 
   async resolveWindowsRuntime(request: {
@@ -614,6 +648,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const grantedRoots = includeExecutionRoots
       ? ((await this.options.getGrantedLocalRoots?.()) ?? [])
       : []
+    // Directories under \\wsl.localhost (or \\wsl$) belong to one guest. Native protected
+    // execution cannot use them, and another distro must not map them to its own guest paths.
+    const applicableGrantedRoots = grantedRoots.filter((root) => {
+      const distro = wslUncDistro(root.path)
+      if (!distro) return true
+      if (target.kind === 'wsl2') return distro.toLowerCase() === target.distro.toLowerCase()
+      return !(nativeWindows && windowsProtectionRequired === true)
+    })
     // Broad writable ancestors must never make application authority or its future staging
     // files writable. Keep explicit descendant workspaces and caches usable.
     const physicalPath = (path: string): string => {
@@ -716,19 +758,21 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
-            ...(nativeWindows ? [] : grantedRoots.map((root) => root.path)),
+            ...(nativeWindows ? [] : applicableGrantedRoots.map((root) => root.path)),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ],
           ...(nativeWindows
             ? {
                 optionalReadOnlyRoots: [
                   ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
-                  ...grantedRoots.map((root) => root.path),
+                  ...applicableGrantedRoots.map((root) => root.path),
                   ...environmentPathRoots(env, this.platform)
                 ],
                 optionalReadWriteRoots: [
                   ...(invocation.filesystem.optionalReadWriteRoots ?? []),
-                  ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+                  ...applicableGrantedRoots
+                    .filter((root) => root.access === 'rw')
+                    .map((root) => root.path)
                 ].filter((path) => !coversAuthority(path))
               }
             : {}),
@@ -737,22 +781,21 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             commandTempRoot,
             ...(nativeWindows
               ? []
-              : grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path))
+              : applicableGrantedRoots
+                  .filter((root) => root.access === 'rw')
+                  .map((root) => root.path))
           ].filter((path) => !coversAuthority(path)),
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
             ...invocation.filesystem.deniedWriteRoots,
-            ...(this.options.configRoot
-              ? [
-                  join(this.options.configRoot, 'settings.json'),
-                  join(this.options.configRoot, 'sessions')
-                ]
-              : []),
+            ...authorityWriteDenyRoots(this.options.configRoot),
             ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
               ...(invocation.filesystem.optionalReadWriteRoots ?? []),
-              ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
+              ...applicableGrantedRoots
+                .filter((root) => root.access === 'rw')
+                .map((root) => root.path)
             ]),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ]
