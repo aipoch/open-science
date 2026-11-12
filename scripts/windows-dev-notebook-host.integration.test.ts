@@ -14,9 +14,15 @@ import { expect, it } from 'vitest'
 
 // Exercise the real npm development recipe. Only the external compiler and unrelated builds are
 // fixtures: a stale helper must be replaced before the backend can use it.
-it.skipIf(process.platform !== 'win32').each(['stale', 'missing', 'compiler-failure'] as const)(
-  'prepares the Windows Notebook host before the dev backend (%s)',
-  (scenario) => {
+it
+  .skipIf(process.platform !== 'win32')
+  .each(
+    ['build:backend:dev', 'build:backend:compiled'].flatMap((recipe) =>
+      ['stale', 'missing', 'compiler-failure'].map((scenario) => ({ recipe, scenario }))
+    )
+  )(
+  'prepares the Windows Notebook host before $recipe ($scenario)',
+  ({ recipe, scenario }) => {
     const root = resolve('.')
     const fixture = mkdtempSync(join(tmpdir(), 'os-dev-host-'))
     const vendor = 'packages/notebook-network-sandbox/vendor'
@@ -85,7 +91,7 @@ it.skipIf(process.platform !== 'win32').each(['stale', 'missing', 'compiler-fail
     `
       )
       const npm = join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')
-      const result = spawnSync(process.execPath, [npm, 'run', 'build:backend:dev'], {
+      const result = spawnSync(process.execPath, [npm, 'run', recipe], {
         cwd: fixture,
         env: {
           ...process.env,
