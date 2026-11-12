@@ -163,7 +163,7 @@ describe('LocalFsService.listDir', () => {
 
   it('resolves symlinks and .. via realpath', async () => {
     const link = join(root, 'link-to-sub')
-    await symlink(join(root, 'sub'), link)
+    await symlink(join(root, 'sub'), link, process.platform === 'win32' ? 'junction' : 'dir')
     const listing = await service.listDir(link)
     // realpath both sides: macOS resolves the tmp dir through a /private symlink prefix.
     expect(listing.resolvedPath).toBe(await realpath(join(root, 'sub')))
@@ -522,7 +522,7 @@ describe('LocalFsService granted roots', () => {
     // app.getPath('home') may return a path with symlinked segments (/var on macOS, /home mounts
     // on Linux): validation must compare against the canonical home, not the verbatim string.
     const symlinkedHome = join(outside, 'home-link')
-    await symlink(home, symlinkedHome)
+    await symlink(home, symlinkedHome, process.platform === 'win32' ? 'junction' : 'dir')
     vi.mocked(app.getPath).mockImplementation((name: string) =>
       name === 'home' ? symlinkedHome : '/tmp'
     )
