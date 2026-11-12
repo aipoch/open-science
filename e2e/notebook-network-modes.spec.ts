@@ -274,6 +274,8 @@ for (const theme of ['Light', 'Dark'] as const) {
     const relaxed = settings.getByRole('radio', { name: 'Relaxed', exact: true })
     const strict = settings.getByRole('radio', { name: 'Strict', exact: true })
     const panel = settings.getByRole('region', { name: 'Confirm network mode change', exact: true })
+    await expect(relaxed).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
+    await expect(strict).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
     const active = async (): Promise<'relaxed' | 'strict'> =>
       (await page.evaluate(() => window.api.settings.getSettings())).notebookNetwork?.mode ??
       'relaxed'
@@ -284,6 +286,9 @@ for (const theme of ['Light', 'Dark'] as const) {
     await strict.click()
     await expect(panel).toBeVisible()
     await expect(strict).toBeChecked()
+    await expect(strict).toHaveCSS('border-style', 'dashed')
+    await expect(strict).toHaveCSS('border-width', '1px')
+    await expect(strict).not.toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
     await expect(relaxed).not.toBeChecked()
     await expect(settings.getByText('Current: Relaxed', { exact: true })).toHaveClass('sr-only')
     expect(await active()).toBe('relaxed')
@@ -293,6 +298,8 @@ for (const theme of ['Light', 'Dark'] as const) {
     })
     await panel.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(relaxed).toBeFocused()
+    await expect(relaxed).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
+    await expect(strict).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
     await strict.click()
     await page.keyboard.press('Escape')
     await expect(settings).toBeVisible()
@@ -313,16 +320,20 @@ for (const theme of ['Light', 'Dark'] as const) {
     await expect(settings.getByText('Current: Strict', { exact: true })).toHaveClass('sr-only')
     expect(await active()).toBe('strict')
     await checkRuleDisclosure('Strict')
+    await expect(strict).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
     await page.screenshot({
       animations: 'disabled',
       path: testInfo.outputPath('confirmed-strict.png')
     })
     await strict.press('Home')
     expect(await active()).toBe('strict')
+    await expect(relaxed).toHaveCSS('border-style', 'dashed')
+    await expect(relaxed).not.toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
     await expect(panel.getByText('Network access will expand.', { exact: true })).toBeVisible()
     await panel.getByRole('button', { name: 'Switch to Relaxed mode', exact: true }).click()
     await expect(settings.getByText('Current: Relaxed', { exact: true })).toHaveClass('sr-only')
     expect(await active()).toBe('relaxed')
+    await expect(relaxed).toHaveCSS('border-color', 'rgba(0, 0, 0, 0)')
     await strict.click()
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'de' }))
     await expect(page.locator('html')).toHaveAttribute('lang', 'de')

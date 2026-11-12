@@ -531,7 +531,7 @@ export function NotebookNetworkAccessEditor({
                 aria-checked={selectedMode === mode}
                 tabIndex={selectedMode === mode ? 0 : -1}
                 disabled={busy}
-                className={`min-w-0 rounded-md px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? (mode === 'strict' ? 'notebook-network-strict' : 'notebook-network-relaxed') : ''}`}
+                className={`min-w-0 rounded-md px-2 py-1 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${selectedMode === mode ? (mode === 'strict' ? 'notebook-network-strict' : 'notebook-network-relaxed') : ''} ${pendingMode === mode ? 'border border-dashed' : 'border border-transparent!'}`}
                 onKeyDown={(event) => {
                   if (
                     ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(
