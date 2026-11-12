@@ -8,7 +8,9 @@ import {
   realpath,
   readFile,
   copyFile,
-  chmod
+  chmod,
+  symlink,
+  unlink
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -118,6 +120,134 @@ it.runIf(process.platform === 'win32')(
       expect(() => process.kill(scannerPid, 0)).toThrow()
     } finally {
       scannerFixture.preload = ''
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
+it.runIf(process.platform === 'win32')(
+  'finds a data-file holder through junctions with self and ancestor cycles',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-junction-scan-'))
+    const installation = join(root, 'Science')
+    const target = join(root, 'linked-data')
+    const junction = join(installation, 'resources')
+    let child: ReturnType<typeof spawn> | undefined
+    let exited: Promise<void> | undefined
+    const links: string[] = []
+    try {
+      await mkdir(installation)
+      await mkdir(target)
+      const file = join(target, 'data ü.json')
+      await writeFile(file, '{}')
+      await symlink(target, junction, 'junction')
+      links.push(junction)
+      const self = join(target, 'self')
+      await symlink(target, self, 'junction')
+      links.push(self)
+      const ancestor = join(target, 'ancestor')
+      await symlink(installation, ancestor, 'junction')
+      links.push(ancestor)
+      const preload = join(root, 'bounded-scan.cjs')
+      await writeFile(preload, '')
+      scannerFixture.preload = preload
+      scannerFixture.timeoutMs = 5000
+      child = spawn(
+        process.execPath,
+        [
+          '-e',
+          "require('node:fs').openSync(" +
+            JSON.stringify(file) +
+            ", 'r');process.stdout.write('ready');process.stdin.resume()"
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
+      )
+      exited = new Promise<void>((resolve) => child!.once('close', () => resolve()))
+      await new Promise<void>((resolve, reject) => {
+        child!.stdout!.once('data', () => resolve())
+        child!.once('error', reject)
+      })
+      await expect(inspectInstallationProcessesAsync(installation)).resolves.toContain(child.pid)
+      child.stdin!.end()
+      await exited
+      await expect(inspectInstallationProcessesAsync(installation)).resolves.not.toContain(
+        child.pid
+      )
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await exited
+      scannerFixture.preload = ''
+      scannerFixture.timeoutMs = undefined
+      for (const link of links.reverse()) await unlink(link)
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
+it.runIf(process.platform === 'win32')(
+  'registers physical ASAR archives instead of their virtual contents under Electron',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-asar-scan-'))
+    const installation = join(root, 'Science')
+    const input = join(root, 'archive-input')
+    const archive = join(installation, 'app.asar')
+    const resourcesPath = join(root, 'resources.json')
+    const preload = join(root, 'record-resources.cjs')
+    let child: ReturnType<typeof spawn> | undefined
+    let closed: Promise<void> | undefined
+    try {
+      await mkdir(installation)
+      await mkdir(input)
+      await writeFile(join(input, 'inside.txt'), 'archived content')
+      const require = createRequire(__filename)
+      const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+      const appBuilderRequire = createRequire(
+        builderRequire.resolve('app-builder-lib/package.json')
+      )
+      await appBuilderRequire('@electron/asar').createPackage(input, archive)
+      await writeFile(
+        preload,
+        [
+          "const fs = require('node:fs')",
+          "const Module = require('node:module')",
+          'const load = Module._load',
+          'Module._load = function(id, ...args) {',
+          '  const actual = load.call(this, id, ...args)',
+          "  if (!id.endsWith('process_tree_native.node')) return actual",
+          '  return {...actual, listWindowsInstallationOccupants(files) {',
+          '    fs.writeFileSync(' + JSON.stringify(resourcesPath) + ', JSON.stringify(files))',
+          '    return actual.listWindowsInstallationOccupants(files)',
+          '  }}',
+          '}'
+        ].join('\n')
+      )
+      child = spawn(
+        process.execPath,
+        [
+          '-e',
+          "require('node:fs').openSync(" +
+            JSON.stringify(archive) +
+            ", 'r');process.stdout.write('ready');process.stdin.resume()"
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
+      )
+      closed = new Promise<void>((resolve) => child!.once('close', () => resolve()))
+      await new Promise<void>((resolve, reject) => {
+        child!.stdout!.once('data', () => resolve())
+        child!.once('error', reject)
+      })
+      scannerFixture.command = require('electron') as string
+      scannerFixture.preload = preload
+      await expect(inspectInstallationProcessesAsync(installation)).resolves.toContain(child.pid)
+      expect(JSON.parse(await readFile(resourcesPath, 'utf8'))).toEqual([archive])
+    } finally {
+      scannerFixture.command = ''
+      scannerFixture.preload = ''
+      child?.stdin?.end()
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await closed
       await rm(root, { recursive: true, force: true })
     }
   },
