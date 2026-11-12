@@ -7,6 +7,7 @@ import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { nativePairedTablePanelCrop } from './literature-pdf-native-table-panel-crop.mjs'
 import {
   nativePageTextPacketInventory,
+  nativeNormalCompositingWholeCellInkPacket,
   nativeWholeCellInkPacket,
   proveNativeFractionAmbiguityInk
 } from './literature-pdf-figure-native-plot-labels.mjs'
@@ -5840,7 +5841,13 @@ export function recoverNativeSegmentedNumericVisualFrame(raw, caption, page, tok
       context.viewport.rotation !== 0
     )
       return
-    const packet = nativePageTextPacketInventory(page, tokens, context, true)
+    const packet =
+      nativePageTextPacketInventory(page, tokens, context, true) ??
+      nativeNormalCompositingWholeCellInkPacket(page, tokens, context, {
+        sourceItems: tokens.map((t) => t.sourceItem),
+        sourceRects: tokens.map((t) => t.rect),
+        text: tokens.map((t) => t.text).join('')
+      })
     if (!packet || packet.evidence.images.length) return
     const crop = raw.cropRect.map((v) => v / 1.5),
       rules = collectTableRules(context.operators, context.viewport)
@@ -6000,6 +6007,255 @@ export function proveNativeFractionWarning(table, inventory, rules, context) {
   if (!context?.nativeGlyphContext || !context.sourceContent) return []
   try {
     return certifiedNativeFraction({ table, inventory, rules }, context, true)
+  } catch {
+    return []
+  }
+}
+
+// Open booktabs tables can have neither an outer top nor a bottom rail.
+// Connected native rules, repeated scalar rows and the literal following
+// caption prove the complete visual only; they do not invent header spans.
+export function recoverCaptionedNativeOpenRuleFrames(page, tokens, context, captions) {
+  try {
+    if (
+      page?.rotation !== 0 ||
+      page.invalidGraphicsBounds !== 0 ||
+      context?.pageNumber !== page.pageNumber ||
+      context.viewport?.scale !== 1 ||
+      !/^[a-f\d]{64}$/u.test(context.sourceSha256 ?? '') ||
+      !Array.isArray(captions)
+    )
+      return []
+    const inputsCurrent = retainNativeRecoveryInputs(
+      [page, tokens, context, captions],
+      context.viewport
+    )
+    if (!inputsCurrent) return []
+    const packet =
+      nativePageTextPacketInventory(page, tokens, context, true) ??
+      nativeNormalCompositingWholeCellInkPacket(page, tokens, context, {
+        sourceItems: tokens.map((t) => t.sourceItem),
+        sourceRects: tokens.map((t) => t.rect),
+        text: tokens.map((t) => t.text).join('')
+      })
+    if (tokens.length > 4096 || page.graphicsBounds.length > 4096) return []
+    const records =
+      packet?.records ??
+      tokens.map((t) => ({
+        rect: t.rect,
+        index: t.sourceItem?.index,
+        r: { str: t.text, height: t.height },
+        token: t
+      }))
+    const rulePaintBounds = new Map(),
+      rules = collectTableRules(context.operators, context.viewport, rulePaintBounds),
+      identities = page.graphicsBounds.map((g) => ({
+        ...g,
+        rect: g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+      })),
+      precise = preciseNativeGraphicsBounds({
+        nativeGlyphContext: context,
+        viewport: context.viewport,
+        rulePaintBounds,
+        nativeEvidenceGraphics: identities,
+        nativePaintIdentityGraphics: identities
+      }),
+      out = [],
+      key = (s) => s.replace(/\s/gu, '')
+    const ink = (r) => union(r.part.filter((z) => z.g.text.trim()).map((z) => z.g.ink))
+    for (const caption of captions.filter(
+      (c) =>
+        c.page === page.pageNumber &&
+        valid(c.rect) &&
+        /^Table\s+(?:[A-Z]?\d+|[IVXLCDM]+)[.:]\s/u.test(c.lines?.[0] ?? '')
+    )) {
+      const cap = records.filter((r) => inside(caption.rect, r.rect)),
+        h = Math.max(...cap.map((r) => r.r.height))
+      if (!(h > 0) || key(cap.map((r) => r.r.str).join('')) !== key(caption.lines.join('')))
+        continue
+      const near = rules.filter(
+          (r) =>
+            r.every(Number.isFinite) &&
+            r[1] < caption.rect[1] &&
+            r[3] < caption.rect[1] + h * 0.25 &&
+            r[3] > caption.rect[1] - h * 32 &&
+            r[2] > caption.rect[0] - h &&
+            r[0] < caption.rect[2] + h
+        ),
+        seeds = near.filter(
+          (r) => r[0] === r[2] && r[3] - r[1] > h * 0.75 && caption.rect[1] - r[3] < h * 3
+        ),
+        seen = new Set(),
+        components = []
+      const touches = (a, b) =>
+        Math.max(a[0], b[0]) <= Math.min(a[2], b[2]) + h * 0.08 &&
+        Math.max(a[1], b[1]) <= Math.min(a[3], b[3]) + h * 0.08
+      for (const seed of seeds) {
+        if (seen.has(seed)) continue
+        const group = [seed]
+        seen.add(seed)
+        for (let i = 0; i < group.length; i++)
+          for (const r of near)
+            if (!seen.has(r) && touches(group[i], r)) {
+              seen.add(r)
+              group.push(r)
+            }
+        components.push(group)
+      }
+      const proofs = []
+      for (const group of components) {
+        const extent = [
+            Math.min(...group.map((r) => r[0])),
+            Math.min(...group.map((r) => r[1])),
+            Math.max(...group.map((r) => r[2])),
+            Math.max(...group.map((r) => r[3]))
+          ],
+          vertical = group.filter((r) => r[0] === r[2]),
+          horizontal = group.filter((r) => r[1] === r[3])
+        if (
+          !valid(extent) ||
+          extent[2] - extent[0] < h * 8 ||
+          extent[3] - extent[1] < h * 4 ||
+          vertical.length < 2 ||
+          horizontal.length < 2 ||
+          caption.rect[1] - extent[3] > h * 3 ||
+          Math.abs((extent[0] + extent[2] - caption.rect[0] - caption.rect[2]) / 2) > h * 3
+        )
+          continue
+        const band = [
+            extent[0] - h * 0.5,
+            extent[1] - h * 0.25,
+            extent[2] + h * 0.5,
+            caption.rect[1] - 0.05
+          ],
+          owned = records.filter((r) => !cap.includes(r) && over(r.rect, band))
+        if (owned.length < 12 || owned.some((r) => !valid(r.rect) || !inside(band, r.rect)))
+          continue
+        const rows = []
+        for (const r of owned.toSorted((a, b) => a.rect[3] - b.rect[3] || a.rect[0] - b.rect[0])) {
+          let row = rows.find((g) => Math.abs(g[0].rect[3] - r.rect[3]) < h * 0.15)
+          if (!row) rows.push((row = []))
+          row.push(r)
+        }
+        const scalar = /^[+−-]?\d+(?:\.\d+)?(?:±[\d.]+)?$/u,
+          numericRows = rows.filter(
+            (g) =>
+              g.flatMap((r) => r.r.str.trim().split(/\s+/u)).filter((t) => scalar.test(t)).length >=
+              2
+          )
+        if (
+          numericRows.length < 3 ||
+          numericRows.some((g) => g.length < 2) ||
+          rows.filter((g) => g.some((r) => /\p{L}/u.test(r.r.str))).length < 2
+        )
+          continue
+        const currentPacket =
+          packet ??
+          nativeNormalCompositingWholeCellInkPacket(page, tokens, context, {
+            sourceItems: owned.map((r) => r.token.sourceItem),
+            sourceRects: owned.map((r) => r.rect),
+            text: owned.map((r) => r.r.str).join('')
+          })
+        if (!currentPacket) {
+          continue
+        }
+        const actualRecord = (r) =>
+          currentPacket.records.find(
+            (z) =>
+              z.index === r.index &&
+              z.r.str === r.r.str &&
+              z.rect.every((v, k) => Math.abs(v - r.rect[k]) < 1e-6)
+          )
+        if (owned.some((r) => !actualRecord(r))) continue
+        const ownInk = (r) => ink(actualRecord(r))
+        if (owned.some((r) => !valid(ownInk(r)) || !inside(band, ownInk(r)))) continue
+        const textExtent = union(owned.flatMap((r) => [r.rect, ownInk(r)])),
+          frame = union([extent, textExtent]),
+          paints = [],
+          ownedPaint = new Set()
+        let bad = false
+        for (const [i, graphic] of identities.entries()) {
+          const rect = precise[i]
+          if (!valid(rect)) {
+            bad = true
+            break
+          }
+          if (over(rect, frame)) {
+            if (
+              graphic.kind !== 'path' ||
+              !inside(
+                [
+                  frame[0] - h * 0.15,
+                  frame[1] - h * 0.15,
+                  frame[2] + h * 0.15,
+                  frame[3] + h * 0.15
+                ],
+                rect
+              )
+            ) {
+              bad = true
+              break
+            }
+            paints.push(rect)
+            ownedPaint.add(i)
+          }
+        }
+        if (bad || !paints.length) {
+          continue
+        }
+        const bound = union([frame, ...paints]),
+          crop = bound.map((v, i) => v + (i < 2 ? -0.75 : 0.75))
+        if (
+          !inside([0, 0, page.width, page.height], crop) ||
+          captions.some((c) => c !== caption && c.page === page.pageNumber && over(c.rect, crop)) ||
+          currentPacket.records.some(
+            (r) =>
+              !owned.some((o) => o.index === r.index) &&
+              r.part.some((z) => z.g.text.trim() && over(z.g.ink, crop))
+          ) ||
+          (page.graphicsBounds ?? []).some(
+            (g) =>
+              g.kind === 'image' &&
+              over(
+                (g.paintedNormalizedRect ?? g.normalizedRect).map(
+                  (v, i) => v * (i % 2 ? page.height : page.width)
+                ),
+                crop
+              )
+          )
+        )
+          continue
+        const table = { rect: crop, caption },
+          sourceIndices = owned.map((r) => r.index),
+          resultCurrent = retainNativeRecoveryInputs(
+            [table, sourceIndices, bound],
+            context.viewport
+          )
+        if (!resultCurrent || !inputsCurrent()) continue
+        proofs.push({
+          table,
+          sourceIndices,
+          paintBounds: bound,
+          current: () => inputsCurrent() && resultCurrent(),
+          pngSafe: (png) => {
+            const raster = getPdfCropRasterProtectionFromPng(png, crop, page)
+            return (
+              !!raster &&
+              inputsCurrent() &&
+              resultCurrent() &&
+              !currentPacket.records.some(
+                (r) =>
+                  !owned.some((o) => o.index === r.index) &&
+                  r.part.some((z) => z.g.text.trim() && over(z.g.ink, raster.protection))
+              ) &&
+              !precise.some((r, i) => !ownedPaint.has(i) && over(r, raster.protection))
+            )
+          }
+        })
+      }
+      if (proofs.length === 1) out.push(proofs[0])
+    }
+    return inputsCurrent() ? out : []
   } catch {
     return []
   }

@@ -1,8 +1,13 @@
-import { execFile } from 'node:child_process'
 import { join, isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { computeAccounts } from './compute-account-service'
-import { modalPythonCommand } from './modal-account-auth'
+import {
+  computePythonRuntime,
+  computeHelperPath,
+  runComputePython,
+  type ComputePythonBinding
+} from './compute-python-runtime'
+import type { ModalMaterial } from './compute-account-adapter'
 
 type App = { environmentName: string; appName: string }
 type Binding = App & { appId: string; nonce: string; volumeName: string }
@@ -19,75 +24,79 @@ const observation = z.object({
 })
 export class ModalCreateRejectedError extends Error {}
 
+export type ModalExecution = (
+  action: string,
+  request: object,
+  signal?: AbortSignal
+) => Promise<unknown>
+export async function withModalExecution<T>(
+  operation: (execute: ModalExecution) => Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  // Account identity must precede the environment lease (the account queue itself probes Python).
+  const identity = await computeAccounts.modalIdentity(signal)
+  const runtime = computePythonRuntime('modal')
+  const binding = await runtime.binding(signal)
+  return runtime.run(
+    binding,
+    () =>
+      operation((action, request, signal) =>
+        invokeBound(binding, identity, action, request, signal)
+      ),
+    signal
+  )
+}
 async function invoke(action: string, request: object, signal?: AbortSignal): Promise<unknown> {
-  signal?.throwIfAborted()
-  const { python, args } = modalPythonCommand('compute-modal.py')
-  const managedIdentity = await computeAccounts.modalIdentity(signal)
+  return withModalExecution((execute) => execute(action, request, signal), signal)
+}
+async function invokeBound(
+  binding: ComputePythonBinding,
+  managedIdentity: ModalMaterial | undefined,
+  action: string,
+  request: object,
+  signal?: AbortSignal
+): Promise<unknown> {
   const data = JSON.stringify({ request, managedIdentity })
   if (Buffer.byteLength(data) > 2 * 1024 * 1024)
     throw new Error('Modal request exceeds its byte limit.')
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      python,
-      [...args, action],
-      {
-        encoding: 'utf8',
-        signal,
-        timeout: ['stage', 'launch', 'download'].includes(action) ? 600000 : 45000,
-        killSignal: 'SIGKILL',
-        maxBuffer: 4 * 1024 * 1024,
-        windowsHide: true
-      },
-      (error, stdout) => {
-        if (error) {
-          reject(
-            signal?.aborted
-              ? signal.reason
-              : new Error(
-                  'Modal SDK process unavailable or interrupted. Check the configured Python interpreter.'
-                )
-          )
-          return
-        }
-        const envelope = z.union([
-          z.strictObject({ result: z.json() }),
-          z.strictObject({ error: z.string() })
-        ])
-        let response: z.infer<typeof envelope>
-        try {
-          response = envelope.parse(JSON.parse(stdout))
-        } catch {
-          reject(new Error('Invalid response from the Modal SDK process.'))
-          return
-        }
-        if ('result' in response) {
-          resolve(response.result)
-        } else if (response.error === 'sdk-version') {
-          reject(
-            new Error(
-              'Install modal==1.6.3 in the host Python environment or set OPEN_SCIENCE_MODAL_PYTHON.'
-            )
-          )
-        } else if (
-          (action === 'launch' && response.error === 'sandbox-not-started') ||
-          (action === 'create-volume' &&
-            ['InvalidError', 'InvalidUsageError', 'PermissionDeniedError', 'AuthError'].includes(
-              response.error
-            ))
-        ) {
-          reject(new ModalCreateRejectedError('Modal rejected resource creation.'))
-        } else {
-          reject(
-            new Error('Modal SDK operation failed. Check the local identity, App and environment.')
-          )
-        }
-      }
+  let stdout: string
+  try {
+    stdout = await runComputePython(
+      binding.python,
+      ['-I', '-B', computeHelperPath('compute-modal.py'), action],
+      data,
+      signal,
+      ['stage', 'launch', 'download'].includes(action) ? 600000 : 45000,
+      4 * 1024 * 1024
     )
-    child.stdin?.on('error', () => {
-      /* The callback reports process failures. */
-    })
-    child.stdin?.end(data)
-  })
+  } catch {
+    if (signal?.aborted) throw signal.reason
+    throw new Error(
+      'Modal SDK process unavailable or interrupted. Review the Python environment in Connect Modal.'
+    )
+  }
+  const envelope = z.union([
+    z.strictObject({ result: z.json() }),
+    z.strictObject({ error: z.string() })
+  ])
+  let response: z.infer<typeof envelope>
+  try {
+    response = envelope.parse(JSON.parse(stdout))
+  } catch {
+    throw new Error('Invalid response from the Modal SDK process.')
+  }
+  if ('result' in response) return response.result
+  if (
+    (action === 'launch' && response.error === 'sandbox-not-started') ||
+    (action === 'create-volume' &&
+      ['InvalidError', 'InvalidUsageError', 'PermissionDeniedError', 'AuthError'].includes(
+        response.error
+      ))
+  )
+    throw new ModalCreateRejectedError('Modal rejected resource creation.')
+  throw new Error(
+    'Modal SDK operation failed. Review the Python environment, local identity, App and environment.'
+  )
 }
 
 export async function resolveModalApp(
@@ -107,11 +116,12 @@ export async function resolveModalApp(
 export { resolveModalApp as inspectModalTarget }
 export async function createModalVolume(
   binding: Binding,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  execute: ModalExecution = invoke
 ): Promise<{ volumeId: string }> {
   return z
     .object({ volumeId: z.string().regex(/^vo-[\w-]+$/) })
-    .parse(await invoke('create-volume', binding, signal))
+    .parse(await execute('create-volume', binding, signal))
 }
 const portable = (name: string): boolean =>
   name.length > 0 &&
@@ -154,11 +164,12 @@ export async function createModalSandbox(
     gpu?: string
     timeoutSeconds: number
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  execute: ModalExecution = invoke
 ): Promise<{ sandboxId: string }> {
   return z
     .object({ sandboxId: z.string().regex(/^sb-[\w-]+$/) })
-    .parse(await invoke('launch', request, signal))
+    .parse(await execute('launch', request, signal))
 }
 export async function inspectModalSandbox(
   request: Sandbox,

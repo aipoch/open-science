@@ -25,7 +25,7 @@ import { nativeReadingOrder, nativeHyphenatedText } from './reading-order.mjs'
 import { proveNumericGlyphSources } from './numeric-glyphs.mjs'
 import { createSourceFragmentRecovery } from './source-fragments.mjs'
 import { unwrapPageContainers } from './page-containers.mjs'
-import { translateFormLabels } from './form-labels.mjs'
+import { preserveOpenRectanglePaths, translateFormLabels } from './form-labels.mjs'
 import { generateReflow } from './reflow.mjs'
 import { splitSharedTextRuns, recoverOverprintedTextSources } from './shared-text-runs.mjs'
 import {
@@ -220,7 +220,10 @@ const objectSourceOffsets = (
 ) => {
   const expected = []
   for (const { segment, index } of sourceGraphemes.segment(source)) {
-    for (const value of normalized(segment)) expected.push({ value, index })
+    // A combining slash may share a grapheme with a preceding PDF.js space.
+    // Its source offset starts at the retained sign, not the discarded space.
+    const start = index + (segment.match(/^\s*/u)?.[0].length ?? 0)
+    for (const value of normalized(segment)) expected.push({ value, index: start })
   }
   const offsets = new Map(),
     extraOffsets = new Map(),
@@ -1291,8 +1294,8 @@ async function generate({
       throw error
     }
   }
-  const planUnit = (unit) => {
-    const originalUnit = unit
+  const planUnit = (unit, numericInitialProof) => {
+    const originalUnit = numericInitialProof?.owner ?? unit
     pageNumber = unit.fragments[0]?.pageNumber
     const unchanged =
       unit.source === unit.translation ||
@@ -1328,7 +1331,9 @@ async function generate({
         gap = a ? b.y - a.y - a.height : Infinity
       if (
         previous?.pageNumber === fragment.pageNumber &&
-        Math.abs(a.x - b.x) * page.width <= 0.5 &&
+        // Merging must preserve the declared IPC left edge for every row;
+        // a genuine inset is not serialization rounding or available space.
+        Math.abs(a.x - b.x) * page.width <= 0.001 &&
         (Math.abs(a.x + a.width - b.x - b.width) * page.width <= 0.5 ||
           // A paragraph's shorter final row owns the same column's blank tail,
           // provided the native object/link checks below prove it is empty.
@@ -1688,11 +1693,14 @@ async function generate({
           ),
           dropCap
         const [capital, opening] = selected.filter((object) => object.text.trim()),
-          openingWord = opening?.text.trim().match(/^[a-z][A-Za-z]*/u)?.[0],
+          numericInitial =
+            /^[1-9]$/u.test(capital?.text.trim() ?? '') &&
+            /^D\s+[a-z][A-Za-z]{2,}\b/u.test(opening?.text.trim() ?? ''),
+          openingWord = numericInitial ? 'D' : opening?.text.trim().match(/^[a-z][A-Za-z]*/u)?.[0],
           openingSize = opening && sizes.get(opening.i)
         if (
           horizontalSource &&
-          /^[A-Z]$/u.test(capital?.text.trim() ?? '') &&
+          (/^[A-Z]$/u.test(capital?.text.trim() ?? '') || numericInitial) &&
           openingWord &&
           unit.source.trimStart().startsWith(capital.text.trim() + openingWord) &&
           sizes.get(capital.i) >= openingSize * 2 &&
@@ -1718,13 +1726,105 @@ async function generate({
             row.top = Math.max(row.top, object.bounds[3])
           }
           rows.sort((left, right) => right.baseline - left.baseline)
-          const inset = rows.slice(0, 3),
-            following = rows[3]
-          // A decorative initial spans three indented lines of one native font.
-          // A fourth line resumes at its left edge below all capital ink. This
+          const replannedInitial =
+            numericInitialProof?.page === page &&
+            numericInitialProof.fragment === fragment &&
+            numericInitialProof.capital === capital.obj &&
+            numericInitialProof.font === font &&
+            numericInitialProof.source === unit.source
+          let numericReturn = replannedInitial ? rows[2] : undefined
+          const next = unit.fragments[index + 1]
+          if (numericInitial && rows.length === 2 && next?.pageNumber === fragment.pageNumber) {
+            const box = fragmentBounds(next),
+              intersects = (object) =>
+                object.bounds[0] < box.x + box.width &&
+                object.bounds[2] > box.x &&
+                object.bounds[1] < box.top &&
+                object.bounds[3] > box.bottom,
+              contained = (object) =>
+                object.bounds[0] >= box.x - 0.05 &&
+                object.bounds[2] <= box.x + box.width + 0.05 &&
+                object.bounds[1] >= box.bottom - 0.05 &&
+                object.bounds[3] <= box.top + 0.05,
+              text = objects.filter(
+                (object) => object.type === 1 && object.text.trim() && intersects(object)
+              ),
+              complete = text.filter(contained)
+            // The next complete owned fragment can overlap this initial's em box.
+            // Only these already-selected native objects may cross its boundary.
+            if (
+              Math.abs(box.x - sourceRect.x) <= 0.5 &&
+              Math.abs(box.x + box.width - sourceRect.x - sourceRect.width) <= openingSize * 0.25 &&
+              box.top <= sourceRect.top &&
+              box.bottom < sourceRect.bottom &&
+              Array.isArray(next.items) &&
+              next.items.length > 0 &&
+              next.items.length <= 500 &&
+              next.items.every(
+                (item, at, items) =>
+                  Number.isSafeInteger(item.index) &&
+                  item.index >= 0 &&
+                  typeof item.text === 'string' &&
+                  (!at || item.index > items[at - 1].index)
+              ) &&
+              text.every((object) => contained(object) || selected.includes(object)) &&
+              sourceMatches(
+                next.items.map((item) => item.text).join(''),
+                complete.map((object) => object.text).join(''),
+                origin.verifiedHyphens(box)
+              )
+            ) {
+              const metrics = e.alloc(24),
+                candidates = []
+              try {
+                for (const object of complete.filter((object) => !selected.includes(object))) {
+                  if (!p.FPDFPageObj_GetMatrix(object.obj, metrics)) break
+                  const [a, b, c, d, , baseline] = e.m.HEAPF32.slice(metrics / 4, metrics / 4 + 6)
+                  if (
+                    a <= 0 ||
+                    a !== d ||
+                    b !== 0 ||
+                    c !== 0 ||
+                    !p.FPDFTextObj_GetFontSize(object.obj, metrics)
+                  )
+                    break
+                  candidates.push({ object, baseline, size: e.m.HEAPF32[metrics / 4] * a })
+                }
+              } finally {
+                e.free(metrics)
+              }
+              if (
+                candidates.length ===
+                  complete.filter((object) => !selected.includes(object)).length &&
+                candidates.length
+              ) {
+                const highest = Math.max(...candidates.map((candidate) => candidate.baseline)),
+                  first = candidates.filter(
+                    (candidate) => Math.abs(candidate.baseline - highest) < 0.02
+                  )
+                if (
+                  first.every(
+                    ({ object, size }) =>
+                      p.FPDFTextObj_GetFont(object.obj) === font &&
+                      Math.abs(size - openingSize) < 0.01
+                  )
+                )
+                  numericReturn = {
+                    baseline: highest,
+                    left: Math.min(...first.map(({ object }) => object.bounds[0])),
+                    top: Math.max(...first.map(({ object }) => object.bounds[3]))
+                  }
+              }
+            }
+          }
+          const insetCount = numericInitial ? 2 : 3,
+            inset = rows.slice(0, insetCount),
+            following = numericInitial ? numericReturn : rows[3]
+          // A decorative initial spans indented lines of one native font.
+          // A following owned line resumes below all capital ink. This
           // identifies a drop cap without reclassifying a heading or a formula.
           if (
-            inset.length === 3 &&
+            inset.length === insetCount &&
             following &&
             inset.every(
               (row, index) =>
@@ -1735,12 +1835,96 @@ async function generate({
                     inset[index - 1].baseline - row.baseline <= openingSize * 1.6))
             ) &&
             capital.bounds[3] >= inset[0].baseline + openingSize * 0.4 &&
-            capital.bounds[1] <= inset[2].baseline + openingSize * 0.1 &&
+            capital.bounds[1] <= inset.at(-1).baseline + openingSize * 0.1 &&
+            (!numericInitial ||
+              (inset.at(-1).baseline - following.baseline >= openingSize * 0.9 &&
+                inset.at(-1).baseline - following.baseline <= openingSize * 1.6)) &&
             following.top < capital.bounds[1] &&
             Math.abs(following.left - capital.bounds[0]) <= openingSize * 0.25
           ) {
-            dropCap = capital
-            bodySize = openingSize
+            if (numericInitial && !replannedInitial) {
+              // Replan this proven initial and its overlapping owned return fragment
+              // once, so their shared native line is neither foreign ink nor counted twice.
+              if (
+                !numericInitialProof &&
+                index === 0 &&
+                Array.isArray(fragment.items) &&
+                fragment.items.length > 0 &&
+                fragment.items.length <= 500 &&
+                next?.items?.length
+              ) {
+                const a = fragment.rect,
+                  b = next.rect,
+                  merged = {
+                    pageNumber: fragment.pageNumber,
+                    rect: {
+                      x: Math.min(a.x, b.x),
+                      y: Math.min(a.y, b.y),
+                      width: Math.max(a.x + a.width, b.x + b.width) - Math.min(a.x, b.x),
+                      height: Math.max(a.y + a.height, b.y + b.height) - Math.min(a.y, b.y)
+                    },
+                    items: [...fragment.items, ...next.items]
+                  },
+                  box = fragmentBounds(merged),
+                  overlaps = (bounds) =>
+                    bounds[0] < box.x + box.width &&
+                    bounds[2] > box.x &&
+                    bounds[1] < box.top &&
+                    bounds[3] > box.bottom,
+                  contained = (object) =>
+                    object.bounds[0] >= box.x - 0.05 &&
+                    object.bounds[2] <= box.x + box.width + 0.05 &&
+                    object.bounds[1] >= box.bottom - 0.05 &&
+                    object.bounds[3] <= box.top + 0.05,
+                  paint = objects.filter((object) => overlaps(object.bounds)),
+                  text = paint.filter((object) => object.type === 1 && object.text.trim())
+                if (
+                  a.y + a.height > b.y &&
+                  merged.items.every(
+                    (item, at, items) =>
+                      Number.isSafeInteger(item.index) &&
+                      item.index >= 0 &&
+                      typeof item.text === 'string' &&
+                      (!at || item.index > items[at - 1].index)
+                  ) &&
+                  paint.every((object) => object.type === 1) &&
+                  text.every(contained) &&
+                  sourceMatches(
+                    merged.items.map((item) => item.text).join(''),
+                    text.map((object) => object.text).join(''),
+                    origin.verifiedHyphens(box)
+                  ) &&
+                  !units.some(
+                    (other) =>
+                      other !== originalUnit &&
+                      other.fragments.some((other) => {
+                        if (other.pageNumber !== fragment.pageNumber) return false
+                        const bounds = fragmentBounds(other)
+                        return overlaps([
+                          bounds.x,
+                          bounds.bottom,
+                          bounds.x + bounds.width,
+                          bounds.top
+                        ])
+                      })
+                  )
+                )
+                  return planUnit(
+                    { ...unit, fragments: [merged, ...unit.fragments.slice(2)] },
+                    {
+                      owner: originalUnit,
+                      page,
+                      fragment: merged,
+                      capital: capital.obj,
+                      font,
+                      source: unit.source
+                    }
+                  )
+              }
+            } else {
+              dropCap = capital
+              bodySize = openingSize
+            }
           }
         }
         const bodyBaselines = selected
@@ -2112,7 +2296,7 @@ async function generate({
                   // can move together with its proven native mathematical group.
                   radical =
                     nativeMathSymbolText(before, nativeFontName(before)).trim() === '√' &&
-                    /^[A-Za-zα-ωΑ-Ω0-9]{1,8}$/u.test(after.text.trim()) &&
+                    /^[A-Za-zα-ωΑ-Ω∆0-9]{1,8}$/u.test(after.text.trim()) &&
                     right - left >= point * 0.2 &&
                     right - left <= point * 5 &&
                     Math.abs(left - before.bounds[2]) <= point * 0.15 &&
@@ -2205,7 +2389,7 @@ async function generate({
             )
           // A painted vertical cell rule inside a text region proves separate
           // columns. Reflowing the whole row would move values into other cells.
-          const at = e.alloc(16)
+          const at = e.alloc(24)
           try {
             for (const rule of rules) {
               check(p.FPDFPath_GetDrawMode(rule.obj, at, at + 4))
@@ -2235,6 +2419,70 @@ async function generate({
                 sourceRect.x = Math.max(sourceRect.x, rule.bounds[2] + 0.5)
                 sourceRect.width = end - sourceRect.x
               } else check(false, 'unsupported-layout')
+            }
+            // Matching native row rails bound borrowed side space even when no
+            // vertical cell edge exists. They grant no new source/paint ownership.
+            const rowRails = []
+            for (const rule of objects) {
+              if (
+                rule.type !== 2 ||
+                rule.bounds[3] - rule.bounds[1] > 2 ||
+                p.FPDFPath_CountSegments(rule.obj) !== 2 ||
+                p.FPDFPageObj_GetLineCap(rule.obj) !== 0 ||
+                p.FPDFPageObj_GetDashCount(rule.obj) !== 0
+              )
+                continue
+              const clip = p.FPDFPageObj_GetClipPath(rule.obj)
+              if (clip && p.FPDFClipPath_CountPaths(clip) !== -1) continue
+              check(p.FPDFPath_GetDrawMode(rule.obj, at, at + 4))
+              if (e.m.HEAP32[at / 4] || !e.m.HEAP32[at / 4 + 1]) continue
+              check(p.FPDFPageObj_GetStrokeColor(rule.obj, at, at + 4, at + 8, at + 12))
+              if (e.m.HEAPU32[at / 4 + 3] !== 255) continue
+              check(p.FPDFPageObj_GetMatrix(rule.obj, at))
+              const matrix = [...e.m.HEAPF32.slice(at / 4, at / 4 + 6)]
+              if (
+                !matrix.every(Number.isFinite) ||
+                matrix[0] <= 0 ||
+                matrix[3] <= 0 ||
+                matrix[1] !== 0 ||
+                matrix[2] !== 0
+              )
+                continue
+              const points = []
+              for (let n = 0; n < 2; n++) {
+                const segment = p.FPDFPath_GetPathSegment(rule.obj, n)
+                if (
+                  !segment ||
+                  p.FPDFPathSegment_GetType(segment) !== (n ? 0 : 2) ||
+                  p.FPDFPathSegment_GetClose(segment) ||
+                  !p.FPDFPathSegment_GetPoint(segment, at, at + 4)
+                )
+                  break
+                const [x, y] = e.m.HEAPF32.slice(at / 4, at / 4 + 2)
+                points.push([matrix[0] * x + matrix[4], matrix[3] * y + matrix[5]])
+              }
+              if (
+                points.length !== 2 ||
+                !points.flat().every(Number.isFinite) ||
+                points[0][1] !== points[1][1]
+              )
+                continue
+              const x0 = Math.min(points[0][0], points[1][0]),
+                x1 = Math.max(points[0][0], points[1][0]),
+                y = points[0][1]
+              if (x0 <= left && x1 >= right && (y >= top || y <= bottom))
+                rowRails.push({ left: x0, right: x1, y })
+            }
+            for (const upper of rowRails.filter((r) => r.y >= top)) {
+              if (
+                !rowRails.some(
+                  (r) => r.y <= bottom && r.left === upper.left && r.right === upper.right
+                )
+              )
+                continue
+              const end = Math.min(sourceRect.x + sourceRect.width, upper.right)
+              sourceRect.x = Math.max(sourceRect.x, upper.left)
+              sourceRect.width = end - sourceRect.x
             }
           } finally {
             e.free(at)
@@ -3011,14 +3259,25 @@ async function generate({
         const markers = selected
           .filter((o) => !region.anchors.some((a) => a.indices.includes(o.i)))
           .map((o) => {
-            const baseline = objectBaselines.get(o.i)
+            const baseline = objectBaselines.get(o.i),
+              sourceOffset = offsets.get(o.i),
+              nativeLabel = o.text.trim(),
+              spelling = unit.source.slice(sourceOffset, sourceOffset + nativeLabel.length),
+              // PDFium and PDF.js can use different same-width mu spellings.
+              nativeAlias =
+                Number.isSafeInteger(sourceOffset) &&
+                sourceOffset >= 0 &&
+                spelling.length === nativeLabel.length &&
+                spelling !== nativeLabel &&
+                spelling.replaceAll('µ', 'μ') === nativeLabel.replaceAll('µ', 'μ')
             const closest = bodyBaselines.reduce(
               (nearest, y) => (Math.abs(y - baseline) < Math.abs(nearest - baseline) ? y : nearest),
               bodyBaselines[0]
             )
             return {
-              sourceOffset: offsets.get(o.i),
-              label: o.text.trim(),
+              sourceOffset,
+              label: nativeAlias ? spelling : nativeLabel,
+              nativeAlias,
               scale: sizes.get(o.i) / bodySize,
               rise: baseline - closest,
               bounds: [...o.bounds],
@@ -3195,6 +3454,8 @@ async function generate({
         for (const group of resolveNestedScriptGroups(unit.source, unit.source, markers)) {
           if (
             group.scriptOnly ||
+            group.indexedProduct ||
+            group.nativeScriptGroup ||
             (group.baselineIndex === group.sourceIndices[0] &&
               ((group.sourceIndices.length === 3 &&
                 /^[A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]{2,7}$/u.test(group.label)) ||
@@ -3242,6 +3503,25 @@ async function generate({
             movable: true
           })
         }
+        // A reconciled native script must acquire script typography or retain
+        // its source paragraph; an unmatched alias must never become flat prose.
+        for (const marker of markers)
+          if (
+            marker.nativeAlias &&
+            marker.scale >= 0.5 &&
+            marker.scale < 0.85 &&
+            Math.abs(marker.rise) > bodySize * 0.08 &&
+            Math.abs(marker.rise) < bodySize * 0.6
+          )
+            check(
+              region.anchors.some(
+                (anchor) =>
+                  marker.sourceIndices.every((index) => anchor.indices.includes(index)) &&
+                  ((anchor.mathGroup && !anchor.generated) ||
+                    (anchor.generated && anchor.movable && Number.isFinite(anchor.scriptRise)))
+              ),
+              'unsupported-layout'
+            )
         // Translated academic degrees no longer share the source's identifier
         // (PhD2). Map the complete author-footnote sequence only when native
         // geometry proves every marker and the target keeps every label in order.
@@ -3305,13 +3585,22 @@ async function generate({
               /^[\p{Sm}\p{Cc}\s]+$/u.test(label) &&
               object.bounds[2] > object.bounds[0] &&
               object.bounds[3] > object.bounds[1],
+            // Some CMSY objects paint the slash and its relation together.
+            // Keep that complete native run only; a detached combining mark
+            // or a reordered target is not a rendering substitute.
+            nativeNegatedRelation =
+              /^(?:[A-Z]{6}\+)?CMSY(?:5|6|7|8|9|10|12)$/u.test(nativeFontName(object)) &&
+              /^\u0338[∼∈]$/u.test(label) &&
+              object.bounds[2] > object.bounds[0] &&
+              object.bounds[3] > object.bounds[1],
             nativeSymbol =
+              nativeNegatedRelation ||
               nativeAlphabet ||
               mathematicalRun ||
               loweredIndexOperator ||
               nativeEncodedSymbol ||
               registeredMarks.has(object.i) ||
-              ((/^[\p{L}\p{Sm}\p{So}]$/u.test(label) ||
+              ((/^[\p{L}\p{Sm}\p{So}⟨⟩]$/u.test(label) ||
                 /^[\p{Sm}]\s*[A-Za-z\p{Script=Greek}]$/u.test(label)) &&
                 (!face.hasGlyphForCodePoint(label.codePointAt(0)) ||
                   // A raised standalone symbol keeps its original glyph even if
@@ -3385,7 +3674,13 @@ async function generate({
           }
           // Publisher-encoded glyphs require exact source identity. If the target
           // changes or ambiguously duplicates them, retain the verified paragraph.
-          if (nativeAlphabet || nativeEncodedSymbol || mathematicalRun || loweredIndexOperator)
+          if (
+            nativeAlphabet ||
+            nativeEncodedSymbol ||
+            nativeNegatedRelation ||
+            mathematicalRun ||
+            loweredIndexOperator
+          )
             check(
               targetOffset >= 0 &&
                 (!nativeAlphabet ||
@@ -4851,6 +5146,9 @@ async function generate({
           !token.anchor?.nativeFootnoteRow &&
           (/^[，。！？；：、,.;:!?）)］\]｝}》」』】”’％%]/u.test((token.text ?? '').trimStart()) ||
             /[（(［[｛{《「『【“‘]$/u.test((previous.at(-1).text ?? '').trimEnd()) ||
+            // Script anchors introduce their own boundaries. A literal ratio
+            // remains atomic across that seam just as it does in plain prose.
+            (previousAnchor && /^\s*\//u.test(token.text ?? '') && !ends.includes(start)) ||
             (token.anchor &&
               !wrappedUriBreak &&
               !/[\s，,；;]$/u.test(previous.at(-1).text ?? '')) ||
@@ -5246,13 +5544,16 @@ async function generate({
       // Keep punctuation attached across an inserted anchor boundary. Each group
       // can wrap as a whole, so a closing mark never starts the next line.
       const groups = []
-      for (const token of tokens) {
+      for (const [index, token] of tokens.entries()) {
         const previous = groups.at(-1)
         if (
           previous &&
           !token.anchor?.nativeFootnoteRow &&
           (/^[，。！？；：、,.;:!?）)］\]｝}》」』】”’％%]/u.test((token.text ?? '').trimStart()) ||
             /[（(［[｛{《「『【“‘]$/u.test((previous.at(-1).text ?? '').trimEnd()) ||
+            (previous.at(-1).anchor &&
+              /^\s*\//u.test(token.text ?? '') &&
+              !ends.includes(boundaries[index])) ||
             (token.anchor &&
               !/[\s，,；;]$/u.test(previous.at(-1).text ?? '') &&
               // A standalone full URI may start after its introducer colon;
@@ -6313,8 +6614,10 @@ async function generate({
             prepared.delete(line.object)
           }
         }
-        for (const page of new Set(replacements.map((plan) => plan.page)))
+        for (const page of new Set(replacements.map((plan) => plan.page))) {
+          preserveOpenRectanglePaths(e, page)
           check(p.FPDFPage_GenerateContent(page))
+        }
       } finally {
         // Rejected units and failed insertions still own their uninserted objects.
         for (const object of prepared) p.FPDFPageObj_Destroy(object)

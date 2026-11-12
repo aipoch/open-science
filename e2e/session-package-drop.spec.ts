@@ -258,28 +258,21 @@ test('drops native packages into Workspace and Home and restores a child discuss
   expect(detached?.runtimeContext?.sessionContext).toBeUndefined()
   await expect(reopened.getByText('Source deleted', { exact: true })).toBeVisible()
   await reopened.screenshot({ path: testInfo.outputPath('detached-parent-discussion.png') })
+  const replies = reopened
+    .getByRole('region', { name: 'Conversation', exact: true })
+    .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  const previousReplies = await replies.count()
   await submitPromptViaUi(reopened, 'Continue as an ordinary conversation.')
-  await expect(reopened.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
-  await expect
-    .poll(
-      async () =>
-        (await app.readFakeAgentPrompts())
-          .filter(
-            (row) =>
-              row.prompt.includes('Continue as an ordinary conversation.') &&
-              !row.prompt.includes('Generate Session metadata')
-          )
-          .at(-1)?.prompt
-    )
-    .toBeTruthy()
+  await expect(replies).toHaveCount(previousReplies + 1, { timeout: 90_000 })
   const followUp = (await app.readFakeAgentPrompts())
     .filter(
       (row) =>
         row.prompt.includes('Continue as an ordinary conversation.') &&
         !row.prompt.includes('Generate Session metadata')
     )
-    .at(-1)!
-  expect(followUp.prompt).not.toContain('Current discussion focus for this turn')
+    .at(-1)
+  expect(followUp?.prompt).toContain('Continue as an ordinary conversation.')
+  expect(followUp?.prompt).not.toContain('Current discussion focus for this turn')
 })
 
 test('attaches native files across the conversation and excludes both sidebars', async ({

@@ -545,7 +545,15 @@
     "packages/pdf-translation/resources/native-link-origin.mjs",
     "packages/pdf-translation/test/native-link-origin.test.ts",
     "packages/pdf-translation/src/reader/native-occluded-text.ts",
-    "packages/pdf-translation/test/reader/pdf-translation-occluded-text.test.ts"
+    "packages/pdf-translation/test/reader/pdf-translation-occluded-text.test.ts",
+    "packages/pdf-translation/resources/reflow-native-retention.mjs",
+    "packages/pdf-translation/src/reader/unstructured-table-retention.ts",
+    "packages/pdf-translation/test/greek-script-aliases.test.ts",
+    "packages/pdf-translation/test/protected-literals.test.ts",
+    "packages/pdf-translation/test/reader/pdf-translation-unstructured-table-retention.test.ts",
+    "packages/pdf-translation/test/reflow-link-retry.test.ts",
+    "packages/pdf-translation/test/reflow-native-retention.test.ts",
+    "packages/pdf-translation/test/reflow-page-anchors.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -656,7 +664,13 @@
       "packages/pdf-translation/test/reader/pdf-translation-figure-panels.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-figure-variable-keys.test.ts",
       "packages/pdf-translation/test/native-link-origin.test.ts",
-      "packages/pdf-translation/test/reader/pdf-translation-occluded-text.test.ts"
+      "packages/pdf-translation/test/reader/pdf-translation-occluded-text.test.ts",
+      "packages/pdf-translation/test/greek-script-aliases.test.ts",
+      "packages/pdf-translation/test/protected-literals.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-unstructured-table-retention.test.ts",
+      "packages/pdf-translation/test/reflow-link-retry.test.ts",
+      "packages/pdf-translation/test/reflow-native-retention.test.ts",
+      "packages/pdf-translation/test/reflow-page-anchors.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [

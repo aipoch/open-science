@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -92,7 +92,7 @@ it.each(['EACCES', 'EIO'])(
       await pruning
       expect(run).toHaveBeenCalledWith(
         '/usr/bin/python3',
-        ['-I', '-S', '-c', expect.any(String), root, names[1], names[0]],
+        ['-I', '-S', '-c', expect.any(String), await realpath(root), names[1], names[0]],
         { timeout: 10000 }
       )
     }

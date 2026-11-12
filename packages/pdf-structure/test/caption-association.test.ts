@@ -54,10 +54,10 @@ const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> =>
   graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 50 / 800, 350 / 600, 235 / 800] }]
 })
 
-function leftCaptionStack(): ReturnType<typeof JSON.parse> {
+function leftCaptionStack(prefix = ''): ReturnType<typeof JSON.parse> {
   const captions = [80, 190, 300].map((y, n) => ({
     page: 1,
-    lines: [`Table ${n + 1}. Independent measurements.`],
+    lines: [`Table ${prefix}${n + 1}. Independent measurements.`],
     rect: [50, y, 200, y + 10]
   }))
   const tables = [100, 210, 320].map((y) => ({ rect: [50, y + 13, 450, y + 79] }))
@@ -106,6 +106,49 @@ it('reserves short flush-left titles for complete consecutive native table frame
     associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
   ).toEqual(f.captions)
   expect(f).toEqual(before)
+})
+
+it.each(['A', 'S', 'B', 'Z'])(
+  'preserves independent %s-series captions on complete consecutive native frames',
+  (prefix) => {
+    const f = leftCaptionStack(prefix),
+      before = structuredClone(f)
+    expect(
+      associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+    ).toEqual(f.captions)
+    expect(f).toEqual(before)
+  }
+)
+
+it.each(['mixed-series', 'nonconsecutive', 'missing-opening', 'foreign-corridor'])(
+  'requires the same independent native proof for appendix captions: %s',
+  (change) => {
+    const f = leftCaptionStack('A')
+    if (change === 'mixed-series') f.captions[1].lines[0] = 'Table S2. Independent measurements.'
+    if (change === 'nonconsecutive') f.captions[1].lines[0] = 'Table A9. Independent measurements.'
+    if (change === 'missing-opening')
+      f.rules = f.rules.filter((_: unknown, i: number) => i % 3 !== 0)
+    if (change === 'foreign-corridor')
+      f.page.lines.push({
+        text: 'Independent prose',
+        x: 60,
+        y: 92,
+        width: 100,
+        height: 5,
+        fontSize: 5
+      })
+    expect(
+      associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+    ).not.toEqual(f.captions)
+  }
+)
+
+it.each(['B', 'Z'])('keeps distinct %s-series caption stacks separate', (prefix) => {
+  const f = leftCaptionStack(prefix)
+  f.captions[1].lines[0] = 'Table A2. Independent measurements.'
+  expect(
+    associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+  ).not.toEqual(f.captions)
 })
 
 it.each([
@@ -2459,3 +2502,190 @@ it('keeps stacked raster and vector panels under one caption beside a separated-
   expect(figures).toHaveLength(1)
   expect(figures[0].rect).toEqual([80, 60, 260, 590])
 })
+
+it.each([
+  'intact',
+  'missing-raster',
+  'distant-raster',
+  'tail-alignment',
+  'tail-font',
+  'intervening-text'
+])('closes a raster caption before a neighboring independent caption: %s', (kind) => {
+  const line = (text: string, x: number, y: number, width: number): unknown => ({
+    text,
+    x,
+    y,
+    width,
+    height: 9,
+    fontSize: 9
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [
+      line('Figure 2: Distribution of repeated measurements in', 53.8, 152.6, 240.2),
+      line('Groups', 53.5, 163.5, 26.2),
+      line('The highest response values were found in groups such as sets of', 53.5, 242, 240.5),
+      line('Figure 3: Distribution of positive and negative responses', 318, 255.3, 240.2)
+    ],
+    graphicsBounds: [{ kind: 'image', normalizedRect: [55 / 600, 83 / 800, 296 / 600, 155 / 800] }]
+  }
+  if (kind === 'missing-raster') page.graphicsBounds = []
+  if (kind === 'distant-raster') page.graphicsBounds[0].normalizedRect[3] = 100 / 800
+  if (kind === 'tail-alignment') (page.lines[1] as { x: number }).x += 30
+  if (kind === 'tail-font') (page.lines[1] as { fontSize: number }).fontSize = 12
+  if (kind === 'intervening-text') page.lines.push(line('Independent text.', 50, 178, 180))
+  const captions = findCaptionCandidates([page])
+  expect(
+    captions.some(
+      (c: { lines: string[] }) =>
+        c.lines.join(' ') === 'Figure 2: Distribution of repeated measurements in Groups'
+    )
+  ).toBe(kind === 'intact')
+})
+
+it.each([
+  'Figure 7 or in the following discussion for clarity.',
+  'Fig. 7 (a)-(d), whereas the alternative estimate differs.'
+])(
+  'keeps a conjunction or panel-range continuation with its complete native paragraph: %s',
+  (pointer) => {
+    const lines = [
+      'The comparison gives a complete account of the measured',
+      'results for the independently observed groups shown in',
+      pointer,
+      'The following sentence continues the same discussion.'
+    ].map((text, i) => ({ text, x: 50, y: 100 + i * 12, width: 250, height: 10, fontSize: 10 }))
+    const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds: [] as { kind: string; normalizedRect: number[] }[]
+    }
+    // A disjoint equation rule above the complete source rows grants no figure ownership.
+    page.graphicsBounds.push({
+      kind: 'path',
+      normalizedRect: [200 / 600, 92 / 800, 220 / 600, 99 / 800]
+    })
+    expect(findCaptionCandidates([page])).toEqual([])
+    for (const change of ['preposition', 'leading', 'font', 'crossing-graphic']) {
+      const other = structuredClone(page)
+      if (change === 'preposition')
+        other.lines[1].text = 'The measurements have an independent descriptive title.'
+      if (change === 'leading') other.lines[1].y -= 4
+      if (change === 'font') other.lines[1].fontSize = 9
+      if (change === 'crossing-graphic')
+        other.graphicsBounds[0].normalizedRect = [200 / 600, 103 / 800, 220 / 600, 114 / 800]
+      expect(findCaptionCandidates([other]).some((c) => c.lines[0] === pointer)).toBe(true)
+    }
+  }
+)
+
+const followingPlateCaption = (): ReturnType<typeof JSON.parse> => {
+  const prior = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [
+      {
+        text: 'Figure 7 shows a separate experimental illustration',
+        x: 72,
+        y: 72,
+        width: 440,
+        height: 12,
+        fontSize: 12
+      }
+    ],
+    graphicsBounds: [
+      { kind: 'image', imageHash: 'a'.repeat(64), normalizedRect: [0.15, 0.5, 0.85, 0.9] }
+    ]
+  }
+  const page = {
+    pageNumber: 2,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [] as typeof prior.graphicsBounds,
+    lines: [
+      'Figure 7. Measured observations collected for the independent groups were',
+      'recorded for each experimental condition and each repeated measurement',
+      'each shade denotes a separate experimental group.',
+      '3.4. Subsequent analysis',
+      'A separate paragraph begins after the section heading.'
+    ].map((text, i) => ({
+      text,
+      x: 72,
+      y: [72, 100, 128, 168, 208][i],
+      width: i === 2 ? 330 : 440,
+      height: 12,
+      fontSize: 12
+    }))
+  }
+  return { prior, page }
+}
+
+it('retains a double-spaced next-page caption through its separate section boundary', () => {
+  const f = followingPlateCaption(),
+    before = structuredClone(f)
+  const found = findCaptionCandidates([f.prior, f.page])
+  expect(found).toHaveLength(1)
+  expect(found[0].lines).toEqual(f.page.lines.slice(0, 3).map((l) => l.text))
+  expect(found[0].rect[3]).toBe(140)
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'number',
+  'competing-image',
+  'leading',
+  'font',
+  'heading',
+  'unclosed',
+  'intervening-line'
+])(
+  'does not extend a following-page caption with incomplete native boundary evidence: %s',
+  (change) => {
+    const f = followingPlateCaption()
+    if (change === 'number')
+      f.prior.lines[0].text = 'Figure 8 shows a separate experimental illustration'
+    if (change === 'competing-image')
+      f.prior.graphicsBounds.push(structuredClone(f.prior.graphicsBounds[0]))
+    if (change === 'leading') f.page.lines[1].y += 5
+    if (change === 'font') f.page.lines[1].fontSize = 11
+    if (change === 'heading') f.page.lines[3].text = 'An independent body paragraph begins here.'
+    if (change === 'unclosed')
+      f.page.lines[2].text = 'each shade denotes a separate experimental group'
+    if (change === 'intervening-line')
+      f.page.lines.push({
+        text: 'A separate native source line',
+        x: 72,
+        y: 90,
+        width: 440,
+        height: 12,
+        fontSize: 12
+      })
+    const found = findCaptionCandidates([f.prior, f.page]).find((c) => c.page === 2)
+    expect(found?.lines).not.toEqual(f.page.lines.slice(0, 3).map((l) => l.text))
+  }
+)
+
+it.each([
+  'Figure 2 (Appendix) shows an example.',
+  'Fig. 3 (Supplementary material) depicts the response.',
+  'Figure 4 (Supplement) presents the result.'
+])('does not treat an appendix reference as a caption: %s', (text) =>
+  expect(captionKind(text)).toBeUndefined()
+)
+it.each(['Figure 2. Example responses.', 'Figure 3: Supplementary measurements.'])(
+  'retains punctuation-delimited captions beside appendix prose: %s',
+  (text) => expect(captionKind(text)).toBe('figure')
+)

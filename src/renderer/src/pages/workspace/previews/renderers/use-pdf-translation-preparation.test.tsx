@@ -166,6 +166,71 @@ describe('reader-owned PDF preparation', () => {
     expect(current.state.status).toBe('error')
     expect(extractPdfTranslationSource).not.toHaveBeenCalled()
   })
+  it.each([
+    'pdfjs-paragraph-layout-1',
+    'pdfjs-paragraph-layout-2',
+    'pdfjs-paragraph-layout-3',
+    'pdfjs-paragraph-layout-4',
+    'pdfjs-paragraph-layout-5'
+  ])(
+    'extracts a new parser layout after %s recovery is suppressed and preparation is reset',
+    async (parserVersion) => {
+      const historical = {
+        version: 1 as const,
+        parserVersion,
+        fingerprint: ready.source.fingerprint,
+        pages: ready.source.pages,
+        units: ready.source.units,
+        coverage: ready.coverage
+      }
+      const saved = {
+        key: 'historical',
+        layoutSnapshot: historical,
+        sources: [historical.units[0].source],
+        translations: ['已保存的译文。'],
+        translatedSourceIndices: [0]
+      } as PdfTranslationCheckpoint
+      checkpoint = saved
+      await render()
+      expect(current.state.status).toBe('ready')
+      if (current.state.status !== 'ready') throw new Error('Expected saved extraction')
+      const recovered = current.state.extraction.source
+      expect(getPdfTranslationLayoutSnapshot(recovered)).toBe(historical)
+      expect(extractPdfTranslationSource).not.toHaveBeenCalled()
+      const fresh = {
+        ...ready,
+        source: createPdfTranslationSource({
+          ...ready.source,
+          units: [
+            { ...ready.source.units[0], id: 'fresh-unit', source: 'A newly joined paragraph.' }
+          ]
+        })
+      }
+      vi.mocked(extractPdfTranslationSource).mockResolvedValue(fresh)
+      checkpoint = undefined
+      await act(async () => current.reset())
+      await render()
+      expect(current.state.status).toBe('idle')
+      await act(async () => current.start())
+      await waitFor(() => expect(current.state.status).toBe('ready'))
+      if (current.state.status !== 'ready') throw new Error('Expected fresh extraction')
+      expect(current.state.extraction.source).toBe(fresh.source)
+      expect(current.state.extraction.source.units[0].id).toBe('fresh-unit')
+      expect(getPdfTranslationLayoutSnapshot(fresh.source)?.parserVersion).toBe(
+        'pdfjs-paragraph-layout-6'
+      )
+      expect(historical.parserVersion).toBe(parserVersion)
+      expect(historical.units[0].id).toBe('saved-unit')
+      expect(getPdfTranslationLayoutSnapshot(recovered)).toBe(historical)
+      expect([recovered.units[0].id, recovered.units[0].source, saved.translations[0]]).toEqual([
+        'saved-unit',
+        saved.sources[0],
+        '已保存的译文。'
+      ])
+      expect(extractPdfTranslationSource).toHaveBeenCalledOnce()
+    }
+  )
+
   it('extracts a legacy record once and saves its layout without calling a model', async () => {
     checkpoint = {
       key: 'checkpoint-key',

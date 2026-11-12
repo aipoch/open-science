@@ -6,8 +6,224 @@ import {
   readSourceRow
 } from './literature-pdf-source-records.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
 
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+
+// Zero advance is meaningful for an overprinted negation, but is not a valid
+// ordinary font box. Keep its original owner and prove the exact equality it
+// overprints; the positive-width fonts still use the shared all-carrier guard.
+export function recoverNativeOverlayMathRecords(table, items, captions, rules) {
+  const p = closedFrame(table, items, captions, rules)
+  if (!p || p.captionCount !== 1) return
+  const { em, opening, divider, closing, source, header, body } = p,
+    marks = source.filter((i) => i.rect[0] === i.rect[2]),
+    fonts = source.filter((i) => i.rect[2] > i.rect[0]),
+    near = (a, b) => Math.abs(a - b) < em * 0.00001
+  if (
+    !marks.length ||
+    source.length !== marks.length + fonts.length ||
+    !proveNativeUniqueWholeFonts(fonts, items) ||
+    fonts.some(
+      (i) =>
+        i.sourceItem.pageNumber !== fonts[0].sourceItem.pageNumber ||
+        Object.keys(i.sourceItem).some((k) => !['pageNumber', 'index', 'text'].includes(k))
+    ) ||
+    source.some(
+      (i) =>
+        !i.rect.every(Number.isFinite) ||
+        !Number.isFinite(i.baseline) ||
+        !(i.height > 0) ||
+        !near(i.rect[3], i.baseline) ||
+        !near(i.rect[3] - i.rect[1], i.height)
+    )
+  )
+    return
+  const overlays = new Map(),
+    origins = new Set()
+  for (const mark of marks) {
+    const origin = mark.sourceItem
+    if (
+      mark.text !== '\u0338' ||
+      !body.includes(mark) ||
+      !origin ||
+      !Number.isSafeInteger(origin.pageNumber) ||
+      origin.pageNumber < 1 ||
+      !Number.isSafeInteger(origin.index) ||
+      origin.index < 0 ||
+      origin.text !== mark.text ||
+      Object.keys(origin).some((k) => !['pageNumber', 'index', 'text'].includes(k)) ||
+      Object.keys(mark).some((k) => k !== 'sourceItem' && /^source/u.test(k))
+    )
+      return
+    const key = `${origin.pageNumber}:${origin.index}`
+    let count = 0
+    const visit = (o) => {
+      if (!o || typeof o !== 'object') return
+      if (o.pageNumber === origin.pageNumber && o.index === origin.index) count++
+      for (const value of Object.values(o)) visit(value)
+    }
+    // The shared guard above has already rejected cycles and excessive depth.
+    items.forEach(visit)
+    if (count !== 1 || origins.has(key) || origin.pageNumber !== fonts[0].sourceItem.pageNumber)
+      return
+    origins.add(key)
+    const anchors = body.filter(
+      (i) =>
+        /^=\s*[−+-]?\d+(?:\.\d+)?$/u.test(i.text) &&
+        i.rect[2] > i.rect[0] &&
+        near(i.rect[0], mark.rect[0]) &&
+        near(i.baseline, mark.baseline) &&
+        near(i.height, mark.height)
+    )
+    if (anchors.length !== 1 || [...overlays.values()].includes(anchors[0])) return
+    overlays.set(mark, anchors[0])
+  }
+  const projections = []
+  for (const i of [...fonts].sort((a, b) => a.rect[0] - b.rect[0])) {
+    const last = projections.at(-1)
+    if (last && i.rect[0] - last[1] < em * 0.65) last[1] = Math.max(last[1], i.rect[2])
+    else projections.push([i.rect[0], i.rect[2]])
+  }
+  if (
+    projections.length !== 3 ||
+    projections.slice(1).some((r, n) => r[0] - projections[n][1] < em * 0.3)
+  )
+    return
+  const cuts = [
+      opening[0],
+      ...projections.slice(1).map((r, n) => (projections[n][1] + r[0]) / 2),
+      opening[2]
+    ],
+    grouped = (g) =>
+      groupSourceRowsWithScripts(
+        [...g].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+        em,
+        0.3
+      ),
+    heads = grouped(header),
+    physical = grouped(body),
+    records = [],
+    lane = (g, c) => g.filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + 1])
+  if (
+    heads?.length !== 1 ||
+    !readSourceRow(header, cuts)?.every((t) => /\p{L}/u.test(t)) ||
+    !physical ||
+    !hasUniqueRecordTokens(source, [header, ...physical]) ||
+    marks.some((m) => !cuts.slice(1, -1).some((x, n) => m.rect[0] > cuts[n] && m.rect[0] < x)) ||
+    rules.some(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > opening[0] &&
+        r[0] < opening[2] &&
+        r[1] < closing[1] &&
+        r[3] > opening[1]
+    ) ||
+    rules.some(
+      (r) =>
+        r[0] < opening[2] &&
+        r[2] > opening[0] &&
+        r[1] > opening[1] &&
+        r[1] < closing[1] &&
+        !(
+          near(r[1], divider[1]) &&
+          near(r[3], divider[1]) &&
+          near(r[0], opening[0]) &&
+          near(r[2], opening[2])
+        )
+    )
+  )
+    return
+  for (const row of physical) {
+    // Omit the separately proved overlays from recognition only. They remain
+    // in the row packet, the emitted cell owners and its original regions.
+    const v = readSourceRow(
+      row.filter((i) => !overlays.has(i)),
+      cuts
+    )
+    if (!v) return
+    if (v.every(Boolean)) {
+      const result = lane(row, 2)
+      if (
+        result.length !== 1 ||
+        !/^\p{L}[\p{L}.\s]*\d+(?:\.\d+)*$/u.test(result[0].text) ||
+        v.slice(0, 2).some((t) => !/[=<>≤≥≡±×+()]/u.test(t))
+      )
+        return
+      records.push([...row])
+    } else if (
+      v[0] &&
+      v[1] &&
+      !v[2] &&
+      records.length &&
+      !v.slice(0, 2).some((t) => /[=<>≤≥≡]/u.test(t))
+    ) {
+      const prior = records.at(-1),
+        a = lane(row, 0),
+        b = lane(row, 1)
+      for (const [c, g] of [
+        [0, a],
+        [1, b]
+      ]) {
+        const previous = lane(prior, c),
+          gap = Math.min(...g.map((i) => i.baseline)) - Math.max(...previous.map((i) => i.baseline))
+        if (
+          gap < em * 0.8 ||
+          gap > em * 1.8 ||
+          !near(Math.min(...g.map((i) => i.rect[0])), Math.min(...previous.map((i) => i.rect[0])))
+        )
+          return
+      }
+      prior.push(...row)
+    } else return
+  }
+  if (
+    records.length < 3 ||
+    records.length > 12 ||
+    physical.length <= records.length ||
+    !hasUniqueRecordTokens(source, [header, ...records])
+  )
+    return
+  const bounds = records.map((g) => [
+    Math.min(...g.map((i) => i.rect[1])),
+    Math.max(...g.map((i) => i.rect[3]))
+  ])
+  if (bounds.some((r, n) => n && r[0] <= bounds[n - 1][1])) return
+  const edges = [
+    opening[1],
+    divider[1],
+    ...bounds.slice(1).map((r, n) => (bounds[n][1] + r[0]) / 2),
+    closing[1]
+  ]
+  return {
+    cuts,
+    groups: [header, ...records],
+    rowRects: edges.slice(1).map((y, n) => [cuts[0], edges[n], cuts.at(-1), y]),
+    headerRows: 1,
+    baselineHeight: em,
+    consumed: source,
+    combiningOperators: overlays,
+    cropRect: [opening[0], opening[1], opening[2], closing[1]],
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// Serialization copies are local to a fully proved plan. Whole source tokens
+// are never changed or replaced in the ownership packet.
+export function nativeMathOverlaySerialization(items, overlays) {
+  if (!(overlays instanceof Map) || !overlays.size) return items
+  const active = [...overlays].filter(
+    ([mark, anchor]) => items.includes(mark) && items.includes(anchor)
+  )
+  if (!active.length) return items
+  return items
+    .filter((i) => !active.some(([mark]) => mark === i))
+    .map((i) =>
+      active.some(([, anchor]) => anchor === i)
+        ? { ...i, text: i.text.replace(/^=/u, '=\u0338') }
+        : i
+    )
+}
 
 // Independent full-width strokes enclose a complete source table. A detector's
 // crop may miss an outer glyph, but all intersecting native text must fit the
@@ -376,7 +592,7 @@ export function recoverNativeTerminalFieldContinuationGrid(table, items, caption
 // and positive gutters must remain empty across *all* original source glyphs.
 export function recoverNativeMathFieldRecords(table, items, captions, rules) {
   const p = closedFrame(table, items, captions, rules)
-  if (!p) return
+  if (!p) return recoverNativeMathSummaryRecords(table, items, captions, rules)
   const { em, opening, divider, closing, source, header, body } = p,
     grouped = (row) =>
       groupSourceRowsWithScripts(
@@ -460,5 +676,89 @@ export function recoverNativeMathFieldRecords(table, items, captions, rules) {
     preservePhysicalRows: true,
     ownedTokens: new Set(source),
     repair: 'native-body-records-recovered'
+  }
+}
+
+// An independently ruled final summary can have a true empty description.
+// Prove the complete mathematical records above it first; the fourth rule
+// bounds a single textual stub and one numeric field, not another paragraph.
+export function recoverNativeMathSummaryRecords(table, items, captions, rules) {
+  const crop = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.text?.trim() &&
+        i.rect[0] < crop[2] &&
+        i.rect[2] > crop[0] &&
+        i.rect[1] < crop[3] &&
+        i.rect[3] > crop[1]
+    ),
+    em = median(near.map((i) => i.height))
+  if (!(em > 0)) return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= crop[1] - em &&
+        r[1] <= crop[3] + em &&
+        Math.abs(r[0] - crop[0]) < em &&
+        Math.abs(r[2] - crop[2]) < em
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 4 ||
+    full.some((r) => Math.abs(r[0] - full[0][0]) > 0.05 || Math.abs(r[2] - full[0][2]) > 0.05)
+  )
+    return
+  const separator = full[2],
+    closing = full[3],
+    prefix = recoverNativeMathFieldRecords(
+      { ...table, cropRect: [crop[0], crop[1], crop[2], separator[1]] },
+      items,
+      captions,
+      rules.filter((r) => r[1] <= separator[1] + 0.02)
+    )
+  if (!prefix || prefix.columns.length !== 3 || prefix.rows.length < 4) return
+  const tail = items.filter(
+      (i) =>
+        i.text?.trim() &&
+        i.rect[0] < closing[2] &&
+        i.rect[2] > closing[0] &&
+        i.rect[1] < closing[1] &&
+        i.rect[3] > separator[1]
+    ),
+    physical = groupSourceRowsWithScripts(
+      [...tail].sort((a, b) => a.baseline - b.baseline),
+      em,
+      0.3
+    ),
+    cuts = [prefix.columns[0][0], ...prefix.columns.map((c) => c[2])]
+  if (
+    !physical ||
+    physical.length !== 1 ||
+    tail.some(
+      (i) =>
+        !i.horizontal ||
+        i.rect[0] < closing[0] - 0.02 ||
+        i.rect[2] > closing[2] + 0.02 ||
+        i.rect[1] < separator[1] ||
+        i.rect[3] > closing[1]
+    )
+  )
+    return
+  const values = readSourceRow(tail, cuts)
+  if (
+    !values ||
+    !/\p{L}/u.test(values[0]) ||
+    values[1] ||
+    !/^(?:≈\s*)?[\d,]+$/u.test(values[2]) ||
+    closing[1] - separator[1] > em * 3 ||
+    !hasUniqueRecordTokens([...prefix.ownedTokens, ...tail], [[...prefix.ownedTokens], tail])
+  )
+    return
+  return {
+    ...prefix,
+    cropRect: [prefix.cropRect[0], prefix.cropRect[1], prefix.cropRect[2], closing[1]],
+    rows: [...prefix.rows, [cuts[0], separator[1], cuts.at(-1), closing[1]]],
+    columns: prefix.columns.map((c) => [c[0], c[1], c[2], closing[1]]),
+    ownedTokens: new Set([...prefix.ownedTokens, ...tail])
   }
 }

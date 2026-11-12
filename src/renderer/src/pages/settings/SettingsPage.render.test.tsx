@@ -11,11 +11,12 @@ import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
 import { MINIMUM_CLAUDE_CLI_VERSION } from '../../../../shared/claude-runtime'
 import type { ProviderView } from '../../../../shared/settings'
-import type { SpecialistView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { previewLeaveGuards, workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
@@ -26,6 +27,7 @@ import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { ProviderList } from './ProviderList'
 import {
   marketplaceCatalog,
   marketplaceDetail
@@ -88,11 +90,6 @@ beforeAll(async () => {
     import('./ComputeHostDetail'),
     import('./ComputeTargetEditor'),
     import('./ComputePanel'),
-    import('./ConnectorAddForm'),
-    import('./ConnectorDetailView'),
-    import('./ConnectorExportView'),
-    import('./ConnectorImportView'),
-    import('./ConnectorsPanel'),
     import('./GeneralPanel'),
     import('./AppearancePanel'),
     import('./NotificationsPanel'),
@@ -101,8 +98,6 @@ beforeAll(async () => {
     import('./PermissionsPanel'),
     import('./RemoteControlPanel'),
     import('./RuntimesPanel'),
-    import('./SkillsPanel'),
-    import('./SpecialistsPanel'),
     import('./StoragePanel'),
     import('./TagsPanel'),
     import('./TokenUsagePanel')
@@ -418,6 +413,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  previewLeaveGuards.clear()
   useSettingsStore.setState(originalSettingsActions)
   container.remove()
   document.body.innerHTML = ''
@@ -439,19 +435,6 @@ const navButton = (label: string): HTMLButtonElement | undefined =>
   Array.from(
     document.body.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings"] button')
   ).find((candidate) => candidate.textContent?.trim() === label)
-
-const openCustomServerEditor = async (displayName: string): Promise<void> => {
-  openRadixMenu(
-    document.body.querySelector<HTMLButtonElement>(`[aria-label="Actions for ${displayName}"]`)
-  )
-  const edit = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-    (item) => item.textContent?.trim() === 'Edit'
-  )
-  await act(async () => {
-    clickRadixMenuItem(edit)
-    await Promise.resolve()
-  })
-}
 
 const selectSettingsOption = (label: string, option: string): void => {
   const trigger = document.body.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)
@@ -499,7 +482,7 @@ const installCustomProviderSnapshot = (): ProviderView => {
       {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['messages', 'chat-completions'],
+        supportedApiTypes: ['chat-completions', 'messages'],
         supportsSkills: true
       }
     ]
@@ -508,6 +491,76 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('shows native recovery only in the tested agent while retaining the HTTP failure elsewhere', async () => {
+    const provider: ProviderView = {
+      ...installCustomProviderSnapshot(),
+      lastValidationFailure: {
+        at: 10,
+        category: 'model-not-found',
+        target: { model: 'model-a', endpoint: 'messages' }
+      },
+      lastValidatedAt: 20,
+      lastValidatedTarget: {
+        model: 'model-a',
+        endpoint: 'messages',
+        frameworkId: 'claude-code',
+        route: 'claude-anthropic'
+      }
+    }
+    const render = async (agentFrameworkId: 'claude-code' | 'opencode'): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <ProviderList
+            providers={[provider]}
+            activeProviderId={provider.id}
+            agentFrameworkId={agentFrameworkId}
+            frameworkEndpoints={['messages']}
+            onEdit={vi.fn()}
+            onDelete={vi.fn()}
+            onTest={vi.fn()}
+          />
+        )
+      )
+    }
+    await render('claude-code')
+    expect(container.querySelector('[aria-label="Connection verified"]')).not.toBeNull()
+    expect(
+      container.querySelector('[aria-label="Test failed: the configured model was not found."]')
+    ).toBeNull()
+    await render('opencode')
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Test failed: the configured model was not found."]')
+    ).not.toBeNull()
+  })
+
+  it.each([
+    ['Manage skills', 'skills'],
+    ['Add connector', 'connectors'],
+    ['Add specialist', 'specialists']
+  ] as const)('opens %s search results in Resource Center', async (query, resource) => {
+    const onClose = vi.fn()
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    let resume!: () => void
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, (action) => {
+      resume = action
+      return false
+    })
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    const search = document.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+    await act(async () => {
+      fireEvent.change(search, { target: { value: query } })
+      search.focus()
+    })
+    await act(async () => fireEvent.keyDown(search, { key: 'Enter' }))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    await act(async () => resume())
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState().resourceCenterIntent).toMatchObject({ resource })
+  })
+
   it('retains the requested recovery model through the settings route', async () => {
     const provider = installCustomProviderSnapshot()
     provider.models.push('pinned-model')
@@ -843,46 +896,6 @@ describe('SettingsPage layout', () => {
     }
   )
 
-  it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
-    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
-      revision: 2,
-      tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
-      assignments: [
-        {
-          tagId: 'tag-favorite',
-          resourceType: 'catalog.skill',
-          resourceId: 'alpha',
-          createdAt: 1
-        }
-      ]
-    })
-
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
-
-    const tag = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Favorites'
-    )
-    expect(tag).toBeDefined()
-    expect(document.body.querySelector('button button')).toBeNull()
-    await act(async () => tag?.click())
-
-    expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
-      'Tags'
-    )
-    expect(document.body.textContent).toContain('Alpha')
-    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
-      false
-    )
-
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    )
-    expect(document.body.querySelector('nav [aria-current="page"]')?.textContent?.trim()).toBe(
-      'Skills'
-    )
-  })
-
   it('opens Tag creation as a breadcrumb-backed Settings sub-view', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 1,
@@ -1004,7 +1017,7 @@ describe('SettingsPage layout', () => {
     })
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
+    await act(async () => navButton('Tags')?.click())
 
     const favorite = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Favorites'
@@ -1024,7 +1037,7 @@ describe('SettingsPage layout', () => {
     expect(selectedTag?.textContent).toContain('Favorites')
   })
 
-  it('preserves an in-panel Tag selection when returning from a resource', async () => {
+  it('preserves an in-panel Tag selection when returning from another Settings panel', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 2,
       tags: [
@@ -1055,7 +1068,7 @@ describe('SettingsPage layout', () => {
     })
 
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
+    await act(async () => navButton('Tags')?.click())
 
     const favorite = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Favorites'
@@ -1067,10 +1080,7 @@ describe('SettingsPage layout', () => {
     ).find((button) => button.textContent?.includes('Research'))
     await act(async () => research?.click())
 
-    const resource = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('aside + section button')
-    ).find((button) => button.textContent?.includes('Alpha'))
-    await act(async () => resource?.click())
+    await act(async () => navButton('General')?.click())
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
     )
@@ -1081,7 +1091,7 @@ describe('SettingsPage layout', () => {
     expect(selectedTag?.textContent).toContain('Research')
   })
 
-  it('records the default Tag in history before navigating through a resource', async () => {
+  it('records the default Tag in history before navigating to another Settings panel', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
       revision: 2,
       tags: [
@@ -1119,18 +1129,9 @@ describe('SettingsPage layout', () => {
     ).find((button) => button.getAttribute('aria-current') === 'page')
     expect(selectedDefault?.textContent).toContain('Favorites')
 
-    const resource = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('aside + section button')
-    ).find((button) => button.textContent?.includes('Alpha'))
-    await act(async () => resource?.click())
+    await act(async () => navButton('General')?.click())
 
-    const research = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Research'
-    )
-    await act(async () => research?.click())
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    )
+    act(() => useTagStore.getState().setBrowserSelectedId('tag-research'))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
     )
@@ -1247,30 +1248,6 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
   })
 
-  it('jumps from settings search to in-place Skill selection after retiring Manage', async () => {
-    // jsdom has no scrolling layout; keep the real search navigation and focus behavior.
-    Element.prototype.scrollIntoView = vi.fn()
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
-    const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
-    await act(async () => {
-      fireEvent.change(search, { target: { value: 'Manage skills' } })
-      search.focus()
-    })
-    await act(async () => fireEvent.keyDown(search, { key: 'Enter' }))
-    expect(document.activeElement?.getAttribute('aria-label')).toBe('Manage skills')
-    const select = document.activeElement?.querySelector<HTMLButtonElement>(
-      '[aria-label="Select multiple in Featured"]'
-    )
-    expect(select).not.toBeNull()
-    await act(async () => select!.click())
-    await act(async () =>
-      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
-    )
-    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
-    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
-  })
-
   it.each([{ isComposing: true }, { keyCode: 229 }])(
     'preserves the native composing Escape action through the Settings dialog: %j',
     async (composition) => {
@@ -1376,11 +1353,7 @@ describe('SettingsPage layout', () => {
       'overscroll-contain'
     )
 
-    // Left navigation grouped as Intelligence (Model, Agent, Skills, Specialists, Memory),
-    // Connections (Connectors, Network, Remote, Credentials, Compute), Workspace (Tags,
-    // Permissions, Runtimes, Storage, Usage, Archived) and System (General, Appearance, Notifications).
-    // Feedback remains a
-    // separate fixed footer action.
+    // Resource management belongs to Resource Center; Settings retains app configuration.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -1399,26 +1372,24 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('System')
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = navScroll?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(19)
-    expect(navItems[0]?.textContent).toContain('General')
-    expect(navItems[1]?.textContent).toContain('Appearance')
-    expect(navItems[2]?.textContent).toContain('Notifications')
-    expect(navItems[3]?.textContent).toContain('Model')
-    expect(navItems[4]?.textContent).toContain('Agent')
-    expect(navItems[5]?.textContent).toContain('Skills')
-    expect(navItems[6]?.textContent).toContain('Specialists')
-    expect(navItems[7]?.textContent).toContain('Memory')
-    expect(navItems[8]?.textContent).toContain('Connectors')
-    expect(navItems[9]?.textContent).toContain('Network')
-    expect(navItems[10]?.textContent).toContain('Remote')
-    expect(navItems[11]?.textContent).toContain('Credentials')
-    expect(navItems[12]?.textContent).toContain('Compute')
-    expect(navItems[13]?.textContent).toContain('Tags')
-    expect(navItems[14]?.textContent).toContain('Permissions')
-    expect(navItems[15]?.textContent).toContain('Runtimes')
-    expect(navItems[16]?.textContent).toContain('Storage')
-    expect(navItems[17]?.textContent).toContain('Usage')
-    expect(navItems[18]?.textContent).toContain('Archived')
+    expect([...navItems].map((item) => item.textContent?.trim())).toEqual([
+      'General',
+      'Appearance',
+      'Notifications',
+      'Model',
+      'Agent',
+      'Memory',
+      'Network',
+      'Remote',
+      'Credentials',
+      'Compute',
+      'Tags',
+      'Permissions',
+      'Runtimes',
+      'Storage',
+      'Usage',
+      'Archived'
+    ])
     const navGroups = Array.from(navScroll?.querySelectorAll(':scope > div') ?? [])
     const connectionsGroup = navGroups.find(
       (group) => group.firstElementChild?.textContent?.trim() === 'Connections'
@@ -2245,7 +2216,7 @@ describe('SettingsPage layout', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ],
@@ -2295,7 +2266,7 @@ describe('SettingsPage layout', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['messages', 'chat-completions'],
+          supportedApiTypes: ['chat-completions', 'messages'],
           supportsSkills: true
         }
       ]
@@ -3713,221 +3684,6 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).not.toContain('Sign-in required')
   })
 
-  it('switches to the Connectors panel and lists bundled connectors', async () => {
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-
-    const connectorsTab = Array.from(
-      document.body.querySelectorAll('nav[aria-label="Settings"] button')
-    ).find((button) => /connectors/i.test(button.textContent ?? '')) as
-      HTMLButtonElement | undefined
-    expect(connectorsTab).not.toBeUndefined()
-
-    await act(async () => {
-      connectorsTab?.click()
-    })
-
-    // The Connectors panel loads and renders the bundled connector rows + contact-email section.
-    expect(
-      (window as unknown as { api: { settings: { listConnectors: ReturnType<typeof vi.fn> } } }).api
-        .settings.listConnectors
-    ).toHaveBeenCalled()
-    expect(document.body.textContent).toContain('Chemistry')
-    expect(document.body.textContent).not.toContain('Contact email')
-  })
-
-  it('keeps a Connector draft when device credential creation uses Settings history', async () => {
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => navButton('Connectors')?.click())
-
-    const addConnector = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent?.includes('Add connector'))
-    openRadixMenu(addConnector)
-    const localCommand = Array.from(
-      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).find((item) => item.textContent?.includes('Local command'))
-    await act(async () => {
-      clickRadixMenuItem(localCommand)
-      await Promise.resolve()
-    })
-
-    const displayName = document.body.querySelector<HTMLInputElement>(
-      '[aria-label="Display name"]'
-    )!
-    fireEvent.change(displayName, { target: { value: 'Draft research server' } })
-    act(() =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
-        ?.click()
-    )
-    fireEvent.change(document.body.querySelector('[aria-label="Variable name"]')!, {
-      target: { value: 'API_TOKEN' }
-    })
-    selectSettingsOption('Credential for API_TOKEN', 'New credential')
-
-    expect(document.body.textContent).toContain('Stored on this device')
-    expect(document.body.textContent).toContain('Add connector')
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    )
-
-    expect(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
-    ).toBe('Draft research server')
-  })
-
-  it('keeps edit-time credential creation in the Connector flow without Connector Tags', async () => {
-    const customServer = {
-      id: 'notion-connector-id',
-      name: 'notion2',
-      displayName: 'Notion2',
-      transport: 'stdio' as const,
-      enabled: true,
-      command: 'npx',
-      hasEnv: true,
-      environmentNames: ['API_TOKEN']
-    }
-    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
-      connectors: [],
-      customServers: [customServer],
-      ncbi: { hasApiKey: false }
-    })
-
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Connectors')?.click())
-    await openCustomServerEditor('Notion2')
-    expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
-
-    act(() =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
-        ?.click()
-    )
-    selectSettingsOption('Environment variable action', 'Replace saved variables')
-    await act(async () => {
-      await Promise.resolve()
-    })
-    fireEvent.change(document.body.querySelector('[aria-label="Variable name"]')!, {
-      target: { value: 'API_TOKEN' }
-    })
-    expect(document.body.querySelector('[aria-label="Credential for API_TOKEN"]')).not.toBeNull()
-    selectSettingsOption('Credential for API_TOKEN', 'New credential')
-
-    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector('[aria-label="Manage Tags"]')).toBeNull()
-    expect(
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).some(
-        (button) => button.textContent?.trim() === 'Edit notion2'
-      )
-    ).toBe(true)
-    expect(document.body.textContent).toContain('New credential')
-
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    )
-    expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
-    expect(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Variable name"]')?.value
-    ).toBe('API_TOKEN')
-  })
-
-  it('blocks Connector save and preserves the draft when a live refresh removes the target', async () => {
-    const customServer = {
-      id: 'custom-server-uuid',
-      name: 'my-mcp',
-      displayName: 'My MCP',
-      description: 'A custom MCP server.',
-      transport: 'stdio' as const,
-      enabled: true,
-      command: 'npx',
-      args: ['-y', '@example/my-mcp']
-    }
-    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
-      connectors: [],
-      customServers: [customServer],
-      ncbi: { hasApiKey: false }
-    })
-    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
-    const addCustomServer = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({ updateCustomServer, addCustomServer })
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => navButton('Connectors')?.click())
-    await openCustomServerEditor('My MCP')
-
-    act(() => useSettingsStore.setState({ customServers: [] }))
-
-    const submit = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => ['Save changes', 'Add connector'].includes(button.textContent?.trim() ?? '')
-    )
-    expect(submit?.textContent?.trim()).toBe('Save changes')
-    expect(document.body.textContent).toContain(
-      'This Connector no longer exists. Your draft has not been saved.'
-    )
-    expect(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
-    ).toBe('My MCP')
-    expect(submit?.disabled).toBe(true)
-    expect(updateCustomServer).not.toHaveBeenCalled()
-    expect(addCustomServer).not.toHaveBeenCalled()
-  })
-
-  it('keeps the Connector editor and draft open when an update loses a deletion race', async () => {
-    const customServer = {
-      id: 'custom-server-uuid',
-      name: 'my-mcp',
-      displayName: 'My MCP',
-      description: 'A custom MCP server.',
-      transport: 'stdio' as const,
-      enabled: true,
-      command: 'npx',
-      args: ['-y', '@example/my-mcp']
-    }
-    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
-      connectors: [],
-      customServers: [customServer],
-      ncbi: { hasApiKey: false }
-    })
-    const updateCustomServer = vi
-      .fn()
-      .mockRejectedValue(new Error('Unknown custom connector: custom-server-uuid'))
-    useSettingsStore.setState({ updateCustomServer })
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => navButton('Connectors')?.click())
-    await openCustomServerEditor('My MCP')
-
-    const displayName = document.body.querySelector<HTMLInputElement>(
-      '[aria-label="Display name"]'
-    )!
-    fireEvent.change(displayName, { target: { value: 'Unsaved draft' } })
-    const submit = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Save changes'
-    )
-    await act(async () => submit?.click())
-
-    expect(updateCustomServer).toHaveBeenCalledWith(
-      expect.objectContaining({ id: customServer.id, displayName: 'Unsaved draft' })
-    )
-    expect(document.body.textContent).toContain('Unknown custom connector: custom-server-uuid')
-    expect(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
-    ).toBe('Unsaved draft')
-    expect(
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).some(
-        (button) => button.textContent?.trim() === 'Save changes'
-      )
-    ).toBe(true)
-  })
-
   it('switches to the Network panel, configures a mirror, and saves it', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -4082,371 +3838,6 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Network status"]')).not.toBeNull()
   })
 
-  it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-
-    // Navigate to the Skills panel.
-    const skillsTab = Array.from(
-      document.body.querySelectorAll('nav[aria-label="Settings"] button')
-    ).find((button) => /skills/i.test(button.textContent ?? '')) as HTMLButtonElement | undefined
-    await act(async () => {
-      skillsTab?.click()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Open the skill's detail view by clicking its row.
-    const alphaRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('Alpha')
-    )
-    await act(async () => {
-      alphaRow?.click()
-    })
-
-    // The header now shows a "Skills › Alpha" breadcrumb with a clickable "Skills" crumb.
-    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')
-    expect(crumb).not.toBeNull()
-    expect(document.body.textContent).toContain('Alpha')
-
-    // Clicking the breadcrumb returns to the list (the crumb collapses back to the panel title).
-    await act(async () => {
-      crumb?.click()
-    })
-    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
-  })
-
-  it('selects Connectors in their category without leaving the catalog', async () => {
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Connectors')?.click())
-    await act(async () =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
-        .click()
-    )
-    await act(async () =>
-      document.body.querySelector<HTMLInputElement>('[aria-label="Select Chemistry"]')!.click()
-    )
-    expect(document.body.querySelector('[aria-label="Back to connectors"]')).toBeNull()
-    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
-    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')!.click()
-    )
-    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
-    expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
-  })
-
-  it('cancels inline Skill removal with Escape without closing Settings', async () => {
-    vi.mocked(window.api.settings.listSkills).mockResolvedValue([
-      {
-        id: 'personal-test',
-        name: 'Test skill',
-        displayName: 'Test skill',
-        description: 'Test',
-        source: 'personal',
-        enabled: true,
-        updatedAt: '2026-09-13T00:00:00Z'
-      }
-    ])
-    const onClose = vi.fn()
-    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
-    await act(async () => navButton('Skills')?.click())
-    await act(async () =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Personal"]')!
-        .click()
-    )
-    await act(async () =>
-      document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
-    )
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Delete selected"]')!.click()
-    )
-    const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
-    expect(document.activeElement).toBe(title)
-    await act(async () =>
-      title.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-      )
-    )
-    expect(onClose).not.toHaveBeenCalled()
-    expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
-    expect(document.activeElement).toBe(
-      document.body.querySelector('[aria-label="Delete selected"]')
-    )
-  })
-
-  it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {
-    const clickText = async (label: string): Promise<void> => {
-      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (item) => item.textContent?.trim() === label
-      )
-      expect(button).toBeDefined()
-      await act(async () => button!.click())
-    }
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
-    await clickText('Browse Marketplace')
-    const setQuery = async (value: string): Promise<void> => {
-      const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')!
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
-          input,
-          value
-        )
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      })
-    }
-    await setQuery('abstract')
-    await clickText('Batch manage')
-    const crumb = (): HTMLButtonElement | null =>
-      document.body.querySelector('[aria-label="Back to Marketplace"]')
-    expect(crumb()?.closest('div')?.textContent).toContain('Skills›Marketplace›Batch manage')
-    expect(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')?.value
-    ).toBe('abstract')
-    await setQuery('no-such-skill')
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
-    )
-    expect(crumb()).toBeNull()
-    expect(document.body.querySelector('h3')?.textContent).toBe('Browse Marketplace')
-    expect(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')?.value
-    ).toBe('abstract')
-    expect(window.api.settings.listSkillMarketplace).toHaveBeenCalledOnce()
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
-    )
-    expect(crumb()).not.toBeNull()
-    expect(document.body.querySelector('h3')?.textContent).toBe('Batch manage')
-    await act(async () => crumb()!.click())
-    expect(crumb()).toBeNull()
-    expect(document.body.querySelector('h3')?.textContent).toBe('Browse Marketplace')
-  })
-
-  it.each(['install', 'update'] as const)(
-    'preserves batch %s selection when returning from a card detail',
-    async (mode) => {
-      vi.mocked(window.api.settings.listSkillMarketplace).mockResolvedValue({
-        ok: true,
-        value: {
-          ...marketplaceCatalog,
-          installations:
-            mode === 'update'
-              ? {
-                  'abstract-trimmer': {
-                    kind: 'installed',
-                    localSkillId: 'alpha',
-                    version: '0.9.0',
-                    canUpdate: true
-                  }
-                }
-              : {}
-        }
-      })
-      const clickText = async (text: string): Promise<void> => {
-        const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-          (item) => item.textContent?.trim() === text
-        )!
-        expect(button).toBeDefined()
-        await act(async () => button.click())
-      }
-      await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-      await act(async () => navButton('Skills')?.click())
-      await clickText('Browse Marketplace')
-      await clickText('Batch manage')
-      if (mode === 'update') await clickText('Updates1')
-      const query = (): HTMLInputElement | null =>
-        document.body.querySelector('[aria-label="Search skills"]')
-      await act(async () => fireEvent.change(query()!, { target: { value: 'trimmer' } }))
-      const checkbox = (): HTMLInputElement | null =>
-        document.body.querySelector('[data-slot="skill-marketplace-card"] input[type="checkbox"]')
-      await act(async () => checkbox()!.click())
-      expect(checkbox()?.checked).toBe(true)
-      await clickText('Abstract Trimmer')
-      expect(document.body.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
-      await act(async () =>
-        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
-      )
-      expect(checkbox()?.checked).toBe(true)
-      expect(query()?.value).toBe('trimmer')
-      expect(
-        document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')?.textContent
-      ).toContain(mode === 'update' ? 'Update…' : 'Install…')
-      await act(async () =>
-        document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
-      )
-      expect(document.body.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
-      await act(async () =>
-        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
-      )
-      expect(checkbox()?.checked).toBe(true)
-      await clickText('Back to Marketplace')
-      expect(query()?.value).toBe('')
-      await clickText('Batch manage')
-      expect(document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
-      expect(window.api.settings.listSkillMarketplace).toHaveBeenCalledOnce()
-    }
-  )
-
-  it('cancels inline batch review with Escape without closing Settings', async () => {
-    const onClose = vi.fn()
-    vi.mocked(window.api.settings.listSkillMarketplace).mockResolvedValue({
-      ok: true,
-      value: { ...marketplaceCatalog, installations: {} }
-    })
-    const clickText = async (label: string): Promise<void> => {
-      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (item) => item.textContent?.trim() === label
-      )
-      expect(button).toBeDefined()
-      await act(async () => button!.click())
-    }
-    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
-    await act(async () => navButton('Skills')?.click())
-    await clickText('Browse Marketplace')
-    await clickText('Batch manage')
-    const checkbox = document.body.querySelector<HTMLInputElement>(
-      '[data-slot="skill-marketplace-card"] input[type="checkbox"]'
-    )!
-    expect(checkbox).not.toBeNull()
-    await act(async () => checkbox.click())
-    await clickText('Install…')
-    const review = document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')!
-    expect(review).not.toBeNull()
-    await act(async () => fireEvent.keyDown(review.querySelector('h4')!, { key: 'Escape' }))
-    expect(document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')).toBeNull()
-    expect(onClose).not.toHaveBeenCalled()
-    expect(document.activeElement?.textContent).toBe('Install…')
-    await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
-    expect(onClose).toHaveBeenCalledOnce()
-  })
-
-  it('navigates Skill Marketplace and detail through shared breadcrumbs', async () => {
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
-    const browse = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.trim() === 'Browse Marketplace'
-    )
-    expect(browse).toBeDefined()
-    await act(async () => browse?.click())
-    expect(document.body.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(1)
-    const title = document.body.querySelector<HTMLButtonElement>(
-      '[data-slot="skill-marketplace-card"] button'
-    )!
-    const name = title.textContent
-    await act(async () => title.click())
-    expect(
-      document.body.querySelector('[data-slot="skill-marketplace-detail"]')?.textContent
-    ).toContain(name)
-    const marketplaceCrumb = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Back to Marketplace"]'
-    )
-    expect(marketplaceCrumb).not.toBeNull()
-    await act(async () => marketplaceCrumb?.click())
-    expect(document.body.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(1)
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')?.click()
-    )
-    expect(document.body.querySelector('[data-slot="skill-marketplace"]')).toBeNull()
-  })
-
-  it('selects Featured Skills in place while keeping deletion unavailable', async () => {
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => navButton('Skills')?.click())
-    await act(async () =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
-        .click()
-    )
-    await act(async () =>
-      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
-    )
-    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
-    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
-    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
-    expect(document.body.textContent).toContain('Alpha')
-    await act(async () =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Finish selection in Featured"]')!
-        .click()
-    )
-    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
-  })
-
-  it('opens directly on a skill detail when the store has a pending skill', async () => {
-    // A skill mention publishes a landing intent before the dialog opens.
-    useSettingsStore.getState().openSettingsToSkill('alpha')
-
-    const settingsRef = createRef<SettingsPageHandle>()
-    await act(async () => {
-      root.render(<SettingsPage ref={settingsRef} open onClose={vi.fn()} />)
-    })
-    // Flush the seeding effect, the skills-list load, and the skill-detail fetch.
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Landed on the skill's detail page (breadcrumb + detail), not the default General panel.
-    expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
-    expect(document.body.textContent).toContain('Alpha')
-    expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
-    // The intent is consumed so a later normal open won't jump back to it.
-    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
-
-    act(() => {
-      expect(settingsRef.current?.closeActivePane()).toBe(true)
-    })
-    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
-    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
-      true
-    )
-  })
-
-  it('honors a repeated external intent for the same skill while Settings stays open', async () => {
-    useSettingsStore.getState().openSettingsToSkill('alpha')
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await waitFor(() =>
-      expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
-    )
-
-    await act(async () => navButton('Model')?.click())
-    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
-
-    act(() => useSettingsStore.getState().openSettingsToSkill('alpha'))
-    await waitFor(() =>
-      expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
-    )
-  })
-
-  it('keeps an external intent pending until Settings is visible', async () => {
-    useSettingsStore.getState().openSettingsToSkill('alpha')
-
-    await act(async () => {
-      root.render(<SettingsPage open={false} onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await waitFor(() =>
-      expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
-    )
-  })
-
   it('opens directly on a requested settings panel and consumes the target', async () => {
     useSettingsStore.getState().openSettingsToPanel('storage')
 
@@ -4459,616 +3850,6 @@ describe('SettingsPage layout', () => {
 
     expect(navButton('Storage')?.getAttribute('aria-current')).toBe('page')
     expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
-  })
-
-  it('opens directly on a specialist editor when the store has a pending specialist', async () => {
-    // The switch approval card deep-links to one specialist's editor: the intent is published
-    // before the dialog opens, and the catalog resolves that profile.
-    const researcher: SpecialistView = {
-      id: 'spc-1',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'full',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
-      revision: 1
-    }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    // Flush the seeding effect, the specialists-list load, and the editor mount.
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Landed on the specialist's editor (display name prefilled), not the
-    // default General panel.
-    const name = document.body.querySelector<HTMLInputElement>('#sp-name')
-    expect(name?.value).toBe('Researcher')
-    expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
-    // The intent is consumed so a later normal open won't jump back to it.
-    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
-  })
-
-  it('navigates from a specialist capability row to the skill detail and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-1',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
-      revision: 1
-    }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // The capabilities whitelist lists Alpha; clicking the row navigates.
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>('[aria-label="View Alpha details"]')!
-      )
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Landed on Skills › Alpha: the mocked detail metadata renders.
-    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Test Author')
-
-    // Back returns to the specialist editor.
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
-  })
-
-  it.each(['usage', 'access'])(
-    'navigates from a Skill %s popover to Specialist Settings and back',
-    async (entry) => {
-      const researcher: SpecialistView = {
-        id: 'spc-usage',
-        name: 'RESEARCHER',
-        displayName: 'Researcher',
-        description: 'Conducts systematic literature reviews.',
-        systemPrompt: 'You are a literature review specialist.',
-        iconKey: 'search',
-        colorKey: 'blue',
-        enabled: true,
-        capabilityMode: 'selected',
-        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-        selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
-        revision: 1
-      }
-      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-        items: [{ kind: 'custom', ...researcher }],
-        integrity: { status: 'ok' }
-      })
-      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-      useSettingsStore.getState().openSettingsToSkill('alpha')
-
-      await act(async () => {
-        root.render(<SettingsPage open onClose={vi.fn()} />)
-        await Promise.resolve()
-      })
-      await act(async () => {
-        await Promise.resolve()
-      })
-
-      await act(async () => {
-        if (entry === 'access') {
-          fireEvent.click(
-            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
-          )
-        } else {
-          fireEvent.focus(
-            document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
-          )
-        }
-      })
-      await act(async () => {
-        fireEvent.click(
-          document.body.querySelector<HTMLElement>(
-            '[aria-label="Open Researcher in Specialist Settings"]'
-          )!
-        )
-      })
-
-      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
-
-      await act(async () => {
-        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-      })
-      expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
-      expect(document.body.textContent).toContain('Test Author')
-    }
-  )
-
-  it.each(['usage', 'access', 'detail access'])(
-    'navigates from a Connector %s popover to Specialist Settings and back',
-    async (entry) => {
-      const researcher: SpecialistView = {
-        id: 'spc-connector-usage',
-        name: 'RESEARCHER',
-        displayName: 'Researcher',
-        description: 'Conducts systematic literature reviews.',
-        systemPrompt: 'You are a literature review specialist.',
-        iconKey: 'search',
-        colorKey: 'blue',
-        enabled: true,
-        capabilityMode: 'selected',
-        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-        selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
-        revision: 1
-      }
-      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-        items: [{ kind: 'custom', ...researcher }],
-        integrity: { status: 'ok' }
-      })
-      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-      window.api.settings.getConnectorDetail = vi.fn().mockResolvedValue({
-        id: 'chemistry',
-        name: 'chemistry',
-        displayName: 'Chemistry',
-        description: 'Small-molecule chemistry via PubChem.',
-        sources: ['PubChem'],
-        requiresNcbi: false,
-        enabled: true,
-        autoAllow: false,
-        tools: []
-      })
-      useSettingsStore.getState().openSettingsToPanel('connectors')
-
-      await act(async () => {
-        root.render(<SettingsPage open onClose={vi.fn()} />)
-        await Promise.resolve()
-      })
-      await act(async () => {
-        await Promise.resolve()
-      })
-
-      if (entry === 'detail access') {
-        await act(async () =>
-          fireEvent.click(
-            document.body.querySelector<HTMLElement>('[aria-label="View details for Chemistry"]')!
-          )
-        )
-      }
-      await act(async () => {
-        if (entry === 'usage') {
-          fireEvent.focus(
-            document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!
-          )
-        } else {
-          fireEvent.click(
-            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
-          )
-        }
-      })
-      await act(async () => {
-        fireEvent.click(
-          document.body.querySelector<HTMLElement>(
-            '[aria-label="Open Researcher in Specialist Settings"]'
-          )!
-        )
-      })
-
-      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
-
-      await act(async () => {
-        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-      })
-      expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-      expect(document.body.textContent).toContain('Chemistry')
-    }
-  )
-
-  it('routes connector capability rows to detail or edit by server kind', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-2',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: '',
-      systemPrompt: '',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: {
-        skillIds: [],
-        connectorIds: ['chemistry', 'route-uuid'],
-        connectorTools: []
-      },
-      revision: 1
-    }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    ;(window.api.settings.listConnectors as ReturnType<typeof vi.fn>).mockResolvedValue({
-      connectors: [
-        {
-          id: 'chemistry',
-          displayName: 'Chemistry',
-          description: 'Small-molecule chemistry via PubChem.',
-          sources: ['PubChem'],
-          requiresNcbi: false,
-          enabled: true,
-          autoAllow: false
-        }
-      ],
-      customServers: [
-        {
-          id: 'route-uuid',
-          name: 'route',
-          displayName: 'Public Route',
-          transport: 'stdio',
-          enabled: true
-        }
-      ],
-      ncbi: { hasApiKey: false }
-    })
-    ;(
-      window.api.settings as unknown as Record<string, ReturnType<typeof vi.fn>>
-    ).getConnectorDetail = vi.fn().mockResolvedValue({
-      id: 'chemistry',
-      name: 'chemistry',
-      displayName: 'Chemistry',
-      description: 'Small-molecule chemistry via PubChem.',
-      sources: ['PubChem'],
-      requiresNcbi: false,
-      enabled: true,
-      autoAllow: false,
-      tools: []
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // Open the Connectors capability tab.
-    await act(async () => {
-      fireEvent.click(
-        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
-          tab.textContent?.includes('Connectors')
-        )!
-      )
-    })
-
-    const crumb = (): string =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.closest('div')
-        ?.textContent ?? ''
-
-    // A bundled connector lands on its detail page.
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>('[aria-label="View Chemistry details"]')!
-      )
-    })
-    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-    expect(crumb()).toContain('Connectors›Chemistry')
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () =>
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Manage access for Chemistry"]')!
-        .click()
-    )
-    const researcherSwitch = document.body.querySelector('[role="switch"][aria-label="Researcher"]')
-    expect(researcherSwitch?.getAttribute('aria-checked')).toBe('true')
-    await act(async () => fireEvent.keyDown(researcherSwitch!, { key: 'Escape' }))
-
-    // Back to the editor (capability tabs reset to Skills on remount), then a
-    // custom server lands on its edit page.
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    await act(async () => {
-      fireEvent.click(
-        Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((tab) =>
-          tab.textContent?.includes('Connectors')
-        )!
-      )
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>('[aria-label="View Public Route details"]')!
-      )
-    })
-    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-    expect(crumb()).toContain('Connectors›Edit route')
-  })
-
-  it('keeps unsaved specialist edits across a capability detail round trip', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-3',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
-      revision: 1
-    }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSpecialist(researcher.id)
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    // An unsaved edit in the specialist editor.
-    await act(async () => {
-      fireEvent.change(document.body.querySelector<HTMLInputElement>('#sp-description')!, {
-        target: { value: 'My unsaved edit' }
-      })
-    })
-
-    // Round trip through the skill detail page.
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>('[aria-label="View Alpha details"]')!
-      )
-    })
-    expect(document.body.textContent).toContain('Test Author')
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-
-    // Back on the editor, the unsaved edit survived the trip.
-    expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
-      'My unsaved edit'
-    )
-  })
-
-  it('labels Specialist export in shared navigation and preserves Back/Forward history', async () => {
-    window.api.specialist.previewExport = vi.fn().mockResolvedValue({
-      specialistId: 'export-fixture',
-      name: 'Export fixture',
-      version: '1.0.0',
-      fileName: 'export-fixture.zip',
-      expectedRevision: 1,
-      skills: [],
-      connectorIds: [],
-      diagnostics: [],
-      canExport: false
-    })
-    window.api.specialist.exportSpecialist = vi.fn()
-    window.api.specialist.list = vi.fn().mockResolvedValue({
-      items: [
-        {
-          kind: 'custom',
-          id: 'export-fixture',
-          name: 'Export fixture',
-          description: 'Fixture.',
-          systemPrompt: '',
-          enabled: true,
-          capabilityMode: 'selected',
-          revision: 1,
-          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
-        }
-      ],
-      integrity: { status: 'ok' }
-    })
-    useSettingsStore.getState().openSettingsToPanel('specialists')
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    openRadixMenu(
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Export fixture"]')
-    )
-    await act(async () =>
-      clickRadixMenuItem(
-        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
-          item.textContent?.includes('Export ZIP')
-        )
-      )
-    )
-    expect(document.body.textContent).toContain('Choose Skills to include')
-    expect(document.body.textContent).not.toContain('Edit specialist')
-    expect(
-      document.body.querySelector('[aria-label="Back to specialists"]')?.parentElement?.textContent
-    ).toContain('Export ZIP')
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    )
-    expect(document.body.textContent).not.toContain('Choose Skills to include')
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')?.click()
-    )
-    expect(document.body.textContent).toContain('Choose Skills to include')
-    expect(document.body.textContent).not.toContain('Edit specialist')
-  })
-
-  it('labels the Specialist ZIP import breadcrumb with the active workflow', async () => {
-    window.api.specialist.selectPackage = vi.fn().mockResolvedValue({ cancelled: true })
-    useSettingsStore.getState().openSettingsToPanel('specialists')
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    openRadixMenu(
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
-        button.textContent?.includes('Add specialist')
-      )
-    )
-    await act(async () => {
-      clickRadixMenuItem(
-        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
-          item.textContent?.includes('Import ZIP')
-        )
-      )
-    })
-    expect(document.body.textContent).toContain('Select a Specialist ZIP')
-    expect(document.body.textContent).not.toContain('Edit specialist')
-  })
-
-  it('opens the specialist creation form from Write from scratch', async () => {
-    useSettingsStore.getState().openSettingsToPanel('specialists')
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    openRadixMenu(
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
-        button.textContent?.includes('Add specialist')
-      )
-    )
-    const writeFromScratch = Array.from(
-      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).find((item) => item.textContent?.includes('Write from scratch'))
-    await act(async () => {
-      clickRadixMenuItem(writeFromScratch)
-      await Promise.resolve()
-    })
-
-    expect(document.body.querySelector('h3')?.textContent).toBe('Identity')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')).not.toBeNull()
-  })
-
-  it('uses a multi-level header breadcrumb for Marketplace Specialist details', async () => {
-    useSettingsStore.getState().openSettingsToPanel('specialists')
-    Object.assign(window.api.specialist, {
-      listMarketplace: vi.fn().mockResolvedValue({
-        sources: [
-          {
-            id: 'official',
-            kind: 'official',
-            name: 'Open-Science Marketplace',
-            repositoryUrl: 'https://github.com/aipoch/marketplace',
-            ref: 'published',
-            trust: 'official',
-            keyId: 'key-1',
-            keyFingerprint: 'a'.repeat(64),
-            removable: false
-          }
-        ],
-        specialists: [
-          {
-            sourceId: 'official',
-            sourceName: 'Open-Science Marketplace',
-            sourceTrust: 'official',
-            id: 'example-specialist',
-            displayName: 'Example Specialist',
-            summary: 'Focused research workflows.',
-            publisher: { id: 'aipoch', name: 'Aipoch' },
-            version: '1.0.0'
-          }
-        ],
-        failures: []
-      }),
-      getMarketplaceRelease: vi.fn().mockResolvedValue({
-        sourceId: 'official',
-        specialistId: 'example-specialist',
-        displayName: 'Example Specialist',
-        summary: 'Focused research workflows.',
-        publisher: { id: 'aipoch', name: 'Aipoch' },
-        version: '1.0.0',
-        repository: 'https://github.com/aipoch/example',
-        commit: 'a'.repeat(40),
-        license: 'MIT',
-        compressedBytes: 100,
-        uncompressedBytes: 200,
-        fileCount: 2,
-        defaultSkillIds: [],
-        defaultConnectorIds: [],
-        skills: [],
-        connectors: []
-      })
-    })
-
-    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
-    await act(async () => {
-      await Promise.resolve()
-    })
-    await act(async () => {
-      const marketplaceEntry = Array.from(
-        document.body.querySelectorAll<HTMLButtonElement>('button')
-      ).find((button) => button.textContent?.trim() === 'Browse Marketplace')
-      marketplaceEntry?.click()
-      await Promise.resolve()
-    })
-    await act(async () => {
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.includes('Example Specialist'))
-        ?.click()
-      await Promise.resolve()
-    })
-
-    const marketplaceCrumb = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Back to Marketplace"]'
-    )
-    expect(marketplaceCrumb).not.toBeNull()
-    expect(marketplaceCrumb?.closest('div')?.textContent).toContain(
-      'Specialists›Marketplace›example-specialist'
-    )
-    expect(document.body.textContent).not.toContain('Back to Marketplace')
-
-    await act(async () => marketplaceCrumb?.click())
-    expect(document.body.querySelector('[aria-label="Search Marketplace"]')).not.toBeNull()
   })
 
   it('pushes Agent after storage recovery so Back returns to Storage', async () => {
@@ -6092,53 +4873,56 @@ describe('SettingsPage Codex framework', () => {
     expect(frameworkRadios[0]?.tabIndex).toBe(0)
   })
 
-  it('routes isolated subscription sign-out from the provider list', async () => {
-    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
-    const provider = {
-      id: 'builtin-codex-subscription',
-      type: 'codex-isolated',
-      name: 'Codex subscription',
-      apiEndpoints: ['responses'],
-      models: ['gpt-5.6-sol'],
-      supportsImageInput: true,
-      hasKey: false,
-      needsKey: false,
-      lastValidatedAt: 1
-    }
-    const snapshot = {
-      claude: {},
-      opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
-      providers: [provider],
-      activeProviderId: provider.id,
-      activeModel: 'gpt-5.6-sol',
-      agentFrameworkId: 'codex',
-      agentFrameworks: frameworks,
-      claudeManaged: false,
-      opencodeManaged: false,
-      codexManaged: true
-    }
-    api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
-    api.settings.getPreflight = vi.fn().mockResolvedValue({
-      codexReady: true,
-      agentFrameworkId: 'codex',
-      agentReady: true,
-      activeProviderReady: true
-    })
-    const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
-    api.settings.logoutIsolatedCodex = logoutIsolatedCodex
+  it.each(['codex', 'open-science-agent'] as const)(
+    'routes isolated subscription sign-out from the provider list under %s',
+    async (agentFrameworkId) => {
+      const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+      const provider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        name: 'Codex subscription',
+        apiEndpoints: ['responses'],
+        models: ['gpt-5.6-sol'],
+        supportsImageInput: true,
+        hasKey: false,
+        needsKey: false,
+        lastValidatedAt: 1
+      }
+      const snapshot = {
+        claude: {},
+        opencode: {},
+        codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: 'gpt-5.6-sol',
+        agentFrameworkId,
+        agentFrameworks: frameworks,
+        claudeManaged: false,
+        opencodeManaged: false,
+        codexManaged: true
+      }
+      api.settings.getSettings = vi.fn().mockResolvedValue(snapshot)
+      api.settings.getPreflight = vi.fn().mockResolvedValue({
+        codexReady: true,
+        agentFrameworkId,
+        agentReady: true,
+        activeProviderReady: true
+      })
+      const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+      api.settings.logoutIsolatedCodex = logoutIsolatedCodex
 
-    useSettingsStore.getState().openSettingsToPanel('model')
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
-    await act(async () => signOut?.click())
+      useSettingsStore.getState().openSettingsToPanel('model')
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      const signOut = document.body.querySelector<HTMLButtonElement>('[aria-label="Sign out"]')
+      await act(async () => signOut?.click())
 
-    expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
-    const errorAlert = document.body.querySelector('[role="alert"]')
-    expect(errorAlert).toBeNull()
-  })
+      expect(logoutIsolatedCodex).toHaveBeenCalledOnce()
+      const errorAlert = document.body.querySelector('[role="alert"]')
+      expect(errorAlert).toBeNull()
+    }
+  )
 
   it('surfaces a Codex sign-out timeout through the provider error alert', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
@@ -6191,58 +4975,61 @@ describe('SettingsPage Codex framework', () => {
     expect(errorAlert?.textContent).toBe('Codex sign-out timed out.')
   })
 
-  it('summarizes Codex login-check IPC failures and keeps their diagnostics available', async () => {
-    const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
-    const provider = {
-      id: 'builtin-codex-subscription',
-      type: 'codex-shared',
-      name: 'Codex subscription',
-      apiEndpoints: ['responses'],
-      models: ['gpt-5.6-sol'],
-      supportsImageInput: true,
-      hasKey: false,
-      needsKey: false
+  it.each(['codex', 'open-science-agent'] as const)(
+    'summarizes Codex login-check IPC failures and keeps their diagnostics available under %s',
+    async (agentFrameworkId) => {
+      const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
+      const provider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-shared',
+        name: 'Codex subscription',
+        apiEndpoints: ['responses'],
+        models: ['gpt-5.6-sol'],
+        supportsImageInput: true,
+        hasKey: false,
+        needsKey: false
+      }
+      api.settings.getSettings = vi.fn().mockResolvedValue({
+        claude: {},
+        opencode: {},
+        codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+        providers: [provider],
+        activeProviderId: provider.id,
+        agentFrameworkId,
+        agentFrameworks: frameworks,
+        claudeManaged: false,
+        opencodeManaged: false,
+        codexManaged: true
+      })
+      api.settings.getPreflight = vi.fn().mockResolvedValue({
+        codexReady: true,
+        agentFrameworkId,
+        agentReady: true,
+        activeProviderReady: false
+      })
+      api.settings.validateProvider = vi
+        .fn()
+        .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
+
+      useSettingsStore.getState().openSettingsToPanel('model')
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+      })
+      const testLogin = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Check Codex login"]'
+      )
+      await act(async () => testLogin?.click())
+
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+        'Could not test the provider connection.'
+      )
+      const details = document.body.querySelector('details')
+      expect(details?.open).toBe(false)
+      expect(details?.textContent).toContain(
+        'The Codex adapter does not support authentication status.'
+      )
     }
-    api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: {},
-      opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
-      providers: [provider],
-      activeProviderId: provider.id,
-      agentFrameworkId: 'codex',
-      agentFrameworks: frameworks,
-      claudeManaged: false,
-      opencodeManaged: false,
-      codexManaged: true
-    })
-    api.settings.getPreflight = vi.fn().mockResolvedValue({
-      codexReady: true,
-      agentFrameworkId: 'codex',
-      agentReady: true,
-      activeProviderReady: false
-    })
-    api.settings.validateProvider = vi
-      .fn()
-      .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
-
-    useSettingsStore.getState().openSettingsToPanel('model')
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-    const testLogin = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Check Codex login"]'
-    )
-    await act(async () => testLogin?.click())
-
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
-      'Could not test the provider connection.'
-    )
-    const details = document.body.querySelector('details')
-    expect(details?.open).toBe(false)
-    expect(details?.textContent).toContain(
-      'The Codex adapter does not support authentication status.'
-    )
-  })
+  )
 
   it('cancels a pending isolated sign-in when the dialog closes mid-flow', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
@@ -6327,150 +5114,6 @@ describe('SettingsPage Codex framework', () => {
     expect(details?.open).toBe(false)
     expect(details?.textContent).toContain('The Codex adapter failed to spawn.')
   })
-})
-
-describe('Skill editor leave protection', () => {
-  const field = (label: string): HTMLInputElement =>
-    document.querySelector(`[aria-label="${label}"]`)!
-  const clickLabel = async (label: string): Promise<void> => {
-    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-      (item) => item.textContent?.trim() === label
-    )!
-    expect(button, label).toBeDefined()
-    await act(async () => button.click())
-  }
-  const confirmation = (): HTMLElement | null =>
-    document.querySelector('[data-testid="skill-discard-confirmation"]')
-  const mountEditor = async (): Promise<{
-    onClose: ReturnType<typeof vi.fn<() => void>>
-    handle: ReturnType<typeof createRef<SettingsPageHandle>>
-  }> => {
-    const onClose = vi.fn<() => void>()
-    const handle = createRef<SettingsPageHandle>()
-    await act(async () => root.render(<SettingsPage ref={handle} open onClose={onClose} />))
-    await act(async () => navButton('Skills')!.click())
-    openRadixMenu(document.querySelector<HTMLElement>('[data-settings-anchor="skills.add"]'))
-    const create = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
-      item.textContent?.includes('Write from scratch')
-    )!
-    clickRadixMenuItem(create)
-    await waitFor(() => expect(field('Skill name')).not.toBeNull())
-    return { onClose, handle }
-  }
-  const edit = async (): Promise<void> => {
-    await act(async () => {
-      fireEvent.change(field('Skill name'), { target: { value: 'draft-skill' } })
-      fireEvent.change(field('Skill body'), { target: { value: 'Research instructions' } })
-    })
-  }
-
-  it.each([
-    'Back',
-    'Forward',
-    'breadcrumb',
-    'panel',
-    'search',
-    'Cancel',
-    'Close settings',
-    'close pane',
-    'external intent',
-    'host navigation'
-  ])('preserves a draft until discard is confirmed through %s', async (route) => {
-    const { onClose, handle } = await mountEditor()
-    if (route === 'Forward') {
-      await act(async () => navButton('General')!.click())
-      await act(async () => field('Back').click())
-    }
-    await edit()
-    const leave = async (): Promise<void> => {
-      await act(async () => {
-        if (route === 'breadcrumb') field('Back to skills').click()
-        else if (route === 'panel') navButton('General')!.click()
-        else if (route === 'search') {
-          const search = field('Search settings')
-          search.focus()
-          fireEvent.change(search, { target: { value: 'language' } })
-        } else if (route === 'close pane') handle.current!.closeActivePane()
-        else if (route === 'host navigation') handle.current!.requestLeave(onClose)
-        else if (route === 'external intent')
-          useSettingsStore.getState().openSettingsToPanel('general')
-        else if (route !== 'Cancel') field(route).click()
-      })
-      if (route === 'Cancel') await clickLabel('Cancel')
-      if (route === 'search')
-        await act(async () => fireEvent.keyDown(field('Search settings'), { key: 'Enter' }))
-    }
-    await leave()
-    expect(confirmation()).not.toBeNull()
-    expect(field('Skill body').value).toBe('Research instructions')
-    expect(onClose).not.toHaveBeenCalled()
-    if (route === 'search') expect(field('Search settings').value).toBe('language')
-    await clickLabel('Keep editing')
-    expect(confirmation()).toBeNull()
-    expect(field('Skill body').value).toBe('Research instructions')
-    await leave()
-    await clickLabel('Discard changes')
-    expect(confirmation()).toBeNull()
-    if (route === 'Close settings' || route === 'host navigation')
-      expect(onClose).toHaveBeenCalledOnce()
-    else expect(field('Skill body')).toBeNull()
-  })
-
-  it('does not prompt after edits are reverted to the original values', async () => {
-    await mountEditor()
-    await edit()
-    await act(async () => {
-      fireEvent.change(field('Skill name'), { target: { value: '' } })
-      fireEvent.change(field('Skill body'), { target: { value: '' } })
-    })
-    await clickLabel('Cancel')
-    expect(confirmation()).toBeNull()
-    expect(field('Skill body')).toBeNull()
-  })
-
-  it.each(['resolve', 'reject'] as const)(
-    'waits for a pending create to %s before allowing leave',
-    async (outcome) => {
-      let resolve!: () => void
-      let reject!: (error: Error) => void
-      const createSkill = vi.fn().mockReturnValue(
-        new Promise<void>((yes, no) => {
-          resolve = yes
-          reject = no
-        })
-      )
-      const previous = useSettingsStore.getState().createSkill
-      useSettingsStore.setState({ createSkill })
-      try {
-        const { onClose } = await mountEditor()
-        await edit()
-        await clickLabel('Create skill')
-        await act(async () => field('Close settings').click())
-        expect(confirmation()?.textContent).toContain('Wait for the current skill operation')
-        expect(
-          [...confirmation()!.querySelectorAll('button')].every((button) => button.disabled)
-        ).toBe(true)
-        expect(field('Skill body').closest('fieldset')?.disabled).toBe(true)
-        expect(onClose).not.toHaveBeenCalled()
-        await act(async () => {
-          if (outcome === 'resolve') resolve()
-          else reject(new Error('Write failed'))
-        })
-        if (outcome === 'resolve') {
-          expect(confirmation()).toBeNull()
-          expect(field('Skill body')).toBeNull()
-          expect(onClose).not.toHaveBeenCalled()
-        } else {
-          await clickLabel('Keep editing')
-          expect(field('Skill body').value).toBe('Research instructions')
-          expect(document.body.textContent).toContain('Write failed')
-        }
-        expect(createSkill).toHaveBeenCalledOnce()
-      } finally {
-        useSettingsStore.setState({ createSkill: previous })
-      }
-    }
-  )
 })
 
 describe('Provider editor leave protection', () => {
@@ -6562,6 +5205,10 @@ describe('Provider editor leave protection', () => {
     'Escape',
     'close pane',
     'external intent',
+    'resource connector',
+    'resource skill',
+    'resource specialist',
+    'resource panel',
     'host navigation'
   ])('preserves provider edits until discard is confirmed through %s', async (route) => {
     const { onClose, handle } = await mountEditor()
@@ -6580,6 +5227,14 @@ describe('Provider editor leave protection', () => {
           fireEvent.change(search, { target: { value: 'language' } })
         } else if (route === 'close pane') handle.current!.closeActivePane()
         else if (route === 'host navigation') handle.current!.requestLeave(onClose)
+        else if (route === 'resource connector')
+          useSettingsStore.getState().openSettingsToConnector('connector-a')
+        else if (route === 'resource skill')
+          useSettingsStore.getState().openSettingsToSkill('alpha')
+        else if (route === 'resource specialist')
+          useSettingsStore.getState().openSettingsToSpecialist('specialist-a')
+        else if (route === 'resource panel')
+          useSettingsStore.getState().openSettingsToPanel('skills')
         else if (route === 'external intent')
           useSettingsStore.getState().openSettingsToPanel('general')
         else if (route === 'Escape') {
@@ -6595,6 +5250,7 @@ describe('Provider editor leave protection', () => {
     expect(confirmation()?.textContent).toContain('Your provider edits have not been saved.')
     expect(field('Provider name').value).toBe('Research endpoint draft')
     expect(onClose).not.toHaveBeenCalled()
+    if (route.startsWith('resource')) expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
     if (route === 'search') expect(field('Search settings').value).toBe('language')
     await clickLabel('Keep editing')
     expect(confirmation()).toBeNull()
@@ -6602,7 +5258,20 @@ describe('Provider editor leave protection', () => {
     await leave()
     await clickLabel('Discard changes')
     expect(confirmation()).toBeNull()
-    if (['Close settings', 'Escape', 'host navigation'].includes(route))
+    if (route.startsWith('resource')) {
+      expect(onClose).toHaveBeenCalledOnce()
+      const intent = useNavigationStore.getState().resourceCenterIntent
+      if (route === 'resource connector')
+        expect(intent).toEqual({
+          resource: 'connectors',
+          view: { kind: 'list', recoveryConnectorId: 'connector-a' }
+        })
+      else if (route === 'resource skill')
+        expect(intent).toEqual({ resource: 'skills', skillId: 'alpha' })
+      else if (route === 'resource specialist')
+        expect(intent).toEqual({ resource: 'specialists', specialistId: 'specialist-a' })
+      else expect(intent?.resource).toBe('skills')
+    } else if (['Close settings', 'Escape', 'host navigation'].includes(route))
       expect(onClose).toHaveBeenCalledOnce()
     else expect(field('Provider name')).toBeNull()
   })
@@ -7131,6 +5800,16 @@ describe('Connection editor shared leave protection', () => {
     }))
     const update = vi.fn(async () => undefined)
     Object.assign(window.api.compute, {
+      getComputePythonRuntime: vi.fn(async () => ({
+        selection: { kind: 'managed' },
+        revision: 0,
+        candidates: []
+      })),
+      cancelAccountConnection: vi.fn(async () => ({
+        provider: 'hugging-face',
+        state: 'connected',
+        source: 'local'
+      })),
       accountStatus: vi.fn(async (provider: string) => ({ provider, state: 'connected' })),
       useLocalAccount: signIn,
       createHostedTarget: create,
@@ -7140,6 +5819,8 @@ describe('Connection editor shared leave protection', () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Compute')!.click())
     await click('Add Hugging Face Jobs target')
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+    await click('Use local sign-in')
     expect(document.querySelector('[aria-label="Back to compute"]')).not.toBeNull()
     const field = (name: string): HTMLInputElement =>
       document.querySelector(`input[name="${name}"]`)!
@@ -7152,7 +5833,10 @@ describe('Connection editor shared leave protection', () => {
     await click('Save')
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
     await click('Use local sign-in')
-    expect(signIn).toHaveBeenCalledWith('hugging-face')
+    expect(signIn).toHaveBeenCalledWith(
+      'hugging-face',
+      expect.objectContaining({ operationId: expect.any(String), revision: 0 })
+    )
     expect(field('bucket').value).toBe(config.bucket)
     await click('Save')
     expect(create).toHaveBeenLastCalledWith(config)
@@ -7172,56 +5856,39 @@ describe('Connection editor shared leave protection', () => {
       flavor: 't4-small'
     })
     expect(document.querySelector('input[name="flavor"]')).toBeNull()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
   })
-  it.each(['Connectors', 'Compute'] as const)(
-    'protects %s drafts through panel, breadcrumb, back and close',
-    async (panel) => {
-      window.api.compute.passwordCapability = vi.fn().mockResolvedValue({ available: true })
-      const onClose = vi.fn()
-      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
-      await act(async () => navButton(panel)!.click())
-      if (panel === 'Compute') await click('Add SSH host')
-      else {
-        openRadixMenu(
-          [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
-            button.textContent?.includes('Add connector')
-          )
-        )
-        await act(async () => {
-          clickRadixMenuItem(
-            [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
-              item.textContent?.includes('Local command')
-            )
-          )
-          await Promise.resolve()
-        })
-      }
-      const selector = panel === 'Compute' ? '#compute-alias' : '[aria-label="Display name"]'
-      const field = (): HTMLInputElement => document.querySelector(selector)!
-      act(() => fireEvent.change(field(), { target: { value: 'Draft research connection' } }))
-      const leaveButtons = [
-        navButton('General')!,
-        document.querySelector<HTMLButtonElement>(`[aria-label="Back to ${panel.toLowerCase()}"]`)!,
-        document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!,
-        document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!
-      ]
-      for (const leave of leaveButtons) {
-        expect(leave).not.toBeNull()
-        await act(async () => leave.click())
-        expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
-        expect(onClose).not.toHaveBeenCalled()
-        await click('Keep editing')
-        expect(field().value).toBe('Draft research connection')
-      }
-      await act(async () => navButton('General')!.click())
-      await click('Discard changes')
-      expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
-      await act(async () =>
-        document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
-      )
-      expect(field().value).toBe('')
+  it('protects Compute drafts through panel, breadcrumb, back and close', async () => {
+    window.api.compute.passwordCapability = vi.fn().mockResolvedValue({ available: true })
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Compute')!.click())
+    await click('Add SSH host')
+    const selector = '#compute-alias'
+    const field = (): HTMLInputElement => document.querySelector(selector)!
+    act(() => fireEvent.change(field(), { target: { value: 'Draft research connection' } }))
+    const leaveButtons = [
+      navButton('General')!,
+      document.querySelector<HTMLButtonElement>('[aria-label="Back to compute"]')!,
+      document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!,
+      document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!
+    ]
+    for (const leave of leaveButtons) {
+      expect(leave).not.toBeNull()
+      await act(async () => leave.click())
+      expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      await click('Keep editing')
+      expect(field().value).toBe('Draft research connection')
     }
-  )
+    await act(async () => navButton('General')!.click())
+    await click('Discard changes')
+    expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click())
+    expect(field().value).toBe('')
+  })
 })
 
 describe('Resource editor leave protection', () => {

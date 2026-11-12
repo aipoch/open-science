@@ -28,11 +28,9 @@ import {
   Minimize2,
   MonitorSmartphone,
   Palette,
-  ScrollText,
   Settings2,
   TerminalSquare,
   Tags as TagsIcon,
-  Users,
   X,
   Zap
 } from 'lucide-react'
@@ -59,10 +57,8 @@ import {
   type UpsertProviderRequest
 } from '../../../../shared/settings'
 import { APP } from '../../../../shared/app-config'
-import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import type { SkillEditorLeaveState } from './SkillEditor'
 import type { NetworkEditorLeaveState } from './NotebookNetworkDomainsForm'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
@@ -91,11 +87,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ProvidersPanel } from './ProvidersPanel'
 import { ModelPanel } from './ModelPanel'
-import type { SkillsView } from '@/lib/settings-navigation'
 import type { ConnectorsView } from '@/lib/settings-navigation'
-import type { SpecialistsView } from '@/lib/settings-navigation'
-import { ResourceTagSummary } from './ResourceTagControls'
-import { ConnectorsNavIcon } from './connector-icons'
 import { computeTargetAddLabels, type ComputeView } from '@/lib/settings-navigation'
 import type { ArchivedView } from '@/lib/settings-navigation'
 import type { MemoryView } from '@/lib/settings-navigation'
@@ -155,27 +147,6 @@ const RemoteControlPanel = lazy(async () => {
   await panelModule.RemoteControlPanel.preload().catch(() => undefined)
   return { default: panelModule.RemoteControlPanel }
 })
-const SkillsPanel = lazy(async () => {
-  const panelModule = await loadSettingsPanel(
-    () => import('./SkillsPanel'),
-    () => useSettingsStore.getState().loadSkills()
-  )
-  return { default: panelModule.SkillsPanel }
-})
-const ConnectorsPanel = lazy(async () => {
-  const panelModule = await loadSettingsPanel(
-    () => import('./ConnectorsPanel'),
-    () => useSettingsStore.getState().loadConnectors()
-  )
-  return { default: panelModule.ConnectorsPanel }
-})
-const SpecialistsPanel = lazy(async () => {
-  const panelModule = await loadSettingsPanel(
-    () => import('./SpecialistsPanel'),
-    () => useSpecialistStore.getState().load()
-  )
-  return { default: panelModule.SpecialistsPanel }
-})
 const MemoryPanel = lazy(async () => {
   const panelModule = await import('./MemoryPanel')
   return { default: panelModule.MemoryPanel }
@@ -194,18 +165,6 @@ const TagsPanel = lazy(async () => {
   )
   return { default: panelModule.TagsPanel }
 })
-const ConnectorDetailView = lazy(async () => ({
-  default: (await import('./ConnectorDetailView')).ConnectorDetailView
-}))
-const ConnectorAddForm = lazy(async () => ({
-  default: (await import('./ConnectorAddForm')).ConnectorAddForm
-}))
-const ConnectorExportView = lazy(async () => ({
-  default: (await import('./ConnectorExportView')).ConnectorExportView
-}))
-const ConnectorImportView = lazy(async () => ({
-  default: (await import('./ConnectorImportView')).ConnectorImportView
-}))
 const ComputePanel = lazy(async () => {
   const panelModule = await loadSettingsPanel(
     () => import('./ComputePanel'),
@@ -315,12 +274,9 @@ type SettingsPanel = {
 // Keyed rather than derived: the old code sliced a prefix off the key and cast the result, which hid
 // that one panel had no lowercase entry at all and rendered a raw key path to screen readers.
 const PANEL_NAME_LOWER = {
-  Skills: 'skills',
   Model: 'model',
   Network: 'network',
-  Connectors: 'connectors',
   Compute: 'compute',
-  Specialists: 'specialists',
   Memory: 'memory',
   Tags: 'tags',
   Credentials: 'credentials',
@@ -352,15 +308,12 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
-      { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
-      { id: 'specialists', labelKey: 'Specialists', Icon: Users },
       { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit }
     ]
   },
   {
     labelKey: 'Connections',
     panels: [
-      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
       { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
@@ -393,6 +346,8 @@ const SETTINGS_WRITE_ERROR_COPY: Record<SettingsWriteErrorCode, string> = {
     'Could not save Session details model. Refresh the model catalog and try again.',
   'reviewer-model': 'Could not save Reviewer model. Refresh the model catalog and try again.',
   'subagent-model': 'Could not save Subagent model. Refresh the model catalog and try again.',
+  'prompt-optimization-model':
+    'Could not save Prompt optimization model. Refresh the model catalog and try again.',
   'vision-model': 'Could not save Vision model. Refresh the model catalog and try again.',
   notifications: 'Could not save notification preference. Try again.',
   'notification-content': 'Could not save notification preference. Try again.',
@@ -502,16 +457,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const refreshPreflight = useSettingsStore((state) => state.refreshPreflight)
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
   const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
-  const canImportInstalledSkills =
-    typeof window.api.settings.listAgentHomeSkills === 'function' &&
-    typeof window.api.settings.importAgentHomeSkills === 'function'
-
   // Settings navigation history (browser-like back/forward). Each entry contains only its active
   // panel route, so unrelated panel views cannot form impossible combinations.
   const [history, setHistory] = useState<SettingsRoute[]>([INITIAL_SETTINGS_ROUTE])
   const [historyIndex, setHistoryIndex] = useState(0)
   const skillLeaveReturnFocus = useRef<HTMLElement | null>(null)
-  const skillEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
   const networkEditorLeaveState = useRef<NetworkEditorLeaveState | null>(null)
   const [networkEditorBusy, setNetworkEditorBusy] = useState(false)
   const onNetworkLeaveStateChange = useCallback((state: NetworkEditorLeaveState | null) => {
@@ -519,16 +469,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setNetworkEditorBusy(state?.busy ?? false)
     if (state && !state.dirty && !state.busy) setPendingSkillLeave(null)
   }, [])
-  const providerEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
-  const [skillEditorBusy, setSkillEditorBusy] = useState(false)
+  const providerEditorLeaveState = useRef<SettingsEditorLeaveState | null>(null)
   const [pendingSkillLeave, setPendingSkillLeave] = useState<(() => void) | null>(null)
-  const pendingSkillLeaveOwner = useRef<
-    'connection' | 'network' | 'provider' | 'skill' | 'resource' | null
-  >(null)
-  const onSkillEditorLeaveStateChange = useCallback((state: SkillEditorLeaveState | null) => {
-    skillEditorLeaveState.current = state
-    setSkillEditorBusy(state?.busy ?? false)
-  }, [])
+  const pendingSkillLeaveOwner = useRef<'connection' | 'network' | 'provider' | 'resource' | null>(
+    null
+  )
   const resourceEditorLeaveState = useRef<SettingsEditorLeaveState | null>(null)
   const [resourceEditorBusy, setResourceEditorBusy] = useState(false)
   const onResourceEditorLeaveStateChange = useCallback((state: SettingsEditorLeaveState | null) => {
@@ -561,16 +506,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         ? 'network'
         : providerEditorLeaveState.current
           ? 'provider'
-          : skillEditorLeaveState.current
-            ? 'skill'
-            : resourceEditorLeaveState.current
-              ? 'resource'
-              : null
+          : resourceEditorLeaveState.current
+            ? 'resource'
+            : null
     const state =
       connectionEditorLeaveState.current ??
       networkEditorLeaveState.current ??
       providerEditorLeaveState.current ??
-      skillEditorLeaveState.current ??
       resourceEditorLeaveState.current
     if (state?.dirty || state?.busy) {
       const focused = document.activeElement
@@ -584,6 +526,37 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       setPendingSkillLeave(() => leave)
     } else leave()
   }, [])
+  const openResourceCenterSkill = useCallback(
+    (skillId: string): void => {
+      requestLeave(() => {
+        useNavigationStore.getState().openResourceCenter(
+          'user',
+          {
+            resource: 'skills',
+            skillId
+          },
+          onClose
+        )
+      })
+    },
+    [onClose, requestLeave]
+  )
+  const openResourceCenterSpecialist = useCallback(
+    (specialistId: string, kind: 'builtin' | 'edit' = 'edit'): void => {
+      requestLeave(() => {
+        useNavigationStore.getState().openResourceCenter(
+          'user',
+          {
+            resource: 'specialists',
+            specialistId,
+            specialistKind: kind
+          },
+          onClose
+        )
+      })
+    },
+    [onClose, requestLeave]
+  )
   const requestClose = (): void => requestLeave(onClose)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
@@ -601,8 +574,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
   const mobileNavWasOpenRef = useRef(false)
   const codebuddyAutoDetectAttempted = useRef(false)
-  const skills = useSettingsStore((state) => state.skills)
-  const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const deviceCredentials = useSettingsStore((state) => state.deviceCredentials)
   const computeHosts = useComputeStore((state) => state.hosts)
@@ -686,10 +657,33 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     seededIntentId.current = pendingSettingsIntent.requestId
     consumePendingSettingsIntent(pendingSettingsIntent.requestId)
     requestLeave(() => {
-      setHistory([pendingSettingsIntent.route])
+      const route = pendingSettingsIntent.route
+      if (
+        route.panel === 'skills' ||
+        route.panel === 'connectors' ||
+        route.panel === 'specialists'
+      ) {
+        useNavigationStore.getState().openResourceCenter(
+          'user',
+          route.panel === 'connectors'
+            ? { resource: 'connectors', view: route.view }
+            : route.panel === 'skills'
+              ? {
+                  resource: 'skills',
+                  skillId: route.view.kind === 'detail' ? route.view.id : undefined
+                }
+              : {
+                  resource: 'specialists',
+                  specialistId: route.view.kind === 'edit' ? route.view.id : undefined
+                },
+          onClose
+        )
+        return
+      }
+      setHistory([route])
       setHistoryIndex(0)
     })
-  }, [consumePendingSettingsIntent, open, pendingSettingsIntent, requestLeave])
+  }, [consumePendingSettingsIntent, onClose, open, pendingSettingsIntent, requestLeave])
 
   useEffect(() => {
     if (!open) setPendingSkillLeave(null)
@@ -761,11 +755,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const projects = useProjectStore((state) =>
     isUsageVisible ? state.projects : EMPTY_USAGE_PROJECTS
   )
-  const skillsView: SkillsView =
-    currentRoute.panel === 'skills' ? currentRoute.view : { kind: 'list' }
   const modelView: ModelView = currentRoute.panel === 'model' ? currentRoute.view : { kind: 'list' }
-  const connectorsView: ConnectorsView =
-    currentRoute.panel === 'connectors' ? currentRoute.view : { kind: 'list' }
   const notebookNetworkAvailable =
     typeof window.api.settings.getNotebookNetworkStatus === 'function' &&
     !document.documentElement.hasAttribute('data-open-science-notebook-network-unavailable')
@@ -783,8 +773,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         )
       : undefined
   )
-  const specialistsView: SpecialistsView =
-    currentRoute.panel === 'specialists' ? currentRoute.view : { kind: 'list' }
   const archivedView: ArchivedView =
     currentRoute.panel === 'archived' ? currentRoute.view : { kind: 'list' }
   const memoryView: MemoryView =
@@ -805,31 +793,31 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (activeTagId) setSelectedTagId(activeTagId)
   }, [activeTagId, setSelectedTagId])
 
-  const retainsConnectorDraft = (target: SettingsRoute): boolean => {
-    if (currentRoute.panel !== 'connectors' || target.panel !== 'connectors') return false
-    if (
-      !['add', 'edit'].includes(currentRoute.view.kind) ||
-      target.view.kind !== currentRoute.view.kind
-    )
-      return false
-    return (
-      JSON.stringify({ ...currentRoute.view, credentialView: undefined }) ===
-      JSON.stringify({ ...target.view, credentialView: undefined })
-    )
-  }
-  const requestRouteLeave = (target: SettingsRoute, leave: () => void): void => {
-    if (retainsConnectorDraft(target)) leave()
-    else requestLeave(leave)
-  }
-
   // Pushes a complete active route, dropping any forward entries. Routes contain only serializable
   // navigation values, so comparing the whole route automatically covers fields added later.
   const navigate = (route: SettingsRoute, onNavigated?: () => void): void => {
+    if (route.panel === 'skills' || route.panel === 'connectors' || route.panel === 'specialists') {
+      requestLeave(() => {
+        useNavigationStore
+          .getState()
+          .openResourceCenter(
+            'user',
+            route.panel === 'connectors'
+              ? { resource: 'connectors', view: route.view }
+              : { resource: route.panel },
+            () => {
+              onClose()
+              onNavigated?.()
+            }
+          )
+      })
+      return
+    }
     if (JSON.stringify(route) === JSON.stringify(currentRoute)) {
       onNavigated?.()
       return
     }
-    requestRouteLeave(route, () => {
+    requestLeave(() => {
       setHistory((entries) => [...entries.slice(0, historyIndex + 1), route])
       setHistoryIndex((index) => index + 1)
       onNavigated?.()
@@ -844,11 +832,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         : settingsPanelRoute(panel),
       onNavigated
     )
-  }
-
-  const navigateTag = (tagId: string): void => {
-    setSelectedTagId(tagId)
-    navigate({ panel: 'tags', view: { kind: 'list', tagId } })
   }
 
   const recordSelectedTag = useCallback(
@@ -868,16 +851,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     [historyIndex]
   )
 
-  // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
-  const navigateSkills = (skills: SkillsView): void => navigate({ panel: 'skills', view: skills })
-
-  // Navigates within the connectors panel (list/detail/add/edit) as a history entry.
+  // Connector links leave Settings and open their owner in Resource Center.
   const navigateConnectors = (connectors: ConnectorsView): void =>
     navigate({ panel: 'connectors', view: connectors })
-
-  // Navigates within the specialists panel (list/create) as a history entry.
-  const navigateSpecialists = (specialists: SpecialistsView): void =>
-    navigate({ panel: 'specialists', view: specialists })
 
   // Navigates within the network panel (package-mirror list vs. configure) as a history entry, so the
   // configure form gets a proper "Network / Package mirror" breadcrumb + back/forward.
@@ -899,65 +875,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'credentials', view: credentials })
 
   // Shared header breadcrumb for a drilled-in sub-view (null when on a panel's list, so the plain
-  // panel title shows). Covers both the skills and model panels.
+  // panel title shows).
   const breadcrumb = ((): {
     rootLabelKey: DrillablePanelName
     rootTo: SettingsRoute
-    parents?: ReadonlyArray<{
-      label: string
-      to: SettingsRoute
-      ariaLabel: string
-      onClick?: () => void
-    }>
     leaf: string
   } | null => {
-    if (activePanel === 'skills' && skillsView.kind !== 'list') {
-      if (
-        skillsView.kind === 'marketplace' ||
-        skillsView.kind === 'marketplace-detail' ||
-        skillsView.kind === 'marketplace-batch'
-      ) {
-        return {
-          rootLabelKey: 'Skills',
-          rootTo: { panel: 'skills', view: { kind: 'list' } },
-          ...(skillsView.kind !== 'marketplace'
-            ? {
-                parents: [
-                  {
-                    label: t('Marketplace'),
-                    to: { panel: 'skills', view: { kind: 'marketplace' } },
-                    ariaLabel: t('Back to {{panel}}', { panel: t('Marketplace') })
-                  }
-                ]
-              }
-            : {}),
-          leaf:
-            skillsView.kind === 'marketplace-detail'
-              ? skillsView.displayName
-              : skillsView.kind === 'marketplace-batch'
-                ? t('Batch manage')
-                : t('Marketplace')
-        }
-      }
-      const leaf =
-        skillsView.kind === 'create'
-          ? t('New skill')
-          : skillsView.kind === 'upload'
-            ? t('Upload skills')
-            : skillsView.kind === 'import'
-              ? t('Import from GitHub')
-              : skillsView.kind === 'import-agent-home'
-                ? t('Import installed skills')
-                : (() => {
-                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                    return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
-                  })()
-      return {
-        rootLabelKey: 'Skills',
-        rootTo: { panel: 'skills', view: { kind: 'list' } },
-        leaf
-      }
-    }
     if (
       activePanel === 'model' &&
       (modelView.kind === 'classification-create' || modelView.kind === 'classification-edit')
@@ -993,70 +916,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               : t('Package mirror')
       }
     }
-    if (activePanel === 'connectors' && connectorsView.kind !== 'list') {
-      if (connectorsView.kind === 'add' && connectorsView.credentialView === 'create') {
-        const addConnectorRoute: SettingsRoute = {
-          panel: 'connectors',
-          view: {
-            kind: 'add',
-            transport: connectorsView.transport,
-            ...(connectorsView.template ? { template: connectorsView.template } : {})
-          }
-        }
-        return {
-          rootLabelKey: 'Connectors',
-          rootTo: { panel: 'connectors', view: { kind: 'list' } },
-          parents: [
-            {
-              label: t('Add connector'),
-              to: addConnectorRoute,
-              ariaLabel: t('Back to {{panel}}', { panel: t('Add connector') }),
-              onClick: () => setHistoryIndex((index) => Math.max(0, index - 1))
-            }
-          ],
-          leaf: t('New credential')
-        }
-      }
-      if (connectorsView.kind === 'edit' && connectorsView.credentialView === 'create') {
-        const connectorName =
-          customServers.find((server) => server.id === connectorsView.id)?.name ?? t('connector')
-        const editConnectorLabel = t('Edit {{name}}', { name: connectorName }).trim()
-        return {
-          rootLabelKey: 'Connectors',
-          rootTo: { panel: 'connectors', view: { kind: 'list' } },
-          parents: [
-            {
-              label: editConnectorLabel,
-              to: { panel: 'connectors', view: { kind: 'edit', id: connectorsView.id } },
-              ariaLabel: t('Back to {{panel}}', { panel: editConnectorLabel }),
-              onClick: () => setHistoryIndex((index) => Math.max(0, index - 1))
-            }
-          ],
-          leaf: t('New credential')
-        }
-      }
-      const leaf =
-        connectorsView.kind === 'add'
-          ? t('Add connector')
-          : connectorsView.kind === 'import'
-            ? t('Import Connector or MCP configuration')
-            : connectorsView.kind === 'export'
-              ? t('Export {{name}}', {
-                  name:
-                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
-                }).trim()
-              : connectorsView.kind === 'edit'
-                ? t('Edit {{name}}', {
-                    name:
-                      customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
-                  }).trim()
-                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
-      return {
-        rootLabelKey: 'Connectors',
-        rootTo: { panel: 'connectors', view: { kind: 'list' } },
-        leaf
-      }
-    }
     if (activePanel === 'compute' && computeView.kind !== 'list') {
       const leaf =
         computeView.kind === 'add'
@@ -1072,54 +931,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       return {
         rootLabelKey: 'Compute',
         rootTo: { panel: 'compute', view: { kind: 'list' } },
-        leaf
-      }
-    }
-    if (activePanel === 'specialists' && specialistsView.kind !== 'list') {
-      const rootTo: SettingsRoute = {
-        panel: 'specialists',
-        view: { kind: 'list' }
-      }
-      if (
-        specialistsView.kind === 'marketplace-sources' ||
-        specialistsView.kind === 'marketplace-release'
-      ) {
-        return {
-          rootLabelKey: 'Specialists',
-          rootTo,
-          parents: [
-            {
-              label: t('Marketplace'),
-              to: { panel: 'specialists', view: { kind: 'marketplace' } },
-              ariaLabel: t('Back to Marketplace')
-            }
-          ],
-          leaf:
-            specialistsView.kind === 'marketplace-sources'
-              ? t('Marketplace sources')
-              : specialistsView.id
-        }
-      }
-      const editingSpecialist =
-        specialistsView.kind === 'edit'
-          ? specialistItems.find(
-              (item): item is Extract<SpecialistListItem, { kind: 'custom' }> =>
-                item.kind === 'custom' && item.id === specialistsView.id
-            )
-          : undefined
-      const leaf =
-        specialistsView.kind === 'create'
-          ? t('New specialist')
-          : specialistsView.kind === 'marketplace'
-            ? t('Marketplace')
-            : specialistsView.kind === 'import'
-              ? t('Import ZIP')
-              : specialistsView.kind === 'export'
-                ? t('Export ZIP')
-                : (editingSpecialist?.name ?? t('Edit specialist'))
-      return {
-        rootLabelKey: 'Specialists',
-        rootTo,
         leaf
       }
     }
@@ -1185,12 +996,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const goBack = (): void => {
     if (!canGoBack) return
-    requestRouteLeave(history[historyIndex - 1], () => setHistoryIndex((index) => index - 1))
+    requestLeave(() => setHistoryIndex((index) => index - 1))
   }
 
   const goForward = (): void => {
     if (!canGoForward) return
-    requestRouteLeave(history[historyIndex + 1], () => setHistoryIndex((index) => index + 1))
+    requestLeave(() => setHistoryIndex((index) => index + 1))
   }
 
   useImperativeHandle(ref, () => ({
@@ -1730,21 +1541,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         >
                           {t(breadcrumb.rootLabelKey)}
                         </button>
-                        {breadcrumb.parents?.map((parent) => (
-                          <span key={parent.label} className="contents">
-                            <span className="shrink-0 text-muted-foreground" aria-hidden="true">
-                              ›
-                            </span>
-                            <button
-                              type="button"
-                              onClick={parent.onClick ?? (() => navigate(parent.to))}
-                              aria-label={parent.ariaLabel}
-                              className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
-                            >
-                              {parent.label}
-                            </button>
-                          </span>
-                        ))}
                         <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                           ›
                         </span>
@@ -1856,17 +1652,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               >
                 <div
                   className={cn(
-                    'mx-auto w-full',
-                    activePanel === 'skills' &&
-                      (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-batch')
-                      ? 'max-w-none'
-                      : 'max-w-[880px]',
+                    'mx-auto w-full max-w-[880px]',
                     (activePanel === 'model' &&
                       (modelView.kind === 'classification-create' ||
                         modelView.kind === 'classification-edit')) ||
                       activePanel === 'memory' ||
-                      activePanel === 'tags' ||
-                      (activePanel === 'skills' && skillsView.kind === 'marketplace-batch')
+                      activePanel === 'tags'
                       ? 'h-full'
                       : 'min-h-full'
                   )}
@@ -1881,70 +1672,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         modelView.kind === 'local-models' ||
                         modelView.kind === 'classification')
                         ? 'model:tabs'
-                        : activePanel === 'skills' &&
-                            (skillsView.kind === 'marketplace' ||
-                              skillsView.kind === 'marketplace-detail' ||
-                              skillsView.kind === 'marketplace-batch')
-                          ? 'skills:marketplace'
-                          : activePanel === 'connectors' &&
-                              (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
-                              connectorsView.credentialView === 'create'
-                            ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
-                            : `${activePanel}:${historyIndex}`
+                        : `${activePanel}:${historyIndex}`
                     }
                     onClose={requestClose}
                   >
-                    {activePanel === 'skills' ? (
-                      <SkillsPanel
-                        view={skillsView}
-                        onNavigate={navigateSkills}
-                        onEditorLeaveStateChange={onSkillEditorLeaveStateChange}
-                        onSaved={() => {
-                          // Only the completed write can bypass the dirty/pending guard.
-                          onSkillEditorLeaveStateChange(null)
-                          skillLeaveReturnFocus.current = null
-                          setPendingSkillLeave(null)
-                          navigateSkills({ kind: 'list' })
-                        }}
-                        onOpenGitHubCredential={() =>
-                          navigate({
-                            panel: 'credentials',
-                            view: { kind: 'service', serviceId: 'github' }
-                          })
-                        }
-                        onOpenTag={navigateTag}
-                        onOpenSpecialist={(usage) =>
-                          navigate({
-                            panel: 'specialists',
-                            view:
-                              usage.kind === 'builtin'
-                                ? { kind: 'builtin', id: usage.id }
-                                : { kind: 'edit', id: usage.id }
-                          })
-                        }
-                        canImportInstalledSkills={canImportInstalledSkills}
-                      />
-                    ) : activePanel === 'specialists' ? (
-                      <SpecialistsPanel
-                        view={specialistsView}
-                        onNavigate={navigateSpecialists}
-                        onOpenTag={navigateTag}
-                        onOpenSkillDetail={(skillId) =>
-                          navigate({
-                            panel: 'skills',
-                            view: { kind: 'detail', id: skillId }
-                          })
-                        }
-                        onOpenConnectorDetail={(connectorId) =>
-                          navigate({
-                            panel: 'connectors',
-                            view: customServers.some((server) => server.id === connectorId)
-                              ? { kind: 'edit', id: connectorId }
-                              : { kind: 'detail', id: connectorId }
-                          })
-                        }
-                      />
-                    ) : activePanel === 'tags' ? (
+                    {activePanel === 'tags' ? (
                       <>
                         {openingTagAnnotation ? (
                           <div
@@ -1969,10 +1701,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           onSelectedTagChange={recordSelectedTag}
                           onOpenResource={(reference) => {
                             if (reference.resourceType === 'catalog.skill') {
-                              navigate({
-                                panel: 'skills',
-                                view: { kind: 'detail', id: reference.resourceId }
-                              })
+                              openResourceCenterSkill(reference.resourceId)
                               return
                             }
                             if (reference.resourceType === 'catalog.connector') {
@@ -2000,13 +1729,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             const specialist = specialistItems.find(
                               (item) => item.id === reference.resourceId
                             )
-                            navigate({
-                              panel: 'specialists',
-                              view:
-                                specialist?.kind === 'builtin'
-                                  ? { kind: 'builtin', id: reference.resourceId }
-                                  : { kind: 'edit', id: reference.resourceId }
-                            })
+                            openResourceCenterSpecialist(
+                              reference.resourceId,
+                              specialist?.kind === 'builtin' ? 'builtin' : 'edit'
+                            )
                           }}
                         />
                       </>
@@ -2020,130 +1746,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           useNavigationStore.getState().openProject(projectId, 'user', onClose)
                         }}
                       />
-                    ) : activePanel === 'connectors' ? (
-                      connectorsView.kind === 'detail' ? (
-                        <div>
-                          <ResourceTagSummary
-                            reference={{
-                              resourceType: 'catalog.connector',
-                              resourceId: connectorsView.id
-                            }}
-                            className="px-5 pt-5"
-                            onOpenTag={navigateTag}
-                          />
-                          <ConnectorDetailView
-                            onOpenSpecialist={(usage) =>
-                              navigate({
-                                panel: 'specialists',
-                                view:
-                                  usage.kind === 'builtin'
-                                    ? { kind: 'builtin', id: usage.id }
-                                    : { kind: 'edit', id: usage.id }
-                              })
-                            }
-                            key={connectorsView.id}
-                            id={connectorsView.id}
-                            onManagePermissions={() => navigatePanel('permissions')}
-                            onManageCredentials={() =>
-                              navigate({
-                                panel: 'credentials',
-                                view: { kind: 'service', serviceId: 'openalex' }
-                              })
-                            }
-                          />
-                        </div>
-                      ) : connectorsView.kind === 'add' ? (
-                        open && (
-                          <ConnectorAddForm
-                            active={open}
-                            key={connectionDraftGeneration}
-                            onLeaveStateChange={onConnectionEditorLeaveStateChange}
-                            initialTransport={connectorsView.transport}
-                            initialTemplate={connectorsView.template}
-                            credentialViewOpen={connectorsView.credentialView === 'create'}
-                            onCredentialViewChange={(open) => {
-                              if (open) {
-                                navigateConnectors({ ...connectorsView, credentialView: 'create' })
-                              } else {
-                                goBack()
-                              }
-                            }}
-                            onDone={() => navigateConnectors({ kind: 'list' })}
-                            onCancel={() => navigateConnectors({ kind: 'list' })}
-                          />
-                        )
-                      ) : connectorsView.kind === 'import' ? (
-                        <ConnectorImportView
-                          onUse={(template) =>
-                            navigateConnectors({
-                              kind: 'add',
-                              transport: template.transport === 'stdio' ? 'local' : 'remote',
-                              template
-                            })
-                          }
-                          onCancel={() => navigateConnectors({ kind: 'list' })}
-                        />
-                      ) : connectorsView.kind === 'export' ? (
-                        <ConnectorExportView
-                          key={connectorsView.id}
-                          id={connectorsView.id}
-                          onDone={() => navigateConnectors({ kind: 'list' })}
-                        />
-                      ) : connectorsView.kind === 'edit' ? (
-                        <div>
-                          {connectorsView.credentialView !== 'create' ? (
-                            <ResourceTagSummary
-                              reference={{
-                                resourceType: 'catalog.connector',
-                                resourceId: connectorsView.id
-                              }}
-                              className="px-5 pt-5"
-                              onOpenTag={navigateTag}
-                            />
-                          ) : null}
-                          {open && (
-                            <ConnectorAddForm
-                              active={open}
-                              key={connectionDraftGeneration}
-                              onLeaveStateChange={onConnectionEditorLeaveStateChange}
-                              editServer={customServers.find((s) => s.id === connectorsView.id)}
-                              editServerId={connectorsView.id}
-                              credentialViewOpen={connectorsView.credentialView === 'create'}
-                              onCredentialViewChange={(open) => {
-                                if (open) {
-                                  navigateConnectors({
-                                    ...connectorsView,
-                                    credentialView: 'create'
-                                  })
-                                } else {
-                                  goBack()
-                                }
-                              }}
-                              onDone={() => navigateConnectors({ kind: 'list' })}
-                              onCancel={() => navigateConnectors({ kind: 'list' })}
-                            />
-                          )}
-                        </div>
-                      ) : (
-                        <ConnectorsPanel
-                          recoveryConnectorId={
-                            connectorsView.kind === 'list'
-                              ? connectorsView.recoveryConnectorId
-                              : undefined
-                          }
-                          onNavigate={navigateConnectors}
-                          onOpenTag={navigateTag}
-                          onOpenSpecialist={(usage) =>
-                            navigate({
-                              panel: 'specialists',
-                              view:
-                                usage.kind === 'builtin'
-                                  ? { kind: 'builtin', id: usage.id }
-                                  : { kind: 'edit', id: usage.id }
-                            })
-                          }
-                        />
-                      )
                     ) : activePanel === 'compute' ? (
                       computeView.kind === 'add' ? (
                         // Revoke completion authority before the dialog's exit animation unmounts.
@@ -2374,7 +1976,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
                           showCodexSubscriptions={
-                            agentFrameworkId === 'codex' && modelView.kind === 'create'
+                            (agentFrameworkId === 'codex' ||
+                              agentFrameworkId === 'open-science-agent') &&
+                            modelView.kind === 'create'
                           }
                           showClaudeIsolated={
                             agentFrameworkId === 'claude-code' && modelView.kind === 'create'
@@ -2517,16 +2121,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     : t(
                         'Your provider edits have not been saved. Discard them and leave the editor?'
                       )
-                  : skillEditorBusy
-                    ? t('Wait for the current skill operation to finish before leaving.')
-                    : t('Your skill edits have not been saved. Discard them and leave the editor?')
+                  : t('Your changes have not been saved. Discard them and leave the editor?')
         }
         cancelLabel={t('Keep editing')}
         confirmLabel={t('Discard changes')}
         loading={
           connectionEditorBusy ||
           networkEditorBusy ||
-          skillEditorBusy ||
           resourceEditorBusy ||
           (isProviderFormOpen && isSaving)
         }
@@ -2548,7 +2149,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           if (
             connectionEditorLeaveState.current?.busy ||
             networkEditorLeaveState.current?.busy ||
-            skillEditorLeaveState.current?.busy ||
             resourceEditorLeaveState.current?.busy ||
             providerEditorLeaveState.current?.busy
           )

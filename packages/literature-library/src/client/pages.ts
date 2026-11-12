@@ -82,7 +82,13 @@ export function createLiteratureClient<Page extends LibraryPage>(
       )
         throw error
       const item = literatureItemViewSchema.parse(JSON.parse(await readLiteratureRecord(itemId)))
-      if (item.id !== itemId) throw new Error('Reference changed while reading search results.')
+      // exportRecord reads the retained row, even when an active search followed a merge.
+      const activeLibrary = request.scope === 'library' && request.lifecycle !== 'deleted'
+      if (
+        item.id !== itemId ||
+        (activeLibrary && (item.deletedAt !== undefined || item.mergedIntoItemId !== undefined))
+      )
+        throw new Error('Reference changed while reading search results.')
       const { totalCount } = await api.search({ ...request, countOnly: true })
       if (totalCount === undefined) throw new Error('Literature count is unavailable.')
       const next = (request.offset ?? 0) + 1

@@ -1,3 +1,4 @@
+import { computePythonSelectionSchema } from '../../shared/compute-python-runtime'
 import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
 
@@ -253,12 +254,17 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   })
   const classification = classificationSettingsSchema.safeParse(value.classification).data
   const visionModel = sanitizeVisionModel(value.visionModel)
+  const modalRuntime = computePythonSelectionSchema.safeParse(value.modalRuntime)
+  const huggingFaceRuntime = computePythonSelectionSchema.safeParse(value.huggingFaceRuntime)
   const settings: StoredSettings = {
+    ...(huggingFaceRuntime.success ? { huggingFaceRuntime: huggingFaceRuntime.data } : {}),
+    ...(modalRuntime.success ? { modalRuntime: modalRuntime.data } : {}),
     version: SETTINGS_FILE_VERSION,
     providers,
     ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
+    promptOptimizationModel: sanitizeSubagentModel(value.promptOptimizationModel),
     sessionDetailsModel: sanitizeSessionDetailsModel(value.sessionDetailsModel),
     ...(visionModel ? { visionModel } : {})
   }

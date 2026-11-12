@@ -2,7 +2,7 @@ import type { PDFPageProxy } from 'pdfjs-dist'
 import type { PdfTranslationSource } from './source.js'
 import type { AuxiliaryNativeInkReader } from './auxiliary-native-ink.js'
 import { nativeInkPageIdentity } from './auxiliary-native-ink.js'
-import { nativeReferenceFontWitnesses } from './native-reference-evidence.js'
+import { nativeReferenceFontWitnesses, nativeDisplayNumber } from './native-reference-evidence.js'
 import { nativeTextFreeClipInkRegions } from './native-source-geometry.js'
 
 type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -34,12 +34,92 @@ const overlaps = (a: Box, b: Box, pad = 0): boolean =>
 
 /** Cheap marker gate only; it grants no native evidence or eligibility. */
 export function hasNativeDisplaySequence(content: Content): boolean {
-  const numbers = new Set(
-    content.items.flatMap((i): number[] =>
-      'str' in i && /^\([1-9]\d{0,3}\)$/u.test(i.str) ? [Number(i.str.slice(1, -1))] : []
-    )
+  const numbers = content.items.flatMap((i) =>
+    'str' in i && nativeDisplayNumber(i.str) ? [nativeDisplayNumber(i.str)!] : []
   )
-  return [...numbers].some((n) => numbers.has(n + 1))
+  return numbers.some((n) =>
+    numbers.some((other) => other.roman === n.roman && other.value === n.value + 1)
+  )
+}
+
+type MathItem = { str: string; height: number; width: number; transform: number[] }
+const mathOperator =
+  /^(?:arg\s*(?:max|min)|lim|max|min|log|ln|exp|sin|cos|tan|sinh|cosh|tanh|det)$/u
+/** A potential native math atom. Long words still require an attached index below. */
+export function nativeMathAtom(item: MathItem, font: number): boolean {
+  const value = item.str.normalize('NFKC'),
+    words = value.match(/[A-Za-z]{2,}/gu) ?? []
+  return (
+    !Array.from(value).some(
+      (char) => /\p{L}/u.test(char) && !/[\p{Script=Latin}\p{Script=Greek}]/u.test(char)
+    ) &&
+    !/\p{Script=Greek}{3,}/u.test(value) &&
+    item.height >= font * 0.45 &&
+    item.height <= font * 1.05 &&
+    (!words.length ||
+      mathOperator.test(item.str.normalize('NFKC')) ||
+      item.str === 'in' ||
+      words.every((word) => mathOperator.test(word)) ||
+      (item.height < font * 0.85 && /^[A-Za-z]{2,20}$/u.test(item.str.normalize('NFKC'))))
+  )
+}
+/** Complete grammar over unchanged native items, including nested lowered labels. */
+export function nativeClosedMathGrammar(items: readonly MathItem[], font: number): boolean {
+  const text = items.map((i) => i.str.normalize('NFKC')).join(' '),
+    optimization = /^(?:arg\s*)?(?:max|min)\b/u.test(text)
+  if (
+    items.length < 3 ||
+    items.length > 256 ||
+    (!/[=≡≠≈≃≤≥]/u.test(text) && !optimization) ||
+    (optimization && !/[=+−]/u.test(text))
+  )
+    return false
+  return items.every((item, at) => {
+    if (!nativeMathAtom(item, font)) return false
+    const value = item.str.normalize('NFKC'),
+      words = value.match(/[A-Za-z]{2,}/gu) ?? []
+    if (value === 'in') {
+      const domain = items[at + 1],
+        dimension = items[at + 2]
+      return (
+        !!domain &&
+        !!dimension &&
+        /^[RC]$/u.test(domain.str) &&
+        /^\d{1,2}$/u.test(dimension.str) &&
+        Math.abs(domain.height - item.height) < font * 0.05 &&
+        Math.abs(domain.transform[5] - item.transform[5]) < font * 0.05 &&
+        domain.transform[4] - item.transform[4] - item.width >= 0 &&
+        domain.transform[4] - item.transform[4] - item.width < font * 2 &&
+        dimension.height >= font * 0.5 &&
+        dimension.height < font * 0.85 &&
+        dimension.transform[5] - domain.transform[5] > font * 0.1 &&
+        dimension.transform[5] - domain.transform[5] < font * 0.6 &&
+        Math.abs(dimension.transform[4] - domain.transform[4] - domain.width) < font * 0.3
+      )
+    }
+    if (!words.length || mathOperator.test(value) || words.every((w) => mathOperator.test(w)))
+      return true
+    if (!/^[A-Za-z]{2,20}$/u.test(value) || item.height >= font * 0.85) return false
+    const parents = items.slice(Math.max(0, at - 8), at).filter((base, n, preceding) => {
+      const gap = item.transform[4] - base.transform[4] - base.width,
+        delta = base.transform[5] - item.transform[5]
+      return (
+        /^[,(]?[A-Za-z\p{Script=Greek}](?:,[A-Za-z\p{Script=Greek}])?$/u.test(
+          base.str.normalize('NFKC')
+        ) &&
+        item.height >= base.height * 0.5 &&
+        item.height < base.height * 0.85 &&
+        delta >= base.height * 0.08 &&
+        delta <= base.height * 0.5 &&
+        gap >= -base.height * 0.1 &&
+        gap < base.height * 0.25 &&
+        preceding
+          .slice(n + 1)
+          .every((i) => i.height < base.height * 0.85 && /^[()\d,.'′+−-]+$/u.test(i.str))
+      )
+    })
+    return parents.length === 1
+  })
 }
 
 /** Every path is bounded by its actual control hull and a conservative stroke
@@ -286,25 +366,29 @@ export async function nativeScopedDisplayOwners(
       },
       anchors = entries.filter(
         (e) =>
-          /^\([1-9]\d{0,3}\)$/u.test(e.item.str) &&
-          e.owner.sourceOnly &&
-          e.owner.preserve === 'formula' &&
-          e.owner.fragments.length === 1 &&
-          e.owner.fragments[0].items.length === 1
+          nativeDisplayNumber(e.item.str) &&
+          e.item.hasEOL === true &&
+          e.owner.fragments.length === 1
       ),
       packets: { entries: Entry[]; owners: Unit[]; anchor: Entry }[] = []
     for (const anchor of anchors) {
       const h = anchor.item.height,
         y = anchor.item.transform[5],
         x = anchor.item.transform[4],
-        number = Number(anchor.item.str.slice(1, -1))
+        number = nativeDisplayNumber(anchor.item.str)!
+      const aligned = new Set(
+        anchors.flatMap((e) => {
+          const n = nativeDisplayNumber(e.item.str)
+          return n?.roman &&
+            Math.abs(e.item.transform[4] + e.item.width - x - anchor.item.width) < h * 0.05
+            ? [n.value]
+            : []
+        })
+      )
       if (
-        !anchors.some(
-          (e) =>
-            Math.abs(Number(e.item.str.slice(1, -1)) - number) === 1 &&
-            Math.abs(e.item.transform[4] - x) < h * 0.05 &&
-            Math.abs(e.item.transform[5] - y) > h * 1.6 &&
-            Math.abs(e.item.transform[5] - y) < h * 20
+        number.roman &&
+        ![number.value - 2, number.value - 1, number.value].some((start) =>
+          [0, 1, 2].every((n) => aligned.has(start + n))
         )
       )
         continue
@@ -312,10 +396,10 @@ export async function nativeScopedDisplayOwners(
       while (first > 0) {
         const i = entries[first - 1].item
         if (
-          Math.abs(i.transform[5] - y) > h * 1.55 ||
-          i.transform[4] >= x ||
-          i.height < h * 0.45 ||
-          i.height > h * 1.05
+          Math.abs(i.transform[5] - y) > h * 5 ||
+          i.transform[4] + i.width > x + anchor.item.width + h * 0.1 ||
+          nativeDisplayNumber(i.str) ||
+          !nativeMathAtom(i, h)
         )
           break
         first--
@@ -327,7 +411,10 @@ export async function nativeScopedDisplayOwners(
       if (
         math.length < 3 ||
         math.length > 256 ||
-        !math.some((e) => e.item.str.includes('=')) ||
+        !nativeClosedMathGrammar(
+          math.map((e) => e.item),
+          h
+        ) ||
         !whole.some((o) => !o.sourceOnly && !o.preserve) ||
         whole.some(
           (o) =>
@@ -336,42 +423,6 @@ export async function nativeScopedDisplayOwners(
             ) ||
             (o.preserve && !['formula', 'literal'].includes(o.preserve))
         )
-      )
-        continue
-      if (
-        math.some((e, at) => {
-          const i = e.item,
-            a = math[at + 1]?.item,
-            b = math[at + 2]?.item
-          if (
-            i.width <= 0 ||
-            i.height <= 0 ||
-            i.transform.length !== 6 ||
-            i.transform[0] <= 0 ||
-            i.transform[1] !== 0 ||
-            i.transform[2] !== 0 ||
-            i.transform[3] !== i.height ||
-            ![...i.transform, i.width, i.height].every(Number.isFinite) ||
-            (Array.from(i.str).some((char) => char.charCodeAt(0) < 32) && !e.owner.sourceOnly)
-          )
-            return true
-          return (i.str.normalize('NFKC').match(/[A-Za-z]+/gu) ?? []).some(
-            (word) =>
-              word.length > 1 &&
-              !/^(?:lim|max|min|log|ln|exp|sin|cos|tan|det)$/u.test(word) &&
-              !(
-                word === 'in' &&
-                a &&
-                b &&
-                /^(?:R|C|N|Z)$/u.test(a.str.normalize('NFKC')) &&
-                /^\d{1,2}$/u.test(b.str) &&
-                Math.abs(i.transform[5] - y) < h * 0.05 &&
-                Math.abs(a.transform[5] - y) < h * 0.05 &&
-                b.transform[5] > y &&
-                b.height < h * 0.85
-              )
-          )
-        })
       )
         continue
       packets.push({ entries: packet, owners: whole, anchor })
@@ -395,7 +446,7 @@ export async function nativeScopedDisplayOwners(
           selected,
           operatorSnapshot: identity.operators
         })),
-      paints = ink && (await nativePaints(identity.operators, viewport))
+      paints = await nativePaints(identity.operators, viewport)
     if (
       !ink ||
       ink.size !== entries.length ||

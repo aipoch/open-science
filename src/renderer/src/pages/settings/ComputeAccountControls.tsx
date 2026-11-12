@@ -1,3 +1,5 @@
+import { ComputePythonEnvironmentControl } from './ComputePythonEnvironmentControl'
+import { useComputePythonEnvironment } from './use-compute-python-environment'
 import type { TFunction } from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { Copy, ExternalLink, LoaderCircle, Terminal, X } from 'lucide-react'
@@ -35,6 +37,8 @@ function accountReasonLabel(
   t: TFunction
 ): string {
   switch (reason) {
+    case 'missing':
+      return t('No local sign-in found. Connect in browser to sign in.')
     case 'dependency':
       return t('Sign-in tools unavailable')
     case 'storage':
@@ -124,13 +128,15 @@ function OpenAccountDialog({
   onConnected
 }: Omit<AccountDialogProps, 'open'>): React.JSX.Element {
   const { t } = useTranslation()
-  const { status, error, busy, run } = account
+  const { status, error, busy } = account
+  const environment = useComputePythonEnvironment(provider, account)
   const pending = status?.state === 'pending'
   const flow = useRef<'idle' | 'starting' | 'managed' | 'local'>(
     pending ? (status.source ?? 'managed') : 'idle'
   )
   const active = useRef(true)
   const browserButton = useRef<HTMLButtonElement>(null)
+  const focusWhenReady = useRef(false)
   const returnFocus = useRef<HTMLElement | null>(null)
   const [method, setMethod] = useState<SignInMethod>()
   const [copy, setCopy] = useState<'idle' | 'copied' | 'error'>('idle')
@@ -145,23 +151,25 @@ function OpenAccountDialog({
   const userCode = pending && status.source !== 'local' ? status.userCode : undefined
 
   useEffect(() => {
+    if (focusWhenReady.current && !environment.blocked && !browserButton.current?.disabled) {
+      focusWhenReady.current = false
+      browserButton.current?.focus()
+    }
+  }, [environment.blocked])
+
+  useEffect(() => {
     active.current = true
     return () => {
       active.current = false
-      // Strict Mode may immediately remount the same dialog. A real navigation cancels the flow.
-      queueMicrotask(() => {
-        if (!active.current && flow.current !== 'idle') {
-          flow.current = 'idle'
-          void run('cancelAccountConnection')
-        }
-      })
     }
-  }, [run])
+  }, [])
 
   useEffect(() => {
     if (!active.current) return
     if (pending) {
-      flow.current = status.source ?? 'managed'
+      // Changing the environment retires the previous login intent, even while its cancel
+      // response still reports pending or preserves an already connected account.
+      if (flow.current !== 'idle') flow.current = status.source ?? 'managed'
       return
     }
     const expected = flow.current
@@ -178,8 +186,8 @@ function OpenAccountDialog({
     flow.current = 'starting'
     setMethod(operation)
     setCopy('idle')
-    const next = await run(operation)
-    if (!active.current) return
+    const next = await environment.signIn(operation)
+    if (!active.current || !next) return
     flow.current = next?.state === 'pending' ? (next.source ?? 'managed') : 'idle'
     if (next?.state === 'connected' && !next.reason) {
       active.current = false
@@ -192,8 +200,8 @@ function OpenAccountDialog({
     active.current = false
     if (flow.current !== 'idle') {
       flow.current = 'idle'
-      void run('cancelAccountConnection')
     }
+    environment.cancel()
     onClose()
   }
   return (
@@ -202,6 +210,12 @@ function OpenAccountDialog({
         <AlertDialog.Overlay className={dialogOverlayClassName} />
         <AlertDialog.Content
           className={dialogPanelClassName('w-[min(440px,92vw)] p-0')}
+          onPointerDown={() => {
+            focusWhenReady.current = false
+          }}
+          onKeyDown={() => {
+            focusWhenReady.current = false
+          }}
           onCloseAutoFocus={(event) => {
             if (returnFocus.current?.isConnected) {
               event.preventDefault()
@@ -215,6 +229,7 @@ function OpenAccountDialog({
             ) {
               returnFocus.current = document.activeElement
             }
+            focusWhenReady.current = !!browserButton.current?.disabled
             if (browserButton.current && !browserButton.current.disabled) {
               event.preventDefault()
               browserButton.current.focus()
@@ -243,7 +258,24 @@ function OpenAccountDialog({
             >
               {waiting ? waitingLabel : (description ?? t('Connect in browser'))}
             </AlertDialog.Description>
-            {waiting ? (
+            {
+              <ComputePythonEnvironmentControl
+                provider={accountNames[provider]}
+                environment={environment}
+                onSelect={(selection) => {
+                  flow.current = 'idle'
+                  setMethod(undefined)
+                  void environment.select(selection)
+                }}
+                onRetry={() => {
+                  if (!environment.snapshot) void environment.load()
+                  else if (environment.retrySelection)
+                    void environment.select(environment.selection)
+                  else if (method) void signIn(method)
+                }}
+              />
+            }
+            {waiting && (
               <div className="space-y-4">
                 {userCode && (
                   <div
@@ -292,12 +324,13 @@ function OpenAccountDialog({
                   {waitingLabel}
                 </p>
               </div>
-            ) : (
+            )}
+            {
               <div className="grid gap-2">
                 <Button
                   ref={browserButton}
                   type="button"
-                  disabled={busy}
+                  disabled={busy || pending || environment.blocked}
                   onClick={() => void signIn('connectAccount')}
                 >
                   <ExternalLink className="size-4" aria-hidden="true" />
@@ -306,26 +339,18 @@ function OpenAccountDialog({
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={busy}
+                  disabled={busy || pending || environment.blocked}
                   onClick={() => void signIn('useLocalAccount')}
                 >
                   <Terminal className="size-4" aria-hidden="true" />
                   {t('Use local sign-in')}
                 </Button>
               </div>
-            )}
-            {failure && !busy && (
+            }
+            {failure && !busy && !status?.runtimeError && (
               <InlineNotice level="error" role="alert" className="mt-3">
                 {!error && reason === 'dependency'
-                  ? provider === 'modal'
-                    ? t(
-                        'Install {{packageName}} in the host Python environment or set {{variable}}.',
-                        { packageName: 'modal==1.6.3', variable: 'OPEN_SCIENCE_MODAL_PYTHON' }
-                      )
-                    : t(
-                        'Install {{packageName}} with device sign-in support or set {{variable}}.',
-                        { packageName: 'huggingface_hub', variable: 'OPEN_SCIENCE_HF_PYTHON' }
-                      )
+                  ? t('Preparation failed. Retry or choose another environment.')
                   : failure}
               </InlineNotice>
             )}
@@ -336,7 +361,7 @@ function OpenAccountDialog({
                 {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
-            {failure && !waiting && method && (
+            {failure && !waiting && method && !status?.runtimeError && (
               <Button type="button" onClick={() => void signIn(method)}>
                 {t('Retry')}
               </Button>

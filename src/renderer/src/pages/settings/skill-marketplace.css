@@ -5,23 +5,6 @@
 [data-slot='skill-marketplace'] {
   container-type: inline-size;
 }
-.skill-marketplace-batch-surface,
-.skill-marketplace-batch-layout {
-  height: 100%;
-  min-height: 0;
-}
-.skill-marketplace-batch-layout {
-  display: flex;
-  flex-direction: column;
-}
-.skill-marketplace-batch-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  scroll-padding-block: 2rem;
-  padding-bottom: 2rem;
-}
 .skill-marketplace-card[data-selected='true'] {
   border-color: var(--primary);
   background: color-mix(in srgb, var(--primary) 5%, var(--card));
@@ -88,41 +71,6 @@
 .skill-marketplace-metadata > dd {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.skill-marketplace-detail {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-.skill-marketplace-detail-header,
-.skill-marketplace-detail-controls {
-  display: contents;
-}
-.skill-marketplace-detail > *,
-.skill-marketplace-detail-controls > * {
-  grid-column: 1 / -1;
-}
-.skill-marketplace-detail-identity {
-  grid-column: 1;
-  grid-row: 1;
-}
-.skill-marketplace-detail-score,
-.skill-marketplace-detail-controls > .skill-marketplace-primary-action {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  justify-self: end;
-}
-.skill-marketplace-detail-controls > .skill-marketplace-primary-action {
-  max-width: min(24rem, 45cqw);
-  justify-content: flex-end;
-}
-.skill-marketplace-detail:has(.skill-marketplace-detail-score)
-  > .skill-marketplace-detail-controls
-  > .skill-marketplace-primary-action {
-  margin-top: 2.75rem;
-}
-.skill-marketplace-detail-summary {
-  grid-column: 1 / -1;
-  grid-row: 2;
 }
 .skill-marketplace-disclosure > summary {
   display: flex;

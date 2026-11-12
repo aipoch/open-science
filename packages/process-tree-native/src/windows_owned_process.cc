@@ -47,7 +47,9 @@ bool Arguments(napi_env env, napi_callback_info info, size_t count, napi_value* 
   return napi_get_cb_info(env, info, &actual, args, nullptr, nullptr) == napi_ok && actual == count;
 }
 bool JobName(const std::wstring& name) {
-  const std::wstring prefix = L"Local\\OpenScience.Delegation.";
+  const std::wstring notebookPrefix = L"Local\\OpenScience.Notebook.";
+  const std::wstring prefix = name.compare(0, notebookPrefix.size(), notebookPrefix) == 0
+    ? notebookPrefix : L"Local\\OpenScience.Delegation.";
   if (name.compare(0, prefix.size(), prefix) != 0 || name.size() != prefix.size() + 36) return false;
   for (size_t i = prefix.size(); i < name.size(); ++i) {
     wchar_t c = name[i];

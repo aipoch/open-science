@@ -295,6 +295,33 @@ const renderEditor = (overrides: Overrides = {}): void => {
   })
 }
 
+it('opens a Skill reference in the project pane without changing the draft or conversation', () => {
+  const doc: ComposerDoc = {
+    nodes: [
+      { type: 'skill', id: 'lit', name: 'Literature' },
+      { type: 'text', text: ' keep this draft' }
+    ]
+  }
+  const onDocChange = vi.fn()
+  usePreviewWorkbenchStore.getState().activateProject('default')
+  useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
+  const sessions = useSessionStore.getState().sessions
+  renderEditor({ doc, onDocChange })
+  act(() => editor().querySelector<HTMLElement>('[data-skill-id]')!.click())
+  expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+    panelState: 'open',
+    activeItemId: 'tool:project:marketplace',
+    items: [expect.objectContaining({ skillDetailRequest: { skillId: 'lit' } })]
+  })
+  expect(domToDoc(editor())).toEqual(doc)
+  expect(onDocChange).not.toHaveBeenCalled()
+  expect(useNavigationStore.getState()).toMatchObject({
+    view: 'workspace',
+    activeProjectId: 'default'
+  })
+  expect(useSessionStore.getState().sessions).toBe(sessions)
+})
+
 const editor = (): HTMLElement =>
   document.body.querySelector<HTMLElement>('[role="textbox"]') as HTMLElement
 

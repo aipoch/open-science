@@ -5573,6 +5573,12 @@ export function populateTableCellText({
       if (
         !recordGrid.ownedTokens.has(item) &&
         !(
+          splitSourceItems.includes(item) &&
+          forcedCells.has(item) &&
+          item.sourceToken &&
+          recordGrid.ownedTokens.has(item.sourceToken)
+        ) &&
+        !(
           anchor &&
           recordGrid.ownedTokens.has(anchor) &&
           (isAdjacentTableScript(item, anchor) || nativeRadicals.has(item))

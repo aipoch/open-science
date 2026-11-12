@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, lstat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
 import { createResearchFilmLifecycle, type ResearchFilmLifecycle } from './lifecycle'
@@ -99,9 +99,15 @@ it('recovers interrupted deletion from a complete catalog and retains archived s
   const { root } = await fixture()
   const deleted = await presentation(root, 'gone')
   const archived = await presentation(root, 'archived')
+  // Crash after rename(pending, id), before the pending receipt was unlinked.
+  for (const saved of [deleted, archived])
+    await writeFile(
+      join(saved.base, 'pending.json'),
+      JSON.stringify({ version: 1, id: basename(saved.directory) })
+    )
   const restarted = createResearchFilmLifecycle({ dataRoot: () => root })
   await restarted.reconcileSessions(['archived'])
-  expect(await exists(join(deleted.directory, 'session.json'))).toBe(false)
+  await expect(lstat(deleted.base)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await exists(join(archived.directory, 'session.json'))).toBe(true)
   await restarted.reconcileSessions(['archived'])
 })

@@ -39,15 +39,21 @@ export const useStickyResourceFilters = (): {
     const panel = panelRef.current
     const filters = filterRef.current
     if (!panel || !filters) return
-    const measure = (): void =>
-      panel.style.setProperty(
-        '--resource-filter-height',
-        `${filters.getBoundingClientRect().height}px`
-      )
+    let active = true
+    const measure = (): void => {
+      const height = filters.getBoundingClientRect().height
+      if (active && height > 0) panel.style.setProperty('--resource-filter-height', `${height}px`)
+    }
     measure()
+    // A child's layout effect can synchronously compact the toolbar after this effect.
+    // Reconcile its final height before paint instead of waiting for ResizeObserver.
+    queueMicrotask(measure)
     const observer = new ResizeObserver(measure)
     observer.observe(filters)
-    return () => observer.disconnect()
+    return () => {
+      active = false
+      observer.disconnect()
+    }
   })
   return { panelRef, filterRef }
 }

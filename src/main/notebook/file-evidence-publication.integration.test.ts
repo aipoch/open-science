@@ -419,8 +419,12 @@ it(
       lane: string,
       id: string,
       op: string,
-      extra = {}
-    ): Promise<{ shadowError?: string; fileEvidence: { activityId: string } }> => {
+      extra = {},
+      crashAfterRename?: string
+    ): Promise<{
+      shadowError?: string
+      fileEvidence: { activityId: string; checksum: string; storageKey: string }
+    }> => {
       const laneKey = lane === b ? 's/frames/b' : lane === other ? 't' : 's'
       const request = {
         operation: op,
@@ -450,8 +454,9 @@ it(
         rootKinds: ['handoff'],
         ...extra
       }
-      const result = await runChild(process.execPath, [workerPath], lane, JSON.stringify(request))
-      expect(result.code, result.stdout).toBe(0)
+      const args = crashAfterRename ? ['--require', crashAfterRename, workerPath] : [workerPath]
+      const result = await runChild(process.execPath, args, lane, JSON.stringify(request))
+      if (result.code !== 0) throw new Error(result.stdout || 'worker exited ' + result.code)
       return JSON.parse(result.stdout)
     }
     const begin = async (lane: string, id: string, content: string): Promise<string> => {
@@ -477,9 +482,6 @@ it(
       const first = await begin(a, 'a', 'exclusive')
       const active = await begin(other, 'active', 'in flight')
       await utimes(active, new Date(0), new Date(0))
-      await call(a, 'a', 'persist')
-      await utimes(first, new Date(0), new Date(0))
-      expect((await stat(first)).nlink).toBe(1)
       // A copied/restored pending capture can lose its activity link. Its durable
       // receipt still roots the initial checksum even after the grace period.
       const activeName = 'sha256-' + createHash('sha256').update('in flight').digest('hex')
@@ -488,8 +490,66 @@ it(
       await writeFile(activeLink, 'in flight')
       expect((await stat(active)).nlink).toBe(1)
       await sweep()
+      await expect(readFile(active, 'utf8')).resolves.toBe('in flight')
+      await call(a, 'a', 'persist')
+      await utimes(first, new Date(0), new Date(0))
+      expect((await stat(first)).nlink).toBe(1)
+      await sweep()
       await expect(readFile(first, 'utf8')).resolves.toBe('exclusive')
       await expect(readFile(active, 'utf8')).resolves.toBe('in flight')
+      // A new-format run has no activity alias even while executing. Another lane's
+      // collector must keep the old pooled input through a real process restart.
+      await writeFile(file, 'long-running input')
+      const pinned = 'sha256-' + createHash('sha256').update('long-running input').digest('hex')
+      const activeId = 'pinned'
+      await call(other, activeId, 'begin', {
+        poolAddressed: true,
+        initialFiles: [
+          {
+            file: { physicalPath: file, relativePath: 'handoff/input', ...(await identity(file)) },
+            generation: { generationId: 'long-gen', capturedAt: '2026-11-10T00:00:00Z' }
+          }
+        ]
+      })
+      expect((await stat(join(pool, pinned))).nlink).toBe(1)
+      await utimes(join(pool, pinned), new Date(0), new Date(0))
+      await writeFile(file, 'overwritten')
+      await sweep()
+      expect(await readFile(join(pool, pinned), 'utf8')).toBe('long-running input')
+      await call(other, activeId, 'cleanup')
+      await expect(stat(join(pool, pinned))).rejects.toMatchObject({ code: 'ENOENT' })
+      await call(a, 'settling', 'begin', { poolAddressed: true })
+      const { fileEvidence: published } = await call(a, 'settling', 'persist')
+      const interrupt = join(project, 'interrupt-settlement.cjs')
+      await writeFile(
+        interrupt,
+        `const fs = require('node:fs');
+const { basename } = require('node:path');
+const { openSync, renameSync } = fs;
+let scans = 0;
+fs.openSync = (file, flags, ...rest) => {
+  const fd = openSync(file, flags, ...rest);
+  if (basename(file) === 'log.jsonl' && !(flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR))) scans++;
+  return fd;
+};
+fs.renameSync = (from, to) => {
+  renameSync(from, to);
+  if (from === 'activity-settling' && to.startsWith('deleting-')) {
+    fs.writeFileSync('settlement-scans', String(scans));
+    process.exit(83);
+  }
+};`
+      )
+      await expect(call(a, 'settling', 'complete', published, interrupt)).rejects.toThrow(
+        'worker exited 83'
+      )
+      expect(await readFile(join(a, 'settlement-scans'), 'utf8')).toBe('1')
+      const committed = await readFile(shadowLog(a))
+      await call(a, 'settling', 'complete', published)
+      expect(await readFile(shadowLog(a))).toEqual(committed)
+      expect(
+        (await readdir(a)).some((name) => name.includes('settling') || name.startsWith('deleting-'))
+      ).toBe(false)
       await begin(b, 'b', 'shared')
       expect((await call(b, 'b', 'persist')).shadowError).toBeUndefined()
       const original = await readFile(shadowLog(b))
@@ -515,6 +575,9 @@ it(
       const bad = clean.replace('"activityId":"b2"', '"activityId":"bx"')
       await writeFile(shadowLog(b), bad)
       await begin(b, 'b3', 'shared')
+      await call(b, 'new-corrupt', 'begin', { poolAddressed: true })
+      await expect(call(b, 'new-corrupt', 'persist')).rejects.toThrow(/checksum/)
+      await call(b, 'new-corrupt', 'cleanup')
       const damaged = await call(b, 'b3', 'persist')
       expect(damaged.shadowError).toMatch(/checksum/)
       expect(damaged.fileEvidence.activityId).toBe('b3')

@@ -11,12 +11,15 @@ import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.m
 import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
 import {
   nativeRecoveryOwnValues,
+  nativeNonisolatedGroupProfileData,
   retainNativeRecoveryInputs
 } from './literature-pdf-native-figure-recovery-profile.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
+import { nativeFillStrokeGlyphEnvelope } from './literature-pdf-figure-native-stroked-text.mjs'
 
 const pairedGroupPixelCertificates = new WeakMap(),
   pairedGroupPixelMode = Symbol('paired-group-pixel'),
+  nonisolatedGroupPixelMode = Symbol('nonisolated-group-pixel'),
   groupPixelMode = Symbol('group-pixel'),
   groupPixelCertificates = new WeakMap()
 const finite = (a, n) =>
@@ -259,7 +262,8 @@ function groupPixelType3LiveFont(font, entry) {
 // is false. Never admit that group to the stricter glyph/path inventories.
 function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, pairedLiteral) {
   const pairedPixels = mode === pairedGroupPixelMode,
-    pixels = mode === groupPixelMode || pairedPixels,
+    nonisolatedPixels = mode === nonisolatedGroupPixelMode,
+    pixels = mode === groupPixelMode || pairedPixels || nonisolatedPixels,
     literalCertificate = pairedPixels
       ? pairedLiteral
       : pixels
@@ -310,6 +314,13 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
       size: 0,
       fillAlpha: 1,
       fillColor: '#000000',
+      strokeAlpha: 1,
+      strokeColor: '#000000',
+      lineWidth: 1,
+      lineJoin: 0,
+      lineCap: 0,
+      miterLimit: 10,
+      textRenderingMode: 0,
       charSpacing: 0,
       wordSpacing: 0,
       leading: 0
@@ -404,6 +415,9 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
       if (!text || typeof a?.[0] !== 'string' || !Number.isFinite(a[1]) || a[1] <= 0) return
       state.font = a[0]
       state.size = a[1]
+    } else if (nonisolatedPixels && op === OPS.setTextRenderingMode) {
+      if (!text || !group || ![0, 2].includes(a?.[0]) || a.length !== 1) return
+      state.textRenderingMode = a[0]
     } else if (op === OPS.setTextMatrix) {
       const m = a?.length === 1 ? a[0] : a
       if (!text || !finite(m, 6)) return
@@ -421,6 +435,20 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
           : op === OPS.setWordSpacing
             ? 'wordSpacing'
             : 'leading'
+      ] = a[0]
+    } else if (
+      nonisolatedPixels &&
+      [OPS.setLineWidth, OPS.setLineJoin, OPS.setLineCap, OPS.setMiterLimit].includes(op)
+    ) {
+      if (!finite(a, 1) || (op === OPS.setLineWidth && a[0] < 0)) return
+      state[
+        op === OPS.setLineWidth
+          ? 'lineWidth'
+          : op === OPS.setLineJoin
+            ? 'lineJoin'
+            : op === OPS.setLineCap
+              ? 'lineCap'
+              : 'miterLimit'
       ] = a[0]
     } else if (pixels && op === OPS.nextLine) {
       if (!text || (a !== null && (!Array.isArray(a) || a.length))) return
@@ -469,6 +497,22 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
           type3Used.add(key)
         }
         const advance = box([x, y, x + glyph.width * state.size * advanceScale, y + state.size], m)
+        const strokeState =
+          nonisolatedPixels && state.textRenderingMode === 2
+            ? {
+                matrix: [...m],
+                textMatrix: [...matrix],
+                lineWidth: state.lineWidth,
+                lineJoin: state.lineJoin,
+                lineCap: state.lineCap,
+                miterLimit: state.miterLimit,
+                fillColor: state.fillColor,
+                fillAlpha: state.fillAlpha,
+                strokeColor: state.strokeColor,
+                strokeAlpha: state.strokeAlpha,
+                clip: [...group.rect]
+              }
+            : undefined
         if ((groupCount === 1 || pairedPixels) && !group)
           outsideGlyphs.push({
             font: state.font,
@@ -481,7 +525,8 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
             glyph,
             origin: [x, y],
             matrix: m,
-            size: state.size
+            size: state.size,
+            strokeState
           })
         for (const c of letters(glyph.unicode))
           chars.push({
@@ -498,7 +543,8 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
             glyph,
             origin: [x, y],
             matrix: m,
-            size: state.size
+            size: state.size,
+            strokeState
           })
         x +=
           glyph.width * state.size * advanceScale +
@@ -569,9 +615,13 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
     } else if (pixels && [OPS.setFillColorN, OPS.setStrokeColorN].includes(op)) {
       if (!group || !groupConfinedColor(a)) return
       if (op === OPS.setFillColorN) state.fillColor = undefined
+      else state.strokeColor = undefined
     } else if (pixels && op === OPS.setFillRGBColor) {
       if (!/^#[a-f0-9]{6}$/iu.test(a?.[0] ?? '')) return
       state.fillColor = a[0]
+    } else if (nonisolatedPixels && op === OPS.setStrokeRGBColor) {
+      if (!/^#[a-f0-9]{6}$/iu.test(a?.[0] ?? '')) return
+      state.strokeColor = a[0]
     } else if (
       pixels &&
       group &&
@@ -603,7 +653,11 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
         )
       )
         return
-      if (pixels) for (const [k, v] of a[0]) if (k === 'ca') state.fillAlpha = v
+      if (pixels)
+        for (const [k, v] of a[0]) {
+          if (k === 'ca') state.fillAlpha = v
+          if (k === 'CA') state.strokeAlpha = v
+        }
     } else if (!plain.has(op)) return
   }
   if (text || stack.length || group || marked || paint.size || groups.length !== groupCount) return
@@ -737,7 +791,8 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
     context.glyphBounds ?? (pixels && pixelType3.size ? context.partialFontGlyphBounds : undefined)
   if (!Array.isArray(exteriorBounds)) return
   const fonts = new Map(),
-    outsideInk = []
+    outsideInk = [],
+    strokeEnvelopes = []
   for (const f of exteriorBounds) {
     if (typeof f?.fontName !== 'string' || fonts.has(f.fontName) || !Array.isArray(f.glyphs)) return
     const bounds = new Map()
@@ -753,6 +808,23 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
       bounds.set(g.fontChar, g.bounds)
     }
     fonts.set(f.fontName, bounds)
+  }
+  for (const p of chars.filter((p) => p.strokeState)) {
+    if (!pixels || !p.group || p.glyph.operatorListId != null || p.glyph.isInFont !== true) return
+    const b = fonts.get(p.font)?.get(p.glyph.fontChar)
+    if (!finite(b, 4)) return
+    const ink = box(
+        [
+          p.origin[0] + b[0] * p.size,
+          p.origin[1] + b[1] * p.size,
+          p.origin[0] + b[2] * p.size,
+          p.origin[1] + b[3] * p.size
+        ],
+        p.matrix
+      ),
+      rect = nativeFillStrokeGlyphEnvelope(ink, p.strokeState, 4)
+    if (!valid(ink) || !rect || !inside(p.group.rect, rect)) return
+    strokeEnvelopes.push({ ink, state: p.strokeState, rect })
   }
   for (const p of outsideGlyphs) {
     const b = fonts.get(p.font)?.get(p.glyph.fontChar)
@@ -789,6 +861,7 @@ function disjointGroupProgram(page, tokens, context, groupCount = 2, mode, paire
     fonts,
     pixelType3,
     internalZeroParts,
+    strokeEnvelopes,
     ...(pairedPixels ? { outsideParts: outsideGlyphs } : {})
   }
 }
@@ -1792,7 +1865,7 @@ function liveOrdinaryGroupFonts(context, program, witness, scope) {
 // A rendered group canvas can prove physical crop bounds without granting any
 // of its labels ownership. The private plan also retains the live ordinary fonts
 // and actual program; serialized metadata cannot recreate this certificate.
-export function nativeRenderedGroupPixelCrop(
+function renderedGroupPixelCrop(
   page,
   figure,
   captions,
@@ -1800,9 +1873,20 @@ export function nativeRenderedGroupPixelCrop(
   tokens,
   context,
   publishedRect = figure?.rect,
-  live
+  live,
+  mode = groupPixelMode,
+  nonisolatedProfile
 ) {
   try {
+    const profileGroups =
+      mode === nonisolatedGroupPixelMode
+        ? nativeNonisolatedGroupProfileData(nonisolatedProfile, page, tokens, context)
+        : undefined
+    if (
+      mode === nonisolatedGroupPixelMode &&
+      (!Array.isArray(profileGroups) || profileGroups.length !== 1)
+    )
+      return
     const values = nativeRecoveryOwnValues(context)
     if (!values) return
     const keys = Object.keys(values),
@@ -1859,13 +1943,21 @@ export function nativeRenderedGroupPixelCrop(
       input.type3GlyphPrograms
     )
       return
-    const p = disjointGroupProgram(page, tokens, input, 1, groupPixelMode)
+    const p = disjointGroupProgram(page, tokens, input, 1, mode)
     if (!p || p.records.length > 4096) return
     const group = p.groups[0],
       cap = p.records.filter((r) => !r.group && inside(figure.caption.rect, r.token.rect)),
       em = Math.max(...cap.map((r) => r.r.height)),
       rect = group.rect.map((v, i) => v + (i < 2 ? -0.5 : 0.5))
     if (
+      (mode === nonisolatedGroupPixelMode &&
+        (group.begin !== profileGroups[0].begin ||
+          group.end !== profileGroups[0].end ||
+          group.arg.isolated !== false ||
+          group.arg.knockout !== false ||
+          group.arg.matrix !== null ||
+          group.arg.smask !== null ||
+          !equal(group.arg.bbox, profileGroups[0].bbox))) ||
       group.records.length < 3 ||
       group.records.length > 256 ||
       !cap.length ||
@@ -1924,14 +2016,18 @@ export function nativeRenderedGroupPixelCrop(
         live
       ),
       output = { rect },
-      owned = retainNativeRecoveryInputs([output, group, foreign, foreground])
+      owned = retainNativeRecoveryInputs([output, group, foreign, foreground, p.strokeEnvelopes])
     if (!liveCurrent || !owned || !liveCurrent()) return
     groupPixelCertificates.set(output, {
       page,
       group,
       foreign,
+      strokeEnvelopes: p.strokeEnvelopes,
       current: () =>
         current() &&
+        (mode !== nonisolatedGroupPixelMode ||
+          nativeNonisolatedGroupProfileData(nonisolatedProfile, page, tokens, context) ===
+            profileGroups) &&
         owned() &&
         liveCurrent() &&
         Object.getPrototypeOf(context) === prototype &&
@@ -1954,6 +2050,60 @@ export function nativeRenderedGroupPixelCrop(
     return
   }
 }
+export function nativeRenderedGroupPixelCrop(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  context,
+  publishedRect = figure?.rect,
+  live
+) {
+  return renderedGroupPixelCrop(
+    page,
+    figure,
+    captions,
+    tables,
+    tokens,
+    context,
+    publishedRect,
+    live,
+    groupPixelMode
+  )
+}
+// Opt-in crop-only path. The separate profile proves there is no earlier page
+// paint; this independent interpreter proves complete group paint/text closure
+// and that every outside glyph is disjoint from the recovered group bounds.
+export function nativeNonisolatedGroupPixelCrop(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  context,
+  publishedRect,
+  live,
+  profile
+) {
+  const descriptors = nativeNonisolatedGroupProfileData(profile, page, tokens, context)
+  if (!Array.isArray(descriptors) || descriptors.length !== 1) return
+  const plan = renderedGroupPixelCrop(
+      page,
+      figure,
+      captions,
+      tables,
+      tokens,
+      context,
+      publishedRect,
+      live,
+      nonisolatedGroupPixelMode,
+      profile
+    ),
+    proof = plan && groupPixelCertificates.get(plan)
+  if (!proof?.current()) return
+  return plan
+}
 function compactGroup(s) {
   return s.replace(/\s/gu, '')
 }
@@ -1967,6 +2117,10 @@ export function nativeRenderedGroupPixelPngSafe(plan, png, rect, page) {
       proof.current() &&
       !!raster &&
       equal(plan.rect, rect) &&
+      proof.strokeEnvelopes.every((stroke) => {
+        const envelope = nativeFillStrokeGlyphEnvelope(stroke.ink, stroke.state, raster.scaleLower)
+        return envelope && inside(proof.group.rect, envelope) && inside(rect, envelope)
+      }) &&
       inside(
         rect,
         proof.group.rect.map((v, i) => v + (i < 2 ? -1 : 1) / raster.scaleLower)

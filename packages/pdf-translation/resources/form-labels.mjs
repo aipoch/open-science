@@ -11,6 +11,44 @@ import {
 import { engine } from './pdfium.mjs'
 import { createHash } from 'node:crypto'
 
+// PDFium serializes a four-corner open path as `re`, closing its missing edge.
+// An empty final subpath preserves butt-capped paint and prevents that rewrite.
+export function preserveOpenRectanglePaths(native, page) {
+  const { p, m } = native
+  const at = native.alloc(8)
+  try {
+    for (let index = 0; index < p.FPDFPage_CountObjects(page); index++) {
+      const object = p.FPDFPage_GetObject(page, index)
+      if (p.FPDFPageObj_GetType(object) !== 2 || p.FPDFPath_CountSegments(object) !== 4) continue
+      if (p.FPDFPageObj_GetLineCap(object) !== 0) continue
+      const points = []
+      for (let n = 0; n < 4; n++) {
+        const segment = p.FPDFPath_GetPathSegment(object, n)
+        if (
+          !segment ||
+          p.FPDFPathSegment_GetType(segment) !== (n ? 0 : 2) ||
+          p.FPDFPathSegment_GetClose(segment) ||
+          !p.FPDFPathSegment_GetPoint(segment, at, at + 4)
+        )
+          break
+        const point = [...m.HEAPF32.slice(at / 4, at / 4 + 2)]
+        if (!point.every(Number.isFinite)) break
+        points.push(point)
+      }
+      if (points.length !== 4) continue
+      const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = points
+      if (!(
+        (x0 === x1 && y1 === y2 && x2 === x3 && y3 === y0 && x0 !== x2 && y0 !== y2) ||
+        (y0 === y1 && x1 === x2 && y2 === y3 && x3 === x0 && x0 !== x2 && y0 !== y2)
+      ))
+        continue
+      if (!p.FPDFPath_MoveTo(object, x3, y3)) throw Error('Could not preserve open PDF rectangle')
+    }
+  } finally {
+    native.free(at)
+  }
+}
+
 // PDFium can assign one overprinted label's text to a different native object
 // after its Form is copied to a temporary page. The painted objects themselves
 // must remain identical in order, geometry, font, matrix and readable paint state.

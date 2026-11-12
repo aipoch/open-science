@@ -8,4 +8,10 @@ export function mapGenerations(
   sidecar: EvidenceBody,
   transform: (generation: unknown) => unknown
 ): EvidenceBody
-export function expandProjection(packed: EvidenceBody, views: ViewRow[][], prefix: string): Buffer
+export function jsonBytesWithinLimit(value: unknown, maxBytes: number, pretty?: boolean): number
+export function expandProjection(
+  packed: EvidenceBody,
+  views: ViewRow[][],
+  prefix: string,
+  maxBytes?: number
+): Buffer

@@ -274,7 +274,8 @@ const packageFeatureSchema = z.enum([
   'ro-crate',
   'content-dedupe',
   'research-film',
-  'log-evidence'
+  'log-evidence',
+  'compute-log-evidence'
 ])
 
 export const sessionPackageManifestSchema = z

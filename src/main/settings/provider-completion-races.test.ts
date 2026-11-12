@@ -4,6 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// The deferred HTTP and storage operations control race ordering; poll timing is tested separately.
+vi.mock('./xai-oauth', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./xai-oauth')>()
+  return {
+    ...original,
+    XaiOAuthController: class extends original.XaiOAuthController {
+      constructor(options: ConstructorParameters<typeof original.XaiOAuthController>[0]) {
+        super({ ...options, wait: async (_milliseconds, signal) => signal.throwIfAborted() })
+      }
+    }
+  }
+})
+
 vi.mock('electron', () => ({
   net: { fetch: (input: string, init?: RequestInit) => globalThis.fetch(input, init) },
   safeStorage: {

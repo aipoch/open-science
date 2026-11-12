@@ -24,8 +24,9 @@ export function pdfTranslationLineEnds(text) {
     protectedSpans = [
       /第\s*(?:\d+|[A-Za-z][.．]\d+)(?:[.．]\d+)*\s*[节節]/gu,
       new RegExp(number, 'gu'),
+      new RegExp(`${number}\\s*\\^\\s*(?:\\([+−-]?\\d+\\)|[+−-]?\\d+)`, 'gu'),
       new RegExp(`${number}\\s*[±∓–−-]\\s*${number}`, 'gu'),
-      new RegExp(`(?:${number}|${identifier})\\s*[+−±∓×÷-]\\s*(?:${number}|${identifier})`, 'gu'),
+      new RegExp(`(?:${number}|${identifier})\\s*[+−±∓×÷/-]\\s*(?:${number}|${identifier})`, 'gu'),
       new RegExp(`${number}\\s*[×⋅·]\\s*10\\s*(?:[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+|\\^?\\s*[+−-]?\\d+)`, 'gu'),
       /[A-Za-z\p{Script=Greek}\d]+(?:[-‐‑][A-Za-z\p{Script=Greek}\d]+)+/gu,
       new RegExp(`${identifier}[-‐‑]\\p{Script=Han}`, 'gu'),
@@ -46,7 +47,7 @@ export function pdfTranslationLineEnds(text) {
     .filter(
       (end) =>
         !protectedSpans.some(([start, stop]) => end > start && end < stop) &&
-        !/[+−\-±∓×÷=<>≤≥≈≠]$/u.test(text.slice(0, end).trimEnd()) &&
+        !/[+−\-±∓×÷/=<>≤≥≈≠]$/u.test(text.slice(0, end).trimEnd()) &&
         !/[（(［[｛{《「『【“‘]$/u.test(text.slice(0, end).trimEnd()) &&
         !(/[.,]$/u.test(text.slice(0, end)) && /^\d/u.test(text.slice(end))) &&
         !/^[，。！？；：、,.;:!?）)］\]｝}》」』】”’％%]/u.test(text.slice(end).trimStart()) &&

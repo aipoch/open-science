@@ -31,6 +31,59 @@ const provider = (
 })
 
 describe('configured model catalog', () => {
+  it('uses native recovery evidence only for its tested framework in model selectors', () => {
+    const recovered = provider('gateway', ['model'], {
+      apiEndpoints: ['messages'],
+      lastValidationFailure: {
+        at: 10,
+        category: 'model-not-found',
+        target: { model: 'model', endpoint: 'messages' }
+      },
+      lastValidatedAt: 20,
+      lastValidatedTarget: {
+        model: 'model',
+        endpoint: 'messages',
+        frameworkId: 'claude-code',
+        route: 'claude-anthropic'
+      }
+    })
+    const catalog = (
+      frameworkId: 'claude-code' | 'opencode'
+    ): ReturnType<typeof buildConfiguredModelCatalog> =>
+      buildConfiguredModelCatalog({
+        providers: [recovered],
+        frameworkId,
+        frameworkEndpoints: ['messages']
+      })
+    expect(catalog('claude-code')).toMatchObject([{ model: 'model', selectable: true }])
+    expect(catalog('opencode')).toEqual([])
+  })
+
+  it.each([
+    { type: 'codex-shared', codexAuthMode: undefined },
+    { type: 'codex-isolated', codexAuthMode: 'imported' },
+    { type: 'codex-isolated', codexAuthMode: 'isolated' }
+  ] as const)('offers $type/$codexAuthMode in primary and fixed-model catalogs', (auth) => {
+    const entries = buildConfiguredModelCatalog({
+      providers: [
+        provider('builtin-codex-subscription', ['gpt-5.5'], {
+          ...auth,
+          apiEndpoints: [],
+          hasKey: false
+        })
+      ],
+      frameworkId: 'open-science-agent',
+      frameworkEndpoints: ['responses', 'chat-completions', 'messages']
+    })
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      providerId: 'builtin-codex-subscription',
+      model: 'gpt-5.5',
+      selectable: true,
+      supportsImageInput: true
+    })
+  })
+
   it('keeps same-named models distinct by compound provider identity', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [provider('first', ['shared']), provider('second', ['shared'])],
@@ -119,7 +172,7 @@ describe('configured model catalog', () => {
         })
       ],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['messages', 'chat-completions']
+      frameworkEndpoints: ['chat-completions', 'messages']
     })
 
     expect(
@@ -137,7 +190,7 @@ describe('configured model catalog', () => {
 
   it.each([
     { frameworkId: 'claude-code', frameworkEndpoints: ['messages'] },
-    { frameworkId: 'opencode', frameworkEndpoints: ['messages', 'chat-completions'] },
+    { frameworkId: 'opencode', frameworkEndpoints: ['chat-completions', 'messages'] },
     { frameworkId: 'codex', frameworkEndpoints: ['responses'] }
   ] as const)('offers the new Ark vision models to $frameworkId', (framework) => {
     const models = [
@@ -215,4 +268,25 @@ describe('configured model catalog', () => {
       }).map((entry) => entry.providerId)
     ).toEqual([CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID])
   })
+})
+
+it('keeps a native-only Codex subscription selectable only for native Codex', () => {
+  const provider = {
+    id: 'subscription',
+    name: 'Codex subscription',
+    type: 'codex-isolated' as const,
+    codexHarnessAvailable: false,
+    supportsImageInput: true,
+    models: ['gpt-6.1-sol'],
+    hasKey: false,
+    needsKey: false
+  }
+  for (const frameworkId of ['codex', 'open-science-agent'] as const) {
+    const catalog = buildConfiguredModelCatalog({
+      providers: [provider],
+      frameworkId,
+      frameworkEndpoints: ['responses']
+    })
+    expect(catalog[0].selectable).toBe(frameworkId === 'codex')
+  }
 })

@@ -1,8 +1,16 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  AI research workbench for reproducible science — open-source, local-first, and model-agnostic.
+  AIPOCH Open-Science is a local-first open-source AI research workbench for reproducible science, with flexible model backends. Export selected work as a portable <code>.science</code> Research Package so others can inspect the research record.
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">
+    <img width="720" alt="AIPOCH Research Generation Demo — AIPOCH Open-Science .science Research Package" src="docs/images/readme/demo-full.webp" />
+  </a>
+</p>
+
+<p align="center">Watch on YouTube: <a href="https://www.youtube.com/watch?v=to_BhE5DDMw">AIPOCH Open-Science: Generating .science Research Packages (Demo)</a></p>
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
@@ -43,27 +51,19 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-[AIPOCH Open-Science](https://aipoch.com/open-science) is an open-source AI research workbench. Start with a question, a paper, or a data file. Describe what you want to find out in your own words, and work with an AI agent to explore the evidence, analyze data, or create a chart.
+### 💡 AIPOCH Open-Science v1.2.1 updates
 
-When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
+_November 11, 2026_
 
-### 💡 AIPOCH Open-Science v1.2.0 updates
+- **Unified Resource Center**: Manage skills, connectors, specialists, and Marketplace installs together; installation also works in the Web UI.
+- **Manual prompt optimization**: Invoke your configured provider from the composer, review or edit the result, and undo it; save custom templates in Project settings.
+- **Built-in Agent upgrades**: Use Codex subscriptions for the main agent and subagents, select Claude Fable 5.2 with a 1M context window, and use provider-supported output limits.
+- **Bibliography CSV**: Export selected references or a whole project or collection with 16 stable English column names.
+- **Compact research exports**: Notebook and Compute histories store unique evidence once, reducing the size and export time of long `.science` histories.
+- **Cloud compute sign-in**: Modal and Hugging Face prepare compatible Python before browser authorization; account verification follows the system proxy.
+- **Reliability improvements**: Windows update recovery, answered questions, and research films across session switches improve; idle interpreters are reclaimed after 15 minutes without session activity.
 
-_November 9, 2026_
-
-- **Remote compute**: Run approved jobs on user-connected Kubernetes, Hugging Face Jobs, Modal, or Ray alongside SSH and Slurm, with per-job approval and collection recovery after restarts.
-- **Built-in agent**: The standalone Open-Science Agent is now the default for new setups; Claude Code, OpenCode, Codex, CodeBuddy, and Pi remain available.
-- **Faster macOS updates**: Download only changed blocks of the app image, with automatic full-download fallback.
-- **Step discussions**: Ask from imported `.science` research or a replay step to open a child conversation linked to that step; the import stays read-only.
-- **Source previews**: Hover over a source link to see its destination domain, with title and description metadata for approved HTTPS sources.
-- **Workspace improvements**: A simpler sidebar, a prominent "Fork to continue" action, and a stable reading position when sending from an earlier turn.
-- **Reliability fixes**: macOS update checks verify the running app, Windows names file blockers and keeps the input above the taskbar, and fixed-layout PDF translation retains successful pages when one fails.
-
-[View the full v1.2.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.0)
-
-<p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
-</p>
+[View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
 
 ## 🚀 Quick Start
 
@@ -281,7 +281,7 @@ AIPOCH Open-Science is model-agnostic at the product level: connect it to major 
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key.                                                                                                                                                                                                                                                                                                                                                    |
 | **Custom Gateway**           | Supply a Base URL and exact model ID with an API protocol supported by the selected agent backend (Messages, Chat Completions, or Responses), then run the connection test. Remote gateways require HTTPS and an API Key. Loopback endpoints such as `localhost`, `127.0.0.1`, or `[::1]` may use HTTP without a key; presets include Ollama, LM Studio, llama.cpp, and vLLM. A default API format does not guarantee server or model compatibility. |
-| **Codex Subscription**       | Select the Codex agent framework, then choose Codex Subscription as the provider type.                                                                                                                                                                                                                                                                                                                                                               |
+| **Codex Subscription**       | Select Open-Science Agent or Codex, then choose Codex Subscription as the provider type. Import an existing Codex sign-in or sign in with Open-Science.                                                                                                                                                                                                                                                                                              |
 | **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback).                                                                                                                     |
 | **xAI (Grok) OAuth**         | Use the built-in xAI (Grok) OAuth device sign-in. Access depends on your xAI account and the selected backend’s protocol support; validate the connection in the app.                                                                                                                                                                                                                                                                                |
 

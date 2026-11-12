@@ -4,7 +4,6 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { LocalModelOwner } from '../local-models/owner'
 import { createResearchVideoPresentationOwner } from './presentation'
 import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
 
@@ -69,7 +68,7 @@ async function fixture(): Promise<{
       revision: 'model',
       assets: [{ file: 'model_quantized.onnx', path: join(root, 'model_quantized.onnx') }]
     }))
-  } as unknown as LocalModelOwner
+  } as unknown as Options['models']
   const loadSession = vi.fn(async () => session)
   const writeScreenplay = vi.fn(
     async (
@@ -154,6 +153,24 @@ it('generates a persistent presentation directly from read-only history without 
   expect((await reopened.status(request)).result?.playerPath).toContain(moved)
   await reopened.close()
 })
+it('continues exactly once for the requesting session when narration finishes in the background', async () => {
+  const f = await fixture()
+  const download = Promise.withResolvers<Awaited<ReturnType<Options['models']['installForUse']>>>()
+  f.options.models.installForUse = vi.fn(() => download.promise)
+  const owner = createResearchVideoPresentationOwner(f.options)
+  const start = { ...request, installNarration: true }
+  expect((await owner.start(start)).narrationDownload).toBeDefined()
+  expect((await owner.start(start)).narrationDownload).toBeDefined()
+  const other = { ...request, sessionId: 'other' }
+  expect((await owner.status(other)).narrationDownload).toBeUndefined()
+  owner.cancel(other)
+  expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+  download.resolve({ ...(await f.options.models.getSnapshot()), availability: 'ready' })
+  await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+  expect(f.options.models.installForUse).toHaveBeenCalledOnce()
+  expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
+  await owner.close()
+})
 it('cancels the background authoring operation and releases the model lease', async () => {
   const f = await fixture()
   f.options.writeScreenplay.mockImplementation(
@@ -226,7 +243,7 @@ it('corrects malformed screenplay output once against the same frozen source', a
   await owner.close()
 })
 
-it('authors original skill animation files before starting narration and player generation', async () => {
+it('resumes an interrupted scene after restart using the validated screenplay and helper', async () => {
   const f = await fixture()
   f.options.writeScreenplay.mockResolvedValue(
     JSON.stringify({
@@ -254,22 +271,38 @@ it('authors original skill animation files before starting narration and player 
       ]
     })
   )
-  const writeAnimation = vi.fn<NonNullable<Options['writeAnimation']>>(async (_source, input) =>
-    input.shared ? 'function rain(k) { k.ctx.fillRect(0, 0, 20, 20); }' : 'rain(k);'
-  )
+  let interrupted = false
+  const writeAnimation = vi.fn<NonNullable<Options['writeAnimation']>>(async (_source, input) => {
+    if (input.shared) return 'function rain(k) { k.ctx.fillRect(0, 0, 20, 20); }'
+    if (!interrupted) {
+      interrupted = true
+      throw new Error('Temporary model failure')
+    }
+    return 'rain(k);'
+  })
   const generate = f.options.generate.getMockImplementation()!
   f.options.generate.mockImplementation(async (...args) => {
     const spec = JSON.parse(await readFile(args[0].specPath, 'utf8'))
     expect(spec.scenes[0].panels[1].script).toBe('anims/hook.js')
     expect(await readFile(join(args[0].specPath, '..', 'anims/hook.js'), 'utf8')).toBe('rain(k);')
-    expect(writeAnimation).toHaveBeenCalledTimes(2)
+    expect(writeAnimation.mock.calls.map(([, input]) => input.shared)).toEqual([true, false, false])
     return generate(...args)
   })
+  const first = createResearchVideoPresentationOwner({ ...f.options, writeAnimation })
+  await first.start(request)
+  await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+  await first.close()
   const owner = createResearchVideoPresentationOwner({ ...f.options, writeAnimation })
   try {
-    await owner.start(request)
+    expect(await owner.status(request)).toMatchObject({
+      canResume: true,
+      filmStep: 3,
+      progress: { completed: 1, total: 2 }
+    })
+    await owner.start({ ...request, resume: true })
     await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
     expect(f.options.generate).toHaveBeenCalledOnce()
+    expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
   } finally {
     await owner.close()
   }
@@ -573,4 +606,23 @@ it('retains conversation text and Artifact references above the former byte cap'
     artifactIds: ['plot-version']
   })
   expect(Buffer.byteLength(JSON.stringify(source))).toBeGreaterThan(512 * 1024)
+})
+
+it('resumes a failed build after restart without requesting the screenplay again', async () => {
+  const f = await fixture()
+  f.options.generate.mockRejectedValueOnce(new Error('Worker stopped'))
+  const first = createResearchVideoPresentationOwner(f.options)
+  await first.start(request)
+  await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+  await first.close()
+  const reopened = createResearchVideoPresentationOwner(f.options)
+  expect(await reopened.status(request)).toMatchObject({ canResume: true, filmStep: 4 })
+  await reopened.start({ ...request, resume: true })
+  await vi.waitFor(async () =>
+    expect((await reopened.status(request)).result?.title).toBe('Rainfall uncertainty')
+  )
+  expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
+  expect(f.options.generate).toHaveBeenCalledTimes(2)
+  expect((await reopened.status(request)).canResume).toBeUndefined()
+  await reopened.close()
 })

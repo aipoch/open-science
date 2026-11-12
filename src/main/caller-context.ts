@@ -2,7 +2,7 @@ export type CallerSurface = 'electron' | 'web' | 'task'
 export type CallerLocation = 'local' | 'remote'
 export type CallerPrincipalKind = 'human' | 'automation' | 'agent-session'
 export type CallerActionOrigin = 'human' | 'automation' | 'agent-session'
-export type CallerAuthority = 'manage-remote-pairing'
+export type CallerAuthority = 'manage-remote-pairing' | 'import-local-package-path'
 
 export type CallerContext = Readonly<{
   clientId: string

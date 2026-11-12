@@ -6,6 +6,7 @@ import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { SpecialistView } from '../../../../shared/specialist'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 
@@ -49,6 +50,8 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  useSettingsStore.setState({ isSettingsOpen: false, pendingSettingsIntent: undefined })
+  useNavigationStore.setState({ view: 'home', resourceCenterIntent: undefined })
   useSpecialistStore.setState({ items: [], isLoaded: true })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -107,11 +110,11 @@ describe('PermissionApprovalControls specialist switch card', () => {
     expect(detail).not.toBeNull()
     act(() => detail!.click())
 
-    // The stable profile id (never the renameable public name) reaches the settings dialog.
-    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
-      panel: 'specialists',
-      view: { kind: 'edit', id: 'spc-1' }
+    // The stable profile id (never the renameable public name) reaches Resource Center.
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'marketplace',
+      resourceCenterIntent: { resource: 'specialists', specialistId: 'spc-1' }
     })
   })
 

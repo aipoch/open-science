@@ -5,7 +5,21 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { modalAccountAdapter } from './modal-account-auth'
+import { boundModalAccountAdapter } from './modal-account-auth'
+const binding = {
+  revision: 0,
+  runtimeRoot: '/runtime',
+  prefix: '/runtime/envs/default-python',
+  python: '/runtime/envs/default-python/bin/python',
+  environment: 'default-python'
+}
+const modalAccountAdapter = boundModalAccountAdapter(binding)
+vi.mock('./compute-python-runtime', async (load) => ({
+  ...(await load<typeof import('./compute-python-runtime')>()),
+  computePythonRuntime: () => ({
+    run: async (_binding: unknown, fn: () => Promise<unknown>) => fn()
+  })
+}))
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }))
@@ -90,7 +104,7 @@ describe('Modal workspace identity', () => {
     expect(child.stdin.read()?.toString()).toBe(JSON.stringify({ action: 'probe', material }))
     expect(spawn).toHaveBeenCalledWith(
       expect.any(String),
-      ['-I', join(process.cwd(), 'app.asar.unpacked', 'resources', 'compute-modal-auth.py')],
+      ['-I', '-B', join(process.cwd(), 'app.asar.unpacked', 'resources', 'compute-modal-auth.py')],
       expect.objectContaining({ stdio: ['pipe', 'pipe', 'ignore'] })
     )
   })

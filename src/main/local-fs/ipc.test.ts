@@ -75,6 +75,14 @@ describe('registerLocalFsIpcHandlers', () => {
     installation.uninstall()
     expect([...ipcHandlers.keys()]).toEqual([])
   })
+  it('returns a file manager error to the caller so it can offer a retry', async () => {
+    const service = createServiceStub()
+    vi.mocked(service.revealInFolder).mockRejectedValue(new Error('File manager unavailable'))
+    registerLocalFsIpcHandlers(service)
+    await expect(
+      ipcHandlers.get(LOCAL_FS_REVEAL_CHANNEL)?.({}, '/test/report.docx')
+    ).rejects.toThrow('File manager unavailable')
+  })
   it('forwards grant-root requests to the service', async () => {
     const service = createServiceStub()
     registerLocalFsIpcHandlers(service)

@@ -506,3 +506,23 @@ it('retains classified failure evidence in session and turn diagnostics with red
   expect(serialized).not.toContain('DO NOT EXPORT')
   expect(serialized).toContain('[truncated]')
 })
+
+it('retains film request evidence without exporting the generated content', () => {
+  const fields = {
+    operationId: 'film-job',
+    requestId: 'call-1',
+    attempt: 2,
+    phase: 'animation',
+    model: 'example-model',
+    reason: 'max_turn_requests',
+    outputBytes: 0,
+    outputTokens: 4096,
+    durationMs: 54000
+  }
+  expect(
+    projectDiagnosticLog({
+      scope: 'research-video',
+      data: { ...fields, text: 'private draft', prompt: 'private session' }
+    })
+  ).toEqual({ scope: 'research-video', diagnostics: fields })
+})

@@ -39,7 +39,7 @@ const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
     `Open-Science request timed out after ${resolvedTimeoutMs} milliseconds.`,
     { code: 'timeout' }
   )
-  const timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
+  let timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
   const requestSignal = signal
     ? AbortSignal.any([signal, timeoutController.signal])
     : timeoutController.signal
@@ -47,6 +47,11 @@ const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
 
   return {
     signal: requestSignal,
+    refresh() {
+      if (finalized || timeoutController.signal.aborted) return
+      clearTimeout(timeout)
+      timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
+    },
     finalize() {
       if (finalized) return
       finalized = true
@@ -85,6 +90,7 @@ const wrapResponseBodyLifecycle = (response, lifecycle) => {
           lifecycle.finalize()
           controller.close()
         } else {
+          lifecycle.refresh()
           controller.enqueue(chunk.value)
         }
       } catch (error) {

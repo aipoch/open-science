@@ -133,6 +133,7 @@ type EvidenceWorkerBlobPoolBinding = {
 }
 type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'begin'
+  poolAddressed?: boolean
   expectedRootIdentity: FileIdentity
   receiptName: string
   stagingName: string
@@ -275,7 +276,19 @@ type EvidenceWorkerEnsureProjectRequest = {
   expectedRootIdentity: FileIdentity
   projectName: string
 }
+type HistoricalEvidenceOwner = Pick<
+  EvidenceWorkerCompleteRequest,
+  'activityId' | 'activityKind' | 'parentActivityId' | 'evidenceId' | 'checksum'
+>
 type EvidenceWorkerRequest =
+  | (EvidenceWorkerBlobPoolBinding & {
+      operation: 'backfill-history'
+      expectedRootIdentity: FileIdentity
+      storageKeyPrefix: string
+      owners: HistoricalEvidenceOwner[]
+      maxEvidenceBytes: number
+      diskReserveBytes: number
+    })
   | (EvidenceWorkerBlobPoolBinding & {
       operation: 'publish-imported-pool' | 'rollback-imported-pool'
       expectedRootIdentity: FileIdentity
@@ -720,6 +733,37 @@ const runSerializedEvidenceWorker = async (
     void tail.then(() => {
       if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
     })
+  }
+}
+
+// Bound batches leave room for live captures between historical publications.
+export async function backfillWorkingFileEvidence(
+  storageRoot: string,
+  lane: string,
+  owners: HistoricalEvidenceOwner[],
+  signal?: AbortSignal
+): Promise<void> {
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, lane), false)
+  const project = projectEvidenceScope(storageRoot, join(storageRoot, lane), lane)
+  if (!project) throw new Error('Invalid historical evidence lane.')
+  const pool = await secureEvidenceRoot(storageRoot, join(project.projectRoot, 'blobs'))
+  for (let offset = 0; offset < owners.length; offset += 32) {
+    await runSerializedEvidenceWorker(
+      runEvidenceWorker,
+      root.path,
+      {
+        operation: 'backfill-history',
+        expectedRootIdentity: root.identity,
+        storageKeyPrefix: lane,
+        owners: owners.slice(offset, offset + 32),
+        blobRoot: pool.path,
+        expectedBlobRootIdentity: pool.identity,
+        blobStorageKeyPrefix: project.blobStorageKeyPrefix,
+        maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+        diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+      },
+      signal
+    )
   }
 }
 
@@ -1778,6 +1822,7 @@ const beginEvidenceCapture = async (
       capture.evidenceRoot.path,
       {
         operation: 'begin',
+        poolAddressed: Boolean(projectScope),
         expectedRootIdentity: capture.evidenceRoot.identity,
         receiptName: capture.receiptName,
         stagingName: capture.stagingName,
@@ -2440,6 +2485,7 @@ const beginComputeJobFileEvidence = async (request: {
   try {
     const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
       operation: 'begin',
+      poolAddressed: true,
       expectedRootIdentity: evidenceRoot.identity,
       receiptName: receiptNameForActivity(request.jobId),
       stagingName,
@@ -2476,7 +2522,7 @@ const beginComputeJobFileEvidence = async (request: {
       if (!generation) throw new Error(`Compute input could not be frozen: ${input.label}`)
       return {
         ...input,
-        frozenPath: join(evidenceRoot.path, stagingName, 'blobs', `sha256-${generation.checksum}`),
+        frozenPath: join(blobRoot.path, `sha256-${generation.checksum}`),
         generationId: generation.generationId,
         checksum: generation.checksum,
         sizeBytes: generation.sizeBytes
@@ -2560,6 +2606,7 @@ const publishComputeJobFileEvidence = async (request: {
   const freeBytes = await availableBytes(evidenceRoot.path)
   const capture = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
     operation: 'ensure-capture',
+    poolAddressed: true,
     expectedRootIdentity: evidenceRoot.identity,
     receiptName: receiptNameForActivity(request.jobId),
     stagingName: `staging-${request.jobId}`,

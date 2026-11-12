@@ -17,6 +17,7 @@ import {
   selectProviderModelOptions,
   useSettingsStore
 } from './settings-store'
+import { useNavigationStore } from './navigation-store'
 
 // Minimal window.api.settings surface the store calls.
 type SettingsApi = {
@@ -142,6 +143,7 @@ let callLog: string[]
 
 beforeEach(() => {
   callLog = []
+  useNavigationStore.setState({ view: 'home', resourceCenterIntent: undefined })
   api = {
     getSettings: vi.fn().mockResolvedValue(snapshot([])),
     getPreflight: vi.fn().mockResolvedValue({ claudeReady: true, activeProviderReady: true }),
@@ -1503,44 +1505,24 @@ describe('settings store: refreshProviderModels', () => {
 })
 
 describe('settings store: openSettingsToSkill', () => {
-  it('opens the dialog on a skill; consume and close both clear the pending intent', () => {
+  it('redirects to the Resource Center skill detail', () => {
     useSettingsStore.getState().openSettingsToSkill('x')
-    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
-      panel: 'skills',
-      view: { kind: 'detail', id: 'x' }
-    })
-
-    const requestId = useSettingsStore.getState().pendingSettingsIntent!.requestId
-    useSettingsStore.getState().consumePendingSettingsIntent(requestId)
-    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
-
-    // Closing after a fresh open-to-skill clears the intent so a later open starts fresh.
-    useSettingsStore.getState().openSettingsToSkill('y')
-    useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
-    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({
+      resource: 'skills',
+      skillId: 'x'
+    })
   })
 })
 
 describe('settings store: openSettingsToSpecialist', () => {
-  it('opens the dialog on a specialist; consume and close both clear the pending intent', () => {
+  it('redirects to the Resource Center specialist detail', () => {
     useSettingsStore.getState().openSettingsToSpecialist('spc-1')
-    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
-    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
-      panel: 'specialists',
-      view: { kind: 'edit', id: 'spc-1' }
-    })
-
-    const requestId = useSettingsStore.getState().pendingSettingsIntent!.requestId
-    useSettingsStore.getState().consumePendingSettingsIntent(requestId)
-    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
-
-    // Closing after a fresh open-to-specialist clears the intent so a later open starts fresh.
-    useSettingsStore.getState().openSettingsToSpecialist('spc-2')
-    useSettingsStore.getState().closeSettings()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
-    expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
+    expect(useNavigationStore.getState().resourceCenterIntent).toEqual({
+      resource: 'specialists',
+      specialistId: 'spc-1'
+    })
   })
 })
 

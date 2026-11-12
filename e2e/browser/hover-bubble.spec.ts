@@ -1,5 +1,19 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
+test('keeps usage avatars compact inside installed resource cards', async ({ page }) => {
+  await page.goto('/hover-bubble.html')
+  const card = page.locator('.resource-installed-card')
+  const identity = card.locator('[data-avatar-size="md"]')
+  const usage = card.locator('[data-avatar-size="sm"]')
+  for (const dimension of ['width', 'height']) {
+    await expect(identity).toHaveCSS(dimension, '40px')
+    await expect(identity.locator('svg')).toHaveCSS(dimension, '20px')
+    await expect(usage).toHaveCSS(dimension, '20px')
+    await expect(usage.locator('svg')).toHaveCSS(dimension, '12px')
+    await expect(card.locator('[data-slot="skill-usage-main-avatar"]')).toHaveCSS(dimension, '20px')
+  }
+})
+
 // Retained outgoing cards must fail even if the assertion runs after their exit duration.
 async function freezeClosedBubbles(page: Page): Promise<void> {
   await page.evaluate(() => {

@@ -1996,3 +1996,240 @@ it('fences deletion against active translation and holds the content lock until 
     h.registry.dispose()
   }
 })
+
+it.each([
+  ['SUPPLEMENTAL MATERIAL', '补充材料'],
+  ['Supplemental Material', '补充材料'],
+  ['Weighting Scheme', '权重方案'],
+  ['Human Immunodeficiency Virus', '人类免疫缺陷病毒'],
+  ['Non-Hispanic Black', '非西班牙裔黑人'],
+  ['Non-Hispanic White', '非西班牙裔白人'],
+  ['SEX-BASED ANALYSES', '基于性别的分析'],
+  ['COMPETING INTERESTS STATEMENT', '利益冲突声明'],
+  ['CONTRIBUTORSHIP STATEMENT', '作者贡献声明'],
+  ['Structural Metadata', '结构元数据'],
+  ['ABC Information Record', 'ABC 信息记录'],
+  ['Industry API', '行业 API'],
+  ['Prediction accuracy - 87% of predictions were correct.', '预测准确率为87%，这些预测是正确的。']
+])(
+  'accepts translated scientific labels and a prose metric separator: %s',
+  async (source, text) => {
+    const h = setup()
+    h.runner.run.mockResolvedValue({ text, stopReason: 'end_turn' })
+    const { operationId } = await h.owner.begin({ ...input, sources: [source] }, h.caller.lease)
+    try {
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).resolves.toBe(text)
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+      await h.owner.shutdown()
+    }
+  }
+)
+it.each([
+  ['Supplemental Material Foundation', '补充材料基金会'],
+  ['Weighting Scheme Labs', '权重方案实验室'],
+  ['Human Immunodeficiency Virus Foundation', '人类免疫缺陷病毒基金会'],
+  ['ABC Information Record', '信息记录'],
+  ['ABC Information Record', 'ABC1 信息记录'],
+  ['Industry API', '行业接口'],
+  ['Industry API', 'Industry API'],
+  ['Structural Metadata Institute', '结构元数据研究所'],
+  ['Prediction accuracy - 87% of predictions were correct.', '预测准确率为87，这些预测是正确的。'],
+  ['Prediction accuracy - 87% of predictions were correct.', '预测准确率为−87%。'],
+  ['The accuracy change was - 5%.', '准确率变化为5%。']
+])(
+  'retains identity and numeric-unit protections beside the generic-label exceptions: %s',
+  async (source, text) => {
+    const h = setup()
+    h.runner.run.mockResolvedValue({ text, stopReason: 'end_turn' })
+    const { operationId } = await h.owner.begin({ ...input, sources: [source] }, h.caller.lease)
+    try {
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).rejects.toMatchObject({ code: 'incomplete-output' })
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+      await h.owner.shutdown()
+    }
+  }
+)
+
+it('retries equivalent quantity scaling with the original numeric spelling', async () => {
+  const h = setup()
+  const source = 'Since the 1990s, the population reached 12.5 million.'
+  h.runner.run
+    .mockResolvedValueOnce({ text: '自上世纪90年代以来，人口达到1250万。', stopReason: 'end_turn' })
+    .mockResolvedValueOnce({
+      text: '自<q0>1990</q0>年代以来，人口达到<q1>12.5 million</q1>。',
+      stopReason: 'end_turn'
+    })
+  const { operationId } = await h.owner.begin(
+    { ...input, sources: [source], contentFirst: true },
+    h.caller.lease
+  )
+  try {
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+    ).rejects.toMatchObject({ code: 'incomplete-output' })
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+    ).resolves.toBe('自1990年代以来，人口达到12.5 million。')
+    expect(h.runner.run.mock.calls[1][0].systemPrompt).toContain(
+      'Do not rescale quantities or abbreviate years or decades'
+    )
+    expect(JSON.parse(h.runner.run.mock.calls[1][0].prompt).source).toBe(
+      'Since the <q0>1990</q0>s, the population reached <q1>12.5 million</q1>.'
+    )
+  } finally {
+    h.owner.close(operationId, h.caller.lease)
+    await h.owner.shutdown()
+  }
+})
+
+it.each([
+  { contentFirst: true, batch: false },
+  { contentFirst: true, batch: true },
+  { contentFirst: false, batch: false },
+  { contentFirst: false, batch: true }
+])('keeps prompt quantity tokens consistent with the selected policy: %j', async (policy) => {
+  const h = setup()
+  const sources = [
+    'Since the 1990s, the population reached 12.5 million.',
+    'The count was 12.5 million.'
+  ]
+  const translations = ['自1990年代以来，人口达到12.5 million。', '数量为12.5 million。']
+  h.runner.run.mockResolvedValue({
+    text: policy.batch
+      ? JSON.stringify(
+          translations.map((translation, sourceIndex) => ({ sourceIndex, translation }))
+        )
+      : translations[0],
+    stopReason: 'end_turn'
+  })
+  const { operationId } = await h.owner.begin(
+    {
+      ...input,
+      sources: policy.batch ? sources : sources.slice(0, 1),
+      contentFirst: policy.contentFirst,
+      batchShortSources: policy.batch
+    },
+    h.caller.lease
+  )
+  try {
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source: sources[0] }, h.caller.lease)
+    ).resolves.toBe(translations[0])
+    expect(h.runner.run).toHaveBeenCalledOnce()
+    const prompt = JSON.parse(h.runner.run.mock.calls[0][0].prompt)
+    const units = policy.batch ? prompt.units : [prompt]
+    expect(
+      units.map((unit: { requiredNumericLiterals: string[] }) => unit.requiredNumericLiterals)
+    ).toEqual(
+      (policy.batch ? [['1990', '12.5'], ['12.5']] : [['1990', '12.5']]).map((values) =>
+        values.map((value) => (!policy.contentFirst && value === '12.5' ? '12500000' : value))
+      )
+    )
+  } finally {
+    h.owner.close(operationId, h.caller.lease)
+    await h.owner.shutdown()
+  }
+})
+
+it('accepts an unsigned dimensional transition through the full content-first owner', async () => {
+  const h = setup()
+  const source = 'We recover poses through 2D-to-3D lifting.'
+  const text = '我们通过2D到3D的提升恢复姿态。'
+  h.runner.run.mockResolvedValue({ text, stopReason: 'end_turn' })
+  const { operationId } = await h.owner.begin(
+    { ...input, sources: [source], contentFirst: true },
+    h.caller.lease
+  )
+  try {
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+    ).resolves.toBe(text)
+    expect(JSON.parse(h.runner.run.mock.calls[0][0].prompt).requiredNumericLiterals).toEqual([
+      '2',
+      '3'
+    ])
+  } finally {
+    h.owner.close(operationId, h.caller.lease)
+    await h.owner.shutdown()
+  }
+})
+
+it('keeps a missing URL on the literal retry instead of numeric phrase recovery', async () => {
+  const h = setup()
+  const source = 'The trial had 3 cases; see https://example.org/method.'
+  const text = '试验有3例；参见 https://example.org/method。'
+  h.runner.run
+    .mockResolvedValueOnce({ text: '试验有3例。', stopReason: 'end_turn' })
+    .mockResolvedValueOnce({ text, stopReason: 'end_turn' })
+  const { operationId } = await h.owner.begin(
+    { ...input, sources: [source], contentFirst: true },
+    h.caller.lease
+  )
+  try {
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+    ).rejects.toMatchObject({ code: 'incomplete-output' })
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+    ).resolves.toBe(text)
+    expect(JSON.parse(h.runner.run.mock.calls[1][0].prompt).source).toBe(source)
+  } finally {
+    h.owner.close(operationId, h.caller.lease)
+    await h.owner.shutdown()
+  }
+})
+
+it.each([false, true])(
+  'refuses damaged Unicode before saving in content-first=%s',
+  async (contentFirst) => {
+    const h = setup()
+    const source = 'The response remains readable.'
+    h.runner.run.mockResolvedValueOnce({ text: '回复应保持可�读。', stopReason: 'end_turn' })
+    const { operationId } = await h.owner.begin(
+      { ...input, sources: [source], contentFirst },
+      h.caller.lease
+    )
+    try {
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).rejects.toMatchObject({
+        code: 'incomplete-output',
+        message: expect.stringContaining('replacement characters')
+      })
+      h.runner.run.mockResolvedValueOnce({ text: '回复应保持可读。', stopReason: 'end_turn' })
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).resolves.toBe('回复应保持可读。')
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+      await h.owner.shutdown()
+    }
+  }
+)
+
+it.each([false, true])(
+  'preserves a literal source replacement symbol in content-first=%s',
+  async (contentFirst) => {
+    const h = setup()
+    const source = 'The damaged label reads �.'
+    h.runner.run.mockResolvedValue({ text: '损坏的标签显示为�。', stopReason: 'end_turn' })
+    const { operationId } = await h.owner.begin(
+      { ...input, sources: [source], contentFirst },
+      h.caller.lease
+    )
+    try {
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).resolves.toBe('损坏的标签显示为�。')
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+      await h.owner.shutdown()
+    }
+  }
+)

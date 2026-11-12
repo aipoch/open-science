@@ -16,6 +16,8 @@ import { packageInventoryEntrySchema } from '../../shared/session-package'
 import {
   compactLaneViews,
   indexPortableEvidence,
+  installLaneLogs,
+  readLoggedEvidence,
   portableEvidenceSchema,
   remapLogEvidence,
   type PortableEvidence
@@ -25,6 +27,95 @@ import * as storageUsage from '../storage/usage'
 import { sha256 } from '../artifacts/provenance-canonical'
 
 const directories: string[] = []
+
+it('bounds selected log records, their views and expanded generations when reading one activity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'evidence-budget-'))
+  directories.push(root)
+  const lane = 'execution-file-evidence/p/s'
+  const key = lane + '/activity-small/evidence.json'
+  const path = 'a'.repeat(800)
+  const sum = sha256('input')
+  const rows: [string, string, number][] = [[path, sum, 5]]
+  const view = sha256(JSON.stringify(rows))
+  const body = {
+    activityId: 'small',
+    activityKind: 'notebook-run',
+    evidenceId: 'small-evidence',
+    relations: []
+  }
+  const digest = sha256(JSON.stringify(body, null, 2) + '\n')
+  const small = {
+    version: 1 as const,
+    activityId: 'small',
+    pre: view,
+    post: view,
+    checksum: digest,
+    detail: JSON.stringify(body)
+  }
+  const large = {
+    ...small,
+    activityId: 'large',
+    detail: JSON.stringify({
+      ...body,
+      activityId: 'large',
+      evidenceId: Array.from({ length: 4000 }, (_, i) => sha256(String(i))).join('')
+    })
+  }
+  await installLaneLogs(root, [{ key: lane, views: { [view]: rows }, records: [large, small] }])
+  expect((await readLoggedEvidence(root, key, digest, 2048)).toString()).toBe(
+    JSON.stringify(body, null, 2) + '\n'
+  )
+  await expect(readLoggedEvidence(root, key, digest, 650)).rejects.toThrow(/limit/i)
+  await expect(
+    readLoggedEvidence(root, lane + '/activity-large/evidence.json', digest, 2048)
+  ).rejects.toThrow(/read limit/)
+  const log = join(root, lane, '.shadow-evidence', 'log.jsonl')
+  const [largeLine, smallLine] = (await readFile(log, 'utf8')).trimEnd().split('\n')
+  await writeFile(log, largeLine.slice(0, -64) + '0'.repeat(64) + '\n' + smallLine + '\n')
+  await expect(readLoggedEvidence(root, key, digest, 2048)).rejects.toThrow(/Invalid portable/)
+  const detail = JSON.stringify({
+    ...body,
+    relations: Array.from({ length: 30 }, () => ({ generation: [0, 0, 'g', 'now'] }))
+  })
+  const otherLane = lane + '2'
+  await installLaneLogs(root, [
+    { key: otherLane, views: { [view]: rows }, records: [{ ...small, detail }] }
+  ])
+  await expect(
+    readLoggedEvidence(root, otherLane + '/activity-small/evidence.json', digest, 2048)
+  ).rejects.toThrow(/read limit/)
+  const tinyLane = lane + '4'
+  const emptyView = sha256('[]')
+  const rawBytes = Buffer.from(JSON.stringify(body, null, 2) + '\n')
+  await installLaneLogs(root, [
+    {
+      key: tinyLane,
+      views: { [emptyView]: [] },
+      records: [{ ...small, pre: emptyView, post: emptyView }]
+    }
+  ])
+  expect((await stat(join(root, tinyLane, '.shadow-evidence', 'log.jsonl'))).size).toBeGreaterThan(
+    rawBytes.length
+  )
+  const tinyKey = tinyLane + '/activity-small/evidence.json'
+  await expect(readLoggedEvidence(root, tinyKey, digest, rawBytes.length)).resolves.toEqual(
+    rawBytes
+  )
+  await expect(readLoggedEvidence(root, tinyKey, digest, rawBytes.length - 1)).rejects.toThrow(
+    /read limit/
+  )
+  const bombLane = lane + '3'
+  await installLaneLogs(root, [
+    {
+      key: bombLane,
+      views: { [view]: rows },
+      records: [{ ...small, detail: JSON.stringify({ ...body, padding: 'x'.repeat(64 * 1024) }) }]
+    }
+  ])
+  await expect(
+    readLoggedEvidence(root, bombLane + '/activity-small/evidence.json', digest, 2048)
+  ).rejects.toThrow(/2048|buffer|larger/i)
+})
 
 it('verifies source sidecars and view identities before mapping log evidence', () => {
   const path = 'data/result.csv'

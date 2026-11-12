@@ -31,6 +31,7 @@ const ACTIVITY_KINDS = new Set(['notebook-run', 'compute-job'])
 const REGISTERED_INPUT_SOURCE_KINDS = new Set(['upload-version', 'artifact-version'])
 const RECEIPT_NAME = /^receipt-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/u
 const CAPTURE_FILE = 'capture.json'
+const PIN_FILE = 'pool-pins'
 const ACTIVITY_BLOBS_DIRECTORY = 'blobs'
 const ownershipFile = (token) => `.ownership-${assertSafeName(token)}`
 const projectOwnershipReceipt = (projectName) =>
@@ -185,7 +186,21 @@ const publishExclusiveFile = (name, contents, withoutLinks = false) => {
   const temporaryName = `.publish-${randomUUID()}.tmp`
   try {
     writeExclusiveFile(temporaryName, contents)
-    if (withoutLinks) {
+    let needsRename = withoutLinks
+    if (!needsRename) {
+      try {
+        linkSync(temporaryName, name)
+      } catch (error) {
+        if (
+          !['EPERM', 'EACCES', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK', 'EXDEV'].includes(
+            error.code
+          )
+        )
+          throw error
+        needsRename = true
+      }
+    }
+    if (needsRename) {
       // The unpacked worker and standalone backend both ship this Node-API binary.
       require('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node').publishNoReplace(
         process.cwd(),
@@ -194,7 +209,6 @@ const publishExclusiveFile = (name, contents, withoutLinks = false) => {
         name
       )
     } else {
-      linkSync(temporaryName, name)
       rmSync(temporaryName)
     }
     syncDirectory()
@@ -269,7 +283,7 @@ const RECEIPT_REQUIRED_FIELDS = [
   'ownershipToken'
 ]
 const receiptFields = (...phaseFields) =>
-  new Set([...RECEIPT_REQUIRED_FIELDS, 'parentActivityId', ...phaseFields])
+  new Set([...RECEIPT_REQUIRED_FIELDS, 'parentActivityId', 'poolAddressed', ...phaseFields])
 const RECEIPT_FIELDS_BY_PHASE = new Map([
   ['prepared', receiptFields()],
   ['allocated', receiptFields('stagingIdentity')],
@@ -290,6 +304,7 @@ const receiptShape = (value) => {
   if (
     typeof value.activityId !== 'string' ||
     !ACTIVITY_KINDS.has(value.activityKind) ||
+    (value.poolAddressed !== undefined && value.poolAddressed !== true) ||
     (value.parentActivityId !== undefined && typeof value.parentActivityId !== 'string') ||
     typeof value.evidenceId !== 'string' ||
     typeof value.storageKeyPrefix !== 'string' ||
@@ -830,6 +845,39 @@ const blobPoolBytes = (blobPool, includeUnactivated = false) => {
   }
   return bytes + shadow.projectBytes(blobPool, includeUnactivated)
 }
+// Journal the digest before using pooled bytes. A torn write leaves no unmarked owner:
+// the collector refuses a damaged journal until the receipt is recovered.
+const pinDigest = (token, checksum) =>
+  createHash('sha256')
+    .update(token + checksum)
+    .digest('hex')
+const pinGeneration = (token, checksum) => {
+  const fd = openSync(PIN_FILE, constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW)
+  try {
+    const info = fstatSync(fd)
+    if (!info.isFile() || info.nlink !== 1 || info.size + 130 > MAX_INTERNAL_JSON_BYTES)
+      throw new Error('Invalid execution evidence pin journal.')
+    const line = checksum + ' ' + pinDigest(token, checksum) + '\n'
+    if (writeSync(fd, line) !== line.length) throw new Error('Incomplete execution evidence pin.')
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+const markPins = (directory, receipt, live) => {
+  const path = join(directory, PIN_FILE)
+  if (!lstatSync(path).isFile()) throw new Error('Invalid execution evidence pin journal.')
+  const text = readRegularFile(path, MAX_INTERNAL_JSON_BYTES).toString('latin1')
+  for (let i = 0; i < text.length; i += 130) {
+    const checksum = text.slice(i, i + 64)
+    if (
+      !/^[a-f0-9]{64}$/u.test(checksum) ||
+      text.slice(i + 64, i + 130) !== ' ' + pinDigest(receipt.ownershipToken, checksum) + '\n'
+    )
+      throw new Error('Damaged execution evidence pin journal.')
+    live.add('sha256-' + checksum)
+  }
+}
 const shadowIO = {
   readFile(path, limit) {
     if (!lstatSync(path).isFile()) throw new Error('Unsafe shadow evidence file.')
@@ -841,12 +889,17 @@ const shadowIO = {
       const receipt = readJson(join(lane, name))
       if (!receiptShape(receipt) || receipt.receiptName !== name)
         throw new Error('Invalid pending evidence receipt.')
-      if (receipt.phase !== 'capturing') continue
+      if (receipt.phase === 'prepared' || (!receipt.poolAddressed && receipt.phase !== 'capturing'))
+        continue
       const staging = join(lane, receipt.stagingName)
       const dir = entryExists(staging) ? staging : join(lane, receipt.finalName)
       if (!sameIdentity(entryIdentity(dir), receipt.stagingIdentity))
         throw new Error('Pending evidence changed during mark.')
       verifyOwnershipMarker(dir, receipt.ownershipToken, 'Pending evidence')
+      if (receipt.poolAddressed) {
+        markPins(dir, receipt, live)
+        if (receipt.phase === 'allocated') continue
+      }
       const file = join(dir, CAPTURE_FILE)
       if (!entryExists(file) && dir !== staging) continue // already published
       for (const { generation } of readCapture(receipt, file).relations)
@@ -892,9 +945,7 @@ const sweepBlobPool = (blobPool) => {
   if (!sameIdentity(entryIdentity(blobPool.path), blobPool.identity)) {
     throw new Error('File-evidence blob-pool identity changed during cleanup scan.')
   }
-  // In-flight captures own real links in staging (and after rename, the final directory).
-  // They remain roots across worker calls and at any age. Only single-link candidates
-  // additionally need the committed lane logs before the old collector can unlink them.
+  // A capturing receipt owns its initial bytes even before the first lane activates the log.
   if (quarantined.length || orphaned.length) {
     let marks
     try {
@@ -903,17 +954,15 @@ const sweepBlobPool = (blobPool) => {
       // An unreadable lane prevents proving unreachability, but never blocks other runs.
       return 0
     }
-    if (marks.active) {
-      const cutoff = Date.now() - shadow.graceMs
-      for (const candidates of [orphaned, quarantined]) {
-        for (let index = candidates.length - 1; index >= 0; index--) {
-          const { name } = candidates[index]
-          if (
-            marks.live.has(blobEntry(name).blobName) ||
-            lstatSync(join(blobPool.path, name)).mtimeMs > cutoff
-          )
-            candidates.splice(index, 1)
-        }
+    const cutoff = Date.now() - shadow.graceMs
+    for (const candidates of [orphaned, quarantined]) {
+      for (let index = candidates.length - 1; index >= 0; index--) {
+        const { name } = candidates[index]
+        if (
+          marks.live.has(blobEntry(name).blobName) ||
+          (marks.active && lstatSync(join(blobPool.path, name)).mtimeMs > cutoff)
+        )
+          candidates.splice(index, 1)
       }
     }
   }
@@ -1032,6 +1081,137 @@ const releaseUnusedActivityBlobs = (retainedGenerations, blobPool, receipt) => {
   syncDirectoryPath(ACTIVITY_BLOBS_DIRECTORY)
   sweepBlobPool(blobPool)
 }
+// Historical conversion is additive. Only native summaries from the exporting lane can
+// authorize a record; never discover candidates by walking a Project or a working directory.
+const backfillHistory = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const project = dirname(pool.path)
+  const lane = process.cwd()
+  const laneKey = relative(project, lane).split(sep).join('/')
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/frames\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/u.test(laneKey) ||
+    request.storageKeyPrefix !== pool.storageKeyPrefix.slice(0, -'/blobs'.length) + '/' + laneKey ||
+    request.owners.length > 32
+  )
+    throw new Error('Invalid historical evidence lane.')
+  const verified = new Map()
+  const observation = (st) => [st.dev, st.ino, st.size, st.mtimeNs, st.ctimeNs].join(':')
+  const verify = (path, g) => {
+    const st = lstatSync(path, { bigint: true })
+    const stamp = observation(st)
+    if (!st.isFile() || st.size !== BigInt(g.sizeBytes))
+      throw new Error('Invalid historical evidence blob.')
+    const reusable = process.platform !== 'win32' && st.ino > 0n
+    if (!reusable || verified.get(stamp) !== g.checksum) {
+      verifyBlob(path, g.sizeBytes, g.checksum)
+      if (stamp !== observation(lstatSync(path, { bigint: true })))
+        throw new Error('Historical evidence changed during conversion.')
+      if (reusable) verified.set(stamp, g.checksum)
+    }
+  }
+  for (const owner of request.owners) {
+    const activity = 'activity-' + assertSafeName(owner.activityId)
+    if (!entryIdentity(activity)) throw new Error('Unsafe historical activity directory.')
+    const prefix = request.storageKeyPrefix + '/' + activity
+    const bytes = shadowIO.readFile(join(activity, 'evidence.json'), MAX_INTERNAL_JSON_BYTES)
+    if (createHash('sha256').update(bytes).digest('hex') !== owner.checksum)
+      throw new Error('Execution file evidence checksum mismatch.')
+    const body = JSON.parse(bytes)
+    if (
+      body.schemaVersion !== 1 ||
+      body.activityId !== owner.activityId ||
+      body.activityKind !== assertActivityKind(owner.activityKind) ||
+      body.parentActivityId !== owner.parentActivityId ||
+      body.evidenceId !== owner.evidenceId
+    )
+      throw new Error('Execution file evidence ownership mismatch.')
+    const predecessors = body.predecessorGenerations ?? []
+    if (
+      !Array.isArray(body.relations) ||
+      body.relations.length > 10000 ||
+      !Array.isArray(predecessors) ||
+      predecessors.length > 10000
+    )
+      throw new Error('Invalid historical execution evidence.')
+    const generations = [
+      ...body.relations.flatMap((r) => (r.generation ? [r.generation] : [])),
+      ...predecessors
+    ]
+    const ids = new Set(generations.map((g) => g.generationId))
+    // Preserve the legacy archive path for an incomplete predecessor mapping or an older
+    // generation layout. Neither can safely be described by the current projection.
+    if (
+      body.relations.some((r) => r.previousGenerationId && !ids.has(r.previousGenerationId)) ||
+      generations.some(
+        (g) =>
+          !BLOB_NAME.test('sha256-' + g.checksum) ||
+          g.contentStorageKey !== prefix + '/blobs/sha256-' + g.checksum ||
+          !Number.isSafeInteger(g.sizeBytes) ||
+          g.sizeBytes < 0 ||
+          typeof g.relativePath !== 'string' ||
+          !g.relativePath.length ||
+          g.relativePath.length > 4096
+      )
+    )
+      continue
+    const dir = join(activity, 'blobs')
+    if (generations.length && !entryIdentity(dir))
+      throw new Error('Unsafe historical blob directory.')
+    const missing = new Map()
+    for (const g of generations) {
+      const name = 'sha256-' + g.checksum
+      verify(join(dir, name), g)
+      if (entryExists(join(pool.path, name))) verify(join(pool.path, name), g)
+      else missing.set(name, g)
+    }
+    const capture = {
+      relations: [
+        ...body.relations.filter(
+          (r) => r.relation === 'present-before' || r.relation === 'staged-input'
+        ),
+        ...predecessors.map((generation) => ({ generation }))
+      ]
+    }
+    const missingBytes = [...missing.values()].reduce((sum, g) => sum + g.sizeBytes, 0)
+    shadow.append(lane, capture, body, bytes, {
+      ...shadowIO,
+      projectRoot: project,
+      storageKeyPrefix: prefix,
+      reserveBytes: request.diskReserveBytes + missingBytes,
+      projectLimit: request.maxEvidenceBytes,
+      projectUsage: () => blobPoolBytes(pool, true) + missingBytes,
+      publishHistoricalContent(views) {
+        for (const [name, g] of missing) {
+          // The append owner reclaims interrupted .tmp files from this lane on retry.
+          const tmp = join(views, '.tmp-' + randomUUID())
+          const from = openSync(
+            join(dir, name),
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+          )
+          try {
+            const to = openSync(tmp, 'wx', 0o600)
+            try {
+              const copy = streamDescriptor(from, g.sizeBytes, to)
+              if (copy.bytesRead !== g.sizeBytes || copy.checksum !== g.checksum)
+                throw new Error('Historical evidence changed during conversion.')
+              fsyncSync(to)
+            } finally {
+              closeSync(to)
+            }
+            renameSync(tmp, join(pool.path, name))
+            syncDirectoryPath(pool.path)
+          } finally {
+            closeSync(from)
+            rmSync(tmp, { force: true })
+          }
+        }
+      }
+    })
+  }
+  return { ok: true }
+}
+
 // Maintenance consumes completed owner records, never directory names as deletion authority.
 // Every native sidecar in the Project participates in the reference set, including other lanes.
 const compactHistory = (request) => {
@@ -1423,12 +1603,13 @@ const copyGeneration = (
     }
     const checksum = hashed.checksum
     const contentName = `sha256-${checksum}`
+    if (request.pinToken) pinGeneration(request.pinToken, checksum)
     const blobPath = join(blobPool.path, contentName)
     let publishedNewBlob = false
     let sharedImmutable = false
     if (existsSync(blobPath)) {
       verifyBlob(blobPath, before.size, checksum)
-      bindRunBlob(blobPath, contentName, before.size, checksum)
+      if (!request.pinToken) bindRunBlob(blobPath, contentName, before.size, checksum)
     } else {
       if (existingBlobBytes + before.size > request.maxEvidenceBytes) {
         return { state: 'unavailable', reason: 'generation-budget-exceeded' }
@@ -1466,7 +1647,8 @@ const copyGeneration = (
         return { state: 'unavailable', reason: 'generation-freeze-failed' }
       }
       try {
-        linkSync(temporaryName, blobPath)
+        if (request.pinToken) renameSync(temporaryName, blobPath)
+        else linkSync(temporaryName, blobPath)
         syncDirectoryPath(blobPool.path)
         publishedNewBlob = true
         publishedBlobPath = blobPath
@@ -1474,7 +1656,7 @@ const copyGeneration = (
         if (!error || error.code !== 'EEXIST') throw error
         verifyBlob(blobPath, before.size, checksum)
       }
-      bindRunBlob(blobPath, contentName, before.size, checksum)
+      if (!request.pinToken) bindRunBlob(blobPath, contentName, before.size, checksum)
     }
     rmSync(temporaryName, { force: true })
     publishedBlobPath = undefined
@@ -1487,7 +1669,9 @@ const copyGeneration = (
         relativePath,
         checksum,
         sizeBytes: before.size,
-        contentStorageKey: `${request.storageKeyPrefix}/${request.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${contentName}`,
+        contentStorageKey: request.pinToken
+          ? `${blobPool.storageKeyPrefix}/${contentName}`
+          : `${request.storageKeyPrefix}/${request.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${contentName}`,
         capturedAt: generation.capturedAt
       }
     }
@@ -1495,7 +1679,7 @@ const copyGeneration = (
     if (sourceDescriptor !== undefined) closeSync(sourceDescriptor)
     if (targetDescriptor !== undefined) closeSync(targetDescriptor)
     rmSync(temporaryName, { force: true })
-    if (publishedBlobPath) {
+    if (publishedBlobPath && !request.pinToken) {
       const metadata = lstatSync(publishedBlobPath)
       if (metadata.isFile() && !metadata.isSymbolicLink() && metadata.nlink === 1) {
         rmSync(publishedBlobPath)
@@ -1519,6 +1703,7 @@ const begin = (request) => {
   const receipt = {
     schemaVersion: 1,
     phase: 'prepared',
+    ...(request.poolAddressed ? { poolAddressed: true } : {}),
     receiptName,
     stagingName,
     finalName,
@@ -1531,7 +1716,20 @@ const begin = (request) => {
     storageKeyPrefix,
     ownershipToken: randomUUID()
   }
-  publishExclusiveFile(receiptName, `${JSON.stringify(receipt, null, 2)}\n`)
+  if (receipt.poolAddressed) {
+    const lane = relative(dirname(realpathSync(blobPool.path)), realpathSync('.'))
+      .split(sep)
+      .join('/')
+    const prefix = blobPool.storageKeyPrefix.replace(/\/blobs$/u, '')
+    if (
+      !/^execution-file-evidence\/[^/]+$/u.test(prefix) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/frames\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/u.test(lane) ||
+      receipt.storageKeyPrefix !== prefix + '/' + lane
+    )
+      throw new Error('Invalid pool-addressed evidence lane.')
+    request.pinToken = receipt.ownershipToken
+  }
+  publishExclusiveFile(receiptName, `${JSON.stringify(receipt, null, 2)}\n`, receipt.poolAddressed)
   let stagingIdentity
   let ownershipMarkerPublished = false
   try {
@@ -1542,6 +1740,7 @@ const begin = (request) => {
       throw new Error('File-evidence staging directory changed during capture binding.')
     }
     writeExclusiveFile(ownershipFile(receipt.ownershipToken), '')
+    if (receipt.poolAddressed) writeExclusiveFile(PIN_FILE, '')
     ownershipMarkerPublished = true
     syncDirectory()
     process.chdir('..')
@@ -1607,6 +1806,9 @@ const begin = (request) => {
       activityKind: receipt.activityKind,
       ...(receipt.parentActivityId ? { parentActivityId: receipt.parentActivityId } : {}),
       initialViewState,
+      ...(receipt.poolAddressed
+        ? { reserveBytes: request.diskReserveBytes, projectLimit: request.maxEvidenceBytes }
+        : {}),
       reasonCodes: [...new Set(reasons)].sort(),
       bytesUsed,
       relations
@@ -1738,7 +1940,7 @@ const finishPublished = (request, receipt, blobPool, generations = []) => {
     assertBoundRoot(expected)
     verifyOwnershipMarker('.', receipt.ownershipToken, 'File-evidence Activity')
     const { serialized, sidecar } = readPublication(receipt)
-    if (receipt.phase === 'capturing' && entryExists(CAPTURE_FILE)) {
+    if (!receipt.poolAddressed && receipt.phase === 'capturing' && entryExists(CAPTURE_FILE)) {
       const capture = readCapture(receipt)
       const projectPrefix = blobPool.storageKeyPrefix.replace(/\/blobs$/u, '')
       const lane = dirname(process.cwd())
@@ -1852,6 +2054,7 @@ const persist = (request) => {
   ) {
     throw new Error('File-evidence persistence does not match its recovery receipt.')
   }
+  if (receipt.poolAddressed) request.pinToken = receipt.ownershipToken
   if (receipt.phase === 'published' || captureMoved(receipt)) {
     return finishPublished(request, receipt, blobPool)
   }
@@ -2019,13 +2222,25 @@ const persist = (request) => {
     ) {
       throw new Error('File-evidence sidecar exceeds the reserved storage budget.')
     }
+    if (receipt.poolAddressed) {
+      const project = dirname(blobPool.path)
+      writeNativeRecord(
+        dirname(process.cwd()),
+        blobPool.storageKeyPrefix.slice(0, -'/blobs'.length),
+        project,
+        capture,
+        sidecar,
+        Buffer.from(serialized),
+        { verifyOnly: true }
+      )
+    }
     // Preserve the initial capture until the complete directory has moved. Failed renames
     // can be retried with newly observed outputs, without pruning their predecessors.
     if (entryExists('evidence.json')) {
       readPublication(receipt)
       replaceJson('evidence.json', sidecar)
     } else {
-      publishExclusiveFile('evidence.json', serialized)
+      publishExclusiveFile('evidence.json', serialized, receipt.poolAddressed)
     }
     process.chdir('..')
     moveCapture(request, receipt)
@@ -2058,8 +2273,9 @@ const verifyPublishedEvidence = (receipt, expected) => {
   }
   verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Activity')
   process.chdir(receipt.finalName)
+  let bytes
   try {
-    const bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
+    bytes = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
     if (createHash('sha256').update(bytes).digest('hex') !== expected.checksum) {
       throw new Error('Published file-evidence checksum mismatch.')
     }
@@ -2080,8 +2296,73 @@ const verifyPublishedEvidence = (receipt, expected) => {
   const storageKey = `${receipt.storageKeyPrefix}/${receipt.finalName}/evidence.json`
   if (storageKey !== expected.storageKey)
     throw new Error('Published file-evidence storage key mismatch.')
+  return bytes
 }
 
+const writeNativeRecord = (lane, prefix, project, capture, sidecar, serialized, options) => {
+  const retained = new Set([
+    ...sidecar.relations.map((r) => r.generation?.generationId),
+    ...(sidecar.predecessorGenerations ?? []).map((g) => g.generationId)
+  ])
+  const relations = capture.relations.filter(
+    (r) => r.generation && retained.has(r.generation.generationId)
+  )
+  const pool = { path: join(project, 'blobs'), storageKeyPrefix: prefix + '/blobs' }
+  shadow.append(lane, { relations }, sidecar, serialized, {
+    ...shadowIO,
+    poolAddressed: true,
+    ...options,
+    projectRoot: project,
+    reserveBytes: capture.reserveBytes,
+    projectLimit: capture.projectLimit,
+    projectUsage: () => blobPoolBytes(pool, true),
+    storageKeyPrefix: prefix
+  })
+}
+// Only a retained native summary may turn a pending receipt into a committed log record.
+const settlePublication = (receipt, expected) => {
+  if (!receipt.poolAddressed) {
+    verifyPublishedEvidence(receipt, expected)
+    removeReceipt(receipt.receiptName)
+    return
+  }
+  const lane = process.cwd()
+  const prefix = receipt.storageKeyPrefix.split('/').slice(0, 2).join('/')
+  const project =
+    receipt.storageKeyPrefix.split('/').length === 3
+      ? dirname(lane)
+      : dirname(dirname(dirname(lane)))
+  if (expected.storageKey !== receipt.storageKeyPrefix + '/' + receipt.finalName + '/evidence.json')
+    throw new Error('Retained evidence storage key mismatch.')
+  const { committed, appendState } = shadow.inspectNativePublication(
+    lane,
+    receipt.activityId,
+    prefix,
+    shadowIO
+  )
+  if (committed) {
+    const content = JSON.parse(committed)
+    if (
+      createHash('sha256').update(committed).digest('hex') !== expected.checksum ||
+      content.evidenceId !== expected.evidenceId ||
+      content.activityKind !== expected.activityKind ||
+      content.parentActivityId !== expected.parentActivityId
+    )
+      throw new Error('Retained evidence differs from committed log.')
+  } else {
+    const serialized = verifyPublishedEvidence(receipt, expected)
+    const capture = readCapture(receipt, join(receipt.finalName, CAPTURE_FILE))
+    const sidecar = JSON.parse(serialized)
+    writeNativeRecord(lane, prefix, project, capture, sidecar, serialized, { appendState })
+  }
+  removeReceiptOwnedDirectory(
+    receipt.finalName,
+    receipt.finalIdentity ?? receipt.stagingIdentity,
+    receipt.ownershipToken,
+    'final'
+  )
+  removeReceipt(receipt.receiptName)
+}
 const complete = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const receipt = readReceipt(request.receiptName)
@@ -2094,8 +2375,7 @@ const complete = (request) => {
   ) {
     throw new Error('File-evidence completion does not match its recovery receipt.')
   }
-  verifyPublishedEvidence(receipt, request)
-  removeReceipt(receipt.receiptName)
+  settlePublication(receipt, request)
   return { ok: true, removedStagingEntries: 0, removedActivityEntries: 0 }
 }
 
@@ -2120,11 +2400,10 @@ const reconcile = (request, sweepBlobs = true) => {
       ) {
         throw new Error('Retained file-evidence does not match its recovery receipt.')
       }
-      verifyPublishedEvidence(receipt, {
+      settlePublication(receipt, {
         ...expected,
         expectedRootIdentity: request.expectedRootIdentity
       })
-      removeReceipt(receipt.receiptName)
       continue
     }
     if (
@@ -2492,6 +2771,7 @@ const operationHandlers = new Map([
   ['publish-imported-pool', publishImportedPool],
   ['rollback-imported-pool', rollbackImportedPool],
   ['compact-history', compactHistory],
+  ['backfill-history', backfillHistory],
   ['begin', begin],
   ['ensure-capture', ensureCapture],
   ['ensure-project', ensureProject],

@@ -7059,3 +7059,120 @@ it.each([
     expect(JSON.stringify(f)).toBe(before)
   }
 })
+
+const emptySpaceBesideCellClip = (): ReturnType<typeof JSON.parse> => {
+  const f = anonymousCertifiedPicture()
+  f.context.operators.fnArray.length = 0
+  f.context.operators.argsArray.length = 0
+  f.context.content.items.length = 0
+  f.context.glyphBounds[0].glyphs.length = 0
+  f.tokens.length = 0
+  f.page.graphicsBounds.length = 0
+  f.add(OPS.save, null)
+  f.add(OPS.clip, null)
+  f.shape(100, 100, 50, 50, OPS.endPath)
+  f.page.graphicsBounds.length = 0
+  f.add(OPS.setFillRGBColor, ['#000000'])
+  f.text(' ', 99.92, 120)
+  f.context.glyphBounds[0].glyphs[0].bounds = [0, 0, 0, 0]
+  f.text('A', 110, 120)
+  f.add(OPS.restore, null)
+  return f
+}
+it('retains a complete native page when an empty-outline space is just outside its cell clip', () => {
+  const f = emptySpaceBesideCellClip(),
+    before = JSON.stringify(f)
+  expect(
+    nativePageTextPacketInventory(
+      f.page,
+      f.tokens.filter((t) => t.text.trim()),
+      f.context,
+      true
+    )
+  ).toBeDefined()
+  expect(JSON.stringify(f)).toBe(before)
+})
+it.each(['nonspace', 'visible-space', 'nonzero-ink', 'unknown-advance'])(
+  'does not grant empty-whitespace clip permission to %s',
+  (change) => {
+    const f = emptySpaceBesideCellClip(),
+      first = f.context.operators.fnArray.indexOf(OPS.showText),
+      g = f.context.operators.argsArray[first][0][0]
+    if (change === 'nonspace') g.unicode = 'X'
+    if (change === 'visible-space') f.context.glyphBounds[0].glyphs[0].bounds = [0, -0.1, 0.2, 0.7]
+    if (change === 'nonzero-ink') f.context.glyphBounds[0].glyphs[0].bounds = [-0.1, 0, 0, 0]
+    if (change === 'unknown-advance') g.width = Number.NaN
+    expect(
+      nativePageTextPacketInventory(
+        f.page,
+        f.tokens.filter((t) => t.text.trim()),
+        f.context,
+        true
+      )
+    ).toBeUndefined()
+  }
+)
+
+const certifiedSkippedSpaceBesideCellClip = (): ReturnType<typeof JSON.parse> => {
+  const f = emptySpaceBesideCellClip(),
+    operationIndex = f.context.operators.fnArray.indexOf(OPS.showText),
+    g = f.context.operators.argsArray[operationIndex][0][0]
+  g.isInFont = false
+  g.isSpace = false
+  f.context.glyphBounds[0].glyphs[0].bounds = [0.02, -0.2, 0.3, 0.7]
+  f.context.skippedSpaceGlyphs = [
+    {
+      operationIndex,
+      glyphIndex: 0,
+      fontName: 'F',
+      fontChar: ' ',
+      width: g.width,
+      unicode: ' ',
+      isSpace: false
+    }
+  ]
+  return f
+}
+it('uses the existing render witness for a skipped empty-ink space with a fallback font outline', () => {
+  const f = certifiedSkippedSpaceBesideCellClip()
+  expect(
+    nativePageTextPacketInventory(
+      f.page,
+      f.tokens.filter((t) => t.text.trim()),
+      f.context,
+      true
+    )
+  ).toBeDefined()
+})
+it.each([
+  'no-witness',
+  'wrong-operation',
+  'wrong-font',
+  'wrong-width',
+  'wrong-space-kind',
+  'nonspace',
+  'visible-ink'
+])('requires the complete actual-render skipped-space witness: %s', (change) => {
+  const f = certifiedSkippedSpaceBesideCellClip(),
+    proof = f.context.skippedSpaceGlyphs[0],
+    g = f.context.operators.argsArray[proof.operationIndex][0][0]
+  if (change === 'no-witness') delete f.context.skippedSpaceGlyphs
+  if (change === 'wrong-operation') proof.operationIndex++
+  if (change === 'wrong-font') proof.fontName = 'Other'
+  if (change === 'wrong-width') proof.width++
+  if (change === 'wrong-space-kind') proof.isSpace = true
+  if (change === 'nonspace') g.unicode = 'X'
+  if (change === 'visible-ink') {
+    g.isInFont = true
+    delete f.context.skippedSpaceGlyphs
+    f.context.glyphBounds[0].glyphs[0].bounds = [-0.01, -0.2, 0.3, 0.7]
+  }
+  expect(
+    nativePageTextPacketInventory(
+      f.page,
+      f.tokens.filter((t) => t.text.trim()),
+      f.context,
+      true
+    )
+  ).toBeUndefined()
+})

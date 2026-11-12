@@ -1,5 +1,7 @@
+import { ResourceDetailActionsProvider } from '../marketplace/ResourceDetailLayout'
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createTwoFilesPatch } from 'diff'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +38,7 @@ const detail = vi.fn().mockImplementation(async ({ id }) => ({
   ok: true,
   value: {
     ...marketplaceDetail,
+    installation: { kind: 'not-installed' },
     entry: entries.find((item) => item.id === id) ?? marketplaceEntry
   }
 }))
@@ -51,6 +54,7 @@ beforeEach(() => {
     ok: true,
     value: {
       ...marketplaceDetail,
+      installation: { kind: 'not-installed' },
       entry: entries.find((item) => item.id === id) ?? marketplaceEntry
     }
   }))
@@ -97,7 +101,7 @@ describe('Skill Marketplace', () => {
   const click = async (label: string, scope: ParentNode = container): Promise<void> => {
     const target = [
       ...scope.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
-        'button, input[type="checkbox"]'
+        'button:not([role="tab"]), input[type="checkbox"], [role="menuitem"]'
       )
     ].find((button) => button.textContent === label || button.getAttribute('aria-label') === label)
     expect(target, label).toBeDefined()
@@ -150,16 +154,14 @@ describe('Skill Marketplace', () => {
           version: '1.0.0'
         }
       })
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
+    await act(async () => root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />))
     await click('Install')
     expect(container.textContent).toContain('Installed')
     expect(container.textContent).not.toContain('Skill installation failed')
     expect(container.textContent).toContain('Skills were installed, but runtime refresh failed.')
     await click('Retry')
     expect(install).toHaveBeenLastCalledWith({
-      id: entries[0].id,
+      id: marketplaceEntry.id,
       snapshotId: marketplaceCatalog.snapshotId,
       expectedVersion: '1.0.0'
     })
@@ -170,20 +172,80 @@ describe('Skill Marketplace', () => {
     expect(list).toHaveBeenCalledTimes(1)
   })
 
-  it('installs immediately once without refreshing discovery and keeps cards during manual refresh', async () => {
-    let complete!: (result: unknown) => void
-    let refreshComplete!: (result: unknown) => void
+  it('reconciles drawer mutations from local receipts without resetting the list', async () => {
     list
       .mockResolvedValueOnce({
         ok: true,
-        value: { ...marketplaceCatalog, entries: [entries[0]], installations: {} }
+        value: { ...marketplaceCatalog, entries, installations: {} }
       })
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            refreshComplete = resolve
-          })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          entries,
+          installations: { 'skill-0': installedDetail.installation }
+        }
+      })
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(
+        <SkillMarketplace
+          view={{ kind: 'marketplace' }}
+          onNavigate={onNavigate}
+          localRevisionKey={0}
+        />
       )
+    )
+    await click('Load more')
+    await act(async () =>
+      root.render(
+        <SkillMarketplace
+          view={{ kind: 'marketplace' }}
+          onNavigate={onNavigate}
+          localRevisionKey={1}
+        />
+      )
+    )
+    expect(list).toHaveBeenLastCalledWith({ snapshotId: marketplaceCatalog.snapshotId })
+    expect(container.querySelectorAll('article')).toHaveLength(40)
+    expect(container.querySelector('[data-skill-id="skill-0"]')?.textContent).toContain('Installed')
+  })
+
+  it('reconciles deletion in the retained Installed catalog without resetting browsing', async () => {
+    useSettingsStore.setState({ skills: [installedSkill] })
+    list
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          entries,
+          installations: { 'skill-0': installedDetail.installation }
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { ...marketplaceCatalog, entries, installations: {} }
+      })
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    )
+    await click('Load more')
+    expect(container.querySelector('[data-skill-id="skill-0"]')?.textContent).toContain('Installed')
+    await act(async () => useSettingsStore.setState({ skills: [] }))
+    expect(list).toHaveBeenLastCalledWith({ snapshotId: marketplaceCatalog.snapshotId })
+    expect(container.querySelectorAll('article')).toHaveLength(40)
+    expect(container.querySelector('[data-skill-id="skill-0"]')?.textContent).not.toContain(
+      'Installed'
+    )
+    expect(container.querySelector('[data-skill-id="skill-0"]')?.textContent).toContain('Install')
+  })
+
+  it('installs directly from a card without navigating and retains its details action', async () => {
+    list.mockResolvedValue({
+      ok: true,
+      value: { ...marketplaceCatalog, entries, installations: {} }
+    })
+    let complete!: (result: unknown) => void
     install.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -195,9 +257,7 @@ describe('Skill Marketplace', () => {
       root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={navigate} />)
     )
     const card = container.querySelector('article')!
-    const action = [...card.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Install'
-    )!
+    const action = card.querySelector<HTMLButtonElement>('.skill-marketplace-install-action')!
     await act(async () => {
       action.click()
       action.click()
@@ -207,31 +267,66 @@ describe('Skill Marketplace', () => {
       snapshotId: marketplaceCatalog.snapshotId,
       expectedVersion: null
     })
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(navigate).not.toHaveBeenCalled()
     expect(action.disabled).toBe(true)
     expect(action.textContent).toBe('Installing…')
-    expect(action.querySelector('svg')?.classList.contains('animate-spin')).toBe(true)
     await act(async () =>
       complete({
         ok: true,
         value: { id: 'imported-skill-0', status: 'imported', version: '1.0.0' }
       })
     )
-    expect(container.querySelector('article')).toBe(card)
     expect(action.textContent).toBe('Installed')
-    expect(action.dataset.installed).toBe('true')
-    expect(action.querySelector('svg')?.getAttribute('data-icon')).toBe('inline-start')
-    expect(container.querySelector('[data-slot="skill-marketplace-loading"]')).toBeNull()
-    expect(list).toHaveBeenCalledTimes(1)
     expect(action.disabled).toBe(false)
-    await click(entries[0].displayName, card)
+    expect(container.querySelector('article')).toBe(card)
+    expect(list).toHaveBeenCalledTimes(1)
+    await click('View details', card)
     expect(navigate).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'marketplace-detail', id: entries[0].id })
     )
-    await click('Refresh')
-    await act(async () => refreshComplete({ ok: false, error: 'integrity' }))
-    expect(container.querySelector('article')).toBeNull()
-    expect(container.textContent).toContain('Marketplace verification failed')
+  })
+
+  it('opens details when installation state is unavailable and deduplicates its pending action', async () => {
+    let complete!: (result: unknown) => void
+    install.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    const navigate = vi.fn()
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={navigate} />)
+    )
+    const card = container.querySelector('article')!
+    expect(card.querySelector('.skill-marketplace-install-action')).toBeNull()
+    await click('View details', card)
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'marketplace-detail', id: entries[0].id })
+    )
+    expect(install).not.toHaveBeenCalled()
+    const view = navigate.mock.lastCall![0]
+    await act(async () => root.render(<SkillMarketplace view={view} onNavigate={navigate} />))
+    const action = container.querySelector<HTMLButtonElement>('.skill-marketplace-install-action')!
+    await act(async () => {
+      action.click()
+      action.click()
+    })
+    expect(install).toHaveBeenCalledExactlyOnceWith({
+      id: entries[0].id,
+      snapshotId: marketplaceCatalog.snapshotId,
+      expectedVersion: null
+    })
+    expect(action.disabled).toBe(true)
+    expect(action.textContent).toBe('Installing…')
+    await act(async () =>
+      complete({
+        ok: true,
+        value: { id: 'imported-skill-0', status: 'imported', version: '1.0.0' }
+      })
+    )
+    expect(container.textContent).toContain('Installed version: 1.0.0')
+    expect(list).toHaveBeenCalledTimes(1)
   })
 
   it.each(['not-installed', 'installed'] as const)(
@@ -255,7 +350,6 @@ describe('Skill Marketplace', () => {
       const card = container.querySelector('article')!
       expect(card.textContent).toContain(entry.displayName)
       expect(card.textContent).toContain('Unavailable')
-      expect(card.querySelector('[title="Only stable releases can be installed."]')).not.toBeNull()
       expect(card.querySelector('.skill-marketplace-install-action')).toBeNull()
       await act(async () =>
         root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />)
@@ -377,7 +471,7 @@ describe('Skill Marketplace', () => {
       { snapshotId: marketplaceCatalog.snapshotId }
     ])
     // The skill was removed after the old job finished: never replay its succeeded result.
-    expect(container.querySelector('article')?.textContent).toContain('Install')
+    expect(container.querySelector('article')?.textContent).toContain('View details')
     expect(container.querySelector('article')?.textContent).not.toContain('Installed')
   })
 
@@ -456,8 +550,13 @@ describe('Skill Marketplace', () => {
       root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
     )
     await click('Refresh')
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={{ ...detailView, id: entries[0].id }} onNavigate={vi.fn()} />
+      )
+    )
     await click('Install')
-    expect(container.querySelector('article')?.textContent).toContain('Installed')
+    expect(container.textContent).toContain('Installed version: 1.0.0')
     await act(async () =>
       complete({
         ...initial,
@@ -465,10 +564,13 @@ describe('Skill Marketplace', () => {
       })
     )
     expect(list).toHaveBeenLastCalledWith({ snapshotId: marketplaceCatalog.snapshotId })
-    expect(container.querySelector('article')?.textContent).toContain('Update')
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    )
+    expect(container.querySelector('article')?.textContent).toContain('Update available')
     expect(container.querySelector('article')?.textContent).not.toContain('Installed')
   })
-  it('keeps a failed first installation inside the card and retries without a dialog', async () => {
+  it('keeps a failed first installation inside the detail and retries without a dialog', async () => {
     list.mockResolvedValueOnce({
       ok: true,
       value: { ...marketplaceCatalog, entries: [entries[0]], installations: {} }
@@ -476,10 +578,8 @@ describe('Skill Marketplace', () => {
     install
       .mockResolvedValueOnce({ ok: false, error: 'network' })
       .mockResolvedValueOnce({ ok: false, error: 'integrity' })
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
-    const card = container.querySelector('article')!
+    await act(async () => root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />))
+    const card = container
     await click('Install', card)
     expect(card.textContent).toContain('Skill installation failed')
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
@@ -491,114 +591,7 @@ describe('Skill Marketplace', () => {
     ).toBe(true)
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
   })
-  it('previews inline uninstall on hover, restores on leave, and removes on one click', async () => {
-    useSettingsStore.setState({ skills: [installedSkill] })
-    list
-      .mockResolvedValueOnce({
-        ok: true,
-        value: {
-          ...marketplaceCatalog,
-          entries: [marketplaceEntry],
-          installations: { [marketplaceEntry.id]: installedDetail.installation }
-        }
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        value: { ...marketplaceCatalog, entries: [marketplaceEntry], installations: {} }
-      })
-    let complete!: (value: SkillView[]) => void
-    remove.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          complete = resolve
-        })
-    )
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
-    const card = container.querySelector('article')!
-    const action = card.querySelector<HTMLButtonElement>('.skill-marketplace-install-action')!
-    expect(action.querySelector('circle')).not.toBeNull()
-    await pointer(action, 'pointerover')
-    expect(action.textContent).toBe('Uninstall')
-    expect(action.dataset.variant).toBe('destructive')
-    expect(remove).not.toHaveBeenCalled()
-    await pointer(action, 'pointerout')
-    expect(action.textContent).toBe('Installed')
-    await pointer(action, 'pointerover')
-    await act(async () =>
-      action.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    )
-    expect(action.textContent).toBe('Installed')
-    await pointer(action, 'pointerout')
-    await pointer(action, 'pointerover')
-    await act(async () => {
-      action.click()
-      action.click()
-    })
-    expect(remove).toHaveBeenCalledExactlyOnceWith({ id: installedSkill.id })
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
-    expect(action.disabled).toBe(true)
-    expect(action.textContent).toBe('Uninstalling…')
-    await act(async () => complete([]))
-    expect(container.querySelector('article')).toBe(card)
-    expect(action.textContent).toBe('Install')
-    expect(list).toHaveBeenCalledTimes(1)
-  })
-  it('supports keyboard preview and preserves two-tap confirmation without hover on touch', async () => {
-    list.mockResolvedValue({
-      ok: true,
-      value: {
-        ...marketplaceCatalog,
-        entries: [marketplaceEntry],
-        installations: { [marketplaceEntry.id]: installedDetail.installation }
-      }
-    })
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
-    const action = container.querySelector<HTMLButtonElement>('.skill-marketplace-install-action')!
-    await pointer(action, 'pointerover', 'touch')
-    expect(action.textContent).toBe('Installed')
-    await click('Installed')
-    expect(action.textContent).toBe('Uninstall')
-    await pointer(action, 'pointerout', 'touch')
-    expect(action.textContent).toBe('Uninstall')
-    expect(remove).not.toHaveBeenCalled()
-    await act(async () =>
-      action.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    )
-    const matches = vi.spyOn(action, 'matches').mockReturnValue(true)
-    await act(async () => action.focus())
-    expect(matches).toHaveBeenCalledWith(':focus-visible')
-    expect(action.textContent).toBe('Uninstall')
-    await act(async () => action.blur())
-    expect(action.textContent).toBe('Installed')
-    matches.mockRestore()
-  })
-  it('keeps an installed card when the protected uninstall is rejected', async () => {
-    useSettingsStore.setState({ skills: [installedSkill] })
-    list.mockResolvedValueOnce({
-      ok: true,
-      value: {
-        ...marketplaceCatalog,
-        entries: [marketplaceEntry],
-        installations: { [marketplaceEntry.id]: installedDetail.installation }
-      }
-    })
-    remove.mockRejectedValueOnce(new Error('Used by Literature Reviewer'))
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
-    await click('Installed')
-    await click('Uninstall')
-    expect(container.querySelector('article')?.textContent).toContain('Used by Literature Reviewer')
-    expect(container.querySelector('.skill-marketplace-install-action')?.textContent).toBe(
-      'Installed'
-    )
-    expect(useSettingsStore.getState().skills).toEqual([installedSkill])
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
-  })
+
   it('enters batch mode explicitly and restores browsing filters, loaded cards and scroll on exit', async () => {
     list.mockResolvedValue({
       ok: true,
@@ -612,15 +605,34 @@ describe('Skill Marketplace', () => {
     await render({ kind: 'marketplace' })
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
     expect(container.textContent).not.toContain('Install selected')
-    expect(container.querySelector('.skill-marketplace-card-controls')).not.toBeNull()
+    expect(container.querySelector('article button')?.textContent).toContain('Skill')
     await select('Category', 'Academic writing')
     await click('Load more')
     container.scrollTop = 840
     container.dispatchEvent(new Event('scroll'))
-    await click('Batch manage')
+    await act(async () => {
+      fireEvent.keyDown(container.querySelector('[aria-label="More actions"]')!, { key: 'Enter' })
+    })
+    await click('Batch manage', document.body)
     expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'marketplace-batch' })
     await render({ kind: 'marketplace-batch' })
     expect(container.scrollTop).toBe(0)
+    const header = container.querySelector('[data-slot="resource-catalog-header"]')!
+    expect(header.querySelector('h2')?.textContent).toBe('Skills')
+    expect(header.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Marketplace'
+    )
+    expect(header.querySelector('[aria-label="Search skills"]')).not.toBeNull()
+    expect(header.querySelector('[data-slot="skill-marketplace-selection"]')).not.toBeNull()
+    expect(container.querySelector('.skill-marketplace-batch-scroll')).toBeNull()
+    expect(
+      [...container.querySelectorAll('h2')].some((node) => node.textContent === 'Batch manage')
+    ).toBe(false)
+    expect(
+      [...header.querySelectorAll('[data-slot="resource-filter-label"]')].map(
+        (node) => node.textContent
+      )
+    ).toEqual(['Category', 'Sort by'])
     const modeButtons = container.querySelectorAll('[aria-label="Batch operation"] [role="radio"]')
     expect(modeButtons).toHaveLength(2)
     for (const button of modeButtons) {
@@ -640,7 +652,7 @@ describe('Skill Marketplace', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
     expect(container.querySelectorAll('article')).toHaveLength(1)
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     await click('Select all filtered results (1)')
     await click('Install…')
     expect(document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')).not.toBeNull()
@@ -651,11 +663,11 @@ describe('Skill Marketplace', () => {
     expect(container.querySelectorAll('article')).toHaveLength(40)
     expect(container.scrollTop).toBe(840)
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
-    expect(container.querySelector('.skill-marketplace-card-controls')).not.toBeNull()
+    expect(container.querySelector('article button')?.textContent).toContain('Skill')
     await render({ kind: 'marketplace-batch' })
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0)
-    await click('Back to Marketplace')
+    await click('Exit selection')
     expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'marketplace' })
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
     expect(window.api.settings.stopSkillMarketplaceBatch).not.toHaveBeenCalled()
@@ -725,6 +737,55 @@ describe('Skill Marketplace', () => {
       )
     ).toHaveLength(0)
   })
+  it.each(['install', 'update'] as const)(
+    'selects whole cards in batch %s mode and restores details on exit',
+    async (mode) => {
+      list.mockResolvedValue({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          entries: entries.slice(0, 3),
+          installations: {
+            'skill-1': { kind: 'installed', version: '0.9.0', canUpdate: true },
+            'skill-2': { kind: 'conflict' }
+          }
+        }
+      })
+      const onNavigate = vi.fn()
+      await act(async () =>
+        root.render(
+          <SkillMarketplace view={{ kind: 'marketplace-batch' }} onNavigate={onNavigate} />
+        )
+      )
+      if (mode === 'update') await click('Updates1')
+      const id = mode === 'update' ? 'skill-1' : 'skill-0'
+      const card = container.querySelector<HTMLElement>(`[data-skill-id="${id}"]`)!
+      const checkbox = card.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+      expect(card.querySelector('[inert]')).not.toBeNull()
+      expect(card.textContent).not.toContain('View details')
+      await act(async () => checkbox.closest('label')!.click())
+      expect(checkbox.checked).toBe(true)
+      expect(card.dataset.selected).toBe('true')
+      const footer = card.querySelector('[data-slot="resource-card-footer"]')
+      if (mode === 'install') expect(footer).toBeNull()
+      else expect(footer?.textContent).toContain('Update available')
+      await act(async () => checkbox.closest('label')!.click())
+      expect(checkbox.checked).toBe(false)
+      expect(onNavigate).not.toHaveBeenCalled()
+      expect(detail).not.toHaveBeenCalled()
+      expect(container.querySelector('[data-skill-id="skill-2"]')).toBeNull()
+      await act(async () =>
+        root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={onNavigate} />)
+      )
+      const browseCard = container.querySelector<HTMLElement>(`[data-skill-id="${id}"]`)!
+      expect(browseCard.querySelector('[inert]')).toBeNull()
+      expect(browseCard.querySelector('input[type="checkbox"]')).toBeNull()
+      await click('View details', browseCard)
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ kind: 'marketplace-detail', id })
+      )
+    }
+  )
   it('confirms updates separately with the expected installed version and target version', async () => {
     list.mockResolvedValueOnce({
       ok: true,
@@ -741,7 +802,7 @@ describe('Skill Marketplace', () => {
     await act(async () =>
       root.render(<SkillMarketplace view={{ kind: 'marketplace-batch' }} onNavigate={vi.fn()} />)
     )
-    await click('Updates1', container.querySelector('[data-slot="skill-marketplace-batch"]')!)
+    await click('Updates1', container.querySelector('[data-slot="skill-marketplace-selection"]')!)
     await click('Select all filtered results (1)')
     await click('Update…')
     const dialog = document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')!
@@ -771,12 +832,12 @@ describe('Skill Marketplace', () => {
       container.querySelector('[data-slot="skill-marketplace-selection"] input')!
     const card = (id: string): HTMLInputElement =>
       container.querySelector(`[data-skill-id="${id}"] input`)!
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     expect(all().checked).toBe(false)
     await act(async () => card('skill-0').click())
     expect(all().indeterminate).toBe(true)
     expect(
-      container.querySelector('[data-slot="skill-marketplace-batch-dock"]')?.textContent
+      container.querySelector('[data-slot="skill-marketplace-selection"]')?.textContent
     ).toContain('1 selected')
     expect(
       container.querySelector('[data-skill-id="skill-0"]')?.getAttribute('data-selected')
@@ -793,11 +854,11 @@ describe('Skill Marketplace', () => {
     expect(all().indeterminate).toBe(true)
     await click('Clear selection')
     expect(document.activeElement).toBe(all())
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     await click('Select all filtered results (40)')
     await select('Category', 'Academic writing')
     expect(all().checked).toBe(false)
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     expect(list).toHaveBeenCalledTimes(1)
   })
   it('locks filters during an inline review and restores action focus on cancel', async () => {
@@ -814,8 +875,15 @@ describe('Skill Marketplace', () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     expect(document.activeElement).toBe(review.querySelector('h4'))
     expect(container.querySelector<HTMLInputElement>('input[type="search"]')?.disabled).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Refresh"]')?.disabled).toBe(
+      true
+    )
+    expect(container.querySelector('[aria-label="Refresh"] .animate-spin')).toBeNull()
     expect(container.querySelector('fieldset')?.disabled).toBe(true)
     expect(container.querySelectorAll('article input:disabled')).toHaveLength(36)
+    const lockedCard = container.querySelector<HTMLInputElement>('article input')!
+    await act(async () => lockedCard.closest('label')!.click())
+    expect(lockedCard.checked).toBe(true)
     await act(async () =>
       document.activeElement!.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
@@ -827,50 +895,78 @@ describe('Skill Marketplace', () => {
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
     await click('Updates0')
     expect(container.querySelectorAll('article')).toHaveLength(0)
-    expect(container.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+    expect(container.querySelector('[data-slot="skill-marketplace-batch-feedback"]')).toBeNull()
     expect(container.textContent).toContain('No skills match your search.')
   })
-  it('confirms uninstall, deduplicates it and returns to install after success', async () => {
-    useSettingsStore.setState({ skills: [installedSkill] })
-    detail.mockResolvedValueOnce({ ok: true, value: installedDetail })
-    await act(async () => root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />))
-    expect(
-      container
-        .querySelector('details[data-slot="skill-marketplace-sources"]')
-        ?.hasAttribute('open')
-    ).toBe(false)
-    const action = container.querySelector('.skill-marketplace-install-action')!
-    expect(action.textContent).toBe('Installed')
-    await pointer(action, 'pointerover')
-    expect(action.textContent).toBe('Uninstall')
-    await click('Uninstall')
-    expect(remove).not.toHaveBeenCalled()
-    await click('Cancel', document.querySelector('[role="alertdialog"]')!)
-    expect(remove).not.toHaveBeenCalled()
-    await pointer(action, 'pointerover')
-    await click('Uninstall')
-    let finish!: (value: SkillView[]) => void
-    remove.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        })
-    )
-    const dialog = document.querySelector('[role="alertdialog"]')!
-    await click('Uninstall', dialog)
-    expect(remove).toHaveBeenCalledExactlyOnceWith({ id: installedSkill.id })
-    expect([...dialog.querySelectorAll('button')].every((button) => button.disabled)).toBe(true)
-    expect(container.textContent).not.toContain('Installing…')
-    await act(async () => finish([]))
-    expect(useSettingsStore.getState().skills).toEqual([])
-    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Install'))
-    expect(detail).toHaveBeenCalledTimes(1)
-    expect(list).toHaveBeenCalledTimes(1)
-    expect(container.textContent).not.toContain('Installed version:')
-    expect(
-      [...container.querySelectorAll('button')].some((button) => button.textContent === 'Install')
-    ).toBe(true)
-  })
+  it.each([false, true])(
+    'confirms uninstall and returns to install after success (card=%s)',
+    async (compact) => {
+      useSettingsStore.setState({ skills: [installedSkill] })
+      detail.mockResolvedValueOnce({ ok: true, value: installedDetail })
+      list.mockResolvedValue({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          entries: [marketplaceEntry],
+          installations: { [marketplaceEntry.id]: installedDetail.installation }
+        }
+      })
+      const onNavigate = vi.fn()
+      await act(async () =>
+        root.render(
+          <SkillMarketplace
+            view={compact ? { kind: 'marketplace' } : detailView}
+            onNavigate={onNavigate}
+          />
+        )
+      )
+      if (!compact)
+        expect(
+          container
+            .querySelector('details[data-slot="skill-marketplace-sources"]')
+            ?.hasAttribute('open')
+        ).toBe(false)
+      const action = container.querySelector('.skill-marketplace-install-action')!
+      expect(action.textContent).toBe('Installed')
+      await pointer(action, 'pointerover')
+      expect(action.textContent).toBe('Uninstall')
+      await pointer(action, 'pointerout')
+      expect(action.textContent).toBe('Installed')
+      await pointer(action, 'pointerover')
+      await click('Uninstall')
+      expect(remove).not.toHaveBeenCalled()
+      await click('Cancel', document.querySelector('[role="alertdialog"]')!)
+      expect(remove).not.toHaveBeenCalled()
+      await pointer(action, 'pointerover')
+      await click('Uninstall')
+      let finish!: (value: SkillView[]) => void
+      remove.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+      const dialog = document.querySelector('[role="alertdialog"]')!
+      await click('Uninstall', dialog)
+      expect(remove).toHaveBeenCalledExactlyOnceWith({ id: installedSkill.id })
+      expect([...dialog.querySelectorAll('button')].every((button) => button.disabled)).toBe(true)
+      expect(container.textContent).not.toContain('Installing…')
+      list.mockResolvedValue({
+        ok: true,
+        value: { ...marketplaceCatalog, entries: [marketplaceEntry], installations: {} }
+      })
+      await act(async () => finish([]))
+      expect(useSettingsStore.getState().skills).toEqual([])
+      await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Install'))
+      expect(detail).toHaveBeenCalledTimes(compact ? 0 : 1)
+      expect(onNavigate).not.toHaveBeenCalled()
+      expect(list).toHaveBeenLastCalledWith({ snapshotId: marketplaceCatalog.snapshotId })
+      expect(container.textContent).not.toContain('Installed version:')
+      expect(
+        [...container.querySelectorAll('button')].some((button) => button.textContent === 'Install')
+      ).toBe(true)
+    }
+  )
   it('preserves a protected installation and displays the deletion guard reason', async () => {
     useSettingsStore.setState({ skills: [installedSkill] })
     detail.mockResolvedValueOnce({ ok: true, value: installedDetail })
@@ -939,10 +1035,9 @@ describe('Skill Marketplace', () => {
     detail.mockResolvedValueOnce({ ok: true, value: installedDetail })
     toggle.mockRejectedValueOnce(new Error('Cannot change enablement'))
     await act(async () => root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />))
-    const actions = container.querySelector('[data-slot="skill-marketplace-detail-actions"]')!
+    const actions = container.querySelector('[data-slot="resource-detail-actions"]')!
     expect(actions).not.toBeNull()
     expect(actions.closest('details')).toBeNull()
-    expect(actions.classList.contains('skill-marketplace-primary-action')).toBe(true)
     expect(actions.querySelector('.skill-marketplace-install-action')?.textContent).toBe(
       'Installed'
     )
@@ -971,7 +1066,7 @@ describe('Skill Marketplace', () => {
     expect(toggle).toHaveBeenLastCalledWith({ id: installedSkill.id, enabled: true })
     expect(enableSwitch.getAttribute('aria-checked')).toBe('true')
   })
-  it('orders enablement before update and uninstall in the detail action group', async () => {
+  it('keeps enablement left and update last in the detail footer', async () => {
     useSettingsStore.setState({ skills: [installedSkill] })
     detail.mockResolvedValueOnce({
       ok: true,
@@ -980,13 +1075,28 @@ describe('Skill Marketplace', () => {
         installation: { ...installedDetail.installation, canUpdate: true }
       }
     })
-    await act(async () => root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />))
-    const actions = container.querySelector('[data-slot="skill-marketplace-detail-actions"]')!
+    const footer = document.createElement('div')
+    document.body.appendChild(footer)
+    await act(async () =>
+      root.render(
+        <ResourceDetailActionsProvider value={{ container: footer, onClose: vi.fn() }}>
+          <SkillMarketplace view={detailView} onNavigate={vi.fn()} />
+        </ResourceDetailActionsProvider>
+      )
+    )
+    // Root owns the scrolling body; the action target is separate from it.
+    expect(
+      container.querySelector(
+        '[data-slot="skill-marketplace-detail"] [data-slot="resource-detail-actions"]'
+      )
+    ).toBeNull()
+
+    const actions = footer.querySelector('[data-slot="resource-detail-actions"]')!
     expect(
       [...actions.querySelectorAll('button')].map(
         (button) => button.getAttribute('aria-label') ?? button.textContent
       )
-    ).toEqual(['Enable', 'Update', 'Uninstall'])
+    ).toEqual(['Enable', 'Close', 'Uninstall', 'Update'])
     const primary = actions.querySelector('.skill-marketplace-install-action')!
     await pointer(primary, 'pointerover')
     expect(primary.textContent).toBe('Update')
@@ -994,6 +1104,7 @@ describe('Skill Marketplace', () => {
     expect(
       [...actions.querySelectorAll('button')].filter((button) => button.textContent === 'Uninstall')
     ).toHaveLength(1)
+    footer.remove()
   })
   it('filters receipt-backed installations and updates without treating a conflict as installed', async () => {
     list.mockResolvedValueOnce({
@@ -1016,30 +1127,16 @@ describe('Skill Marketplace', () => {
     await select('Installation status', 'Update available')
     expect(container.querySelectorAll('article')).toHaveLength(1)
     expect(container.querySelector('article')?.textContent).toContain('Skill 01')
-    await click('Update')
-    expect(install).not.toHaveBeenCalled()
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      'Update Skill from 0.9.0 to 1.0.0?'
-    )
-    install.mockResolvedValueOnce({
-      ok: true,
-      value: { id: 'imported-skill-1', status: 'imported', version: '1.0.0' }
-    })
-    await click('Update', document.querySelector('[role="alertdialog"]')!)
-    expect(install).toHaveBeenCalledExactlyOnceWith({
-      id: 'skill-1',
-      snapshotId: marketplaceCatalog.snapshotId,
-      expectedVersion: '0.9.0'
-    })
-    expect(container.querySelector('article')).toBeNull()
-    expect(list).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('article')?.textContent).toContain('Update available')
+    expect(container.querySelector('.skill-marketplace-install-action')?.textContent).toBe('Update')
     await select('Installation status', 'All')
-    const updatedCard = container.querySelector('[data-skill-id="skill-1"]')!
-    expect(updatedCard.querySelector('.skill-marketplace-install-action')?.textContent).toBe(
-      'Installed'
+    expect(container.querySelector('[data-skill-id="skill-0"]')?.textContent).toContain('Installed')
+    expect(container.querySelector('[data-skill-id="skill-2"]')?.textContent).toContain(
+      'Local conflict'
     )
-    expect(updatedCard.querySelector('[data-installed="true"] .lucide-circle-check')).not.toBeNull()
+    expect(install).not.toHaveBeenCalled()
   })
+
   it('requires confirmation, binds the old version, and prevents duplicate update submissions', async () => {
     detail.mockResolvedValueOnce({
       ok: true,
@@ -1098,34 +1195,6 @@ describe('Skill Marketplace', () => {
     expect(container.textContent).toContain('Installed version: 1.1.0')
   })
 
-  it('restores list focus after uninstall removes the focused installed card without discovery', async () => {
-    useSettingsStore.setState({ skills: [installedSkill] })
-    list.mockResolvedValueOnce({
-      ok: true,
-      value: {
-        ...marketplaceCatalog,
-        entries: [marketplaceEntry],
-        installations: { [marketplaceEntry.id]: installedDetail.installation }
-      }
-    })
-    remove.mockResolvedValueOnce([])
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
-    await select('Installation status', 'Installed')
-    const card = container.querySelector('article')!
-    const action = container.querySelector<HTMLButtonElement>('.skill-marketplace-install-action')!
-    await vi.waitFor(() =>
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Installation status')
-    )
-    await act(async () => action.focus())
-    await pointer(action, 'pointerover')
-    await click('Uninstall', card)
-    expect(container.querySelector('article')).toBeNull()
-    expect(list).toHaveBeenCalledTimes(1)
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
-    expect(document.activeElement?.textContent).toBe('Browse Marketplace')
-  })
   it('opens conflict details from the browse card without attempting installation', async () => {
     list.mockResolvedValueOnce({
       ok: true,
@@ -1380,9 +1449,13 @@ describe('Skill Marketplace', () => {
     await render('skill-0')
     expect(container.textContent).toContain('Loading…')
     await render('skill-1')
-    expect(container.querySelector('h3')?.textContent).toBe('Skill 01')
+    expect(container.querySelector('[data-slot="resource-detail-header"] h2')?.textContent).toBe(
+      'Skill 01'
+    )
     await act(async () => finish({ ok: true, value: { ...marketplaceDetail, entry: entries[0] } }))
-    expect(container.querySelector('h3')?.textContent).toBe('Skill 01')
+    expect(container.querySelector('[data-slot="resource-detail-header"] h2')?.textContent).toBe(
+      'Skill 01'
+    )
     detail.mockResolvedValueOnce({ ok: false, error: 'snapshot-unavailable' })
     await render('expired')
     expect(container.textContent).toContain('Marketplace snapshot is no longer available')
@@ -1544,7 +1617,7 @@ describe('Skill Marketplace', () => {
     expect(button('Load more')).toBeDefined()
     expect(
       [...container.querySelectorAll('[data-slot="skill-marketplace-card"]')].every((card) =>
-        card.textContent?.includes('Academic writing')
+        card.textContent?.includes('Skill')
       )
     ).toBe(true)
     const input = container.querySelector('input')!
@@ -1558,26 +1631,6 @@ describe('Skill Marketplace', () => {
     expect(container.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(0)
     expect(container.textContent).toContain('No skills match your search.')
     expect(button('Load more')).toBeUndefined()
-  })
-
-  it('opens a focus tooltip only for clipped text and dismisses it with Escape', async () => {
-    await act(async () =>
-      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
-    )
-    const title = container.querySelector<HTMLButtonElement>(
-      '[data-slot="skill-marketplace-card"] button'
-    )!
-    await act(async () => title.focus())
-    expect(document.querySelector('[role="tooltip"]')).toBeNull()
-    await act(async () => title.blur())
-    const text = title.querySelector('span')!
-    Object.defineProperties(text, { clientWidth: { value: 100 }, scrollWidth: { value: 300 } })
-    await act(async () => title.focus())
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(title.textContent)
-    await act(async () =>
-      title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    )
-    expect(document.querySelector('[role="tooltip"]')).toBeNull()
   })
 
   it('shows evidence only when provided and keeps source and publisher separate', async () => {
@@ -1602,7 +1655,6 @@ describe('Skill Marketplace', () => {
       '[data-slot="skill-marketplace-detail-category"]'
     )!
     expect(categoryBadge.textContent).toBe('Academic writing')
-    expect(categoryBadge.classList.contains('bg-muted')).toBe(true)
     expect(score?.getAttribute('aria-label')).toBe('Upstream self-assessment 85/100')
     expect(
       container.querySelector('[data-slot="skill-marketplace-assessment"] summary')?.textContent

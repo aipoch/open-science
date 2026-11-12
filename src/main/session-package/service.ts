@@ -101,7 +101,12 @@ import { assertPackageCapacity } from './capacity'
 import { createPackageContentVerifier } from './materialize'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { SessionPackageDeletion } from './deletion'
-import { collectPackageLogEvidence, executionEvidenceKeys } from './execution-evidence'
+import {
+  collectPackageLogEvidence,
+  executionEvidenceKeys,
+  hasComputeLogEvidence,
+  inheritedComputeChecksums
+} from './execution-evidence'
 import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './fork-session'
 import { capturePackageHistory, type PackageHistory } from './history'
 import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
@@ -1023,7 +1028,8 @@ export class SessionPackageService {
       this.options.storageRoot,
       records,
       notebooks,
-      this.signal
+      this.signal,
+      options.consumeSnapshot ? undefined : request
     )
     if (logEvidence) {
       records.logEvidence = logEvidence
@@ -1276,6 +1282,9 @@ export class SessionPackageService {
         }
         const requiredFeatures = [
           ...(records.logEvidence ? (['log-evidence'] as const) : []),
+          ...(hasComputeLogEvidence(records.logEvidence)
+            ? (['compute-log-evidence'] as const)
+            : []),
           ...(records.literature ? (['literature'] as const) : []),
           ...(deduplicated ? (['content-dedupe'] as const) : [])
         ]
@@ -1417,7 +1426,21 @@ export class SessionPackageService {
     })
     if (!session.packageOrigin && !session.forkOrigin) return current
     const origin = await this.readOrigin({ projectId: session.projectId, sessionId: session.id })
-    const inherited = mapPackageReferences(origin.history, origin.identities) as
+    const checksums = Object.fromEntries(
+      origin.files.map((f) => [f.sourceChecksum, f.localChecksum])
+    )
+    if (origin.nativeLogOrigin)
+      Object.assign(
+        checksums,
+        await inheritedComputeChecksums(
+          this.options.storageRoot,
+          'execution-file-evidence/' + session.projectId + '/' + session.id,
+          origin.history,
+          origin.identities,
+          (session.packageOrigin ?? session.forkOrigin)!.manifestChecksum
+        )
+      )
+    const inherited = mapPackageReferences(origin.history, origin.identities, '', checksums) as
       PackageHistory | undefined
     return {
       taskRuns: [...(inherited?.taskRuns ?? []), ...current.taskRuns],
@@ -1902,13 +1925,15 @@ export class SessionPackageService {
         true
       )
       onProgress?.({ importStage: 'publish', phase: 'importing' })
-      if (records.logEvidence) {
-        const metadata = join(evidenceDirectory, 'origin-metadata')
+      // Fork origin readers need only these two files. Leave the transfer in operation staging
+      // so both successful publication and restart recovery retire its payloads.
+      if (records.logEvidence || forkSource) {
+        const metadata = join(evidenceDirectory, records.logEvidence ? 'origin-metadata' : 'source')
         await mkdir(metadata)
         for (const name of ['manifest.json', 'records.json'])
           await copyFile(join(sourceRoot, name), join(metadata, name))
       }
-      await rename(sourceRoot, join(evidenceDirectory, 'source'))
+      if (!forkSource) await rename(sourceRoot, join(evidenceDirectory, 'source'))
       await writeDurableJsonFile(
         join(evidenceDirectory, 'receipt.json'),
         JSON.stringify(

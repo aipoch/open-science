@@ -3,7 +3,9 @@ import {
   literatureItemInputSchema
 } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import type { Locator, Page } from 'playwright'
+import type { ElectronApplication, Locator, Page } from 'playwright'
+import { mkdir, readFile } from 'node:fs/promises'
+import Papa from 'papaparse'
 import { test } from './fixtures/electron-app'
 import { openAllReferences } from './fixtures/library'
 
@@ -20,6 +22,92 @@ const configureLiveProxy = async (page: Page): Promise<void> => {
       server
     )
 }
+
+test.describe('bibliographic CSV desktop acceptance', () => {
+  test.use({ windowMode: 'normal' })
+  test('exports selected metadata through the real Electron save pipeline', async ({
+    app
+  }, testInfo) => {
+    const page = await app.completeOnboarding()
+    await app.setMainWindowSize(1280, 900)
+    const application = (app as unknown as { application: ElectronApplication }).application
+    const outputPath = testInfo.outputPath('selected-references.csv')
+    await mkdir(testInfo.outputPath(), { recursive: true })
+    // Only replace the OS picker; metadata reads, serialization, IPC and file writes are real.
+    await application.evaluate(({ dialog }, filePath) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath })
+    }, outputPath)
+    const records = Array.from({ length: 27 }, (_, index) =>
+      literatureItemInputSchema.parse({
+        itemType: 'journalArticle',
+        title: `CSV reference ${String(index + 1).padStart(2, '0')}`,
+        issuedYear: 2024,
+        containerTitle: 'Journal, "中文"',
+        abstract: index === 0 ? '=HYPERLINK("example")' : 'First line\nSecond line',
+        language: 'zh',
+        typeFields: { volume: '2', issue: '3', pages: '10–20' },
+        identifiers: [{ scheme: 'doi', value: `10.1234/csv-${index + 1}` }],
+        creators: [
+          { nameMode: 'person', givenName: 'Ada', familyName: 'Lovelace', creatorType: 'Author' }
+        ]
+      })
+    )
+    await page.evaluate(async (records) => {
+      for (const item of records)
+        await window.api.literature.transact({ kind: 'create-item', item })
+    }, records)
+    await openAllReferences(page)
+    await page.getByRole('checkbox', { name: 'Select all references', exact: true }).check()
+    await page.getByRole('button', { name: /^Select all matching references/ }).click()
+    await page.getByRole('checkbox', { name: 'Select CSV reference 27', exact: true }).uncheck()
+    const toolbar = page.locator('[data-slot="literature-selection-toolbar"]')
+    await expect(toolbar).toContainText('26 selected')
+    const more = toolbar.getByRole('button', { name: 'More actions', exact: true })
+    await more.click()
+    await page.getByRole('button', { name: 'Export', exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: 'BibTeX', exact: true })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'RIS', exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('csv-export-options.png') })
+    await page.getByRole('menuitem', { name: 'CSV', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Saved', exact: true })).toBeVisible()
+    const bytes = await readFile(outputPath)
+    expect([...bytes.subarray(0, 3)]).toEqual([239, 187, 191])
+    const parsed = Papa.parse<Record<string, string>>(bytes.toString('utf8'), {
+      header: true,
+      skipEmptyLines: true
+    })
+    expect(parsed.errors).toEqual([])
+    expect(parsed.data).toHaveLength(26)
+    expect(parsed.data.map((row) => row.title).sort()).toEqual(
+      records
+        .slice(0, 26)
+        .map((item) => item.title)
+        .sort()
+    )
+    const first = parsed.data.find((row) => row.title === 'CSV reference 01')!
+    expect(first).toMatchObject({
+      authors: 'Ada Lovelace',
+      year: '2024',
+      publication: 'Journal, "中文"',
+      abstract: '\'=HYPERLINK("example")',
+      doi: '10.1234/csv-1',
+      pmid: '',
+      pmcid: '',
+      arxiv_id: '',
+      volume: '2',
+      issue: '3',
+      pages: '10–20',
+      language: 'zh'
+    })
+    expect(parsed.data.find((row) => row.title === 'CSV reference 02')?.abstract).toBe(
+      'First line\r\nSecond line'
+    )
+    await expect(toolbar).toContainText('26 selected')
+    await page.keyboard.press('Escape')
+    await expect(more).toBeFocused()
+    await testInfo.attach('bibliographic-csv', { path: outputPath, contentType: 'text/csv' })
+  })
+})
 
 // Live providers are a separate acceptance check; portable regressions use fixed responses.
 test.describe('live literature providers', () => {

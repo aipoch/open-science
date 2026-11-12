@@ -1,7 +1,9 @@
 # @aipoch/compute
 
-Remote Compute domain contracts, SSH/SCP transport, direct-SSH and Slurm execution protocols,
-queue admission, lifecycle transitions, cancellation, deletion and result-collection scheduling.
+Remote Compute contracts and job lifecycle management for Open-Science. The Node entry point
+provides SSH/SCP transport, direct SSH and Slurm execution, a Kubernetes Job adapter, and
+submission, job control and file transfer helpers for Hugging Face Jobs and Ray Jobs.
+The Open-Science host implements Modal Sandbox execution.
 This package builds and tests independently. It ships with Open-Science; no separate publishing
 workflow is required. Node >=22.13 is supported; development and CI use Node 24.
 
@@ -12,7 +14,8 @@ workflow is required. Node >=22.13 is supported; development and CI use Node 24.
   validation and storage/connection contracts. CJS `require` and ESM `import` use the same implementation.
 - Other subpaths are private. Import through the package name; do not import `src` or `dist`.
 
-The package imports only Node built-ins, `micromatch` and `@aipoch/diagnostics/node`.
+The Node implementation uses `@huggingface/hub` for bucket transfers and `jszip` for Ray working
+directories.
 There are no application aliases, database clients, Electron, Notebook initialization, resource-root
 lookups or application environment variables. Declaration files are included in the tarball.
 
@@ -35,7 +38,8 @@ concurrent writers. Callback notification failure must not undo a committed life
 
 ## Safety and integration
 
-- **Scope:** SSH/SCP transfers, direct SSH or Slurm job execution, and remote lifecycle coordination.
+- **Scope:** Job execution and file transfers on user-provisioned SSH, Slurm, Kubernetes, Hugging Face
+  Jobs and Ray targets.
 - **Controls:** Input/profile validation, queue admission, lifecycle claims, and cancellation/collection
   protocols operate through the host-supplied connection and storage contracts.
 - **Remaining risks:** Scripts and inputs leave the local machine. Jobs act with the remote account's
@@ -129,9 +133,9 @@ and the filesystem/process tools exercised by the protocol tests. Slurm addition
 Windows exclusions apply only to those Unix-native cases; portable transport, path and parser tests
 run on Windows too. The package configuration owns test concurrency; CI does not serialize it.
 
-Launcher and protocol scripts are generated from strings compiled into `dist`; there are no WASM,
-Worker, template or external data resources to locate. Host askpass scripts remain host-owned and
-are registered in `scripts/ci/module-runtime-consumers.json` with the credential adapter.
+SSH launcher and protocol scripts are generated from strings compiled into `dist`. Hugging Face
+bucket transfers load the compiled `hugging-face-bucket-worker.js` alongside the bucket module.
+Askpass scripts belong to the host and are registered in `scripts/ci/module-runtime-consumers.json` with the credential adapter.
 
 ## Build, tests and independent consumption
 

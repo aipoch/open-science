@@ -9,6 +9,7 @@
     "src/main/research-video/runtime.test.ts",
     "src/shared/research-video-progress.ts",
     "src/renderer/src/components/research-video-progress.tsx",
+    "src/main/research-video/checkpoint.ts",
     "src/main/research-video/presentation.ts",
     "src/main/research-video/presentation.test.ts",
     "src/main/research-video/session-source.ts",

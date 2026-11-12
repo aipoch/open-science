@@ -1,3 +1,9 @@
+import type {
+  ComputeAccountOperation,
+  ComputePythonSelect,
+  ComputePythonResult,
+  ComputePythonSnapshot
+} from '../compute-python-runtime'
 import type { ComputeAccountProvider, ComputeAccountStatus } from '../compute-accounts'
 import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../artifacts'
 import type {
@@ -43,17 +49,32 @@ import type { PersistedChatSession } from '../session-persistence'
 import { callable, EVENT, LOCAL } from './definition'
 
 export const contracts = {
+  'compute.getComputePythonRuntime': callable<
+    (provider: ComputeAccountProvider) => Promise<ComputePythonSnapshot>
+  >()('compute', ['compute:python-runtime:get', LOCAL]),
+  'compute.selectComputePythonRuntime': callable<
+    (provider: ComputeAccountProvider, request: ComputePythonSelect) => Promise<ComputePythonResult>
+  >()('compute', ['compute:python-runtime:select', LOCAL]),
   'compute.accountStatus': callable<
     (provider: ComputeAccountProvider, force?: boolean) => Promise<ComputeAccountStatus>
   >()('compute', ['compute:account-status', LOCAL]),
   'compute.connectAccount': callable<
-    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+    (
+      provider: ComputeAccountProvider,
+      context?: ComputeAccountOperation
+    ) => Promise<ComputeAccountStatus>
   >()('compute', ['compute:connect-account', LOCAL]),
   'compute.useLocalAccount': callable<
-    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+    (
+      provider: ComputeAccountProvider,
+      context?: ComputeAccountOperation
+    ) => Promise<ComputeAccountStatus>
   >()('compute', ['compute:use-local-account', LOCAL]),
   'compute.cancelAccountConnection': callable<
-    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+    (
+      provider: ComputeAccountProvider,
+      context?: ComputeAccountOperation
+    ) => Promise<ComputeAccountStatus>
   >()('compute', ['compute:cancel-account-connection', LOCAL]),
   'compute.disconnectAccount': callable<
     (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>

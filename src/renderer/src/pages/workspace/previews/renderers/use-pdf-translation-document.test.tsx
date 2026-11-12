@@ -2,7 +2,7 @@ import { readPdfTranslationCases } from '../../../../../../../test/fixtures/pdf-
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { renderHook, waitFor, act, cleanup } from '@testing-library/react'
+import { renderHook, waitFor as waitForResult, act, cleanup } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {
@@ -28,6 +28,10 @@ import {
   type PdfTranslationPdfRequest,
   type PdfTranslationRecordLayoutRequest
 } from '../../../../../../shared/pdf-translation'
+// Hook state changes have no DOM mutation to wake Testing Library's polling observer.
+const waitFor: typeof waitForResult = (callback, options) =>
+  waitForResult(callback, { interval: 10, ...options })
+
 const { getDocument, operators } = vi.hoisted(() => ({ getDocument: vi.fn(), operators: {} }))
 vi.mock('../pdfjs', () => ({ pdfjsLib: { getDocument, OPS: operators } }))
 afterEach(() => {
@@ -4743,6 +4747,11 @@ it.each([
 it.each([
   'valid',
   'ascii',
+  'valid-comma-hit-area',
+  'comma-on-next-row',
+  'large-bracket-intruder',
+  'valid-lowered-neighbor',
+  'intruding-lowered-neighbor',
   'month-hit-area',
   'swapped-hit-areas',
   'reordered-numbers',
@@ -4770,7 +4779,12 @@ it.each([
       ].includes(kind),
       repeatSource = repeated || kind === 'duplicate-source-block',
       sourceText = 'Use [10, 11].' + (repeatSource ? ' Again [10, 11].' : ''),
-      ascii = kind === 'ascii',
+      ascii = ['ascii', 'valid-comma-hit-area', 'comma-on-next-row'].includes(kind),
+      lowered =
+        kind === 'valid-lowered-neighbor' ||
+        kind === 'intruding-lowered-neighbor' ||
+        kind === 'large-bracket-intruder',
+      commaHit = kind === 'valid-comma-hit-area' || kind === 'comma-on-next-row',
       labels =
         kind === 'reordered-numbers'
           ? ['11', '10']
@@ -4789,6 +4803,7 @@ it.each([
               : 1,
       targetText =
         '2020年10月参照' +
+        (lowered ? 'i' : '') +
         Array(targetBlocks)
           .fill(block + '。')
           .join(''),
@@ -4822,23 +4837,48 @@ it.each([
       item('10', 95, 12, 720),
       item('月参照', 107, 30, 720)
     ]
+    if (lowered) {
+      const x =
+          kind === 'large-bracket-intruder' ? 85 : kind === 'intruding-lowered-neighbor' ? 95 : 70,
+        y = kind === 'large-bracket-intruder' ? 706.6 : 697.5
+      after.push({ ...item('i', x, 6, y), transform: [7, 0, 0, 7, x, y] })
+    }
     for (let index = 0; index < targetBlocks; index++) {
       const y = 700 - index * 16
       after.push(
-        item(open, kind === 'distant-bracket' ? 70 : 80, 10, y),
+        {
+          ...item(open, kind === 'distant-bracket' ? 70 : 80, 10, y),
+          ...(lowered
+            ? {
+                transform: [
+                  kind === 'large-bracket-intruder' ? 24 : 8,
+                  0,
+                  0,
+                  kind === 'large-bracket-intruder' ? 24 : 8,
+                  80,
+                  y
+                ]
+              }
+            : {})
+        },
         item(labels[0], 90, 12, y),
-        item(comma, 102, 10, kind === 'raised-comma' ? y + 4 : y),
-        item(labels[1], 112, 12, y),
-        item(close + '。', 124, 20, y)
+        item(
+          comma,
+          102,
+          commaHit ? 1.8 : 10,
+          kind === 'raised-comma' || kind === 'comma-on-next-row' ? y + 4 : y
+        ),
+        item(labels[1], commaHit ? 108 : 112, 12, y),
+        item(close + '。', commaHit ? 120 : 124, 20, y)
       )
     }
     f.targetPage.getTextContent.mockResolvedValue({ items: after })
     const links = Array.from({ length: repeatSource ? 4 : 2 }, (_, index) => ({
       annotationType: 2,
       rect: [
-        85 + Math.floor(index / 2) * 70 + (index % 2) * 22,
+        (commaHit ? 84 : 85) + Math.floor(index / 2) * 70 + (index % 2) * 22,
         699,
-        99 + Math.floor(index / 2) * 70 + (index % 2) * 22,
+        (commaHit ? 98 : 99) + Math.floor(index / 2) * 70 + (index % 2) * 22,
         711
       ],
       url: `https://example.org/reference/${index % 2 === 0 ? 10 : 11}/occurrence/${Math.floor(index / 2)}`
@@ -4852,7 +4892,7 @@ it.each([
               ? (index + 2) % 4
               : index,
         y = 699 - Math.floor(position / 2) * 16,
-        x = 89 + (position % 2) * 22
+        x = 89 + (position % 2) * (commaHit ? 18 : 22)
       return {
         ...link,
         rect:
@@ -4867,11 +4907,103 @@ it.each([
       hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
     await waitFor(() =>
       expect(hook.result.current.state.status).toBe(
-        ['valid', 'ascii', 'valid-repeated-blocks'].includes(kind) ? 'ready' : 'error'
+        [
+          'valid',
+          'ascii',
+          'valid-repeated-blocks',
+          'valid-lowered-neighbor',
+          'valid-comma-hit-area'
+        ].includes(kind)
+          ? 'ready'
+          : 'error'
       )
     )
-    if (!['valid', 'ascii', 'valid-repeated-blocks'].includes(kind))
+    if (
+      ![
+        'valid',
+        'ascii',
+        'valid-repeated-blocks',
+        'valid-lowered-neighbor',
+        'valid-comma-hit-area'
+      ].includes(kind)
+    )
       expect(hook.result.current.state).toMatchObject({ failure: { code: 'validation-failed' } })
+  }
+)
+
+it.each(['valid', 'swapped-actions', 'missing-link', 'changed-action'] as const)(
+  'keeps repeated citation actions ordered across a shared delimiter run: %s',
+  async (kind) => {
+    const f = fixture(),
+      before = ['Use [', '10', '] and [', '10', '].'],
+      sourceText = before.join(''),
+      targetText = '见[10]再[10]。',
+      source = createPdfTranslationSource({
+        ...f.results.source,
+        units: [
+          {
+            ...f.results.source.units[0],
+            source: sourceText,
+            fragments: [
+              {
+                ...f.results.source.units[0].fragments[0],
+                items: before.map((text, index) => ({ index, text }))
+              }
+            ]
+          }
+        ]
+      }),
+      results = {
+        source,
+        units: [{ id: 'one', translationSource: sourceText, translation: targetText }]
+      },
+      item = (str: string, x: number, width: number): typeof f.item => ({
+        ...f.item,
+        str,
+        transform: [10, 0, 0, 10, x, 700],
+        width
+      })
+    f.originalPage.getTextContent.mockResolvedValue({
+      items: [
+        item(before[0], 60, 30),
+        item(before[1], 90, 12),
+        item(before[2], 102, 60),
+        item(before[3], 162, 12),
+        item(before[4], 174, 10)
+      ]
+    })
+    f.targetPage.getTextContent.mockResolvedValue({
+      items: [
+        item('见[', 60, 20),
+        item('10', 80, 12),
+        item(']再[', 92, 30),
+        item('10', 122, 12),
+        item(']。', 134, 20)
+      ]
+    })
+    const links = [90, 162].map((x, index) => ({
+      annotationType: 2,
+      rect: [x - 1, 699, x + 13, 711],
+      url: `https://example.org/reference/${index}`
+    }))
+    f.originalPage.getAnnotations.mockResolvedValue(links)
+    f.targetPage.getAnnotations.mockResolvedValue(
+      links.slice(0, kind === 'missing-link' ? 1 : 2).map((link, index) => {
+        const x = [80, 122][kind === 'swapped-actions' ? 1 - index : index]
+        return {
+          ...link,
+          rect: [x - 1, 699, x + 13, 711],
+          ...(kind === 'changed-action' && index === 0
+            ? { url: 'https://example.org/changed' }
+            : {})
+        }
+      })
+    )
+    const artifact = { results, data: new Uint8Array([4, 5]) },
+      hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+    await waitFor(() =>
+      expect(hook.result.current.state.status).toBe(kind === 'valid' ? 'ready' : 'error')
+    )
   }
 )
 
@@ -6165,4 +6297,142 @@ it('maps native accepted-subset indices back to checkpoint indices across skippe
       ]
     })
   )
+})
+
+it.each([
+  'valid',
+  'changed-action',
+  'changed-width',
+  'changed-text',
+  'changed-matrix',
+  'changed-font',
+  'invalid-font-metrics',
+  'changed-ink',
+  'blank-ink',
+  'moved-glyph',
+  'missing-claim',
+  'foreign-claim',
+  'repeated-label',
+  'partial-token',
+  'overwide-hit-area',
+  'decimal-tail'
+] as const)('verifies every native part of a merged publication link prefix: %s', async (kind) => {
+  const { createCanvas } = await import('@napi-rs/canvas')
+  const f = fixture(),
+    glyph = (str: string, x: number, width: number): typeof f.item & { fontName: string } => ({
+      str,
+      width,
+      fontName: 'native',
+      transform: [10, 0, 0, 10, x, 700]
+    }),
+    tail =
+      kind === 'partial-token'
+        ? ', 3456, record.'
+        : kind === 'decimal-tail'
+          ? ', 345.6, record.'
+          : ', 345, record.',
+    before = [glyph('JOURNAL', 60, 40), glyph('12', 100, 10), glyph(tail, 110, 70)],
+    native = [...before, glyph(' Details.', 180, 40)],
+    label = 'JOURNAL12,345',
+    sourceText = native.map((item) => item.str).join(''),
+    translation = `${label}。详情。${kind === 'repeated-label' ? label : ''}`,
+    after = [
+      glyph('JOURNAL', 80, 40),
+      glyph(kind === 'changed-text' ? '13' : '12', 120, 10),
+      glyph(', 345', kind === 'moved-glyph' ? 132 : 130, 20),
+      glyph(`。详情。${kind === 'repeated-label' ? label : ''}`, 160, 90)
+    ],
+    styles = { native: { ascent: 0.9, descent: -0.2, vertical: false, fontFamily: 'serif' } }
+  if (kind === 'changed-matrix') after[2].transform[0] = 11
+  const fragments = [
+      {
+        pageNumber: 1,
+        rect: { x: 0.09, y: 0.1, width: 0.6, height: 0.1 },
+        items: native.map((item, index) => ({
+          index: kind === 'missing-claim' && index === 2 ? 99 : index,
+          text: kind === 'foreign-claim' && index === 2 ? 'Unrelated text' : item.str
+        }))
+      }
+    ],
+    source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [{ id: 'one', source: sourceText, fragments }]
+    }),
+    results = { source, units: [{ id: 'one', translationSource: sourceText, translation }] }
+  f.originalPage.getTextContent.mockResolvedValue(
+    Object.assign(
+      {
+        items: native
+      },
+      { styles }
+    )
+  )
+  f.targetPage.getTextContent.mockResolvedValue(
+    Object.assign(
+      { items: after },
+      {
+        styles:
+          kind === 'changed-font'
+            ? { native: { ...styles.native, fontFamily: 'sans-serif' } }
+            : kind === 'invalid-font-metrics'
+              ? { native: { ...styles.native, ascent: Number.NaN } }
+              : styles
+      }
+    )
+  )
+  f.originalPage.getAnnotations.mockResolvedValue([
+    {
+      annotationType: 2,
+      url: 'https://example.org/record',
+      rect: [59, 698, kind === 'overwide-hit-area' ? 135 : 131, 710]
+    }
+  ])
+  f.targetPage.getAnnotations.mockResolvedValue([
+    {
+      annotationType: 2,
+      url: kind === 'changed-action' ? 'https://example.org/other' : 'https://example.org/record',
+      rect: [
+        79,
+        698,
+        kind === 'changed-width' ? 152 : kind === 'overwide-hit-area' ? 155 : 151,
+        710
+      ]
+    }
+  ])
+  const createElement = document.createElement.bind(document),
+    canvasFactory = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(((tag: string, options?: ElementCreationOptions) =>
+        tag === 'canvas'
+          ? (createCanvas(1, 1) as unknown as HTMLCanvasElement)
+          : createElement(tag, options)) as typeof document.createElement),
+    render = (target: boolean): ReturnType<typeof vi.fn> =>
+      vi.fn(({ canvasContext: context }: { canvasContext: CanvasRenderingContext2D }) => {
+        context.fillStyle = 'white'
+        context.fillRect(0, 0, context.canvas.width, context.canvas.height)
+        context.fillStyle = 'black'
+        if (kind !== 'blank-ink')
+          context.fillRect(target && kind === 'changed-ink' ? 5 : 4, 4, 3, 3)
+        return { promise: Promise.resolve() }
+      })
+  Object.assign(f.originalPage, { render: render(false) })
+  Object.assign(f.targetPage, { render: render(true) })
+  for (const page of [f.originalPage, f.targetPage])
+    Object.assign(page, {
+      getViewport: vi.fn(({ scale = 1 }: { scale?: number } = {}) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+        rotation: 0,
+        convertToViewportPoint: (x: number, y: number): number[] => [x * scale, (800 - y) * scale]
+      }))
+    })
+  try {
+    const artifact = { results, data: new Uint8Array([4, 5]) },
+      hook = renderHook(() => usePdfTranslationDocument(f.original, results, artifact, 'reader:0'))
+    await waitFor(() =>
+      expect(hook.result.current.state.status).toBe(kind === 'valid' ? 'ready' : 'error')
+    )
+  } finally {
+    canvasFactory.mockRestore()
+  }
 })

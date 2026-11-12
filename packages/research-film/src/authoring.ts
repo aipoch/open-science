@@ -14,6 +14,7 @@ import type { ResearchVideoSessionSource } from './source.js'
 import { researchFilmResources } from './resources.js'
 import {
   writeWithResearchFilmCorrection,
+  type FilmAuthoringCheckpoint,
   type ResearchFilmCorrection as Correction
 } from './authoring-correction.js'
 
@@ -114,7 +115,8 @@ export async function authorResearchFilmSource(options: {
   directory: string
   author: ResearchFilmAuthor
   signal: AbortSignal
-  onAnimations?: () => void
+  checkpoint?: FilmAuthoringCheckpoint
+  onAnimations?: (completed: number, total: number) => void
 }): Promise<{ specPath: string; title: string }> {
   const { source, directory, author, signal } = options
   signal.throwIfAborted()
@@ -168,16 +170,18 @@ export async function authorResearchFilmSource(options: {
       }
       return parsed
     },
-    signal
+    signal,
+    options.checkpoint
   )
-  options.onAnimations?.()
   await writeResearchVideoAnimations(
     spec,
     directory,
     author.writeAnimation
       ? (input, signal, correction) => author.writeAnimation!(source, input, signal, correction)
       : undefined,
-    signal
+    signal,
+    options.checkpoint,
+    options.onAnimations
   )
   signal.throwIfAborted()
   const specPath = join(directory, 'video.json')
@@ -202,6 +206,7 @@ export async function generateResearchFilm(
   const result = await options.generate(
     {
       specPath,
+      retainNarration: Boolean(options.checkpoint),
       modelDirectory: options.modelDirectory,
       engineDirectory: options.engineDirectory,
       outputDirectory: join(options.directory, 'output'),

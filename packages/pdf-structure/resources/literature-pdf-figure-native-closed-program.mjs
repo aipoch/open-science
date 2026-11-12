@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import {
   nativeClosedProgramInkPacket,
   nativeSavedPaintInkPacket,
+  nativeFillStrokeTextInkPacket,
   nativeRecoveryFigureInkPacket
 } from './literature-pdf-figure-native-plot-labels.mjs'
 import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.mjs'
@@ -19,11 +20,16 @@ import {
 } from './literature-pdf-native-figure-recovery-profile.mjs'
 import { union } from './literature-pdf-page-geometry.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
+import { nativeFillStrokeGlyphEnvelope } from './literature-pdf-figure-native-stroked-text.mjs'
+import { nativePhysicalFramePrograms } from './literature-pdf-figure-native-physical-frame.mjs'
 const certificates = new WeakMap()
 const pixelCertificates = new WeakMap()
 const nativeCaptionPixelMode = Symbol('native-caption-pixel')
 const nativePaintPixelMode = Symbol('native-paint-pixel')
 const nativeSavedPaintPixelMode = Symbol('native-saved-paint-pixel')
+const nativeMissingFormPixelMode = Symbol('native-missing-form-pixel')
+const nativeFillStrokeTextPixelMode = Symbol('native-fill-stroke-text-pixel')
+const nativePhysicalFramePixelMode = Symbol('native-physical-frame-pixel')
 const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
 const inside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] - 1e-7 : n <= a[i] + 1e-7))
 const expand = (r, n) => r.map((v, i) => v + (i < 2 ? -n : n))
@@ -571,15 +577,29 @@ export function nativeClosedPaintPixelCrop(
   context,
   publishedRect = figure?.rect
 ) {
-  return closedProgramPixelCrop(
-    page,
-    figure,
-    captions,
-    tables,
-    tokens,
-    context,
-    publishedRect,
-    nativePaintPixelMode
+  return (
+    closedProgramPixelCrop(
+      page,
+      figure,
+      captions,
+      tables,
+      tokens,
+      context,
+      publishedRect,
+      nativePaintPixelMode
+    ) ??
+    (!figure?.rect && figure?.reason === 'ambiguous-graphic-direction'
+      ? closedProgramPixelCrop(
+          page,
+          figure,
+          captions,
+          tables,
+          tokens,
+          context,
+          publishedRect,
+          nativeMissingFormPixelMode
+        )
+      : undefined)
   )
 }
 // Complete independently saved vector programs can contain outlined lettering
@@ -603,6 +623,44 @@ export function nativeSavedPaintPixelCrop(
     context,
     publishedRect,
     nativeSavedPaintPixelMode
+  )
+}
+// This separate preview purpose observes native fill+stroke glyph paint. It
+// never grants Source claims or relaxes the existing fill-only observers.
+export function nativeFillStrokeTextPixelCrop(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  context,
+  publishedRect = figure?.rect
+) {
+  return closedProgramPixelCrop(
+    page,
+    figure,
+    captions,
+    tables,
+    tokens,
+    context,
+    publishedRect,
+    nativeFillStrokeTextPixelMode
+  )
+}
+
+// Four physically intersecting native strokes can certify an otherwise
+// missing text pipeline. This mode grants no Source ownership.
+export function nativePhysicalFramePixelCrop(page, figure, captions, tables, tokens, context) {
+  if (figure?.rect) return
+  return closedProgramPixelCrop(
+    page,
+    figure,
+    captions,
+    tables,
+    tokens,
+    context,
+    undefined,
+    nativePhysicalFramePixelMode
   )
 }
 function closedPaintMetrics(s) {
@@ -698,7 +756,12 @@ function closedProgramPixelCrop(
 ) {
   try {
     const saved = mode === nativeSavedPaintPixelMode,
-      paintMode = mode === nativePaintPixelMode || saved,
+      missingForm = mode === nativeMissingFormPixelMode,
+      fillStroke = mode === nativeFillStrokeTextPixelMode,
+      affineImages = mode === nativeCaptionPixelMode || fillStroke,
+      boundedForm = missingForm || fillStroke,
+      physicalFrame = mode === nativePhysicalFramePixelMode,
+      paintMode = mode === nativePaintPixelMode || saved || boundedForm || physicalFrame,
       values = nativeRecoveryOwnValues(context)
     if (!values) return
     const prototype = Object.getPrototypeOf(context),
@@ -763,12 +826,15 @@ function closedProgramPixelCrop(
     const seed = tokens.find((t) => t.sourceItem?.text?.trim())?.sourceItem,
       packet =
         seed &&
-        (saved ? nativeSavedPaintInkPacket : nativeClosedProgramInkPacket)(page, tokens, input, [
-          seed
-        ])
+        (fillStroke
+          ? nativeFillStrokeTextInkPacket
+          : saved
+            ? nativeSavedPaintInkPacket
+            : nativeClosedProgramInkPacket)(page, tokens, input, [seed])
     if (
       !packet ||
-      (mode !== nativeCaptionPixelMode && packet.evidence.images.length) ||
+      (fillStroke && !packet.glyphs.some((g) => g.fillStrokeText)) ||
+      (!affineImages && packet.evidence.images.length) ||
       packet.records.length > 4096 ||
       packet.evidence.paths.size > 4096 ||
       (!paintMode &&
@@ -802,11 +868,29 @@ function closedProgramPixelCrop(
         (paintMode && [OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op))
       ) {
         const a = packet.o.argsArray[i]
-        if (paintMode && op === OPS.paintFormXObjectBegin && (a?.[0] !== null || a?.[1] !== null))
-          return
+        if (paintMode && op === OPS.paintFormXObjectBegin) {
+          if (boundedForm) {
+            if (
+              !valid(Array.from(a?.[1] ?? [])) ||
+              (a?.[0] !== null &&
+                (!finite(Array.from(a?.[0] ?? []), 6) ||
+                  a[0][1] !== 0 ||
+                  a[0][2] !== 0 ||
+                  a[0][0] <= 0 ||
+                  a[0][3] <= 0))
+            )
+              return
+          } else if (a?.[0] !== null || a?.[1] !== null) return
+        }
         if (paintMode && op === OPS.beginGroup && !packet.evidence.isolatedGroups?.get(i)) return
         const scope = { start: i, op, parent: stack.at(-1), matrix: [...matrix] }
-        if (!stack.length) roots.push(scope)
+        if (
+          boundedForm
+            ? op === OPS.paintFormXObjectBegin &&
+              !stack.some((s) => s.op === OPS.paintFormXObjectBegin)
+            : !stack.length
+        )
+          roots.push(scope)
         stack.push(scope)
         if (roots.length > 512) return
       } else if (
@@ -829,7 +913,7 @@ function closedProgramPixelCrop(
         matrix = scope.matrix
       } else if (op === OPS.transform) {
         matrix = Util.transform(matrix, packet.o.argsArray[i])
-      } else if (op === OPS.paintImageXObject && mode === nativeCaptionPixelMode) {
+      } else if (op === OPS.paintImageXObject && affineImages) {
         // The whole affine image is an upper bound even when its private clip
         // is curved. No unsupported clip is treated as an empty image.
         const m = Util.transform(v.transform, matrix),
@@ -861,7 +945,7 @@ function closedProgramPixelCrop(
     }
     if (
       stack.length ||
-      (mode === nativeCaptionPixelMode &&
+      (affineImages &&
         (images.length !== packet.evidence.images.length ||
           images.length > 64 ||
           images.length !== page.graphicsBounds.filter((g) => g.kind === 'image').length))
@@ -927,7 +1011,9 @@ function closedProgramPixelCrop(
       return
     const capStart = Math.min(...cap.flatMap((r) => r.part.map((z) => z.g.i))),
       results = []
-    const programs = roots.map((root) => ({ scopes: [root], labels: [] }))
+    const programs = physicalFrame
+      ? nativePhysicalFramePrograms(packet, paths, glyphs, capStart)
+      : roots.map((root) => ({ scopes: [root], labels: [] }))
     if (mode === nativePaintPixelMode && roots.length === 2) {
       const labels = roots.map((root, n) =>
         packet.records.filter(
@@ -941,14 +1027,17 @@ function closedProgramPixelCrop(
     }
     for (const program of programs) {
       const root = { start: program.scopes[0].start, end: program.scopes.at(-1).end },
-        belongs = (i) =>
-          program.scopes.some((s) => i > s.start && i < s.end) ||
-          program.labels.some((r) => r.part.some((z) => z.g.i === i)),
+        belongs =
+          program.belongs ??
+          ((i) =>
+            program.scopes.some((s) => i > s.start && i < s.end) ||
+            program.labels.some((r) => r.part.some((z) => z.g.i === i))),
         own = glyphs.filter((g) => belongs(g.i)),
         records = packet.records.filter((r) => r.part.some((z) => belongs(z.g.i))),
         paints = paths.filter((p) => belongs(p.i)),
         ownImages = images.filter((p) => belongs(p.i))
       if (
+        (fillStroke && !own.some((g) => g.fillStrokeText)) ||
         (!saved && records.length < 3) ||
         records.length > (mode === nativeCaptionPixelMode ? 256 : 64) ||
         (mode === nativeCaptionPixelMode && (records.length <= 64 || !ownImages.length)) ||
@@ -957,7 +1046,7 @@ function closedProgramPixelCrop(
         !records.every((r) => r.part.every((z) => belongs(z.g.i))) ||
         paints.some((q) =>
           [q.state.fillAlpha, q.state.strokeAlpha].some((alpha) =>
-            saved ? !Number.isFinite(alpha) || alpha <= 0 || alpha > 1 : alpha !== 1
+            saved || fillStroke ? !Number.isFinite(alpha) || alpha <= 0 || alpha > 1 : alpha !== 1
           )
         ) ||
         own.some(
@@ -1010,7 +1099,13 @@ function closedProgramPixelCrop(
         pad = 2 / (Math.ceil(page.width * 1.5) / page.width),
         rect = union([expand(body, pad), ...(publishedRect ? [publishedRect] : [])]),
         foreign = [
-          ...glyphs.filter((g) => !belongs(g.i)).map((g) => ({ rect: g.ink, floor: 0 })),
+          ...glyphs
+            .filter((g) => !belongs(g.i))
+            .map((g) => ({
+              rect: g.ink,
+              floor: 0,
+              ...(fillStroke && g.fillStrokeText ? { strokedGlyphs: [g.fillStrokeText] } : {})
+            })),
           ...(paintMode
             ? packet.records
                 .filter((r) => !records.includes(r))
@@ -1019,7 +1114,12 @@ function closedProgramPixelCrop(
                     closedPaintForeignFontBounds(r.r, input.content.styles[r.r.fontName], v),
                     ...r.part.map((z) => z.g.ink)
                   ]),
-                  floor: 0
+                  floor: 0,
+                  ...(fillStroke
+                    ? {
+                        strokedGlyphs: r.part.map((z) => z.g.fillStrokeText).filter(Boolean)
+                      }
+                    : {})
                 }))
             : []),
           ...paths.filter((p) => !belongs(p.i)),
@@ -1072,7 +1172,13 @@ function closedProgramPixelCrop(
           )) ||
         !valid(rect) ||
         !inside([0, 0, page.width, page.height], rect) ||
-        body[3] >= caption.rect[1] ||
+        // A Form's exact clip can overlap the caption's advance box while
+        // remaining above every caption glyph. This pixel-only admission
+        // retains the complete foreign glyph/font exclusion below.
+        body[3] >=
+          (boundedForm
+            ? Math.min(...cap.flatMap((r) => r.part.map((z) => z.g.ink[1])))
+            : caption.rect[1]) ||
         body[2] <= caption.rect[0] ||
         body[0] >= caption.rect[2] ||
         (publishedRect &&
@@ -1135,12 +1241,26 @@ export function nativeClosedProgramPixelPngSafe(plan, png, rect, page) {
       proof.current() &&
       !!raster &&
       JSON.stringify(plan.rect) === JSON.stringify(rect) &&
-      proof.own.every((g) => inside(rect, expand(g.ink, 1 / raster.scaleLower))) &&
+      proof.own.every((g) => {
+        const ink = g.fillStrokeText
+          ? nativeFillStrokeGlyphEnvelope(g.fillStrokeText.ink, g.fillStrokeText, raster.scaleLower)
+          : g.ink
+        return !!ink && inside(rect, expand(ink, 1 / raster.scaleLower))
+      }) &&
       closedProgramPaintsInside(proof.packet, proof.paints, rect, raster) &&
       proof.ownImages.every((q) => inside(rect, expand(q.rect, 1 / raster.scaleLower))) &&
-      proof.foreign.every(
-        (q) => !hit(raster.protection, expand(q.rect, (q.floor + 2) / raster.scaleLower))
-      )
+      proof.foreign.every((q) => {
+        const strokes = (q.strokedGlyphs ?? []).map((state) =>
+          nativeFillStrokeGlyphEnvelope(state.ink, state, raster.scaleLower)
+        )
+        return (
+          strokes.every(Boolean) &&
+          !hit(
+            raster.protection,
+            expand(union([q.rect, ...strokes]), (q.floor + 2) / raster.scaleLower)
+          )
+        )
+      })
     )
   } catch {
     return false
@@ -1220,14 +1340,29 @@ export function nativeCaptionedProgramPixelPngSafe(plan, png, rect, page) {
 
 export function nativeClosedPaintPixelPngSafe(plan, png, rect, page) {
   return (
-    pixelCertificates.get(plan)?.mode === nativePaintPixelMode &&
-    nativeClosedProgramPixelPngSafe(plan, png, rect, page)
+    [nativePaintPixelMode, nativeMissingFormPixelMode].includes(
+      pixelCertificates.get(plan)?.mode
+    ) && nativeClosedProgramPixelPngSafe(plan, png, rect, page)
   )
 }
 
 export function nativeSavedPaintPixelPngSafe(plan, png, rect, page) {
   return (
     pixelCertificates.get(plan)?.mode === nativeSavedPaintPixelMode &&
+    nativeClosedProgramPixelPngSafe(plan, png, rect, page)
+  )
+}
+
+export function nativeFillStrokeTextPixelPngSafe(plan, png, rect, page) {
+  return (
+    pixelCertificates.get(plan)?.mode === nativeFillStrokeTextPixelMode &&
+    nativeClosedProgramPixelPngSafe(plan, png, rect, page)
+  )
+}
+
+export function nativePhysicalFramePixelPngSafe(plan, png, rect, page) {
+  return (
+    pixelCertificates.get(plan)?.mode === nativePhysicalFramePixelMode &&
     nativeClosedProgramPixelPngSafe(plan, png, rect, page)
   )
 }

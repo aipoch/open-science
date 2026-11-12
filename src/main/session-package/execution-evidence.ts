@@ -66,14 +66,19 @@ export const readExecutionEvidence = (value: unknown): z.infer<typeof executionE
 
 // Follow immutable references, not the whole Project blob pool or its machine-local ownership
 // receipts. Notebook and Compute summaries share this evidence format.
+type EvidenceReference = {
+  checksum: string
+  evidenceId?: string
+  activityId?: string
+  activityKind?: string
+  parentActivityId?: string
+}
 const evidenceReferences = (
   records: PackageRecords,
-  notebooks: readonly NotebookRunDocument[]
-): Map<string, { checksum: string; evidenceId?: string; activityId?: string }> => {
-  const references = new Map<
-    string,
-    { checksum: string; evidenceId?: string; activityId?: string }
-  >()
+  notebooks: readonly NotebookRunDocument[],
+  owners?: Map<string, EvidenceReference>
+): Map<string, EvidenceReference> => {
+  const references = new Map<string, EvidenceReference>()
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return
     if (Array.isArray(value)) {
@@ -98,13 +103,42 @@ const evidenceReferences = (
             : typeof row.evidence_id === 'string'
               ? row.evidence_id
               : undefined,
-        activityId: typeof row.activityId === 'string' ? row.activityId : undefined
+        activityId: typeof row.activityId === 'string' ? row.activityId : previous?.activityId,
+        activityKind:
+          typeof row.activityKind === 'string' ? row.activityKind : previous?.activityKind,
+        parentActivityId:
+          typeof row.parentActivityId === 'string'
+            ? row.parentActivityId
+            : previous?.parentActivityId
       })
     }
     Object.values(row).forEach(visit)
   }
-  for (const notebook of notebooks) for (const run of notebook.runs) visit(run.fileEvidence)
-  for (const job of records.history?.computeJobs ?? []) visit(job.fileEvidence)
+  for (const notebook of notebooks)
+    for (const run of notebook.runs) {
+      const ref = run.fileEvidence
+      visit(ref)
+      if (
+        ref?.storageKey &&
+        ref.checksum &&
+        ref.activityId === run.runId &&
+        ref.activityKind === 'notebook-run'
+      )
+        owners?.set(ref.storageKey, references.get(ref.storageKey)!)
+    }
+  for (const job of records.history?.computeJobs ?? []) {
+    const ref = job.fileEvidence
+    if (
+      ref?.storageKey &&
+      (ref.activityKind !== 'compute-job' ||
+        ref.activityId !== job.id ||
+        ref.parentActivityId !== job.producerRunId)
+    )
+      throw new Error('Compute file evidence ownership mismatch.')
+    visit(ref)
+    if (ref?.storageKey && ref.checksum)
+      owners?.set(ref.storageKey, references.get(ref.storageKey)!)
+  }
   for (const version of records.tables.ArtifactVersion)
     if (typeof version.executionSnapshotJson === 'string')
       visit(JSON.parse(version.executionSnapshotJson))
@@ -127,13 +161,56 @@ function hasAuthorizedViews(
     viewRows(lane, hash).every((row) => allowed.has(JSON.stringify(row)))
   )
 }
+export const hasComputeLogEvidence = (logs: PackageRecords['logEvidence']): boolean =>
+  logs?.some((lane) =>
+    lane.records.some((record) => JSON.parse(record.detail).activityKind === 'compute-job')
+  ) ?? false
+
+// Compute rows are historical snapshots on import. Recover the destination checksum from
+// the native log and its authenticated transfer provenance before forwarding the history.
+export async function inheritedComputeChecksums(
+  root: string,
+  lane: string,
+  history: PackageRecords['history'],
+  identities: Record<string, string>,
+  manifestChecksum: string
+): Promise<Record<string, string>> {
+  const jobs = new Map(
+    (history?.computeJobs ?? []).flatMap((job) => {
+      const ref = job.fileEvidence
+      return ref?.checksum && ref.evidenceId && identities[job.id]
+        ? [[identities[job.id], { job, ref }] as const]
+        : []
+    })
+  )
+  if (!jobs.size) return {}
+  const records = await collectLaneRecords(root, lane, new Set(jobs.keys()))
+  const checksums: Record<string, string> = Object.create(null)
+  for (const record of records?.records ?? []) {
+    const { job, ref } = jobs.get(record.activityId)!
+    const source = record.sources?.at(-1)
+    if (
+      !source ||
+      source.manifestChecksum !== manifestChecksum ||
+      source.activityId !== job.id ||
+      source.evidenceId !== ref.evidenceId ||
+      source.checksum !== ref.checksum
+    )
+      throw new Error('Imported Compute evidence origin mismatch.')
+    checksums[source.checksum] = record.checksum
+  }
+  return checksums
+}
+
 export async function collectPackageLogEvidence(
   root: string,
   records: PackageRecords,
   notebooks: readonly NotebookRunDocument[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  backfillSession?: { projectId: string; sessionId: string }
 ): Promise<PortableEvidence | undefined> {
-  const refs = evidenceReferences(records, notebooks)
+  const owners = backfillSession ? new Map<string, EvidenceReference>() : undefined
+  const refs = evidenceReferences(records, notebooks, owners)
   const groups = new Map<string, Set<string>>()
   for (const key of refs.keys()) {
     const loc = evidenceLocation(key)
@@ -144,7 +221,41 @@ export async function collectPackageLogEvidence(
   }
   const result: PortableEvidence = []
   for (const [key, ids] of groups) {
-    const lane = await collectLaneRecords(root, key, ids, signal)
+    let lane = await collectLaneRecords(root, key, ids, signal)
+    const [, project, session] = key.split('/')
+    if (
+      backfillSession &&
+      project === backfillSession.projectId &&
+      session === backfillSession.sessionId
+    ) {
+      const logged = new Set(lane?.records.map((r) => r.activityId))
+      const missing = [...ids].flatMap((activityId) => {
+        const path = key + '/activity-' + activityId + '/evidence.json'
+        const ref = owners?.get(path)
+        if (
+          !ref ||
+          logged.has(activityId) ||
+          ref.activityId !== activityId ||
+          (ref.activityKind !== 'notebook-run' && ref.activityKind !== 'compute-job') ||
+          ref.evidenceId !== 'execution-file-evidence-' + activityId
+        )
+          return []
+        return [
+          {
+            activityId,
+            activityKind: ref.activityKind,
+            evidenceId: ref.evidenceId,
+            parentActivityId: ref.parentActivityId,
+            checksum: ref.checksum
+          }
+        ] as const
+      })
+      if (missing.length) {
+        const { backfillWorkingFileEvidence } = await import('../notebook/working-file-observer')
+        await backfillWorkingFileEvidence(root, key, missing, signal)
+        lane = await collectLaneRecords(root, key, ids, signal)
+      }
+    }
     if (!lane) continue
     const verified = indexPortableEvidence([lane])
     lane.records = lane.records.filter((record) => {
@@ -201,7 +312,10 @@ export const executionEvidenceKeys = async (
     }
     if (
       (reference.evidenceId && evidence.evidenceId !== reference.evidenceId) ||
-      (reference.activityId && evidence.activityId !== reference.activityId)
+      (reference.activityId && evidence.activityId !== reference.activityId) ||
+      (reference.activityKind &&
+        (evidence.activityKind !== reference.activityKind ||
+          evidence.parentActivityId !== reference.parentActivityId))
     )
       throw new Error('Execution file evidence ownership mismatch.')
     const generations = [

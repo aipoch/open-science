@@ -14,6 +14,7 @@ import {
   type ModalJobJournal
 } from './modal-job-journal'
 import {
+  withModalExecution,
   resolveModalApp,
   createModalVolume,
   stageModalInputs,
@@ -213,10 +214,14 @@ export function createModalJobRuntime(deps: Deps): {
     if (!j.volume) {
       await verifyInputs(files, signal)
       const intent = { ...j, volume: {} }
-      await createOnce(job, intent, async () => ({
-        ...intent,
-        volume: { id: (await createModalVolume(binding, signal)).volumeId }
-      }))
+      await withModalExecution(
+        (execute) =>
+          createOnce(job, intent, async () => ({
+            ...intent,
+            volume: { id: (await createModalVolume(binding, signal, execute)).volumeId }
+          })),
+        signal
+      )
       return
     }
     const scope = { ...binding, volumeId: j.volume.id! }
@@ -235,12 +240,17 @@ export function createModalJobRuntime(deps: Deps): {
           gpu: j.target.gpu,
           command: job.command
         }
-        await createOnce(job, intent, async (timeoutSeconds) => ({
-          ...intent,
-          sandbox: {
-            id: (await createModalSandbox({ ...config, timeoutSeconds }, signal)).sandboxId
-          }
-        }))
+        await withModalExecution(
+          (execute) =>
+            createOnce(job, intent, async (timeoutSeconds) => ({
+              ...intent,
+              sandbox: {
+                id: (await createModalSandbox({ ...config, timeoutSeconds }, signal, execute))
+                  .sandboxId
+              }
+            })),
+          signal
+        )
         return
       }
       const state = await inspectModalSandbox({ ...scope, sandboxId: j.sandbox.id! }, signal)

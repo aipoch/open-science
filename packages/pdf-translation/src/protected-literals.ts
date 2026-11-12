@@ -1,10 +1,15 @@
 import { pdfTranslationNumericUnitLiterals } from './numeric-units.js'
 
+// Literal-preserving prompts must agree with the guard, rather than normalize quantity scales.
+export const pdfTranslationWrittenNumericLiterals = (source: string): string[] =>
+  source
+    // The separator in a complete dimensional transition is not a unary minus.
+    .replace(/(?<![\p{L}\p{N}_+−.,/-])(\d+D-to)-(?=\d+D(?![\p{L}\p{N}_]))/gu, '$1 ')
+    .match(/[+−-]?\p{N}+(?:[.,]\p{N}+)*(?:[eE][+−-]?\d+)?/gu) ?? []
+
 const tokens = (source: string): string[] => [
   ...pdfTranslationNumericUnitLiterals(source),
-  ...[...source.matchAll(/[+−-]?\p{N}+(?:[.,]\p{N}+)*(?:[eE][+−-]?\d+)?/gu)].map(
-    (match) => match[0]
-  ),
+  ...pdfTranslationWrittenNumericLiterals(source),
   ...[
     ...source.matchAll(/https?:\/\/[^\s<>]+|www\.[^\s<>]+|\b10\.\d{4,9}\/[^\s<>]+|`[^`\r\n]+`/gu)
   ].map((match) => match[0].replace(/[.,;:，。；：)\]}>）】》]+$/u, ''))

@@ -9,6 +9,9 @@ import {
   useSyncExternalStore
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { ClassifiedFailure } from '../../../../shared/failure/contract'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import type { ComposerSendSnapshot, ComposerSessionContext } from './composer-contract'
 import {
@@ -273,6 +276,7 @@ type WorkspaceComposerController = {
     attachments: UploadedAttachment[]
     transfers: ComposerUploadTransfer[]
     error: string | null
+    errorFailure?: ClassifiedFailure
     errorDetail?: string
     errorProviderValidations?: ProviderValidationSnapshot
     historyStatus: string
@@ -1921,6 +1925,7 @@ const useWorkspaceComposerController = ({
         }))
       : []
 
+  const visionModelMissing = error === VISION_MODEL_NOT_CONFIGURED_MESSAGE
   return {
     view: {
       queuedEdit,
@@ -1928,7 +1933,10 @@ const useWorkspaceComposerController = ({
       annotations: visibleAnnotations,
       attachments,
       transfers,
-      error,
+      error: visionModelMissing ? annotationValidationMessage('visual-model-required', t) : error,
+      errorFailure: visionModelMissing
+        ? { category: 'configuration', reason: 'configuration/vision-model', diagnostics: {} }
+        : undefined,
       errorDetail,
       errorProviderValidations,
       historyStatus,

@@ -10,6 +10,10 @@ import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 import { matchNativeFigureRenderContext } from './literature-pdf-render-bounds.mjs'
 import { nativeRasterForeignPaints } from './literature-pdf-figure-native-stacked-raster.mjs'
+import {
+  hasBalancedNativeAlgorithmBody,
+  hasCompleteNativeProcedureBody
+} from './literature-pdf-native-balanced-algorithm.mjs'
 
 const valid = (r) =>
   Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
@@ -461,6 +465,103 @@ export function proveNativeAlgorithmBody(page, candidate, context) {
         .sort((a, b) => a.pageNumber - b.pageNumber || a.index - b.index)
     }
   }
+}
+
+// Some publishers put the title above a two-rule numbered program. Require
+// complete native ordinals, I/O and assignment packets; prose lists cannot
+// acquire the surrounding rule frame from their title alone.
+function framedIndentedOrdinals(page, title, titles, rules, context) {
+  const inventory = nativeInventory(page, context),
+    h = title.fontSize
+  if (
+    !inventory ||
+    inventory.some((t) => t.invalid) ||
+    !(h > 0) ||
+    !Array.isArray(context.operators?.fnArray) ||
+    !Array.isArray(context.operators.argsArray)
+  )
+    return []
+  const nativeRules = collectTableRules(context.operators, context.viewport)
+  const tops = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[1] > title.bottom &&
+      r[1] - title.bottom < h &&
+      r[2] - r[0] > page.width * 0.5 &&
+      title.x >= r[0] &&
+      title.right <= r[2]
+  )
+  if (tops.length !== 1) return []
+  const top = tops[0],
+    frame = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 2 ||
+    frame.some((r) => !nativeRules.some((n) => JSON.stringify(r) === JSON.stringify(n)))
+  )
+    return []
+  const bottom = frame[1],
+    rect = [top[0], title.y, top[2], bottom[1]]
+  if (bottom[1] - top[1] < h * 6 || titles.some((t) => t !== title && overlap(box(t), rect)))
+    return []
+  const body = inventory.filter((t) => overlap(t.rect, [top[0], top[1], top[2], bottom[1]]))
+  if (
+    !body.length ||
+    body.some(
+      (t) =>
+        !t.valid ||
+        !t.horizontal ||
+        !inside([top[0], top[1], top[2], bottom[1]], t.rect) ||
+        t.labelRect[1] <= top[1] ||
+        t.labelRect[3] >= bottom[1]
+    )
+  )
+    return []
+  const ordinals = body.filter((t) => /^[1-9]\d*:$/u.test(t.text))
+  if (
+    ordinals.length < 4 ||
+    ordinals.length > 128 ||
+    ordinals.some(
+      (t, n) =>
+        Number(t.text.slice(0, -1)) !== n + 1 ||
+        Math.abs(t.rect[2] - ordinals[0].rect[2]) > h * 0.1 ||
+        (n && t.baseline <= ordinals[n - 1].baseline)
+    )
+  )
+    return []
+  const prefix = body.filter((t) => t.sourceItem.index < ordinals[0].sourceItem.index)
+  if (
+    !prefix.length ||
+    !/^Inputs?:$/iu.test(prefix[0].text) ||
+    prefix.some((t) => t.baseline >= ordinals[0].baseline)
+  )
+    return []
+  const packets = ordinals.map((n, i) =>
+    body.filter(
+      (t) =>
+        t.sourceItem.index > n.sourceItem.index &&
+        (!ordinals[i + 1] || t.sourceItem.index < ordinals[i + 1].sourceItem.index)
+    )
+  )
+  if (
+    packets.some(
+      (g, i) =>
+        !g.length ||
+        g[0].rect[0] <= ordinals[i].rect[2] ||
+        Math.abs(g[0].baseline - ordinals[i].baseline) > h * 0.1 ||
+        g.some((t) => ordinals[i + 1] && t.labelRect[3] >= ordinals[i + 1].rect[1])
+    )
+  )
+    return []
+  const texts = packets.map((g) => g.map((t) => t.text).join(' '))
+  if (
+    texts.filter((t) => /←/u.test(t)).length < 2 ||
+    !texts.some((t) => /^(?:for each|while|if)\b/iu.test(t)) ||
+    !packets.some((g, i) => i && g[0].rect[0] > packets[i - 1][0].rect[0] + h * 0.5)
+  )
+    return []
+  return [{ rect, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }]
 }
 
 // A three-step computational routine has no explicit end-for/return. Its
@@ -2719,7 +2820,7 @@ function nativeClosedScopeLoops(page, context) {
 }
 
 // Keep nativePageTextPacketInventory and all existing algorithm families strict.
-function nativeNumberedPseudocodeFrame(page, originalContext) {
+function nativeNumberedPseudocodeFrame(page, originalContext, balancedTitle, procedureTitle) {
   const original = originalContext.nativeGlyphContext
   if (
     !/^[a-f0-9]{64}$/u.test(original?.sourceSha256 ?? '') ||
@@ -2772,9 +2873,22 @@ function nativeNumberedPseudocodeFrame(page, originalContext) {
     v = context.viewport,
     o = context.operators,
     lines = groupPageLines(page),
-    titles = lines.filter((l) => /^Algorithm\s+[1-9]\d*\b/u.test(l.text))
-  if (titles.length !== 1 || !/\bPseudocode\b/u.test(titles[0].text) || raw.length > 16384) return
-  const title = titles[0],
+    titles = lines.filter((l) =>
+      procedureTitle
+        ? /^Procedure\s+[1-9]\d*\b/u.test(l.text)
+        : /^Algorithm\s+[1-9]\d*\b/u.test(l.text)
+    )
+  if (
+    raw.length > 16384 ||
+    (balancedTitle || procedureTitle
+      ? !titles.some((t) => {
+          const expected = balancedTitle ?? procedureTitle
+          return eq(box(t), box(expected)) && t.text === expected.text
+        })
+      : titles.length !== 1 || !/\bPseudocode\b/u.test(titles[0].text))
+  )
+    return
+  const title = balancedTitle ?? procedureTitle ?? titles[0],
     paint = new Map(),
     rules = collectTableRules(o, v, paint),
     horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] > page.width * 0.5),
@@ -2783,31 +2897,88 @@ function nativeNumberedPseudocodeFrame(page, originalContext) {
   for (const top of horizontal) {
     if (Math.abs(top[1] - title.y) >= title.fontSize) continue
     const same = horizontal
-      .filter((r) => r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .filter(
+        (r) =>
+          r[0] === top[0] &&
+          r[2] === top[2] &&
+          r[1] >= top[1] &&
+          (!balancedTitle || !titles.some((other) => other.y > title.bottom && r[1] >= other.y))
+      )
       .sort((a, b) => a[1] - b[1])
+    const procedureCaptionLines = procedureTitle
+      ? lines.filter(
+          (line) =>
+            line.y >= title.y - title.fontSize * 0.1 &&
+            line.bottom < same[1]?.[1] &&
+            line.x >= top[0] - 1e-6 &&
+            line.x < top[2]
+        )
+      : undefined
     if (
       same.length === 3 &&
       same[1][1] > title.bottom &&
-      same[1][1] - title.bottom < title.fontSize &&
+      (procedureTitle
+        ? procedureCaptionLines?.length === 2 &&
+          procedureCaptionLines[0].text === title.text &&
+          procedureCaptionLines[1].text.trim().length > 0 &&
+          same[1][1] - procedureCaptionLines[1].bottom < title.fontSize
+        : same[1][1] - title.bottom < title.fontSize) &&
       same[2][1] - same[1][1] > title.fontSize * 5
     )
       frames.push(same)
   }
   if (frames.length !== 1) return
   const [top, divider, bottom] = frames[0],
+    procedureCaptionLines = procedureTitle
+      ? lines.filter(
+          (line) =>
+            line.y >= title.y - title.fontSize * 0.1 &&
+            line.bottom < divider[1] &&
+            line.x >= top[0] - 1e-6 &&
+            line.x < top[2]
+        )
+      : undefined,
     frame = [top[0], top[1], top[2], bottom[1]],
-    captionFrame = [top[0], top[1], top[2], divider[1]],
+    captionFrame = [balancedTitle ? Math.min(top[0], title.x) : top[0], top[1], top[2], divider[1]],
     bodyFrame = [top[0], divider[1], top[2], bottom[1]],
     tokens = raw.filter((r) => r.str?.trim()).map((r) => tableTextToken(r, v, 0)),
     positive = new Set(tokens.filter((t) => valid(t.rect)).map((t) => t.sourceItem.index))
+  if (
+    procedureTitle &&
+    (procedureCaptionLines?.length !== 2 ||
+      procedureCaptionLines[0].text !== title.text ||
+      !procedureCaptionLines[1].text.trim())
+  )
+    return
   if (!positive.size || positive.size > 4096) return
   // Zero-advance glyphs remain unclaimed by the public packet. Its complete
   // foreign ink certificate is checked separately before assigning body ownership.
-  const proof = nativePageTextPacketInventory(page, tokens, native, false, positive)
+  // The balanced family can observe renderer-skipped whitespace only through
+  // the existing exact same-render empty-outline certificate. Nonspace glyphs
+  // and every owned whole advance retain the ordinary packet requirements.
+  const proof = nativePageTextPacketInventory(page, tokens, native, !!balancedTitle, positive)
   if (!proof) return
   const selected = proof.records.filter((r) => overlap(r.ink, frame)),
     caption = selected.filter((r) => inside(captionFrame, r.ink)),
-    body = selected.filter((r) => inside(bodyFrame, r.ink))
+    body = selected.filter(
+      (r) =>
+        inside(bodyFrame, r.ink) ||
+        (balancedTitle &&
+          r.ink[1] > divider[1] &&
+          r.ink[3] < bottom[1] &&
+          (inside(bodyFrame, r.rect) ||
+            (/^\(Eq\.\s+\([1-9]\d*\)\)$/u.test(r.r.str) &&
+              r.part.length > 1 &&
+              r.part.at(-1).g.ink[0] < top[2] &&
+              r.part.at(-1).g.ink[2] > top[2] &&
+              r.part.slice(0, -1).every((z) => inside(bodyFrame, z.g.ink)) &&
+              selected.some(
+                (other) =>
+                  other !== r &&
+                  inside(bodyFrame, other.ink) &&
+                  Math.abs(other.rect[3] - r.rect[3]) < title.fontSize * 0.02
+              ))))
+    )
   if (
     !caption.length ||
     !body.length ||
@@ -2824,7 +2995,25 @@ function nativeNumberedPseudocodeFrame(page, originalContext) {
         r.r.transform[3] !== r.r.height
     ) ||
     caption.some((r) => r.r.width <= 0) ||
-    !/^Algorithm\s+[1-9]\d*\b.*\bPseudocode\b/u.test(caption.map((r) => r.r.str).join(' '))
+    !(
+      procedureTitle
+        ? /^Procedure\s+[1-9]\d*\b/u
+        : balancedTitle
+          ? /^Algorithm\s+[1-9]\d*:\s+\S/u
+          : /^Algorithm\s+[1-9]\d*\b.*\bPseudocode\b/u
+    ).test(caption.map((r) => r.r.str).join(' '))
+  )
+    return
+  if (
+    procedureTitle &&
+    caption
+      .map((record) => record.r.str)
+      .join(' ')
+      .replace(/\s/gu, '') !==
+      procedureCaptionLines
+        .map((line) => line.text)
+        .join(' ')
+        .replace(/\s/gu, '')
   )
     return
   for (const r of body) {
@@ -2852,20 +3041,30 @@ function nativeNumberedPseudocodeFrame(page, originalContext) {
   if (
     caption.some((r) => r.index >= first) ||
     proof.records.some((r) => r.index >= first && r.index <= last && !bodyIds.has(r.index)) ||
-    ordinals.length < 4 ||
-    ordinals.length > 128 ||
-    ordinals[0] !== body[0] ||
-    ordinals.some(
-      (r, i) =>
-        Number(r.r.str.slice(0, -1)) !== i + 1 ||
-        r.r.fontName !== ordinals[0].r.fontName ||
-        r.r.height !== ordinals[0].r.height ||
-        Math.abs(r.rect[2] - ordinals[0].rect[2]) > r.r.height * 0.001 ||
-        (i && r.rect[1] <= ordinals[i - 1].rect[3])
-    )
+    (!balancedTitle &&
+      (ordinals.length < 4 ||
+        ordinals.length > 128 ||
+        ordinals[0] !== body[0] ||
+        ordinals.some(
+          (r, i) =>
+            Number(r.r.str.slice(0, -1)) !== i + 1 ||
+            r.r.fontName !== ordinals[0].r.fontName ||
+            r.r.height !== ordinals[0].r.height ||
+            Math.abs(
+              r.rect[2] -
+                (procedureTitle
+                  ? ordinals.find((ordinal) => ordinal.r.str.length === r.r.str.length).rect[2]
+                  : ordinals[0].rect[2])
+            ) >
+              r.r.height * 0.001 ||
+            (i && r.rect[1] <= ordinals[i - 1].rect[3])
+        )))
   )
     return
-  for (const [i, n] of ordinals.entries()) {
+  if (balancedTitle && !hasBalancedNativeAlgorithmBody(body, title.fontSize, caption[0].r.fontName))
+    return
+  if (procedureTitle && !hasCompleteNativeProcedureBody(body, title.fontSize)) return
+  for (const [i, n] of (balancedTitle ? [] : ordinals).entries()) {
     const packet = body.filter(
       (r) => r.index > n.index && (!ordinals[i + 1] || r.index < ordinals[i + 1].index)
     )
@@ -2946,7 +3145,11 @@ function nativeNumberedPseudocodeFrame(page, originalContext) {
     return
   return {
     rect,
-    caption: { page: page.pageNumber, rect: union(caption.map((r) => r.ink)), lines: [title.text] },
+    caption: {
+      page: page.pageNumber,
+      rect: union(caption.map((r) => r.ink)),
+      lines: procedureTitle ? procedureCaptionLines.map((line) => line.text) : [title.text]
+    },
     nativeBody: { kind: 'algorithm', sourceItems: body.map((r) => ({ ...r.r.sourceItem })) },
     scopedGlyphProof: {
       foreignGlyphs,
@@ -3185,6 +3388,7 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
   )
   for (const title of titles) {
     for (const c of [
+      ...framedIndentedOrdinals(page, title, titles, rules, context),
       ...framedSteps(page, title, titles, rules, context),
       ...framedNumberedInput(page, title, titles, rules, context),
       ...framedOutdentedConditionals(page, title, titles, context),
@@ -3207,5 +3411,16 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
   const numberedFrame = nativeNumberedPseudocodeFrame(page, context)
   if (numberedFrame && !result.some((other) => overlap(other.rect, numberedFrame.rect)))
     result.push(numberedFrame)
+  for (const title of titles) {
+    const balanced = nativeNumberedPseudocodeFrame(page, context, title)
+    if (balanced && !result.some((other) => overlap(other.rect, balanced.rect)))
+      result.push(balanced)
+  }
+  const procedureTitles = lines.filter((line) => /^Procedure\s+[1-9]\d*\b/u.test(line.text))
+  for (const title of procedureTitles) {
+    const procedure = nativeNumberedPseudocodeFrame(page, context, undefined, title)
+    if (procedure && !result.some((other) => overlap(other.rect, procedure.rect)))
+      result.push(procedure)
+  }
   return result
 }

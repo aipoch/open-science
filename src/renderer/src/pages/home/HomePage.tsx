@@ -218,7 +218,7 @@ const HomePage = ({
   const enqueueProjectArchive = useArchiveUndoStore((state) => state.enqueueProject)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
-  const openMarketplace = useNavigationStore((state) => state.openMarketplace)
+  const openResourceCenter = useNavigationStore((state) => state.openResourceCenter)
   const openLibrary = useNavigationStore((state) => state.openLibrary)
   const pendingProjectCreation = useNavigationStore((state) => state.pendingProjectCreation)
   const pendingWslSetupAfterProjectCreation = useNavigationStore(
@@ -771,7 +771,7 @@ const HomePage = ({
                         variant="ghost"
                         size="icon"
                         className="size-9 rounded-lg text-text-300"
-                        onClick={() => openMarketplace('user')}
+                        onClick={() => openResourceCenter('user')}
                         aria-label={t('Resource center')}
                       >
                         <Store className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -1313,7 +1313,7 @@ const HomePage = ({
                         active: activeSection === 'projects'
                       },
                       {
-                        label: t('Use Case Gallery'),
+                        label: t('Use Cases'),
                         onClick: scrollToGallery,
                         active: activeSection === 'examples'
                       }

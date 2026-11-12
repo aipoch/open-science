@@ -4,7 +4,18 @@ import {
   type PdfTranslationCheckpoint as StoredCheckpoint
 } from './contracts.js'
 
+const scientificApiRole = /^(?:[Ii]ndustry|INDUSTRY) (API)$/u
+
 type PdfTranslationCheckpoint = Omit<StoredCheckpoint, 'sourceId'>
+
+// A replacement glyph introduced by decoding or generation is lost text, not a font request.
+// Existing source literals remain valid; never invent a repair for the damaged character.
+export function pdfTranslationIntroducesReplacementCharacters(
+  source: string,
+  translation: string
+): boolean {
+  return (translation.match(/\uFFFD/gu)?.length ?? 0) > (source.match(/\uFFFD/gu)?.length ?? 0)
+}
 
 // Reject unmistakable translation-task commentary, without interpreting or removing
 // arbitrary prose. Literal examples already present in the source remain valid.
@@ -267,11 +278,22 @@ export function pdfTranslationChangesNumericSigns(source: string, translation: s
       const prefix = normalized.slice(0, match.index)
       const minus = /[-−]\s*$/u.exec(prefix)
       const beforeMinus = minus ? prefix.slice(0, minus.index) : ''
+      // A spaced ASCII dash can introduce a nonnegative ratio metric in prose.
+      // Compact/Unicode minus and signed changes retain their numeric meaning.
+      const metricSeparator =
+        !!minus &&
+        /^-\s+$/u.test(minus[0]) &&
+        /(?:^|\b(?:indicates|shows|reports|achieves|achieved)\s+)(?:prediction|classification|detection)\s+(?:accuracy|precision|recall|sensitivity|specificity|completeness)\s+$/iu.test(
+          beforeMinus
+        ) &&
+        /^\s*%\s+of\b/iu.test(normalized.slice(match.index + match[0].length)) &&
+        Number(key) <= 100
       const ambiguous =
         !!minus &&
+        !metricSeparator &&
         (/(?:[\d)\]]\s*|[A-Za-z]|\b[A-Za-z]\s+)$/u.test(beforeMinus) ||
           (/^\s*$/u.test(beforeMinus) && /^-\s/u.test(minus[0])))
-      const negative = (!!minus && !ambiguous) || /[负負]\s*$/u.test(prefix)
+      const negative = (!!minus && !metricSeparator && !ambiguous) || /[负負]\s*$/u.test(prefix)
       const count = result.get(key) ?? { total: 0, negative: 0, ambiguous: false }
       count.total++
       if (negative) count.negative++
@@ -346,18 +368,31 @@ export function pdfTranslationMissingCitationIdentities(
   return [...missing]
 }
 
+function ordinaryAcademicHeading(source: string): string | undefined {
+  const heading = source
+    .trim()
+    .replace(/\s+/gu, ' ')
+    .replace(/^(?:[A-Z]|\d+)(?:\.\d+)+\.?\s+/iu, '')
+  return /^(?:ethics statement|open science(?: statement)?|training details|additional results|implementation details|data availability|ethical considerations|ablation study)$/iu.test(
+    heading
+  )
+    ? heading
+    : undefined
+}
+
 // These ordinary scientific labels and clinical section headings are not names,
 // even when title-cased. Recognizing them also rejects copied English headings.
 // Keep this vocabulary closed: unknown names, acronyms and formula identifiers
 // must remain eligible for unchanged output.
 function isOrdinaryScientificLabel(source: string): boolean {
   source = source.trim().replace(/^#\s*(params?|parameters)\.?$/i, '$1')
+  if (ordinaryAcademicHeading(source) || scientificApiRole.test(source)) return true
   // Publication labels and clinical table summaries are not proper names.
   if (
-    /^(?:open[ -]access|original (?:article|research)|research article|review article|systematic review|case report|brief report|short communication|editorial|letter to the editor|edited by|reviewed by|additional information)$/iu.test(
+    /^(?:open[ -]access|original (?:article|research)|research article|review article|systematic review|case report|brief report|short communication|editorial|letter to the editor|edited by|reviewed by|additional information|supplemental material|(?:competing interests|contributorship) statement)$/iu.test(
       source
     ) ||
-    /^(?:all grades?|total cycles?|physical symptoms?|(?:sleep|aim trainer) score|AE class|intraoperative HR|limited context|yes|no|unclear|(?:high|low|unclear) risk)$/iu.test(
+    /^(?:all grades?|total cycles?|physical symptoms?|human immunodeficiency virus|non-hispanic (?:black|white)|sex-based analys(?:is|es)|(?:sleep|aim trainer) score|AE class|intraoperative HR|limited context|yes|no|unclear|(?:high|low|unclear) risk)$/iu.test(
       source
     )
   )
@@ -374,7 +409,16 @@ function isOrdinaryScientificLabel(source: string): boolean {
   // Task names and training phases are ordinary labels even in diagram title case.
   // Match the whole label; names containing these words still keep their identity.
   if (
-    /^(?:question[ -]answer(?:ing)?(?:[ -]pair)?|fine[ -]tuning|language understanding|(?:segment|position|token) embeddings?|token classification|warm[ -]?up steps?|learning rates?(?: decay)?|weight decay|gradient clipping|training time|transformer layers?|(?:dev|development|train(?:ing)?|test|validation) set(?: accuracy| results)?|dev test|single sentence|additional ablation studies|masking rates?|unit types?|no NSP|broader impact|denoising diffusion (?:probabilistic )?models?)$/iu.test(
+    /^(?:question[ -]answer(?:ing)?(?:[ -]pair)?|fine[ -]tuning|language understanding|(?:segment|position|token) embeddings?|token classification|warm[ -]?up steps?|learning rates?(?: decay)?|weight decay|weighting schemes?|gradient clipping|training time|transformer layers?|(?:dev|development|train(?:ing)?|test|validation) set(?: accuracy| results)?|dev test|single sentence|additional ablation studies|masking rates?|unit types?|no NSP|broader impact|denoising diffusion (?:probabilistic )?models?)$/iu.test(
+      source
+    )
+  )
+    return true
+  if (/^(?:[A-Z]{2,8} )?(?:[Dd]omain|[Ii]nformation [Rr]ecords?)$/u.test(source)) return true
+  // Metadata roles and registry kinds are common diagram vocabulary. Match
+  // complete constructions, leaving unknown qualifiers and names protected.
+  if (
+    /^(?:(?:structural|technical|declarative|descriptive|administrative|provenance) metadata|(?:operation|profile|type|schema|metadata) registr(?:y|ies)|information records?|any technology)$/iu.test(
       source
     )
   )
@@ -390,7 +434,7 @@ function isOrdinaryScientificLabel(source: string): boolean {
     return false
   const words = source.match(/[A-Za-z]+/g) ?? []
   const ordinary =
-    /^(?:attention|type|multi|single|head|heads|query|queries|caption|image|retrieval|local|global|beam|search|training|model|steps?|scores?|error|rate|average|mean|median|standard|deviation|stddev|inference|stage|exploding|vanishing|gradient|gradients|normalization|batch|index|noise|strengths?|limitations?|and|layer|loss|accuracy|test|validation|log|epoch|conv|convolution|depthwise|separable|pointwise|with|activation|param|params|parameters|covariate|shift|without|physical|therapy|assessment|group|comparison|other|studies|future|research|directions|author|contributions|ethics|approval|clinical|trial|registration|object|detection|finegrain|fine|grained|classification|landmark|recognition|filter|shape|input|size|fully|connected|mult|adds|shallow|train)$/i
+    /^(?:attention|type|multi|single|head|heads|query|queries|caption|image|retrieval|local|global|beam|search|training|model|steps?|scores?|error|rate|average|mean|median|standard|deviation|stddev|inference|stage|exploding|vanishing|gradient|gradients|normalization|batch|index|noise|strengths?|limitations?|and|layer|loss|accuracy|test|validation|log|epoch|conv|convolution|depthwise|separable|pointwise|with|activation|param|params|parameters|covariate|shift|without|physical|therapy|assessment|group|comparison|other|studies|future|research|directions|author|contributions|ethics|approval|clinical|trial|registration|object|detection|finegrain|fine|grained|classification|landmark|recognition|filter|shape|input|size|fully|connected|mult|adds|shallow|train|concepts?|coordinates?|overall|rendered|defen[cs]e|settings?|the|code|gaussian|map)$/i
   return (
     words.length > 0 &&
     words.length <= 8 &&
@@ -495,11 +539,19 @@ export function pdfTranslationDropsStandaloneProperName(
       return !new RegExp(`(?<![A-Za-z])${escaped}(?![A-Za-z])`, 'u').test(translation)
     })
   const words = value.split(/[ -]+/u)
+  const apiIdentifier = scientificApiRole.exec(value)?.[1]
+  if (apiIdentifier)
+    return !new RegExp(`(?<![A-Za-z0-9_])${apiIdentifier}(?![A-Za-z0-9_])`, 'u').test(translation)
   // The score is translatable, but the named test keeps its original identity.
   if (/^Aim Trainer Score$/iu.test(value))
     return !new RegExp(`(?<![A-Za-z])${value.slice(0, -' Score'.length)}(?![A-Za-z])`, 'u').test(
       translation
     )
+  // An acronym qualifies an ordinary domain/record label; translate the role,
+  // while retaining that complete identifier in the same standalone label.
+  const recordLabel = /^([A-Z]{2,8}) (?:[Dd]omain|[Ii]nformation [Rr]ecords?)$/u.exec(value)
+  if (recordLabel)
+    return !new RegExp(`(?<![A-Za-z0-9_])${recordLabel[1]}(?![A-Za-z0-9_])`, 'u').test(translation)
   // Small-caps PDF fonts can extract ordinary publication labels as mixed case.
   // A closed lowercase vocabulary proves they are prose before CamelCase is
   // interpreted as a model identifier; unknown names still fail that lookup.
@@ -514,6 +566,14 @@ export function pdfTranslationDropsStandaloneProperName(
     return identifiers.some(
       (word) => !new RegExp(`(?<![A-Za-z])${word}(?![A-Za-z])`, 'u').test(translation)
     )
+  // Ordinary diagram qualifiers may be localized, but their unknown uppercase
+  // identifiers keep the exact spelling and complete token boundary.
+  if (isOrdinaryScientificLabel(value))
+    return (value.match(/(?<![A-Za-z0-9_])[A-Z][A-Z0-9]+(?![A-Za-z0-9_])/gu) ?? [])
+      .filter((word) => !isOrdinaryScientificLabel(word.toLowerCase()))
+      .some(
+        (word) => !new RegExp(`(?<![A-Za-z0-9_])${word}(?![A-Za-z0-9_])`, 'u').test(translation)
+      )
   if (
     sectionLabels.has(value) ||
     isScientificStatementTitle(value) ||
@@ -962,8 +1022,16 @@ export function pdfTranslationCopiesEnglishProse(
     // Bilingual labels may retain the original in parentheses; ordinary label
     // words outside them still need translation (for example, "Beam-4 搜索").
     const translatedLabel = text.replace(/[(（](?:[^()（）]|[(（][^()（）]*[)）])*[)）]/gu, '')
-    return (source.match(/[A-Za-z]+/g) ?? [])
-      .filter(isOrdinaryScientificLabel)
+    const heading = ordinaryAcademicHeading(source),
+      apiRole = scientificApiRole.test(source.trim()),
+      words = (heading ?? source).match(/[A-Za-z]+/g) ?? [],
+      targetWords = translatedLabel.match(/[A-Za-z]+/g) ?? []
+    if (targetWords.join('').toLowerCase() === words.join('').toLowerCase()) return true
+    return words
+      .filter(
+        (word) =>
+          heading || (apiRole && /^industry$/iu.test(word)) || isOrdinaryScientificLabel(word)
+      )
       .some((word) => new RegExp(`(?<![A-Za-z])${word}(?![A-Za-z])`, 'i').test(translatedLabel))
   }
   const comparable = (value: string): string =>
@@ -1099,7 +1167,10 @@ export function reconcilePdfTranslationCheckpoint<T extends PdfTranslationCheckp
   }
   const sourceIndices = pdfTranslationSourceIndices(checkpoint)
   const translations = checkpoint.translations.map((translation, index) =>
-    normalizePdfTranslationText(checkpoint.sources[sourceIndices[index]], translation)
+    // Match initial acceptance: content-first keeps the source Unicode spelling.
+    checkpoint.contentFirst
+      ? translation.trim()
+      : normalizePdfTranslationText(checkpoint.sources[sourceIndices[index]], translation)
   )
   if (translations.some((translation, index) => translation !== checkpoint.translations[index]))
     checkpoint = { ...checkpoint, translations, layoutReports: undefined }
@@ -1168,6 +1239,10 @@ export function reconcilePdfTranslationCheckpoint<T extends PdfTranslationCheckp
       translation
     ) ||
     pdfTranslationHasCommentary(checkpoint.sources[sourceIndices[position]], translation) ||
+    pdfTranslationIntroducesReplacementCharacters(
+      checkpoint.sources[sourceIndices[position]],
+      translation
+    ) ||
     pdfTranslationIntroducesMathMarkup(checkpoint.sources[sourceIndices[position]], translation) ||
     pdfTranslationAddsNumericLiterals(checkpoint.sources[sourceIndices[position]], translation) ||
     pdfTranslationChangesNumericSigns(checkpoint.sources[sourceIndices[position]], translation) ||

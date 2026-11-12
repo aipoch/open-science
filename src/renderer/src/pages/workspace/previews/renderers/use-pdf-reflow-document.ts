@@ -184,6 +184,8 @@ export function usePdfReflowDocument(
           signal: controller.signal
         })
         if (cancelled) return
+        for (const page of structure.retainedSourcePageNumbers ?? []) retainedPages.add(page)
+        includeJoinedPages(retainedPages)
         const structureRetained = new Set(structure.retainedUnitIds)
         // Geometric guesses remain advisory: only the verified IDs above can
         // override an accepted translation. Uncertain prose must still be emitted.
@@ -358,9 +360,9 @@ export function usePdfReflowDocument(
           }
           throw new Error(validationDetail)
         }
-        if (recoveryPages) {
+        if (retainedPages.size) {
           const copied = new Set(output.reflow.originalPageNumbers)
-          for (const sourcePage of recoveryPages) {
+          for (const sourcePage of retainedPages) {
             const outputIndex = output.reflow.sourcePageNumbers.indexOf(sourcePage)
             if (!copied.has(outputIndex + 1)) throw new Error('Reflow original page missing')
             const page = await original.getPage(sourcePage)

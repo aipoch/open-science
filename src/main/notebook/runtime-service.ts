@@ -1,5 +1,7 @@
+import { withDataRootWrite } from '../storage/migration-state'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { randomUUID } from 'node:crypto'
+import { NotebookIdleReclamation } from './idle-reclamation'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -225,6 +227,7 @@ type McpRpcConnectionBinding = {
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {
+  isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
   admitSessionWork?: (projectId: string, sessionId: string) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
@@ -787,6 +790,8 @@ class NotebookRuntimeService {
     | 'refreshAfterPackageMutation'
   >
   private disposalPromise: Promise<{ reaped: boolean }> | undefined
+  private readonly idleReclamation: NotebookIdleReclamation
+  private readonly shellProcess: NotebookShellProcess
   private environmentStartupBarrier: Promise<void> = Promise.resolve()
   private runLifecycleRecovery: Promise<void> | undefined
   private runLifecycleRecoveryFailed = false
@@ -896,6 +901,12 @@ class NotebookRuntimeService {
         )
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
+      isSessionBusy: options.isSessionBusy,
+      observeSession: (sessionId) => this.idleReclamation.observeSession(sessionId),
+      onActivityChanged: (sessionId) =>
+        sessionId
+          ? this.idleReclamation?.activityChanged(sessionId)
+          : this.idleReclamation?.refresh(),
       admitSessionWork: options.admitSessionWork,
       storageRoot: options.dataRoot,
       defaultProjectId,
@@ -1064,6 +1075,13 @@ class NotebookRuntimeService {
       processHostPath: resolveNotebookResource(undefined, 'kernel_process_host.js')
     })
     this.helperModules = new NotebookHelperModuleHost(options.helperModuleCatalog)
+    this.shellProcess =
+      options.shellProcess ??
+      new NotebookShellProcessAdapter(
+        options.platform,
+        options.processSandbox,
+        this.shellProcessOwnership
+      )
     this.executionOwner = new NotebookExecutionOwner({
       reviewCode: (...args) => this.reviewCode(...args),
       prepareRuntimeSelection: (...args) => this.prepareRuntimeSelection(...args),
@@ -1104,16 +1122,30 @@ class NotebookRuntimeService {
       logger: this.runtimeLogger,
       platform: options.platform,
       shellRuntimeBinding: options.shellRuntimeBinding,
-      shellProcess:
-        options.shellProcess ??
-        new NotebookShellProcessAdapter(
-          options.platform,
-          options.processSandbox,
-          this.shellProcessOwnership
-        ),
+      shellProcess: this.shellProcess,
       shellConcurrencyLimit: options.shellConcurrencyLimit,
       getGrantedLocalRoots: options.getGrantedLocalRoots
     })
+    this.idleReclamation = new NotebookIdleReclamation({
+      resources: () => [
+        ...this.sessionLifecycle.idleInterpreters(),
+        ...(this.shellProcess.idleProcesses?.() ?? []).map((resource) => ({
+          ...resource,
+          release: (stillIdle: () => boolean) =>
+            this.sessionLifecycle.reclaimIdleInterpreter(resource, stillIdle)
+        }))
+      ],
+      isSessionBusy: async (projectId, sessionId) =>
+        this.sessionLifecycle.hasPendingWork(sessionId) ||
+        (await options.isSessionBusy?.(projectId, sessionId)) === true ||
+        this.sessionLifecycle.hasPendingWork(sessionId),
+      onFailure: (error) =>
+        this.runtimeLogger.error('Notebook idle reclamation failed', errorLogFields(error))
+    })
+  }
+
+  noteSessionActivity(sessionId: string): void {
+    this.idleReclamation.activityChanged(sessionId)
   }
 
   private async resolveRuntimeEnablement(
@@ -2217,11 +2249,14 @@ class NotebookRuntimeService {
   }
 
   async runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]> {
-    return this.sessionLifecycle.runProjectOperation(request, () =>
-      this.repository.readSessionRunIndex(
-        resolveProjectId(request, resolveProjectId(this.options)),
-        request.sessionId
-      )
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      () =>
+        this.repository.readSessionRunIndex(
+          resolveProjectId(request, resolveProjectId(this.options)),
+          request.sessionId
+        ),
+      false
     )
   }
 
@@ -2229,51 +2264,55 @@ class NotebookRuntimeService {
   async state(
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    return this.sessionLifecycle.runProjectOperation(request, async () => {
-      const requestedRunIds = request.runIds ?? []
-      if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
-        throw new Error(
-          `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
-        )
-      }
-      if (
-        request.historySummaryFrameId !== undefined &&
-        Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
-          NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
-      ) {
-        throw new Error(
-          `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
-        )
-      }
-      const runIds = [...new Set(requestedRunIds)]
-      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
-      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
-        throw new Error('Notebook history limit must be 1-100.')
-      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
-        throw new Error('Notebook state history cursor is invalid.')
-      const projectId = resolveProjectId(request, resolveProjectId(this.options))
-      if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
-        return this.sessionReadModel.importedState(
-          request,
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      async () => {
+        const requestedRunIds = request.runIds ?? []
+        if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+          throw new Error(
+            `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
+          )
+        }
+        if (
+          request.historySummaryFrameId !== undefined &&
+          Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
+            NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
+        ) {
+          throw new Error(
+            `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
+          )
+        }
+        const runIds = [...new Set(requestedRunIds)]
+        const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+        if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+          throw new Error('Notebook history limit must be 1-100.')
+        if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+          throw new Error('Notebook state history cursor is invalid.')
+        const projectId = resolveProjectId(request, resolveProjectId(this.options))
+        if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
+          return this.sessionReadModel.importedState(
+            request,
+            runIds,
+            request.historySummaryFrameId,
+            request.historyBefore,
+            historyLimit
+          )
+        }
+        const session = await this.sessionLifecycle.ensure(request)
+        // Project durable history only after the lane's binding commit settles, including reads
+        // that arrived just before shutdown closed session creation admission.
+        await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
+        await this.runTerminalization.reconcilePending(session)
+        return this.sessionReadModel.state(
+          session,
           runIds,
           request.historySummaryFrameId,
           request.historyBefore,
           historyLimit
         )
-      }
-      const session = await this.sessionLifecycle.ensure(request)
-      // Project durable history only after the lane's binding commit settles, including reads
-      // that arrived just before shutdown closed session creation admission.
-      await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
-      await this.runTerminalization.reconcilePending(session)
-      return this.sessionReadModel.state(
-        session,
-        runIds,
-        request.historySummaryFrameId,
-        request.historyBefore,
-        historyLimit
-      )
-    })
+      },
+      false
+    )
   }
 
   async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
@@ -2487,6 +2526,60 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.packageOperations.inspect(request)
     )
+  }
+
+  // Sessionless Python helpers share Notebook's policy and logical environment lock. The caller
+  // resolves account identity before entering; the callback owns its child until it has closed.
+  async assertPythonExecutionAllowed(
+    environment: string | undefined,
+    python: string
+  ): Promise<void> {
+    await this.ensureRecovered()
+    const root = getRuntimeRoot(this.options.dataRoot)
+    if (environment) {
+      const prefix = envPrefix(root, environment, this.options.platform)
+      this.assertPrefixRecoverable(prefix)
+      if (environment === DEFAULT_PY_ENV && (await this.isDefaultEnvDisabled('python', root)))
+        throw new Error('RUNTIME_DISABLED')
+    }
+    const enablement = await this.resolveRuntimeEnablement('python')
+    let identity = python
+    try {
+      identity = realpathSync(python)
+    } catch {
+      /* Missing interpreters fail at launch. */
+    }
+    if (enablement?.enabled[identity] === false || enablement?.enabled[python] === false)
+      throw new Error('RUNTIME_DISABLED')
+    if (
+      environment &&
+      (this.repairPolicy.requirement('python', environment).required ||
+        this.environmentOperations.isRepairBlocked(
+          this.repairPolicy.blockKey('python', environment)
+        ))
+    )
+      throw new Error('RUNTIME_REPAIR_REQUIRED')
+  }
+
+  withPythonExecution<T>(
+    target: Readonly<{ runtimeRoot: string; python: string; environment?: string }>,
+    operation: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return withDataRootWrite(async () => {
+      signal?.throwIfAborted()
+      if (target.runtimeRoot !== getRuntimeRoot(this.options.dataRoot))
+        throw new Error('RUNTIME_STALE')
+      const execute = async (): Promise<T> => {
+        signal?.throwIfAborted()
+        await this.assertPythonExecutionAllowed(target.environment, target.python)
+        signal?.throwIfAborted()
+        return operation()
+      }
+      return target.environment
+        ? this.environmentOperations.runShared('execution', target.environment, execute, signal)
+        : execute()
+    })
   }
 
   // Installs packages into the shared global environments (never inside a session/kernel). Resolves
@@ -2827,6 +2920,7 @@ class NotebookRuntimeService {
     this.environmentOperations.dispose()
     this.executionOwner.fenceShellRuns({ global: true })
     this.sessionLifecycle.beginDisposal()
+    const idleDisposal = this.idleReclamation.dispose()
     // Mark recovery disposed first, but do not let slow startup filesystem reconciliation consume the
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.
@@ -2861,9 +2955,9 @@ class NotebookRuntimeService {
           throw error
         }
       )
-    const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
-      ([shutdownResult, recoveryResult]) => {
-        const failures = [shutdownResult, recoveryResult]
+    const disposal = Promise.allSettled([shutdown, recoveryDisposal, idleDisposal]).then(
+      ([shutdownResult, recoveryResult, idleResult]) => {
+        const failures = [shutdownResult, recoveryResult, idleResult]
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => result.reason)
         if (failures.length === 1) throw failures[0]

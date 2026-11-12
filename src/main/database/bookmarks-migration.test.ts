@@ -44,7 +44,8 @@ it('installs the Bookmark table with durable ownership, JSON, and paging constra
       '0053_literature_doi_identity',
       '0054_slurm_job_reliability',
       '0055_session_discussion_parent',
-      '0056_compute_kubernetes_workspace'
+      '0056_compute_kubernetes_workspace',
+      '0057_project_optimization_prompt'
     ]
   })
 

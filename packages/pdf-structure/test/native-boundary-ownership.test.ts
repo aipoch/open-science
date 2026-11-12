@@ -34,7 +34,14 @@ type AnonymousRuledPacket = ReturnType<typeof JSON.parse>
 // Small ordinary-font paint packets keep source text and paint independent of
 // the model grid. Every font and line is owned; no paper fixture is involved.
 function anonymousRuledPacket(
-  kind: 'prose' | 'scripts' | 'parts' | 'records' | 'interval',
+  kind:
+    | 'prose'
+    | 'scripts'
+    | 'parts'
+    | 'records'
+    | 'interval'
+    | 'ordinal-continuation'
+    | 'missing-first',
   options: { gap?: number; stroke?: number; offpage?: number } = {}
 ): AnonymousRuledPacket {
   const O = ruledPacketOPS
@@ -119,10 +126,41 @@ function anonymousRuledPacket(
       )
     })
   }
-  font('Table 1: Values', 20, 65)
-  const captions = [{ page: 1, lines: ['Table 1: Values'], rect: [20, 55, 95, 65] }]
+  const continuation = ['ordinal-continuation', 'missing-first'].includes(kind)
+  if (!continuation) font('Table 1: Values', 20, 65)
+  const captions = continuation
+    ? []
+    : [{ page: 1, lines: ['Table 1: Values'], rect: [20, 55, 95, 65] }]
   let cropRect: number[]
-  if (kind === 'interval') {
+  if (kind === 'ordinal-continuation') {
+    for (const y of [80, 130, 180, 230, 280]) {
+      line([20, y, 50, y])
+      line([50.5, y, 180, y])
+      line([180.5, y, 400, y])
+    }
+    for (let r = 0; r < 4; r++) {
+      const y = 90.5 + r * 50
+      font(String(r + 7), 30, y)
+      font('Native label', 60, y)
+      font('First literal', 190, y)
+      font('continued label', 60, y + 12)
+      font('continued value', 190, y + 12)
+    }
+    cropRect = [20, 77, 400, 283]
+  } else if (kind === 'missing-first') {
+    for (const y of [80, 160, 240]) {
+      line([20, y, 80, y])
+      line([80.5, y, 200, y])
+      line([200.5, y, 300, y])
+      line([300.5, y, 400, y])
+    }
+    for (const [r, label] of ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].entries()) {
+      font(label, 90, 90.5 + r * 12.6)
+      font(String(12 + r), 215, 90.5 + r * 12.6)
+      font('1.' + r, 315, 90.5 + r * 12.6)
+    }
+    cropRect = [20, 77, 400, 243]
+  } else if (kind === 'interval') {
     for (const y of [80, 108, 183]) line([20, y, 220, y])
     line([110, 108, 110, 183])
     font('Choice', 30, 100)
@@ -1158,3 +1196,228 @@ it('keeps a printed range with its preceding measured label', () => {
     '15.5 (14.4)'
   ])
 })
+
+const { recoverNativeOrdinalWrappedRecordGrid } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-bounded-text-record-grid.mjs')).href
+)
+const { recoverNativeUnownedFirstRecord } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-leaf-record-repair.mjs')).href
+)
+const { anonymousCertifiedPicture } = await import('./fixtures/figure-recovery-program.mjs')
+const continuationPacket = (
+  kind: 'ordinal-continuation' | 'missing-first'
+): ReturnType<typeof JSON.parse> => {
+  const x = anonymousRuledPacket(kind),
+    f = anonymousCertifiedPicture(),
+    n = f.context
+  n.operators.fnArray.length = 0
+  n.operators.argsArray.length = 0
+  n.content.items.length = 0
+  n.glyphBounds[0].glyphs.length = 0
+  f.tokens.length = 0
+  f.page.graphicsBounds.length = 0
+  f.page.lines.length = 0
+  f.add(ruledPacketOPS.setFillRGBColor, ['#000000'])
+  for (const r of x.rules) f.shape(r[0], r[1] - 0.2, r[2] - r[0], 0.4)
+  for (const i of x.tokens) f.text(i.text, i.rect[0], i.baseline)
+  n.glyphBounds[0].glyphs = [
+    ...new Map(n.glyphBounds[0].glyphs.map((g) => [g.fontChar, g])).values()
+  ]
+  f.page.lines = f.tokens.map((i) => ({
+    text: i.text,
+    x: i.rect[0],
+    y: i.rect[1],
+    width: i.rect[2] - i.rect[0],
+    height: i.height,
+    fontSize: i.height
+  }))
+  const paint = new Map()
+  x.rules = packetRules(n.operators, n.viewport, paint)
+  x.table.id = 'page-1-table-1'
+  x.tokens = f.tokens
+  x.context = {
+    operators: n.operators,
+    content: n.content,
+    viewport: n.viewport,
+    sourcePage: f.page,
+    nativeGlyphContext: n,
+    rulePaintBounds: paint,
+    nativeEvidenceGraphics: f.page.graphicsBounds.map((g) => ({
+      kind: g.kind,
+      rect: g.normalizedRect.map((v) => v * 400)
+    }))
+  }
+  return x
+}
+it('recovers complete ruled continuation records independently of merged model columns', () => {
+  const x = continuationPacket('ordinal-continuation'),
+    before = JSON.stringify(x)
+  const r = recoverNativeOrdinalWrappedRecordGrid(x.table, x.tokens, x.captions, x.rules, x.context)
+  expect(r?.rows).toHaveLength(4)
+  expect(r.columns).toHaveLength(3)
+  expect(r.headerRows).toEqual([])
+  expect([...r.ownedTokens]).toEqual(x.tokens)
+  expect(r.cropRect).toEqual(x.table.cropRect)
+  expect(JSON.stringify(x)).toBe(before)
+})
+it.each([
+  'ordinal',
+  'missing-value',
+  'rule-gap',
+  'foreign-source',
+  'font',
+  'unknown-paint',
+  'alias'
+])('requires full native ruled continuation ownership with %s evidence', (change) => {
+  const x = continuationPacket('ordinal-continuation')
+  if (change === 'ordinal') x.tokens[0].text = '1'
+  if (change === 'missing-value') x.tokens.splice(2, 1)
+  if (change === 'rule-gap') x.rules[1][0] += 4
+  if (change === 'foreign-source')
+    x.tokens.push({ ...x.tokens[0], sourceItem: { ...x.tokens[0].sourceItem, index: 999 } })
+  if (change === 'font') x.tokens[1].height = 9
+  if (change === 'unknown-paint') {
+    x.context.operators.fnArray.push(ruledPacketOPS.setTextRise)
+    x.context.operators.argsArray.push([1])
+  }
+  if (change === 'alias') x.tokens[1].sourceItem.index = x.tokens[0].sourceItem.index
+  expect(
+    recoverNativeOrdinalWrappedRecordGrid(x.table, x.tokens, x.captions, x.rules, x.context)
+  ).toBeUndefined()
+})
+const missingFirstPacket = (): ReturnType<typeof JSON.parse> => {
+  const x = continuationPacket('missing-first'),
+    cuts = [20, 80.25, 200.25, 300.25, 400]
+  x.cells = Array.from({ length: 4 }, (_, r) =>
+    Array.from({ length: 4 }, (_, c) => {
+      const source = c ? [x.tokens[(r + 1) * 3 + c - 1]] : []
+      return {
+        row: r,
+        column: c,
+        rowSpan: 1,
+        colSpan: 1,
+        text: source.map((i) => i.text).join(' '),
+        sourceTokens: source,
+        sourceRects: source.map((i) => i.rect),
+        rect: [cuts[c], 93.1 + r * 12.6, cuts[c + 1], 103.1 + r * 12.6]
+      }
+    })
+  ).flat()
+  x.rows = Array.from({ length: 4 }, (_, r) => ({
+    rect: [20, 93.1 + r * 12.6, 400, 103.1 + r * 12.6]
+  }))
+  x.unassigned = x.tokens.slice(0, 3).map((i) => i.text)
+  return x
+}
+it('inserts only a complete unowned first record above native continuation peers', () => {
+  const x = missingFirstPacket(),
+    before = JSON.stringify(x)
+  const r = recoverNativeUnownedFirstRecord(
+    x.table,
+    x.tokens,
+    [],
+    x.rules,
+    x.cells,
+    x.rows,
+    x.unassigned,
+    x.context
+  )
+  expect(r?.row).toBe(0)
+  expect(r.groups.map((g) => g.map((i) => i.text).join(' '))).toEqual(['', 'Alpha', '12', '1.0'])
+  expect(r.rect[1]).toBe(x.table.cropRect[1])
+  expect(JSON.stringify(x)).toBe(before)
+})
+it.each([
+  'missing-peer',
+  'different-lane',
+  'partial-owner',
+  'foreign-source',
+  'rule-gap',
+  'unknown-paint',
+  'different-leading'
+])('requires native first-record and peer closure with %s', (change) => {
+  const x = missingFirstPacket()
+  if (change === 'missing-peer') x.cells = x.cells.filter((c) => c.row !== 2)
+  if (change === 'different-lane') x.tokens[0].rect[0] += 4
+  if (change === 'partial-owner') x.cells[0].sourceTokens = [x.tokens[0]]
+  if (change === 'foreign-source') x.tokens.push({ ...x.tokens[0], text: 'Foreign' })
+  if (change === 'rule-gap') x.rules[1][0] += 4
+  if (change === 'unknown-paint') {
+    x.context.operators.fnArray.push(ruledPacketOPS.setTextRise)
+    x.context.operators.argsArray.push([1])
+  }
+  if (change === 'different-leading') x.tokens[0].baseline -= 3
+  expect(
+    recoverNativeUnownedFirstRecord(
+      x.table,
+      x.tokens,
+      [],
+      x.rules,
+      x.cells,
+      x.rows,
+      x.unassigned,
+      x.context
+    )
+  ).toBeUndefined()
+})
+
+it.each(['foreign-ink', 'above-rail-ink', 'outside-crop-ink', 'claimed-glyph'])(
+  'refuses a continuation whose real native glyph ink lacks closure: %s',
+  (change) => {
+    const x = continuationPacket('ordinal-continuation'),
+      n = x.context.nativeGlyphContext
+    if (change === 'foreign-ink') {
+      const sourceItem = { pageNumber: 1, index: n.content.items.length, text: 'Ω' },
+        raw = {
+          str: 'Ω',
+          dir: 'ltr',
+          hasEOL: true,
+          width: 5,
+          height: 10,
+          fontName: 'F',
+          transform: [10, 0, 0, 10, 10, 300],
+          sourceItem
+        }
+      n.content.items.push(raw)
+      x.tokens.push({
+        text: 'Ω',
+        height: 10,
+        baseline: 100,
+        horizontal: true,
+        rect: [10, 90, 15, 100],
+        sourceItem
+      })
+      n.glyphBounds[0].glyphs.push({ fontChar: 'Ω', bounds: [0, -0.1, 1.5, 0.7] })
+      const O = ruledPacketOPS
+      n.operators.fnArray.push(O.beginText, O.setFont, O.setTextMatrix, O.showText, O.endText)
+      n.operators.argsArray.push(
+        null,
+        ['F', 10],
+        [1, 0, 0, 1, 10, 300],
+        [
+          [
+            {
+              unicode: 'Ω',
+              fontChar: 'Ω',
+              width: 500,
+              isInFont: true,
+              originalCharCode: 937,
+              accent: null
+            }
+          ]
+        ],
+        null
+      )
+    }
+    if (change === 'above-rail-ink')
+      n.glyphBounds[0].glyphs.find((g) => g.fontChar === '7').bounds = [0, -0.1, 0.5, 1.2]
+    if (change === 'outside-crop-ink')
+      n.glyphBounds[0].glyphs.find((g) => g.fontChar === '7').bounds = [-1.2, -0.1, 0.5, 0.7]
+    if (change === 'claimed-glyph')
+      n.operators.argsArray[n.operators.fnArray.indexOf(ruledPacketOPS.showText)][0][0].unicode =
+        '9'
+    expect(
+      recoverNativeOrdinalWrappedRecordGrid(x.table, x.tokens, [], x.rules, x.context)
+    ).toBeUndefined()
+  }
+)

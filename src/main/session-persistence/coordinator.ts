@@ -145,7 +145,8 @@ type SessionMutationRepository = {
   assertSessionIdentityOwnership(sessionId: string, expectedProjectId: string): Promise<void>
   saveSession(
     session: PersistedChatSession,
-    expectedRevision?: number
+    expectedRevision?: number,
+    onJsonCommitted?: (session: PersistedChatSession) => void
   ): Promise<PersistedChatSession>
   saveSessionWithBindingRepair?(
     session: PersistedChatSession,
@@ -1290,10 +1291,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
   mutateRuntimeSession(
     scope: { projectId: string; sessionId: string },
-    mutate: (session: PersistedChatSession) => PersistedChatSession
+    mutate: (session: PersistedChatSession) => PersistedChatSession,
+    onJsonCommitted?: () => void
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(scope.projectId, scope.sessionId, () =>
-      this.stateOwner.mutateRuntimeSession(scope, mutate)
+      this.stateOwner.mutateRuntimeSession(scope, mutate, onJsonCommitted)
     )
   }
 

@@ -284,6 +284,17 @@ describe('WorkspacePage image attachment gating', () => {
     await act(async () => {
       await vi.waitFor(() => expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
     })
+    const { i18next } = await import('../../i18n')
+    try {
+      await act(async () => i18next.changeLanguage('zh-Hans'))
+      expect(conversationProps.view.actionError).toBe(i18next.t(IMAGE_BLOCKED_MESSAGE))
+      expect(conversationProps.view.actionError).not.toBe(IMAGE_BLOCKED_MESSAGE)
+      expect(conversationProps.composer.view.errorFailure?.reason).toBe(
+        'configuration/vision-model'
+      )
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
     expect(stageLocalFile).not.toHaveBeenCalled()
     expect(conversationProps.composer.view.attachments).toEqual([])
   })

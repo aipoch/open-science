@@ -3305,6 +3305,27 @@ describe('startWebHttpServer', () => {
     })
     expect(localResponse.status).toBe(200)
     expect(localInvoke).toHaveBeenCalledOnce()
+    for (const [headers, authorities] of [
+      [{ authorization: 'Bearer local-token' }, ['import-local-package-path']],
+      [{ cookie: 'open_science_web_token=local-token' }, []],
+      [{ authorization: 'Bearer local-token', origin: `http://127.0.0.1:${server.port}` }, []]
+    ] as const) {
+      const imported = await fetch(rpcUrl('sessions:import-package'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          args: [{ projectName: 'New' }, '/backups/session.science', { nonInteractive: true }]
+        })
+      })
+      expect(imported.status).toBe(200)
+      expect(localInvoke).toHaveBeenLastCalledWith(
+        'sessions:import-package',
+        expect.objectContaining({
+          callerContext: expect.objectContaining({ authorities })
+        })
+      )
+    }
     expect(rpc.invoke).not.toHaveBeenCalled()
   })
 

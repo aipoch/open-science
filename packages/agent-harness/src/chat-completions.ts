@@ -280,7 +280,7 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
           messages,
           stream: true,
           stream_options: { include_usage: true },
-          max_tokens: request.maxOutputTokens,
+          ...(request.useProviderOutputDefault ? {} : { max_tokens: request.maxOutputTokens }),
           ...(request.tools.length
             ? {
                 tools: request.tools.map((tool) => ({

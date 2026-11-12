@@ -238,7 +238,11 @@ const WorkspaceToolCodeBlock = ({
         }
         data-testid="tool-code-block"
         data-language={language}
-        className={cn('m-0 max-h-[320px] overflow-auto py-2.5', numbered ? 'px-0' : 'px-3')}
+        // Use the shared WebKit thumb so macOS overlay scrollbars cannot hide it on hover.
+        className={cn(
+          'scrollbar-auto-hide m-0 max-h-[320px] overflow-auto py-2.5 [scrollbar-color:auto]! [scrollbar-width:auto]',
+          numbered ? 'px-0' : 'px-3'
+        )}
       >
         <code
           className={cn(

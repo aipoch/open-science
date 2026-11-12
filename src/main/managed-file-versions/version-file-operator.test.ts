@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import {
+  cp,
   link,
   mkdir,
-  mkdtemp,
+  mkdtemp as createTemporaryDirectory,
   open as openFile,
   readdir,
   readFile,
+  realpath,
   rename as renameFile,
   rm,
   rmdir,
@@ -16,11 +18,15 @@ import {
   type FileHandle
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 let cleanupRoot: string | undefined
+
+// Keep ordinary fixtures physical on hosts where the OS temp directory has linked ancestors.
+const mkdtemp = async (prefix: string): Promise<string> =>
+  realpath(await createTemporaryDirectory(prefix))
 
 // NTFS refuses to rename a directory while a descendant file handle is still open, so parent-swap
 // cases that depend on that TOCTOU stay POSIX-only. Windows still fail-closes at the OS rename.
@@ -94,6 +100,64 @@ describe('NodeVersionFileOperator', () => {
       readFile(join(cleanupRoot, ...plannedFile.storageRef.split('/')))
     ).resolves.toEqual(content)
   })
+
+  it.each(['inside', 'outside'])(
+    'preserves link/.. storage-key layout and containment when the layout is %s the native root',
+    async (location) => {
+      const { NodeVersionFileOperator } = await import('./version-file-operator')
+      cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+      const physical = join(cleanupRoot, 'physical')
+      const alias =
+        location === 'inside'
+          ? join(physical, 'research', 'holder', 'selected')
+          : join(cleanupRoot, 'selected')
+      await mkdir(join(physical, 'child'), { recursive: true })
+      await mkdir(join(physical, 'research'))
+      await mkdir(dirname(alias), { recursive: true })
+      await symlink(
+        join(physical, 'child'),
+        alias,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      const storageRoot = `${alias}/../research`
+      await mkdir(resolve(storageRoot))
+      const operator = new NodeVersionFileOperator({ storageRoot })
+      const planInput = {
+        operationId: 'operation-dot-root',
+        scope: {
+          source: 'upload' as const,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          logicalFileId: 'upload-1'
+        },
+        logicalFilename: 'notes.txt',
+        candidateIndex: 0
+      }
+      const content = Buffer.from('existing repository layout')
+      const layoutMatches = (await realpath(storageRoot)) === (await realpath(resolve(storageRoot)))
+      const publication = operator.publishImmutable({
+        ...planInput,
+        plannedFile: operator.planImmutable(planInput),
+        content
+      })
+      // POSIX resolves the link before ".."; native Windows may normalize it first. In either
+      // case the operator must never publish to a different root than its repository consumers.
+      if (!layoutMatches && location === 'outside') {
+        await expect(publication).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+        expect(await readdir(join(cleanupRoot, 'research'))).toEqual([])
+      } else {
+        const stored = await publication
+        await expect(readFile(join(storageRoot, ...stored.storageRef.split('/')))).resolves.toEqual(
+          content
+        )
+      }
+      await expect(
+        readFile(
+          join(physical, 'research', ...operator.planImmutable(planInput).storageRef.split('/'))
+        )
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
 
   it('publishes when the configured file system does not support hard links', async () => {
     const module = await import('./version-file-operator')
@@ -1228,13 +1292,74 @@ describe('NodeVersionFileOperator', () => {
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
-  it('rejects a symbolic-link storage root before creating version directories', async () => {
+  it('defers a dangling root alias error to use without trusting a later target', async () => {
+    const { NodeVersionFileOperator } = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const physical = join(cleanupRoot, 'physical')
+    const alias = join(cleanupRoot, 'selected')
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const operator = new NodeVersionFileOperator({ storageRoot: alias })
+    const content = Buffer.from('reconnected content')
+    const integrity = {
+      sizeBytes: content.byteLength,
+      checksum: createHash('sha256').update(content).digest('hex')
+    }
+    await expect(operator.openImmutable('content.txt', integrity)).rejects.toMatchObject({
+      code: 'STORAGE_UNAVAILABLE'
+    })
+    await mkdir(physical)
+    await writeFile(join(physical, 'content.txt'), content)
+    await expect(operator.openImmutable('content.txt', integrity)).rejects.toMatchObject({
+      code: 'STORAGE_UNAVAILABLE'
+    })
+    const reconnected = new NodeVersionFileOperator({ storageRoot: alias })
+    const lease = await reconnected.openImmutable('content.txt', integrity)
+    await lease.close()
+  })
+
+  it('rejects an aliased root replaced by a different directory at the same path', async () => {
+    const { NodeVersionFileOperator } = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    const physical = join(cleanupRoot, 'physical')
+    const alias = join(cleanupRoot, 'selected')
+    await mkdir(physical)
+    await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const operator = new NodeVersionFileOperator({ storageRoot: alias })
+    const input = {
+      operationId: 'operation-root-replacement',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'README.md',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(input)
+    const content = Buffer.from('same immutable content')
+    const stored = await operator.publishImmutable({ ...input, plannedFile, content })
+    const previous = join(cleanupRoot, 'previous')
+    await renameFile(physical, previous)
+    await expect(operator.publishImmutable({ ...input, plannedFile, content })).rejects.toThrow()
+    await expect(readdir(physical)).rejects.toMatchObject({ code: 'ENOENT' })
+    // Even matching bytes in a new directory do not preserve the configured root's identity.
+    await cp(previous, physical, { recursive: true })
+    await expect(
+      operator.openImmutable(stored.storageRef, stored).then((lease) => lease.close())
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    await expect(
+      operator.publishImmutable({ ...input, plannedFile, content })
+    ).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+  })
+
+  it('rejects a storage root replaced with a symbolic link after initialization', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const storageRoot = join(cleanupRoot, 'storage')
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
-    await symlink(outsideRoot, storageRoot, process.platform === 'win32' ? 'junction' : 'dir')
     const operator = new module.NodeVersionFileOperator({ storageRoot })
+    await symlink(outsideRoot, storageRoot, process.platform === 'win32' ? 'junction' : 'dir')
     const planInput = {
       operationId: 'operation-root-symlink',
       scope: {

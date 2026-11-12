@@ -79,7 +79,7 @@ export const contracts = {
   ),
   'specialist.cancelMarketplaceCandidate': callable<
     (request: CancelMarketplaceCandidateRequest) => Promise<void>
-  >()('specialist', ['specialist:marketplace-candidate-cancel', ELECTRON]),
+  >()('specialist', ['specialist:marketplace-candidate-cancel', WEB]),
   'specialist.cancelPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<void>
   >()('specialist', ['specialist:package-cancel', WEB]),
@@ -89,7 +89,7 @@ export const contracts = {
   ),
   'specialist.delete': callable<
     (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
-  >()('specialist', ['specialist:delete', ELECTRON]),
+  >()('specialist', ['specialist:delete', WEB]),
   'specialist.duplicate': callable<
     (request: DuplicateSpecialistRequest) => Promise<CreateSpecialistRequest>
   >()('specialist', ['specialist:duplicate', ELECTRON]),
@@ -110,7 +110,7 @@ export const contracts = {
   >()('specialist', ['specialist:marketplace-source-inspect-github', ELECTRON]),
   'specialist.installMarketplace': callable<
     (request: MarketplaceInstallRequest) => Promise<MarketplaceInstallResult>
-  >()('specialist', ['specialist:marketplace-install', ELECTRON]),
+  >()('specialist', ['specialist:marketplace-install', WEB]),
   'specialist.installPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<SpecialistPackageInstallResult>
   >()('specialist', ['specialist:package-install', WEB]),
@@ -136,10 +136,10 @@ export const contracts = {
   >()('specialist', ['specialist:pending-switch', ELECTRON_EVENT]),
   'specialist.prepareMarketplaceInstall': callable<
     (request: PrepareMarketplaceInstallRequest) => Promise<MarketplaceInstallPreview>
-  >()('specialist', ['specialist:marketplace-install-prepare', ELECTRON]),
+  >()('specialist', ['specialist:marketplace-install-prepare', WEB]),
   'specialist.previewDelete': callable<
     (request: { id: string }) => Promise<SpecialistDeletePreview>
-  >()('specialist', ['specialist:delete-preview', ELECTRON]),
+  >()('specialist', ['specialist:delete-preview', WEB]),
   'specialist.previewExport': callable<
     (request: {
       specialistId: string

@@ -247,6 +247,27 @@ describe('Project lifecycle composition', () => {
     expect(d.notificationInbox.markSessionsRead).toHaveBeenCalledWith(['session-1'])
   })
 
+  it.each(['pendingPermissions', 'pendingElicitations'] as const)(
+    'protects a session waiting for %s after the asynchronous job check',
+    async (kind) => {
+      const { dependencies: d, runtime } = fixture()
+      d.getActiveSideChatSessions.mockReturnValue([])
+      const activity = mocks.archive.mock.calls[0][2]
+      const jobCheck = Promise.withResolvers<number>()
+      d.computeJobActivityRef.current.countNonTerminalBySession.mockReturnValueOnce(
+        jobCheck.promise
+      )
+      const result = activity.isSessionBusy('project-1', 'session-1')
+      runtime.getSnapshot.mockReturnValue({
+        promptInFlightSessionIds: [],
+        [kind]: [{ sessionId: 'session-1' }]
+      })
+      jobCheck.resolve(0)
+      await expect(result).resolves.toBe(true)
+      await expect(activity.isSessionBusy('project-1', 'unrelated')).resolves.toBe(false)
+    }
+  )
+
   it('routes relays and file commands to the active owners with their original identities', async () => {
     const { dependencies: d, runtime } = fixture()
     const targetState = mocks.relay.mock.calls[0][0].targetState

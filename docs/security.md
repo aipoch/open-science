@@ -208,7 +208,13 @@ a mode does not migrate or re-encrypt existing credentials.
 
 Codex subscription authentication uses an app-owned `codex-subscription/auth.json` file
 under the configuration root and relies on operating-system account and filesystem
-protection. Shared Claude mode uses the default `~/.claude` profile. Isolated Claude mode
+protection. The Codex backend and the built-in Open-Science Agent can use the same imported or
+app-managed ChatGPT sign-in. For the built-in Agent, the main process sends the account credential
+to the Codex subscription endpoint or the loopback route accepted during import. The Agent process
+receives only a revocable local connection token. Codex handles credential refresh in the app-owned
+profile.
+
+Shared Claude mode uses the default `~/.claude` profile. Isolated Claude mode
 stores its OAuth token as a OS-encrypted provider key and uses an app-owned
 `CLAUDE_CONFIG_DIR` under the Open-Science configuration root, separate from `~/.claude`.
 

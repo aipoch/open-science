@@ -1,9 +1,17 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled Node worker. */
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFString, PDFHexString } from 'pdf-lib'
-import { translatedPdfLinkLabel, translatedPdfLinkFragment } from './link-labels.mjs'
+import {
+  translatedPdfLinkLabel,
+  translatedPdfLinkFragment,
+  translatedPdfBracketedReference
+} from './link-labels.mjs'
 import { literalSourceIdentity } from './literal-source-identity.mjs'
 import { mapBlankPageAnchor } from './reflow-page-anchors.mjs'
-import { captureNativeLinkOrigins, nativeLinkOriginSpan } from './native-link-origin.mjs'
+import {
+  captureNativeLinkOrigins,
+  nativeLinkOriginSpan,
+  nativeLinkSourceSpan
+} from './native-link-origin.mjs'
 
 const compact = (text) => text.replace(/\s/gu, '')
 const contains = (a, b) =>
@@ -11,6 +19,38 @@ const contains = (a, b) =>
   a.y >= b.y - 0.002 &&
   a.x + a.width <= b.x + b.width + 0.002 &&
   a.y + a.height <= b.y + b.height + 0.002
+
+// Publisher hit areas can include the opening bracket or following comma.
+// The native certificate owns the complete hit; the existing semantic helper
+// still requires its complete list, numeric order and repeated occurrence.
+function closedNumericHit(source, translation, located, native) {
+  if (!native || native.start !== located.start || compact(native.text) !== compact(located.text))
+    return
+  const hit = compact(located.text).match(/^([[［]?)(\d{1,4})([,，\]］]?)$/u)
+  if (!hit || (!hit[1] && !hit[3])) return
+  const at = located.start + located.text.indexOf(hit[2]),
+    mapped = translatedPdfBracketedReference(source, translation, hit[2], at)
+  if (
+    !mapped ||
+    located.start < mapped.sourceBlock.start ||
+    located.start + located.text.length > mapped.sourceBlock.end
+  )
+    return
+  let start = mapped.start,
+    end = mapped.end
+  if (hit[1]) {
+    if (!/^[[［]\s*$/u.test(translation.slice(mapped.targetBlock.start, start))) return
+    start = mapped.targetBlock.start
+  }
+  if (hit[3]) {
+    const tail = translation
+      .slice(end, mapped.targetBlock.end)
+      .match(hit[3] === ',' || hit[3] === '，' ? /^\s*[,，]/u : /^\s*[\]］]/u)
+    if (!tail) return
+    end += tail[0].length
+  }
+  return { start, text: translation.slice(start, end) }
+}
 
 // Match only a unique, exact visible spelling. Keep UTF-16 offsets for the
 // existing semantic label mapper and the font's per-line placement records.
@@ -120,12 +160,13 @@ function readOutlines(original, native, source, readDestination) {
   }
 }
 
-export function readReflowLinks(native, source, input, originalDocument) {
+export function readReflowLinks(native, source, input, originalDocument, retainTextRegion) {
   // Form fields (including hidden fields and XFA) have document-level relationships.
   // Rebuilding page content cannot preserve their values, actions or editability.
   if (originalDocument.catalog.has(PDFName.of('AcroForm'))) return { wholeDocument: true }
   const pageCount = input.pages.length,
-    unsafePages = new Set()
+    unsafePages = new Set(),
+    originalTextRegions = []
   const { p, m } = native,
     result = [],
     geometry = []
@@ -208,6 +249,22 @@ export function readReflowLinks(native, source, input, originalDocument) {
                   )
                 )
                   continue
+                if ([x1, x2, y1, y2].every(Number.isFinite)) {
+                  const retained = retainTextRegion?.(page, number, rect, geometry[number - 1])
+                  if (retained) {
+                    if (
+                      !originalTextRegions.some(
+                        (region) =>
+                          region.pageNumber === number &&
+                          ['x', 'y', 'width', 'height'].every(
+                            (key) => region.rect[key] === retained[key]
+                          )
+                      )
+                    )
+                      originalTextRegions.push({ pageNumber: number, rect: retained })
+                    continue
+                  }
+                }
               }
               unsafePages.add(number)
               break
@@ -339,6 +396,7 @@ export function readReflowLinks(native, source, input, originalDocument) {
       links: result,
       geometry,
       unsafePages,
+      originalTextRegions,
       wholeDocument: bookmarks.wholeDocument || result.some((link) => link.unsupported)
     }
   } finally {
@@ -381,6 +439,46 @@ export function mapReflowLinks(
 ) {
   const failed = new Set(),
     mapped = []
+  // The native destination parser exposes single-precision operands. Match an
+  // actual catalog identity at that exact precision, never a nearby coordinate.
+  const nativePointKey = (dest) =>
+    Number.isSafeInteger(dest?.pageNumber) &&
+    dest.pageNumber > 0 &&
+    dest.mode === 1 &&
+    dest.params?.length === 3 &&
+    dest.params[2] === null &&
+    dest.params.slice(0, 2).every(Number.isFinite)
+      ? JSON.stringify([dest.pageNumber, ...dest.params.slice(0, 2).map(Math.fround)])
+      : undefined
+  const aliases = new Map(),
+    mappedStarts = new Map()
+  for (const entry of catalogDestinations) {
+    const key = nativePointKey(entry.destination)
+    if (key) aliases.set(key, [...(aliases.get(key) ?? []), entry])
+  }
+  const namedStart = (dest) => {
+    const key = nativePointKey(dest)
+    if (!key) return
+    if (mappedStarts.has(key)) return mappedStarts.get(key)
+    const values = (aliases.get(key) ?? []).map((entry) =>
+        mapBlankPageAnchor(
+          entry,
+          blankPageAnchors,
+          firstContent,
+          sourcePages,
+          placements,
+          lines,
+          input.units
+        )
+      ),
+      first = values[0],
+      result =
+        first && values.every((value) => JSON.stringify(value) === JSON.stringify(first))
+          ? first
+          : undefined
+    mappedStarts.set(key, result)
+    return result
+  }
   const affine = (rect, crop) => ({
     pageNumber: crop.pageNumber,
     rect: {
@@ -411,10 +509,12 @@ export function mapReflowLinks(
       if (owners.length !== 1) return undefined
       const { unit, unitIndex } = owners[0],
         nativeSource = nativeLinkOriginSpan(link, unit, unitIndex, i),
-        source = span(unit.source, link.labels[i]) ?? nativeSource
+        nativeOccurrence = nativeLinkSourceSpan(link, unit, unitIndex, i),
+        source = span(unit.source, link.labels[i]) ?? nativeLinkSourceSpan(link, unit, unitIndex, i)
       if (!source) return undefined
       const target =
         nativeSource ??
+        closedNumericHit(unit.source, unit.translation, source, nativeOccurrence) ??
         (compact(source.text) === compact(unit.source)
           ? { start: 0, text: unit.translation }
           : (translatedPdfLinkLabel(unit.source, unit.translation, source.text, source.start) ??
@@ -495,7 +595,7 @@ export function mapReflowLinks(
         images[0]
       )
     else if (owners.length === 1) target = placements.get(owners[0])?.[0]
-    if (!target) return undefined
+    if (!target) return namedStart(dest)
     return {
       pageNumber: target.pageNumber,
       mode: 1,
@@ -507,8 +607,8 @@ export function mapReflowLinks(
     const regions = origin(link),
       target = link.destination ? destination(link.destination) : undefined
     if (!regions || (link.destination && !target)) {
-      failed.add(link.pageNumber)
-      if (link.destination) failed.add(link.destination.pageNumber)
+      if (!regions) failed.add(link.pageNumber)
+      if (link.destination && !target) failed.add(link.destination.pageNumber)
     } else mapped.push({ link, regions, target })
   }
   const mappedOutlines = outlines.map((outline) => {

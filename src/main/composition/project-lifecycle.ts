@@ -1,3 +1,4 @@
+import type { PromptOptimizationService } from '../projects/prompt-optimization'
 import { join } from 'node:path'
 import { HarnessStorageCleanup } from '../harness-acp/storage-cleanup'
 import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
@@ -53,6 +54,7 @@ import { createUploadCommandOwner } from '../uploads/command-owner'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
 export function composeProjectLifecycle({
+  promptOptimization,
   applicationEvents,
   notificationInbox,
   uploadRepository,
@@ -79,6 +81,7 @@ export function composeProjectLifecycle({
   clearSessionCredentials,
   getNotebookService
 }: {
+  promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
   researchFilmLifecycle: ResearchFilmLifecycle
@@ -261,8 +264,13 @@ export function composeProjectLifecycle({
         if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
         const jobs = await computeJobs.countNonTerminalBySession(sessionId)
         // Read synchronous activity after the database await so a newly active runtime is visible.
+        const snapshot = runtimeRef.current?.getSnapshot()
         return (
           jobs > 0 ||
+          snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) ===
+            true ||
+          snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) ===
+            true ||
           sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
           detectArchiveBlockingSessions().some(
             (session) => session.projectId === projectId && session.sessionId === sessionId
@@ -339,6 +347,7 @@ export function composeProjectLifecycle({
     }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
+    promptOptimization,
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
     onAgentContextChanged: (projectId) => {
       // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
@@ -395,6 +404,7 @@ export async function composeProjectRecovery({
   modules
 }: {
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
+  promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   isComputeJobOwnerLive: ({

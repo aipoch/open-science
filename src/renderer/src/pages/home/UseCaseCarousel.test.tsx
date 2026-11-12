@@ -192,7 +192,7 @@ it('pins the home gallery before paint and keeps the offset after scrolling away
 it('routes the gallery title and detail marketplace action to the marketplace page', async () => {
   await render()
   await act(async () =>
-    fireEvent.click(within(container).getByRole('button', { name: 'Use Case Gallery' }))
+    fireEvent.click(within(container).getByRole('button', { name: 'Use Cases' }))
   )
   expect(useNavigationStore.getState().view).toBe('marketplace')
   expect(within(document.body).queryByRole('dialog')).toBeNull()
@@ -485,7 +485,7 @@ it('prefetches only a settled hover and shares that request with the opened deta
 it('opens the case from its whole card and offers marketplace navigation beside detail import', async () => {
   await render()
   const ui = within(container)
-  expect(ui.getByRole('button', { name: 'Use Case Gallery' })).toBeTruthy()
+  expect(ui.getByRole('button', { name: 'Use Cases' })).toBeTruthy()
   expect(ui.queryByRole('button', { name: 'Random examples' })).toBeNull()
   const card = within(ui.getAllByRole('article')[0])
   expect(card.queryByRole('button', { name: 'Details' })).toBeNull()
@@ -636,11 +636,11 @@ it.each(['success', 'failure'] as const)(
   }
 )
 
-it('defaults the workbench market selector to cases while keeping category controls separate', async () => {
+it('keeps the compact gallery heading and category controls without duplicate navigation', async () => {
   await act(async () => root.render(<UseCaseCarousel variant="marketplace" compact />))
   const ui = within(container)
-  const selector = ui.getByRole('combobox', { name: 'Resource type' })
-  expect(selector.textContent).toContain('Use Case Gallery')
+  expect(ui.getByRole('heading', { name: 'Use Cases' })).toBeTruthy()
+  expect(ui.queryByRole('combobox', { name: 'Resource type' })).toBeNull()
   expect(ui.getByRole('group', { name: 'Category' })).toBeTruthy()
   expect(ui.getAllByRole('article')).toHaveLength(6)
 })
