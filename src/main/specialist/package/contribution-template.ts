@@ -1,3 +1,5 @@
+import type { FileSaveSelection } from '../../file-save-target'
+import type { PublishUserFileOptions } from '../../user-file-publisher'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { buildContributionTemplateZip } from '@aipoch/specialists/node'
@@ -18,12 +20,13 @@ type ContributionTemplateExporterDependencies = {
     title: string
     defaultPath: string
     filters: Array<{ name: string; extensions: string[] }>
-  }) => Promise<{ canceled: boolean; filePath?: string }>
+  }) => Promise<FileSaveSelection>
   readReadme: () => Promise<string>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<void>
   publishUserFile: (
     destinationPath: string,
-    write: (temporaryPath: string) => Promise<unknown>
+    write: (temporaryPath: string) => Promise<unknown>,
+    options?: PublishUserFileOptions
   ) => Promise<void>
   generatePackageId?: () => string
   translate?: NativeTranslator
@@ -53,8 +56,10 @@ export const createContributionTemplateExporter =
         readme,
         packageId: (dependencies.generatePackageId ?? randomUUID)()
       })
-      await dependencies.publishUserFile(destination.filePath, (temporaryPath) =>
-        dependencies.writeFile(temporaryPath, archive)
+      await dependencies.publishUserFile(
+        destination.filePath,
+        (temporaryPath) => dependencies.writeFile(temporaryPath, archive),
+        { target: destination.target }
       )
       return { saved: true }
     } catch {

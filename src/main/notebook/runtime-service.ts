@@ -350,14 +350,16 @@ const saveIpynbWithDialog = async (
   translate: NativeTranslator = englishNativeTranslator
 ): Promise<ExportNotebookResult> => {
   const dialog = desktopFileInteraction()
-  const { canceled, filePath } = await dialog.chooseSavePath({
+  const { canceled, filePath, target } = await dialog.chooseSavePath({
     defaultPath: join(runtimeMetadata().downloadsPath, suggestedName),
     title: translate('Export notebook'),
     filters: [{ name: translate('Jupyter Notebook'), extensions: ['ipynb'] }]
   })
 
   if (canceled || !filePath) return { saved: false }
-  await publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, data, 'utf8'))
+  await publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, data, 'utf8'), {
+    target
+  })
   return { saved: true, filePath }
 }
 

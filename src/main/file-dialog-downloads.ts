@@ -46,7 +46,14 @@ export function installFileDialogDownloads(
       controller.abort()
       cancelDownload()
     }
+    // A new document cannot inherit the previous document's pending save authorization.
+    // Keep the same cancellation signal through selection, copying and final publication.
     window.once('closed', closed)
+    contents.once('destroyed', closed)
+    contents.on('did-start-navigation', navigated)
+    function navigated(_event: unknown, _url: string, inPlace: boolean, mainFrame: boolean): void {
+      if (mainFrame && !inPlace) closed()
+    }
     const completed = new Promise<void>((resolve, reject) => {
       item.once('done', (_event, state) => {
         downloadFinished = true
@@ -68,8 +75,19 @@ export function installFileDialogDownloads(
         }
         await completed
         controller.signal.throwIfAborted()
-        await publishUserFile(selected.filePath, (target) =>
-          copyFile(join(stagedRoot, 'download'), target)
+        operation.phase('publish-file')
+        await publishUserFile(
+          selected.filePath,
+          (target) => copyFile(join(stagedRoot, 'download'), target),
+          {
+            target: selected.target,
+            signal: controller.signal,
+            userSelectedDestination: true,
+            validateDestination: async () => {
+              if (window.isDestroyed() || contents.isDestroyed()) controller.abort()
+              controller.signal.throwIfAborted()
+            }
+          }
         )
         operation.complete()
       } catch (error) {
@@ -84,6 +102,8 @@ export function installFileDialogDownloads(
         }
       } finally {
         window.removeListener('closed', closed)
+        contents.removeListener('destroyed', closed)
+        contents.removeListener('did-start-navigation', navigated)
         cancelDownload()
         await completed.catch(() => undefined)
         await rm(stagedRoot, {

@@ -1,3 +1,5 @@
+import type { FileSaveSelection, FileSaveTarget } from '../file-save-target'
+import { publishUserFile } from '../user-file-publisher'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 import { outputFilename, WINDOWS_RESERVED_BASENAME } from './export-filename'
@@ -109,10 +111,7 @@ type ArtifactReproducibilityReceiptExporterDependencies = {
     lockChecksum: string,
     request: ArtifactReproducibilityReceiptScope
   ) => Promise<string | undefined>
-  showSaveDialog: (
-    owner: unknown,
-    options: SaveDialogOptions
-  ) => Promise<{ canceled: boolean; filePath?: string }>
+  showSaveDialog: (owner: unknown, options: SaveDialogOptions) => Promise<FileSaveSelection>
   showOpenDialog?: (
     owner: unknown,
     options: OpenDialogOptions
@@ -123,7 +122,7 @@ type ArtifactReproducibilityReceiptExporterDependencies = {
     kernelKind: 'python' | 'r'
     lock: NotebookEnvironmentLock
   }) => Promise<{ environmentName: string; reused: boolean }>
-  writeArchive?: (filePath: string, bytes: Uint8Array) => Promise<unknown>
+  writeArchive?: (filePath: string, bytes: Uint8Array, target?: FileSaveTarget) => Promise<unknown>
   translate?: NativeTranslator
 }
 
@@ -674,6 +673,10 @@ const readEnvironmentLockArchive = async (
 const createArtifactReproducibilityReceiptExporter = (
   dependencies: ArtifactReproducibilityReceiptExporterDependencies
 ): ArtifactReproducibilityReceiptExporter => {
+  const writeArchive =
+    dependencies.writeArchive ??
+    ((path: string, bytes: Uint8Array, target?: FileSaveTarget) =>
+      publishUserFile(path, (temporary) => writeFile(temporary, bytes), { target }))
   const resolveEnvironmentLock = async (
     request: ExportArtifactEnvironmentLockRequest
   ): Promise<{
@@ -865,7 +868,7 @@ const createArtifactReproducibilityReceiptExporter = (
           filters: []
         })
         if (selected.canceled || !selected.filePath) return { saved: false }
-        await (dependencies.writeArchive ?? writeFile)(selected.filePath, bytes)
+        await writeArchive(selected.filePath, bytes, selected.target)
         return { saved: true }
       }
       let checkLog: ArtifactReproducibilityCheckLogRecord | undefined
@@ -891,7 +894,11 @@ const createArtifactReproducibilityReceiptExporter = (
       if (selected.canceled || !selected.filePath) return { saved: false }
 
       const finalPath = selected.filePath
-      const destination = finalPath.toLowerCase().endsWith('.zip') ? finalPath : `${finalPath}.zip`
+      const destination = selected.target
+        ? finalPath
+        : finalPath.toLowerCase().endsWith('.zip')
+          ? finalPath
+          : `${finalPath}.zip`
       const outputs: Record<string, Uint8Array> = {}
       const manifest: Array<{ entityId: string; relativePath: string; archivePath: string }> = []
       const archivedChecksums = new Map<string, string>()
@@ -935,7 +942,7 @@ const createArtifactReproducibilityReceiptExporter = (
           version.versionNumber < 1)
       )
         throw new Error('Verification report version identity does not match the receipt.')
-      await (dependencies.writeArchive ?? writeFile)(
+      await writeArchive(
         destination,
         buildVerificationArchive(
           validated,
@@ -945,7 +952,8 @@ const createArtifactReproducibilityReceiptExporter = (
           version?.versionNumber,
           Boolean(sourceScope),
           omitted.length > 0
-        )
+        ),
+        selected.target
       )
       return { saved: true }
     },
@@ -971,10 +979,11 @@ const createArtifactReproducibilityReceiptExporter = (
       })
       if (selected.canceled || !selected.filePath) return { saved: false }
 
-      const destination = selected.filePath.toLowerCase().endsWith('.zip')
-        ? selected.filePath
-        : `${selected.filePath}.zip`
-      await (dependencies.writeArchive ?? writeFile)(destination, archive)
+      const destination =
+        selected.target || selected.filePath.toLowerCase().endsWith('.zip')
+          ? selected.filePath
+          : `${selected.filePath}.zip`
+      await writeArchive(destination, archive, selected.target)
       return { saved: true }
     },
     importEnvironmentLock: async (owner, request) => {

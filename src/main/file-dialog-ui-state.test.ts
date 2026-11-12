@@ -116,5 +116,7 @@ it('keeps macOS filenames independent of Windows reserved names', async () => {
   expect(await session.action({ type: 'select', directory: root, filename: 'CON.txt' })).toEqual({
     type: 'done'
   })
-  expect(finish).toHaveBeenCalledWith({ canceled: false, filePath: join(root, 'CON.txt') })
+  expect(finish).toHaveBeenCalledWith(
+    expect.objectContaining({ canceled: false, filePath: join(root, 'CON.txt') })
+  )
 })

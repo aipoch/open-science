@@ -4,12 +4,12 @@ import {
   type BaseWindow,
   type OpenDialogOptions,
   type OpenDialogReturnValue,
-  type SaveDialogOptions,
-  type SaveDialogReturnValue
+  type SaveDialogOptions
 } from 'electron'
 import { showFileDialogInHelper } from './file-dialog-process'
 import { assertSelectedSavePath } from './file-dialog-filename'
-import { usesHtmlFileDialog } from './file-dialog-protocol'
+import { usesHtmlFileDialog, type FileDialogSaveResult } from './file-dialog-protocol'
+import { snapshotFileTarget } from './file-save-target'
 
 const runFileDialog = async <Result extends { canceled: boolean }>(
   kind: 'open' | 'save',
@@ -61,13 +61,13 @@ export function showSaveDialog(
   parent: BaseWindow,
   options: SaveDialogOptions,
   signal?: AbortSignal
-): Promise<SaveDialogReturnValue>
-export function showSaveDialog(options: SaveDialogOptions): Promise<SaveDialogReturnValue>
+): Promise<FileDialogSaveResult>
+export function showSaveDialog(options: SaveDialogOptions): Promise<FileDialogSaveResult>
 export function showSaveDialog(
   parentOrOptions: BaseWindow | SaveDialogOptions,
   options?: SaveDialogOptions,
   signal?: AbortSignal
-): Promise<SaveDialogReturnValue> {
+): Promise<FileDialogSaveResult> {
   const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
   const dialogOptions = options ?? (parentOrOptions as SaveDialogOptions)
   if (process.platform === 'win32' || usesHtmlFileDialog({ kind: 'save', options: dialogOptions }))
@@ -75,12 +75,15 @@ export function showSaveDialog(
       { kind: 'save', options: dialogOptions },
       parent,
       signal
-    ) as Promise<SaveDialogReturnValue>
+    ) as Promise<FileDialogSaveResult>
   return runFileDialog('save', parent, async (dialogParent) => {
     const selected = await (dialogParent
       ? dialog.showSaveDialog(dialogParent, dialogOptions)
       : dialog.showSaveDialog(dialogOptions))
-    if (!selected.canceled) assertSelectedSavePath(dialogOptions, selected.filePath)
+    if (!selected.canceled) {
+      assertSelectedSavePath(dialogOptions, selected.filePath)
+      return { ...selected, target: await snapshotFileTarget(selected.filePath) }
+    }
     return selected
   })
 }

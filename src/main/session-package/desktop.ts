@@ -1,3 +1,4 @@
+import type { FileSaveTarget } from '../file-save-target'
 import { downloadUseCase } from './use-case-download'
 import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
@@ -64,6 +65,7 @@ export class SessionPackageDesktop {
   private lastExport?: {
     operationId: string
     filePath: string
+    target?: FileSaveTarget
     selection?: PackageFileSelection
   }
   // The sensitive-content retry in respond() never passes export options, so it inherits this
@@ -278,7 +280,9 @@ export class SessionPackageDesktop {
         undefined,
         true,
         previous?.filePath,
-        previous?.selection
+        previous?.selection,
+        undefined,
+        previous?.target
       ).then(() => this.operations.snapshot)
     }
     if (
@@ -739,7 +743,8 @@ export class SessionPackageDesktop {
     allowSensitiveContent = false,
     destinationPath?: string,
     selection?: PackageFileSelection,
-    stageDownload?: boolean
+    stageDownload?: boolean,
+    expectedTarget?: FileSaveTarget
   ): Promise<SessionPackageExportResult> {
     const stage = stageDownload ?? this.stageDownloadForRetries
     let operationSignal: AbortSignal | undefined
@@ -752,6 +757,7 @@ export class SessionPackageDesktop {
           this.lastExport = {
             operationId: this.operations.snapshot!.id,
             filePath: destinationPath,
+            target: expectedTarget,
             selection
           }
         this.operations.setCleanupPending(this.pendingCleanup.size > 0)
@@ -760,6 +766,7 @@ export class SessionPackageDesktop {
           return await this.staged(async (directory) => {
             const archive = join(directory, 'session.science')
             let filePath: string | undefined = destinationPath
+            let target = expectedTarget
             await this.options.withDataRootWrite(() =>
               this.acceptCleanup(() =>
                 this.options.service.exportTo(request, archive, {
@@ -813,9 +820,11 @@ export class SessionPackageDesktop {
                               signal.throwIfAborted()
                             }
                             filePath = selected.filePath
+                            target = selected.target
                             this.lastExport = {
                               operationId: this.operations.snapshot!.id,
                               filePath: filePath!,
+                              target,
                               selection: excluded
                             }
                             this.operations.report({ phase: 'preparing' })
@@ -832,6 +841,8 @@ export class SessionPackageDesktop {
               filePath,
               (temporary) => this.copyArchive(archive, temporary, 'saving', signal),
               {
+                target,
+                signal,
                 validateDestination: async () => signal.throwIfAborted()
               }
             )

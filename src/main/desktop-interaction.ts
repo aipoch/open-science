@@ -8,6 +8,8 @@ import type {
   desktopMessageOptionsSchema,
   DesktopNativeOperation
 } from './desktop-native-contract'
+import type { FileSaveSelection } from './file-save-target'
+import type { showSaveDialog } from './file-dialog-electron'
 import { assertSelectedSavePath } from './file-dialog-filename'
 import { readFile, rm } from 'node:fs/promises'
 import { ApplicationCommandError } from '../shared/application-command-contract'
@@ -32,11 +34,11 @@ export type DesktopInteraction = Readonly<{
     timeoutMessage: string
   }): Promise<Buffer>
   chooseFiles: typeof dialog.showOpenDialog
-  chooseSavePath: typeof dialog.showSaveDialog
+  chooseSavePath: typeof showSaveDialog
   chooseSavePathForCaller(
     callerId: string | undefined,
     options: z.infer<typeof desktopSaveOptionsSchema>
-  ): Promise<{ canceled: boolean; filePath?: string }>
+  ): Promise<FileSaveSelection>
   confirm: typeof dialog.showMessageBox
   confirmSync: typeof dialog.showMessageBoxSync
   openPath: typeof shell.openPath
@@ -80,7 +82,7 @@ export type DesktopFileInteraction = Readonly<{
   chooseSavePath(
     options: z.infer<typeof desktopSaveOptionsSchema>,
     callerId?: string
-  ): Promise<{ canceled: boolean; filePath?: string }>
+  ): Promise<FileSaveSelection>
   confirm(
     options: z.infer<typeof desktopMessageOptionsSchema>,
     callerId?: string
@@ -134,10 +136,7 @@ export function createRemoteDesktopFileInteraction(
         filePaths: string[]
       },
     chooseSavePath: async (options, callerId) =>
-      (await request({ operation: 'save-dialog', options }, callerId)) as {
-        canceled: boolean
-        filePath?: string
-      },
+      (await request({ operation: 'save-dialog', options }, callerId)) as FileSaveSelection,
     confirm: async (options, callerId) =>
       (await request({ operation: 'message-box', options }, callerId)) as { response: number },
     researchVideoProgress: async (options) =>

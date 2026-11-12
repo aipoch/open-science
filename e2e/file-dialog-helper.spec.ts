@@ -1,7 +1,7 @@
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -226,8 +226,10 @@ test('HTML destination selection saves Unicode names and requires explicit repla
     await first.page.screenshot({ path: info.outputPath('01-html-save.png') })
     await first.page.getByRole('button', { name: 'Save', exact: true }).click()
     const selection = await first.result
-    expect(selection).toEqual({ canceled: false, filePath: file })
-    await publishUserFile(file, (path) => writeFile(path, 'original UTF-8 content'))
+    expect(selection).toMatchObject({ canceled: false, filePath: file })
+    await publishUserFile(file, (path) => writeFile(path, 'original UTF-8 content'), {
+      target: 'target' in selection ? selection.target : undefined
+    })
     expect(await readFile(file, 'utf8')).toBe('original UTF-8 content')
   } finally {
     await first.close()
@@ -248,8 +250,11 @@ test('HTML destination selection saves Unicode names and requires explicit repla
     expect(await readFile(file, 'utf8')).toBe('changed while confirmation was open')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await page.getByRole('button', { name: 'Replace', exact: true }).click()
-    expect(await second.result).toEqual({ canceled: false, filePath: file })
-    await publishUserFile(file, (path) => writeFile(path, 'confirmed replacement'))
+    const selected = await second.result
+    expect(selected).toMatchObject({ canceled: false, filePath: file })
+    await publishUserFile(file, (path) => writeFile(path, 'confirmed replacement'), {
+      target: 'target' in selected ? selected.target : undefined
+    })
     expect(await readFile(file, 'utf8')).toBe('confirmed replacement')
   } finally {
     await second.close()
@@ -378,7 +383,7 @@ test('compact save navigation updates the destination and keyboard actions prese
     await name.press('Enter').catch((error) => {
       if (!helper.page.isClosed()) throw error
     })
-    expect(await helper.result).toEqual({
+    expect(await helper.result).toMatchObject({
       canceled: false,
       filePath: join(nested, 'analysis.v2.TXT')
     })
@@ -462,7 +467,7 @@ test('actual export types preserve aliases and compound suffixes and require exp
         await helper.page.getByRole('button', { name: 'Save', exact: true }).click()
       }
       const target = join(root, scenario.expected)
-      expect(await helper.result).toEqual({ canceled: false, filePath: target })
+      expect(await helper.result).toMatchObject({ canceled: false, filePath: target })
       const bytes = Buffer.from(`unchanged encoded payload ${index}`)
       await publishUserFile(target, (path) => writeFile(path, bytes))
       expect(await readFile(target)).toEqual(bytes)
@@ -660,3 +665,42 @@ for (const locale of ['en', 'de', 'fr', 'ru', 'es', 'zh-Hans', 'zh-Hant', 'ja', 
     }
   })
 }
+
+test('confirmed targets stay protected through final file publication', async () => {
+  const root = test.info().outputPath('publication-races')
+  await mkdir(root, { recursive: true })
+  for (const scenario of ['modified', 'replaced', 'appeared', 'cancelled'] as const) {
+    const destination = join(root, `${scenario}.txt`)
+    if (scenario !== 'appeared') await writeFile(destination, 'original')
+    const helper = await launchHelper(root, 'save', 'light', { defaultPath: destination })
+    try {
+      await helper.page.getByRole('button', { name: 'Save', exact: true }).click()
+      if (scenario !== 'appeared')
+        await helper.page.getByRole('button', { name: 'Replace', exact: true }).click()
+      const selected = await helper.result
+      if (!('target' in selected) || !selected.target) throw new Error('Missing trusted target')
+      const controller = new AbortController()
+      await expect(
+        publishUserFile(
+          destination,
+          async (temporary) => {
+            await writeFile(temporary, 'export')
+            if (scenario === 'modified' || scenario === 'appeared')
+              await writeFile(destination, 'other writer')
+            if (scenario === 'replaced') {
+              await writeFile(destination + '.other', 'other writer')
+              await rename(destination + '.other', destination)
+            }
+            if (scenario === 'cancelled') controller.abort()
+          },
+          { target: selected.target, signal: controller.signal }
+        )
+      ).rejects.toThrow()
+      expect(await readFile(destination, 'utf8')).toBe(
+        scenario === 'cancelled' ? 'original' : 'other writer'
+      )
+    } finally {
+      await helper.close()
+    }
+  }
+})

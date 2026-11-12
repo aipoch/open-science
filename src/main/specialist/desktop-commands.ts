@@ -90,6 +90,10 @@ export function createSpecialistDesktopCommands(
         },
         {
           ...options,
+          signal: AbortSignal.any([
+            invocation.callerLease.signal,
+            ...(options?.signal ? [options.signal] : [])
+          ]),
           validateDestination: async () => {
             await options?.validateDestination?.()
             assertCaller(invocation)

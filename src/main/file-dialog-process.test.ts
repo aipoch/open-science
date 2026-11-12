@@ -168,12 +168,19 @@ describe('isolated native file dialogs', () => {
       expect.objectContaining(saveRequest),
       expect.any(Function)
     )
-    child.emit('message', { type: 'result', result: { canceled: false, filePath } })
+    child.emit('message', {
+      type: 'result',
+      result: { canceled: false, filePath, target: { path: filePath, fingerprint: null } }
+    })
     await Promise.resolve()
     expect(settled).not.toHaveBeenCalled()
     child.exit(0)
     await result
-    expect(settled).toHaveBeenCalledWith({ canceled: false, filePath })
+    expect(settled).toHaveBeenCalledWith({
+      canceled: false,
+      filePath,
+      target: { path: filePath, fingerprint: null }
+    })
     expect(JSON.stringify(mocks.log.info.mock.calls)).not.toContain(filePath)
     expect(child.kill).not.toHaveBeenCalled()
     assertReleased()
@@ -186,7 +193,10 @@ describe('isolated native file dialogs', () => {
       const rejection = expect(pending).rejects.toThrow('exited unexpectedly')
       child.ready()
       if (stage === 'after-selection')
-        child.emit('message', { type: 'result', result: { canceled: false, filePath } })
+        child.emit('message', {
+          type: 'result',
+          result: { canceled: false, filePath, target: { path: filePath, fingerprint: null } }
+        })
       child.emit('disconnect')
       child.exit(0xc0000374)
       await rejection
@@ -216,7 +226,10 @@ describe('isolated native file dialogs', () => {
         window.destroyed = true
         window.emit('closed')
       }
-      child.emit('message', { type: 'result', result: { canceled: false, filePath } })
+      child.emit('message', {
+        type: 'result',
+        result: { canceled: false, filePath, target: { path: filePath, fingerprint: null } }
+      })
       await rejection
       expect(child.kill).toHaveBeenCalledWith('SIGKILL')
       if (reason !== 'window-close') assertReleased()
@@ -262,7 +275,10 @@ describe('isolated native file dialogs', () => {
     const pending = showFileDialogInHelper(saveRequest, window.asParent())
     const rejection = expect(pending).rejects.toThrow('invalid selection')
     child.emit('message', { type: 'ready' })
-    child.emit('message', { type: 'result', result: { canceled: false, filePath } })
+    child.emit('message', {
+      type: 'result',
+      result: { canceled: false, filePath, target: { path: filePath, fingerprint: null } }
+    })
     await rejection
     assertReleased()
   })

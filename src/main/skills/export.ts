@@ -1,3 +1,4 @@
+import type { FileSaveSelection } from '../file-save-target'
 import type { SkillExportArchive } from '@aipoch/skills/sources'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'
@@ -12,7 +13,7 @@ type SkillExportDialog = {
     title: string
     defaultPath: string
     filters: Array<{ name: string; extensions: string[] }>
-  }) => Promise<{ canceled: boolean; filePath?: string }>
+  }) => Promise<FileSaveSelection>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<unknown>
   publishUserFile?: typeof publishUserFile
 }
@@ -28,8 +29,12 @@ export const saveSkillExport = async (
     filters: [{ name: translate('Skill ZIP'), extensions: ['zip'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
-  await (adapter.publishUserFile ?? publishUserFile)(selected.filePath, async (temporaryPath) => {
-    await adapter.writeFile(temporaryPath, archive.archiveBytes)
-  })
+  await (adapter.publishUserFile ?? publishUserFile)(
+    selected.filePath,
+    async (temporaryPath) => {
+      await adapter.writeFile(temporaryPath, archive.archiveBytes)
+    },
+    { target: selected.target }
+  )
   return { saved: true }
 }

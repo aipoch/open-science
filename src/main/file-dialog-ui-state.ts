@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { validFileBasename, saveFileFormat } from './file-dialog-filename'
 import { resolveSaveFileName } from '../shared/file-save-name'
-import { lstat, mkdir, opendir, stat } from 'node:fs/promises'
+import { mkdir, opendir, stat } from 'node:fs/promises'
+import { fileFingerprint as fingerprint } from './file-save-target'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import type { FileDialogRequest, FileDialogResult } from './file-dialog-protocol'
 import type {
@@ -35,18 +36,6 @@ async function listLocation(path: string): Promise<FileDialogLocation> {
   }
   folders.sort((a, b) => a.name.localeCompare(b.name))
   return { path: absolute, parent: dirname(absolute), folders, truncated }
-}
-
-async function fingerprint(path: string): Promise<string | undefined> {
-  try {
-    const info = await lstat(path, { bigint: true })
-    // Never confirm replacing a directory, symlink or device through this file-only UI.
-    if (!info.isFile()) throw new Error('Destination is not a regular file')
-    return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(':')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  }
 }
 
 export class FileDialogUiSession {
@@ -145,13 +134,13 @@ export class FileDialogUiSession {
             return { type: 'error', code: 'filename' }
           const path = join(action.directory, filename)
           const existing = await fingerprint(path)
-          if (existing !== undefined) {
+          if (existing !== null) {
             const token = randomUUID()
             this.confirmation = { token, path, fingerprint: existing }
             return { type: 'confirm', filename, token }
           }
           this.closed = true
-          this.finish({ canceled: false, filePath: path })
+          this.finish({ canceled: false, filePath: path, target: { path, fingerprint: null } })
           return { type: 'done' }
         }
         case 'replace': {
@@ -164,7 +153,11 @@ export class FileDialogUiSession {
           )
             return { type: 'error', code: 'changed' }
           this.closed = true
-          this.finish({ canceled: false, filePath: pending.path })
+          this.finish({
+            canceled: false,
+            filePath: pending.path,
+            target: { path: pending.path, fingerprint: pending.fingerprint }
+          })
           return { type: 'done' }
         }
         default:

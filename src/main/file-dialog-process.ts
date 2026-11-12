@@ -224,6 +224,14 @@ export async function showFileDialogInHelper(
         } else if (raw?.type === 'result' && ready && !selection) {
           try {
             selection = parseFileDialogResult(request.kind, raw.result)
+            // Only the helper can grant overwrite authorization; a path alone is insufficient.
+            if (
+              presentation === 'html' &&
+              request.kind === 'save' &&
+              !selection.canceled &&
+              !('target' in selection && selection.target)
+            )
+              throw new Error('Save target authorization is missing.')
             if (request.kind === 'save' && !selection.canceled && 'filePath' in selection)
               assertSelectedSavePath(request.options, selection.filePath)
             if (presentation === 'html' && !shown && !selection.canceled)

@@ -74,7 +74,7 @@ export function createDesktopNativeHandler(
         const selected = await showSaveDialog(parent, request.options, signal)
         result = {
           canceled: selected.canceled,
-          ...(selected.filePath ? { filePath: selected.filePath } : {})
+          ...(selected.filePath ? { filePath: selected.filePath, target: selected.target } : {})
         }
         break
       }

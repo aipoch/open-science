@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path'
 import { isLocale } from '../shared/locale'
 import type { FileDialogAppearance } from '../shared/file-dialog-ui'
+import { fileSaveTargetSchema, type FileSaveTarget } from './file-save-target'
 import type {
   OpenDialogOptions,
   OpenDialogReturnValue,
@@ -15,7 +16,8 @@ export const FILE_DIALOG_DISPLAY_TIMEOUT_MS = 15_000
 export type FileDialogRequest =
   { kind: 'open'; options: OpenDialogOptions } | { kind: 'save'; options: SaveDialogOptions }
 
-export type FileDialogResult = OpenDialogReturnValue | SaveDialogReturnValue
+export type FileDialogSaveResult = SaveDialogReturnValue & { target?: FileSaveTarget }
+export type FileDialogResult = OpenDialogReturnValue | FileDialogSaveResult
 
 export const usesHtmlFileDialog = (request: FileDialogRequest): boolean =>
   (process.platform === 'win32' || process.platform === 'darwin') &&
@@ -66,8 +68,11 @@ export function parseFileDialogResult(
   if (record(raw) && typeof raw.canceled === 'boolean') {
     if (raw.canceled)
       return kind === 'open' ? { canceled: true, filePaths: [] } : { canceled: true, filePath: '' }
-    if (kind === 'save' && selectedPath(raw.filePath))
-      return { canceled: false, filePath: raw.filePath }
+    if (kind === 'save' && selectedPath(raw.filePath)) {
+      const target = raw.target === undefined ? undefined : fileSaveTargetSchema.parse(raw.target)
+      if (target && target.path !== raw.filePath) throw new Error('Save target path mismatch.')
+      return { canceled: false, filePath: raw.filePath, ...(target ? { target } : {}) }
+    }
     if (
       kind === 'open' &&
       Array.isArray(raw.filePaths) &&

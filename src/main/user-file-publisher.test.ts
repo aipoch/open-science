@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
 import {
   chmod,
+  link,
   copyFile,
   mkdtemp,
   open,
@@ -19,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFileDurability } from '@aipoch/durable-files'
 
 import { publishUserFile } from './user-file-publisher'
+import { snapshotFileTarget } from './file-save-target'
 
 let root = ''
 
@@ -292,3 +294,65 @@ it.each(['private-file', 'fallback-copy', 'fallback-file'] as const)(
     expect(await readFile(destination, 'utf8')).toBe('retry bytes')
   }
 )
+
+it('restores the captured original when the caller expires before publication', async () => {
+  const destination = join(root, 'confirmed.txt')
+  await writeFile(destination, 'original')
+  const target = await snapshotFileTarget(destination)
+  const controller = new AbortController()
+  await expect(
+    publishUserFile(destination, (p) => writeFile(p, 'export'), {
+      target,
+      signal: controller.signal,
+      validateDestination: async () => {
+        if (!(await stat(destination).catch(() => null)))
+          controller.abort(new Error('caller expired'))
+      }
+    })
+  ).rejects.toThrow('caller expired')
+  expect(await readFile(destination, 'utf8')).toBe('original')
+  expect(await readdir(root)).toEqual(['confirmed.txt'])
+})
+
+it('preserves both files and a receipt if a competitor prevents restoration', async () => {
+  const destination = join(root, 'confirmed.txt')
+  await writeFile(destination, 'original')
+  const target = await snapshotFileTarget(destination)
+  await expect(
+    publishUserFile(destination, (p) => writeFile(p, 'export'), {
+      target,
+      linkFile: async (source, dest) => {
+        await writeFile(dest, 'competitor', { flag: 'wx' })
+        await link(source, dest)
+      }
+    })
+  ).rejects.toMatchObject({ code: 'EEXIST' })
+  expect(await readFile(destination, 'utf8')).toBe('competitor')
+  const recovery = (await readdir(root)).find((name) => name.startsWith('.open-science-save-'))!
+  const files = await readdir(join(root, recovery), { recursive: true })
+  const previous = files.find((name) => name.endsWith('previous'))!
+  const receipt = files.find((name) => name.endsWith('recovery.json'))!
+  expect(await readFile(join(root, recovery, previous), 'utf8')).toBe('original')
+  expect(JSON.parse(await readFile(join(root, recovery, receipt), 'utf8')).target).toEqual(target)
+})
+
+it('rechecks caller validity after a fallback copy and before its atomic publication', async () => {
+  const destination = join(root, 'fresh.txt')
+  let current = true
+  await expect(
+    publishUserFile(destination, (p) => writeFile(p, 'export'), {
+      target: await snapshotFileTarget(destination),
+      validateDestination: async () => {
+        if (!current) throw new Error('caller expired')
+      },
+      linkFile: async () => {
+        throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' })
+      },
+      copyFileExclusive: async (source, dest) => {
+        await copyFile(source, dest, constants.COPYFILE_EXCL)
+        current = false
+      }
+    })
+  ).rejects.toThrow('caller expired')
+  expect(await readdir(root)).toEqual([])
+})

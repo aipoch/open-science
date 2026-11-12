@@ -938,3 +938,49 @@ test('desktop export routes open a visible themed picker and publish selected fi
   })
   await observer.stop()
 })
+
+test('closing a browser download caller during writing prevents late publication', async ({
+  app
+}, info) => {
+  test.skip(process.platform !== 'darwin' && process.platform !== 'win32')
+  const page = await app.completeOnboarding()
+  const root = info.outputPath('cancelled-browser-download')
+  await mkdir(root, { recursive: true })
+  const target = join(root, 'existing.txt')
+  await writeFile(target, 'preserve original')
+  const observer = await app.observeFileDialogs()
+  const gate = await app.holdBrowserDownloadWrite()
+  try {
+    await page.evaluate(() => {
+      const url = URL.createObjectURL(new Blob(['new download bytes'], { type: 'text/plain' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'existing.txt'
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    })
+    const picker = await observer.next()
+    await picker.page.locator('#save-path').fill(root)
+    await picker.page.locator('#save-name').fill('existing.txt')
+    await picker.page.getByRole('button', { name: 'Save', exact: true }).click()
+    await picker.page.getByRole('button', { name: 'Replace', exact: true }).click()
+    await expect.poll(() => gate.evaluate((state) => state.entered)).toBe(true)
+    const temporary = await gate.evaluate((state) => state.temporaryDirectory)
+    await gate.evaluate((state) => state.closeCaller())
+    await gate.evaluate((state) => state.release())
+    await expect.poll(async () => Boolean(await stat(temporary).catch(() => null))).toBe(false)
+    expect(await readFile(target, 'utf8')).toBe('preserve original')
+    expect((await readdir(root)).filter((name) => name.startsWith('.open-science-save-'))).toEqual(
+      []
+    )
+    await info.attach('browser-download-close-log', {
+      path: await app.captureMainLog('browser-download-close.log'),
+      contentType: 'text/plain'
+    })
+    await picker.close().catch(() => undefined)
+  } finally {
+    await observer.stop()
+    await gate.evaluate((state) => state.restore()).catch(() => undefined)
+    await gate.dispose()
+  }
+})

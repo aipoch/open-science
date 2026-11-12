@@ -390,6 +390,15 @@ type ElectronApp = {
   createTestDirectory: (name: string) => Promise<string>
   holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
   observeFileDialogs: () => Promise<FileDialogObserver>
+  holdBrowserDownloadWrite: () => Promise<
+    JSHandle<{
+      entered: boolean
+      temporaryDirectory: string
+      release: () => void
+      closeCaller: () => void
+      restore: () => void
+    }>
+  >
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
@@ -1445,6 +1454,51 @@ class ElectronAppHarness implements ElectronApp {
     await this.runningApplication.evaluate(({ app }, url) => {
       app.emit('open-url', { preventDefault: () => undefined }, url)
     }, url)
+  }
+
+  async holdBrowserDownloadWrite(): Promise<
+    JSHandle<{
+      entered: boolean
+      temporaryDirectory: string
+      release: () => void
+      closeCaller: () => void
+      restore: () => void
+    }>
+  > {
+    const owner = await this.runningApplication.browserWindow(this.page)
+    const id = await owner.evaluate((window) => window.id)
+    // Pause after the real filesystem copy, before the production publisher can commit it.
+    // This schedules a deterministic close during writing, without mocking download/selection.
+    return this.runningApplication.evaluateHandle(({ BrowserWindow }, id) => {
+      const fs = process.getBuiltinModule('node:fs/promises')
+      const path = process.getBuiltinModule('node:path')
+      const original = fs.copyFile
+      let release = (): void => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const keeper = new BrowserWindow({ show: false })
+      const state = {
+        entered: false,
+        temporaryDirectory: '',
+        release,
+        closeCaller: () => BrowserWindow.fromId(id)!.destroy(),
+        restore: () => {
+          fs.copyFile = original
+          release()
+          keeper.destroy()
+        }
+      }
+      fs.copyFile = (async (...args: Parameters<typeof fs.copyFile>) => {
+        await original(...args)
+        if (String(args[0]).includes('open-science-download-')) {
+          state.temporaryDirectory = path.dirname(String(args[1]))
+          state.entered = true
+          await gate
+        }
+      }) as typeof original
+      return state
+    }, id)
   }
 
   async observeFileDialogs(): Promise<FileDialogObserver> {

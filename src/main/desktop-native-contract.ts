@@ -2,6 +2,7 @@ import { researchVideoProgressSchema } from '@aipoch/research-film/contracts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
+import { fileSaveTargetSchema } from './file-save-target'
 
 const text = z.string().max(32_768)
 const path = text.refine(isAbsolute, 'Expected an absolute local path.')
@@ -300,7 +301,15 @@ export function parseDesktopNativeResult(
         .strict()
         .parse(result)
     case 'save-dialog':
-      return z.object({ canceled: z.boolean(), filePath: path.optional() }).strict().parse(result)
+      return z
+        .object({
+          canceled: z.boolean(),
+          filePath: path.optional(),
+          target: fileSaveTargetSchema.optional()
+        })
+        .strict()
+        .refine((value) => !value.target || value.target.path === value.filePath)
+        .parse(result)
     case 'message-box':
       return z
         .object({
