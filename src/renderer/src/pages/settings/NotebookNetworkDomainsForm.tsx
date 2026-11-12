@@ -1,4 +1,8 @@
-import { NotebookNetworkAccessEditor } from './NotebookNetworkAccessEditor'
+import {
+  NotebookNetworkAccessEditor,
+  type NetworkEditorLeaveState
+} from './NotebookNetworkAccessEditor'
+export type { NetworkEditorLeaveState } from './NotebookNetworkAccessEditor'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -42,11 +46,6 @@ const statusReasonLabel = (
   }
 }
 
-export type NetworkEditorLeaveState = Readonly<{
-  dirty: boolean
-  busy: boolean
-  cancelPendingMode?: () => void
-}>
 const NotebookNetworkDomainsForm = ({
   onLeaveStateChange
 }: {

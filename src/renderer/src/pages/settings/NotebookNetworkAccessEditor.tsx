@@ -27,7 +27,12 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
-import type { NetworkEditorLeaveState } from './NotebookNetworkDomainsForm'
+
+export type NetworkEditorLeaveState = Readonly<{
+  dirty: boolean
+  busy: boolean
+  cancelPendingMode?: () => void
+}>
 
 type Editor = { base: NotebookNetworkSettings; id?: string; original?: TrustedPrivateDestination }
 

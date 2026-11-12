@@ -1,6 +1,6 @@
 import { trustedDestinationId } from './notebook-network-settings'
 import { normalizeStrictNetworkRule } from '@aipoch/notebook-network-sandbox/network-address'
-import { OPEN_SCIENCE_DOMAIN_GROUPS } from './notebook-network'
+import { OPEN_SCIENCE_DOMAIN_GROUPS } from './notebook-network-settings'
 import type {
   NotebookNetworkSettings,
   NotebookStrictWhitelistEntry,
