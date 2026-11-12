@@ -1046,14 +1046,17 @@ describe('AcpPromptTurnWorkflow', () => {
     await harness.workflow.run(turn, { kind: 'user' })
 
     expect(harness.interactions.reservePrompt).toHaveBeenCalledTimes(2)
-    expect(harness.resumeAfterReload).toHaveBeenCalledWith({
-      sessionId: 's1',
-      providerSessionId: 'provider-1',
-      cwd: '/session',
-      projectId: 'project-1',
-      permissionProfile: 'ask',
-      memoryEnabled: false
-    })
+    expect(harness.resumeAfterReload).toHaveBeenCalledWith(
+      {
+        sessionId: 's1',
+        providerSessionId: 'provider-1',
+        cwd: '/session',
+        projectId: 'project-1',
+        permissionProfile: 'ask',
+        memoryEnabled: false
+      },
+      expect.any(Function)
+    )
     expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })
     expect(harness.executor.mock.calls[0][0].session).toBe(reloaded)
   })
