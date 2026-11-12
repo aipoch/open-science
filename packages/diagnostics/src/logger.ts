@@ -31,7 +31,7 @@ export type LoggerConfig = {
   runId: string
   fileName: string
   minLevel: LogLevel
-  mirrorToConsole: boolean
+  mirrorToConsole: boolean | ((scope: string, message: string) => boolean)
   consoleFormat: 'text' | 'json'
   // Max bytes per file before it rotates.
   maxBytes: number
@@ -935,7 +935,7 @@ const emit = (level: LogLevel, scope: string, message: string, data?: unknown): 
     diagnosticCorrelation.getStore()
   )
 
-  if (mirror) {
+  if (typeof mirror === 'function' ? mirror(scope, message) : mirror) {
     const consoleMethod = level === 'debug' ? 'log' : level
     if (config?.consoleFormat === 'json') {
       console[consoleMethod](line)

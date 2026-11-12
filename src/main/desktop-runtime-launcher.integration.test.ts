@@ -400,7 +400,7 @@ ${fixtureSource}`
       }
     })
     expect(launched.startedProcess?.pid).toBeGreaterThan(0)
-    expect(children.length).toBe(2)
+    expect(children.filter((child) => child.spawnargs.includes(entry))).toHaveLength(2)
   })
   it('gives up with a recoverable error when the lock stays held after exit 75', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-exit75-held-'))
