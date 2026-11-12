@@ -120,10 +120,6 @@ export function DesktopRuntimeRecovery({
           .map(({ id, projectId }) => ({ id, projectId }))
       )
     }
-    // Restore only a focus lost to disabling a service control. Do not override user navigation.
-    if (document.activeElement === document.body && previousFocus.current?.isConnected)
-      previousFocus.current.focus()
-    previousFocus.current = null
   }, [state.phase, state.restartedGeneration])
   if (state.closing && updating) return null
   if (
@@ -279,9 +275,18 @@ export function DesktopRuntimeRecovery({
           onKeyDown={(event) => event.stopPropagation()}
           onOpenAutoFocus={(event) => {
             event.preventDefault()
+            // A planned shutdown may have kept an update or quit dialog active until now.
+            const focused = document.activeElement
+            if (focused instanceof HTMLElement && focused !== document.body)
+              previousFocus.current = focused
             if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
           }}
-          onCloseAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') return
+            if (previousFocus.current?.isConnected) previousFocus.current.focus()
+            previousFocus.current = null
+          }}
         >
           <Dialog.Title hidden>{title}</Dialog.Title>
           {notice}
