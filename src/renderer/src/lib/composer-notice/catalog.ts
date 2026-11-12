@@ -128,10 +128,11 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation =>
-  failure.responseMessage
-    ? { ...noticeCatalog.service, feedback: 'none' }
-    : (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
+export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation => {
+  const presentation =
+    (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
+  return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation
+}
 
 export type ComposerNotice = Readonly<{
   id: string

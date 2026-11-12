@@ -92,6 +92,30 @@ describe('turn outcome notice action ownership', () => {
     expect(container.textContent).not.toContain('Report this error')
   })
 
+  it('opens model settings for a provider configuration failure while showing its response', () => {
+    const openSettings = vi.fn()
+    actions.settingsAction = () => ({ label: 'Model settings', onClick: openSettings })
+    render({
+      kind: 'failed',
+      settledAt: 1,
+      failure: {
+        category: 'configuration',
+        reason: 'configuration/model-unavailable',
+        responseMessage: 'Example model unavailable',
+        diagnostics: { status: 404 }
+      }
+    })
+    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
+    expect(container.textContent).toContain('Example model unavailable')
+    expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-notice-action="open-provider-settings"]')
+        ?.click()
+    )
+    expect(openSettings).toHaveBeenCalledOnce()
+  })
+
   it('captures the failed prompt for native Artifact publication retry', () => {
     render({
       kind: 'failed',
