@@ -1,3 +1,4 @@
+import { closeConfirmationLayer } from '@/components/ui/overlay-layer'
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -123,6 +124,7 @@ export const CloseConfirmModal = ({
 
   return (
     <AlertDialog.Root
+      layer={closeConfirmationLayer}
       open={active && Boolean(request)}
       onOpenChange={(open) => {
         if (!open) reply('cancel')
