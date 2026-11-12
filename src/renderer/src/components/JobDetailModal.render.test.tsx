@@ -216,7 +216,7 @@ describe('JobDetailModal — detail view', () => {
       (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
     ).toBe(false)
     const retry = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Retry'
+      (button) => button.textContent === 'Retry cancellation'
     )!
     await act(async () => retry.click())
     expect(jobsCancel).toHaveBeenCalledOnce()
@@ -249,12 +249,12 @@ describe('JobDetailModal — detail view', () => {
     expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe(
       'Unable to confirm cancellation'
     )
-    expect(container.textContent).toContain('Automatic checks have stopped.')
+    expect(container.textContent).toContain('The remote job may still be running.')
     expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
     act(() => vi.advanceTimersByTime(60_000))
     expect(jobsList).not.toHaveBeenCalled()
     const retry = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Retry'
+      (button) => button.textContent === 'Retry cancellation'
     )!
     await act(async () => retry.click())
     expect(jobsCancel).toHaveBeenCalledOnce()

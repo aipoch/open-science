@@ -7980,7 +7980,7 @@
     "Not scheduled": "Sin programar",
     "Unable to confirm cancellation": "No se puede confirmar la cancelación",
     "Cancellation failed": "Error de cancelación",
-    "The remote process may still be running. Automatic checks have stopped. Retry to request cancellation again.": "Es posible que el proceso remoto siga en ejecución. Las comprobaciones automáticas se han detenido. Vuelva a intentarlo para solicitar la cancelación de nuevo.",
+    "The remote job may still be running.": "Es posible que la tarea remota siga en ejecución.",
     "The cancellation attempt ended. The job is still being tracked.": "Este intento de cancelación ha finalizado. El seguimiento del trabajo continúa.",
     "Unable to get job status": "No se puede obtener el estado del trabajo",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "El planificador no tiene ningún resultado disponible para este trabajo. Es posible que el proceso remoto siga ejecutándose. Revise el planificador y los archivos remotos antes de decidir el siguiente paso.",

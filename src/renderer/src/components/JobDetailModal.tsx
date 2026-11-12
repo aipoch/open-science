@@ -464,9 +464,7 @@ function JobDetailView({
                     'The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.'
                   )
                 : trackingStopped
-                  ? t(
-                      'The remote process may still be running. Automatic checks have stopped. Retry to request cancellation again.'
-                    )
+                  ? t('The remote job may still be running.')
                   : t('The cancellation attempt ended. The job is still being tracked.')
             }
             content={
@@ -488,7 +486,7 @@ function JobDetailView({
             primaryButton={
               isActive
                 ? {
-                    label: t('Retry'),
+                    label: t('Retry cancellation'),
                     onClick: () => void cancelJob(),
                     loading: isCancellingRequest
                   }
