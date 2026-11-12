@@ -44,7 +44,9 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       if (typeof source[key] === 'string') diagnostics[key] = source[key]
     return {
       category,
-      ...(typeof failure.responseMessage === 'string' && failure.responseMessage.trim()
+      ...((category === 'service' || category === 'configuration') &&
+      typeof failure.responseMessage === 'string' &&
+      failure.responseMessage.trim()
         ? { responseMessage: failure.responseMessage }
         : {}),
       ...(typeof failure.reason === 'string' &&

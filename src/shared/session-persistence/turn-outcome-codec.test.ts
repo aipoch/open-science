@@ -190,6 +190,19 @@ describe('legacy failure migration', () => {
     expect(outcome).toMatchObject({ failure: { category, diagnostics: { raw: 'legacy' } } })
     expect(JSON.stringify(outcome)).not.toContain('errorReportable')
   })
+  it('drops a misplaced provider response from an internal failure', () => {
+    const diagnostics = { code: '-32603', raw: 'Example adapter failure' }
+    const outcome = sanitizeTurnOutcome({
+      kind: 'failed',
+      settledAt: 1,
+      failure: { category: 'internal', responseMessage: 'Example response', diagnostics }
+    })
+    expect(outcome).toEqual({
+      kind: 'failed',
+      settledAt: 1,
+      failure: { category: 'internal', diagnostics }
+    })
+  })
   it('prefers classified data and strips invalid diagnostic fields', () => {
     const outcome = sanitizeTurnOutcome({
       kind: 'failed',
