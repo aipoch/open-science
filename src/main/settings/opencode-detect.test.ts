@@ -2,7 +2,7 @@ import { posix, win32 } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  collectCandidateDirs,
+  candidateDirs,
   detectOpencode,
   parseVersion,
   type OpencodeDetectDeps
@@ -34,23 +34,27 @@ describe('opencode-detect', () => {
   })
 
   it('finds opencode on PATH and records its absolute path and version', async () => {
-    const result = await detectOpencode(createDeps({ '/usr/local/bin/opencode': '1.18.0' }))
+    const resolveNpmBinDirs = vi.fn(async () => [])
+    const result = await detectOpencode(
+      createDeps({ '/usr/local/bin/opencode': '1.18.0' }, { resolveNpmBinDirs })
+    )
+    expect(resolveNpmBinDirs).not.toHaveBeenCalled()
 
     expect(result).toEqual({ resolvedPath: '/usr/local/bin/opencode', version: '1.18.0' })
   })
 
   it('passes cancellation through npm discovery and version probing', async () => {
     const controller = new AbortController()
-    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue(['/npm/bin'])
     const getVersion = vi.fn().mockResolvedValue('1.18.0')
 
     await detectOpencode(
-      createDeps({ '/usr/local/bin/opencode': '1.18.0' }, { resolveNpmBinDirs, getVersion }),
+      createDeps({ '/npm/bin/opencode': '1.18.0' }, { resolveNpmBinDirs, getVersion }),
       controller.signal
     )
 
     expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
-    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/opencode', controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/npm/bin/opencode', controller.signal)
   })
 
   it('finds a managed opencode via extraDirs even when it is not on PATH', async () => {
@@ -105,13 +109,10 @@ describe('opencode-detect', () => {
 
   it('tolerates a failing npm bin resolution', async () => {
     const result = await detectOpencode(
-      createDeps(
-        { '/usr/local/bin/opencode': '1.0.0' },
-        { resolveNpmBinDirs: () => Promise.reject(new Error('npm missing')) }
-      )
+      createDeps({}, { resolveNpmBinDirs: () => Promise.reject(new Error('npm missing')) })
     )
 
-    expect(result?.version).toBe('1.0.0')
+    expect(result).toBeUndefined()
   })
 
   describe('windows', () => {
@@ -130,7 +131,7 @@ describe('opencode-detect', () => {
       })
 
     it('probes %APPDATA%\\npm and the home install dirs, not the Unix dirs', async () => {
-      const dirs = await collectCandidateDirs(winDeps({}))
+      const dirs = await Array.fromAsync(candidateDirs(winDeps({})))
 
       expect(dirs).toContain(win32.join('C:\\Users\\me\\AppData\\Roaming', 'npm'))
       expect(dirs).toContain(win32.join('C:\\Users\\me', '.opencode', 'bin'))
