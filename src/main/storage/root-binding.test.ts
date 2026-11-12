@@ -10,14 +10,16 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 
 import { bindStorageRoot, StorageRootChangedError } from './root-binding'
 
 const roots: string[] = []
-const fixture = async (): Promise<{ root: string; physical: string; alias: string }> => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'storage-root-binding-')))
+const fixture = async (
+  parent = tmpdir()
+): Promise<{ root: string; physical: string; alias: string }> => {
+  const root = await realpath(await mkdtemp(join(parent, 'storage-root-binding-')))
   roots.push(root)
   const physical = join(root, 'physical')
   const alias = join(root, 'selected')
@@ -28,6 +30,20 @@ const fixture = async (): Promise<{ root: string; physical: string; alias: strin
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+it.each(['absolute', 'relative'])('preserves native link/.. meaning in a %s root', async (kind) => {
+  const { root, physical, alias } = await fixture(kind === 'relative' ? process.cwd() : tmpdir())
+  await mkdir(join(physical, 'child'))
+  await mkdir(join(physical, 'research'))
+  await mkdir(join(root, 'research'))
+  await unlink(alias)
+  await symlink(join(physical, 'child'), alias, process.platform === 'win32' ? 'junction' : 'dir')
+  // Joining these segments would erase the POSIX meaning of following the link before "..".
+  const input = `${kind === 'relative' ? relative(process.cwd(), alias) : alias}/../research`
+  const binding = bindStorageRoot(input)
+  expect(binding.path).toBe(await realpath(input))
+  await expect(binding.verify()).resolves.toBeUndefined()
 })
 
 it('creates a missing root under a bound ancestor and never recreates it after removal', async () => {

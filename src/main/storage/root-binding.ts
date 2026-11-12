@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync, type BigIntStats } from 'node:fs'
 import { lstat, realpath } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path'
 
 type DirectoryIdentity = Pick<BigIntStats, 'dev' | 'ino' | 'birthtimeNs'>
 type CreateDirectory = (path: string) => Promise<unknown>
@@ -35,7 +35,11 @@ const unavailableBinding = (path: string, error: unknown): StorageRootBinding =>
 // Missing suffixes may be created beneath the captured ancestor; an unavailable link is never
 // reinterpreted as a missing directory or silently rebound when it reconnects.
 export const bindStorageRoot = (root: string): StorageRootBinding => {
-  const logicalRoot = resolve(root)
+  // Anchor relative input without erasing link/.. before the filesystem interprets it.
+  const prefix = parse(root).root
+  const logicalRoot = isAbsolute(root)
+    ? root
+    : `${resolve(prefix || '.')}${sep}${root.slice(prefix.length)}`
   let anchor = logicalRoot
   const suffix: string[] = []
   for (;;) {

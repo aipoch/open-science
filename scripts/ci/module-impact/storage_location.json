@@ -1024,5 +1024,6 @@
   },
   "consumerModules": ["main_web_service"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Configured-root binding adds shared filesystem identity and ancestor-link checks beyond the reviewed storage-location boundary; retain full CI until this boundary is reviewed."
 }
