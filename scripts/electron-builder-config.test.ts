@@ -20,10 +20,7 @@ import {
   matchesWsl2BashPreviewManifest
 } from '../src/shared/wsl2-preview-manifest'
 
-import {
-  WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
-  WINDOWS_CACHE_TRUSTED_OWNER_SIDS
-} from '@aipoch/environment'
+import { WINDOWS_CACHE_TRUSTED_OWNER_SIDS } from '@aipoch/environment'
 
 describe('macOS native privacy purpose descriptions', () => {
   it.each([
@@ -617,9 +614,21 @@ describe('electron-builder Windows targets', () => {
       expect(cleanup).toContain("'" + sid + "'")
     }
     expect(cleanup).toContain('$trustedWriteSids -notcontains $sid')
-    for (const right of WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES) {
-      expect(cleanup).toContain(`[System.Security.AccessControl.FileSystemRights]::${right}`)
-    }
+    // The runtime matches names; the uninstaller checks bit overlap. Composite Modify/FullControl
+    // include read rights and must not enter this mask. Write includes CreateFiles and AppendData.
+    const writeMask = cleanup.match(/\$writeMask = ([\s\S]*?)\r?\n\s*foreach \(\$rule/)?.[1] ?? ''
+    expect(
+      Array.from(
+        writeMask.matchAll(/\[System\.Security\.AccessControl\.FileSystemRights\]::(\w+)/g),
+        (match) => match[1]
+      )
+    ).toEqual([
+      'Write',
+      'Delete',
+      'DeleteSubdirectoriesAndFiles',
+      'ChangePermissions',
+      'TakeOwnership'
+    ])
     expect(cleanup).toContain('Remove-Item -LiteralPath $candidate')
   })
 
