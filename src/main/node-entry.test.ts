@@ -35,6 +35,8 @@ const f = vi.hoisted(() => ({
   closeOwnership: vi.fn(async () => {}),
   closeNetwork: vi.fn(async () => {}),
   closeMainAgents: vi.fn(async () => {}),
+  reapUpdateProcesses: vi.fn(async (_deadlineAt: number) => {}),
+  captureUpdateProcesses: vi.fn<() => (deadlineAt: number) => Promise<void>>(),
   configureMainAgents: vi.fn(async () => {}),
   constructMainAgents: vi.fn(),
   mainAgentOwnership: { recover: vi.fn(async () => {}), spawn: vi.fn() },
@@ -95,6 +97,10 @@ vi.mock('./acp/main-agent-process-ownership', () => ({
   configureMainAgentProcessOwnership: f.configureMainAgents,
   closeMainAgentProcessOwnership: f.closeMainAgents
 }))
+vi.mock('./process-tree-windows', () => ({
+  inspectRuntimeWindowsProcessIds: vi.fn(() => []),
+  captureRuntimeWindowsProcessCleanup: f.captureUpdateProcesses
+}))
 vi.mock('./delegation/process-ownership', () => ({
   DelegatedProcessOwnership: class {
     constructor(configRoot: string, directoryName: string) {
@@ -107,6 +113,7 @@ vi.mock('./delegation/process-ownership', () => ({
 vi.mock('./node-fatal-errors', () => ({ installNodeFatalErrors: vi.fn() }))
 vi.mock('./local-service-lifetime', () => ({
   LOCAL_SERVICE_STOP_BUDGET_MS: 20_000,
+  LOCAL_SERVICE_STOP_ESCALATION_MS: 3_500,
   serviceStopDeadline: (deadlineAt?: number) =>
     Math.min(deadlineAt ?? Infinity, Date.now() + 20_000),
   createLocalServiceLifetime: async (options: {
@@ -307,6 +314,7 @@ beforeEach(async () => {
   // Keep thrown errors and the reporter on the same module instance after each entry reload.
   f.credentialAccess = (await import('./credential-identity/access')).createCredentialAccess
   vi.clearAllMocks()
+  f.captureUpdateProcesses.mockReturnValue(f.reapUpdateProcesses)
   f.healthyCredentials = false
   f.inventoryFailure = undefined
   f.startupFailure = false
@@ -1035,6 +1043,50 @@ it('exits with failure at the shutdown deadline when a disposer never finishes',
     await vi.waitFor(() => expect(f.closeOwnership).toHaveBeenCalledOnce())
     vi.useRealTimers()
   }
+})
+
+it('reaps retained update processes after failed disposal before exiting', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  f.runtime.dispose.mockRejectedValueOnce(new Error('module disposal failed'))
+  const reaped = Promise.withResolvers<void>()
+  f.reapUpdateProcesses.mockReturnValueOnce(reaped.promise)
+  f.createLifetime.mock.lastCall![0].stop('update')
+  try {
+    await vi.waitFor(() => expect(f.reapUpdateProcesses).toHaveBeenCalledOnce())
+    expect(f.captureUpdateProcesses.mock.invocationCallOrder[0]).toBeLessThan(
+      f.runtime.dispose.mock.invocationCallOrder[0]
+    )
+    expect(f.disconnectDatabase.mock.invocationCallOrder[0]).toBeLessThan(
+      f.reapUpdateProcesses.mock.invocationCallOrder[0]
+    )
+    expect(process.exit).not.toHaveBeenCalled()
+  } finally {
+    reaped.resolve()
+    await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+  }
+  expect(process.exit).toHaveBeenNthCalledWith(1, 1)
+})
+
+it('starts update process cleanup before the service escalation deadline when disposal stalls', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const drain = Promise.withResolvers<void>()
+  f.runtime.dispose.mockReturnValueOnce(drain.promise)
+  vi.useFakeTimers()
+  try {
+    f.createLifetime.mock.lastCall![0].stop('update')
+    await vi.waitFor(() => expect(f.runtime.dispose).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(12_500)
+    expect(f.reapUpdateProcesses).toHaveBeenCalledOnce()
+    expect(process.exit).not.toHaveBeenCalled()
+  } finally {
+    drain.resolve()
+    await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+    vi.useRealTimers()
+  }
+  // Disposal may create another helper after the timer sweep; the final pass must recapture it.
+  expect(f.reapUpdateProcesses).toHaveBeenCalledTimes(2)
 })
 
 it('reports rejected stop intent without releasing resources and allows a later stop', async () => {
