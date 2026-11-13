@@ -4787,7 +4787,7 @@ describe('startWebHttpServer', () => {
 
     vi.mocked(net.fetch).mockResolvedValue(
       new Response('<!doctype html>', {
-        headers: { 'content-type': 'text/plain', 'content-length': '16' }
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
       })
     )
     const download = await fetch(endpoint, { headers })
@@ -4797,13 +4797,16 @@ describe('startWebHttpServer', () => {
 
     vi.mocked(net.fetch).mockResolvedValue(
       new Response('<!doctype html>', {
-        headers: { 'content-type': 'text/plain', 'content-length': '16' }
+        headers: { 'content-type': 'text/plain', 'content-length': '15' }
       })
     )
     const inline = await fetch(`${endpoint}?disposition=inline`, { headers })
     expect(inline.status).toBe(200)
     expect(inline.headers.get('content-disposition')).toBe('inline')
     expect(inline.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    const inlineBody = await inline.text()
+    expect(inlineBody).toContain('<title>Open-Science | HTML Preview</title>')
+    expect(inlineBody).toContain('data-open-science-favicon="true"')
 
     tasks.acquireArtifact.mockResolvedValueOnce({
       resourceId: 'resource-html-mime',

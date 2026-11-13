@@ -78,6 +78,7 @@ import { resolveAuthenticatedArtifactBrowserBinding } from './artifact-url'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import { brandHtmlPreviewDocument } from './html-branding'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -910,7 +911,8 @@ const streamPreviewResource = async (
   response: ServerResponse,
   fetchPreview: WebServerOptions['fetchPreview'],
   resourceUrl: string,
-  responseOverrides: Record<string, string> = {}
+  responseOverrides: Record<string, string> = {},
+  transformBody?: (body: string) => string
 ): Promise<void> => {
   const abortController = new AbortController()
   const abortOnDisconnect = (): void => {
@@ -936,9 +938,19 @@ const streamPreviewResource = async (
         responseHeaders[key] = value
     })
     Object.assign(responseHeaders, responseOverrides)
+    let transformedBody: Buffer | undefined
+    if (transformBody && upstream.ok && upstream.body) {
+      transformedBody = Buffer.from(transformBody(await upstream.text()), 'utf8')
+      delete responseHeaders['content-encoding']
+      responseHeaders['content-length'] = String(transformedBody.byteLength)
+    }
     response.writeHead(upstream.status, responseHeaders)
-    if (!upstream.body || request.method === 'HEAD') {
+    if ((!upstream.body && !transformedBody) || request.method === 'HEAD') {
       response.end()
+      return
+    }
+    if (transformedBody) {
+      response.end(transformedBody)
       return
     }
     try {
@@ -1344,7 +1356,8 @@ const handleTaskApiRequest = async (
             response,
             fetchPreview,
             artifact.url,
-            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition'))
+            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition')),
+            url.searchParams.get('disposition') === 'inline' ? brandHtmlPreviewDocument : undefined
           )
         } finally {
           await tasks.releaseArtifact(artifact.resourceId)
