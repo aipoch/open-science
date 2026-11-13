@@ -593,7 +593,7 @@ for (const single of [true, false]) {
       'Editable source for research category 1, shared with collaborators in the project storage bucket.'
     const cons =
       'Execution environment for research category 1 requires separate setup and deployment permissions.'
-    await expect(both).toHaveAccessibleName(new RegExp(`Option 1.*优点: ${pros}.*局限: ${cons}`))
+    await expect(both).toHaveAccessibleName(new RegExp(`Option 1.*优点: ${pros}.*缺点: ${cons}`))
     await expect(both.getByText(`优点: ${pros}`, { exact: true })).toBeVisible()
     const box = await both.boundingBox()
     expect(box!.width).toBeLessThan(390)
@@ -604,9 +604,9 @@ for (const single of [true, false]) {
         .evaluate((node) => node.getBoundingClientRect().height)
     ).toBeGreaterThan(16)
     const prosOnly = page.getByTestId('elicitation-option-Option 2')
-    await expect(prosOnly).not.toContainText('局限:')
+    await expect(prosOnly).not.toContainText('缺点:')
     await expect(page.getByTestId('elicitation-option-Option 3')).not.toContainText('优点:')
-    await expect(page.getByTestId('elicitation-option-Option 4')).not.toContainText(/优点:|局限:/)
+    await expect(page.getByTestId('elicitation-option-Option 4')).not.toContainText(/优点:|缺点:/)
     await both.focus()
     await page.keyboard.press('Space')
     await expect(both).toHaveAttribute('aria-pressed', 'true')
@@ -626,7 +626,7 @@ for (const single of [true, false]) {
     await expect(page.getByTestId('elicitation-card')).not.toContainText('优点:')
     await page.getByTestId('elicitation-answer-row').click()
     await expect(page.getByTestId('elicitation-option-Option 1')).toContainText(`优点: ${pros}`)
-    await expect(page.getByTestId('elicitation-option-Option 1')).toContainText(`局限: ${cons}`)
+    await expect(page.getByTestId('elicitation-option-Option 1')).toContainText(`缺点: ${cons}`)
   })
 }
 
@@ -640,7 +640,7 @@ for (const single of [true, false]) {
     )
     const first = page.getByRole('button', { name: 'Option 1', exact: true })
     await expect(first).toHaveAccessibleDescription(
-      /Research category 1.*优点: Editable source.*局限: Execution environment/
+      /Research category 1.*优点: Editable source.*缺点: Execution environment/
     )
     await expect(first.getByText(/优点:/)).toBeVisible()
     await expect(
@@ -648,7 +648,7 @@ for (const single of [true, false]) {
     ).toHaveAccessibleDescription(/优点:/)
     await expect(
       page.getByRole('button', { name: 'Option 2', exact: true })
-    ).not.toHaveAccessibleDescription(/局限:/)
+    ).not.toHaveAccessibleDescription(/缺点:/)
     await expect(
       page.getByRole('button', { name: 'Option 3', exact: true })
     ).not.toHaveAccessibleDescription(/优点:/)

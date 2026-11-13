@@ -194,7 +194,7 @@
   },
   "renderer": {
     "Pros": "优点",
-    "Cons": "局限",
+    "Cons": "缺点",
     "Network protocol": "协议",
     "Delete address?": "删除地址？",
     "The model returned no film content.": "模型未返回短片内容。",
