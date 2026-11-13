@@ -172,7 +172,7 @@ type NotebookExecutionOwnerOptions = {
   shellConcurrencyLimit?: number
   shellRuntimeBinding?: ShellRuntimeBinding
   getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
-  getNetworkMode?: () => NotebookNetworkMode
+  getNetworkMode?: () => NotebookNetworkMode | Promise<NotebookNetworkMode>
 }
 
 const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExecutionResult => {
@@ -752,7 +752,7 @@ class NotebookExecutionOwner {
     const queuedRun: NotebookRunRecord = {
       runId,
       executionMode: request.background ? 'background' : 'foreground',
-      networkMode: this.options.getNetworkMode?.() ?? 'relaxed',
+      networkMode: (await this.options.getNetworkMode?.()) ?? 'relaxed',
       submissionIdentity,
       submissionFingerprint,
       admittedAt,
@@ -1173,7 +1173,7 @@ class NotebookExecutionOwner {
     const queuedRun: NotebookRunRecord = {
       runId: controlInvocationId,
       executionMode: request.background ? 'background' : 'foreground',
-      networkMode: this.options.getNetworkMode?.() ?? 'relaxed',
+      networkMode: (await this.options.getNetworkMode?.()) ?? 'relaxed',
       submissionIdentity,
       submissionFingerprint,
       admittedAt,
@@ -1615,7 +1615,7 @@ class NotebookExecutionOwner {
       const queuedRun: NotebookRunRecord = {
         runId,
         executionMode: request.background ? 'background' : 'foreground',
-        networkMode: this.options.getNetworkMode?.() ?? 'relaxed',
+        networkMode: (await this.options.getNetworkMode?.()) ?? 'relaxed',
         submissionIdentity,
         submissionFingerprint,
         admittedAt,

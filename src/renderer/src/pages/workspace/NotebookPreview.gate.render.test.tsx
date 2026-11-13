@@ -568,6 +568,9 @@ describe('NotebookPreview per-kernel tabs', () => {
     await mountWithRuns([makeRun({ runId: 'network-mode', kernelKind: 'python' })])
 
     expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Relaxed mode')
+    expect(screen.getByRole('status', { name: 'Relaxed mode' })).toBe(
+      screen.getByTestId('notebook-network-mode')
+    )
 
     act(() => {
       useSettingsStore.setState({
@@ -579,6 +582,9 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
 
     expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Strict mode')
+    expect(screen.getByRole('status', { name: 'Strict mode' })).toBe(
+      screen.getByTestId('notebook-network-mode')
+    )
   })
 
   it('shows the network mode captured by each execution record', async () => {

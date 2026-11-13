@@ -1559,7 +1559,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                 : 'notebook-network-relaxed'
             )}
             role="status"
-            aria-label={t('Network mode')}
+            aria-label={notebookNetworkMode === 'strict' ? t('Strict mode') : t('Relaxed mode')}
             data-testid="notebook-network-mode"
           >
             {notebookNetworkMode === 'strict' ? t('Strict mode') : t('Relaxed mode')}

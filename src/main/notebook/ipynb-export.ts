@@ -33,6 +33,7 @@ type OpenScienceCellMetadata = {
   status: NotebookRunRecord['status']
   kernel: NotebookKernelKind
   environment?: string
+  networkMode?: NotebookRunRecord['networkMode']
 }
 
 type NbformatCodeCell = {
@@ -239,7 +240,8 @@ const runToCell = (run: NotebookRunRecord, seen: Set<string>): NbformatCodeCell 
       ...(run.endedAt === undefined ? {} : { endedAt: run.endedAt }),
       status: run.status,
       kernel: run.kernelKind,
-      ...(run.environment ? { environment: run.environment } : {})
+      ...(run.environment ? { environment: run.environment } : {}),
+      ...(run.networkMode ? { networkMode: run.networkMode } : {})
     }
   }
 

@@ -5149,3 +5149,24 @@ it('freezes the network event mode and run before asynchronous completion and la
   await wrapped.cleanup('spawn-failed', { processesTerminated: true })
   await owner.dispose()
 })
+
+it('loads the persisted network mode before the first run snapshot', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'audit-first-mode-'))
+  fixtureDirectories.push(root)
+  const getSettings = vi.fn(async () => ({
+    ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    mode: 'strict' as const,
+    strictWhitelist: []
+  }))
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: root,
+    temporaryRoot: root,
+    getSettings,
+    persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    requestDecision: async () => 'deny'
+  })
+
+  await expect(owner.getNetworkMode()).resolves.toBe('strict')
+  expect(getSettings).toHaveBeenCalledOnce()
+  await owner.dispose()
+})

@@ -152,7 +152,7 @@ export type NotebookRuntimeAccessAdmission = Readonly<{
 }>
 
 export interface NotebookProcessSandbox {
-  getNetworkMode?(): NotebookNetworkMode
+  getNetworkMode?(): NotebookNetworkMode | Promise<NotebookNetworkMode>
   resolveWindowsRuntime?(request: {
     runtime: 'repl' | 'bash'
     binding?: ShellRuntimeBinding

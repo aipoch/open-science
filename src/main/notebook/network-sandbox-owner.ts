@@ -430,7 +430,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  getNetworkMode(): NotebookNetworkMode {
+  async getNetworkMode(): Promise<NotebookNetworkMode> {
+    await this.initialize()
     return this.settings?.mode ?? 'relaxed'
   }
 
