@@ -250,7 +250,6 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:set-pinggy-token',
   'remote-access:set-pinggy-region',
   'sessions:export-conversation',
-  'sessions:fork',
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:cancel-diagnostics',

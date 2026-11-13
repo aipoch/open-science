@@ -36,7 +36,6 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:cancel-diagnostics',
-  'sessions:fork',
   'sessions:open-recovery-folder',
   'file:save-session-artifacts',
   'file:save-project-artifacts',

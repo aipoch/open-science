@@ -55,6 +55,7 @@ import type { ApplicationCommandByNameDispatcher } from '../application-command-
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
+import { TaskSubmissions } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
 import {
   TaskRunner,
@@ -80,12 +81,14 @@ type TaskApiDependencies = {
   now: () => number
   subscribeEvents: (listener: (event: AcpRuntimeEvent) => void) => () => void
   runJournal: TaskRunJournal
+  submissionRoot: string
 }
 
 class HeadlessTaskApi {
   private readonly callerContexts = new AsyncLocalStorage<CallerContext>()
   private readonly commandClient = createApplicationCommandClient()
   private readonly runner: TaskRunner
+  private readonly submissions?: TaskSubmissions
 
   constructor(
     private readonly ports: TaskApiPorts,
@@ -225,15 +228,28 @@ class HeadlessTaskApi {
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)
+    if (dependencies.submissionRoot && dependencies.runJournal) {
+      const journal = dependencies.runJournal
+      this.submissions = new TaskSubmissions(dependencies.submissionRoot, {
+        loadRuns: () => journal.load(),
+        startRun: (request, requestId) =>
+          this.callerContexts.run(TASK_CALLER_CONTEXT, () =>
+            this.runner.startRun(request, requestId)
+          ),
+        now: dependencies.now
+      })
+    }
   }
 
-  initialize(): Promise<void> {
-    return this.runner.initialize()
+  async initialize(): Promise<void> {
+    // Recover receipt links before Run restoration prunes old terminal history.
+    await this.submissions?.initialize()
+    await this.runner.initialize()
   }
 
   async dispose(): Promise<void> {
     try {
-      await this.runner.dispose()
+      await Promise.all([this.submissions?.dispose(), this.runner.dispose()])
     } finally {
       this.commandClient.dispose()
     }
@@ -539,6 +555,25 @@ class HeadlessTaskApi {
             expectedRevision: request.expectedRevision
           }
     return this.invoke('acp:respond-plan', command) as Promise<PlanResponseResult>
+  }
+
+  supportsSubmissions(): boolean {
+    return this.submissions !== undefined
+  }
+
+  submitRun(
+    requestId: string,
+    request: StartTaskRunRequest
+  ): Promise<import('../../shared/task-api').TaskSubmission> {
+    if (!this.submissions)
+      throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
+    return this.submissions.submit(requestId, request)
+  }
+
+  getSubmission(requestId: string): Promise<import('../../shared/task-api').TaskSubmission> {
+    if (!this.submissions)
+      throw new TaskRunnerError('submission_unavailable', 'Durable submissions are unavailable.')
+    return this.submissions.get(requestId)
   }
 
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {

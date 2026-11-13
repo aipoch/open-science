@@ -4,16 +4,23 @@
     "src/main/tasks/task-run-journal.test.ts",
     "src/main/tasks/task-run-journal.ts",
     "src/main/tasks/task-runner.test.ts",
-    "src/main/tasks/task-runner.ts"
+    "src/main/tasks/task-runner.ts",
+    "src/main/tasks/task-submissions.test.ts",
+    "src/main/tasks/task-submissions.ts"
   ],
   "interfacePaths": [
     "src/main/tasks/task-control-ports.ts",
     "src/main/tasks/task-run-journal.ts",
-    "src/main/tasks/task-runner.ts"
+    "src/main/tasks/task-runner.ts",
+    "src/main/tasks/task-submissions.ts"
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/tasks/task-run-journal.test.ts", "src/main/tasks/task-runner.test.ts"],
+    "owner": [
+      "src/main/tasks/task-run-journal.test.ts",
+      "src/main/tasks/task-runner.test.ts",
+      "src/main/tasks/task-submissions.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -70,5 +77,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Durable submission receipts add a persisted admission owner and restart reconciliation beyond the reviewed Task boundary; retain complete CI validation until the expanded sources and consumers are reviewed."
 }
