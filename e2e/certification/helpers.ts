@@ -83,7 +83,7 @@ const openProjectSession = async (
 }
 
 const sendReviewedPrompt = async (
-  page: Parameters<typeof sendPrompt>[0],
+  page: Page,
   prompt: string,
   reply: string,
   commands: string[],
@@ -98,9 +98,9 @@ const sendReviewedPrompt = async (
       })
       let previousCode: string | undefined
       for (const command of commands) {
-        await expect(review).toContainText(command)
         const code = review.getByTestId('tool-code-block')
-        if (previousCode) await expect(code).not.toHaveText(previousCode)
+        await expect(code).toContainText(command, { timeout })
+        if (previousCode) await expect(code).not.toHaveText(previousCode, { timeout })
         previousCode = await code.innerText()
         await review.getByRole('button', { name: 'Allow', exact: true }).click()
       }
