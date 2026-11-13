@@ -50,6 +50,55 @@ function interveningBulletPage(scale = 1): PdfLayoutPage {
   return { page: 1, width: 700 * scale, height: 800 * scale, rotation: 0, items }
 }
 
+test('preserves a caption whose PDF contains duplicate figure label streams', () => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, y],
+    fontName,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  const page: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      item('Figure 1.', 90, 400, 30, 'HiddenCaption'),
+      item('Figure 1.', 60, 400.5, 36, 'Caption'),
+      item('Hidden caption text.', 90, 388, 120, 'HiddenCaption', true),
+      item('Visible caption text.', 60, 388.5, 140, 'Caption', true),
+      item(
+        'This ordinary paragraph remains independently available for translation.',
+        60,
+        300,
+        360,
+        'Body',
+        true
+      )
+    ]
+  }
+
+  const result = extractDocument({ pages: [page] }),
+    caption = result.units.find((unit) => unit.source.includes('Figure 1.'))
+  expect(caption?.sourceOnly).toBe(true)
+  expect(
+    result.units.find((unit) => unit.source.startsWith('This ordinary paragraph'))?.sourceOnly
+  ).not.toBe(true)
+})
+
 test.each([0.5, 1, 2])(
   'a complete native terminal row remains in its ordinary bullet sentence: %s',
   (scale) => {
