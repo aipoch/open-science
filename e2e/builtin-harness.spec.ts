@@ -63,8 +63,27 @@ test('built-in harness executes approved host MCP and restores its session after
         }
       : { content: resumed ? 'HARNESS_RESUMED_OK' : 'HARNESS_TURN_OK' }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
+    const terminal = {
+      index: 0,
+      delta: { role: 'assistant', content: '' },
+      finish_reason: call ? 'tool_calls' : 'stop'
+    }
+    // 覆盖正文和工具终态后的重复空尾帧，确保桌面持久化及重启恢复也能完成。
     response.end(
-      `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 100 } } })}\n\ndata: [DONE]\n\n`
+      [
+        { choices: [{ index: 0, delta, finish_reason: null }] },
+        { choices: [terminal] },
+        {
+          choices: [terminal],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            prompt_tokens_details: { cached_tokens: 100 }
+          }
+        }
+      ]
+        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+        .join('') + 'data: [DONE]\n\n'
     )
   })
   await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
@@ -119,11 +138,18 @@ test('built-in harness executes approved host MCP and restores its session after
       timeout: 90_000
     })
     await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeHidden()
+    await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
     const before = (
       await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
     ).find((session) => session.projectId === projectId)!
     expect(before.agentFrameworkId).toBe('open-science-agent')
     expect(before.providerSessionId).toEqual(expect.any(String))
+    if (!relay)
+      expect(before.messages.find((message) => message.turnUsage)?.turnUsage).toMatchObject({
+        inputTokens: 1800,
+        cacheTokens: 200,
+        outputTokens: 40
+      })
     const runs = await app.readNotebookFixtureRuns(projectId, before.id)
     const executed = runs.filter(
       (run) => run.kernelKind === 'repl' && run.script.includes('HARNESS_TOOL_OK')
@@ -136,15 +162,23 @@ test('built-in harness executes approved host MCP and restores its session after
     await page.screenshot({ path: testInfo.outputPath('harness-executed.png'), fullPage: true })
     page = await app.restart()
     await openProjectSession(page, 'Built-in harness acceptance', initialPrompt)
+    await expect(page.getByText('HARNESS_TURN_OK', { exact: true })).toBeVisible()
     await submitPromptViaUi(page, 'Reply exactly HARNESS_RESUMED_OK without calling tools.')
     await expect(page.getByText('HARNESS_RESUMED_OK', { exact: true })).toBeVisible({
       timeout: 90_000
     })
     await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeHidden()
+    await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
     const after = (
       await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
     ).find((session) => session.id === before.id)!
     expect(after.providerSessionId).toBe(before.providerSessionId)
+    if (!relay)
+      expect(after.messages.find((message) => message.turnUsage)?.turnUsage).toMatchObject({
+        inputTokens: 1800,
+        cacheTokens: 200,
+        outputTokens: 40
+      })
     expect(
       (await app.readNotebookFixtureRuns(projectId, before.id)).filter((run) =>
         run.script.includes('HARNESS_TOOL_OK')

@@ -90,6 +90,37 @@ function normalizeUsage(value: unknown): ModelUsage {
   return result
 }
 
+/**
+ * 校验终态后的兼容尾帧，确保不会丢弃新增内容或工具增量。
+ *
+ * Args:
+ *   choice: 已校验为主 choice 的后续帧。
+ *   finish: 首次记录的终态，后续帧不得改变它。
+ */
+function validateTerminalTrailer(
+  choice: Record<string, unknown>,
+  finish: NonNullable<ChatCompletionsDiagnostics['finishReason']>
+): void {
+  if (
+    choice.finish_reason != null &&
+    choice.finish_reason !== '' &&
+    choice.finish_reason !== finish
+  )
+    return protocol()
+  const delta = object(choice.delta)
+  for (const [name, value] of Object.entries(delta)) {
+    if (value == null) continue
+    if (name === 'role') {
+      if (value !== '' && value !== 'assistant') return protocol()
+    } else if (name === 'tool_calls' || name === 'reasoning_details') {
+      if (!Array.isArray(value) || value.length !== 0) return protocol()
+    } else if (name === 'function_call' || value !== '') {
+      // 未知扩展也只能为空；不能把未识别的音视频或其他载荷当作空尾帧吞掉。
+      return protocol()
+    }
+  }
+}
+
 export async function* dataEvents(
   response: Response,
   limit: number,
@@ -357,7 +388,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
           if (!Array.isArray(event.choices)) return protocol()
           for (const item of event.choices) {
             const choice = object(item)
-            if (choice.index !== 0 || finish) return protocol()
+            if (choice.index !== 0) return protocol()
+            if (finish !== undefined) {
+              validateTerminalTrailer(choice, finish)
+              continue
+            }
             const delta = object(choice.delta)
             if (delta.content != null) {
               if (typeof delta.content !== 'string') return protocol()
