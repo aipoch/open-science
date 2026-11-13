@@ -73,6 +73,23 @@ describe('NotebookStep', () => {
     expect(completeOnboarding).toHaveBeenCalledOnce()
   })
 
+  it('hands completion back to the onboarding shell when supplied', async () => {
+    const completeOnboarding = vi.fn().mockResolvedValue(undefined)
+    const onComplete = vi.fn()
+    useSettingsStore.setState({ completeOnboarding })
+
+    await act(async () => {
+      root.render(<NotebookStep onBack={vi.fn()} onComplete={onComplete} />)
+    })
+    await act(async () => {})
+    await act(async () => {})
+
+    await act(async () => finishButton()?.click())
+
+    expect(onComplete).toHaveBeenCalledOnce()
+    expect(completeOnboarding).not.toHaveBeenCalled()
+  })
+
   it('returns to the provider step from the Back button', async () => {
     const onBack = vi.fn()
 

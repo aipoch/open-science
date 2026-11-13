@@ -11,13 +11,14 @@ import { onboardingErrorMessage } from './onboarding-error'
 
 type NotebookStepProps = {
   onBack: () => void
+  onComplete?: () => void
 }
 
 // Optional step: how notebooks run (app-managed Python by default, or a detected interpreter of the
 // user's own). Nothing here blocks the wizard — a fresh env is built lazily on first notebook use —
 // except a runtime setup the user explicitly started: it must finish (or be cancelled) before
 // leaving, otherwise a half-built env would be stranded.
-const NotebookStep = ({ onBack }: NotebookStepProps): React.JSX.Element => {
+const NotebookStep = ({ onBack, onComplete }: NotebookStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
   const completionInFlight = useRef(false)
@@ -34,7 +35,11 @@ const NotebookStep = ({ onBack }: NotebookStepProps): React.JSX.Element => {
     setIsCompleting(true)
     setCompletionError(undefined)
     try {
-      await completeOnboarding()
+      if (onComplete) {
+        onComplete()
+      } else {
+        await completeOnboarding()
+      }
     } catch (error) {
       setCompletionError(onboardingErrorMessage(error, t('Could not finish setup.')))
       completionInFlight.current = false

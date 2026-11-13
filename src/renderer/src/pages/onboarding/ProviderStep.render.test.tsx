@@ -47,6 +47,7 @@ type HarnessProps = {
   onBack?: () => void
   onAdvance?: () => void
   initialValue?: ProviderFormValue
+  variant?: 'form' | 'quick'
 }
 
 // The provider draft lives in the wizard shell in production; the harness plays that role so the
@@ -54,13 +55,20 @@ type HarnessProps = {
 const Harness = ({
   onBack = vi.fn(),
   onAdvance = vi.fn(),
-  initialValue
+  initialValue,
+  variant = 'form'
 }: HarnessProps): React.JSX.Element => {
   const [value, setValue] = useState<ProviderFormValue>(
     () => initialValue ?? createEmptyProviderFormValue()
   )
   return (
-    <ProviderStep formValue={value} setFormValue={setValue} onBack={onBack} onAdvance={onAdvance} />
+    <ProviderStep
+      formValue={value}
+      setFormValue={setValue}
+      onBack={onBack}
+      onAdvance={onAdvance}
+      variant={variant}
+    />
   )
 }
 
@@ -108,6 +116,28 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
+  it('shows only the Anthropic API-key path when open-science-agent has no subscription route', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'open-science-agent',
+      agentFrameworks: [
+        {
+          id: 'open-science-agent',
+          displayName: 'Open-Science Agent',
+          supportedApiTypes: ['chat-completions', 'messages'],
+          supportsSkills: true
+        }
+      ]
+    })
+
+    await renderStep({ variant: 'quick' })
+
+    const anthropic = container.querySelector<HTMLElement>('.onboarding-provider-card-anthropic')
+    expect(anthropic).not.toBeNull()
+    expect(anthropic?.textContent).not.toContain('Use your eligible Claude subscription')
+    expect(anthropic?.textContent).not.toContain('Use an account instead')
+    expect(anthropic?.querySelector('input[placeholder="Enter your API key"]')).not.toBeNull()
+  })
+
   it('offers OpenCode Go and Zen when OpenCode is the active framework', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',

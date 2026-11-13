@@ -156,6 +156,7 @@
     "ipaddr.js": "1.9.1",
     "js-tiktoken": "^1.0.21",
     "js-yaml": "^4.1.0",
+    "lottie-web": "^5.13.0",
     "marked": "^17.0.6",
     "micromatch": "^4.0.8",
     "openchemlib": "^9.25.0",
