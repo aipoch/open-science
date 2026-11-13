@@ -4970,6 +4970,10 @@ try {
                 )
               } else {
                 fallbackDeferred = true
+                thumbnail = await crop(
+                  table.cropRect.map((v) => v / 1.5),
+                  table.id
+                )
                 const note = {
                   text: 'Native table crop ownership proof became stale; detector crop retained for review.',
                   rect: table.cropRect
