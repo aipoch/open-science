@@ -95,7 +95,11 @@ it.each(['cancel', 'failure'] as const)(
       workers[1].emit('message', { kind: 'speech-duration', lane: 0, duration: 1 })
       if (reason === 'cancel')
         workers[2].emit('message', { kind: 'speech-duration', lane: 1, duration: 1 })
-      expect(await result).toEqual(new Error(reason === 'cancel' ? 'cancelled' : 'speech failed'))
+      expect(await result).toMatchObject({
+        message: reason === 'cancel' ? 'cancelled' : 'speech failed'
+      })
+      if (reason === 'failure')
+        expect(await result).toMatchObject({ workerRole: 'speech', lane: 1 })
       expect(workers[0].postMessage).not.toHaveBeenCalled()
       expect(workers[1].postMessage).toHaveBeenCalledOnce()
       expect(workers).toHaveLength(3)
@@ -237,3 +241,49 @@ it('reuses complete speech after a player build fails and replaces a damaged mix
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it.each(['generation', 'speech'] as const)(
+  'identifies an unexpected %s exit without losing its code',
+  async (role) => {
+    const root = await mkdtemp(join(tmpdir(), 'film-exit-'))
+    try {
+      const workers: EventEmitter[] = []
+      const generate = createResearchVideoGenerator({
+        temporaryRoot: root,
+        createWorker: () => {
+          const worker = Object.assign(new EventEmitter(), {
+            terminate: vi.fn(async () => 1),
+            postMessage: vi.fn()
+          })
+          workers.push(worker)
+          if (workers.length === 1)
+            queueMicrotask(() => {
+              if (role === 'speech')
+                worker.emit('message', { kind: 'synthesize', lane: 0, text: 'private narration' })
+              workers.at(-1)!.emit('exit', 23)
+            })
+          return worker as unknown as Worker
+        }
+      })
+      await expect(
+        generate(
+          {
+            specPath: 'unused',
+            modelDirectory: 'unused',
+            engineDirectory: 'unused',
+            outputDirectory: join(root, 'output')
+          },
+          new AbortController().signal
+        )
+      ).rejects.toMatchObject({
+        message: 'Research video worker stopped before completion',
+        workerRole: role,
+        exitCode: 23,
+        lane: role === 'speech' ? 0 : undefined
+      })
+      expect(await readdir(root)).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
