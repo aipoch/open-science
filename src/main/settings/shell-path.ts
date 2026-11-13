@@ -42,13 +42,14 @@ const augmentedPathEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 // npm prefix starts a process. Ask for its directories only after all local candidates miss.
 export async function* withNpmBinFallback(
   dirs: readonly string[],
-  deps: { resolveNpmBinDirs(signal?: AbortSignal): Promise<string[]> },
+  deps: { resolveNpmBinDirs?(signal?: AbortSignal): Promise<string[]> },
   signal?: AbortSignal
 ): AsyncGenerator<string> {
   const seen = new Set(dirs)
   yield* seen
 
   signal?.throwIfAborted()
+  if (!deps.resolveNpmBinDirs) return
   let npmDirs: string[]
   try {
     npmDirs = await deps.resolveNpmBinDirs(signal)
