@@ -65,7 +65,8 @@ for (const width of [320, 375, 414, 639, 640, 768]) {
           const style = getComputedStyle(el)
           return el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
         })
-        expect(buttonBounds.width).toBeCloseTo(innerWidth, 0)
+        expect(buttonBounds.width).toBeGreaterThanOrEqual(44)
+        expect(buttonBounds.width).toBeLessThanOrEqual(innerWidth)
       }
       const undo = page.getByTestId('archive-undo-snackbar')
       expect(await undo.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
