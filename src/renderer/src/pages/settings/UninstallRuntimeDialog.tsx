@@ -25,7 +25,7 @@ type UninstallRuntimeDialogProps = {
 }
 
 const confirmButtonClassName =
-  'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
+  'border-transparent bg-danger-000 text-danger-foreground hover:bg-danger-000/90 hover:text-danger-foreground'
 
 const DISPLAY_NAME: Record<'claude' | 'opencode' | 'codex' | 'codebuddy' | 'pi', string> = {
   claude: 'Claude',

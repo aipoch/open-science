@@ -32,7 +32,7 @@ const FieldHelp = ({
             size="icon-xs"
             aria-label={label ? t('Help for {{field}}', { field: label }) : t('More information')}
             data-slot="field-help"
-            className="size-6 rounded-full bg-transparent text-muted-foreground/50 hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground data-[state=delayed-open]:bg-muted data-[state=delayed-open]:text-foreground data-[state=instant-open]:bg-muted data-[state=instant-open]:text-foreground"
+            className="size-6 rounded-full bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground data-[state=delayed-open]:bg-muted data-[state=delayed-open]:text-foreground data-[state=instant-open]:bg-muted data-[state=instant-open]:text-foreground"
           >
             <CircleHelp className="size-3" aria-hidden="true" />
           </Button>

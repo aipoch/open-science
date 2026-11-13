@@ -49,7 +49,7 @@ export const NotebookRecordCell = ({
           <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
           {isProblem ? (
             errorLine ? (
-              <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
+              <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-danger-foreground">
                 {t('error (line {{line}})', { line: errorLine })}
               </span>
             ) : (

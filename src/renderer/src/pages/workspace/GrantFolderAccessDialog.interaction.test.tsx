@@ -790,7 +790,7 @@ describe('GrantFolderAccessDialog', () => {
     )
     expect(grantButton?.disabled).toBe(false)
     expect(grantButton?.className).toContain('bg-primary')
-    expect(grantButton?.className).toContain('hover:bg-primary/80')
+    expect(grantButton?.className).toContain('hover:bg-primary/90')
     // Switch to read & write before granting.
     await click(document.body.querySelector('[role="radio"][aria-checked="false"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))

@@ -30,7 +30,7 @@ export function JobTerminalOutput({
           alignItems: 'center',
           justifyContent: 'center',
           fontSize: '12px',
-          color: '#3a3a50',
+          color: '#8b949e',
           textAlign: 'center'
         }}
       >

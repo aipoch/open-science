@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 
 for (const [locale, label, projects, cancel] of [
@@ -168,3 +169,36 @@ for (const locale of ['unknown', '__proto__', 'constructor', 'toString']) {
     expect(errors).toEqual([])
   })
 }
+
+test('keeps action text readable while hovered in both themes', async ({ page }) => {
+  await page.goto('/button-feedback.html')
+  await page.addScriptTag({ path: resolve('node_modules/axe-core/axe.min.js') })
+  const save = page
+    .getByRole('region', { name: 'Proxy form' })
+    .getByRole('button', { name: 'Save', exact: true })
+  for (const dark of [false, true]) {
+    await page.evaluate(
+      (enabled) => document.documentElement.classList.toggle('dark', enabled),
+      dark
+    )
+    for (const target of [save, page.getByTestId('destructive-action')]) {
+      await target.hover()
+      await page.evaluate(async () => {
+        await Promise.all(
+          document
+            .getAnimations()
+            .filter((animation) => {
+              const end = animation.effect?.getComputedTiming().endTime
+              return typeof end === 'number' && Number.isFinite(end) && end <= 2000
+            })
+            .map((animation) => animation.finished.catch(() => {}))
+        )
+      })
+      const result = await target.evaluate(async (element) => {
+        const axe = (window as unknown as { axe: typeof import('axe-core') }).axe
+        return axe.run(element, { runOnly: { type: 'rule', values: ['color-contrast'] } })
+      })
+      expect(result.violations).toEqual([])
+    }
+  }
+})

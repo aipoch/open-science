@@ -29,7 +29,7 @@ type DeleteProjectDialogProps = {
 }
 
 const deleteDialogConfirmButtonClassName =
-  'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
+  'border-transparent bg-danger-000 text-danger-foreground hover:bg-danger-000/90 hover:text-danger-foreground'
 
 // Destructive deletion requires confirmation and reports the app-managed data removed with the Project.
 const DeleteProjectDialog = ({

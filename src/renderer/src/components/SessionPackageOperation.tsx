@@ -447,7 +447,7 @@ export const PackageExportProgressButton = ({
       onClick={() => setOpen(true)}
     >
       <Icon
-        className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
+        className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground dark:text-status-success-dark-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
         aria-hidden="true"
       />
       {!iconOnly ? <span className="hidden truncate lg:inline">{status}</span> : null}
@@ -524,7 +524,7 @@ export const PackageOperationIndicator = ({
           className={cn(
             'size-4 shrink-0',
             operation.state === 'failed'
-              ? 'text-status-failure-foreground'
+              ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
               : needsAttention
                 ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                 : 'text-primary',

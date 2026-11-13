@@ -300,7 +300,7 @@ export function PdfTranslationEditions({
               </AlertDialog.Cancel>
               <PdfTranslationActionHint reason={disabledReason}>
                 <Button
-                  className="border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white"
+                  className="border-transparent bg-danger-000 text-danger-foreground hover:bg-danger-000/90 hover:text-danger-foreground"
                   disabled={deleting || Boolean(disabledReason)}
                   onClick={async () => {
                     if (!deletingEdition || !onDelete || deleting || disabledReason) return

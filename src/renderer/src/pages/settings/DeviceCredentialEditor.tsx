@@ -619,7 +619,10 @@ export function DeviceCredentialEditor({
 
         {message ? (
           message.tone === 'success' ? (
-            <p className="text-sm text-status-success-foreground" role="status">
+            <p
+              className="text-sm text-status-success-foreground dark:text-status-success-dark-foreground"
+              role="status"
+            >
               {message.text}
             </p>
           ) : (
