@@ -225,3 +225,88 @@ it('rechecks changed source instead of retaining a prior conditional witness', (
   page.items.find((i) => i.str === 'q')!.str = 'changed source'
   expect(nativeCaseDisplayItems(page).size).toBe(0)
 })
+
+function annotatedCases(): PdfLayoutPage {
+  return {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      item('An ordinary paragraph introduces the display.', 50, 690, 300, 'Body', true),
+      item('q(t) =', 160, 634, 35, 'Math'),
+      item('\uF8F1', 200, 658, 9, 'Brace'),
+      item('\uF8F4', 200, 649, 9, 'Brace'),
+      item('\uF8F2', 200, 646, 9, 'Brace'),
+      item('\uF8F4', 200, 628, 9, 'Brace'),
+      item('\uF8F3', 200, 623, 9, 'Brace'),
+      ...[647, 632.5, 618].flatMap((y, n) => [
+        item(`${[4, 9, 6][n]} (${['north', 'west', 'south'][n]})`, 210, y, 45),
+        item(',', 255, y, 3, 'Math'),
+        item('t', 275, y, 5, 'Math'),
+        item(n ? '≡ ±' : '≡', 285, y, n ? 18 : 8, 'Math'),
+        item(`${n + 2} (mod 11)`, n ? 306 : 296, y, 50),
+        item(n === 2 ? '.' : ',', n ? 356 : 346, y, 3, 'Math', true)
+      ]),
+      item('An ordinary paragraph resumes.', 50, 580, 250, 'Body', true)
+    ]
+  }
+}
+
+it('keeps annotated native modular branches out of a free-flow translation fragment', () => {
+  const page = annotatedCases(),
+    before = structuredClone(page),
+    grouped = groupPdfTranslationPages({ pages: [page] })
+  for (let index = 1; index < page.items.length - 1; index++) {
+    const owner = grouped.units.find((u) => u.items.includes(`1:${index}`))!
+    expect(owner.sourceOnly, `native case item ${index}`).toBe(true)
+    expect(owner.preserve).toBe('formula')
+  }
+  expect(grouped.units.filter((u) => !u.sourceOnly).map((u) => u.source)).toEqual([
+    page.items[0].str,
+    page.items.at(-1)!.str
+  ])
+  expect(grouped.units.flatMap((u) => u.items).toSorted()).toEqual(
+    page.items.map((_, n) => `1:${n}`).toSorted()
+  )
+  expect(page).toEqual(before)
+})
+
+it.each([
+  'brace',
+  'assignment',
+  'alignment',
+  'condition',
+  'label',
+  'foreign',
+  'overlap',
+  'metrics',
+  'rotation'
+])('does not claim an unclosed annotated display: %s', (fault) => {
+  const page = annotatedCases()
+  if (fault === 'brace') page.items[3].str = 'ordinary'
+  if (fault === 'assignment') page.items[1].str = 'List of categories'
+  if (fault === 'alignment') page.items[13].transform[4] += 3
+  if (fault === 'condition') page.items[11].str = 'ordinary explanation'
+  if (fault === 'label') page.items[7].str = 'a paragraph starts here'
+  if (fault === 'foreign') page.items.splice(12, 0, item('foreign', 50, 600, 40))
+  if (fault === 'overlap') page.items.splice(-1, 0, item('foreign', 280, 640, 40))
+  if (fault === 'metrics') page.items[3].fontDescent = undefined
+  if (fault === 'rotation') page.rotation = 90
+  expect(nativeCaseDisplayItems(page).size).toBe(0)
+})
+
+it.each([0.5, 2])('recognizes annotated case geometry at scale %s', (scale) => {
+  const page = annotatedCases(),
+    expected = [...nativeCaseDisplayItems(page)]
+  page.width *= scale
+  page.height *= scale
+  for (const i of page.items) {
+    i.width *= scale
+    i.height *= scale
+    i.transform = i.transform.map((v) => v * scale)
+  }
+  expect([...nativeCaseDisplayItems(page)]).toEqual(expected)
+  page.items[7].str = 'changed source prose'
+  expect(nativeCaseDisplayItems(page).size).toBe(0)
+})

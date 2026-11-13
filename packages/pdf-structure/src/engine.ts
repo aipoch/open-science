@@ -89,9 +89,7 @@ export const createEngineAt = (
       const stop = (): Promise<void> => {
         if (stopped) return Promise.resolve()
         stopping ??= (async () => {
-          if (child.exitCode === null && child.signalCode === null) {
-            await runtimeHost.stop(child)
-          }
+          await runtimeHost.stop(child)
           await closed
           await converting?.catch(() => undefined)
           const cleanup = await import(pathToFileURL(join(resources, 'scratch.mjs')).href)

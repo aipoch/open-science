@@ -1,5 +1,6 @@
-import { Worker, workerData } from 'node:worker_threads'
-import { Writable } from 'node:stream'
+import { installPdfCanvasReset } from './literature-pdf-canvas-reset.mjs'
+import { parentPort, workerData } from 'node:worker_threads'
+import { requestOnnxProcess } from './onnx-process.mjs'
 import { nativeKeyedPhotoTimelineCropPlan } from './literature-pdf-figure-native-captioned-illustration.mjs'
 import { isSearchableScan, readScannedPageElements } from './literature-pdf-scanned-page.mjs'
 import { createNativeTableFontRoleWitness } from './literature-pdf-native-table-font-role.mjs'
@@ -9,7 +10,7 @@ import {
 } from './literature-pdf-native-owned-figure-labels.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Candidate extractor adapted from the reviewed offline experiment. Main owns authorization/cache.
-// Usage: node resources/pdf-structure/literature-pdf-extract.mjs PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
+// Supervisor Worker argv: PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
 import assert from 'node:assert/strict'
 import {
   ordinaryTableCompetitionRect,
@@ -408,9 +409,7 @@ assert(
   pdfArgument && assetArgument && runtimeArgument && pageArgument && outputArgument,
   'Supply all five arguments.'
 )
-const pdfPath = resolve(pdfArgument),
-  assets = resolve(assetArgument),
-  runtime = resolve(runtimeArgument)
+const pdfPath = resolve(pdfArgument)
 const output = resolve(outputArgument)
 const requestedPages = pageArgument
   .split(',')
@@ -435,125 +434,9 @@ const run = async (script, args) => {
     process.argv = previous
   }
 }
-// Keep ORT's module/linear memory out of geometry and native publication.
-const runOnnxWorker = async (args) => {
-  console.log(JSON.stringify({ phase: './literature-pdf-onnx.mjs' }))
-  const worker = new Worker(new URL('./literature-pdf-onnx.mjs', import.meta.url), {
-    argv: args,
-    execArgv: [],
-    stdout: true,
-    stderr: true,
-    resourceLimits: { maxOldGenerationSizeMb: 512 }
-  })
-  let failure,
-    code,
-    didExit = false,
-    stopping
-  const exited = new Promise((resolve) =>
-    worker.once('exit', (value) => {
-      code = value
-      didExit = true
-      resolve()
-    })
-  )
-  worker.once('error', (error) => {
-    failure ??= error
-  })
-  const stop = () =>
-    (stopping ??= (async () => {
-      try {
-        if (!didExit) await worker.terminate()
-      } finally {
-        await exited
-      }
-    })())
-  const pipeError = (error) => {
-    failure ??= error
-    // A failed destination unpipes/pauses its source. Drain owned stdio so
-    // termination/exit cannot wait forever on backpressure.
-    worker.stdout.unpipe()
-    worker.stderr.unpipe()
-    worker.stdout.resume()
-    worker.stderr.resume()
-    void stop().catch((error) => {
-      failure ??= error
-    })
-  }
-  const streams = [worker.stdout, worker.stderr]
-  const drained = Promise.all(
-    streams.map(
-      (stream) =>
-        new Promise((resolve) => {
-          stream.once('end', resolve)
-          stream.once('close', resolve)
-          stream.once('error', (error) => {
-            pipeError(error)
-            resolve()
-          })
-        })
-    )
-  )
-  // Readable end does not wait for the destination's asynchronous write callbacks.
-  // End only owned bridges; their finish proves forwarding, without ending parent stdio.
-  const forwards = [process.stdout, process.stderr].map(
-    (destination) =>
-      new Writable({
-        write(chunk, encoding, done) {
-          try {
-            destination.write(chunk, encoding, done)
-          } catch (error) {
-            done(error)
-          }
-        }
-      })
-  )
-  const forwarded = Promise.all(
-    forwards.map(
-      (stream) =>
-        new Promise((resolve) => {
-          stream.once('finish', resolve)
-          stream.once('close', resolve)
-          stream.on('error', pipeError)
-        })
-    )
-  )
-  process.stdout.on('error', pipeError)
-  process.stderr.on('error', pipeError)
-  try {
-    worker.stdout.pipe(forwards[0], { end: false })
-    worker.stderr.pipe(forwards[1], { end: false })
-    await exited
-    await drained
-    forwards.forEach((stream) => stream.end())
-    await forwarded
-    if (failure) throw failure
-    if (code !== 0) throw Error(`ONNX worker exited unsuccessfully (${code})`)
-  } finally {
-    worker.stdout.unpipe()
-    worker.stderr.unpipe()
-    worker.stdout.resume()
-    worker.stderr.resume()
-    try {
-      await stop()
-      await drained
-      forwards.forEach((stream) => stream.end())
-      await forwarded
-    } finally {
-      worker.stdout.unpipe()
-      worker.stderr.unpipe()
-      process.stdout.removeListener('error', pipeError)
-      process.stderr.removeListener('error', pipeError)
-    }
-  }
-}
-await runOnnxWorker([
-  pdfPath,
-  assets,
-  runtime,
-  pageArgument,
-  join(output, 'inference'),
-  'production'
-])
+// Geometry starts only after the separately owned ORT process has closed.
+const runOnnxWorker = () => requestOnnxProcess(parentPort)
+await runOnnxWorker()
 const structurePhase = await run('./literature-pdf-structure.mjs', [
   pdfPath,
   join(output, 'geometry'),
@@ -562,6 +445,7 @@ const structurePhase = await run('./literature-pdf-structure.mjs', [
   'production',
   'caption-raster'
 ])
+console.log(JSON.stringify({ phase: 'geometry:completed', memory: process.memoryUsage() }))
 try {
   const geometry = JSON.parse(await readFile(join(output, 'geometry/probe.json'), 'utf8'))
   const originalPages = new Map(geometry.pages.map((page) => [page.pageNumber, page]))
@@ -674,6 +558,7 @@ try {
     writtenFigurePngs.delete(relativePath)
   }
   const assetRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
+  console.log(JSON.stringify({ phase: 'publication:pdf:create', memory: process.memoryUsage() }))
   const task = getDocument({
     data: new Uint8Array(bytes),
     isEvalSupported: false,
@@ -837,6 +722,7 @@ try {
   })
   try {
     const document = await task.promise
+    installPdfCanvasReset(document.canvasFactory)
     const pageLabels = await document.getPageLabels()
     const separatedFigures =
       document.numPages > 20 &&

@@ -197,7 +197,7 @@ it('declines unavailable native metrics and propagates cancellation', async () =
   await expect(rememberNativeCaptionTerminal({ ...c, signal: abort.signal })).rejects.toThrow()
 })
 
-it('serializes parser 10 sources without proof and restores historical snapshots unchanged', async () => {
+it('serializes fresh sources without proof and restores historical snapshots unchanged', async () => {
   const task = getDocument({ data: new Uint8Array(data) })
   onTestFinished(() => task.destroy())
   const extraction = await extractPdfTranslationSource({
@@ -207,7 +207,7 @@ it('serializes parser 10 sources without proof and restores historical snapshots
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-14')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-15')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()

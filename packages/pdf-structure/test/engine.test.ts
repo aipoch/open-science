@@ -12,82 +12,145 @@ beforeEach(() => {
   vi.spyOn(workerResult, 'readWorkerResult')
 })
 const roots: string[] = []
-it.each(['worker-heap', 'process-rss', 'scratch-bytes'])(
-  'reports the exact %s supervisor limit without changing the budgets',
-  async (reason) => {
-    const { readFile } = await import('node:fs/promises')
-    const { EventEmitter } = await import('node:events')
-    const { runInNewContext } = await import('node:vm')
-    const source = (await readFile(new URL('../resources/host.mjs', import.meta.url), 'utf8'))
-      .replace(/^import .*$/gm, '')
-      .replaceAll('import.meta.url', "'file:///resources/host.mjs'")
-    let limits: unknown,
-      inspect: () => Promise<void>,
-      rss = 2 * 1024 ** 3,
-      scratch = 256 * 1024 ** 2
-    const workers: StubWorker[] = [],
-      stdin = new EventEmitter(),
-      exit = vi.fn(),
-      error = vi.fn(),
-      deadlines: number[] = [],
-      inspectScratch = vi.fn(async () => scratch)
-    class StubWorker extends EventEmitter {
-      stdout = Object.assign(new EventEmitter(), { pipe: vi.fn() })
-      stderr = new EventEmitter()
-      terminate = vi.fn(async () => undefined)
-      constructor(_url: URL, options: { resourceLimits: unknown }) {
-        super()
-        workers.push(this)
-        limits = options.resourceLimits
+it.each([
+  'worker-heap',
+  'process-rss',
+  'scratch-bytes',
+  'combined-rss',
+  'deadline',
+  'duplicate-start'
+])('reports the exact %s supervisor limit without changing the budgets', async (reason) => {
+  const { readFile } = await import('node:fs/promises')
+  const { EventEmitter } = await import('node:events')
+  const { runInNewContext } = await import('node:vm')
+  const source = (await readFile(new URL('../resources/host.mjs', import.meta.url), 'utf8'))
+    .replace(/^import .*$/gm, '')
+    .replaceAll('import.meta.url', "'file:///resources/host.mjs'")
+  let limits: unknown,
+    inspect: () => Promise<void>,
+    rss = reason === 'combined-rss' ? 1024 ** 3 : 2 * 1024 ** 3,
+    childRss = reason === 'combined-rss' ? 1024 ** 3 : 0,
+    deadlineCallback: () => void,
+    memoryCallback: () => void,
+    scratch = 256 * 1024 ** 2
+  const workers: StubWorker[] = [],
+    stdin = new EventEmitter(),
+    exit = vi.fn(),
+    error = vi.fn(),
+    deadlines: number[] = [],
+    inspectScratch = vi.fn(async () => scratch),
+    childStop = vi.fn(async () => undefined),
+    createOnnxProcess = vi.fn((_args, memory) => {
+      memoryCallback = memory
+      return {
+        stdout: new EventEmitter(),
+        result: new Promise(() => undefined),
+        stop: childStop,
+        get rssBytes() {
+          return childRss
+        }
       }
-    }
-    runInNewContext(source, {
-      Worker: StubWorker,
-      URL,
-      process: { platform: 'linux', stdin, stdout: {}, memoryUsage: () => ({ rss }), exit },
-      console: { error },
-      inspectScratch,
-      setTimeout: (_callback: unknown, ms: number) => deadlines.push(ms),
-      clearTimeout: vi.fn(),
-      setInterval: (callback: () => Promise<void>, ms: number) => {
-        expect(ms).toBe(250)
-        inspect = callback
-      },
-      clearInterval: vi.fn()
     })
-    stdin.emit('data', '{"input":"source.pdf","output":"scratch","pages":[1]}\n')
-    expect(limits).toEqual({ maxOldGenerationSizeMb: 512 })
-    expect(deadlines).toEqual([120000])
-    await inspect!()
-    expect(exit).not.toHaveBeenCalled()
-    expect(error).not.toHaveBeenCalled()
-    if (reason === 'worker-heap') {
-      workers[0].emit('error', new Error('Worker terminated: JS heap out of memory'))
-    } else {
-      if (reason === 'process-rss') rss++
-      else scratch++
-      await inspect!()
+  class StubWorker extends EventEmitter {
+    stdout = Object.assign(new EventEmitter(), { pipe: vi.fn() })
+    stderr = new EventEmitter()
+    terminate = vi.fn(async () => undefined)
+    constructor(_url: URL, options: { resourceLimits: unknown }) {
+      super()
+      workers.push(this)
+      limits = options.resourceLimits
     }
-    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1))
-    const message = error.mock.calls.map((args) => args.join(' ')).join('\n')
-    expect(message).toContain('PDF execution resource limit exceeded. Last phase: startup.')
-    expect(message).toContain(`Reason: ${reason}.`)
-    const stats = JSON.parse(message.split('Stats: ')[1])
-    expect(stats).toMatchObject({
-      workerHeapLimitMb: 512,
-      rssLimitBytes: 2 * 1024 ** 3,
-      scratchLimitBytes: 256 * 1024 ** 2,
-      deadlineMs: 120000,
-      rssBytes: rss
-    })
-    if (reason === 'scratch-bytes') expect(stats.scratchBytes).toBe(scratch)
-    expect(
-      Object.values(stats).every((value) => Number.isSafeInteger(value) && Number(value) >= 0)
-    ).toBe(true)
-    expect(message).not.toContain('source.pdf')
-    expect(message).not.toContain('"scratch"')
   }
-)
+  runInNewContext(source, {
+    Worker: StubWorker,
+    URL,
+    join,
+    process: {
+      platform: 'linux',
+      on: vi.fn(),
+      stdin,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      memoryUsage: () => ({ rss }),
+      exit
+    },
+    console: { error },
+    inspectScratch,
+    createOnnxProcess,
+    setTimeout: (callback: () => void, ms: number) => {
+      if (ms === 120000) deadlineCallback = callback
+      deadlines.push(ms)
+    },
+    clearTimeout: vi.fn(),
+    setInterval: (callback: () => Promise<void>, ms: number) => {
+      expect(ms).toBe(250)
+      inspect = callback
+    },
+    clearInterval: vi.fn()
+  })
+  stdin.emit('data', '{"input":"source.pdf","output":"scratch","pages":[1]}\n')
+  if (reason === 'combined-rss' || reason === 'deadline' || reason === 'duplicate-start')
+    workers[0].emit('message', { type: 'onnx:start', args: ['ignored'] })
+  expect(limits).toEqual({ maxOldGenerationSizeMb: 512 })
+  expect(deadlines).toEqual([120000])
+  await inspect!()
+  expect(exit).not.toHaveBeenCalled()
+  expect(error).not.toHaveBeenCalled()
+  if (reason === 'worker-heap') {
+    workers[0].emit('error', new Error('Worker terminated: JS heap out of memory'))
+  } else if (reason === 'combined-rss') {
+    childRss++
+    memoryCallback!()
+  } else if (reason === 'duplicate-start') {
+    workers[0].emit('message', { type: 'onnx:start' })
+  } else if (reason === 'deadline') {
+    deadlineCallback!()
+  } else {
+    if (reason === 'process-rss') rss++
+    else scratch++
+    await inspect!()
+  }
+  await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(1))
+  const message = error.mock.calls.map((args) => args.join(' ')).join('\n')
+  if (reason === 'duplicate-start') {
+    expect(createOnnxProcess).toHaveBeenCalledOnce()
+    expect(childStop).toHaveBeenCalledOnce()
+    return
+  }
+  if (reason === 'deadline') {
+    expect(message).toContain('PDF execution deadline exceeded. Last phase: startup')
+    expect(childStop).toHaveBeenCalledOnce()
+    return
+  }
+  expect(message).toContain('PDF execution resource limit exceeded. Last phase: startup.')
+  expect(message).toContain(`Reason: ${reason === 'combined-rss' ? 'process-rss' : reason}.`)
+  const stats = JSON.parse(message.split('Stats: ')[1])
+  expect(stats).toMatchObject({
+    workerHeapLimitMb: 512,
+    rssLimitBytes: 2 * 1024 ** 3,
+    scratchLimitBytes: 256 * 1024 ** 2,
+    deadlineMs: 120000,
+    rssBytes: rss + childRss
+  })
+  if (reason === 'scratch-bytes') expect(stats.scratchBytes).toBe(scratch)
+  if (reason === 'combined-rss') {
+    expect(stats).toMatchObject({ hostRssBytes: rss, childRssBytes: childRss })
+    expect(createOnnxProcess.mock.calls[0][0]).toEqual([
+      'source.pdf',
+      undefined,
+      undefined,
+      '1',
+      'scratch/inference',
+      'production'
+    ])
+    expect(childStop).toHaveBeenCalledOnce()
+  }
+  expect(
+    Object.values(stats).every((value) => Number.isSafeInteger(value) && Number(value) >= 0)
+  ).toBe(true)
+  expect(message).not.toContain('source.pdf')
+  expect(message).not.toContain('"scratch"')
+})
 it('resolves the actual engine recipe with the installed package exports', async () => {
   const recipe = await createPdfStructureEngine({ modelRecipe }).describe()
   expect(recipe.fingerprint).toMatch(/^[a-f0-9]{64}$/)
@@ -119,7 +182,7 @@ it('joins main-process result conversion before deleting scratch after cancellat
   await mkdir(join(root, 'job'))
   await writeFile(
     join(root, 'host.mjs'),
-    `import {mkdir} from 'node:fs/promises'; process.stdin.once('data', async chunk => { const request=JSON.parse(chunk); await mkdir(request.output); process.exit(0) })`
+    `import {mkdir} from 'node:fs/promises'; process.stdin.once('data', async chunk => { const request=JSON.parse(chunk); await mkdir(request.output); process.send({type:"pdf:stopped"},()=>process.exit(0)) })`
   )
   await writeFile(
     join(root, 'scratch.mjs'),
@@ -178,7 +241,10 @@ it('joins main-process result conversion before deleting scratch after cancellat
 it('retains the stop handle when the initial progress observer throws', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pdf-engine-observer-'))
   roots.push(root)
-  await writeFile(join(root, 'host.mjs'), 'setInterval(() => {}, 1000)')
+  await writeFile(
+    join(root, 'host.mjs'),
+    `process.stdin.resume();process.on('message',({type})=>{if(type==='pdf:stop')process.send({type:'pdf:stopped'},()=>process.exit(1))})`
+  )
   await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
   const { nodeProcessRuntime } = await import('../src/node-runtime.js')
   const runtime = { ...nodeProcessRuntime, stop: vi.fn(nodeProcessRuntime.stop) }
@@ -197,7 +263,10 @@ it('retains scratch and retries when termination cannot be confirmed', async () 
   const root = await mkdtemp(join(tmpdir(), 'pdf-engine-retry-'))
   roots.push(root)
   await mkdir(join(root, 'extractor'))
-  await writeFile(join(root, 'host.mjs'), 'setInterval(() => {}, 1000)')
+  await writeFile(
+    join(root, 'host.mjs'),
+    `process.stdin.resume();process.on('message',({type})=>{if(type==='pdf:stop')process.send({type:'pdf:stopped'},()=>process.exit(1))})`
+  )
   await writeFile(
     join(root, 'scratch.mjs'),
     `import { rmdir } from 'node:fs/promises'; export async function inspectScratch(path) { await rmdir(path) }`
@@ -251,7 +320,7 @@ it.each([
     join(root, 'host.mjs'),
     'process.stdin.once("data", () => process.stderr.write(' +
       JSON.stringify(stderr) +
-      ', () => process.exit(37)))'
+      ', () => process.send({type:"pdf:stopped"},()=>process.exit(37))))'
   )
   await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
   const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
@@ -272,7 +341,7 @@ it('classifies a host resource-limit failure for an explicit retry', async () =>
   roots.push(root)
   await writeFile(
     join(root, 'host.mjs'),
-    'process.stdin.once("data", () => process.stderr.write("PDF execution resource limit exceeded.", () => process.exit(1)))'
+    'process.stdin.once("data", () => process.stderr.write("PDF execution resource limit exceeded.", () => process.send({type:"pdf:stopped"},()=>process.exit(1))))'
   )
   await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
   const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
@@ -288,7 +357,7 @@ it('classifies a host deadline failure for an explicit retry', async () => {
   roots.push(root)
   await writeFile(
     join(root, 'host.mjs'),
-    'process.stdin.once("data", () => process.stderr.write("PDF execution deadline exceeded. Last phase: onnx", () => process.exit(1)))'
+    'process.stdin.once("data", () => process.stderr.write("PDF execution deadline exceeded. Last phase: onnx", () => process.send({type:"pdf:stopped"},()=>process.exit(1))))'
   )
   await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
   const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
@@ -304,7 +373,7 @@ it('classifies a worker JavaScript heap-limit failure for an explicit retry', as
   roots.push(root)
   await writeFile(
     join(root, 'host.mjs'),
-    'process.stdin.once("data", () => process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", () => process.exit(1)))'
+    'process.stdin.once("data", () => process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", () => process.send({type:"pdf:stopped"},()=>process.exit(1))))'
   )
   await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
   const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
@@ -333,7 +402,7 @@ it('retains an actual nullable exit code and signal from the owned runtime close
   child.emit('close', null, 'SIGTERM')
   await expect(job.result).rejects.toThrow('PDF extraction failed. (exitCode=null, signal=SIGTERM)')
   await job.stop()
-  expect(runtime.stop).not.toHaveBeenCalled()
+  expect(runtime.stop).toHaveBeenCalledOnce()
   expect(workerResult.readWorkerResult).not.toHaveBeenCalled()
   child.stdin.destroy()
   child.stdout.destroy()
@@ -482,6 +551,8 @@ it.each([
   'transfer-success',
   'render-failure',
   'inference-failure',
+  'detection-create-failure',
+  'detection-release-failure',
   'structure-success',
   'structure-failure'
 ])('releases completed page resources and inference tensors on %s', async (mode) => {
@@ -492,6 +563,9 @@ it.each([
     { pathToFileURL } = await import('node:url'),
     { createOnnxSessionLifecycle } = await import(
       new URL('../resources/literature-pdf-onnx-sessions.mjs', import.meta.url).href
+    ),
+    { installPdfCanvasReset: installCanvasReset } = await import(
+      new URL('../resources/literature-pdf-canvas-reset.mjs', import.meta.url).href
     )
   const source = (
     await readFile(new URL('../resources/literature-pdf-onnx.mjs', import.meta.url), 'utf8')
@@ -502,6 +576,11 @@ it.each([
       '({ ...runtime, InferenceSession: { create: async (...args) => { const session = await runtime.InferenceSession.create(...args); return { ...session, inputNames: Array.from(session.inputNames) } } } })'
     )
     .replaceAll('import.meta.url', "'file:///resources/literature-pdf-onnx.mjs'")
+  const factory = { reset: vi.fn() },
+    installPdfCanvasReset = vi.fn((value: typeof factory) => {
+      expect(value).toBe(factory)
+      installCanvasReset(value)
+    })
   const events: string[] = [],
     png = Buffer.from('same-pixels'),
     canvas = {
@@ -528,15 +607,20 @@ it.each([
         height: 300,
         convertToViewportPoint: (x: number, y: number) => [x, 300 - y]
       }),
-      render: () => ({
-        promise: mode === 'render-failure' ? Promise.reject(Error(mode)) : Promise.resolve()
-      }),
+      render: () => {
+        expect(installPdfCanvasReset).toHaveBeenCalledExactlyOnceWith(factory)
+        factory.reset({}, 300, 300)
+        return {
+          promise: mode === 'render-failure' ? Promise.reject(Error(mode)) : Promise.resolve()
+        }
+      },
       getOperatorList: async () => ({}),
       cleanup: () => {
         events.push('page')
       }
     },
     document = {
+      canvasFactory: factory,
       numPages: 1,
       getPage: async () => page,
       cleanup: async () => {
@@ -561,8 +645,15 @@ it.each([
     InferenceSession: {
       create: async () => {
         const index = sessionIndex++
+        expect(events.slice(0, 3)).toEqual(['page', 'document', 'destroy'])
+        expect([canvas.width, canvas.height]).toEqual([1, 1])
+        expect(observed.rulesReady).toBe(true)
+        if (index === 0 && mode === 'detection-create-failure') throw Error(mode)
         if (index === 1)
-          expect(events.filter((e) => !['page', 'document'].includes(e)).slice(0, 4)).toEqual([
+          expect(events).toEqual([
+            'page',
+            'document',
+            'destroy',
             'tensor',
             'logits',
             'boxes',
@@ -570,7 +661,10 @@ it.each([
           ])
         return {
           inputNames: ['pixel_values'],
-          release: async () => events.push(`session:${index}`),
+          release: async () => {
+            events.push(`session:${index}`)
+            if (index === 0 && mode === 'detection-release-failure') throw Error(mode)
+          },
           run: async () => {
             if (mode === 'inference-failure' || (mode === 'structure-failure' && index === 1))
               throw Error(mode)
@@ -631,6 +725,7 @@ it.each([
     pathToFileURL,
     runtime,
     createOnnxSessionLifecycle,
+    installPdfCanvasReset,
     sharp,
     performance,
     process: {
@@ -713,22 +808,51 @@ it.each([
   expect.soft(events).toContain('document')
   expect(events).toContain('destroy')
   if (mode === 'render-failure') expect(sessionIndex).toBe(0)
+  else if (mode === 'detection-create-failure') expect(sessionIndex).toBe(1)
   else expect(events).toContain('session:0')
   if (mode.startsWith('structure-')) expect(events).toContain('session:1')
   else expect(events).not.toContain('session:1')
-  if (mode !== 'render-failure') expect.soft(events).toContain('tensor')
+  if (!['render-failure', 'detection-create-failure'].includes(mode))
+    expect.soft(events).toContain('tensor')
   if (mode.endsWith('success')) {
     expect(observed.sourceSha256).toBe('source')
     expect(events).toEqual([
+      'page',
+      'document',
+      'destroy',
       'tensor',
       'logits',
       'boxes',
       'session:0',
       ...(mode === 'structure-success' ? ['tensor', 'logits', 'boxes'] : []),
-      'page',
-      'document',
-      'destroy',
       ...(mode === 'structure-success' ? ['session:1'] : [])
     ])
   }
+})
+
+it('retains scratch after an unexpectedly killed default supervisor, including repeated stop', async () => {
+  const { once } = await import('node:events')
+  const { nodeProcessRuntime } = await import('../src/node-runtime.js')
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-unconfirmed-'))
+  roots.push(root)
+  await mkdir(join(root, 'extractor'))
+  await writeFile(
+    join(root, 'host.mjs'),
+    'process.stdin.resume();console.log("ready");setInterval(()=>{},1000)'
+  )
+  await writeFile(
+    join(root, 'scratch.mjs'),
+    `import{rmdir}from'node:fs/promises';export async function inspectScratch(root){await rmdir(root)}`
+  )
+  const runtime = { ...nodeProcessRuntime, spawn: vi.fn(nodeProcessRuntime.spawn) },
+    job = createEngineAt(root, { modelRecipe, runtime }).start(requestAt(root)),
+    child = runtime.spawn.mock.results[0].value
+  const failed = expect(job.result).rejects.toThrow('signal=SIGKILL')
+  await once(child.stdout, 'data')
+  child.kill('SIGKILL')
+  await failed
+  await expect(job.stop()).rejects.toThrow('termination is unconfirmed')
+  await expect(job.stop()).rejects.toThrow('termination is unconfirmed')
+  expect((await stat(join(root, 'extractor'))).isDirectory()).toBe(true)
+  expect(workerResult.readWorkerResult).not.toHaveBeenCalled()
 })
