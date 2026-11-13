@@ -16,7 +16,7 @@ import { configureDesktopReviewer } from './reviewer/paged-preview-host'
 import { createReviewerElectronPagedContentResolver } from './reviewer/paged-preview-electron'
 import { app, BrowserWindow, dialog, shell, webContents, Notification } from 'electron'
 import { configureDesktopInteraction } from './desktop-interaction'
-import { showOpenDialog, showSaveDialog } from './file-dialog-electron'
+import { showSaveDialog } from './file-dialog-electron'
 
 export function installElectronInteraction(): void {
   configureOfficePreviewHost({
@@ -47,7 +47,7 @@ export function installElectronInteraction(): void {
     renderResearchVideo: renderResearchVideoMp4,
     researchVideoProgress: async (request) => readResearchVideoExportProgress(request),
     printConversationPdf,
-    chooseFiles: showOpenDialog,
+    chooseFiles: dialog.showOpenDialog.bind(dialog),
     chooseSavePath: showSaveDialog,
     chooseSavePathForCaller: async (callerId, options) => {
       if (callerId === undefined) return showSaveDialog(options)

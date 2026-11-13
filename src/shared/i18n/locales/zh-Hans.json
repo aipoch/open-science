@@ -7988,7 +7988,6 @@
     "Enter a valid folder name.": "请输入有效的文件夹名称。",
     "Cannot use this destination. Choose another file or folder.": "无法使用此目标位置。请选择其他文件或文件夹。",
     "The destination changed. Review it and save again.": "目标文件已发生变化。请检查后重新保存。",
-    "Select folder": "选择文件夹",
     "Parent folder": "上一级文件夹",
     "Folders": "文件夹",
     "No subfolders": "没有子文件夹",

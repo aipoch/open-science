@@ -7,7 +7,7 @@ import { resolveLocaleFromTags } from '../shared/locale'
 import { FileDialogUiSession } from './file-dialog-ui-state'
 import {
   FILE_DIALOG_DISPLAY_TIMEOUT_MS,
-  type FileDialogResult,
+  type FileDialogSaveResult,
   type FileDialogWindowRequest
 } from './file-dialog-protocol'
 
@@ -51,7 +51,7 @@ export async function showInProcessFileDialog(
   request: FileDialogWindowRequest,
   parent: BaseWindow,
   signal?: AbortSignal
-): Promise<FileDialogResult> {
+): Promise<FileDialogSaveResult> {
   signal?.throwIfAborted()
   if (parent.isDestroyed()) throw new Error('Desktop command window is no longer available.')
   if (activeSaveDialog && !activeSaveDialog.isDestroyed())
@@ -128,7 +128,7 @@ export async function showInProcessFileDialog(
   }
   reportWindow('created')
 
-  const result = new Promise<FileDialogResult>((resolve, reject) => {
+  const result = new Promise<FileDialogSaveResult>((resolve, reject) => {
     let settled = false
     window.on('focus', () => {
       if (!settled && window.isVisible()) reportWindow('focused')
@@ -167,7 +167,7 @@ export async function showInProcessFileDialog(
       () => fail(new Error('File dialog initialization timed out.')),
       FILE_DIALOG_DISPLAY_TIMEOUT_MS - 1000
     )
-    const finish = (selection: FileDialogResult): void => {
+    const finish = (selection: FileDialogSaveResult): void => {
       if (settled) return
       settled = true
       resolve(selection)
@@ -231,13 +231,7 @@ export async function showInProcessFileDialog(
         busy = false
       }
     })
-    window.once('closed', () =>
-      finish(
-        request.kind === 'save'
-          ? { canceled: true, filePath: '' }
-          : { canceled: true, filePaths: [] }
-      )
-    )
+    window.once('closed', () => finish({ canceled: true, filePath: '' }))
     window.webContents.once('render-process-gone', () =>
       fail(new Error('File dialog renderer exited.'))
     )

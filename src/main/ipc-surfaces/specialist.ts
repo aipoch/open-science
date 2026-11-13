@@ -1,6 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
-import { app } from 'electron'
-import * as dialog from '../file-dialog-electron'
+import { app, dialog } from 'electron'
+import { showSaveDialog } from '../file-dialog-electron'
 import { publishUserFile } from '../user-file-publisher'
 import { registerSpecialistIpcHandlers } from '../specialist/ipc'
 import {
@@ -50,7 +50,7 @@ export const createSpecialistElectronSurface = ({
       createContributionTemplateExporter({
         appVersion: app.getVersion(),
         translate,
-        showSaveDialog: (options) => dialog.showSaveDialog(options),
+        showSaveDialog: (options) => showSaveDialog(options),
         readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
         publishUserFile,
         writeFile: (filePath, bytes) => writeFile(filePath, bytes)
@@ -69,7 +69,7 @@ export const createSpecialistElectronSurface = ({
         saveReport: (report) =>
           saveSpecialistPackageReport(
             {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
+              showSaveDialog: (options) => showSaveDialog(options),
               publishUserFile,
               writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
             },
@@ -79,7 +79,7 @@ export const createSpecialistElectronSurface = ({
         saveExport: (archive) =>
           saveSpecialistExport(
             {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
+              showSaveDialog: (options) => showSaveDialog(options),
               publishUserFile,
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },

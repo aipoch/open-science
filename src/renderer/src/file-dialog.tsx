@@ -35,11 +35,10 @@ declare global {
 
 export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Element {
   const { t } = useTranslation()
-  const directoryMode = initial.mode === 'directory'
   const [location, setLocation] = useState(initial.location)
   const [path, setPath] = useState(initial.location.path)
   const [filename, setFilename] = useState(initial.filename)
-  const [browsing, setBrowsing] = useState(directoryMode)
+  const [browsing, setBrowsing] = useState(false)
   const [newFolder, setNewFolder] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
@@ -163,7 +162,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
       } else if (reply.type === 'confirm') setConfirmation(reply)
       else if (reply.type === 'error') {
         setError(reply.code)
-        // The same validation code can belong to different fields, especially in directory mode.
+        // File and folder names share validation codes but show feedback beside their own fields.
         setErrorOwner(
           action.type === 'mkdir'
             ? 'new-folder'
@@ -205,9 +204,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
       }}
     >
       <header ref={headerRef} className={dialogHeaderClassName}>
-        <h1 className={dialogTitleClassName}>
-          {directoryMode ? t('Select folder') : t('Save file')}
-        </h1>
+        <h1 className={dialogTitleClassName}>{t('Save file')}</h1>
         <Button
           variant="ghost"
           size="icon"
@@ -395,49 +392,47 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
               )}
             </section>
           )}
-          {!directoryMode && (
-            <div className="flex shrink-0 flex-col gap-1.5">
-              <div className={rowClass}>
-                <label htmlFor="save-name" className="text-sm text-muted-foreground">
-                  {t('File name')}
-                </label>
-                <Input
-                  id="save-name"
-                  ref={nameInput}
-                  className={inputClass}
-                  autoFocus
-                  value={filename}
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-invalid={Boolean(filenameError)}
-                  aria-describedby={filenameError ? 'save-name-hint' : undefined}
-                  onChange={(event) => editName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return
-                    event.preventDefault()
-                    // Enter commits an IME candidate without accepting or saving the file.
-                    if (!event.nativeEvent.isComposing && event.keyCode !== 229) save()
-                  }}
-                />
-              </div>
-              {filenameError && (
-                <div className={rowClass}>
-                  <span aria-hidden="true" />
-                  <div>
-                    {filenameError && (
-                      <p
-                        id="save-name-hint"
-                        role="alert"
-                        className="text-sm font-normal leading-5 text-muted-foreground [overflow-wrap:anywhere]"
-                      >
-                        {errors[filenameError]}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
+          <div className="flex shrink-0 flex-col gap-1.5">
+            <div className={rowClass}>
+              <label htmlFor="save-name" className="text-sm text-muted-foreground">
+                {t('File name')}
+              </label>
+              <Input
+                id="save-name"
+                ref={nameInput}
+                className={inputClass}
+                autoFocus
+                value={filename}
+                spellCheck={false}
+                autoComplete="off"
+                aria-invalid={Boolean(filenameError)}
+                aria-describedby={filenameError ? 'save-name-hint' : undefined}
+                onChange={(event) => editName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  // Enter commits an IME candidate without accepting or saving the file.
+                  if (!event.nativeEvent.isComposing && event.keyCode !== 229) save()
+                }}
+              />
             </div>
-          )}
+            {filenameError && (
+              <div className={rowClass}>
+                <span aria-hidden="true" />
+                <div>
+                  {filenameError && (
+                    <p
+                      id="save-name-hint"
+                      role="alert"
+                      className="text-sm font-normal leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+                    >
+                      {errors[filenameError]}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           {/* Keep feedback in the measured content so validation can grow the window. */}
           {destinationError && (
             <div className="shrink-0" id="save-destination-hint">
@@ -461,7 +456,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
           {t('Cancel')}
         </Button>
         <Button disabled={busy} onClick={save}>
-          {directoryMode ? initial.buttonLabel || t('Select folder') : t('Save')}
+          {t('Save')}
         </Button>
       </footer>
       <AlertDialog.Root

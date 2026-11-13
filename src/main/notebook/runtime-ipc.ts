@@ -1,4 +1,4 @@
-import * as dialog from '../file-dialog-electron'
+import { dialog } from 'electron'
 
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { ipcMainHandle } from '../ipc-handler-registry'

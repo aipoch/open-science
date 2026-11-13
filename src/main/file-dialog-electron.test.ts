@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   html: vi.fn(),
-  nativeOpen: vi.fn(),
   nativeSave: vi.fn(),
   focused: vi.fn(),
   allWindows: vi.fn(),
@@ -24,13 +23,12 @@ vi.mock('electron', () => ({
     getAllWindows: mocks.allWindows
   },
   dialog: {
-    showOpenDialog: mocks.nativeOpen,
     showSaveDialog: mocks.nativeSave
   },
   nativeTheme: { shouldUseDarkColors: false }
 }))
 
-import { showOpenDialog, showSaveDialog } from './file-dialog-electron'
+import { showSaveDialog } from './file-dialog-electron'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 
@@ -39,7 +37,6 @@ afterEach(() => Object.defineProperty(process, 'platform', originalPlatform))
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.snapshot.mockResolvedValue({ path: '/tmp/output.txt', fingerprint: null })
-  mocks.nativeOpen.mockResolvedValue({ canceled: true, filePaths: [] })
   mocks.nativeSave.mockResolvedValue({ canceled: true, filePath: '' })
 })
 
@@ -80,18 +77,5 @@ describe('desktop save dialog routing', () => {
     await showSaveDialog({ defaultPath: '/tmp/output.txt' })
 
     expect(mocks.html).toHaveBeenCalledWith(expect.any(Object), focused, undefined)
-  })
-
-  it('keeps open dialogs on Electron native dialogs', async () => {
-    Object.defineProperty(process, 'platform', { value: 'win32' })
-    const parent = { isDestroyed: () => false }
-    const result = { canceled: true, filePaths: [] }
-    mocks.nativeOpen.mockResolvedValue(result)
-
-    await expect(showOpenDialog(parent as never, { properties: ['openDirectory'] })).resolves.toBe(
-      result
-    )
-    expect(mocks.nativeOpen).toHaveBeenCalledWith(parent, { properties: ['openDirectory'] })
-    expect(mocks.html).not.toHaveBeenCalled()
   })
 })

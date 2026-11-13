@@ -4,7 +4,7 @@ import { resolveSaveFileName } from '../shared/file-save-name'
 import { mkdir, opendir, stat } from 'node:fs/promises'
 import { fileFingerprint as fingerprint } from './file-save-target'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import type { FileDialogRequest, FileDialogResult } from './file-dialog-protocol'
+import type { FileDialogRequest, FileDialogSaveResult } from './file-dialog-protocol'
 import type {
   FileDialogLocation,
   FileDialogUiAction,
@@ -54,20 +54,15 @@ export class FileDialogUiSession {
     private readonly request: FileDialogRequest,
     private readonly defaults: Pick<FileDialogUiState, 'locale' | 'shortcuts'> &
       Partial<Pick<FileDialogUiState, 'appearance'>>,
-    private readonly finish: (result: FileDialogResult) => void,
+    private readonly finish: (result: FileDialogSaveResult) => void,
     private readonly reportFailure: (code: string) => void
   ) {}
 
   private async initialState(): Promise<FileDialogUiState> {
     const initial = this.request.options.defaultPath ?? ''
-    const directoryMode = this.request.kind === 'open'
     const initialIsDirectory =
       validPath(initial) && (await stat(initial).catch(() => null))?.isDirectory()
-    const preferred = validPath(initial)
-      ? initialIsDirectory || directoryMode
-        ? initial
-        : dirname(initial)
-      : ''
+    const preferred = validPath(initial) ? (initialIsDirectory ? initial : dirname(initial)) : ''
     let location: FileDialogLocation | undefined
     for (const candidate of [preferred, ...this.defaults.shortcuts.map((item) => item.path)]) {
       if (!candidate) continue
@@ -82,11 +77,10 @@ export class FileDialogUiSession {
     return {
       ...this.defaults,
       appearance: this.defaults.appearance ?? { theme: 'light', followsSystem: true },
-      mode: directoryMode ? 'directory' : 'save',
       title: this.request.options.title,
       buttonLabel: this.request.options.buttonLabel,
-      filename: directoryMode || initialIsDirectory ? '' : basename(initial),
-      format: directoryMode ? null : saveFileFormat(this.request.options),
+      filename: initialIsDirectory ? '' : basename(initial),
+      format: saveFileFormat(this.request.options),
       location
     }
   }
@@ -101,11 +95,7 @@ export class FileDialogUiSession {
           return { type: 'init', state: await this.initialState() }
         case 'cancel':
           this.closed = true
-          this.finish(
-            this.request.kind === 'save'
-              ? { canceled: true, filePath: '' }
-              : { canceled: true, filePaths: [] }
-          )
+          this.finish({ canceled: true, filePath: '' })
           return { type: 'done' }
         case 'browse':
           this.confirmation = undefined
@@ -126,11 +116,6 @@ export class FileDialogUiSession {
           this.confirmation = undefined
           if (!validPath(action.directory) || !(await stat(action.directory)).isDirectory())
             return { type: 'error', code: 'folder' }
-          if (this.request.kind === 'open') {
-            this.closed = true
-            this.finish({ canceled: false, filePaths: [resolve(action.directory)] })
-            return { type: 'done' }
-          }
           let filename = action.filename
           if (typeof filename !== 'string' || !validFileBasename(filename))
             return { type: 'error', code: 'filename' }

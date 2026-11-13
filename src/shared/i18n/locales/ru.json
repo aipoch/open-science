@@ -8475,7 +8475,6 @@
     "Enter a valid folder name.": "Введите допустимое имя папки.",
     "Cannot use this destination. Choose another file or folder.": "Этот путь назначения недоступен. Выберите другой файл или папку.",
     "The destination changed. Review it and save again.": "Объект назначения изменился. Проверьте его и сохраните снова.",
-    "Select folder": "Выбрать папку",
     "Parent folder": "Родительская папка",
     "Folders": "Папки",
     "No subfolders": "Нет вложенных папок",

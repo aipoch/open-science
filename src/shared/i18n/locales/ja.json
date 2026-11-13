@@ -7988,7 +7988,6 @@
     "Enter a valid folder name.": "有効なフォルダー名を入力してください。",
     "Cannot use this destination. Choose another file or folder.": "この保存先は使用できません。別のファイルまたはフォルダーを選択してください。",
     "The destination changed. Review it and save again.": "保存先が変更されました。確認して再度保存してください。",
-    "Select folder": "フォルダーを選択",
     "Parent folder": "親フォルダー",
     "Folders": "フォルダー",
     "No subfolders": "サブフォルダーはありません",

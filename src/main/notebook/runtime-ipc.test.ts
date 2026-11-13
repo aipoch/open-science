@@ -16,9 +16,6 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   createLogger: () => log
 }))
 
-vi.mock('../file-dialog-electron', () => ({
-  showOpenDialog: (...args: unknown[]) => showOpenDialog(...args)
-}))
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload?: unknown) => unknown) => {

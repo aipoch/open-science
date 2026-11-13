@@ -17,7 +17,6 @@ export type FileDialogLocation = {
 }
 
 export type FileDialogUiState = {
-  mode: 'save' | 'directory'
   locale: Locale
   appearance: FileDialogAppearance
   title?: string

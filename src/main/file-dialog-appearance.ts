@@ -5,7 +5,7 @@ import type { FileDialogAppearance } from '../shared/file-dialog-ui'
 const appearances = new WeakMap<BaseWindow, FileDialogAppearance>()
 let latest: FileDialogAppearance | undefined
 
-// Reuse the validated app appearance projection; a disposable helper profile owns no preference.
+// Reuse the caller's validated appearance so save windows follow the application theme and locale.
 export function rememberFileDialogAppearance(
   window: BaseWindow,
   appearance: WindowFindAppearance

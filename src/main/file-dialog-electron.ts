@@ -5,24 +5,21 @@ import {
   dialog,
   nativeTheme,
   type BaseWindow,
-  type OpenDialogOptions,
-  type OpenDialogReturnValue,
   type SaveDialogOptions
 } from 'electron'
 import { getFileDialogAppearance } from './file-dialog-appearance'
 import { showInProcessFileDialog } from './file-dialog-save-window'
 import { assertSelectedSavePath } from './file-dialog-filename'
-import { usesHtmlFileDialog, type FileDialogSaveResult } from './file-dialog-protocol'
+import { usesHtmlSaveDialog, type FileDialogSaveResult } from './file-dialog-protocol'
 import { snapshotFileTarget } from './file-save-target'
 
 const runFileDialog = async <Result extends { canceled: boolean }>(
-  kind: 'open' | 'save',
   parent: BaseWindow | undefined,
   show: (parent: BaseWindow | undefined) => Promise<Result>
 ): Promise<Result> => {
   const operation = startDiagnosticOperation(createLogger('native-file-dialog'), {
     operation: 'native-file-dialog',
-    fields: { kind, platform: process.platform, isolated: false, parented: Boolean(parent) }
+    fields: { kind: 'save', platform: process.platform, parented: Boolean(parent) }
   })
   try {
     const result = await show(parent)
@@ -33,27 +30,6 @@ const runFileDialog = async <Result extends { canceled: boolean }>(
     operation.fail(error)
     throw error
   }
-}
-
-export function showOpenDialog(
-  parent: BaseWindow,
-  options: OpenDialogOptions,
-  signal?: AbortSignal
-): Promise<OpenDialogReturnValue>
-export function showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogReturnValue>
-export function showOpenDialog(
-  parentOrOptions: BaseWindow | OpenDialogOptions,
-  options?: OpenDialogOptions,
-  signal?: AbortSignal
-): Promise<OpenDialogReturnValue> {
-  const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
-  const dialogOptions = options ?? (parentOrOptions as OpenDialogOptions)
-  signal?.throwIfAborted()
-  return runFileDialog('open', parent, (dialogParent) =>
-    dialogParent
-      ? dialog.showOpenDialog(dialogParent, dialogOptions)
-      : dialog.showOpenDialog(dialogOptions)
-  )
 }
 
 export function showSaveDialog(
@@ -69,7 +45,7 @@ export function showSaveDialog(
 ): Promise<FileDialogSaveResult> {
   const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
   const dialogOptions = options ?? (parentOrOptions as SaveDialogOptions)
-  if (usesHtmlFileDialog({ kind: 'save', options: dialogOptions })) {
+  if (usesHtmlSaveDialog()) {
     signal?.throwIfAborted()
     const dialogParent =
       parent ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -85,9 +61,9 @@ export function showSaveDialog(
       },
       dialogParent,
       signal
-    ) as Promise<FileDialogSaveResult>
+    )
   }
-  return runFileDialog('save', parent, async (dialogParent) => {
+  return runFileDialog(parent, async (dialogParent) => {
     const selected = await (dialogParent
       ? dialog.showSaveDialog(dialogParent, dialogOptions)
       : dialog.showSaveDialog(dialogOptions))
