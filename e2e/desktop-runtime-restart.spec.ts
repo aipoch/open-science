@@ -8,6 +8,7 @@ import { test, expect } from '@playwright/test'
 import type { ElectronApplication, Page } from 'playwright'
 import {
   launchEnvironment,
+  disconnectFixtureServiceConnection,
   setFixtureServiceReconnectBlocked,
   launchOpenScience
 } from './fixtures/electron-app'
@@ -62,27 +63,7 @@ for (const borrowed of [false, true])
           .toMatchObject({ phase: 'ready' })
         return page
       }
-      const disconnect = (): Promise<void> =>
-        app!.evaluate(() => {
-          const pipes = (
-            process as NodeJS.Process & {
-              _getActiveHandles(): {
-                readable?: boolean
-                writable?: boolean
-                _handle?: { constructor: { name: string } }
-                destroy(): void
-              }[]
-            }
-          )
-            ._getActiveHandles()
-            .filter(
-              (handle) =>
-                handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
-            )
-          if (pipes.length !== 1)
-            throw new Error(`Expected one runtime pipe, found ${pipes.length}`)
-          pipes[0].destroy()
-        })
+      const disconnect = (): Promise<unknown> => app!.evaluate(disconnectFixtureServiceConnection)
       try {
         if (borrowed) {
           server = spawn(
