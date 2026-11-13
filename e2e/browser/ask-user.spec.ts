@@ -579,3 +579,96 @@ for (const side of ['top', 'bottom'] as const) {
     await expect(page.getByRole('menu')).toHaveAttribute('data-side', side)
   })
 }
+
+for (const single of [true, false]) {
+  test(`trade-offs wrap, remain keyboard accessible and survive ${single ? 'single' : 'multi'} choice review`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 390, height: 700 })
+    await page.goto(
+      `/ask-user.html?tradeoffs=1&embedded=1&locale=zh-Hans${single ? '&single=1' : ''}`
+    )
+    const both = page.getByTestId('elicitation-option-Option 1')
+    const pros =
+      'Editable source for research category 1, shared with collaborators in the project storage bucket.'
+    const cons =
+      'Execution environment for research category 1 requires separate setup and deployment permissions.'
+    await expect(both).toHaveAccessibleName(new RegExp(`Option 1.*优点: ${pros}.*局限: ${cons}`))
+    await expect(both.getByText(`优点: ${pros}`, { exact: true })).toBeVisible()
+    const box = await both.boundingBox()
+    expect(box!.width).toBeLessThan(390)
+    expect(await both.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    expect(
+      await both
+        .getByText(`优点: ${pros}`, { exact: true })
+        .evaluate((node) => node.getBoundingClientRect().height)
+    ).toBeGreaterThan(16)
+    const prosOnly = page.getByTestId('elicitation-option-Option 2')
+    await expect(prosOnly).not.toContainText('局限:')
+    await expect(page.getByTestId('elicitation-option-Option 3')).not.toContainText('优点:')
+    await expect(page.getByTestId('elicitation-option-Option 4')).not.toContainText(/优点:|局限:/)
+    await both.focus()
+    await page.keyboard.press('Space')
+    await expect(both).toHaveAttribute('aria-pressed', 'true')
+    if (single) {
+      await prosOnly.getByText(/优点:/).click()
+      await expect(prosOnly).toHaveAttribute('aria-pressed', 'true')
+      await expect(both).toHaveAttribute('aria-pressed', 'false')
+    } else {
+      await prosOnly.getByText(/优点:/).click()
+      await expect(prosOnly).toHaveAttribute('aria-pressed', 'true')
+      await expect(both).toHaveAttribute('aria-pressed', 'true')
+    }
+    await page.getByRole('button', { name: '完成', exact: true }).click()
+    expect(JSON.parse(await page.getByTestId('submitted-answer').innerText()).answers).toEqual([
+      { fieldId: 'question_0', value: single ? 'Option 2' : ['Option 1', 'Option 2'] }
+    ])
+    await expect(page.getByTestId('elicitation-card')).not.toContainText('优点:')
+    await page.getByTestId('elicitation-answer-row').click()
+    await expect(page.getByTestId('elicitation-option-Option 1')).toContainText(`优点: ${pros}`)
+    await expect(page.getByTestId('elicitation-option-Option 1')).toContainText(`局限: ${cons}`)
+  })
+}
+
+for (const single of [true, false]) {
+  test(`delegate trade-offs are described and selectable for ${single ? 'single' : 'multi'} choice`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 390, height: 700 })
+    await page.goto(
+      `/ask-user.html?delegate=1&tradeoffs=1&locale=zh-Hans${single ? '&single=1' : ''}`
+    )
+    const first = page.getByRole('button', { name: 'Option 1', exact: true })
+    await expect(first).toHaveAccessibleDescription(
+      /Research category 1.*优点: Editable source.*局限: Execution environment/
+    )
+    await expect(first.getByText(/优点:/)).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Option 2', exact: true })
+    ).toHaveAccessibleDescription(/优点:/)
+    await expect(
+      page.getByRole('button', { name: 'Option 2', exact: true })
+    ).not.toHaveAccessibleDescription(/局限:/)
+    await expect(
+      page.getByRole('button', { name: 'Option 3', exact: true })
+    ).not.toHaveAccessibleDescription(/优点:/)
+    await expect(
+      page.getByRole('button', { name: 'Option 4', exact: true })
+    ).toHaveAccessibleDescription('Research category 4')
+    expect(await first.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    await first.focus()
+    await page.keyboard.press('Space')
+    await expect(first).toHaveAttribute('aria-pressed', 'true')
+    const second = page.getByRole('button', { name: 'Option 2', exact: true })
+    await second.getByText(/优点:/).click()
+    await expect(second).toHaveAttribute('aria-pressed', 'true')
+    await expect(first).toHaveAttribute('aria-pressed', single ? 'false' : 'true')
+    await page.getByRole('button', { name: '完成', exact: true }).click()
+    expect(
+      JSON.parse(await page.getByTestId('submitted-answer').innerText()).delegatedQuestion
+    ).toMatchObject({
+      action: 'confirm',
+      answers: [{ questionIndex: 0, value: single ? 'Option 2' : ['Option 1', 'Option 2'] }]
+    })
+  })
+}

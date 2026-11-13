@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/ElicitationOptionDetails.tsx",
     "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
     "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
     "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
@@ -16,13 +17,14 @@
     "src/renderer/src/pages/workspace/PermissionScopeButton.tsx"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/workspace/ElicitationOptionDetails.tsx",
     "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx",
     "src/renderer/src/pages/workspace/PermissionScopeConfirmationDialog.tsx",
     "src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx",
     "src/renderer/src/pages/workspace/session-permissions.ts",
     "src/renderer/src/pages/workspace/PermissionScopeButton.tsx"
   ],
-  "consumerModules": [],
+  "consumerModules": ["workspace_tool_blocks"],
   "testFiles": {
     "owner": [
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",

@@ -194,6 +194,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten."
   },
   "renderer": {
+    "Pros": "Vorteile",
+    "Cons": "Einschränkungen",
     "Network protocol": "Protokoll",
     "Delete address?": "Adresse löschen?",
     "The model returned no film content.": "Das Modell hat keinen Filminhalt zurückgegeben.",

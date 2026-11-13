@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。"
   },
   "renderer": {
+    "Pros": "優點",
+    "Cons": "限制",
     "Network protocol": "協定",
     "Delete address?": "刪除位址？",
     "The model returned no film content.": "模型未傳回短片內容。",

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { MAX_ACP_RUNTIME_EVENTS, MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 import { validateAnnotations, type PdfAnnotation } from './annotations'
-import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
+import { MAX_ELICITATION_OPTIONS_PER_FIELD, MAX_ELICITATION_MESSAGE_CHARS } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
@@ -2387,6 +2387,60 @@ describe('context usage persistence', () => {
 })
 
 describe('sanitizeToolActivity', () => {
+  it('restores option annotations independently with the same tolerance as descriptions', () => {
+    const options = [
+      { value: 'both', label: 'Both', description: ' Context ', pros: ' Benefit ', cons: ' Cost ' },
+      { value: 'pros', label: 'Pros only', pros: 'x'.repeat(4001), cons: '  ' },
+      { value: 'cons', label: 'Cons only', pros: [], cons: 'y'.repeat(4001) },
+      { value: 'legacy', label: 'Legacy option', description: 'Existing description' }
+    ]
+    const activity = sanitizeToolActivity({
+      id: 'tool-ask',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Which approach?',
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'single-select', options }],
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      }
+    })!
+    expect(activity.elicitation?.fields[0].options).toEqual([
+      { value: 'both', label: 'Both', description: 'Context', pros: 'Benefit', cons: 'Cost' },
+      { value: 'pros', label: 'Pros only', pros: 'x'.repeat(MAX_ELICITATION_MESSAGE_CHARS) },
+      { value: 'cons', label: 'Cons only', cons: 'y'.repeat(MAX_ELICITATION_MESSAGE_CHARS) },
+      options[3]
+    ])
+    expect(sanitizeToolActivity(JSON.parse(JSON.stringify(activity)))).toEqual(activity)
+  })
+
+  it.each(['single-select', 'multi-select'] as const)(
+    'round-trips %s trade-offs through the session file codec',
+    (kind) => {
+      const options = [
+        { value: 'both', label: 'Both', pros: 'Benefit', cons: 'Cost' },
+        { value: 'legacy', label: 'Legacy option' }
+      ]
+      const session = normalizeSessionFile(
+        createSessionWithActivity(
+          createOpenToolActivity('tool-tradeoffs', {
+            elicitation: {
+              message: 'Which approach?',
+              fields: [{ id: 'question_0', label: 'Approach', kind, options }],
+              state: 'pending',
+              durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+            }
+          })
+        )
+      )!
+      const restored = normalizeSessionFile(JSON.parse(JSON.stringify(createSessionFile(session))))
+      expect(restored?.activities?.[0].elicitation).toMatchObject({
+        state: 'pending',
+        fields: [{ kind, options }],
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      })
+    }
+  )
+
   it('keeps a valid structured-input projection on the tool activity', () => {
     const activity = sanitizeToolActivity({
       id: 'tool-ask-1',

@@ -193,6 +193,8 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。"
   },
   "renderer": {
+    "Pros": "利点",
+    "Cons": "制約",
     "Network protocol": "通信プロトコル",
     "Delete address?": "アドレスを削除しますか？",
     "The model returned no film content.": "モデルから短編動画の内容が返されませんでした。",

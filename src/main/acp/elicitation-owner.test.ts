@@ -10,6 +10,61 @@ import {
 } from '../../shared/elicitation'
 
 describe('AcpElicitationOwner', () => {
+  it.each(['single-select', 'multi-select'] as const)(
+    'retains trade-offs through %s schema normalization, durable restore and answers',
+    (kind) => {
+      const onProjection = vi.fn()
+      const owner = new AcpElicitationOwner({ onProjection })
+      const options = [
+        { const: 'Both', title: 'Both', description: 'Context', pros: 'Benefit', cons: 'Cost' },
+        { const: 'Pros only', title: 'Pros only', pros: 'Benefit' },
+        { const: 'Cons only', title: 'Cons only', cons: 'Cost' },
+        { const: 'Neither', title: 'Neither' }
+      ]
+      const request = owner.requestDetached(
+        {
+          mode: 'form',
+          sessionId: 'provider-session',
+          toolCallId: 'tool-choice',
+          message: 'Which approach?',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              question_0:
+                kind === 'multi-select'
+                  ? { type: 'array', items: { anyOf: options } }
+                  : { type: 'string', oneOf: options }
+            }
+          } as unknown as ElicitationSchema
+        },
+        { sessionId: 'app-session' },
+        { kind: 'agent-user-choice', requestId: 'choice-1' }
+      )!
+      expect(request.fields[0]).toMatchObject({
+        kind,
+        options: options.map(({ const: value, title: label, ...annotations }) => ({
+          value,
+          label,
+          ...annotations
+        }))
+      })
+      const projection = onProjection.mock.calls[0][1]
+      expect(sanitizeElicitationProjection(JSON.parse(JSON.stringify(projection)))).toEqual(
+        projection
+      )
+      const restoredOwner = new AcpElicitationOwner({ onProjection: vi.fn() })
+      expect(restoredOwner.restoreDetached(JSON.parse(JSON.stringify(request)))).toEqual(request)
+      const value = kind === 'multi-select' ? ['Both', 'Neither'] : 'Both'
+      expect(
+        restoredOwner.respond({
+          requestId: request.requestId,
+          action: 'accept',
+          answers: [{ fieldId: 'question_0', value }]
+        })?.response
+      ).toEqual({ action: 'accept', content: { question_0: value } })
+    }
+  )
+
   it('keeps an attached choice durable when its provider connection is disposed', () => {
     const onProjection = vi.fn()
     const owner = new AcpElicitationOwner({

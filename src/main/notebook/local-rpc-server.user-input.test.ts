@@ -46,14 +46,23 @@ describe('NotebookLocalRpcServer user input bridge', () => {
               question: 'Which implementation should I use?',
               header: 'Approach',
               options: [
-                { label: 'Minimal', description: 'Make the smallest focused change.' },
+                {
+                  label: 'Minimal',
+                  description: 'Make the smallest focused change.',
+                  pros: 'Less review effort.',
+                  cons: 'No optional features.'
+                },
                 { label: 'Expanded', description: 'Include optional extensions.' }
               ]
             },
             {
               question: 'Which output should I produce?',
               header: 'Output',
-              options: [{ label: 'Notebook' }, { label: 'Report' }]
+              kind: 'multi-select',
+              options: [
+                { label: 'Notebook', pros: 'Editable analysis.' },
+                { label: 'Report', cons: 'Static output.' }
+              ]
             }
           ]
         }
@@ -71,15 +80,96 @@ describe('NotebookLocalRpcServer user input bridge', () => {
           question: 'Which implementation should I use?',
           header: 'Approach',
           options: [
-            { label: 'Minimal', description: 'Make the smallest focused change.' },
+            {
+              label: 'Minimal',
+              description: 'Make the smallest focused change.',
+              pros: 'Less review effort.',
+              cons: 'No optional features.'
+            },
             { label: 'Expanded', description: 'Include optional extensions.' }
           ]
         },
         {
           question: 'Which output should I produce?',
           header: 'Output',
-          options: [{ label: 'Notebook' }, { label: 'Report' }]
+          kind: 'multi-select',
+          options: [
+            { label: 'Notebook', pros: 'Editable analysis.' },
+            { label: 'Report', cons: 'Static output.' }
+          ]
         }
+      ]
+    })
+  })
+
+  it.each(['pros', 'cons'])(
+    'rejects invalid %s annotations before invoking the runtime',
+    async (field) => {
+      const requestUserInput = vi.fn()
+      server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        requestUserInput
+      })
+      const connection = await server.issueSessionConnection(
+        'session-1',
+        'project-1',
+        'root-frame-session-1'
+      )
+      for (const invalid of [[], '  ', 'x'.repeat(4001)]) {
+        const response = await fetchRpc(connection, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'requestUserInput',
+            params: {
+              questions: [
+                {
+                  question: 'Which approach?',
+                  options: [{ label: 'A', [field]: invalid }, { label: 'B' }]
+                }
+              ]
+            }
+          })
+        })
+        expect(response.status).toBe(400)
+      }
+      expect(requestUserInput).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['pros', 'cons'])('accepts %s at the trimmed length boundary over RPC', async (field) => {
+    const requestUserInput = vi.fn().mockResolvedValue({ action: 'pending' })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      requestUserInput
+    })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-session-1'
+    )
+    const text = 'x'.repeat(4000)
+    const response = await fetchRpc(connection, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'requestUserInput',
+        params: {
+          questions: [
+            {
+              question: 'Which approach?',
+              options: [{ label: 'A', [field]: `  ${text}  ` }, { label: 'B' }]
+            }
+          ]
+        }
+      })
+    })
+    expect(response.status).toBe(200)
+    expect(requestUserInput).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      questions: [
+        { question: 'Which approach?', options: [{ label: 'A', [field]: text }, { label: 'B' }] }
       ]
     })
   })
