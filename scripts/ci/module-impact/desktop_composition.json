@@ -260,7 +260,8 @@
     "src/main/file-dialog-window.ts",
     "src/main/file-dialog-ui-state.ts",
     "src/main/file-dialog-ui-state.test.ts",
-    "src/main/file-dialog-filename.ts"
+    "src/main/file-dialog-filename.ts",
+    "src/main/file-save-target.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",

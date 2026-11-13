@@ -1,8 +1,20 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { chmod, copyFile, link, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { constants as osConstants } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 
 import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
 import { retryFileReplacement } from '@aipoch/durable-files'
@@ -34,6 +46,19 @@ type LinkFile = NonNullable<PublishUserFileOptions['linkFile']>
 type CopyFileExclusive = NonNullable<PublishUserFileOptions['copyFileExclusive']>
 type PublishNoReplace = NonNullable<PublishUserFileOptions['publishNoReplace']>
 
+type RecoveryReceipt = {
+  destinationPath: string
+  previous: 'previous'
+  temporaryDirectory: string
+}
+
+const RECOVERY_ROOT_ENV = 'OPEN_SCIENCE_FILE_RECOVERY_ROOT'
+const RECOVERY_DIRECTORY_PREFIX = '.open-science-file-recovery-'
+const RECOVERY_RECEIPT_NAME = 'recovery.json'
+const RECOVERY_PREVIOUS_NAME = 'previous'
+const RECOVERY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
+let configuredRecoveryRoot: string | undefined
+
 const hardLinkUnsupportedCodes = new Set([
   'EACCES',
   'EINVAL',
@@ -60,6 +85,120 @@ const publicationErrorCode = (error: unknown): string | undefined => {
     // Diagnostic inspection must not replace the original error with a throwing property getter.
   }
   return undefined
+}
+
+const validRecoveryPath = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= 32_768 &&
+  !value.includes('\0') &&
+  isAbsolute(value)
+
+const parseRecoveryReceipt = (value: unknown): RecoveryReceipt | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const receipt = value as Record<string, unknown>
+  return receipt.previous === RECOVERY_PREVIOUS_NAME &&
+    validRecoveryPath(receipt.destinationPath) &&
+    validRecoveryPath(receipt.temporaryDirectory)
+    ? {
+        destinationPath: receipt.destinationPath,
+        previous: RECOVERY_PREVIOUS_NAME,
+        temporaryDirectory: receipt.temporaryDirectory
+      }
+    : undefined
+}
+
+const recoveryRootFromEnvironment = (): string | undefined => {
+  const root = configuredRecoveryRoot ?? process.env[RECOVERY_ROOT_ENV]
+  return validRecoveryPath(root) ? root : undefined
+}
+
+export const configureUserFileRecoveryRoot = (root: string | undefined): void => {
+  if (root !== undefined && !validRecoveryPath(root))
+    throw new Error('File recovery root must be an absolute path.')
+  configuredRecoveryRoot = root
+  if (root === undefined) delete process.env[RECOVERY_ROOT_ENV]
+  else process.env[RECOVERY_ROOT_ENV] = root
+}
+
+export async function recoverUserFilePublications(root: string): Promise<{
+  restored: number
+  retained: number
+  removed: number
+}> {
+  if (!validRecoveryPath(root)) throw new Error('File recovery root must be an absolute path.')
+  const log = createLogger('file-publisher')
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch (error) {
+    if (publicationErrorCode(error) === 'ENOENT') return { restored: 0, retained: 0, removed: 0 }
+    throw error
+  }
+  let restored = 0
+  let retained = 0
+  let removed = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(RECOVERY_DIRECTORY_PREFIX)) continue
+    const recoveryDirectory = join(root, entry.name)
+    let receipt: RecoveryReceipt | undefined
+    try {
+      receipt = parseRecoveryReceipt(
+        JSON.parse(await readFile(join(recoveryDirectory, RECOVERY_RECEIPT_NAME), 'utf8'))
+      )
+    } catch (error) {
+      log.warn('save recovery receipt unreadable', {
+        recoveryDirectory: entry.name,
+        errorCode: publicationErrorCode(error)
+      })
+      continue
+    }
+    if (!receipt) {
+      log.warn('save recovery receipt invalid', { recoveryDirectory: entry.name })
+      continue
+    }
+    const previous = join(recoveryDirectory, receipt.previous)
+    const previousExists = await stat(previous).then(
+      () => true,
+      () => false
+    )
+    if (!previousExists) {
+      await rm(receipt.temporaryDirectory, { recursive: true, force: true }).catch(() => undefined)
+      await rm(recoveryDirectory, { recursive: true, force: true })
+      removed += 1
+      continue
+    }
+    const destinationExists = await stat(receipt.destinationPath).then(
+      () => true,
+      () => false
+    )
+    if (destinationExists) {
+      const age = Date.now() - (await stat(recoveryDirectory)).mtimeMs
+      if (age > RECOVERY_RETENTION_MS) {
+        await rm(recoveryDirectory, { recursive: true, force: true })
+        removed += 1
+      } else {
+        await rm(receipt.temporaryDirectory, { recursive: true, force: true }).catch(
+          () => undefined
+        )
+        retained += 1
+      }
+      continue
+    }
+    try {
+      await copyFile(previous, receipt.destinationPath, constants.COPYFILE_EXCL)
+      await rm(receipt.temporaryDirectory, { recursive: true, force: true })
+      await rm(recoveryDirectory, { recursive: true, force: true })
+      restored += 1
+    } catch (error) {
+      retained += 1
+      log.warn('save recovery restore deferred', {
+        recoveryDirectory: entry.name,
+        errorCode: publicationErrorCode(error)
+      })
+    }
+  }
+  return { restored, retained, removed }
 }
 
 const defaultCopyFileExclusive: CopyFileExclusive = (sourcePath, destinationPath) =>
@@ -120,6 +259,8 @@ const publishUserFile = async (
     fields: { targetConfirmed: Boolean(options.target), exclusive: Boolean(options.exclusive) }
   })
   let temporaryDirectory: string | undefined
+  let recoveryDirectory: string | undefined
+  let externalRecovery = false
   let preserveRecovery = false
   let recoveryReason: 'captured-file-changed' | 'restore-failed' | undefined
   let recoveryErrorCode: string | undefined
@@ -163,18 +304,31 @@ const publishUserFile = async (
     operation.phase('publish-file')
     if (options.target?.fingerprint && !options.exclusive) {
       const target = options.target
-      const recoveryDirectory = await mkdtemp(join(temporaryDirectory, '.recovery-'))
-      const previous = join(recoveryDirectory, 'previous')
+      const recoveryRoot = recoveryRootFromEnvironment()
+      if (recoveryRoot) {
+        await mkdir(recoveryRoot, { recursive: true })
+        recoveryDirectory = await mkdtemp(join(recoveryRoot, RECOVERY_DIRECTORY_PREFIX))
+        externalRecovery = true
+      } else recoveryDirectory = await mkdtemp(join(temporaryDirectory, '.recovery-'))
+      const recoveryDirectoryPath = recoveryDirectory
+      if (!recoveryDirectoryPath) throw new Error('File recovery directory was not created.')
+      const previous = join(recoveryDirectoryPath, RECOVERY_PREVIOUS_NAME)
       // There is no portable compare-and-swap rename. Capture and verify the actual displaced
       // file, then publish exclusively so a concurrent creator is never overwritten. A receipt
       // survives process termination; failed restoration must never delete the captured bytes.
-      const receipt = join(recoveryDirectory, 'recovery.json')
-      await writeFile(receipt, JSON.stringify({ destinationPath, target, previous: 'previous' }), {
-        flag: 'wx',
-        mode: 0o600
-      })
+      const receipt = join(recoveryDirectoryPath, RECOVERY_RECEIPT_NAME)
+      await writeFile(
+        receipt,
+        JSON.stringify({
+          destinationPath,
+          target,
+          previous: RECOVERY_PREVIOUS_NAME,
+          temporaryDirectory
+        }),
+        { flag: 'wx', mode: 0o600 }
+      )
       await durability.syncFile(receipt)
-      await durability.syncDirectory(recoveryDirectory)
+      await durability.syncDirectory(recoveryDirectoryPath)
       await durability.syncDirectory(temporaryDirectory)
       let captured = false
       try {
@@ -190,7 +344,7 @@ const publishUserFile = async (
         await durability.syncDirectory(directory, {
           allowPermissionDenied: userSelectedDestination
         })
-        await durability.syncDirectory(recoveryDirectory)
+        await durability.syncDirectory(recoveryDirectoryPath)
         await retryFileReplacement(async () => {
           await validate()
           if (!matchesCapturedTarget(await fileFingerprint(previous), target))
@@ -266,17 +420,27 @@ const publishUserFile = async (
     throw error
   } finally {
     if (preserveRecovery && temporaryDirectory) {
+      if (externalRecovery) await rm(temporaryDirectory, { recursive: true, force: true })
       log.warn('save recovery retained', {
         operation: 'user-file-publication',
         operationId,
-        recoveryDirectory: basename(temporaryDirectory),
+        recoveryDirectory: basename(recoveryDirectory ?? temporaryDirectory),
         reason: recoveryReason,
         errorCode: recoveryErrorCode
       })
-    } else if (temporaryDirectory)
-      await rm(temporaryDirectory, { recursive: true, force: true }).catch((error) =>
-        log.warn('save cleanup deferred', { operationId, errorCode: publicationErrorCode(error) })
-      )
+    } else {
+      if (temporaryDirectory)
+        await rm(temporaryDirectory, { recursive: true, force: true }).catch((error) =>
+          log.warn('save cleanup deferred', { operationId, errorCode: publicationErrorCode(error) })
+        )
+      if (externalRecovery && recoveryDirectory)
+        await rm(recoveryDirectory, { recursive: true, force: true }).catch((error) =>
+          log.warn('save recovery cleanup deferred', {
+            operationId,
+            errorCode: publicationErrorCode(error)
+          })
+        )
+    }
   }
 }
 

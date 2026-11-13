@@ -72,6 +72,8 @@ export function createDesktopNativeHandler(
       }
       case 'save-dialog': {
         const selected = await showSaveDialog(parent, request.options, signal)
+        if (!selected.canceled && !selected.target)
+          throw new Error('Native save dialog returned a destination without a fingerprint.')
         result = {
           canceled: selected.canceled,
           ...(selected.filePath ? { filePath: selected.filePath, target: selected.target } : {})

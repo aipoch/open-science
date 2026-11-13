@@ -72,7 +72,7 @@ describe('native operations requested by the Node runtime', () => {
       const save = operation === 'save-dialog'
       const native = save ? mocks.save : mocks.open
       const result = save
-        ? { canceled: false, filePath: path }
+        ? { canceled: false, filePath: path, target: { path, fingerprint: null } }
         : { canceled: false, filePaths: [path] }
       native.mockResolvedValue({ ...result, bookmark: 'not-in-protocol' })
       await expect(

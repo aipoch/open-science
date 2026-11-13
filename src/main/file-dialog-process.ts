@@ -29,6 +29,7 @@ class NativeFileDialogError extends Error {
 
 // Insertion order tracks the last active owner when several windows have independent pickers.
 const activeParents = new Set<BaseWindow>()
+const HELPER_EXIT_GRACE_MS = 1_000
 
 export async function showFileDialogInHelper(
   request: FileDialogRequest,
@@ -92,6 +93,8 @@ export async function showFileDialogInHelper(
       let displayTimeout: ReturnType<typeof setTimeout> | undefined
       let selection: FileDialogResult | undefined
       let exitTimeout: ReturnType<typeof setTimeout> | undefined
+      let helperExited = false
+      let helperExitCode: number | null = null
       const focusHelper = (): void => {
         if (settled || selection || !shown || !child.connected) return
         try {
@@ -275,16 +278,27 @@ export async function showFileDialogInHelper(
             if (presentation === 'html' && !shown && !selection.canceled)
               throw new Error('Selection arrived before the window was shown')
             clearTimeout(displayTimeout)
-            exitTimeout = setTimeout(
-              () =>
+            clearTimeout(exitTimeout)
+            if (helperExited) {
+              if (helperExitCode === 0) finish()
+              else
                 finish(
                   new NativeFileDialogError(
-                    'exit-timeout',
-                    'Native file dialog helper did not exit.'
+                    'unexpected-exit',
+                    'Native file dialog helper exited unexpectedly.'
                   )
-                ),
-              5_000
-            )
+                )
+            } else
+              exitTimeout = setTimeout(
+                () =>
+                  finish(
+                    new NativeFileDialogError(
+                      'exit-timeout',
+                      'Native file dialog helper did not exit.'
+                    )
+                  ),
+                5_000
+              )
           } catch {
             finish(
               new NativeFileDialogError(
@@ -297,17 +311,33 @@ export async function showFileDialogInHelper(
           finish(new NativeFileDialogError('helper-error', 'Native file dialog helper failed.'))
       })
       child.once('exit', (exitCode, exitSignal) => {
+        helperExited = true
+        helperExitCode = exitCode
         operation.phase('helper-exited', { helperPid: child.pid, exitCode, exitSignal })
         // Wait for clean exit even after a result: heap corruption can surface during teardown.
-        if (!settled)
-          finish(
-            exitCode === 0 && selection
-              ? undefined
-              : new NativeFileDialogError(
-                  'unexpected-exit',
-                  'Native file dialog helper exited unexpectedly.'
-                )
-          )
+        if (!settled) {
+          clearTimeout(exitTimeout)
+          if (exitCode === 0 && !selection)
+            exitTimeout = setTimeout(
+              () =>
+                finish(
+                  new NativeFileDialogError(
+                    'unexpected-exit',
+                    'Native file dialog helper exited unexpectedly.'
+                  )
+                ),
+              HELPER_EXIT_GRACE_MS
+            )
+          else
+            finish(
+              exitCode === 0
+                ? undefined
+                : new NativeFileDialogError(
+                    'unexpected-exit',
+                    'Native file dialog helper exited unexpectedly.'
+                  )
+            )
+        }
       })
       if (signal?.aborted) abort()
     })

@@ -12,6 +12,9 @@ import type {
   FileDialogUiState
 } from '../shared/file-dialog-ui'
 
+const MAX_DIRECTORY_ENTRIES = 100_000
+const MAX_DIRECTORY_FOLDERS = 10_000
+
 const validPath = (value: unknown): value is string =>
   typeof value === 'string' && value.length <= 32_768 && !value.includes('\0') && isAbsolute(value)
 
@@ -19,20 +22,25 @@ async function listLocation(path: string): Promise<FileDialogLocation> {
   if (!validPath(path)) throw new Error('Invalid directory')
   const absolute = resolve(path)
   const folders: FileDialogLocation['folders'] = []
-  let visited = 0
+  let visitedEntries = 0
+  let visitedFolders = 0
   let truncated = false
   const directory = await opendir(absolute)
   for await (const entry of directory) {
-    if (++visited > 10_000) {
+    if (++visitedEntries > MAX_DIRECTORY_ENTRIES) {
       truncated = true
       break
     }
     const target = join(absolute, entry.name)
-    if (
+    const isFolder =
       entry.isDirectory() ||
       (entry.isSymbolicLink() && (await stat(target).catch(() => null))?.isDirectory())
-    )
-      folders.push({ name: entry.name, path: target })
+    if (!isFolder) continue
+    if (++visitedFolders > MAX_DIRECTORY_FOLDERS) {
+      truncated = true
+      break
+    }
+    folders.push({ name: entry.name, path: target })
   }
   folders.sort((a, b) => a.name.localeCompare(b.name))
   return { path: absolute, parent: dirname(absolute), folders, truncated }

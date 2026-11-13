@@ -3,6 +3,7 @@ import {
   chmod,
   link,
   copyFile,
+  mkdir,
   mkdtemp,
   open,
   readFile,
@@ -19,7 +20,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createFileDurability } from '@aipoch/durable-files'
 
-import { publishUserFile } from './user-file-publisher'
+import {
+  configureUserFileRecoveryRoot,
+  publishUserFile,
+  recoverUserFilePublications
+} from './user-file-publisher'
 import { snapshotFileTarget } from './file-save-target'
 
 let root = ''
@@ -29,6 +34,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  configureUserFileRecoveryRoot(undefined)
   if (root) await rm(root, { recursive: true, force: true })
 })
 
@@ -252,6 +258,36 @@ describe('publishUserFile', () => {
     expect(replace).toHaveBeenCalledTimes(2)
     expect(wait).toHaveBeenCalledWith(25)
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
+  })
+})
+
+describe('file publication recovery', () => {
+  it('restores a displaced file from a persisted receipt and removes stale staging bytes', async () => {
+    const destinationPath = join(root, 'report.txt')
+    const temporaryDirectory = join(root, '.open-science-save-stale')
+    const recoveryRoot = join(root, 'file-recovery')
+    await mkdir(recoveryRoot)
+    const recoveryDirectory = await mkdtemp(join(recoveryRoot, '.open-science-file-recovery-'))
+    await mkdir(temporaryDirectory)
+    await writeFile(join(temporaryDirectory, 'report.txt'), 'partial replacement')
+    await writeFile(join(recoveryDirectory, 'previous'), 'existing bytes')
+    await writeFile(
+      join(recoveryDirectory, 'recovery.json'),
+      JSON.stringify({
+        destinationPath,
+        previous: 'previous',
+        temporaryDirectory
+      })
+    )
+
+    await expect(recoverUserFilePublications(recoveryRoot)).resolves.toEqual({
+      restored: 1,
+      retained: 0,
+      removed: 0
+    })
+    await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing bytes')
+    await expect(stat(temporaryDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readdir(recoveryRoot)).resolves.toEqual([])
   })
 })
 

@@ -242,6 +242,22 @@ describe('isolated native file dialogs', () => {
     assertReleased()
   })
 
+  it('accepts a result message that arrives just after a clean helper exit', async () => {
+    const pending = showFileDialogInHelper(saveRequest, window.asParent())
+    child.ready()
+    child.exit(0)
+    child.emit('message', {
+      type: 'result',
+      result: { canceled: false, filePath, target: { path: filePath, fingerprint: null } }
+    })
+    await expect(pending).resolves.toEqual({
+      canceled: false,
+      filePath,
+      target: { path: filePath, fingerprint: null }
+    })
+    assertReleased()
+  })
+
   it.each(['before-selection', 'after-selection'] as const)(
     'rejects a native crash %s without an in-process fallback',
     async (stage) => {
