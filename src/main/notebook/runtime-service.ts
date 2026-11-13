@@ -1124,7 +1124,8 @@ class NotebookRuntimeService {
       shellRuntimeBinding: options.shellRuntimeBinding,
       shellProcess: this.shellProcess,
       shellConcurrencyLimit: options.shellConcurrencyLimit,
-      getGrantedLocalRoots: options.getGrantedLocalRoots
+      getGrantedLocalRoots: options.getGrantedLocalRoots,
+      getNetworkMode: () => options.processSandbox?.getNetworkMode?.() ?? 'relaxed'
     })
     this.idleReclamation = new NotebookIdleReclamation({
       resources: () => [

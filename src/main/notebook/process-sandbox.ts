@@ -1,4 +1,5 @@
 import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
+import type { NotebookNetworkMode } from '../../shared/notebook-network-settings'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
 
@@ -151,6 +152,7 @@ export type NotebookRuntimeAccessAdmission = Readonly<{
 }>
 
 export interface NotebookProcessSandbox {
+  getNetworkMode?(): NotebookNetworkMode
   resolveWindowsRuntime?(request: {
     runtime: 'repl' | 'bash'
     binding?: ShellRuntimeBinding

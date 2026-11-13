@@ -581,6 +581,17 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Strict mode')
   })
 
+  it('shows the network mode captured by each execution record', async () => {
+    await mountWithRuns([
+      makeRun({ runId: 'relaxed-run', networkMode: 'relaxed' }),
+      makeRun({ runId: 'strict-run', networkMode: 'strict' })
+    ])
+
+    expect(
+      screen.getAllByTestId('notebook-run-network-mode').map((node) => node.textContent)
+    ).toEqual(['Relaxed mode', 'Strict mode'])
+  })
+
   it.each([
     {
       name: 'a root after the child in the frame list',

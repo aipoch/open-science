@@ -221,6 +221,9 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
     const notebookPane = page.getByTestId('kernel-notebook-pane')
     await expect(notebookPane).toBeVisible()
     await expect(notebookPane.getByTestId('notebook-network-mode')).toHaveText('Strict mode')
+    await expect(notebookPane.getByTestId('notebook-run-network-mode').first()).toHaveText(
+      'Strict mode'
+    )
     await notebookPane.screenshot({
       path: testInfo.outputPath('notebook-network-mode-strict.png'),
       animations: 'disabled'

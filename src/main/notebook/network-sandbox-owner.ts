@@ -39,6 +39,7 @@ import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
   formatNetworkHostname,
   requiresNetworkException,
+  type NotebookNetworkMode,
   type NotebookNetworkSettings
 } from '../../shared/notebook-network-settings'
 import {
@@ -427,6 +428,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       )
       this.releaseWindowsRuntime = configureWindowsNotebookRuntime(() => this.windowsRuntime!.get())
     }
+  }
+
+  getNetworkMode(): NotebookNetworkMode {
+    return this.settings?.mode ?? 'relaxed'
   }
 
   async windowsProtectionConfigured(): Promise<boolean> {
