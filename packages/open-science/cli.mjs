@@ -1842,16 +1842,24 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     const target = {}
     if (options.project) target.projectId = await resolveCliProjectId(client, options.project)
     else if (options.newProject) target.projectName = options.newProject
-    outputValue(
-      await client.importSessionPackage(
+    let imported
+    try {
+      imported = await client.importSessionPackage(
         target,
         resolvedPath,
         { nonInteractive: true },
         { timeoutMs: options.timeoutMs }
-      ),
-      options,
-      deps
-    )
+      )
+    } catch (error) {
+      if (error?.code === 'timeout') {
+        error.completionStatus = 'unconfirmed'
+        error.message += ' The import may still complete. Check the destination before retrying.'
+      }
+      throw error
+    }
+    if (imported === null)
+      throw new OpenScienceApiError('Session import was cancelled.', { code: 'cancelled' })
+    outputValue(imported, options, deps)
     return
   }
   if (command === 'settings' && subcommand === 'agent-routing') {
@@ -2267,6 +2275,7 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
         error: {
           code,
           message,
+          ...(error?.correlationId ? { correlationId: error.correlationId } : {}),
           ...(error?.completionStatus ? { completionStatus: error.completionStatus } : {}),
           ...(error?.runId ? { runId: error.runId } : {})
         },

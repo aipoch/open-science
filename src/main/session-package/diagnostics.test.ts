@@ -57,7 +57,8 @@ describe('Session package device diagnostics', () => {
     await expect(
       owner.run('import', undefined, async () => {
         owner.report({
-          phase: 'copying',
+          phase: 'importing',
+          importStage: 'import-files',
           completedBytes: 128,
           totalBytes: 256,
           currentFile: secret
@@ -78,7 +79,8 @@ describe('Session package device diagnostics', () => {
         }),
         expect.objectContaining({
           data: expect.objectContaining({
-            phase: 'copying',
+            phase: 'importing',
+            importStage: 'import-files',
             outcome: 'failed',
             completedBytes: 128,
             totalBytes: 256,

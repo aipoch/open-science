@@ -135,6 +135,7 @@
     "Session package operation in progress": "Operación de paquete de sesión en curso",
     "Temporary files could not be removed. Try cleanup again.": "No se pudieron eliminar los archivos temporales. Vuelva a intentar la limpieza.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "No se pudo completar la operación del paquete de sesión. Compruebe el paquete y el espacio disponible en disco, y vuelva a intentarlo.",
+    "The selected file is not a valid Session package.": "El archivo seleccionado no es un paquete de sesión válido.",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete.",
     "Could not fork this Session: {{reason}}": "No se pudo bifurcar esta sesión: {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar.",
