@@ -2852,9 +2852,7 @@
       "packages/pdf-structure/test/continued-top-aligned-stub.test.ts",
       "packages/pdf-structure/test/terminal-numeric-parent-header.test.ts"
     ],
-    "contract": [
-      "packages/pdf-structure/test/source-segments-contract.test.ts"
-    ],
+    "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
@@ -3164,8 +3162,6 @@
       "src/main/composition/session-packages.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
