@@ -155,7 +155,7 @@ export function PermissionScopeButton({
     global: t('Allow globally')
   }
   const style =
-    'inline-flex h-8 items-center justify-center border-0 bg-primary text-primary-foreground hover:bg-primary/80 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50'
+    'inline-flex h-8 items-center justify-center border-0 bg-primary text-primary-foreground hover:bg-primary/90 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50'
   return (
     <SplitButton
       kind="popover"

@@ -272,10 +272,10 @@ const ComposerFailureNoticeSlot = ({
                         notice.failure.category === 'session'
                           ? 'text-muted-foreground'
                           : item.level === 'error'
-                            ? 'text-status-failure-foreground'
+                            ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
                             : item.level === 'warning'
-                              ? 'text-status-warning-foreground'
-                              : 'text-status-info-foreground'
+                              ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                              : 'text-status-info-foreground dark:text-status-info-dark-foreground'
                       )}
                     />
                     <button

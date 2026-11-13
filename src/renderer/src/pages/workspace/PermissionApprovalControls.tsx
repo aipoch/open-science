@@ -1160,8 +1160,8 @@ const PermissionApprovalCard = ({
               className={cn(
                 'inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap border-0 px-3 text-sm outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50',
                 isDeleteRequest
-                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                  : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
               )}
               disabled={disabled || !allowOptionId || isSubmitting}
               onClick={() => {
@@ -1189,8 +1189,8 @@ const PermissionApprovalCard = ({
                   className={cn(
                     'inline-flex h-8 select-none items-center justify-center border-0 px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
                     isDeleteRequest
-                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                      : 'bg-primary text-primary-foreground hover:bg-primary/80'
+                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                      : 'bg-primary text-primary-foreground hover:bg-primary/90'
                   )}
                   disabled={isSubmitting}
                 >

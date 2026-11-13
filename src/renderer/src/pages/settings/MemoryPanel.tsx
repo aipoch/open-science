@@ -110,7 +110,7 @@ const MemoryErrorBanner = ({ message }: { message: string }): React.JSX.Element 
 )
 
 const confirmButtonClassName =
-  'border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white'
+  'border-transparent bg-danger-000 text-danger-foreground hover:bg-danger-000/90 hover:text-danger-foreground'
 
 const ConfirmDialog = ({
   open,

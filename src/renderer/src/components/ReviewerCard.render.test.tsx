@@ -480,7 +480,7 @@ describe('ReviewerCard — status badges (pass/warn/fail)', () => {
 
     const badgeSpans = Array.from(container.querySelectorAll('span'))
     const failBadge = badgeSpans.find((s) => s.textContent?.trim() === 'fail')
-    expect(failBadge?.className).toMatch(/red/)
+    expect(failBadge?.className).toContain('text-status-failure-foreground')
 
     // Remount with warn.
     act(() => root.unmount())
@@ -500,7 +500,7 @@ describe('ReviewerCard — status badges (pass/warn/fail)', () => {
 
     const badgeSpansW = Array.from(container.querySelectorAll('span'))
     const warnBadge = badgeSpansW.find((s) => s.textContent?.trim() === 'warn')
-    expect(warnBadge?.className).toMatch(/yellow/)
+    expect(warnBadge?.className).toContain('text-status-warning-foreground')
   })
 })
 
@@ -693,7 +693,7 @@ describe('ReviewerCard — pass expand (pass check cards)', () => {
     const badges = Array.from(container.querySelectorAll('[data-testid="reviewer-item-badge"]'))
     const passBadge = badges.find((b) => b.textContent?.trim() === 'pass')
     expect(passBadge).toBeTruthy()
-    expect(passBadge?.className).toMatch(/green/)
+    expect(passBadge?.className).toContain('text-status-success-foreground')
   })
 
   it('renders the check evidence as the card body', async () => {
@@ -1361,7 +1361,7 @@ describe('ReviewerCard recovery and assessment coverage', () => {
     })
 
     expect(container.textContent).not.toContain('No issues found')
-    expect(container.querySelector('.text-green-600')).toBeNull()
+    expect(container.querySelector('.text-status-success-foreground')).toBeNull()
   })
 })
 
@@ -1424,7 +1424,7 @@ describe('ReviewerCard recovery feedback', () => {
     expect(container.textContent).toContain('Current evidence could not be verified')
     expect(container.textContent).not.toContain('No issues found')
     expect(container.textContent).not.toContain('Turn changed')
-    expect(container.querySelector('.text-green-600')).toBeNull()
+    expect(container.querySelector('.text-status-success-foreground')).toBeNull()
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
         .find((button) => button.textContent === 'Retry')!

@@ -255,7 +255,7 @@ const NotebookRunCell = ({
           ) : null}
           {isProblem ? (
             errorLine ? (
-              <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
+              <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-danger-foreground">
                 {t('error (line {{line}})', { line: errorLine })}
               </span>
             ) : (

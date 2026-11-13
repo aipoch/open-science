@@ -46,13 +46,16 @@ const formatBlockRef = (check: PresentedReviewCheck): string | null => {
 const StatusIcon = ({ status }: { status: ReviewCheck['status'] }): React.JSX.Element => {
   if (status === 'fail')
     return (
-      <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+      <XCircle
+        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-failure-foreground dark:text-status-failure-dark-foreground"
+        aria-hidden
+      />
     )
   if (status === 'warn')
     return <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-yellow-500" aria-hidden />
   return (
     <CheckCircle
-      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-400"
+      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-success-foreground dark:text-status-success-dark-foreground"
       aria-hidden
     />
   )
@@ -177,9 +180,13 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
   // tool entry: collapsible row with real tool name + one-line summary + status dot
   const statusDot =
     entry.status === 'ok' ? (
-      <span className="shrink-0 text-[10px] text-green-600 dark:text-green-400">{t('● ok')}</span>
+      <span className="shrink-0 text-[10px] text-status-success-foreground dark:text-status-success-dark-foreground">
+        {t('● ok')}
+      </span>
     ) : entry.status === 'error' ? (
-      <span className="shrink-0 text-[10px] text-red-500">{t('● error')}</span>
+      <span className="shrink-0 text-[10px] text-status-failure-foreground dark:text-status-failure-dark-foreground">
+        {t('● error')}
+      </span>
     ) : null
 
   // One-line summary: prefer title, fall back to rawInput (first line only)
@@ -239,7 +246,9 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
                   <span
                     className={cn(
                       'block',
-                      entry.exitCode === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'
+                      entry.exitCode === 0
+                        ? 'text-status-success-foreground dark:text-status-success-dark-foreground'
+                        : 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
                     )}
                   >
                     {t('exit {{code}}', { code: entry.exitCode })}

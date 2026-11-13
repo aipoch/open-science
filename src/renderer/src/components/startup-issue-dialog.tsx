@@ -124,7 +124,7 @@ const StartupIssueDialog = ({ error, onClose }: StartupIssueDialogProps): React.
                 if (!consented) event.preventDefault()
                 else onClose()
               }}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/80 ${
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 ${
                 consented ? '' : 'pointer-events-none opacity-50'
               }`}
             >

@@ -172,7 +172,10 @@ export function LiteratureBackgroundTasks({
               aria-describedby={error ? statusId : `${statusId} ${statusId}-progress`}
             >
               {error || (!running.length && pending.some((job) => job.failed > 0)) ? (
-                <AlertCircle className="size-4 text-status-warning-foreground" aria-hidden="true" />
+                <AlertCircle
+                  className="size-4 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                  aria-hidden="true"
+                />
               ) : running.length ? (
                 <LoaderCircle
                   className="size-4 animate-spin motion-reduce:animate-none text-primary"
