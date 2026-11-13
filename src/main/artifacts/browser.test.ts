@@ -8,7 +8,7 @@ describe('createArtifactBrowserOpener', () => {
     const buildUrl = vi
       .fn()
       .mockResolvedValue(
-        'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&projectId=project-1&versionId=version-2&token=token'
+        'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&token=token'
       )
     const opener = createArtifactBrowserOpener({
       resolveConfigRoot: () => '/isolated/config',
@@ -25,7 +25,7 @@ describe('createArtifactBrowserOpener', () => {
       versionId: 'version-2'
     })
     expect(openExternal).toHaveBeenCalledWith(
-      'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&projectId=project-1&versionId=version-2&token=token'
+      'http://127.0.0.1:44123/api/v1/artifacts/artifact-1/content?disposition=inline&token=token'
     )
   })
 

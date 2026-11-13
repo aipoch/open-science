@@ -74,6 +74,7 @@ import {
   projectWebRendererEvent
 } from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
+import { resolveAuthenticatedArtifactBrowserBinding } from './artifact-url'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
@@ -997,7 +998,8 @@ const handleTaskApiRequest = async (
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
   waitUntilTasksReady?: () => Promise<void>,
-  fetchPreview?: WebServerOptions['fetchPreview']
+  fetchPreview?: WebServerOptions['fetchPreview'],
+  artifactBrowserBindingContext?: { configRoot: string; token: string }
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     try {
@@ -1318,10 +1320,23 @@ const handleTaskApiRequest = async (
             'Inline Version requests require projectId and versionId.'
           )
         }
+        const browserBinding =
+          inline && projectId === null && versionId === null
+            ? resolveAuthenticatedArtifactBrowserBinding(
+                artifactBrowserBindingContext?.configRoot ?? '',
+                artifactBrowserBindingContext?.token ?? '',
+                artifactId
+              )
+            : undefined
+        const selectedProjectId = projectId ?? browserBinding?.projectId
+        const selectedVersionId = versionId ?? browserBinding?.versionId
         // Scoped browser reads must not change the default Task artifact download contract.
         const artifact =
-          inline && projectId && versionId
-            ? await tasks.acquireArtifact(artifactId, { projectId, versionId })
+          inline && selectedProjectId && selectedVersionId
+            ? await tasks.acquireArtifact(artifactId, {
+                projectId: selectedProjectId,
+                versionId: selectedVersionId
+              })
             : await tasks.acquireArtifact(artifactId)
         try {
           await streamPreviewResource(
@@ -1593,7 +1608,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           taskIdempotencyRegistry,
           externalAuthorization,
           options.waitUntilTasksReady,
-          options.fetchPreview
+          options.fetchPreview,
+          { configRoot: options.bootstrap.configRoot, token: options.token }
         ))
       ) {
         return

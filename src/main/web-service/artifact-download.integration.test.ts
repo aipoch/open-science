@@ -33,6 +33,7 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
+import { registerAuthenticatedArtifactBrowserBinding } from './artifact-url'
 
 it.each(['historical', 'native'] as const)(
   'downloads a %s Task artifact by its listed Version id through HTTP',
@@ -305,6 +306,16 @@ it.each(['historical', 'native'] as const)(
           expect(head.headers.get(header)).toBe(inline.headers.get(header))
         }
       }
+      registerAuthenticatedArtifactBrowserBinding(fixture.storageRoot, 'synthetic-download-token', {
+        artifactId: version.artifactId,
+        projectId: session.projectId,
+        versionId: newer.versionId
+      })
+      const boundInline = await fetch(
+        `${baseUrl}/api/v1/artifacts/${version.artifactId}/content?disposition=inline&token=synthetic-download-token`
+      )
+      expect(boundInline.status).toBe(200)
+      expect(await boundInline.text()).toBe('newer content')
       for (const url of [
         inlineUrl(newer.versionId, 'missing-project'),
         inlineUrl(newer.versionId, session.projectId, 'missing-file'),
