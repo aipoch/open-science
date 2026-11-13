@@ -201,6 +201,19 @@ it('retains an existing ambiguity diagnostic after local native pair recovery', 
     // populateTableCellText can keep a preferred owner in assignments and also
     // ambiguousAssignments. A unique public Source owner is not an origin proof.
     const issues = new Set([...result.issues, 'ambiguous-cell-assignment'])
+    const baseCells = result.rows.flatMap((row: Fixture, rowIndex: number) =>
+      [
+        [75, 105, 375, 195],
+        [375, 105, 825, 195]
+      ].map((rect, column) => ({
+        row: rowIndex,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        origin: 'model-grid',
+        rect: [rect[0], row.rect[1], rect[2], row.rect[3]]
+      }))
+    )
     const groups = [...new Set(f.tokens.map((t: Fixture) => t.baseline))]
       .sort((a: number, b: number) => a - b)
       .map((baseline) => f.tokens.filter((t: Fixture) => t.baseline === baseline))
@@ -225,6 +238,7 @@ it('retains an existing ambiguity diagnostic after local native pair recovery', 
       witness: f.witness,
       repairs,
       cells: result.cells,
+      baseCells,
       unassigned: result.unassigned,
       issues,
       headerRows: [0],
@@ -233,6 +247,16 @@ it('retains an existing ambiguity diagnostic after local native pair recovery', 
     expect(repairs).toContain('native-interior-paired-record-recovered')
     expect(result.unassigned).toEqual([])
     expect(issues.has('ambiguous-cell-assignment')).toBe(true)
+    expect(baseCells).toHaveLength(result.rows.length * 2)
+    expect(
+      baseCells.every(
+        (cell: Fixture) =>
+          cell.row >= 0 &&
+          cell.row < result.rows.length &&
+          cell.rect[1] === result.rows[cell.row].rect[1] &&
+          cell.rect[3] === result.rows[cell.row].rect[3]
+      )
+    ).toBe(true)
   } finally {
     await f.dispose()
   }

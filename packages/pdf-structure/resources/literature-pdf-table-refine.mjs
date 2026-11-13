@@ -12114,6 +12114,7 @@ export function refineTable(
     witness: nativeFontRoleWitness,
     repairs,
     cells,
+    baseCells,
     unassigned,
     issues,
     headerRows,

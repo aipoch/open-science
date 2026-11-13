@@ -2311,6 +2311,7 @@ function reconcileInteriorPairedRows({
   witness,
   repairs,
   cells,
+  baseCells,
   unassigned,
   issues,
   headerRows,
@@ -2370,6 +2371,7 @@ function reconcileInteriorPairedRows({
       context.operators,
       [...context.rulePaintBounds],
       cells,
+      ...(Array.isArray(baseCells) ? [baseCells] : []),
       unassigned,
       headerRows,
       notes
@@ -2893,6 +2895,32 @@ function reconcileInteriorPairedRows({
         return { ...cell, row: index, rect }
       }),
     nextHeaderRows = headers.map((r) => indexes.get(r))
+  const remapBaseCells = Array.isArray(baseCells)
+    ? baseCells
+        .filter((cell) => !removed.has(rows[cell.row]))
+        .map((cell) => {
+          const old = rows[cell.row],
+            copy = copies.get(old),
+            rect = [...cell.rect]
+          if (!copy) return
+          if (copy.rect[1] !== old.rect[1]) rect[1] = copy.rect[1]
+          if (copy.rect[3] !== old.rect[3]) rect[3] = copy.rect[3]
+          return { ...cell, row: indexes.get(old), rect }
+        })
+    : undefined
+  if (Array.isArray(remapBaseCells))
+    for (const row of added) {
+      const index = indexes.get(row)
+      for (let column = 0; column < 2; column++)
+        remapBaseCells.push({
+          row: index,
+          column,
+          rowSpan: 1,
+          colSpan: 1,
+          origin: 'model-grid',
+          rect: [columnRects[column][0], row.rect[1], columnRects[column][2], row.rect[3]]
+        })
+    }
   if (
     nextCells.some((c) => !c) ||
     nextRows.some(
@@ -2902,6 +2930,12 @@ function reconcileInteriorPairedRows({
     ) ||
     nextCells.some(
       (c) => !c.rect.every(Number.isFinite) || !(c.rect[0] < c.rect[2] && c.rect[1] < c.rect[3])
+    ) ||
+    remapBaseCells?.some(
+      (c) =>
+        !Number.isInteger(c.row) ||
+        !c.rect.every(Number.isFinite) ||
+        !(c.rect[0] < c.rect[2] && c.rect[1] < c.rect[3])
     ) ||
     nextHeaderRows.some((i) => !Number.isInteger(i) || i < 0) ||
     new Set(nextHeaderRows).size !== nextHeaderRows.length
@@ -2920,7 +2954,9 @@ function reconcileInteriorPairedRows({
       return d && Object.hasOwn(d, 'value') && d.writable && d.configurable
     })
   if (
-    ![rows, cells, unassigned, headerRows, repairs].every(writable) ||
+    ![rows, cells, unassigned, headerRows, repairs, ...(baseCells ? [baseCells] : [])].every(
+      writable
+    ) ||
     !keep() ||
     !localPairWitnessCurrent(witness)
   )
@@ -2929,6 +2965,7 @@ function reconcileInteriorPairedRows({
   nextCells.sort((a, b) => a.row - b.row || a.column - b.column)
   Array.prototype.splice.call(rows, 0, rows.length, ...nextRows)
   Array.prototype.splice.call(cells, 0, cells.length, ...nextCells)
+  if (remapBaseCells) Array.prototype.splice.call(baseCells, 0, baseCells.length, ...remapBaseCells)
   Array.prototype.splice.call(headerRows, 0, headerRows.length, ...nextHeaderRows)
   Array.prototype.splice.call(unassigned, 0, unassigned.length, ...remaining)
   Array.prototype.push.apply(
