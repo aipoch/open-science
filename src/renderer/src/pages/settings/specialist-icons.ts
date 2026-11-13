@@ -31,5 +31,9 @@ export const SPECIALIST_COLOR_OPTIONS = [
 ] as const
 
 export const getAvatarStyle = (colorKey?: string): CSSProperties => ({
-  background: getAvatarColor(colorKey)
+  background: getAvatarColor(colorKey),
+  // Avatar tiles stay light in both themes. Use a stable dark glyph color instead of inheriting
+  // the surrounding card foreground, which becomes near-white in dark mode and disappears into
+  // the pastel tile.
+  color: 'hsl(var(--always-black) / 0.78)'
 })
