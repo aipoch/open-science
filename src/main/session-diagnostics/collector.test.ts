@@ -940,3 +940,87 @@ describe('session diagnostics isolated collector', () => {
     expect(await readFile(sessionPath(input), 'utf8')).toBe(raw)
   })
 })
+
+it('includes only the selected session network records and keeps them optional', async () => {
+  const input = await fixture()
+  const directory = join(input.configRoot, 'logs/network')
+  await mkdir(directory, { recursive: true })
+  const record = (sessionId: string, mode: string): string =>
+    JSON.stringify({
+      t: '2026-11-12T00:00:00.000Z',
+      level: 'info',
+      scope: 'notebook:network',
+      msg: 'network access',
+      data: {
+        eventId: sessionId + mode,
+        requestId: 'request',
+        projectId: 'project',
+        sessionId,
+        mode,
+        host: 'example.org',
+        port: 443,
+        protocol: 'https',
+        runtime: 'python',
+        notebookRunId: 'run-a',
+        authorization: 'secret'
+      }
+    }) + '\n'
+  await writeFile(
+    join(directory, 'notebook-2026-11-12.log'),
+    record('session', 'relaxed') + record('other', 'strict') + record('session', 'strict')
+  )
+  const inspection = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
+  expect(inspection).toMatchObject({
+    kind: 'inspection',
+    inspection: {
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: 'network-logs', kind: 'network-log', available: true })
+      ])
+    }
+  })
+  const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['network-logs'] })
+  expect(result).toMatchObject({ kind: 'archive', partial: false })
+  const extracted = join(input.directory!, 'network-extracted')
+  await mkdir(extracted)
+  await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+  const logs = await readFile(join(extracted, 'logs/network/notebook.json'), 'utf8')
+  expect(logs).not.toMatch(/secret|"other"/)
+  const records = JSON.parse(logs).records
+  expect(records.map((r: { data: { mode: string } }) => r.data.mode)).toEqual(['strict', 'relaxed'])
+})
+
+it('marks a network diagnostic partial when the audit journal records a write gap', async () => {
+  const input = await fixture()
+  const directory = join(input.configRoot, 'logs/network')
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, 'integrity.json'), JSON.stringify({ missingRecords: true }))
+  await writeFile(
+    join(directory, 'notebook-2026-11-12.log'),
+    JSON.stringify({
+      t: '2026-11-12T00:00:00.000Z',
+      level: 'info',
+      scope: 'notebook:network',
+      msg: 'network access',
+      data: {
+        requestId: 'request',
+        projectId: 'project',
+        sessionId: 'session',
+        mode: 'strict',
+        host: 'example.org',
+        port: 443,
+        protocol: 'https',
+        runtime: 'python'
+      }
+    }) + '\n'
+  )
+  const result = await runSessionDiagnosticWorker({ ...input, selectedItems: ['network-logs'] })
+  expect(result).toMatchObject({ kind: 'archive', partial: true })
+  const extracted = join(input.directory!, 'integrity-extracted')
+  await mkdir(extracted)
+  await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+  const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+  expect(manifest.items.find((item: { id: string }) => item.id === 'network-logs')).toMatchObject({
+    status: 'partial',
+    sourceMetadata: { warnings: ['Network log recording failed. Some records may be missing.'] }
+  })
+})

@@ -1,3 +1,4 @@
+import { inspectNetworkJournal, collectNetworkJournal } from './network'
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -85,7 +86,7 @@ async function checkPath(root: string, path: string): Promise<void> {
 
 async function inspectSource(source: Source): Promise<Source> {
   try {
-    if (source.kind === 'resource-log') return source
+    if (source.kind === 'resource-log' || source.kind === 'network-log') return source
     if (source.kind === 'sensitive-evidence' || source.kind === 'environment')
       return { ...source, available: true }
     if (!source.path && source.reason) return source
@@ -357,6 +358,14 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
     output: 'logs/resources',
     ...(await inspectResourceJournal(input.configRoot))
   })
+  sources.push({
+    id: 'network-logs',
+    name: 'Notebook network logs',
+    kind: 'network-log',
+    root: input.configRoot,
+    output: 'logs/network/notebook.json',
+    ...(await inspectNetworkJournal(input.configRoot))
+  })
   return Promise.all(sources.map(inspectSource))
 }
 
@@ -576,7 +585,10 @@ export async function runSessionDiagnosticWorker(
         collectedAt: new Date().toISOString(),
         output: source.output,
         scope:
-          source.kind === 'log' || source.kind === 'resource-log' || source.kind === 'environment'
+          source.kind === 'log' ||
+          source.kind === 'resource-log' ||
+          source.kind === 'environment' ||
+          (source.kind === 'network-log' && input.scope === 'application')
             ? 'global'
             : source.kind === 'sensitive-file'
               ? 'unknown'
@@ -596,7 +608,8 @@ export async function runSessionDiagnosticWorker(
         scope:
           source?.kind === 'log' ||
           source?.kind === 'resource-log' ||
-          source?.kind === 'environment'
+          source?.kind === 'environment' ||
+          (source?.kind === 'network-log' && input.scope === 'application')
             ? ('global' as const)
             : source?.kind === 'sensitive-file'
               ? ('unknown' as const)
@@ -607,10 +620,25 @@ export async function runSessionDiagnosticWorker(
       try {
         if (
           !source?.available ||
-          (source.kind !== 'sensitive-evidence' && source.kind !== 'resource-log' && !source.path)
+          (source.kind !== 'sensitive-evidence' &&
+            source.kind !== 'resource-log' &&
+            source.kind !== 'network-log' &&
+            !source.path)
         )
           throw new DiagnosticCollectionError(source?.reason ?? 'Source is no longer discoverable')
-        if (source.kind === 'resource-log') {
+        if (source.kind === 'network-log') {
+          const snapshot = await collectNetworkJournal(input.configRoot, input)
+          state.sourceMetadata = {
+            retainedRecords: snapshot.records.length,
+            truncated: snapshot.truncated,
+            warnings: snapshot.warnings
+          }
+          if (snapshot.truncated || snapshot.warnings.length) {
+            partial = true
+            state.status = snapshot.truncated ? 'truncated' : 'partial'
+          }
+          await writeBestEffort(source.output, () => encode(snapshot), state)
+        } else if (source.kind === 'resource-log') {
           const snapshot = await exportResourceJournal(input.configRoot, content)
           files.push(...snapshot.files)
           state.sourceMetadata = snapshot.metadata
@@ -1013,7 +1041,7 @@ export async function runSessionDiagnosticWorker(
     await writeBestEffort(
       'README.txt',
       () =>
-        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. Optional logs/resources/*.jsonl contains structural system commit memory, PID/birth identities and session activity across application sessions, including retained pre-failure incident segments. Its separate 64 MiB budget does not consume the 32 MiB general export budget. Resource metadata lists incomplete, unavailable or rotated segments; original journals are never cleared. Backend startup logs/backend/desktop-backend-*.log contain projected structured records and recognized native fatal/exception stacks from at most the last 256 KiB of each of the newest 20 files; unrelated process output is omitted. A one-byte boundary probe preserves complete records at the tail edge; metadata accounts for probe, tail and omitted bytes separately. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
+        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. Optional logs/network/notebook.json contains bounded, credential-redacted network events scoped to the selected session (including its agent frames), or all sessions for an application package. Missing run identifiers mean unknown. Its metadata reports read failures and truncation; expired records cannot be restored. Optional logs/resources/*.jsonl contains structural system commit memory, PID/birth identities and session activity across application sessions, including retained pre-failure incident segments. Its separate 64 MiB budget does not consume the 32 MiB general export budget. Resource metadata lists incomplete, unavailable or rotated segments; original journals are never cleared. Backend startup logs/backend/desktop-backend-*.log contain projected structured records and recognized native fatal/exception stacks from at most the last 256 KiB of each of the newest 20 files; unrelated process output is omitted. A one-byte boundary probe preserves complete records at the tail edge; metadata accounts for probe, tail and omitted bytes separately. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
       undefined,
       true
     )

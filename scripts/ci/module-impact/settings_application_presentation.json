@@ -109,7 +109,9 @@
     "src/renderer/src/pages/settings/HostedTargets.tsx",
     "src/renderer/src/pages/settings/KubernetesTargets.tsx",
     "src/renderer/src/pages/settings/ModalTargets.tsx",
-    "src/renderer/src/pages/settings/RayTargets.tsx"
+    "src/renderer/src/pages/settings/RayTargets.tsx",
+    "src/renderer/src/pages/settings/NotebookNetworkLogs.tsx",
+    "src/renderer/src/pages/settings/NotebookNetworkLogs.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -208,7 +210,8 @@
       "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
       "src/renderer/src/pages/settings/validation-message.test.ts",
       "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
-      "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx"
+      "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx",
+      "src/renderer/src/pages/settings/NotebookNetworkLogs.render.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

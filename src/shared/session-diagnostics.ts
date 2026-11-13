@@ -34,6 +34,7 @@ export type SessionDiagnosticItem = {
     | 'invalid-session'
     | 'log'
     | 'resource-log'
+    | 'network-log'
     | 'database'
     | 'notebook'
     | 'environment'

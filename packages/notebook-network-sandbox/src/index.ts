@@ -237,6 +237,7 @@ class NotebookNetworkSandbox {
     let wrapped: Awaited<ReturnType<typeof NotebookNetworkRuntime.wrap>>
     try {
       wrapped = await this.#backend.wrap({
+        startAudit: command.startAudit,
         target,
         command: command.command,
         ...(command.executable ? { executable: command.executable, args: command.args ?? [] } : {}),

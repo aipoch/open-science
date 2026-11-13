@@ -139,7 +139,9 @@
     "src/main/notebook/execution-deadline.ts",
     "src/main/notebook/managed-skill-read-roots.ts",
     "src/main/notebook/managed-skill-read-roots.test.ts",
-    "src/main/notebook/managed-skill-read.integration.test.ts"
+    "src/main/notebook/managed-skill-read.integration.test.ts",
+    "src/main/notebook/network-audit.ts",
+    "src/main/notebook/network-audit.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -283,7 +285,8 @@
       "src/main/notebook/execution-deadline.test.ts",
       "src/main/notebook/kernel-process-identity.test.ts",
       "src/main/notebook/managed-skill-read-roots.test.ts",
-      "src/main/notebook/managed-skill-read.integration.test.ts"
+      "src/main/notebook/managed-skill-read.integration.test.ts",
+      "src/main/notebook/network-audit.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

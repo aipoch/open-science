@@ -70,10 +70,12 @@ const forwardResponse = (
   response: ServerResponse,
   failureMessage: string,
   onEnd?: () => void,
-  isCurrent: () => boolean = () => true
+  isCurrent: () => boolean = () => true,
+  audit?: (event: GatewayAuditEvent) => void
 ): void => {
   let incoming: IncomingMessage | undefined
   const fail = (): void => {
+    audit?.({ outcome: 'failed' })
     upstream.destroy()
     if (response.destroyed) return
     if (response.headersSent) response.destroy()
@@ -90,8 +92,14 @@ const forwardResponse = (
       return
     }
     incoming = message
-    message.once('error', () => response.destroy())
-    message.once('end', () => onEnd?.())
+    message.once('error', () => {
+      audit?.({ outcome: 'failed' })
+      response.destroy()
+    })
+    message.once('end', () => {
+      audit?.({ outcome: 'completed', statusCode: message.statusCode })
+      onEnd?.()
+    })
     try {
       response.writeHead(message.statusCode ?? 502, withoutConnectionHeaders(message.headers))
     } catch {
@@ -104,15 +112,21 @@ const forwardResponse = (
     // The parser can reject excess bytes after a complete response, before its body drains.
     if (!incoming?.complete) fail()
   })
-  request.once('aborted', () => upstream.destroy())
+  request.once('aborted', () => {
+    audit?.({ outcome: 'cancelled' })
+    upstream.destroy()
+  })
   request.once('error', () => upstream.destroy())
   response.once('error', () => upstream.destroy())
-  response.once('close', () => upstream.destroy())
+  response.once('close', () => {
+    if (!incoming?.complete) audit?.({ outcome: 'cancelled' })
+    upstream.destroy()
+  })
   if (request.aborted || response.destroyed) upstream.destroy()
 }
 
 type GatewayDecision =
-  | Readonly<{ allowed: true; address: string }>
+  | Readonly<{ allowed: true; address: string; reason?: string }>
   | Readonly<{
       allowed: false
       message?: string
@@ -127,7 +141,23 @@ type ParentProxySettings = Readonly<{
   trustedCaCertificates?: readonly string[]
 }>
 
+export type GatewayAuditTarget = Readonly<{
+  host: string
+  port: number
+  protocol: 'http' | 'https'
+}>
+export type GatewayAuditEvent = Readonly<{
+  decision?: 'allowed' | 'blocked'
+  address?: string
+  reason?: string
+  outcome?: 'connected' | 'completed' | 'failed' | 'cancelled' | 'timeout'
+  statusCode?: number
+  durationMs?: number
+}>
+export type GatewayAuditStart = (target: GatewayAuditTarget) => (event: GatewayAuditEvent) => void
+
 type CommandGatewayOptions = Readonly<{
+  startAudit?: GatewayAuditStart
   decide: (
     host: string,
     port: number,
@@ -846,6 +876,42 @@ class CommandGateway {
     return true
   }
 
+  #audit(
+    host: string,
+    port: number,
+    protocol: 'http' | 'https'
+  ): (event: GatewayAuditEvent) => void {
+    const started = Date.now()
+    let finish = false
+    let details: GatewayAuditEvent = {}
+    let emit: ReturnType<GatewayAuditStart> | undefined
+    try {
+      emit = this.#options.startAudit?.({ host, port, protocol })
+    } catch {
+      /* Observers cannot authorize traffic. */
+    }
+    return (event) => {
+      if (event.outcome && finish) return
+      if (event.outcome) finish = true
+      if (event.decision) details = event
+      try {
+        emit?.({ ...details, ...event, durationMs: Math.max(0, Date.now() - started) })
+      } catch {
+        /* Keep policy authoritative. */
+      }
+    }
+  }
+
+  #auditDecision(audit: (event: GatewayAuditEvent) => void, decision: GatewayDecision): void {
+    audit({
+      decision: decision.allowed ? 'allowed' : 'blocked',
+      address: decision.address && isIP(decision.address) ? decision.address : undefined,
+      reason: decision.allowed
+        ? (decision.reason ?? 'policy')
+        : (decision.message ?? 'policy blocked')
+    })
+  }
+
   async #authorize(
     host: string,
     port: number,
@@ -878,6 +944,7 @@ class CommandGateway {
   ): Promise<void> {
     // CONNECT and SOCKS carry no scheme. Classify the actual application bytes; never infer
     // protocol from the destination port.
+    let audit: ((event: GatewayAuditEvent) => void) | undefined
     const reader = socketReader(client, initial, true)
     client.setTimeout(10_000, () => client.destroy())
     try {
@@ -905,6 +972,7 @@ class CommandGateway {
 
       client.pause()
       client.setTimeout(0)
+      audit = this.#audit(host, port, protocol)
       let decision = await this.#authorize(
         host,
         port,
@@ -921,6 +989,7 @@ class CommandGateway {
           decision.source === 'unknown' &&
           this.#options.inspection
         ) {
+          audit = undefined
           await this.#inspectConnect(host, client, buffered, generation, responseSent)
           return
         }
@@ -935,12 +1004,18 @@ class CommandGateway {
           )
         }
         if (!decision.allowed) {
+          this.#auditDecision(audit, decision)
+          audit = undefined
           client.destroy()
           return
         }
       }
+      this.#auditDecision(audit, decision)
       const lifetime = new AbortController()
-      client.once('close', () => lifetime.abort())
+      client.once('close', () => {
+        lifetime.abort()
+        audit?.({ outcome: 'cancelled' })
+      })
       const upstream = await destinationSocket(
         this.#parent,
         host,
@@ -961,6 +1036,7 @@ class CommandGateway {
         client.destroy()
         return
       }
+      audit({ outcome: 'connected' })
       client.setTimeout(0)
       if (!responseSent) {
         client.write(
@@ -974,6 +1050,7 @@ class CommandGateway {
         client.pipe(upstream).pipe(client)
       } else bridgeTlsTunnel(client, upstream, buffered)
     } catch {
+      audit?.({ outcome: client.destroyed ? 'cancelled' : 'failed' })
       client.destroy()
     }
   }
@@ -1020,6 +1097,11 @@ class CommandGateway {
       return
     }
     const port = defaultPort(target)
+    const audit = this.#audit(
+      target.hostname,
+      port,
+      target.protocol === 'https:' ? 'https' : 'http'
+    )
     const decision = await this.#authorize(
       target.hostname,
       port,
@@ -1028,6 +1110,7 @@ class CommandGateway {
       () => !response.destroyed && !request.socket.destroyed,
       target.protocol === 'https:' ? 'https' : 'http'
     )
+    this.#auditDecision(audit, decision)
     if (!decision.allowed) {
       rejectHttp(response, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
       return
@@ -1078,10 +1161,14 @@ class CommandGateway {
           upstream,
           request,
           response,
-          'Policy gateway could not reach the destination.'
+          'Policy gateway could not reach the destination.',
+          undefined,
+          undefined,
+          audit
         )
         request.pipe(upstream)
       } catch (error) {
+        audit({ outcome: 'failed' })
         if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
         response.end(
           `Policy gateway could not reach the destination: ${error instanceof Error ? error.message : String(error)}`
@@ -1109,7 +1196,15 @@ class CommandGateway {
             ...(target.protocol === 'https:' ? { servername: target.hostname } : {})
           }
     )
-    forwardResponse(upstream, request, response, 'Policy gateway could not reach the destination.')
+    forwardResponse(
+      upstream,
+      request,
+      response,
+      'Policy gateway could not reach the destination.',
+      undefined,
+      undefined,
+      audit
+    )
     request.pipe(upstream)
   }
 
@@ -1207,10 +1302,12 @@ class CommandGateway {
     let malformed = false
     let sawRequest = false
     let resourceTimeout = false
+    let requestAudit: ((event: GatewayAuditEvent) => void) | undefined
     let recordedBlock = false
     let tls: TLSSocket | undefined
     const expire = (): void => {
       resourceTimeout = true
+      requestAudit?.({ outcome: 'timeout' })
       tls?.destroy()
       client.destroy()
     }
@@ -1224,13 +1321,16 @@ class CommandGateway {
         inspection.isExecutionActive()
       ) {
         recordedBlock = true
-        await this.#authorize(
+        const audit = this.#audit(host, 443, 'https')
+        const decision = await this.#authorize(
           host,
           443,
           generation,
           'block',
           () => !client.destroyed && !tls?.destroyed
         )
+        this.#auditDecision(audit, decision)
+        if (decision.allowed) audit({ outcome: 'cancelled', reason: 'connection cannot resume' })
       }
     }
     try {
@@ -1350,6 +1450,8 @@ class CommandGateway {
             extraBytes = false
             if (!tls!.destroyed) armHeaders()
           })
+          const audit = this.#audit(host, 443, 'https')
+          requestAudit = audit
           try {
             // Leave request bodies backpressured in the parser until the host commits the human
             // decision. Pause the ingress timeout while approval is pending, not upstream timeouts.
@@ -1363,6 +1465,7 @@ class CommandGateway {
             )
             if (approvedBody) tls!.setTimeout(60_000)
             if (approvedBody && !decision.allowed) {
+              this.#auditDecision(audit, decision)
               if (!response.destroyed) rejectHttp(response, NETWORK_APPROVAL_REQUIRED)
               return
             }
@@ -1373,9 +1476,15 @@ class CommandGateway {
             const address =
               decision.allowed || decision.source === 'unknown' ? decision.address : undefined
             if (!address) {
+              this.#auditDecision(audit, decision)
               tls!.destroy()
               return
             }
+            audit({
+              decision: 'allowed',
+              address,
+              reason: decision.allowed ? (decision.reason ?? 'policy') : 'public read'
+            })
             const parent = selectProxy(this.#parent, host, 443, true)
             const raw = parent
               ? await tunnelThroughProxy(parent, address, 443, this.#parent?.ca, lifetime.signal)
@@ -1402,7 +1511,11 @@ class CommandGateway {
               raw.destroy()
             }
             tls!.once('close', stop)
-            const handshakeTimer = setTimeout(stop, 10_000)
+            const timeout = (): void => {
+              audit({ outcome: 'timeout' })
+              stop()
+            }
+            const handshakeTimer = setTimeout(timeout, 10_000)
             try {
               await new Promise<void>((resolve, reject) => {
                 upstream.once('secureConnect', resolve)
@@ -1416,7 +1529,7 @@ class CommandGateway {
               stop()
               return
             }
-            upstream.setTimeout(60_000, stop)
+            upstream.setTimeout(60_000, timeout)
             const headers =
               verdict.kind === 'read' ? verdict.headers : withoutConnectionHeaders(request.headers)
             const continueExpected = request.headers.expect?.toLowerCase() === '100-continue'
@@ -1444,7 +1557,8 @@ class CommandGateway {
                 tls!.removeListener('close', stop)
                 stop()
               },
-              () => this.#inspectionActive(generation, client)
+              () => this.#inspectionActive(generation, client),
+              audit
             )
             outgoing.once('upgrade', (_res, socket) => {
               socket.destroy()
@@ -1457,6 +1571,7 @@ class CommandGateway {
               request.pipe(outgoing)
             } else outgoing.end()
           } catch {
+            audit({ outcome: 'failed' })
             if (!response.headersSent) response.writeHead(502, { connection: 'close' })
             response.end(NETWORK_UPSTREAM_FAILED)
           }

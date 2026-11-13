@@ -1,3 +1,7 @@
+import type {
+  NotebookNetworkAuditQuery,
+  NotebookNetworkAuditPage
+} from '../shared/notebook-network-audit'
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
 import type {
@@ -497,6 +501,16 @@ const backgroundResultCommands = Object.freeze({
 })
 
 const networkCommands = Object.freeze({
+  queryNotebookLogs: defineApplicationCommand<
+    'network:query-notebook-logs',
+    readonly [NotebookNetworkAuditQuery],
+    NotebookNetworkAuditPage
+  >('network:query-notebook-logs'),
+  setNotebookLogRetention: defineApplicationCommand<
+    'network:set-notebook-log-retention',
+    readonly [number],
+    number
+  >('network:set-notebook-log-retention'),
   getInfo: defineApplicationCommand<'network:get-info', readonly [], NetworkInfo>(
     'network:get-info'
   ),
@@ -992,6 +1006,14 @@ const registerHostApplicationCommands = (
       }
     })
     scope.registerGroup(hostApplicationCommandGroups[12], {
+      'network:query-notebook-logs': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.network.queryNotebookLogs(args[0])
+      },
+      'network:set-notebook-log-retention': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.network.setNotebookLogRetention(args[0])
+      },
       'network:get-info': ({ callerContext }) => {
         requireDesktopCaller(callerContext)
         return dependencies.network.getInfo()

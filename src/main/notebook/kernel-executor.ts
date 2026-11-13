@@ -633,6 +633,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       if (proc.pending) throw new Error('Notebook execution is already running.')
       endSandboxExecution = proc.beginSandboxExecution({
         commandText: request.code,
+        ...(request.runId ? { notebookRunId: request.runId } : {}),
         executionReference: request.runId ?? randomUUID(),
         signal: request.signal,
         onNetworkWaitChange: (waiting) => {

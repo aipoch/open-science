@@ -5088,3 +5088,64 @@ it('aborts pending approvals on Strict and rejects old/full-access grants', asyn
   await wrapped.cleanup('exit', { processesTerminated: true })
   await owner.dispose()
 })
+
+it('freezes the network event mode and run before asynchronous completion and later executions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'audit-owner-'))
+  fixtureDirectories.push(root)
+  const records: import('../../shared/notebook-network-audit').NotebookNetworkAuditData[] = []
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: root,
+    temporaryRoot: root,
+    getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    requestDecision: async () => 'deny',
+    audit: { record: (event) => records.push(event), flush: async () => {} }
+  })
+  const wrapped = await owner.wrap({
+    executable: process.execPath,
+    args: [],
+    env: {},
+    cwd: root,
+    commandText: 'first',
+    sessionId: 'session-a',
+    projectId: 'project-a',
+    runtime: 'python',
+    filesystem: {
+      readOnlyRoots: [],
+      readWriteRoots: [root],
+      deniedReadRoots: [],
+      deniedWriteRoots: []
+    }
+  })
+  const end = wrapped.beginExecution?.({
+    commandText: 'first',
+    executionReference: 'run-a',
+    notebookRunId: 'run-a'
+  })
+  const emit = backend.wrap.mock.lastCall![0].startAudit({
+    host: 'example.org',
+    port: 443,
+    protocol: 'https'
+  })
+  emit({ decision: 'allowed' })
+  end?.()
+  owner.applySettings({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, mode: 'strict' })
+  const endNext = wrapped.beginExecution?.({
+    commandText: 'second',
+    executionReference: 'run-b',
+    notebookRunId: 'run-b'
+  })
+  emit({ outcome: 'cancelled' })
+  expect(records).toHaveLength(2)
+  expect(records[1]).toMatchObject({
+    mode: 'relaxed',
+    notebookRunId: 'run-a',
+    projectId: 'project-a',
+    sessionId: 'session-a',
+    outcome: 'cancelled'
+  })
+  expect(records[1].requestId).toBe(records[0].requestId)
+  endNext?.()
+  await wrapped.cleanup('spawn-failed', { processesTerminated: true })
+  await owner.dispose()
+})

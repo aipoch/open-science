@@ -217,6 +217,25 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
       timeout: 60_000
     })
     expect(requests).toBe(1)
+    const audit = await page.evaluate(() =>
+      window.api.network.queryNotebookLogs({ mode: 'strict' })
+    )
+    const accesses = audit.records.filter((record) => record.data.host === 'localhost')
+    expect(accesses.some((record) => record.data.decision === 'blocked')).toBe(true)
+    expect(
+      accesses.some(
+        (record) => record.data.outcome === 'completed' && record.data.decision === 'allowed'
+      )
+    ).toBe(true)
+    expect(
+      accesses.every(
+        (record) => record.data.projectId && record.data.sessionId && record.data.notebookRunId
+      )
+    ).toBe(true)
+    await testInfo.attach('network-audit', {
+      body: JSON.stringify(accesses),
+      contentType: 'application/json'
+    })
     await expect(page.getByTestId('permission-card')).toHaveCount(0)
     settings = await openSettingsPage(page, 'Network')
     await settings.getByRole('button', { name: 'Manage access', exact: true }).click()
@@ -239,6 +258,47 @@ test('saves strict whitelist edits immediately and enforces them in a real Noteb
     await expect(settings.getByRole('textbox', { name: 'Search network addresses' })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath('relaxed-mode.png') })
     await settings.getByRole('button', { name: 'Close settings' }).click()
+    await page.evaluate(async (port) => {
+      const reviewed = await window.api.settings.reviewNotebookPrivateDestination({
+        hostname: 'localhost',
+        port,
+        protocol: 'http'
+      })
+      if (!reviewed.ok) throw new Error('Local fixture destination was not eligible')
+      const current = (await window.api.settings.getSettings()).notebookNetwork!
+      await window.api.settings.setNotebookNetwork({
+        ...current,
+        baseTrustedPrivateDestinations: current.trustedPrivateDestinations ?? [],
+        trustedPrivateDestinations: [
+          ...(current.trustedPrivateDestinations ?? []),
+          reviewed.destination
+        ]
+      })
+    }, address.port)
+    await submitPromptViaUi(page, `Verify strict Notebook network port ${address.port} allowed`)
+    await expect
+      .poll(
+        async () => {
+          const logs = await page.evaluate(() =>
+            window.api.network.queryNotebookLogs({ mode: 'relaxed', outcome: 'completed' })
+          )
+          return logs.records.some(
+            (record) =>
+              record.data.host === 'localhost' &&
+              record.data.notebookRunId &&
+              record.data.projectId &&
+              record.data.sessionId
+          )
+        },
+        { timeout: 60_000 }
+      )
+      .toBe(true)
+    expect(requests).toBe(2)
+    expect(
+      (
+        await page.evaluate(() => window.api.network.queryNotebookLogs({ mode: 'strict' }))
+      ).records.some((record) => record.data.notebookRunId === accesses[0].data.notebookRunId)
+    ).toBe(true)
   } finally {
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))

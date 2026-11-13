@@ -234,6 +234,8 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
 
   'locale:initialize',
   'locale:set-preference',
+  'network:query-notebook-logs',
+  'network:set-notebook-log-retention',
   'network:get-info',
   'network:check-connectivity',
   'managed-file-versions:save-text-edit',

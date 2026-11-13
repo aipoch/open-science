@@ -1,3 +1,4 @@
+import { notebookNetworkAudit } from '../notebook/network-audit'
 import { runtimeMetadata } from '../runtime-metadata'
 import { runtimeNetwork } from '../runtime-network'
 import { mkdir } from 'node:fs/promises'
@@ -180,6 +181,7 @@ export async function composeSettingsBootstrap({
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      audit: notebookNetworkAudit(resolveConfigRoot()),
       configRoot: resolveConfigRoot(),
       windowsRuntimeRoot: join(resolveConfigRoot(), 'notebook-runtimes'),
       packaged: runtimeMetadata().packaged,

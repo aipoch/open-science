@@ -268,6 +268,7 @@ describe('public-read runtime decision lifecycle', () => {
     expect(runtime.annotateStderr(commandId, '')).toBe('')
     await expect(gateway.decide('approved.example', 443, 'probe')).resolves.toEqual({
       allowed: true,
+      reason: 'policy',
       address: '8.8.8.8'
     })
   })
@@ -352,6 +353,7 @@ describe('public-read runtime decision lifecycle', () => {
     expect(mocks.bundle).not.toHaveBeenCalled()
     await expect(gateway.decide('approved.example', 443)).resolves.toEqual({
       allowed: true,
+      reason: 'policy',
       address: '8.8.8.8'
     })
     expect(approval).not.toHaveBeenCalled()
@@ -378,6 +380,7 @@ describe('public-read runtime decision lifecycle', () => {
       gateway.decide('unknown.example', 443, 'block', undefined, 'http')
     ).resolves.toEqual({
       allowed: true,
+      reason: 'authorization',
       address: '8.8.8.8'
     })
   })
@@ -392,6 +395,7 @@ it('enforces strict rules through the runtime without DNS policy checks or appro
   await wrap()
   await expect(gateway.decide('localhost', 8080, 'block', undefined, 'http')).resolves.toEqual({
     allowed: true,
+    reason: 'policy',
     address: 'localhost'
   })
   await expect(gateway.decide('unknown.example', 443, 'block')).resolves.toMatchObject({

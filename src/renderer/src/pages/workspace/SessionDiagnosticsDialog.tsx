@@ -118,7 +118,8 @@ export const SessionDiagnosticsDialog = ({
                   item.id.startsWith('desktop-log:') ||
                   item.id.startsWith('backend-log:')) &&
                 item.kind !== 'sensitive-file' &&
-                item.kind !== 'resource-log'
+                item.kind !== 'resource-log' &&
+                item.kind !== 'network-log'
             )
             .map((item) => item.id)
         )
@@ -294,6 +295,17 @@ export const SessionDiagnosticsDialog = ({
                 : t(
                     'Historical application events and errors, including activity outside this session. Select manually to investigate earlier issues.'
                   )
+            )
+          ),
+        ...items
+          .filter((item) => item.kind === 'network-log')
+          .map((item) =>
+            single(
+              item,
+              t('Notebook network logs'),
+              t(
+                'Includes destination addresses and execution identifiers. Only records within this diagnostic scope are included.'
+              )
             )
           ),
         ...logGroup('desktop-log:', t('Desktop logs')),

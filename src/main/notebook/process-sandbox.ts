@@ -60,6 +60,7 @@ export type NotebookSandboxInvocation = Readonly<{
   pathEnvironment?: NodeJS.ProcessEnv
   cwd: string
   commandText: string
+  notebookRunId?: string
   executionReference?: string
   sessionId: string
   projectId: string
@@ -104,6 +105,7 @@ export type NotebookSandboxedSpawn = Readonly<{
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
   beginExecution?: (request?: {
     commandText: string
+    notebookRunId?: string
     executionReference?: string
     signal?: AbortSignal
     onNetworkWaitChange?: (waiting: boolean) => void

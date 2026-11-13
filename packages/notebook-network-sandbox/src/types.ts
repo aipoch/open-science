@@ -94,6 +94,7 @@ export type NotebookNetworkSandboxStatus =
   | Readonly<{ kind: 'error'; message: string }>
 
 export type NotebookSandboxCommand = Readonly<{
+  startAudit?: import('../runtime/src/gateway/command-gateway.js').GatewayAuditStart
   target?: NotebookSandboxTarget
   command: string
   // Protected Windows launches use the exact process argv so PowerShell never has to initialize the
