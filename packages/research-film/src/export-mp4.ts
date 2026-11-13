@@ -36,6 +36,8 @@ export async function exportResearchVideoMp4(options: {
   const temporaryPath = join(directory, 'video.mp4')
   const frames = Math.ceil(duration * 30)
   let encoder: ReturnType<typeof spawn> | undefined
+  let probe: ReturnType<typeof spawn> | undefined
+  let probeClosed: Promise<void> | undefined
   try {
     encoder = spawn(
       options.encoderPath,
@@ -123,24 +125,33 @@ export async function exportResearchVideoMp4(options: {
     await completion
     signal.throwIfAborted()
     options.onPhase?.('verifying')
-    const probe = spawn(
+    const verifier = spawn(
       options.probePath,
       ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', temporaryPath],
       { stdio: ['ignore', 'pipe', 'pipe'], signal }
     )
+    probe = verifier
+    probeClosed = new Promise((resolve) => verifier.once('close', () => resolve()))
     let output = '',
-      probeError = ''
-    probe.stdout.on('data', (chunk) => {
-      output += chunk.toString()
-      if (output.length > 1024 * 1024) probe.kill()
+      probeError = '',
+      outputTooLarge = false
+    verifier.stdout.on('data', (chunk: Buffer) => {
+      if (outputTooLarge) return
+      const text = chunk.toString()
+      if (output.length + text.length > 1024 * 1024) {
+        outputTooLarge = true
+        verifier.kill('SIGKILL')
+      } else output += text
     })
-    probe.stderr.on('data', (chunk) => {
+    verifier.stderr.on('data', (chunk) => {
       probeError = (probeError + chunk.toString()).slice(-8192)
     })
     await new Promise<void>((resolve, reject) => {
-      probe.once('error', reject)
-      probe.once('close', (code) =>
-        code === 0 ? resolve() : reject(new Error(`Video verification failed: ${probeError}`))
+      verifier.once('error', reject)
+      verifier.once('close', (code) =>
+        code === 0 && !outputTooLarge
+          ? resolve()
+          : reject(new Error(`Video verification failed: ${probeError}`))
       )
     })
     const metadata = JSON.parse(output) as {
@@ -171,6 +182,9 @@ export async function exportResearchVideoMp4(options: {
     // Same-filesystem exclusive publication preserves an existing output on retries or failure.
     await link(temporaryPath, options.outputPath)
   } finally {
+    // Abort emits an error before the verifier has exited; join it before removing its input.
+    if (probe && probe.exitCode === null && probe.signalCode === null) probe.kill('SIGKILL')
+    await probeClosed
     if (encoder && encoder.exitCode === null && encoder.signalCode === null) {
       const closed = once(encoder, 'close').catch(() => {})
       encoder.kill('SIGKILL')

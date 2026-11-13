@@ -6,9 +6,11 @@ import type {
 } from '@aipoch/research-film/contracts'
 import type { LocalModelSnapshot } from '../../shared/local-models'
 import type { createVideoExportTools } from '@aipoch/research-film'
-import { mkdtemp, writeFile, rm, copyFile } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { mkdtemp, rm, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { z } from 'zod'
 import type { ManagedPreviewOwnerRegistry } from '../managed-preview-owner-registry'
 import type { ApplicationCallerLease } from '../application-command-router'
@@ -76,26 +78,18 @@ export function createResearchVideoExportControl(
       let directory: string | undefined
       let releaseTools: (() => void) | undefined
       try {
-        const first = await previews.readRange(lease, { resourceId, begin: 0, end: 1 })
-        if (first.total > 200 * 1024 * 1024)
-          throw new Error('Research video player exceeds 200 MiB')
-        const bytes = Buffer.alloc(first.total)
-        for (let begin = 0; begin < first.total; begin += 1024 * 1024) {
+        const { total } = await previews.readRange(lease, { resourceId, begin: 0, end: 1 })
+        if (total > 200 * 1024 * 1024) throw new Error('Research video player exceeds 200 MiB')
+        const read = async (begin: number, end: number): Promise<Uint8Array> => {
           signal.throwIfAborted()
-          const chunk = await previews.readRange(lease, {
-            resourceId,
-            begin,
-            end: Math.min(first.total, begin + 1024 * 1024)
-          })
-          if (chunk.total !== first.total) throw new Error('Research video source changed')
-          bytes.set(chunk.data, begin)
+          const chunk = await previews.readRange(lease, { resourceId, begin, end })
+          if (chunk.total !== total || chunk.data.byteLength !== end - begin)
+            throw new Error('Research video source changed')
+          return chunk.data
         }
-        if (
-          !bytes
-            .subarray(0, 4096)
-            .toString()
-            .includes('<meta name="open-science-research-video" content="1">')
-        )
+        const prefix = await read(0, Math.min(total, 4096))
+        const header = Buffer.from(prefix).toString()
+        if (!header.includes('<meta name="open-science-research-video" content="1">'))
           throw new Error('Not a supported research video player')
         const desktop = desktopFileInteraction()
         if (!desktop.renderResearchVideo) throw new Error('MP4 export requires the desktop app')
@@ -105,7 +99,7 @@ export function createResearchVideoExportControl(
             canceled: false,
             needsInstallation: { downloadBytes: (await tools.snapshot()).downloadBytes }
           }
-        const titleNode = parseFragment(bytes.subarray(0, 4096).toString()).childNodes.find(
+        const titleNode = parseFragment(header).childNodes.find(
           (node) => 'tagName' in node && node.tagName === 'title'
         )
         const title =
@@ -123,7 +117,13 @@ export function createResearchVideoExportControl(
         if (selected.canceled || !selected.filePath) return { canceled: true }
         directory = await mkdtemp(join(tmpdir(), 'research-video-export-'))
         const htmlPath = join(directory, 'player.html')
-        await writeFile(htmlPath, bytes, { flag: 'wx', signal })
+        async function* playerBytes(): AsyncGenerator<Uint8Array> {
+          yield prefix
+          for (let begin = prefix.byteLength; begin < total; begin += 1024 * 1024) {
+            yield await read(begin, Math.min(total, begin + 1024 * 1024))
+          }
+        }
+        await pipeline(playerBytes(), createWriteStream(htmlPath, { flags: 'wx' }), { signal })
         const encoders = await tools.acquire(directory, signal)
         releaseTools = encoders.release
         current.htmlPath = htmlPath

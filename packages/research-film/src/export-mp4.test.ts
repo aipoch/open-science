@@ -1,7 +1,7 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { exportResearchVideoMp4 } from './export-mp4.js'
 
 describe('research video export', () => {
@@ -46,4 +46,51 @@ describe('research video export', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'joins the verifier on cancellation even if it ignores SIGTERM',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'video-export-probe-'))
+      const controller = new AbortController()
+      const encoderPath = join(root, 'encoder')
+      const probePath = join(root, 'probe')
+      const pidPath = join(root, 'probe.pid')
+      const outputPath = join(root, 'output.mp4')
+      try {
+        await writeFile(
+          encoderPath,
+          `#!${process.execPath}\nprocess.stdin.resume();\nprocess.stdin.on('end', () => require('node:fs').writeFileSync(process.argv.at(-1), 'video'));`,
+          { mode: 0o700 }
+        )
+        await writeFile(
+          probePath,
+          `#!${process.execPath}\nprocess.on('SIGTERM', () => {});\nrequire('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetTimeout(() => process.exit(0), 5000);`,
+          { mode: 0o700 }
+        )
+        const result = exportResearchVideoMp4({
+          renderer: { capture: async () => Buffer.from('frame') },
+          audioPath: 'unused',
+          outputPath,
+          encoderPath,
+          probePath,
+          width: 2,
+          height: 2,
+          duration: 1 / 30,
+          signal: controller.signal
+        }).catch((error: unknown) => error)
+        const pid = await vi.waitFor(async () => {
+          const pid = Number(await readFile(pidPath, 'utf8'))
+          expect(pid).toBeGreaterThan(0)
+          return pid
+        })
+        controller.abort()
+        expect(await result).toMatchObject({ code: 'ABORT_ERR' })
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        expect(await readdir(root)).not.toContain('output.mp4')
+      } finally {
+        controller.abort()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 })
