@@ -9,6 +9,7 @@ import { createDesktopNativeHandler } from './desktop-native-electron'
 const mocks = vi.hoisted(() => ({
   metrics: vi.fn(),
   isolated: vi.fn(),
+  html: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
   message: vi.fn(),
@@ -25,10 +26,16 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
   createLogger: () => mocks.log
 }))
 vi.mock('./file-dialog-process', () => ({ showFileDialogInHelper: mocks.isolated }))
+vi.mock('./file-dialog-window', () => ({ showHtmlFileDialog: mocks.html }))
 vi.mock('electron', () => ({
   app: { getAppMetrics: mocks.metrics },
   shell: { openPath: mocks.openPath, showItemInFolder: mocks.reveal, openExternal: mocks.external },
-  BrowserWindow: { getAllWindows: mocks.windows, fromWebContents: mocks.parent },
+  BrowserWindow: {
+    getAllWindows: mocks.windows,
+    getFocusedWindow: mocks.parent,
+    fromWebContents: mocks.parent
+  },
+  nativeTheme: { shouldUseDarkColors: false },
   dialog: { showOpenDialog: mocks.open, showSaveDialog: mocks.save, showMessageBox: mocks.message }
 }))
 vi.mock('./session-persistence/conversation-pdf-electron', () => ({
@@ -75,6 +82,8 @@ describe('native operations requested by the Node runtime', () => {
         ? { canceled: false, filePath: path, target: { path, fingerprint: null } }
         : { canceled: false, filePaths: [path] }
       native.mockResolvedValue({ ...result, bookmark: 'not-in-protocol' })
+      if (save && (platform === 'win32' || platform === 'darwin'))
+        mocks.html.mockResolvedValue(result)
       await expect(
         value.handler(
           {
@@ -86,11 +95,28 @@ describe('native operations requested by the Node runtime', () => {
           value.signal.signal
         )
       ).resolves.toEqual(result)
-      const isolated = platform === 'win32' || (platform === 'darwin' && save)
-      expect(native.mock.calls).toEqual([
-        isolated ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
-      ])
+      const htmlSave = save && (platform === 'win32' || platform === 'darwin')
+      const isolated = platform === 'win32'
+      if (htmlSave) expect(native).not.toHaveBeenCalled()
+      else
+        expect(native.mock.calls).toEqual([
+          isolated ? [{ title: 'Export' }] : [value.window, { title: 'Export' }]
+        ])
       expect(value.resolve).toHaveBeenCalledWith(value.clientId)
+      if (htmlSave) {
+        expect(mocks.html).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: 'save',
+            options: { title: 'Export' },
+            operationId: expect.any(String),
+            appearance: expect.objectContaining({ theme: 'light' })
+          }),
+          value.window,
+          value.signal.signal
+        )
+        expect(mocks.isolated).not.toHaveBeenCalled()
+        return
+      }
       if (isolated) {
         expect(mocks.isolated).toHaveBeenCalledWith(
           { kind: save ? 'save' : 'open', options: { title: 'Export' } },
@@ -141,10 +167,7 @@ describe('native operations requested by the Node runtime', () => {
   it.each([
     ['open-dialog', 'release'],
     ['open-dialog', 'disconnect'],
-    ['open-dialog', 'destroy'],
-    ['save-dialog', 'release'],
-    ['save-dialog', 'disconnect'],
-    ['save-dialog', 'destroy']
+    ['open-dialog', 'destroy']
   ] as const)('discards a late Windows %s selection on %s', async (operation, reason) => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
     const value = setup()

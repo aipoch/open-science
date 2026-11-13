@@ -141,7 +141,7 @@ export function FileDialog({ initial }: { initial: FileDialogUiState }): JSX.Ele
   const rowClass = 'grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3'
   return (
     <main
-      className="flex h-screen flex-col bg-card text-foreground"
+      className="flex h-full min-h-0 flex-col bg-card text-foreground"
       onKeyDown={(event) => {
         if (
           event.key === 'Escape' &&

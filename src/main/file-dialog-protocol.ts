@@ -19,6 +19,11 @@ export type FileDialogRequest =
 export type FileDialogSaveResult = SaveDialogReturnValue & { target?: FileSaveTarget }
 export type FileDialogResult = OpenDialogReturnValue | FileDialogSaveResult
 
+export type FileDialogWindowRequest = FileDialogRequest & {
+  operationId: string
+  appearance: FileDialogAppearance
+}
+
 export const usesHtmlFileDialog = (request: FileDialogRequest): boolean =>
   (process.platform === 'win32' || process.platform === 'darwin') &&
   (request.kind === 'save' ||
@@ -26,7 +31,7 @@ export const usesHtmlFileDialog = (request: FileDialogRequest): boolean =>
       !request.options.properties.includes('openFile') &&
       !request.options.properties.includes('multiSelections')))
 
-export type FileDialogHelperRequest = FileDialogRequest & {
+export type FileDialogHelperRequest = FileDialogWindowRequest & {
   type: 'show'
   presentation: 'native' | 'html'
   operationId: string

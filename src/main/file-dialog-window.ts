@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, screen, type BaseWindow } from 'electron'
+import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { FILE_DIALOG_UI_CHANNEL } from '../shared/file-dialog-ui'
@@ -6,27 +7,66 @@ import { resolveLocaleFromTags } from '../shared/locale'
 import { FileDialogUiSession } from './file-dialog-ui-state'
 import {
   FILE_DIALOG_DISPLAY_TIMEOUT_MS,
-  type FileDialogHelperRequest,
-  type FileDialogResult
+  type FileDialogResult,
+  type FileDialogWindowRequest
 } from './file-dialog-protocol'
 
+type FileDialogOperation = ReturnType<typeof startDiagnosticOperation>
+
+// Save dialogs are owned by the desktop process so the parent/modal relationship remains intact.
+let activeInProcessDialog: BrowserWindow | undefined
+const SAVE_DIALOG_CONTENT_HEIGHT = 252
+
+const operationFields = (window: BrowserWindow): { visible: boolean; focused: boolean } => ({
+  visible: window.isVisible(),
+  focused: window.isFocused()
+})
+
+const restoreParentWindow = (parent: BaseWindow | undefined): void => {
+  if (!parent || parent.isDestroyed()) return
+  if (process.platform === 'darwin') app.focus({ steal: true })
+  if (parent.isMinimized()) parent.restore()
+  if (!parent.isVisible()) parent.show()
+  parent.focus()
+}
+
 export async function showHtmlFileDialog(
-  request: FileDialogHelperRequest
+  request: FileDialogWindowRequest,
+  parent?: BaseWindow,
+  signal?: AbortSignal
 ): Promise<FileDialogResult> {
+  const inProcess = parent !== undefined || !process.send
+  if (inProcess && activeInProcessDialog && !activeInProcessDialog.isDestroyed())
+    throw new Error('A file dialog is already open.')
+
   const page = process.env.ELECTRON_RENDERER_URL
     ? new URL('file-dialog.html', `${process.env.ELECTRON_RENDERER_URL}/`).href
     : pathToFileURL(join(__dirname, '../renderer/file-dialog.html')).href
   nativeTheme.themeSource = request.appearance.followsSystem ? 'system' : request.appearance.theme
+  const operation: FileDialogOperation | undefined = inProcess
+    ? startDiagnosticOperation(createLogger('native-file-dialog'), {
+        operation: 'native-file-dialog',
+        operationId: request.operationId,
+        fields: {
+          kind: request.kind,
+          platform: process.platform,
+          presentation: 'html',
+          processModel: 'in-process',
+          parented: Boolean(parent)
+        }
+      })
+    : undefined
   const window = new BrowserWindow({
+    ...(parent ? { parent, modal: true } : {}),
     title: request.options.title || 'Open-Science',
     width: 600,
-    height: request.kind === 'save' ? 340 : 560,
+    height: request.kind === 'save' ? SAVE_DIALOG_CONTENT_HEIGHT : 560,
     minWidth: 480,
-    minHeight: request.kind === 'save' ? 340 : 320,
+    minHeight: request.kind === 'save' ? SAVE_DIALOG_CONTENT_HEIGHT : 320,
     useContentSize: true,
     show: false,
-    // Keep the caller's taskbar entry without making the helper window unfocusable.
-    skipTaskbar: process.platform === 'win32',
+    // Keep the legacy helper out of the taskbar; in-process dialogs use their parent instead.
+    ...(!inProcess && process.platform === 'win32' ? { skipTaskbar: true } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/file-dialog.js'),
@@ -37,6 +77,7 @@ export async function showHtmlFileDialog(
       backgroundThrottling: false
     }
   })
+  if (inProcess) activeInProcessDialog = window
   window.setMenu(null)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
@@ -47,14 +88,17 @@ export async function showHtmlFileDialog(
   let displayTimer: ReturnType<typeof setTimeout> | undefined
   let revealTimer: ReturnType<typeof setTimeout> | undefined
   let foregroundTimer: ReturnType<typeof setTimeout> | undefined
+  let abort: (() => void) | undefined
   const reportWindow = (phase: 'created' | 'renderer-ready' | 'shown' | 'focused'): void => {
-    process.send?.({
-      type: 'window-state',
-      phase,
-      visible: window.isVisible(),
-      focused: window.isFocused(),
-      ...(process.platform === 'darwin' ? { dockVisible: app.dock?.isVisible() } : {})
-    })
+    const fields = operationFields(window)
+    if (operation) operation.phase(phase, fields)
+    else
+      process.send?.({
+        type: 'window-state',
+        phase,
+        ...fields,
+        ...(process.platform === 'darwin' ? { dockVisible: app.dock?.isVisible() } : {})
+      })
   }
   reportWindow('created')
   let refocus: ((message: unknown) => void) | undefined
@@ -66,48 +110,54 @@ export async function showHtmlFileDialog(
     let loaded = false
     let rendererReady = false
     let revealing = false
-    refocus = (message: unknown): void => {
-      if (
-        !message ||
-        typeof message !== 'object' ||
-        !('type' in message) ||
-        message.type !== 'focus' ||
-        !('operationId' in message) ||
-        message.operationId !== request.operationId ||
-        !revealing ||
-        settled ||
-        window.isDestroyed()
-      )
-        return
-      // Accessory helpers are absent from Cmd-Tab. Reactivate the existing picker through its owner.
-      if (process.platform === 'darwin') app.focus({ steal: true })
-      if (window.isMinimized()) window.restore()
-      window.show()
-      window.moveTop()
-      window.focus()
+    if (!inProcess) {
+      refocus = (message: unknown): void => {
+        if (
+          !message ||
+          typeof message !== 'object' ||
+          !('type' in message) ||
+          message.type !== 'focus' ||
+          !('operationId' in message) ||
+          message.operationId !== request.operationId ||
+          !revealing ||
+          settled ||
+          window.isDestroyed()
+        )
+          return
+        // Legacy helper dialogs still need an explicit focus request after app activation.
+        if (process.platform === 'darwin') app.focus({ steal: true })
+        if (window.isMinimized()) window.restore()
+        window.show()
+        window.moveTop()
+        window.focus()
+      }
+      process.on('message', refocus)
     }
-    process.on('message', refocus)
     const fail = (error: Error): void => {
       if (settled) return
       settled = true
       reject(error)
     }
+    abort = (): void => fail(new Error('File dialog was cancelled.'))
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
     const releaseForeground = (): void => {
       if (!window.isDestroyed()) window.setAlwaysOnTop(false)
     }
     const reveal = (): void => {
       if (!loaded || !rendererReady || revealing || settled) return
       revealing = true
-      // GUI helpers must explicitly show after React mounts. A short normal-level raise bridges
-      // the cross-process owner gap without leaving the picker above other applications.
-      if (process.platform === 'darwin') app.focus({ steal: true })
-      if (process.platform === 'win32') {
-        window.setAlwaysOnTop(true)
-        foregroundTimer = setTimeout(releaseForeground, 1200)
-        window.once('blur', releaseForeground)
+      if (!inProcess) {
+        // Legacy helper dialogs are separate applications and need a short foreground bridge.
+        if (process.platform === 'darwin') app.focus({ steal: true })
+        if (process.platform === 'win32') {
+          window.setAlwaysOnTop(true)
+          foregroundTimer = setTimeout(releaseForeground, 1200)
+          window.once('blur', releaseForeground)
+        }
       }
       window.show()
-      window.moveTop()
+      if (!inProcess) window.moveTop()
       window.focus()
       const confirmVisible = (): void => {
         if (settled || window.isDestroyed()) return
@@ -139,14 +189,18 @@ export async function showHtmlFileDialog(
           try {
             return [{ kind, path: app.getPath(kind) }]
           } catch {
-            // Optional OS folders can be absent in redirected or isolated Windows profiles.
-            process.send?.({ type: 'selection-error', errorCode: `optional-${kind}-unavailable` })
+            const errorCode = `optional-${kind}-unavailable`
+            if (operation) operation.phase('optional-folder-unavailable', { errorCode })
+            else process.send?.({ type: 'selection-error', errorCode })
             return []
           }
         })
       },
       finish,
-      (errorCode) => process.send?.({ type: 'selection-error', errorCode })
+      (errorCode) => {
+        if (operation) operation.phase('selection-rejected', { errorCode })
+        else process.send?.({ type: 'selection-error', errorCode })
+      }
     )
     let busy = false
     ipcMain.handle(FILE_DIALOG_UI_CHANNEL, async (event, action: unknown) => {
@@ -174,15 +228,15 @@ export async function showHtmlFileDialog(
           throw new Error('Invalid dialog size request.')
         const bounds = window.getBounds()
         const area = screen.getDisplayMatching(bounds).workArea
-        const frameHeight = bounds.height - window.getContentBounds().height
-        const contentHeight = action.expanded ? (request.kind === 'save' ? 536 : 588) : 340
-        const height = Math.min(contentHeight + frameHeight, area.height)
-        window.setBounds({
-          x: bounds.x,
-          y: Math.max(area.y, Math.min(bounds.y, area.y + area.height - height)),
-          width: bounds.width,
-          height
-        })
+        const contentWidth = window.getContentSize()[0]
+        const contentHeight = action.expanded
+          ? request.kind === 'save'
+            ? 536
+            : 588
+          : request.kind === 'save'
+            ? SAVE_DIALOG_CONTENT_HEIGHT
+            : 340
+        window.setContentSize(contentWidth, Math.min(contentHeight, area.height))
         return { type: 'done' }
       }
       if (busy) throw new Error('File dialog action is unavailable.')
@@ -212,14 +266,38 @@ export async function showHtmlFileDialog(
       })
       .catch(() => fail(new Error('File dialog page failed to load.')))
   })
+  let outcome: 'completed' | 'cancelled' | undefined
+  let failure: unknown
+  let failed = false
   try {
-    return await result
+    const selected = await result
+    if (operation) {
+      operation.phase(selected.canceled ? 'cancelled' : 'selected')
+      outcome = selected.canceled ? 'cancelled' : 'completed'
+    }
+    return selected
+  } catch (error) {
+    failed = true
+    failure = error
+    throw error
   } finally {
     clearTimeout(displayTimer)
     clearTimeout(revealTimer)
     clearTimeout(foregroundTimer)
     if (refocus) process.removeListener('message', refocus)
+    if (abort) signal?.removeEventListener('abort', abort)
     ipcMain.removeHandler(FILE_DIALOG_UI_CHANNEL)
+    if (activeInProcessDialog === window) activeInProcessDialog = undefined
     if (!window.isDestroyed()) window.destroy()
+    operation?.phase('closed')
+    if (operation) {
+      if (failed) operation.fail(failure)
+      else if (outcome === 'cancelled') operation.cancel()
+      else if (outcome === 'completed') operation.complete()
+    }
+    if (inProcess) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      restoreParentWindow(parent)
+    }
   }
 }

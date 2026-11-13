@@ -1,12 +1,17 @@
+import { randomUUID } from 'node:crypto'
 import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
+  BrowserWindow,
   dialog,
+  nativeTheme,
   type BaseWindow,
   type OpenDialogOptions,
   type OpenDialogReturnValue,
   type SaveDialogOptions
 } from 'electron'
 import { showFileDialogInHelper } from './file-dialog-process'
+import { getFileDialogAppearance } from './file-dialog-appearance'
+import { showHtmlFileDialog } from './file-dialog-window'
 import { assertSelectedSavePath } from './file-dialog-filename'
 import { usesHtmlFileDialog, type FileDialogSaveResult } from './file-dialog-protocol'
 import { snapshotFileTarget } from './file-save-target'
@@ -70,12 +75,24 @@ export function showSaveDialog(
 ): Promise<FileDialogSaveResult> {
   const parent = options === undefined ? undefined : (parentOrOptions as BaseWindow)
   const dialogOptions = options ?? (parentOrOptions as SaveDialogOptions)
-  if (process.platform === 'win32' || usesHtmlFileDialog({ kind: 'save', options: dialogOptions }))
-    return showFileDialogInHelper(
-      { kind: 'save', options: dialogOptions },
-      parent,
+  if (usesHtmlFileDialog({ kind: 'save', options: dialogOptions })) {
+    signal?.throwIfAborted()
+    const dialogParent =
+      parent ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    return showHtmlFileDialog(
+      {
+        kind: 'save',
+        options: dialogOptions,
+        operationId: randomUUID(),
+        appearance: getFileDialogAppearance(dialogParent) ?? {
+          theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+          followsSystem: true
+        }
+      },
+      dialogParent,
       signal
     ) as Promise<FileDialogSaveResult>
+  }
   return runFileDialog('save', parent, async (dialogParent) => {
     const selected = await (dialogParent
       ? dialog.showSaveDialog(dialogParent, dialogOptions)
