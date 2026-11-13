@@ -234,6 +234,23 @@ describe('storage IPC handlers', () => {
     }
   )
 
+  it('invalidates a preview when the set of retired workspaces changes', async () => {
+    initDataRoot(dataRoot)
+    const retired = join(target, 'workspaces', '.ownership', '.retired-workspaces')
+    await mkdir(retired, { recursive: true })
+    await writeFile(join(target, 'workspaces', 'history.json'), '{}')
+    const deps = fakeDeps()
+    const owner = createStorageCommandOwner(deps)
+    const preview = await owner.inspectDataRoot({ parent: targetParent })
+    expect(preview.kind).toBe('adopt')
+    expect(preview.selection).toBeDefined()
+    await mkdir(join(retired, 'detached'))
+    expect(
+      await owner.setDataRootAndRelaunch({ parent: preview.dataRoot, selection: preview.selection })
+    ).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
   it('refuses a changed move target after handoff preparation before entering the copy engine', async () => {
     initDataRoot(dataRoot)
     const copy = vi.fn()

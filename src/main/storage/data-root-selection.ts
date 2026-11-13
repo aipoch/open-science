@@ -5,7 +5,10 @@ import { dirname, join } from 'node:path'
 import { DATA_ROOT_SELECTION_CHANGED, type DataRootSelection } from '../../shared/storage'
 import { dataRootForPicked, samePath } from '../storage-root'
 import { directoryHasFiles } from './location-evidence'
-import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
+import {
+  MANAGED_WORKSPACE_OWNERSHIP_DIR,
+  RETIRED_WORKSPACES_DIR
+} from './managed-workspace-ownership-dir'
 
 export const dataRootDirectoryIdentity = (target: string): string => {
   const path = realpathSync(target)
@@ -62,11 +65,18 @@ export const dataRootIdentity = (target: string): string => {
         [realpathSync(dirname(target)), parent.dev, parent.ino],
         identity(target),
         entries(target).map((name) => [name, identity(join(target, name))]),
-        entries(receipts).map((name) => [
-          name,
-          readFileSync(join(receipts, name), 'utf8'),
-          name.endsWith('.json') ? identity(join(target, 'workspaces', name.slice(0, -5))) : null
-        ])
+        entries(receipts).map((name) => {
+          const path = join(receipts, name)
+          if (name === RETIRED_WORKSPACES_DIR) {
+            if (!lstatSync(path).isDirectory()) throw new Error('Retired workspace path is unsafe.')
+            return [name, dataRootDirectoryIdentity(path), entries(path)]
+          }
+          return [
+            name,
+            readFileSync(path, 'utf8'),
+            name.endsWith('.json') ? identity(join(target, 'workspaces', name.slice(0, -5))) : null
+          ]
+        })
       ])
     )
     .digest('hex')
