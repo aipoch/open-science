@@ -1,6 +1,19 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { readSourceRow, hasUniqueRecordTokens } from './literature-pdf-source-records.mjs'
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { matchNativeFigureRenderContext } from './literature-pdf-render-bounds.mjs'
+import {
+  retainNativeRecoveryInputs,
+  nativeRecoveryOwnValues
+} from './literature-pdf-native-figure-recovery-profile.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
+import { collectTableRules } from './literature-pdf-graphics.mjs'
+import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
+import { isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
+
 const center = (i) => (i.rect[1] + i.rect[3]) / 2
 
 // A separate bracketed-reference lane and complete measured anchors witness
@@ -216,9 +229,468 @@ export function recoverNativeCitedMeasurementGrid(table, items, captions, rules)
   }
 }
 
+// Two matching native interval fences can recover a missing identifier lane
+// beside complete scientific records. Every field retains its whole sources;
+// header packet overhang is proof geometry, never a new preview crop.
+function recoverNativeTwoFenceScientificGrid(table, items, captions, rules, context) {
+  try {
+    const boundContext = nativeRecoveryOwnValues(context),
+      c = boundContext?.nativeGlyphContext,
+      page = boundContext?.sourcePage,
+      work = boundContext?.viewport,
+      crop = table.cropRect,
+      same = (a, b) => JSON.stringify(a) === JSON.stringify(b),
+      hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
+      inside = (a, b) => a[0] <= b[0] && a[1] <= b[1] && a[2] >= b[2] && a[3] >= b[3],
+      compact = (g) =>
+        g
+          .map((t) => t.text)
+          .join('')
+          .replace(/\s/gu, ''),
+      integer = /^\d+$/u,
+      scientific = /^\d+(?:\.\d+)?×10[−+-]?\d+$/u,
+      scalar = /^\d+\.\d+$/u
+    if (
+      table.structure.objects.filter((o) => o.label === 'table column').length !== 6 ||
+      !c ||
+      !page ||
+      !work ||
+      table.readingRotation !== 0
+    )
+      return undefined
+    if (
+      table.spans?.length ||
+      table.issues?.length ||
+      table.structure.objects.some((o) => /spanning cell|projected row header/u.test(o.label))
+    )
+      return undefined
+    const nativeValues = nativeRecoveryOwnValues(c)
+    if (!nativeValues || !nativeRecoveryOwnValues(page)) return undefined
+    const prototype = Object.getPrototypeOf(c),
+      descriptors = Object.getOwnPropertyDescriptors(c),
+      keys = Reflect.ownKeys(descriptors),
+      carrierCurrent = () =>
+        Object.getPrototypeOf(c) === prototype &&
+        Reflect.ownKeys(c).length === keys.length &&
+        Reflect.ownKeys(c).every((k, i) => k === keys[i]) &&
+        keys.every((k) => {
+          const d = Object.getOwnPropertyDescriptor(c, k),
+            old = descriptors[k]
+          return (
+            d &&
+            Object.hasOwn(d, 'value') &&
+            Object.is(d.value, old.value) &&
+            d.enumerable === old.enumerable &&
+            d.configurable === old.configurable &&
+            d.writable === old.writable
+          )
+        })
+    const current = retainNativeRecoveryInputs(
+      [
+        // The standard packet does not consume the neighboring-page running
+        // head witness. Retain its carrier identity above, not its other viewport.
+        ...Object.entries(nativeValues)
+          .filter(([k]) => k !== 'runningHeadWitness')
+          .map(([, v]) => v),
+        page,
+        context.sourceContent,
+        context.operators,
+        work,
+        table,
+        items,
+        captions,
+        rules,
+        [...context.rulePaintBounds]
+      ],
+      work
+    )
+    if (
+      !current ||
+      work.scale !== 1.5 ||
+      page.renderRotation !== 0 ||
+      work.width !== c.viewport.width * 1.5 ||
+      work.height !== c.viewport.height * 1.5 ||
+      context.content !== context.sourceContent ||
+      !same(
+        work.transform,
+        c.viewport.transform.map((n) => n * 1.5)
+      ) ||
+      !matchNativeFigureRenderContext(
+        c,
+        page.pageNumber,
+        context.sourceContent,
+        c.viewport,
+        page.graphicsBounds,
+        c.sourceSha256
+      )
+    )
+      return undefined
+    const aliases = new Map(
+        context.sourceContent.items.map((r, i) => [r.fontName, c.content.items[i].fontName])
+      ),
+      live = context.operators,
+      original = c.operators
+    if (
+      !same(Array.from(live.fnArray), Array.from(original.fnArray)) ||
+      live.argsArray.length !== original.argsArray.length ||
+      live.argsArray.some((args, i) => {
+        const op = live.fnArray[i],
+          mapped =
+            op === OPS.setFont
+              ? [aliases.get(args[0]), ...args.slice(1)]
+              : op === OPS.dependency
+                ? args.map((id) => aliases.get(id) ?? id)
+                : args
+        return !same(mapped, original.argsArray[i])
+      })
+    )
+      return undefined
+    const fonts = items.filter((t) => t.text?.trim() && inside(crop, t.rect))
+    if (!fonts.length || !proveNativeUniqueWholeFonts(fonts, items)) return undefined
+    for (const t of fonts) {
+      const raw = c.content.items[t.sourceItem.index],
+        p = raw && tableTextToken(raw, work, 0)
+      if (
+        !raw ||
+        raw.str !== t.text ||
+        raw.sourceItem.pageNumber !== t.sourceItem.pageNumber ||
+        !same(p.rect, t.rect) ||
+        p.baseline !== t.baseline ||
+        p.height !== t.height
+      )
+        return undefined
+    }
+    const whole = c.content.items.flatMap((r) =>
+        r.str?.trim() ? [tableTextToken(r, c.viewport, 0)] : []
+      ),
+      packet = nativePageTextPacketInventory(
+        page,
+        whole,
+        c,
+        true,
+        new Set(fonts.map((t) => t.sourceItem.index)),
+        false
+      )
+    if (!packet || packet.evidence.images.length) return undefined
+    const records = fonts.map((t) => packet.records.find((r) => r.index === t.sourceItem.index))
+    if (
+      records.some(
+        (r) =>
+          !r?.advanceComplete ||
+          !packet.valid(r.ink) ||
+          r.part.some(
+            ({ g }) =>
+              g.rendererSkipped ||
+              g.textPaint?.fillAlpha !== 1 ||
+              !/^#[a-f0-9]{6}$/iu.test(g.textPaint.fillColor) ||
+              g.textPaint.fillColor.toLowerCase() === '#ffffff'
+          )
+      )
+    )
+      return undefined
+    const hs = fonts.map((t) => t.height).sort((a, b) => a - b),
+      h = hs[Math.floor(hs.length / 2)],
+      nativePaint = new Map(),
+      nativeRules = collectTableRules(c.operators, work, nativePaint),
+      vertical = nativeRules.filter(
+        (r) =>
+          r[0] === r[2] && r[1] >= crop[1] && r[3] <= crop[3] && r[0] > crop[0] && r[0] < crop[2]
+      ),
+      xs = [...new Set(vertical.map((r) => r[0]))].sort((a, b) => a - b)
+    if (xs.length !== 2 || !vertical.every((r) => rules.some((s) => same(r, s)))) return undefined
+    const bands = vertical.filter((r) => r[0] === xs[0]).sort((a, b) => a[1] - b[1]),
+      other = vertical.filter((r) => r[0] === xs[1]).sort((a, b) => a[1] - b[1])
+    if (
+      bands.length < 4 ||
+      bands.length > 20 ||
+      other.length !== bands.length ||
+      bands.some((r, i) => r[1] !== other[i][1] || r[3] !== other[i][3])
+    )
+      return undefined
+    const dividers = nativeRules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > bands[0][3] &&
+        r[1] < bands[1][1] &&
+        r[0] <= Math.min(...fonts.map((t) => t.rect[0])) &&
+        r[2] >= Math.max(...fonts.map((t) => t.rect[2]))
+    )
+    if (dividers.length !== 1) return undefined
+    const divider = dividers[0]
+    const physical = bands.map((r) => fonts.filter((t) => t.baseline >= r[1] && t.baseline <= r[3]))
+    if (
+      physical.flat().length !== fonts.length ||
+      new Set(physical.flat()).size !== fonts.length ||
+      physical.some((g) => !g.length) ||
+      physical.some(
+        (g, i) =>
+          i &&
+          Math.min(...g.map((t) => t.baseline)) <=
+            Math.max(...physical[i - 1].map((t) => t.baseline))
+      )
+    )
+      return undefined
+    const fields = []
+    for (const row of physical.slice(1)) {
+      const stub = row.filter((t) => t.rect[2] <= xs[0]),
+        middle = row
+          .filter((t) => t.rect[0] >= xs[0] && t.rect[2] <= xs[1])
+          .sort((a, b) => a.rect[0] - b.rect[0]),
+        tail = row.filter((t) => t.rect[0] >= xs[1]).sort((a, b) => a.rect[0] - b.rect[0])
+      if (
+        stub.length !== 1 ||
+        !integer.test(compact(stub)) ||
+        tail.length !== 2 ||
+        !tail.every((t) => integer.test(t.text)) ||
+        stub.length + middle.length + tail.length !== row.length
+      )
+        return undefined
+      const groups = []
+      let group = []
+      for (const t of middle) {
+        if (
+          group.length &&
+          scientific.test(compact(group)) &&
+          group.some((t) => t.height < h * 0.8) &&
+          t.height >= h * 0.8
+        ) {
+          groups.push(group)
+          group = []
+        }
+        group.push(t)
+      }
+      if (group.length) groups.push(group)
+      if (groups.length !== 4) return undefined
+      for (const g of groups) {
+        const main = g.filter((t) => t.height >= h * 0.8),
+          scripts = g.filter((t) => t.height < h * 0.8)
+        if (!main.length || main.some((t) => Math.abs(t.baseline - main[0].baseline) > h * 0.04))
+          return undefined
+        if (scientific.test(compact(g))) {
+          if (
+            !scripts.length ||
+            !scripts.every((t, i) =>
+              i
+                ? Math.abs(t.baseline - scripts[i - 1].baseline) < h * 0.04 &&
+                  t.rect[0] >= scripts[i - 1].rect[2] - 0.02 &&
+                  t.rect[0] - scripts[i - 1].rect[2] < h * 0.1
+                : isAdjacentTableScript(t, main.at(-1))
+            )
+          )
+            return undefined
+        } else if (!scalar.test(compact(g)) || scripts.length) return undefined
+      }
+      fields.push([stub, ...groups, ...tail.map((t) => [t])])
+    }
+    if (
+      [1, 2, 3, 4].some(
+        (col) => fields.filter((row) => scientific.test(compact(row[col]))).length < 2
+      )
+    )
+      return undefined
+    const cuts = [crop[0], xs[0]]
+    for (let col = 1; col < 4; col++) {
+      const l = Math.max(...fields.flatMap((row) => row[col].map((t) => t.rect[2]))),
+        r = Math.min(...fields.flatMap((row) => row[col + 1].map((t) => t.rect[0])))
+      if (!(l < r)) return undefined
+      cuts.push((l + r) / 2)
+    }
+    cuts.push(xs[1])
+    const l = Math.max(...fields.flatMap((row) => row[5].map((t) => t.rect[2]))),
+      r = Math.min(...fields.flatMap((row) => row[6].map((t) => t.rect[0])))
+    if (!(l < r)) return undefined
+    cuts.push((l + r) / 2, crop[2])
+    const lane = (t) =>
+        cuts.slice(1).flatMap((x, col) => (t.rect[0] >= cuts[col] && t.rect[2] <= x ? [col] : [])),
+      header = physical[0],
+      headers = cuts
+        .slice(1)
+        .map((_, col) => header.filter((t) => lane(t).length === 1 && lane(t)[0] === col))
+    if (
+      captions.filter(
+        (cap) =>
+          captionKind(cap.lines[0]) === 'table' &&
+          cap.rect[0] < crop[2] &&
+          cap.rect[2] > crop[0] &&
+          cap.rect[3] <= Math.min(...header.map((t) => t.rect[1])) &&
+          Math.min(...header.map((t) => t.rect[1])) - cap.rect[3] < h * 3
+      ).length !== 1
+    )
+      return undefined
+    if (
+      headers.some((g) => !g.length) ||
+      headers.flat().length !== header.length ||
+      fields.some((row) =>
+        row.some((g, col) => g.some((t) => lane(t).length !== 1 || lane(t)[0] !== col))
+      )
+    )
+      return undefined
+    for (const group of headers) {
+      const normal = group.filter((t) => t.height >= h * 0.8)
+      if (
+        !normal.length ||
+        normal.some(
+          (t) =>
+            !Number.isFinite(t.height) ||
+            Math.abs(t.height - h) > h * 0.02 ||
+            Math.abs(t.baseline - normal[0].baseline) > h * 0.04
+        )
+      )
+        return undefined
+      for (const t of group) {
+        if (!Number.isFinite(t.height) || t.height < h * 0.55 || t.height > h * 1.02)
+          return undefined
+        if (t.rect[1] < bands[0][1] || t.rect[3] > bands[0][3]) {
+          if (normal.filter((a) => a !== t && isAdjacentTableScript(t, a)).length !== 1)
+            return undefined
+        }
+      }
+    }
+    // Start at the independent native band, then complete only its proved
+    // header packets. This envelope excludes foreign ink; it does not enlarge
+    // the returned cell faces or certify the unchanged preview padding.
+    const headerPacketRecords = records.filter((r) =>
+        header.some((t) => t.sourceItem.index === r.index)
+      ),
+      headerPacketInk = [
+        Math.min(...headerPacketRecords.map((r) => r.ink[0])),
+        Math.min(...headerPacketRecords.map((r) => r.ink[1])),
+        Math.max(...headerPacketRecords.map((r) => r.ink[2])),
+        Math.max(...headerPacketRecords.map((r) => r.ink[3]))
+      ],
+      headerFaceTop = Math.min(
+        bands[0][1] / 1.5,
+        Math.min(...header.map((t) => t.rect[1])) / 1.5,
+        headerPacketInk[1]
+      ),
+      face = [
+        Math.min(crop[0] / 1.5, headerPacketInk[0]),
+        headerFaceTop,
+        Math.max(crop[2] / 1.5, headerPacketInk[2]),
+        crop[3] / 1.5
+      ],
+      ownedGlyphs = new Set(records.flatMap((r) => r.part.map((p) => p.g)))
+    if (headerFaceTop < crop[1] / 1.5 || headerPacketInk[3] > divider[1] / 1.5) return undefined
+    for (const g of packet.glyphs) {
+      if (ownedGlyphs.has(g)) continue
+      const nativeEmptySpace =
+        g.text === ' ' && packet.finite(g.ink, 4) && g.ink[0] === g.ink[2] && g.ink[1] === g.ink[3]
+      if (nativeEmptySpace) continue
+      if (!packet.valid(g.ink) || hit(g.ink, face)) {
+        return undefined
+      }
+    }
+    const selected = [...vertical, divider],
+      owned = new Set(),
+      colors = new Map(),
+      stack = []
+    let color = '#000000'
+    for (let i = 0; i < packet.o.fnArray.length; i++) {
+      const op = packet.o.fnArray[i],
+        a = packet.o.argsArray[i]
+      if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) stack.push(color)
+      else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+        if (!stack.length) return undefined
+        color = stack.pop()
+      } else if (op === OPS.setStrokeRGBColor) color = a[0]
+      else if (
+        [
+          OPS.setStrokeColor,
+          OPS.setStrokeColorN,
+          OPS.setStrokeGray,
+          OPS.setStrokeCMYKColor
+        ].includes(op)
+      )
+        color = undefined
+      else if (op === OPS.constructPath) colors.set(i, color)
+    }
+    if (stack.length) return undefined
+    for (const [i, state] of packet.evidence.paths) {
+      const a = packet.o.argsArray[i],
+        q = a?.[1]?.[0]
+      let key
+      if (
+        a?.[0] === OPS.stroke &&
+        packet.finite(q, 6) &&
+        q[0] === 0 &&
+        q[3] === 1 &&
+        state.solidStroke === true &&
+        state.strokeAlpha === 1 &&
+        state.lineCap === 0 &&
+        state.lineWidth > 0
+      ) {
+        const matrix = Util.transform(work.transform, state.transform),
+          u = [q[1], q[2]],
+          v = [q[4], q[5]]
+        Util.applyTransform(u, matrix)
+        Util.applyTransform(v, matrix)
+        const rect = [
+          Math.min(u[0], v[0]),
+          Math.min(u[1], v[1]),
+          Math.max(u[0], v[0]),
+          Math.max(u[1], v[1])
+        ]
+        if (selected.some((r) => same(r, rect))) key = rect.join(',')
+      }
+      if (key) {
+        if (
+          owned.has(key) ||
+          !/^#[a-f0-9]{6}$/iu.test(colors.get(i)) ||
+          colors.get(i).toLowerCase() === '#ffffff' ||
+          !same(nativePaint.get(key), context.rulePaintBounds.get(key)) ||
+          !packet.valid(state.clip) ||
+          !inside(
+            state.clip,
+            nativePaint.get(key).map((v) => v / 1.5)
+          )
+        )
+          return undefined
+        owned.add(key)
+      } else {
+        const p = nativeFigurePathPaint(packet, i, state)
+        if (!p || hit(p.rect, face)) return undefined
+      }
+    }
+    if (owned.size !== selected.length) return undefined
+    const extents = physical.map((g) => [
+        Math.min(...g.map((t) => t.rect[1])),
+        Math.max(...g.map((t) => t.rect[3]))
+      ]),
+      edges = [headerFaceTop * 1.5, divider[1]]
+    for (let i = 2; i < physical.length; i++) {
+      if (!(extents[i - 1][1] < extents[i][0])) return undefined
+      edges.push((extents[i - 1][1] + extents[i][0]) / 2)
+    }
+    edges.push(crop[3])
+    if (
+      !current() ||
+      !carrierCurrent() ||
+      context.nativeGlyphContext !== c ||
+      context.sourcePage !== page ||
+      context.viewport !== work
+    )
+      return undefined
+    return {
+      cropRect: crop,
+      rows: edges.slice(1).map((y, i) => [crop[0], edges[i], crop[2], y]),
+      columns: cuts.slice(1).map((x, i) => [cuts[i], crop[1], x, crop[3]]),
+      spans: [],
+      headerRows: [0],
+      completeSpans: true,
+      ownedTokens: new Set(fonts),
+      preservePhysicalRows: true,
+      repair: 'native-body-records-recovered'
+    }
+  } catch {
+    return undefined
+  }
+}
+
 // Repeated native vertical segments prove five technical lanes and each
 // physical row, including a narrow fixed-parameter lane omitted by the model.
-export function recoverNativeSegmentedScientificGrid(table, items, captions, rules) {
+export function recoverNativeSegmentedScientificGrid(table, items, captions, rules, context) {
+  const scientific = recoverNativeTwoFenceScientificGrid(table, items, captions, rules, context)
+  if (scientific) return scientific
   const crop = table.cropRect
   if (![4, 5].includes(table.structure.objects.filter((o) => o.label === 'table column').length))
     return

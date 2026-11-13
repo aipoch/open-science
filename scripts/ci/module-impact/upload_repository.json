@@ -31,7 +31,9 @@
     "test/experiments/pdf-ablation-validation.test.ts",
     "src/main/uploads/fixtures/scaled-gap-joined-token.json",
     "src/main/uploads/fixtures/scaled-gap-running-head.json",
-    "src/main/uploads/fixtures/scaled-inline-native.json"
+    "src/main/uploads/fixtures/scaled-inline-native.json",
+    "src/main/uploads/fixtures/native-inline-reference-title.json",
+    "src/main/uploads/fixtures/native-inline-reference-link.json"
   ],
   "interfacePaths": [
     "src/main/uploads/repository.ts",

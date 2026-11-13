@@ -35,7 +35,9 @@ import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { createCanvas } from '@napi-rs/canvas'
 import {
   retainNativeRecoveryInputs,
-  createNativeNonisolatedGroupCropProfile
+  createNativeNonisolatedGroupCropProfile,
+  createNativeNonisolatedExclusionCropProfile,
+  createNativeCompositeGroupCropProfile
 } from './literature-pdf-native-figure-recovery-profile.mjs'
 import {
   findNativeAlgorithmCandidates,
@@ -50,7 +52,10 @@ import {
   nativeRenderedGroupPixelPngSafe,
   nativePairedDescriptionGroupPixelCrop,
   nativePairedDescriptionGroupPixelCurrent,
-  nativePairedDescriptionGroupPixelPngSafe
+  nativePairedDescriptionGroupPixelPngSafe,
+  nativeStrokeTaskRasterPairPixelCrop,
+  nativeStrokeTaskRasterPairPixelPngSafe,
+  renderNativeStrokeTaskPairPng
 } from './literature-pdf-figure-native-group.mjs'
 import {
   proveNativeDiffCodeFigure,
@@ -3790,6 +3795,16 @@ try {
                       figureAssociationPage,
                       nativeFigureTokens,
                       nativeFigureContext
+                    ),
+                    createNativeNonisolatedExclusionCropProfile(
+                      figureAssociationPage,
+                      nativeFigureTokens,
+                      nativeFigureContext
+                    ),
+                    createNativeCompositeGroupCropProfile(
+                      figureAssociationPage,
+                      nativeFigureTokens,
+                      nativeFigureContext
                     )
                   ))
             const rasterTitlePixelCrop =
@@ -4059,6 +4074,27 @@ try {
                 pairedDescriptionPixelCrop,
                 figureAssociationPage
               )
+            const strokeTaskPairPixelCrop =
+              oldFinalRect &&
+              !completePixelCrop &&
+              !certifiedPixelCrop &&
+              !pairedDescriptionCurrent &&
+              !sixPanelHatchPixelCrop &&
+              !categoricalHatchPixelCrop &&
+              !oldNativePixelCrop &&
+              nativeFigureContext
+                ? nativeStrokeTaskRasterPairPixelCrop(
+                    figureAssociationPage,
+                    { ...candidate, caption: serializedCaption ?? candidate.caption },
+                    captions,
+                    figureExclusions,
+                    nativeFigureTokens,
+                    nativeFigureContext,
+                    pageFigures.filter((peer) => peer !== candidate),
+                    oldFinalRect,
+                    { nativePage: page, pageContent: originalContent, operators }
+                  )
+                : undefined
             const nativePixelCrop = keyedPhotoPlan
               ? undefined
               : (completePixelCrop ??
@@ -4066,6 +4102,7 @@ try {
                 (pairedDescriptionCurrent ? pairedDescriptionPixelCrop : undefined) ??
                 sixPanelHatchPixelCrop ??
                 categoricalHatchPixelCrop ??
+                strokeTaskPairPixelCrop ??
                 oldNativePixelCrop)
             let rect = keyedPhotoPlan?.rect ?? nativePixelCrop?.rect ?? oldFinalRect
             // Association supplies only independently proved whole-font owners.
@@ -4117,33 +4154,35 @@ try {
               ? (png) =>
                   (pairedDescriptionCurrent
                     ? nativePairedDescriptionGroupPixelPngSafe
-                    : certifiedPixelCrop
-                      ? nativeCertifiedFigurePixelPngSafe
-                      : sixPanelHatchPixelCrop
-                        ? nativeSixPanelHatchPixelPngSafe
-                        : categoricalHatchPixelCrop
-                          ? nativeCategoricalHatchPixelPngSafe
-                          : closedProgramPixelCrop
-                            ? nativeClosedProgramPixelPngSafe
-                            : closedPaintPixelCrop
-                              ? (plan, png, rect, page) =>
-                                  nativeClosedPaintPixelPngSafe(plan, png, rect, page) ||
-                                  nativeSavedPaintPixelPngSafe(plan, png, rect, page) ||
-                                  nativeFillStrokeTextPixelPngSafe(plan, png, rect, page) ||
-                                  nativePhysicalFramePixelPngSafe(plan, png, rect, page)
-                              : renderedGroupPixelCrop
-                                ? nativeRenderedGroupPixelPngSafe
-                                : rasterTitlePixelCrop
-                                  ? nativeRasterTitlePixelPngSafe
-                                  : formPixelCrop
-                                    ? nativeCaptionedFormPixelPngSafe
-                                    : keyedImagePairPixelCrop
-                                      ? nativeKeyedImagePairPixelPngSafe
-                                      : rasterPlatePixelCrop
-                                        ? nativeCompleteRasterPlatePixelPngSafe
-                                        : sharedFramePixelCrop
-                                          ? nativeSharedFramePixelPngSafe
-                                          : nativeIsolatedOpaqueRasterPngSafe)(
+                    : strokeTaskPairPixelCrop
+                      ? nativeStrokeTaskRasterPairPixelPngSafe
+                      : certifiedPixelCrop
+                        ? nativeCertifiedFigurePixelPngSafe
+                        : sixPanelHatchPixelCrop
+                          ? nativeSixPanelHatchPixelPngSafe
+                          : categoricalHatchPixelCrop
+                            ? nativeCategoricalHatchPixelPngSafe
+                            : closedProgramPixelCrop
+                              ? nativeClosedProgramPixelPngSafe
+                              : closedPaintPixelCrop
+                                ? (plan, png, rect, page) =>
+                                    nativeClosedPaintPixelPngSafe(plan, png, rect, page) ||
+                                    nativeSavedPaintPixelPngSafe(plan, png, rect, page) ||
+                                    nativeFillStrokeTextPixelPngSafe(plan, png, rect, page) ||
+                                    nativePhysicalFramePixelPngSafe(plan, png, rect, page)
+                                : renderedGroupPixelCrop
+                                  ? nativeRenderedGroupPixelPngSafe
+                                  : rasterTitlePixelCrop
+                                    ? nativeRasterTitlePixelPngSafe
+                                    : formPixelCrop
+                                      ? nativeCaptionedFormPixelPngSafe
+                                      : keyedImagePairPixelCrop
+                                        ? nativeKeyedImagePairPixelPngSafe
+                                        : rasterPlatePixelCrop
+                                          ? nativeCompleteRasterPlatePixelPngSafe
+                                          : sharedFramePixelCrop
+                                            ? nativeSharedFramePixelPngSafe
+                                            : nativeIsolatedOpaqueRasterPngSafe)(
                     nativePixelCrop,
                     png,
                     rect,
@@ -4273,15 +4312,23 @@ try {
                                 (!legacyPngValidator || legacyPngValidator(png))
                             : legacyPngValidator,
                     !!(nativePixelCrop || pairedRasterRect),
-                    !keyedPhotoPlan && isolatedRasterPixelCrop
+                    strokeTaskPairPixelCrop && nativePixelCrop === strokeTaskPairPixelCrop
                       ? () =>
-                          nativeIsolatedRasterImagePng(
-                            isolatedRasterPixelCrop,
+                          renderNativeStrokeTaskPairPng(
+                            strokeTaskPairPixelCrop,
                             page,
                             rect,
                             pageGeometry.renderRotation
                           )
-                      : undefined
+                      : !keyedPhotoPlan && isolatedRasterPixelCrop
+                        ? () =>
+                            nativeIsolatedRasterImagePng(
+                              isolatedRasterPixelCrop,
+                              page,
+                              rect,
+                              pageGeometry.renderRotation
+                            )
+                        : undefined
                   )
                 : deferredInputsCurrent
                   ? 'thumbnails/' + id + '.png'
