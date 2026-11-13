@@ -53,19 +53,18 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-### 💡 AIPOCH Open-Science v1.2.1 — Nouveautés
+### 💡 AIPOCH Open-Science v1.2.2 — Nouveautés
 
-_11 novembre 2026_
+_12 novembre 2026_
 
-- **Centre de ressources unifié**: Gérez compétences, connecteurs, spécialistes et installations depuis la place de marché au même endroit ; l’installation fonctionne aussi dans l’interface web.
-- **Optimisation manuelle des invites**: Sollicitez le fournisseur configuré depuis le composeur, vérifiez ou modifiez le résultat, puis annulez si nécessaire ; enregistrez vos modèles dans les paramètres du projet.
-- **Agent intégré amélioré**: Utilisez les abonnements Codex pour l’agent principal et les sous-agents, Claude Fable 5.2 avec un contexte d’un million de jetons et les limites de sortie prises en charge par les fournisseurs.
-- **Bibliographie en CSV**: Exportez les références sélectionnées, un projet entier ou une collection avec 16 noms de colonnes fixes en anglais.
-- **Exports de recherche compacts**: Notebook et Compute stockent une seule fois chaque contenu de preuve unique, réduisant la taille et le temps d’export des longs historiques `.science`.
-- **Connexion au calcul cloud**: Modal et Hugging Face préparent un environnement Python compatible avant l’autorisation dans le navigateur ; la vérification du compte utilise le proxy système.
-- **Fiabilité**: Amélioration de la récupération des mises à jour Windows, de la reprise après réponse aux questions et des films de recherche lors des changements de session ; les interpréteurs sont libérés après 15 minutes sans activité de la session.
+- **Mode réseau Strict**: Optez pour une liste blanche Strict pour le réseau du Notebook — les requêtes doivent correspondre à vos règles par protocole, hôte et port ; les requêtes sans correspondance sont bloquées sans demande d’autorisation.
+- **Reprise des films**: La génération d’un film de recherche interrompu reprend depuis des points de contrôle validés avec une vue de progression en cinq étapes ; les scènes terminées et la narration sont réutilisées.
+- **Fidélité des PDF**: Les PDF externes conservent les figures, tableaux, légendes et ordre de lecture natifs, et les documents traduits préservent la structure et la mise en page d’origine.
+- **Octrois Windows plus sûrs**: Les octrois de dossiers en mode protégé sont vérifiés avant l’enregistrement, et les flux de mise à jour, de désinstallation et de transfert récupèrent plus fiabilité en préservant leurs diagnostics.
+- **Mises à jour des fournisseurs**: Qwen4 Max Preview rejoint Bailian Token Plans à Beijing et Singapore, et les modèles par défaut des connexions officielles sont actualisés.
+- **Correctifs de fiabilité**: Les importations de sessions rapportent leur résultat, la récupération de service bloque l’espace de travail jusqu’au retour de la connexion et le contraste du mode sombre est préservé sur toutes les surfaces.
 
-[Notes complètes v1.2.1](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+[Notes complètes v1.2.2](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
 
 <a id="share-your-research"></a>
 

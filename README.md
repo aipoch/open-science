@@ -51,19 +51,18 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.2.1 updates
+### 💡 AIPOCH Open-Science v1.2.2 updates
 
-_November 11, 2026_
+_November 12, 2026_
 
-- **Unified Resource Center**: Manage skills, connectors, specialists, and Marketplace installs together; installation also works in the Web UI.
-- **Manual prompt optimization**: Invoke your configured provider from the composer, review or edit the result, and undo it; save custom templates in Project settings.
-- **Built-in Agent upgrades**: Use Codex subscriptions for the main agent and subagents, select Claude Fable 5.2 with a 1M context window, and use provider-supported output limits.
-- **Bibliography CSV**: Export selected references or a whole project or collection with 16 stable English column names.
-- **Compact research exports**: Notebook and Compute histories store unique evidence once, reducing the size and export time of long `.science` histories.
-- **Cloud compute sign-in**: Modal and Hugging Face prepare compatible Python before browser authorization; account verification follows the system proxy.
-- **Reliability improvements**: Windows update recovery, answered questions, and research films across session switches improve; idle interpreters are reclaimed after 15 minutes without session activity.
+- **Strict network mode**: Opt in to a Strict whitelist for Notebook networking — requests must match your rules by protocol, host, and port; unmatched requests are blocked without an authorization prompt.
+- **Films resume**: Interrupted research-film generation continues from validated checkpoints with a five-step progress view; completed scenes and narration are reused.
+- **PDF fidelity**: External PDFs keep native figures, tables, captions, and reading order, and translated documents preserve the original structure and layout.
+- **Safer Windows grants**: Folder grants in protected mode are checked before saving, and update, uninstall, and handoff flows recover more reliably with diagnostics preserved.
+- **Provider updates**: Qwen4 Max Preview joins Bailian Token Plans in Beijing and Singapore, and default models for official connections are refreshed.
+- **Reliability fixes**: Session imports report their outcome, service recovery blocks the workspace until the connection returns, and dark-mode contrast is preserved across surfaces.
 
-[View the full v1.2.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.1)
+[View the full v1.2.2 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
 
 <a id="share-your-research"></a>
 
