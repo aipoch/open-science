@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { EmptyConversationBanner } from './EmptyConversationBanner'
@@ -107,38 +107,15 @@ it('shows the guide on info-button focus without triggering the row browse', () 
   const info = screen.getByRole('button', { name: 'What is a .science research package?' })
 
   fireEvent.focus(info)
+  const guide = within(screen.getByRole('tooltip'))
   expect(
-    screen.getByText(/A \.science research package contains the exported research history/)
+    guide.getByText(/A \.science research package contains the exported research history/)
   ).toBeTruthy()
-  expect(screen.getByText('read-only history')).toBeTruthy()
-  expect(screen.getByText('continue research')).toBeTruthy()
+  expect(guide.getByText('read-only history')).toBeTruthy()
+  expect(guide.getByText('continue research')).toBeTruthy()
 
   fireEvent.click(info)
   expect(pickerClick).not.toHaveBeenCalled()
+  expect(screen.queryByRole('tooltip')).toBeNull()
   pickerClick.mockRestore()
-})
-
-it('keeps the guide open while the pointer crosses to content, then closes after leaving', () => {
-  vi.useFakeTimers()
-  try {
-    mount()
-    const info = screen.getByRole('button', { name: 'What is a .science research package?' })
-    fireEvent.mouseEnter(info)
-    const content = screen.getByText(
-      /A \.science research package contains the exported research history/
-    )
-    fireEvent.mouseLeave(info)
-    fireEvent.mouseEnter(content)
-    act(() => vi.advanceTimersByTime(200))
-    expect(content).toBeTruthy()
-
-    fireEvent.blur(content)
-    fireEvent.mouseLeave(content)
-    act(() => vi.advanceTimersByTime(200))
-    expect(
-      screen.queryByText(/A \.science research package contains the exported research history/)
-    ).toBeNull()
-  } finally {
-    vi.useRealTimers()
-  }
 })

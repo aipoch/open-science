@@ -1,5 +1,48 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
+for (const compact of [false, true]) {
+  test(`package guide dismisses after hover and preserves keyboard access (${compact ? 'compact' : 'full'})`, async ({
+    page
+  }) => {
+    await page.goto(`/hover-bubble.html?package${compact ? '&compact' : ''}`)
+    const outside = page.getByRole('button', { name: 'Outside', exact: true })
+    const info = page.getByRole('button', { name: 'What is a .science research package?' })
+    const description = page
+      .locator('p')
+      .filter({ hasText: 'A .science research package contains the exported research history' })
+      .first()
+
+    await outside.click()
+    await info.hover()
+    await expect(description).toBeVisible()
+    await description.hover()
+    await expect(description).toBeVisible()
+    await outside.hover()
+    await expect(description).not.toBeVisible()
+    // Popover close-focus restoration used to reopen the guide and steal focus.
+    await expect(outside).toBeFocused()
+
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await expect(info).toBeFocused()
+    await expect(description).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(description).not.toBeVisible()
+    await expect(info).toBeFocused()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(description).toBeVisible()
+    await page.keyboard.press('Tab')
+    await expect(description).not.toBeVisible()
+
+    await info.hover()
+    await expect(description).toBeVisible()
+    await info.click()
+    await outside.hover()
+    await expect(description).not.toBeVisible()
+  })
+}
+
 test('keeps usage avatars compact inside installed resource cards', async ({ page }) => {
   await page.goto('/hover-bubble.html')
   const card = page.locator('.resource-installed-card')
