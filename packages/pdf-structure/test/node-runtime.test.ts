@@ -41,9 +41,9 @@ it('rejects an unowned process without sending a signal', async () => {
   await expect(nodeProcessRuntime.stop(child)).rejects.toThrow('termination is unconfirmed')
   expect(kill).not.toHaveBeenCalled()
 })
-it('requests pipe shutdown and joins close plus private IPC acknowledgement, including retry', async () => {
+it('requests IPC shutdown and joins close plus private IPC acknowledgement, including retry', async () => {
   const child = await fixture(
-    `process.stdin.resume();process.stdin.once('end',()=>process.send({type:'pdf:stopped'},()=>process.exit(1)))`
+    `process.on('message',({type})=>{if(type==='pdf:stop')process.send({type:'pdf:stopped'},()=>process.exit(1))})`
   )
   child.stdout.resume()
   await nodeProcessRuntime.stop(child)
@@ -67,7 +67,7 @@ it.each(['stdout-marker', 'killed'])(
 )
 it('bounds a missing shutdown acknowledgement without certifying a host-only forced kill', async () => {
   const child = await fixture(
-    'process.stdin.resume();process.stdin.on("end",()=>{});console.log("ready");setInterval(()=>{},1000)'
+    'process.on("message",()=>{});console.log("ready");setInterval(()=>{},1000)'
   )
   await once(child.stdout, 'data')
   const baseline = child.listenerCount('close')
@@ -86,14 +86,12 @@ it('bounds a missing shutdown acknowledgement without certifying a host-only for
   await expect(nodeProcessRuntime.stop(child)).rejects.toThrow('termination is unconfirmed')
 })
 
-it('cleans its listeners and timer when the shutdown pipe throws', async () => {
+it('cleans its listener and timer when sending the shutdown request throws', async () => {
   const child = await fixture('setInterval(()=>{},1000)'),
-    baseline = child.listenerCount('close'),
-    errors = child.stdin.listenerCount('error')
-  vi.spyOn(child.stdin, 'end').mockImplementation(() => {
-    throw Error('closed pipe')
+    baseline = child.listenerCount('close')
+  vi.spyOn(child, 'send').mockImplementation(() => {
+    throw Error('closed channel')
   })
   await expect(nodeProcessRuntime.stop(child)).rejects.toThrow('termination is unconfirmed')
   expect(child.listenerCount('close')).toBe(baseline)
-  expect(child.stdin.listenerCount('error')).toBe(errors)
 })

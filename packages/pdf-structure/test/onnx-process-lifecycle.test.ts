@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
@@ -196,7 +196,7 @@ async function startHost(mode: string): Promise<{
 it.each(['stdin-close', 'host-killed', 'worker-exit', 'stdout-close', 'adapter-stop'])(
   'leaves no running inference process after its owner fails: %s',
   async (mode) => {
-    const { host, pid, closed } = await startHost(mode),
+    const { root, host, pid, closed } = await startHost(mode),
       childPid = await pid
     expect(await running(childPid)).toBe(true)
     if (mode === 'adapter-stop') await nodeProcessRuntime.stop(host)
@@ -205,6 +205,10 @@ it.each(['stdin-close', 'host-killed', 'worker-exit', 'stdout-close', 'adapter-s
     if (mode === 'stdout-close') host.stdout.destroy()
     await closed
     await gone(childPid)
+    const snapshot = join(root, 'job', 'snapshot.pdf')
+    if (mode === 'adapter-stop') expect(await readFile(snapshot, 'utf8')).toBe('snapshot')
+    if (mode === 'stdin-close')
+      await expect(stat(join(root, 'job'))).rejects.toMatchObject({ code: 'ENOENT' })
   }
 )
 

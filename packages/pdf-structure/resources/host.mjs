@@ -100,10 +100,14 @@ const checkRss = () => {
 }
 process.stdout.on('error', () => void stop(1))
 process.stderr.on('error', () => void stop(1))
+process.on('message', (message) => {
+  if (message?.type === 'pdf:stop') void stop(1)
+})
 process.stdin.once('end', () => void stop(1, true))
 process.stdin.once('error', () => void stop(1, true))
 let input = ''
 process.stdin.on('data', (chunk) => {
+  if (stopping) return
   input += chunk.toString('utf8')
   if (input.length > 8192 || request) {
     void stop(1)

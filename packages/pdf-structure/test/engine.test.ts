@@ -67,6 +67,7 @@ it.each([
     join,
     process: {
       platform: 'linux',
+      on: vi.fn(),
       stdin,
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
@@ -242,7 +243,7 @@ it('retains the stop handle when the initial progress observer throws', async ()
   roots.push(root)
   await writeFile(
     join(root, 'host.mjs'),
-    `process.stdin.resume();process.stdin.on('end',()=>process.send({type:'pdf:stopped'},()=>process.exit(1)));setInterval(()=>{},1000)`
+    `process.stdin.resume();process.on('message',({type})=>{if(type==='pdf:stop')process.send({type:'pdf:stopped'},()=>process.exit(1))})`
   )
   await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
   const { nodeProcessRuntime } = await import('../src/node-runtime.js')
@@ -264,7 +265,7 @@ it('retains scratch and retries when termination cannot be confirmed', async () 
   await mkdir(join(root, 'extractor'))
   await writeFile(
     join(root, 'host.mjs'),
-    `process.stdin.resume();process.stdin.on('end',()=>process.send({type:'pdf:stopped'},()=>process.exit(1)));setInterval(()=>{},1000)`
+    `process.stdin.resume();process.on('message',({type})=>{if(type==='pdf:stop')process.send({type:'pdf:stopped'},()=>process.exit(1))})`
   )
   await writeFile(
     join(root, 'scratch.mjs'),

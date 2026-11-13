@@ -50,7 +50,6 @@ export const createPdfStructureNodeRuntime = (
         const cleanup = (): void => {
           clearTimeout(deadline)
           child.removeListener('close', closed)
-          child.stdin.removeListener('error', failed)
         }
         const failed = (): void => {
           cleanup()
@@ -63,10 +62,10 @@ export const createPdfStructureNodeRuntime = (
         }
         const deadline = setTimeout(failed, 5_000)
         child.once('close', closed)
-        child.stdin.once('error', failed)
-        // Pipe EOF is graceful on Windows too; killing only the supervisor cannot prove child exit.
+        // The supervisor may finish on its own while the stop request is in flight.
+        // Wait for its close and acknowledgement even if delivery races with exit.
         try {
-          child.stdin.end()
+          if (!state.confirmed && child.connected) child.send({ type: 'pdf:stop' }, () => {})
         } catch {
           failed()
         }
