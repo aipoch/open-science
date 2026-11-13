@@ -1289,7 +1289,7 @@ const writeDownload = async (response, output) => {
       throw error
     }
   )
-  const temporaryOutput = `${destination}.${process.pid}-${randomUUID()}.tmp`
+  const temporaryOutput = join(dirname(destination), `.open-science-${randomUUID()}.tmp`)
   try {
     await pipeline(
       Readable.fromWeb(response.body),

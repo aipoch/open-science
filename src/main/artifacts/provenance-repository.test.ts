@@ -1207,6 +1207,51 @@ describe('artifact provenance repository', () => {
     ])
   })
 
+  it('retains exact pending ownership when a long filename is published through a case alias', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-long-alias-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: async () => client,
+      compatibilityRepository
+    })
+    const filename = '研'.repeat(30) + '.MD'
+    await compatibilityRepository.writePendingFile({
+      projectId: 'p',
+      sessionId: 'artifact-s',
+      runId: 'r',
+      filename,
+      mimeType: 'text/markdown',
+      source: { kind: 'inline', content: 'body', encoding: 'utf8' }
+    })
+    const version = await repository.createVersion({
+      projectId: 'p',
+      appSessionId: 's',
+      artifactStorageSessionId: 'artifact-s',
+      artifactRunId: 'r',
+      rootFrameId: 'root',
+      agentFrameId: 'agent',
+      messageBranchId: 'branch',
+      runtimeSegmentId: 'segment',
+      promptMessageId: 'prompt',
+      filename: filename.toLowerCase(),
+      contentType: 'text/markdown',
+      writeOperationId: 'write-1',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+    expect(await readFile(version.path, 'utf8')).toBe('body')
+    expect(
+      await compatibilityRepository.findPendingVersionRouting({
+        projectId: 'p',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+    ).toMatchObject({ versionId: version.versionId, checksum: version.checksum })
+  })
+
   it('selects the exact pending filename when multiple files share one normalized name', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-exact-filename-'))
     const client = createProjectDbClient(storageRoot)
