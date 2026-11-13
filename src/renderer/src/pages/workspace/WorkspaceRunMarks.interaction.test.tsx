@@ -598,7 +598,10 @@ describe('WorkspaceRunMarks interaction', () => {
       fireEvent.click(source === 'preview' ? preview : mark)
       expect(queryPreview()).toBeNull()
       if (source === 'preview') expect(document.activeElement).toBe(mark)
-      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' })
+      expect(scrollTo).toHaveBeenCalledWith({
+        top: 800,
+        behavior: source === 'mark' ? 'auto' : 'smooth'
+      })
     }
   )
 
@@ -730,7 +733,7 @@ describe('WorkspaceRunMarks interaction', () => {
     )
 
     await waitFor(() => {
-      expect(scrollTo).toHaveBeenCalledWith({ top: 492, behavior: 'smooth' })
+      expect(scrollTo).toHaveBeenCalledWith({ top: 492, behavior: 'auto' })
     })
   })
 

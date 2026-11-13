@@ -85,7 +85,7 @@ const WorkspaceRunMarks = ({
   const pointerFrameRef = useRef<number | undefined>(undefined)
   const pointerPositionRef = useRef(0)
   const pointerFocusRef = useRef(false)
-  const pendingRevealRef = useRef<string | undefined>(undefined)
+  const pendingRevealRef = useRef<{ id: string; behavior: ScrollBehavior } | undefined>(undefined)
   const cancelPointerFrame = (): void => {
     if (pointerFrameRef.current !== undefined) {
       window.cancelAnimationFrame(pointerFrameRef.current)
@@ -288,7 +288,7 @@ const WorkspaceRunMarks = ({
   }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
   const scrollToMountedRun = useCallback(
-    (mark: RunMark, index: number): boolean => {
+    (mark: RunMark, index: number, behavior: ScrollBehavior): boolean => {
       if (!viewport) return false
       const target = findMessageTarget(viewport, mark.id)
       if (!target) return false
@@ -301,39 +301,41 @@ const WorkspaceRunMarks = ({
         maximumScrollTop
       )
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-      scrollViewportTo(viewport, nextScrollTop, reduceMotion ? 'auto' : 'smooth')
+      scrollViewportTo(viewport, nextScrollTop, reduceMotion ? 'auto' : behavior)
       setCurrentIndex(index)
       return true
     },
     [viewport]
   )
 
-  const scrollToRun = (mark: RunMark, index: number): void => {
+  const scrollToRun = (mark: RunMark, index: number, behavior: ScrollBehavior = 'smooth'): void => {
     const targetMounted = viewport ? findMessageTarget(viewport, mark.id) !== undefined : false
     onRevealMessage?.(mark.id)
     if (targetMounted) {
       pendingRevealRef.current = undefined
-      scrollToMountedRun(mark, index)
+      scrollToMountedRun(mark, index, behavior)
       return
     }
-    if (onRevealMessage) pendingRevealRef.current = mark.id
+    if (onRevealMessage) pendingRevealRef.current = { id: mark.id, behavior }
     setCurrentIndex(index)
   }
 
   useLayoutEffect(() => {
-    const pendingId = pendingRevealRef.current
+    const pending = pendingRevealRef.current
     if (!onRevealMessage) {
       pendingRevealRef.current = undefined
       return
     }
-    if (!pendingId) return
-    const pendingIndex = marks.findIndex((mark) => mark.id === pendingId)
+    if (!pending) return
+    const pendingIndex = marks.findIndex((mark) => mark.id === pending.id)
     if (pendingIndex < 0) {
       pendingRevealRef.current = undefined
       return
     }
     const pendingMark = marks[pendingIndex]!
-    if (scrollToMountedRun(pendingMark, pendingIndex)) pendingRevealRef.current = undefined
+    if (scrollToMountedRun(pendingMark, pendingIndex, pending.behavior)) {
+      pendingRevealRef.current = undefined
+    }
   }, [items, marks, onRevealMessage, scrollToMountedRun, visibleIndices])
 
   if (marks.length < 4 || !railPosition || typeof document === 'undefined') return null
@@ -437,7 +439,7 @@ const WorkspaceRunMarks = ({
                     }
                     onClick={() => {
                       closePreview()
-                      scrollToRun(mark, index)
+                      scrollToRun(mark, index, 'auto')
                     }}
                     onBlur={() => {
                       setFocusedId(null)
