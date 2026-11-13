@@ -313,14 +313,15 @@ export async function launchPreparedMacInstaller(
   try {
     await Promise.race([failed, ready])
   } catch (error) {
-    // A failed readiness handshake must not leave a detached executor waiting forever for EOF.
-    child.stdin?.destroy()
+    // Kill before closing stdin: EOF is the executor's normal handoff signal and can start a
+    // replacement transaction after the readiness handshake has already failed.
     if (child.exitCode === null && child.signalCode === null) {
       try {
         child.kill()
       } catch {
         // The exit/error path below remains authoritative if the child already disappeared.
       }
+      child.stdin?.destroy()
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 1_000)
         child.once('exit', () => {
@@ -328,7 +329,7 @@ export async function launchPreparedMacInstaller(
           resolve()
         })
       })
-    }
+    } else child.stdin?.destroy()
     throw error
   }
 }

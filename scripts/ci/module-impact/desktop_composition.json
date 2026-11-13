@@ -239,7 +239,6 @@
     "src/main/local-service-lifetime.test.ts",
     "src/main/node-fatal-errors.ts",
     "src/main/node-fatal-errors.test.ts",
-    "src/main/process-birth-identity.ts",
     "src/main/runtime-entry-identity.ts",
     "src/main/service-command-admission.ts",
     "src/main/verified-service-stop.ts",
