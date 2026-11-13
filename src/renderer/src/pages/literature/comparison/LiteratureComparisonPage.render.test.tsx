@@ -321,8 +321,23 @@ describe('comparison workflow', () => {
           status: scenario === 'missing' ? 'missing' : 'available'
         }
       ]
-      const command = page(table, vi.fn().mockResolvedValue({ tables: [], sourceChecks: checks }))
+      const command = page(
+        table,
+        vi.fn().mockImplementation(async (request) => ({
+          tables: [],
+          sourceChecks: checks.filter(
+            ({ itemId }) => !request.itemIds || request.itemIds.includes(itemId)
+          )
+        }))
+      )
       fireEvent.click(screen.getByRole('button', { name: 'Continue {{count}} cells' }))
+      await waitFor(() =>
+        expect(command).toHaveBeenCalledWith({
+          action: 'check-sources',
+          tableId: 'table',
+          itemIds: ['paper']
+        })
+      )
       if (scenario === 'unchanged') {
         await waitFor(() =>
           expect(command).toHaveBeenCalledWith({
@@ -580,6 +595,12 @@ describe('comparison workflow', () => {
       />
     )
     const matrix = screen.getByRole('table', { name: 'Comparison matrix' })
+    const matrixScrollHint = document.querySelector(
+      '[data-slot="comparison-horizontal-scroll-hint"]'
+    )
+    expect(matrixScrollHint?.className).toContain(
+      'group-data-[overflow-right=true]/journal-scroll:opacity-100'
+    )
     const props = backgroundTaskProps.mock.lastCall![0] as {
       onOpenItem: (itemId: string, onReturn: () => void) => void
     }
@@ -3286,14 +3307,12 @@ describe('pending comparison candidates', () => {
     table.itemIds.push('reviewed')
     table.members.push({ ...table.members[0], itemId: 'reviewed', title: 'Reviewed report' })
     table.cells.push({ ...table.cells[0], id: 'reviewed-cell', itemId: 'reviewed' })
-    const command = vi.fn().mockResolvedValue({
+    const command = vi.fn().mockImplementation(async (request) => ({
       tables: [table],
-      sourceChecks: ['paper', 'reviewed', 'candidate', 'mixed'].map((itemId) => ({
-        itemId,
-        sourceKey: 'source',
-        status: 'available'
-      }))
-    })
+      sourceChecks: ['paper', 'reviewed', 'candidate', 'mixed']
+        .filter((itemId) => !request.itemIds || request.itemIds.includes(itemId))
+        .map((itemId) => ({ itemId, sourceKey: 'source', status: 'available' }))
+    }))
     const props = {
       command,
       onChooseReferences: vi.fn(),
@@ -3360,7 +3379,7 @@ describe('pending comparison candidates', () => {
         tableId: 'table',
         itemIds: ['candidate', 'mixed'],
         expectedRevision: updated.revision,
-        expectedSources: ['paper', 'reviewed', 'candidate', 'mixed'].map((itemId) => ({
+        expectedSources: ['candidate', 'mixed'].map((itemId) => ({
           itemId,
           sourceKey: 'source'
         }))
@@ -3396,14 +3415,12 @@ describe('pending comparison candidates', () => {
     })
     const command = page(
       table,
-      vi.fn().mockResolvedValue({
+      vi.fn().mockImplementation(async (request) => ({
         tables: [],
-        sourceChecks: table.members.map(({ itemId, sourceKey }) => ({
-          itemId,
-          sourceKey,
-          status: 'available'
-        }))
-      })
+        sourceChecks: table.members
+          .filter(({ itemId }) => !request.itemIds || request.itemIds.includes(itemId))
+          .map(({ itemId, sourceKey }) => ({ itemId, sourceKey, status: 'available' }))
+      }))
     )
     expect(screen.queryByRole('button', { name: /Extract pending references/ })).toBeNull()
     expect(command).not.toHaveBeenCalled()
@@ -3418,7 +3435,11 @@ describe('pending comparison candidates', () => {
       name: 'Confirm and start'
     })) as HTMLButtonElement
     await waitFor(() => expect(start.disabled).toBe(false))
-    expect(command).toHaveBeenCalledExactlyOnceWith({ action: 'check-sources', tableId: 'table' })
+    expect(command).toHaveBeenCalledExactlyOnceWith({
+      action: 'check-sources',
+      tableId: 'table',
+      itemIds: ['repaired']
+    })
     fireEvent.click(start)
     await waitFor(() =>
       expect(command).toHaveBeenCalledWith({
@@ -3426,7 +3447,7 @@ describe('pending comparison candidates', () => {
         tableId: 'table',
         itemIds: ['repaired'],
         expectedRevision: 1,
-        expectedSources: table.members.map(({ itemId, sourceKey }) => ({ itemId, sourceKey }))
+        expectedSources: [{ itemId: 'repaired', sourceKey: 'source' }]
       })
     )
   })
@@ -3492,7 +3513,15 @@ describe('pending comparison candidates', () => {
         sourceKey,
         status: 'available'
       }))
-      const command = page(table, vi.fn().mockResolvedValue({ tables: [], sourceChecks: checks }))
+      const command = page(
+        table,
+        vi.fn().mockImplementation(async (request) => ({
+          tables: [],
+          sourceChecks: checks.filter(
+            ({ itemId }) => !request.itemIds || request.itemIds.includes(itemId)
+          )
+        }))
+      )
       expect(screen.queryByRole('button', { name: 'Extract sample' })).toBeNull()
       const bulk = screen.getByRole('button', {
         name: 'Extract pending references (1)'
@@ -3513,7 +3542,11 @@ describe('pending comparison candidates', () => {
         name: 'Confirm and start'
       })) as HTMLButtonElement
       await waitFor(() => expect(confirm.disabled).toBe(false))
-      expect(command).toHaveBeenCalledExactlyOnceWith({ action: 'check-sources', tableId: 'table' })
+      expect(command).toHaveBeenCalledExactlyOnceWith({
+        action: 'check-sources',
+        tableId: 'table',
+        itemIds: ['paper3']
+      })
       const dialog = screen.getByRole('dialog')
       expect(dialog.textContent).toContain('Ready cells: 2')
       expect(
@@ -3531,7 +3564,12 @@ describe('pending comparison candidates', () => {
           tableId: 'table',
           itemIds: ['paper3'],
           expectedRevision: 1,
-          expectedSources: table.members.map(({ itemId, sourceKey }) => ({ itemId, sourceKey }))
+          expectedSources: [
+            {
+              itemId: 'paper3',
+              sourceKey: change === 'source' ? 'new-source' : 'source'
+            }
+          ]
         })
       )
       expect(table).toEqual(before)

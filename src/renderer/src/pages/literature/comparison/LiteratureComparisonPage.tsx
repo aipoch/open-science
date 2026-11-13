@@ -440,7 +440,20 @@ export function LiteratureComparisonPage({
     setBusy(true)
     setError(false)
     try {
-      const itemIds = singleCell && request?.action === 'rerun-field' ? request.itemIds : undefined
+      const resumeItemIds =
+        request?.action === 'resume'
+          ? [
+              ...new Set(
+                table.cells
+                  .filter((cell) => table.remainingCellIds.includes(cell.id))
+                  .map((cell) => cell.itemId)
+              )
+            ]
+          : undefined
+      const itemIds =
+        request?.action === 'run' || (singleCell && request?.action === 'rerun-field')
+          ? request.itemIds
+          : resumeItemIds
       const result = await command({
         action: 'check-sources',
         tableId: table.id,
@@ -1778,8 +1791,15 @@ export function LiteratureComparisonPage({
             viewportRef={matrixScrollRef}
             data-slot="comparison-matrix-scroll"
             aria-label={t('Comparison matrix')}
-            className="flex-auto [scrollbar-gutter:auto]"
+            className="relative flex-auto [scrollbar-gutter:auto]"
           >
+            <div
+              aria-hidden="true"
+              data-slot="comparison-horizontal-scroll-hint"
+              className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-8 items-center justify-center bg-linear-to-l from-bg-000 via-bg-000/80 to-transparent text-muted-foreground/70 opacity-0 transition-opacity group-data-[overflow-right=true]/journal-scroll:opacity-100"
+            >
+              <ChevronRight className="size-4" />
+            </div>
             <LiteratureTable
               className="w-full table-fixed border-separate border-spacing-0 text-left text-sm [--record-width:clamp(9rem,20cqw,15rem)]"
               style={{
