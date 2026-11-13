@@ -3,14 +3,14 @@
 - **Strict Notebook 네트워킹.** 선택적으로 켜는 Strict 모드는 인가 제안 대신 수동으로 관리하는 화이트리스트를 사용합니다. 요청은 프로토콜, 호스트명 또는 IP, 포트가 규칙과 일치할 때만 허용되고, 일치하지 않는 요청은 즉시 차단됩니다. Relaxed 모드는 기본값으로 기존의 승인 동작을 유지합니다. (#4253)
 - **연구 영상이 체크포인트에서 이어집니다.** 중단된 영상 생성은 검증된 작업을 그대로 유지한 채 이어집니다. 완료된 장면, 내레이신, 타이밍, 믹스는 프로세스 재시작을 넘어 재사용되고, 대화 상자는 5단계 중 현재 단계를 표시하며, 이어서 만들기와 새로 만들기를 선택할 수 있습니다. (#4290)
 - **PDF 왕복 충실도.** 외부 PDF는 완전한 기본 그림, 캡신, 표 레코드, 읽기 셜서를 복구하고, 번역된 문서는 검증되지 않은 배치로 대신 떨어지는 대신 원본 구조와 레이아웃을 유지합니다. (#4300, #4342, #4340, #4334, #4286)
-- **더 안전한 Windows 권한 부여와 업데이트.** 보호 모드의 포더 권한 부여는 저장 전에 검증되고, 업데이트·제거·핸드오프 흐름은 더 안정적으로 복구되며 무엇이 막았는지 표시하고 진단 정보를 보존합니다. (#4217, #4305, #4327, #4328, #4337, #4346)
+- **더 안전한 Windows 권한 부여와 업데이트.** 보호 모드의 폴더 권한 부여는 저장 전에 검증되고, 업데이트·제거·핸드오프 흐름은 더 안정적으로 복구되며 무엇이 막았는지 표시하고 진단 정보를 보존합니다. (#4217, #4305, #4327, #4328, #4337, #4346)
 - **제공업체 카탈로그 새로 고침.** Qwen4 Max Preview가 베이징과 싱가포르의 Bailian Token Plans에 100만 컨텍스트 창으로 합류하고, 공식 연결의 기본 모델이 갱신됩니다. (#4311, #4301)
 
 ## 🚀 New Features
 
 - Notebook 네트워킹을 Strict 모드로 전환합니다. 요청은 프로토콜, 호스트명 또는 IP, 포트로 수동 관리 화이트리스트와 일치해야 하며, 일치하지 않는 요청은 인가를 제안하지 않고 차단됩니다. 규칙은 편집 가능한 논리 그룹으로 출처 태그와 함께 관리하고, 기존에 내장된 대상은 한 번만 미리 채워 넣으며 편집은 유지됩니다. 차단된 요청은 묻는 대신 실패하므로, 모드를 신뢰하기 전에 미리 채워진 규칙을 검토하세요. (#4253)
 - 검증된 체크포인트에서 중단된 연구 영상 생성을 이어갑니다. 완료된 도우미와 장면은 이후 실패를 넘겨 살아남고, 내레이신과 타이밍은 플레이어 빌드와 무관하게 캐시되며, Film 대화 상자는 5단계 중 현재 단계를 이어서 만들기 또는 새로 만들기 선택과 함께 표시합니다. (#4290)
-- 보호 모드에서 Windows 포더 권한 부여를 저장 전에 읽기 전용 ACL 검사로 미리 확인합니다. 사용할 수 없는 포더는 어떤 권한 부여도 기록되기 전에 그 이유와 함께 거부되므로, Notebook 실행이 나중에 숨겨진 커널 시작 오류로 실패하지 않습니다. (#4217)
+- 보호 모드에서 Windows 폴더 권한 부여를 저장 전에 읽기 전용 ACL 검사로 미리 확인합니다. 사용할 수 없는 폴더는 어떤 권한 부여도 기록되기 전에 그 이유와 함께 거부되므로, Notebook 실행이 나중에 숨겨진 커널 시작 오류로 실패하지 않습니다. (#4217)
 - 베이징과 싱가포르의 Bailian Token Plans에서 Qwen4 Max Preview를 선택합니다. 100만 컨텍스트 창, 멀티모달 입력, 낮음·중간·매우 높음 추론 강도를 제공하며, 기존 리전 선택기와 키 콘솔을 통해 확인됩니다. (#4311)
 
 ## 🔧 Improvements
@@ -30,7 +30,7 @@
 - 중단된 Windows 커널 작업이 복구되고, PowerShell stderr 리디렉신이 더 이상 기본 Notebook 출력을 삼키지 않습니다. (#4297, #4295)
 - 세신 지속성은 삭제 정리 교착 상태를 피하고 시작 시 하이드레이신을 활성 저장과 분리합니다. (#4312, #4314)
 - 에이전트 런타임 오류는 모델 제공업체 실패와 ACP 실패를 구별하고, 다시 로드된 세신은 프롬프트 활성화까지 보호된 상태를 유지하며, 취소된 프롬프트는 분류 조회를 중단합니다. (#4322, #4283, #4289)
-- 관련 없는 저장된 포더 권한 부여가 더 이상 Notebook 시작을 막지 않습니다. (#4309)
+- 관련 없는 저장된 폴더 권한 부여가 더 이상 Notebook 시작을 막지 않습니다. (#4309)
 - 미리 보기는 버전 확인 중에도 콘텐츠를 제자리에 유지합니다. (#4293)
 - 직접 SSH 작업 취소는 확인되지 않은 취소 시도를 제한합니다. (#4313)
 - 대비는 어두운 모드 아바타, 재생 입력, 테마 전환을 포함해 밝은 표면과 어두운 표면에서 모두 유지됩니다. (#4345, #4339, #4332)
@@ -40,6 +40,6 @@
 ## 🙏 감사의 말
 
 - [@roxi3906](https://github.com/roxi3906) 님께 감사드립니다. Strict Notebook 화이트리스트 모드([#4253](https://github.com/aipoch/open-science/pull/4253))와 위험 코드 표시 수정([#4318](https://github.com/aipoch/open-science/pull/4318), [#4282](https://github.com/aipoch/open-science/pull/4282))을 기여해 주셨습니다.
-- [@ShuangChenyue](https://github.com/ShuangChenyue) 님께 감사드립니다. Windows 포더 권한 부여 사전 확인([#4217](https://github.com/aipoch/open-science/pull/4217))을 기여해 주셨습니다.
+- [@ShuangChenyue](https://github.com/ShuangChenyue) 님께 감사드립니다. Windows 폴더 권한 부여 사전 확인([#4217](https://github.com/aipoch/open-science/pull/4217))을 기여해 주셨습니다.
 - [@liyeshunag](https://github.com/liyeshunag) 님께 감사드립니다. CLI 자격 증명 프로필 수정([#4298](https://github.com/aipoch/open-science/pull/4298))과 취소된 프롬프트 처리([#4289](https://github.com/aipoch/open-science/pull/4289))를 기여해 주셨습니다.
 - [@cyj1116](https://github.com/cyj1116) 님께 감사드립니다. 모바일 미리 보기 표면([#4325](https://github.com/aipoch/open-science/pull/4325))과 아티팩트 다운로드 수정([#4299](https://github.com/aipoch/open-science/pull/4299))을, [@wen2zhou](https://github.com/wen2zhou) 님께 감사드립니다. SSH 취소 제한([#4313](https://github.com/aipoch/open-science/pull/4313))과 PowerShell 출력 보존([#4295](https://github.com/aipoch/open-science/pull/4295))을, [@liguohhh](https://github.com/liguohhh) 님께 감사드립니다. 다시 로드된 세신 보호([#4283](https://github.com/aipoch/open-science/pull/4283))를, [@nasus2002](https://github.com/nasus2002) 님께 감사드립니다. LaTeX 문헌 파싱([#4303](https://github.com/aipoch/open-science/pull/4303))을, [@guch96](https://github.com/guch96) 님께 감사드립니다. 세신 지속성([#4314](https://github.com/aipoch/open-science/pull/4314))을, [@daanveer-tech](https://github.com/daanveer-tech) 님께 감사드립니다. README 업데이트([#4292](https://github.com/aipoch/open-science/pull/4292), [#4294](https://github.com/aipoch/open-science/pull/4294), [#4324](https://github.com/aipoch/open-science/pull/4324))를 기여해 주셨습니다.
