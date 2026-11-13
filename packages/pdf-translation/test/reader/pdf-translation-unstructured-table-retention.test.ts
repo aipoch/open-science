@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- test fixtures */
 import { expect, it } from 'vitest'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, setCharacterSqueeze } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { createHash } from 'node:crypto'
 import { retainUnstructuredTablePages } from '../../src/reader/unstructured-table-retention.js'
@@ -13,11 +13,12 @@ async function setup(
   wrappedCaption = false,
   filledRails = false,
   openBottom = false,
-  headerCase?: string
+  headerCase?: string,
+  heading = 'Phase A'
 ) {
   const centered = headerCase?.startsWith('centered'),
     records = [
-      ['Setting', 'Phase A', 'Phase B'],
+      ['Setting', heading, 'Phase B'],
       ['Mode', 'Alpha', 'Beta'],
       ['Count', '4', '8'],
       ['Variant', 'Short', 'Long']
@@ -35,11 +36,16 @@ async function setup(
         : headerCase && row === 0
           ? ['Type score', 'Rate', 'Group score'][col]
           : `${row + 1}${col + 1}`
+      const naturalWidth = font.widthOfTextAtSize(value, 8),
+        width = centered && row === 0 && col === 1 ? Math.min(naturalWidth, 32) : naturalWidth
+      // Keep the complete hostile heading in its lane, so the native grammar must inspect it.
+      if (width < naturalWidth)
+        page.pushOperators(setCharacterSqueeze((width / naturalWidth) * 100))
       page.drawText(value, {
         x:
           centered && col > 0
             ? (headerCase === 'centered-shared' && row === 0 ? 127.5 : 100 + (col - 1) * 55) -
-              font.widthOfTextAtSize(value, 8) / 2 +
+              width / 2 +
               (headerCase === 'centered-misaligned' && row === 2 && col === 2 ? 2 : 0)
             : headerCase === 'straddle' && row === 0 && col === 0
               ? 60
@@ -53,6 +59,7 @@ async function setup(
         size: 8,
         font
       })
+      if (width < naturalWidth) page.pushOperators(setCharacterSqueeze(100))
     }
   for (const y of openBottom ? [180, 150, 135] : terminalRule ? [180, 135, 120] : [180, 135]) {
     if (filledRails)
@@ -254,6 +261,27 @@ it('retains independent centered record lanes without native column fences', asy
     await f.task.destroy()
   }
 })
+
+it.each([
+  ['AB12-3', true],
+  ['ÅB2', true],
+  ['A12', false],
+  ['AB--3', false],
+  ['AB' + '0'.repeat(96), true],
+  ['AB' + '0'.repeat(96) + '!', false]
+] as const)(
+  'rechecks complete native heading text before retaining lanes: %s',
+  async (heading, expected) => {
+    const f = await setup(true, false, false, false, 'centered', heading)
+    try {
+      const out = await retainUnstructuredTablePages(f.args)
+      expect(out.retainedSourcePageNumbers).toEqual(expected ? [1] : [])
+      if (!expected) expect(out.extraction).toBe(f.args.extraction)
+    } finally {
+      await f.task.destroy()
+    }
+  }
+)
 
 it.each(['centered-shared', 'centered-misaligned', 'centered-open-bottom'])(
   'does not trust a centered-lane marker without the native family: %s',

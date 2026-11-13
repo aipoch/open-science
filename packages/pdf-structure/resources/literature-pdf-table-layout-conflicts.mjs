@@ -6804,7 +6804,7 @@ function nativePrintedRecordConflicts(table, owned, inventory, rules, font, cont
     const [a, b] = [...head.fonts].sort((a, b) => a.rect[0] - b.rect[0]),
       h = a.height
     if (
-      ![a, b].every((f) => /^\p{L}{2,}(?:[ -]?[\p{L}\d]+)*$/u.test(f.text.trim())) ||
+      ![a, b].every((f) => /^\p{L}{2}[\p{L}\d]*(?:[ -][\p{L}\d]+)*$/u.test(f.text.trim())) ||
       b.rect[0] - a.rect[2] < h * 0.6 ||
       Math.abs(a.height - b.height) > h * 0.02
     )

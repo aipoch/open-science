@@ -3155,6 +3155,23 @@ test.each(
     )
 })
 
+test('retains a long non-contact native row with repeated domain punctuation', () => {
+  const text = '!@!.' + '!.'.repeat(50_000) + '@'
+  const inputs = [item(text, 40, 100, 250)]
+  const input = document([page(inputs)])
+  const before = structuredClone(input)
+  const result = extractDocument(input)
+  assert.deepEqual(
+    result.units.flatMap((unit) => unit.originalStrings),
+    [text]
+  )
+  assert.deepEqual(
+    result.units.flatMap((unit) => unit.items),
+    ['1:0']
+  )
+  assert.deepEqual(input, before)
+})
+
 test.each(
   readPdfTranslationCases<{
     name: string

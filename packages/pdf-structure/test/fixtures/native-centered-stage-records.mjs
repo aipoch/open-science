@@ -1,5 +1,13 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { PDFDocument, StandardFonts, moveTo, lineTo, stroke, setLineWidth } from 'pdf-lib'
+import {
+  PDFDocument,
+  StandardFonts,
+  moveTo,
+  lineTo,
+  stroke,
+  setLineWidth,
+  setCharacterSqueeze
+} from 'pdf-lib'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
@@ -18,12 +26,12 @@ import {
 
 // Simplified native PDF: two independent stages and one genuinely shared value.
 // PDF.js extracts and renders the same bytes; no glyph or operator stubs.
-export async function centeredStageRecords(separated = false) {
+export async function centeredStageRecords(separated = false, heading = 'Phase A') {
   const pdf = await PDFDocument.create(),
     font = await pdf.embedFont(StandardFonts.Helvetica),
     page = pdf.addPage([300, 200]),
     rows = [
-      ['Setting', 'Phase A', 'Phase B'],
+      ['Setting', heading, 'Phase B'],
       ['Mode', '-', 'Linear'],
       ['Module', 'Shared module'],
       ['Count', '4', '8'],
@@ -35,8 +43,14 @@ export async function centeredStageRecords(separated = false) {
     const baseline = 35 + r * 22
     text(row[0], 20, baseline)
     row.slice(1).forEach((value, c) => {
-      const center = row.length === 2 ? 200 : 150 + c * 100
-      text(value, center - font.widthOfTextAtSize(value, 10) / 2, baseline)
+      const center = row.length === 2 ? 200 : 150 + c * 100,
+        naturalWidth = font.widthOfTextAtSize(value, 10),
+        width = r === 0 && c === 0 ? Math.min(naturalWidth, 40) : naturalWidth
+      // Keep hostile heading text inside its native lane, without dropping any glyphs.
+      if (width < naturalWidth)
+        page.pushOperators(setCharacterSqueeze((width / naturalWidth) * 100))
+      text(value, center - width / 2, baseline)
+      if (width < naturalWidth) page.pushOperators(setCharacterSqueeze(100))
     })
   })
   for (const y of [18, 145])

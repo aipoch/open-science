@@ -7906,15 +7906,19 @@ function extractPage(
   const metadataAuthors = ((): Set<Line> => {
     const empty = new Set<Line>()
     if (page.page !== 1) return empty
-    const contacts = lines.filter(
-      (row) =>
+    const contacts = lines.filter((row) => {
+      // Separate the domain token from its interior dot so long PDF strings
+      // cannot backtrack across overlapping domain repetitions.
+      const domain = /^[^\s@]+@([^\s@]+)$/u.exec(row.text)?.[1]
+      return (
         row.baseline < page.height * 0.35 &&
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(row.text) &&
+        Boolean(domain?.slice(1, -1).includes('.')) &&
         uninterruptedNativeRow(row) &&
         row.items.every(
           (part) => !part.unsupported && !tableItems.has(part) && !codeItems.has(part)
         )
-    )
+      )
+    })
     if (contacts.length < 3 || contacts.length > 12) return empty
     const pairs = contacts.map((contact) => {
       const names = lines.filter(

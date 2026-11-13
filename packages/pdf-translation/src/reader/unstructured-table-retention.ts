@@ -292,7 +292,7 @@ export async function retainUnstructuredTablePages(
           heads.some(
             (item) =>
               Math.abs(item.height - h) > h * 0.02 ||
-              !/^\p{L}{2,}(?:[ -]?[\p{L}\d]+)*$/u.test(item.str.trim())
+              !/^\p{L}{2}[\p{L}\d]*(?:[ -][\p{L}\d]+)*$/u.test(item.str.trim())
           ) ||
           heads[0].transform[4] + heads[0].width >= heads[1].transform[4] - h ||
           heads[2].transform[4] - heads[1].transform[4] - heads[1].width < h * 0.6

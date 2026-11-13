@@ -992,6 +992,24 @@ const { centeredStageRecords } = await import(
   pathToFileURL(resolve('test/fixtures/native-centered-stage-records.mjs')).href
 )
 const centeredMarker = 'native-centered-headed-record-lanes-collapsed'
+test.each([
+  ['AB12-3', true],
+  ['ÅB2', true],
+  ['A12', false],
+  ['AB--3', false],
+  ['AB' + '0'.repeat(96), true],
+  ['AB' + '0'.repeat(96) + '!', false]
+] as const)('keeps the complete centered heading grammar for %s', async (heading, expected) => {
+  const f = await centeredStageRecords(false, heading)
+  try {
+    assert.equal(
+      conflicts(f.table, f.tokens, f.rules, [], f.context).includes(centeredMarker),
+      expected
+    )
+  } finally {
+    await f.close()
+  }
+})
 test('diagnoses collapsed independently headed centered stages from an actual rendered native PDF', async () => {
   const f = await centeredStageRecords()
   try {
