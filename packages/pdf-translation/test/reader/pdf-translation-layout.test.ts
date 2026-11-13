@@ -116,6 +116,16 @@ test('preserves a caption whose PDF contains duplicate figure label streams', ()
   expect(sameFontResult.units.find((unit) => unit.source.includes('Figure 1.'))?.sourceOnly).toBe(
     true
   )
+
+  const referencePage = structuredClone(page)
+  referencePage.items[0].str = 'Figure 2.'
+  referencePage.items[1].str = 'Figure 2.'
+  referencePage.items[2].str = 'shows the measured result.'
+  referencePage.items[3].str = 'shows the measured result.'
+  const referenceResult = extractDocument({ pages: [referencePage] })
+  expect(
+    referenceResult.units.find((unit) => unit.source.includes('Figure 2.'))?.sourceOnly
+  ).not.toBe(true)
 })
 
 test.each([0.5, 1, 2])(

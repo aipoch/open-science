@@ -10513,6 +10513,16 @@ function extractPage(
     for (const block of blocks) {
       if (!block.items.length) continue
       const anchor = duplicateCaptionAnchors.find(({ item, other }) => {
+        const anchorBlocks = blocks.filter(
+          (candidate) => candidate.items.includes(item) || candidate.items.includes(other)
+        )
+        if (
+          !anchorBlocks.some((candidate) => {
+            const source = collapseDuplicateCaptionLabels(candidate.source)
+            return isPdfTranslationCaption(source) && !captionBodyReference.test(source)
+          })
+        )
+          return false
         const top = Math.min(item.y, other.y),
           bottom = Math.max(item.bottom, other.bottom),
           left = Math.min(item.x, other.x),
@@ -10949,6 +10959,13 @@ const captionLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))
 // those caption rows in their native layout until a renderer can prove which
 // stream is paintable.
 const captionAnchorLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]$/iu
+const collapseDuplicateCaptionLabels = (text: string): string =>
+  text.replace(
+    /^(?<label>(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:])\s*\k<label>\s*/iu,
+    '$<label> '
+  )
+const captionBodyReference =
+  /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]\s+(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu
 // Some PDF text maps expand formula glyphs into repeated `ffi` ligature text or
 // paired Latin-1 delimiters. The visual formula is still present, but its source
 // string cannot be safely matched to PDFium text objects for replacement.
