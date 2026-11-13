@@ -1330,15 +1330,15 @@ export class AgentRuntimeManager {
       file.ctimeNs
     ].join(':')
     const cached = this.lastOpencodeLaunchProbe
-    const now = performance.now()
-    if (cached?.executableKey === executableKey && now < cached.expiresAt) return cached.version
+    if (cached?.executableKey === executableKey && performance.now() < cached.expiresAt)
+      return cached.version
 
     const version = await probe(executablePath)
     if (version) {
       this.lastOpencodeLaunchProbe = {
         executableKey,
         version,
-        expiresAt: now + RUNTIME_PROBE_REUSE_WINDOW_MS
+        expiresAt: performance.now() + RUNTIME_PROBE_REUSE_WINDOW_MS
       }
     }
     return version

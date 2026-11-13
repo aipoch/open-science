@@ -373,6 +373,10 @@ describe('AgentRuntimeManager', () => {
       opencodeDetectDeps: { ...createOpencodeDeps(inventory), probeVersion: probe }
     })
     const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
+    probe.mockImplementationOnce(async () => {
+      clock.mockReturnValue(3100)
+      return '1.2.3'
+    })
     try {
       expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
       expect(await runtime.probeOpencodeVersion(executable)).toBe('1.2.3')
@@ -382,7 +386,7 @@ describe('AgentRuntimeManager', () => {
       probe.mockRejectedValueOnce(new Error('launch failed')).mockResolvedValue('2.0.1')
       await expect(runtime.probeOpencodeVersion(executable)).rejects.toThrow('launch failed')
       expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
-      clock.mockReturnValue(2200)
+      clock.mockReturnValue(5200)
       expect(await runtime.probeOpencodeVersion(executable)).toBe('2.0.1')
       expect(probe).toHaveBeenCalledTimes(4)
     } finally {

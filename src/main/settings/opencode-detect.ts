@@ -189,6 +189,7 @@ const resolveNpmBinDirs =
     }
   }
 
+// A stable resolver lets default OpenCode and CodeBuddy checks share one host npm lookup.
 const resolveHostNpmBinDirs = resolveNpmBinDirs(process.platform)
 
 // Production dependency bundle wired to real fs/child_process for the current host platform.
