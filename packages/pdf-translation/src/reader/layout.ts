@@ -10540,6 +10540,8 @@ function extractPage(
             block.items.map((entry) => entry.fontName).filter((name): name is string => !!name)
           ),
           anchorIndexGap = Math.abs(item.index - other.index),
+          lowerAnchorIndex = Math.min(item.index, other.index),
+          upperAnchorIndex = Math.max(item.index, other.index),
           anchorBaselineGap = Math.abs(item.originalBaseline - other.originalBaseline),
           carriesBothStreams =
             [...streamFonts].filter((name) => anchorFonts.has(name)).length >= 2 ||
@@ -10558,8 +10560,11 @@ function extractPage(
                     (Math.abs(left.x - item.x) <= pairFont * 0.8 &&
                       Math.abs(right.x - other.x) <= pairFont * 0.8) ||
                     (Math.abs(left.x - other.x) <= pairFont * 0.8 &&
-                      Math.abs(right.x - item.x) <= pairFont * 0.8)
-                return sameNativeGap && sameBaselineGap && sameAnchorX
+                      Math.abs(right.x - item.x) <= pairFont * 0.8),
+                  straddlesAnchors =
+                    (left.index < lowerAnchorIndex && right.index > upperAnchorIndex) ||
+                    (right.index < lowerAnchorIndex && left.index > upperAnchorIndex)
+                return sameNativeGap && sameBaselineGap && sameAnchorX && straddlesAnchors
               })
             )
         return (

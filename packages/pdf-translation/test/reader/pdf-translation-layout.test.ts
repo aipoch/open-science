@@ -111,11 +111,24 @@ test('preserves a caption whose PDF contains duplicate figure label streams', ()
   ).not.toBe(true)
 
   const sameFontPage = structuredClone(page)
+  sameFontPage.items = [
+    sameFontPage.items[2],
+    sameFontPage.items[0],
+    sameFontPage.items[1],
+    sameFontPage.items[3],
+    ...sameFontPage.items.slice(4),
+    item('Nearby same-column prose one.', 60, 376, 150, 'Body'),
+    item('Nearby same-column prose two.', 220, 376, 150, 'Body', true)
+  ]
   for (const entry of sameFontPage.items.slice(0, 4)) entry.fontName = 'Caption'
   const sameFontResult = extractDocument({ pages: [sameFontPage] })
   expect(sameFontResult.units.find((unit) => unit.source.includes('Figure 1.'))?.sourceOnly).toBe(
     true
   )
+  expect(
+    sameFontResult.units.find((unit) => unit.source.startsWith('Nearby same-column prose'))
+      ?.sourceOnly
+  ).not.toBe(true)
 
   const referencePage = structuredClone(page)
   referencePage.items[0].str = 'Figure 2.'
