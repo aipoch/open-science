@@ -560,7 +560,8 @@ const withTransientSessionState = (
     branchSwitchBlocked: source.branchSwitchBlocked,
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
     pendingContextReplayMessageId: source.pendingContextReplayMessageId,
-    interactionState: source.interactionState,
+    interactionState:
+      source.contentLoaded === false ? hydrated.interactionState : source.interactionState,
     liveInteractionState: source.liveInteractionState,
     // Recompute durable Attention from the fresh save receipt so a successful
     // newer turn clears the previous turn's badge. Keep only the local graph-sync
