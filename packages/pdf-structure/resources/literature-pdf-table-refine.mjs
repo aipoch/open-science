@@ -930,6 +930,7 @@ export function recoverUnassignedWideMetricGroupHeader({
   rows,
   columns,
   items,
+  headerRows,
   unassigned,
   issues,
   repairs
@@ -941,6 +942,7 @@ export function recoverUnassignedWideMetricGroupHeader({
     !Array.isArray(columns) ||
     columns.length < 8 ||
     !Array.isArray(items) ||
+    !Array.isArray(headerRows) ||
     !Array.isArray(unassigned) ||
     unassigned.length !== 3
   )
@@ -1013,6 +1015,8 @@ export function recoverUnassignedWideMetricGroupHeader({
   }))
   for (const cell of cells) cell.row += 1
   for (const cell of baseCells) cell.row += 1
+  for (let index = 0; index < headerRows.length; index++) headerRows[index] += 1
+  headerRows.unshift(0)
   rows.unshift({
     rect: [columns[0].rect[0], top, columns.at(-1).rect[2], bottom],
     origin: 'source-wide-metric-group-header'
@@ -1682,6 +1686,17 @@ export function recoverNativeSixColumnMicrobenchmarkRows({
       : []
     if (headerTail.length !== 3 || new Set(headerTail.map((item) => laneOf(item))).size !== 3)
       return false
+    const allRowsAlreadyOwned = plans.every((plan) =>
+      plan.fields.every((field) => cells.some((cell) => cell.text?.trim() === field[0].text.trim()))
+    )
+    const allHeadersAlreadyOwned = headerTail.every((item) =>
+      cells.some((cell) =>
+        [...(cell.sourceItems ?? []), ...(cell.sourceTokens ?? [])].some(
+          (source) => source?.text?.trim() === item.text.trim()
+        )
+      )
+    )
+    if (!unassigned.length && allRowsAlreadyOwned && allHeadersAlreadyOwned) return false
     const rowBaseline = (rowIndex) => {
       const values = cells
         .filter((cell) => cell.row === rowIndex)
@@ -13375,6 +13390,7 @@ export function refineTable(
     rows,
     columns,
     items,
+    headerRows,
     unassigned,
     issues,
     repairs
