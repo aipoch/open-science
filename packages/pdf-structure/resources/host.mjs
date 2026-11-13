@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // The supervisor never performs PDF/WASM work. Extraction and optional OCR run in
-// Worker threads, with no child process tree; parent pipe closure remains responsive.
+// Worker threads; ORT has one directly owned process with an IPC-loss exit barrier.
 import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { unlink, rmdir } from 'node:fs/promises'
 import { inspectScratch } from './scratch.mjs'
+import { createOnnxProcess } from './onnx-process.mjs'
 
 // Retain the Windows native binding without initializing the Canvas font wrapper.
 if (process.platform === 'win32') {
@@ -13,7 +14,8 @@ if (process.platform === 'win32') {
   createRequire(require.resolve('@napi-rs/canvas'))('./js-binding')
 }
 
-let worker, request, interval, deadline
+let worker, request, interval, deadline, onnx
+let onnxStarted = false
 let lastPhase = 'startup'
 let heapLimitDetected = false
 let heapLimitReported = false
@@ -28,7 +30,7 @@ const resourceLimits = {
 const reportResourceLimit = (reason, measurements = {}) => {
   const stats = {
     elapsedMs: Math.max(0, Date.now() - startedAt),
-    rssBytes: process.memoryUsage().rss,
+    rssBytes: process.memoryUsage().rss + (onnx?.rssBytes ?? 0),
     ...measurements,
     workerHeapLimitMb: resourceLimits.heapMb,
     rssLimitBytes: resourceLimits.rssBytes,
@@ -62,12 +64,17 @@ const stop = (code, orphan = false) => {
     // Killing the process after a bounded grace period stops all threads, but preserves uncertain
     // scratch ownership. Do not delete files if Worker termination cannot be established.
     const force = setTimeout(() => process.exit(code || 1), 5000)
+    await onnx?.stop()
     await worker?.terminate()
     if (orphan && request) {
       await inspectScratch(request.output, true)
       await unlink(request.input)
       await rmdir(dirname(request.input))
     }
+    if (process.connected && process.send)
+      await new Promise((resolve, reject) => {
+        process.send({ type: 'pdf:stopped' }, (error) => (error ? reject(error) : resolve()))
+      })
     clearTimeout(force)
     process.exit(code)
   })().catch((error) => {
@@ -75,6 +82,24 @@ const stop = (code, orphan = false) => {
     process.exit(1)
   })
 }
+const observePhase = (chunk) => {
+  for (const line of chunk.toString('utf8').split(/\r?\n/u)) {
+    const match = line.match(/\{"phase":"([^"]+)"/u)
+    if (match) lastPhase = match[1].slice(0, 160)
+  }
+}
+const checkRss = () => {
+  const hostRssBytes = process.memoryUsage().rss
+  const childRssBytes = onnx?.rssBytes ?? 0
+  const rssBytes = hostRssBytes + childRssBytes
+  if (!stopping && rssBytes > resourceLimits.rssBytes) {
+    reportResourceLimit('process-rss', { rssBytes, hostRssBytes, childRssBytes })
+    void stop(1)
+  }
+  return rssBytes
+}
+process.stdout.on('error', () => void stop(1))
+process.stderr.on('error', () => void stop(1))
 process.stdin.once('end', () => void stop(1, true))
 process.stdin.once('error', () => void stop(1, true))
 let input = ''
@@ -102,13 +127,44 @@ process.stdin.on('data', (chunk) => {
       stderr: true,
       resourceLimits: { maxOldGenerationSizeMb: resourceLimits.heapMb }
     })
-    worker.stdout.pipe(process.stdout)
-    worker.stdout.on('data', (chunk) => {
-      for (const line of chunk.toString('utf8').split(/\r?\n/u)) {
-        const match = line.match(/\{"phase":"([^"]+)"/u)
-        if (match) lastPhase = match[1].slice(0, 160)
+    worker.on('message', (message) => {
+      if (message?.type !== 'onnx:start') return
+      if (onnxStarted || stopping) {
+        void stop(1)
+        return
+      }
+      onnxStarted = true
+      try {
+        onnx = createOnnxProcess(
+          [
+            request.input,
+            request.assets,
+            request.runtime,
+            request.pages.join(','),
+            join(request.output, 'inference'),
+            'production'
+          ],
+          () => checkRss()
+        )
+        onnx.stdout.on('data', observePhase)
+        void onnx.result.then(
+          () => {
+            if (!stopping) worker.postMessage({ type: 'onnx:complete' })
+          },
+          (error) => {
+            if (!stopping) {
+              reportWorkerError(error.message)
+              void stop(1)
+            }
+          }
+        )
+      } catch (error) {
+        console.error(error.message)
+        void stop(1)
       }
     })
+    worker.stdout.pipe(process.stdout)
+    worker.stdout.on('data', observePhase)
     worker.stderr.on('data', (chunk) => {
       const message = chunk.toString('utf8')
       if (isHeapLimitError(message)) heapLimitDetected = true
@@ -135,14 +191,10 @@ process.stdin.on('data', (chunk) => {
       if (inspecting || stopping) return
       inspecting = true
       try {
-        // RSS includes the inference Worker and native/WASM allocations. This is a sampled watchdog,
-        // not a kernel-enforced allocation limit. Input/pixel/output bounds complement it.
-        const rssBytes = process.memoryUsage().rss
-        if (rssBytes > resourceLimits.rssBytes) {
-          reportResourceLimit('process-rss', { rssBytes })
-          void stop(1)
-          return
-        }
+        // Sum both processes, including all their Workers/native/WASM allocations.
+        // This remains a sampled watchdog rather than a kernel-enforced allocation limit.
+        const rssBytes = checkRss()
+        if (stopping) return
         const scratchBytes = await inspectScratch(request.output)
         if (scratchBytes > resourceLimits.scratchBytes) {
           reportResourceLimit('scratch-bytes', { rssBytes, scratchBytes })

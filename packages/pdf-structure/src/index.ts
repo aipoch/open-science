@@ -13,3 +13,5 @@ export type {
   PdfStructureOcr,
   PdfStructureProcessRuntime
 } from './types.js'
+
+export { createPdfStructureNodeRuntime } from './node-runtime.js'

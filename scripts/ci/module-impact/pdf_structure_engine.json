@@ -2147,7 +2147,16 @@
     "packages/pdf-structure/test/terminal-numeric-parent-header.test.ts",
     "packages/pdf-structure/test/fixtures/owned-grouped-parent-header.mjs",
     "packages/pdf-structure/test/fixtures/whole-deviation-columns.mjs",
-    "packages/pdf-structure/test/fixtures/repeated-owned-parent-header.mjs"
+    "packages/pdf-structure/test/fixtures/repeated-owned-parent-header.mjs",
+    "packages/pdf-structure/resources/literature-pdf-native-raster-peer-ownership.mjs",
+    "packages/pdf-structure/test/native-raster-boundary-labels.test.ts",
+    "packages/pdf-structure/test/native-raster-peer-ownership.test.ts",
+    "packages/pdf-structure/test/onnx-page-lifecycle.test.ts",
+    "packages/pdf-structure/resources/onnx-process.mjs",
+    "packages/pdf-structure/resources/literature-pdf-onnx-host.mjs",
+    "packages/pdf-structure/test/onnx-process-lifecycle.test.ts",
+    "packages/pdf-structure/resources/literature-pdf-canvas-reset.mjs",
+    "packages/pdf-structure/test/canvas-reset.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2850,7 +2859,12 @@
       "packages/pdf-structure/test/scripted-terminal-dimension-records.test.ts",
       "packages/pdf-structure/test/narrative-record-boundary.test.ts",
       "packages/pdf-structure/test/continued-top-aligned-stub.test.ts",
-      "packages/pdf-structure/test/terminal-numeric-parent-header.test.ts"
+      "packages/pdf-structure/test/terminal-numeric-parent-header.test.ts",
+      "packages/pdf-structure/test/native-raster-boundary-labels.test.ts",
+      "packages/pdf-structure/test/native-raster-peer-ownership.test.ts",
+      "packages/pdf-structure/test/onnx-page-lifecycle.test.ts",
+      "packages/pdf-structure/test/onnx-process-lifecycle.test.ts",
+      "packages/pdf-structure/test/canvas-reset.test.ts"
     ],
     "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [
