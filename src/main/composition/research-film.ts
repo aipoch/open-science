@@ -4,7 +4,7 @@ import {
   researchFilmTokenCounter
 } from '../research-video/input-context'
 import type { LocalModelSnapshot } from '../../shared/local-models'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -131,7 +131,15 @@ export async function composeResearchFilm({
   ): Promise<string> => {
     signal.throwIfAborted()
     if (!targets.has(source)) targets.set(source, capture())
-    const { target, budget, count } = await targets.get(source)!
+    const { target, budget, count } = await targets.get(source)!.catch((error) => {
+      filmLog.info('film model target failed', {
+        ...currentFilmAttempt(),
+        sessionId: source.provenance.sessionId,
+        activeBranchId: source.provenance.branchId,
+        ...diagnosticErrorFields(error)
+      })
+      throw error
+    })
     signal.throwIfAborted()
     const requestId = randomUUID()
     const started = performance.now()
@@ -139,6 +147,7 @@ export async function composeResearchFilm({
       ...currentFilmAttempt(),
       requestId,
       sessionId: source.provenance.sessionId,
+      activeBranchId: source.provenance.branchId,
       phase: systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT ? 'screenplay' : 'animation',
       purpose:
         payload && typeof payload === 'object' && 'correction' in payload && payload.correction
@@ -148,16 +157,18 @@ export async function composeResearchFilm({
       providerId: target.providerId
     }
     filmLog.info('film model request', fields)
-    const response = await researchVideoInference
-      .run({
-        target,
-        prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
-        systemPrompt,
-        agentName: 'Research explanation',
-        description: 'Generate a research explanation from a frozen session',
-        outputLimitBytes: 64 * 1024,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
-      })
+    const response = await Promise.resolve()
+      .then(() =>
+        researchVideoInference.run({
+          target,
+          prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
+          systemPrompt,
+          agentName: 'Research explanation',
+          description: 'Generate a research explanation from a frozen session',
+          outputLimitBytes: 64 * 1024,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
+        })
+      )
       .catch(async (error: unknown) => {
         const usage = extractRestrictedInferenceUsage(error)
         filmLog.info('film model failure', {
